@@ -948,7 +948,7 @@ def _alert_owner_protection_failed(pipeline, spec: dict, protection,
                 "coverage sweep will also attempt an automatic repair."
             )
             body = (
-                "🔴 NO STOP AT ALL\n"
+                "🛑🛑🛑 NO STOP AT ALL\n"
                 f"{symbol}: the entry filled ({held} share(s)) but the "
                 "protective stop could not be placed after every immediate "
                 "retry. The position is open at the broker with NOTHING "
@@ -960,7 +960,7 @@ def _alert_owner_protection_failed(pipeline, spec: dict, protection,
         else:
             covered = protection.get("covered_qty")
             body = (
-                "🟠 STOP PARTIALLY COVERS THE POSITION\n"
+                "⚠️ STOP PARTIALLY COVERS THE POSITION\n"
                 f"{symbol}: a protective stop was placed for "
                 f"{_fmt_shares(covered)} share(s), but {_fmt_shares(uncovered)} "
                 "share(s) of the fill are NOT covered by it — the broker "

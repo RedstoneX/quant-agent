@@ -22,6 +22,50 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — alerts stop relying on colour
+
+**In plain words:** the owner is red/green colour blind — red, orange and
+green circles are effectively indistinguishable to him. Every critical
+alert on this desk opened with a coloured circle (🔴 critical, 🟠 hold) and
+colour was doing all the work of telling him how bad something was. This is
+item 21(b) in `docs/WORK.md`, owner spec 2026-09-02.
+
+**What changed.** Every 🔴/🟠 alert opening in `src/notifier.py`,
+`src/pipeline_stages.py`, `src/trader_feed.py`, `scripts/alert_heartbeat.py`
+and `scripts/run_if_et_window.sh` now uses a shape instead of a coloured
+disc — 🛑 for stop/critical, ⚠️ for a degraded/hold state that needs no
+immediate action — and every one of those messages now leads with a plain
+English severity word (`FAILED`, `SUSPENDED`, `CRASHED`, `KILLED`,
+`INCOMPLETE`) so the message is still correct read with zero emoji
+rendering. One condition — a held position with ZERO stop-loss coverage,
+unbounded loss, the single most catastrophic state on this desk — is marked
+🛑🛑🛑 (repetition, not colour, marks the top severity tier); a partially
+covered stop is downgraded from the old 🔴 to ⚠️ since a stop IS still
+standing watch over most of the position.
+
+**What was deliberately left alone.** `src/cost_circuit.py` and
+`src/pipeline.py` still open alerts with 🔴/🟠 — both were being edited by
+other sessions in parallel and touching them risked a merge collision;
+someone still needs to apply the same shape/text-severity treatment there.
+`src/alert_watchdog.py`'s self-test failure/recovery messages and the
+generic per-mode status legends in `src/notifier.py`'s and
+`src/trader_feed.py`'s own `_status_emoji` helpers (used for every routine
+run summary, success included, not just alerts) were read but not touched:
+they already carry a plain-text `status:`/`Status:` line immediately below
+the coloured circle, so the colour is not the *only* signal there, but
+they are visually inconsistent with the rest of the desk now and a good
+candidate for the same shape treatment later.
+
+**Tests.** Updated `tests/test_notifier.py`, `tests/test_daily_report.py`,
+`tests/test_ops_audit_round2.py` and `tests/test_intraday_scan_crash_visibility.py`
+to assert the new shapes and leading severity words instead of the old
+colour + informal word order. Full suite run alongside; no regressions
+beyond the two pre-existing `tests/test_rehearsal_reproduces_cost_ceiling.py`
+failures (that suite reads live production state and is expected to fail
+inside a worktree).
+
+---
+
 ### 2026-09-02/03 — funnel item 8 ("stop on the wrong side of entry") checked, not a code defect
 
 **In plain words:** the census found 2 of 68 proposals refused because the

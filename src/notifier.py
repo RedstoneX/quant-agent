@@ -693,7 +693,7 @@ def format_session_result(
         # _clip_text for why it clips on a boundary instead of mid-word.
         err_msg = _clip_text(str(error), 1500) or "(no message)"
         return (
-            f"🔴 {mode} FAILED  ({timestamp})\n"
+            f"🛑 FAILED: {mode}  ({timestamp})\n"
             f"error: {err_type}: {err_msg}\n"
             f"elapsed: {elapsed_str}"
         )
@@ -747,8 +747,15 @@ def format_session_result(
 
     run_id = result.get("run_id", "?")
     emoji = _status_emoji(status)
+    # Colour-blind-safe (item 21b): a 🛑 circle and a 🟢/🟡/⚪ circle differ
+    # only by hue to the owner, who is red/green colour blind. The shape
+    # itself (🛑 vs the others) already breaks that tie, but the header's
+    # first word states it in text too, so the line is still correct with
+    # zero emoji rendering — "status: {status}" a line below is not the
+    # FIRST word of the message.
+    severity_prefix = "FAILED: " if emoji == "🛑" else ""
     lines: list[str] = [
-        f"{emoji} {mode}  ({timestamp})",
+        f"{emoji} {severity_prefix}{mode}  ({timestamp})",
         f"status: {status}",
         f"run_id: {run_id}",
     ]
@@ -796,7 +803,7 @@ def format_session_result(
         _append_meta_body(lines, result)
     elif mode == "daily":
         # Only error / skipped reach here ("sent" is silenced above).
-        # Surface the failure reason — a bare '🔴 status: error' is
+        # Surface the failure reason — a bare '🛑 FAILED: status error' is
         # undebuggable from a phone.
         filename = result.get("filename", "")
         if filename:
@@ -845,7 +852,7 @@ def _gap_is_uncovered(gap: dict) -> bool:
 
 
 def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
-    """Render the broker-truth stop-coverage gap banner (🔴) when the
+    """Render the broker-truth stop-coverage gap banner (🛑) when the
     reconciler found held positions with less open protective-stop coverage
     than held qty — a (partially) naked position the WAL queue didn't know
     about. This is operator-actionable: a stop needs manual re-protection.
@@ -875,20 +882,26 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
     # is a sub-share DAY stop that lapsed at the close exactly as the design
     # intends, and 'fractional_replaced' is one the session's own sweep has
     # already put back. Both happen to every fractional position every day.
-    # Rendering them red would put a 🔴 on this alert on every single run,
-    # which is how the owner learns to stop reading the banner that matters.
+    # Rendering them as the top-severity banner would put a 🛑🛑🛑 on this
+    # alert on every single run, which is how the owner learns to stop
+    # reading the banner that matters.
     expected = [g for g in rows if _gap_is_expected_fractional(g)]
     faults = [g for g in rows if not _gap_is_expected_fractional(g)]
     uncovered = [g for g in faults if _gap_is_uncovered(g)]
     partial = [g for g in faults if not _gap_is_uncovered(g)]
     if uncovered:
+        # Top severity tier (item 21b): a held position with ZERO stop
+        # coverage is unbounded loss, not just a degraded state — the one
+        # class of alert on this desk that gets the triple mark.
         lines.append(
-            f"🔴 NO STOP AT ALL: {len(uncovered)} position(s) with ZERO "
+            f"🛑🛑🛑 NO STOP AT ALL: {len(uncovered)} position(s) with ZERO "
             f"protective-stop coverage (covered/held): {_describe(uncovered)}"
         )
     if partial:
+        # Still under-protected but a stop IS standing watch over most of
+        # the position — warning tier, not the top one.
         lines.append(
-            f"🔴 STOP MIS-SIZED: {len(partial)} position(s) partially "
+            f"⚠️ STOP MIS-SIZED: {len(partial)} position(s) partially "
             f"under-protected (covered/held): {_describe(partial)}"
         )
     _append_fractional_overnight_line(lines, expected)
@@ -916,7 +929,7 @@ def _append_fractional_overnight_line(lines: list[str], expected: list[dict]) ->
     guarantee he has to trust."
 
     So this line reports the DOLLARS actually unprotected right now, not a
-    reassurance that the design bounds them. It is deliberately not a 🔴 —
+    reassurance that the design bounds them. It is deliberately not a 🛑 —
     nothing here needs doing — and it is deliberately not silent either.
     Uses 🌙 rather than a colour: the state is 'overnight', and the owner is
     red-green colour blind, so hue carries no meaning on this channel.
@@ -991,7 +1004,7 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
         # positions are refused ONCE THE BOOK REACHES the cap, not
         # unconditionally; a book already below it may still trade.
         lines.append(
-            f"🔴 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
+            f"🛑 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
             f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
             f"new positions are refused once the book reaches it."
         )
@@ -1060,8 +1073,9 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
     status = str(result.get("status", ""))
     if status == "paid_analysis_suspended":
         lines.append(
-            "🔴 Paid LLM analysis is suspended by the mandatory cost circuit. "
-            "Broker protection and deterministic safety work remain active."
+            "🛑 SUSPENDED: paid LLM analysis is halted by the mandatory cost "
+            "circuit. Broker protection and deterministic safety work "
+            "remain active."
         )
         err = result.get("error")
         if err:
@@ -1071,8 +1085,9 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
             lines.append(f"trigger: {_clip_text(str(err), 900)}")
     elif status.startswith("pm_") or status == "analysis_error":
         lines.append(
-            f"🔴 PM decision failed ({status}) — no decisions were made; "
-            "this is NOT a deliberate hold and the full paid stack will not auto-repeat"
+            f"🛑 FAILED: PM decision failed ({status}) — no decisions were "
+            "made; this is NOT a deliberate hold and the full paid stack "
+            "will not auto-repeat"
         )
         err = result.get("error")
         if err:
@@ -1160,7 +1175,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
 
     # (0) Dead-man's check: a market-day session that left zero agent_logs
     # today silently never ran (disabled timer, stuck lock, half-day window
-    # math). morning missing is unambiguous → 🔴; midday/close can be
+    # math). morning missing is unambiguous → 🛑; midday/close can be
     # legitimately skipped on some early-close days → softer ⚠️.
     missing = result.get("missing_sessions")
     if isinstance(missing, list) and missing:
@@ -1173,7 +1188,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
             detail = m if m != "morning" else (
                 "morning — no agent activity logged; check the timer/scheduler"
             )
-            lines.append(f"🔴 MORNING SESSION INCOMPLETE TODAY: {detail}")
+            lines.append(f"🛑 INCOMPLETE: MORNING SESSION TODAY — {detail}")
         soft = [m for m in missing if m not in hard]
         if soft:
             lines.append(f"⚠️ no activity logged today for: {', '.join(soft)}")
@@ -1805,7 +1820,11 @@ def _status_emoji(status: str) -> str:
                 # mode == "intra_check" silence tuple above.
                 "kill_switch_halted",
             )):
-        return "🔴"
+        # Item 21b: shape, not colour — a red circle reads the same as the
+        # green/yellow/white ones to the owner. 🛑 is the only shape swap in
+        # this bucket; the plain-text "FAILED: " prefix that goes with it is
+        # added by the caller, which already knows the mode/timestamp.
+        return "🛑"
     return "⚪"
 
 

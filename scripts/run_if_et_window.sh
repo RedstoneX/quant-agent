@@ -281,7 +281,7 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S %Z')] ${MODE} failed with status ${STATUS}; no
 # ordinary non-zero exits python already pushed its own FAILED message;
 # pushing again here would just teach the operator to ignore duplicates.
 if [[ "$STATUS" -eq 124 || "$STATUS" -eq 137 || "$STATUS" -eq 143 ]]; then
-    notify_telegram "🔴 quant-agent ${MODE} KILLED (status ${STATUS}) on ${ET_DATE} — python got no chance to notify. Next tick retries (morning resumes from the decision checkpoint if one was written)."
+    notify_telegram "🛑 KILLED: quant-agent ${MODE} (status ${STATUS}) on ${ET_DATE} — python got no chance to notify. Next tick retries (morning resumes from the decision checkpoint if one was written)."
 fi
 ping_healthcheck "/fail"
 exit "$STATUS"
