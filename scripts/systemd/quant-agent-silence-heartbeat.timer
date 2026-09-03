@@ -1,0 +1,21 @@
+# Desk-wide silence watchdog — item 17c. Runs often because the check
+# itself is cheap (one read-only SQLite query, at most one Telegram send on
+# an already-silent desk) and because catching a crossed threshold within
+# one tick, not one day, is the whole point of building this.
+[Unit]
+Description=quant-agent silence watchdog — alerts on no completed session in N scheduled windows
+
+[Timer]
+# Same tick as the mode timers (quant-agent-morning.timer and siblings) —
+# every 30 minutes, all week. Unlike those, this unit does NOT self-gate to
+# a market-hours window: the desk can go silent on a weekend evening just as
+# easily as a Tuesday afternoon, and `src.silence_watchdog._elapsed_windows`
+# already excludes weekends from the scheduled-window count, so a weekend
+# tick simply finds nothing new to evaluate rather than needing to be
+# skipped here.
+OnCalendar=*:0/30
+Persistent=true
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target
