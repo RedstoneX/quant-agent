@@ -133,6 +133,86 @@ def test_null_equals_omitted_for_every_defaulted_field():
 
 
 # ---------------------------------------------------------------------------
+# 2026-09-03 fix — an empty string is the same "said nothing" signal as null
+#
+# Production emitted `""` (not `null`) on `theme_durability` for BIAF and
+# GPRO — the original `is None`-only check didn't catch it, so it fell
+# through to Literal validation and dropped the whole entry. See
+# docs/INCIDENT_HISTORY.md 2026-09-03 "evening analyst audit".
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("field_name, expected", [
+    ("theme_durability", "unknown"),
+    ("universe_addition_reason", ""),
+])
+def test_empty_string_on_defaulted_missed_opportunity_field(field_name, expected):
+    """The exact production payload shape (BIAF/GPRO, 2026-09-03): `""`
+    instead of `null` on a droppable field must still validate and land on
+    the field's declared default, not raise.
+    """
+    mo = MissedOpportunity(
+        symbol="XOM", move_pct=6.2, miss_category="noise_rally",
+        lesson="no signal, legitimate hold", **{field_name: ""},
+    )
+    assert getattr(mo, field_name) == expected
+
+
+def test_empty_string_equals_null_for_theme_durability():
+    """The fix's whole claim: `""` and `null` must produce the same object."""
+    nulled = MissedOpportunity(
+        symbol="XOM", move_pct=6.2, miss_category="noise_rally",
+        lesson="no signal, legitimate hold", theme_durability=None,
+    )
+    empty = MissedOpportunity(
+        symbol="XOM", move_pct=6.2, miss_category="noise_rally",
+        lesson="no signal, legitimate hold", theme_durability="",
+    )
+    assert nulled.model_dump() == empty.model_dump()
+
+
+def test_empty_string_coercion_is_recorded_like_a_null():
+    """The empty-string path must feed the same operator-visible telemetry
+    as the null path — a silent recovery that never shows up in the
+    coercion ledger would be just as invisible as the original bug.
+    """
+    assert parse_telemetry.total_null_coercions() == 0
+    MissedOpportunity(
+        symbol="BIAF", move_pct=9.0, miss_category="noise_rally",
+        lesson="no signal, legitimate hold", theme_durability="",
+    )
+    snap = parse_telemetry.snapshot()
+    assert snap.get(("MissedOpportunity", "theme_durability")) == 1
+    assert "MissedOpportunity.theme_durability" in parse_telemetry.describe_null_coercions()
+
+
+def test_empty_string_matching_the_fields_own_default_is_not_double_processed():
+    """Boundary case from the fix's own code comment: on a field whose
+    declared default IS `""` (`universe_addition_reason`), an `""` hit
+    "matches the field's own default (no behavior change)" — verify that
+    claim literally: the field lands on the identical empty string, no
+    double-processing bug, and the object still validates (the
+    add/watch-requires-a-reason validator does not misfire on the coercion
+    path).
+
+    The comment's "no behavior change" is about the resulting VALUE, not
+    about telemetry — this field is coerced by the exact same code path as
+    `theme_durability` above, so the coercion is still tallied. A test
+    that expected silence here would be pinning a stronger claim than the
+    fix actually makes.
+    """
+    parse_telemetry.reset()
+    mo = MissedOpportunity(
+        symbol="XOM", move_pct=6.2, miss_category="noise_rally",
+        lesson="no signal, legitimate hold", universe_addition_reason="",
+    )
+    assert mo.universe_addition_reason == ""
+    assert mo.universe_addition_recommendation == "no"
+    assert parse_telemetry.snapshot() == {
+        ("MissedOpportunity", "universe_addition_reason"): 1
+    }
+
+
+# ---------------------------------------------------------------------------
 # Half 2 — a null on a LOAD-BEARING field must still reject the object
 #
 # If any case here starts passing, an analysis with a missing stop, a missing
