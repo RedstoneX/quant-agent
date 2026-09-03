@@ -627,21 +627,17 @@ proposals accumulate. **The capability is shipped; the evidence it needs was
 erased hours later.** Do not read a quiet Proposal Conversion block as "no
 stuck loops" — read it as "no data yet".
 
-**2. Thirteen proposals died with no explanation anywhere — 13 of 68 (19%). NO RECORD.**
+**2. Thirteen proposals died with no explanation anywhere — 13 of 68 (19%). PARTIALLY FIXED.**
 
-Second-largest "cause", and it is not a rule at all — it is a hole in the
-record. Nearly a fifth of all ideas vanish with no table row and no surviving
-log line explaining why. One run produced real database rows while emitting
-zero log lines.
+The constructor-dropped share of this bucket is fixed — full reasoning in
+`docs/INCIDENT_HISTORY.md` ("funnel item 2"). The constructor's own drop
+reason always existed as a log line but was never persisted; it now is,
+going forward only (does not retroactively explain history).
 
-Until this is closed, **every percentage on this page has a 19% blind spot**,
-and any future claim that a fix "worked" is unfalsifiable to that margin.
-Treat closing it as a prerequisite for trusting the re-measure, not as
-optional instrumentation.
-
-Also in this bucket: a 9-item `order_not_placed` shape where an order was
-built and then nothing else appears in any record. That looks like an
-interrupted run, not a deliberate no-trade.
+**Still open:** the separate 9-item `order_not_placed` shape (an order was
+built and then nothing else appears in any record) — structurally different,
+looks like an interrupted run, not investigated yet. Until both are closed,
+treat this page's percentages as having a residual blind spot.
 
 **3. Accepted by the broker, never filled, cancelled — 6 of 68 (9%). WORKING AS INTENDED.**
 
