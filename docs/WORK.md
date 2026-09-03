@@ -1190,36 +1190,16 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02.**
+**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE.**
 
-**Two requirements, both from the owner, both cheap.**
-
-**a. A FAILURE ALERT IS A SEPARATE TELEGRAM MESSAGE. Never appended to, or
-bundled inside, a normal run summary.** *"I don't want alerts in the same
-message as the normal runs... so it doesn't get lost in the run messages."*
-A skipped run, a degraded seat, a halted circuit — each gets its own
-message. Routine session output stays routine. The recipient is one person
-and the failure must not arrive as a paragraph inside a wall of normal text.
-
-**b. SEVERITY MUST NOT BE CARRIED BY COLOUR.** The current alerts open with
-🔴 (critical) and 🟠 (hold) — see `src/notifier.py`. **The owner is
-red/green colour blind**; red, orange and green circles are effectively
-indistinguishable, and today colour is doing all the work. This is recorded
-in `rex-colour-vision` and the alert format ignores it.
-
-Use instead:
-  - **Distinct SHAPES**, not coloured discs: 🛑 stop / ⚠️ warning / ℹ️ info.
-  - **The first word states severity in plain text** — `HALTED`, `SKIPPED`,
-    `DEGRADED` — so the message reads correctly even with no emoji at all.
-  - **Repetition marks the top level**: 🛑🛑🛑 reads as urgent at a glance
-    without requiring any colour judgement.
-  - **Say what to do, not only what broke.** "SKIPPED 10:00 run — earnings
-    coverage 31/67, retrying 10:30, no action needed" is a different message
-    from one that needs a manual reset, and they must not look alike.
-
-**Check `src/alert_watchdog.py` BEFORE building anything new** — it exists
-and has not been read. It may already cover the "nothing arrived" case that
-item 17 asks for. Do not build a second watchdog next to a working one.
+(a) failure-as-own-message shipped earlier (`maybe_alert_data_quality`).
+(b) colour-only severity fixed 2026-09-03 across `src/notifier.py`,
+`src/pipeline_stages.py`, `src/trader_feed.py`, `scripts/alert_heartbeat.py`,
+`scripts/run_if_et_window.sh` — 🛑/🛑🛑🛑/⚠️ shapes + leading plain-text
+severity word. `src/cost_circuit.py` and `src/pipeline.py` still carry
+🔴/🟠 (out of scope this pass — parallel work in progress there). Full
+writeup: `docs/INCIDENT_HISTORY.md` "2026-09-03 — alerts stop relying on
+colour".
 
 ---
 

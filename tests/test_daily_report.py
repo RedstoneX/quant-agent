@@ -140,8 +140,9 @@ def test_format_session_result_daily_sent_is_silent():
 
 
 def test_format_session_result_daily_error_surfaces_reason():
-    """'error' notifies AND carries the reason — a bare '🔴 status: error'
-    is undebuggable from a phone. No filename → no dangling '📊 ? rows →'."""
+    """'error' notifies AND carries the reason — a bare '🛑 FAILED: status
+    error' is undebuggable from a phone. No filename → no dangling
+    '📊 ? rows →'."""
     from src.notifier import format_session_result
     msg = format_session_result(
         "daily",
@@ -149,7 +150,7 @@ def test_format_session_result_daily_error_surfaces_reason():
         3.0,
     )
     assert msg is not None
-    assert "🔴" in msg and "status: error" in msg
+    assert "🛑 FAILED: daily" in msg and "status: error" in msg
     assert "no data from portfolio_history" in msg
     assert "📊" not in msg   # rows/filename line skipped when absent
 

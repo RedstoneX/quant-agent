@@ -207,7 +207,7 @@ def failure_text(stage: str, detail: str) -> str:
     one request to try.
     """
     return (
-        "🔴 QAMC alert channel FAILED its self-test\n\n"
+        "🛑 FAILED: QAMC alert channel FAILED its self-test\n\n"
         f"Stage: {stage}\n"
         f"Detail: {detail or 'no detail'}\n\n"
         "Every alarm on this desk — deploy drift, pricing cache, session "
