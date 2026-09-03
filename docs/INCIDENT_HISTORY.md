@@ -116,6 +116,30 @@ process; and repeated alert failures across several simulated process
 restarts keep accumulating in the durable record (and on `status()`)
 instead of silently disappearing after the first attempt.
 
+---
+
+### 2026-09-03 — the silence-alarm timing was set to owner instruction, not a placeholder
+
+**In plain words:** the silence watchdog (item 17c) shipped with a one-full-day
+placeholder — the desk would have to be dark for an entire trading day before
+anyone was told. The owner rejected that on sight: every hour the desk sits
+silent is an hour of open positions nobody is watching, real money at risk,
+not an abstract number. He set it to roughly one hour instead.
+
+**Why one hour is still a reliable signal, not a false-alarm risk.** The
+check is desk-wide — it only counts silence when EVERY one of the six daily
+jobs has gone quiet at once, not just one. A single job skipping is normal
+and happens for mundane reasons; the whole desk going quiet across two
+independent scheduled slots in a row is not something that happens by
+accident on a healthy desk. Shortening the window from a full day to about an
+hour trades away tolerance for a genuinely unusual event that was already
+rare, in exchange for finding out about a real outage in an hour instead of
+by the end of the day.
+
+**What changed:** `DEFAULT_SILENT_WINDOW_THRESHOLD` in `src/silence_watchdog.py`
+went from 6 to 2. The `DECIDE BY` line this shipped with in `docs/WORK.md` is
+resolved and removed accordingly.
+
 ### 2026-09-03 — item 17c: a watchdog for the desk going silent, not just the alarm breaking
 
 **In plain words:** on 2026-09-02 the desk stopped doing any work at all — a
