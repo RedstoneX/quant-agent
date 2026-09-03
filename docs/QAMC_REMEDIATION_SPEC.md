@@ -2194,6 +2194,79 @@ against the fully merged result before deploy. See the session-start rule in
 
 ---
 
+## Phase 13 — Every analyst reports the same way, weighted by measured skill, not equally (owner-ratified 2026-09-03)
+
+**Owner's framing, verbatim in spirit: this is a trading desk, and analyst
+agents are not interchangeable and must not be weighted equally.** He reached
+this independently twice — first for combining signals in the PM's scoring
+(see the composite-score work), now extended one layer earlier, to how each
+specialist agent reports in the first place.
+
+### 13.1 The problem this closes
+
+Two structural defects were found reading the Portfolio Manager's actual
+decision code line by line (not by testing prompt wording — by reading the
+rule code itself, for the first time):
+
+- **No tiebreaker among equally-eligible candidates.** Several stocks can all
+  pass every rule; nothing ranks or compares them, so the effective choice
+  falls to whatever the model defaults toward, not a real decision.
+- **A "catalyst exception" checks that a citation exists, never that it
+  supports the trade.** A stock can cite genuinely bad news and still pass —
+  the code proves the news item exists and names the symbol, nothing more.
+
+Both are instances of the same root cause: analysts hand the PM free-form
+prose instead of a checkable, comparable judgment, so nothing downstream can
+verify substance, only the shape of a reference.
+
+### 13.2 The fix: a standard verdict shape, from every seat, every time
+
+Every specialist agent (technical, news, macro, earnings, smart money,
+evening) outputs the same four things, in the same structured shape, on
+every call:
+
+1. **Direction** — bullish / bearish / neutral, with a magnitude, not just a
+   label.
+2. **Conviction** — how sure the agent is, separate from what it thinks.
+3. **Evidence** — specific, checkable facts backing the call (a number, a
+   dated event, a level) — not prose alone.
+4. **Invalidation** — a stated condition that, if true, means the call was
+   wrong. Every call must be falsifiable in a way code can eventually check.
+
+This is what makes the PM's comparison across candidates a real comparison
+instead of reading several different essays and picking one.
+
+### 13.3 Weighting: measured per-seat skill, not one blanket trust level
+
+Per the composite-score work above, corroboration only counts to the extent
+signals are independent, and combining skill requires knowing each source's
+actual reliability — never assumed. Applied here: each analyst's contribution
+is weighted by ITS OWN measured reliability **for the specific type of
+judgment it is making**, not a single trust level applied to everything it
+says. A seat can be highly reliable on one kind of call (e.g. the technical
+analyst's stop/target geometry, already independently verified in code) and
+unreliable on another. Measure before weighting; **start equal-weight and
+adjust only on out-of-sample proof**, per 13.2's own already-ratified
+discipline above — no agent invents a weight or a reliability score without
+showing the measurement it came from.
+
+### 13.4 What this does NOT authorize
+
+- Does not remove or replace the deterministic reward:risk, stop-geometry, or
+  risk-budget code — those stay Python, verified independently, exactly as
+  today. This changes what analysts HAND UP, not what the deterministic layer
+  does with real numbers it already computes itself.
+- Does not invent a new risk threshold. If implementing this surfaces a place
+  that needs a new numeric bar, that is a separate decision, flagged
+  separately — same rule as everywhere else in this document.
+- Does not require rewriting every agent at once. Land the verdict shape and
+  wire it into the PM's comparison first; extend seat-by-seat.
+
+See [[qamc-weighted-scoring-architecture]] (memory) for the full reasoning
+chain and prior art this extends.
+
+---
+
 ## Invariants (must hold at all times)
 
 1. Alpaca **Paper** only. Live capital requires separate explicit authorization.
