@@ -106,11 +106,12 @@ Audited from real production logs, not assumed. Ranked by measured severity:
    detail in `docs/INCIDENT_HISTORY.md`.
 3. **Tech analyst — already fixed by an earlier 2026-09-02 session**
    (`thesis_invalid_if` null crash); confirmed no recurrence post-deploy.
-4. **News analyst — root cause NOT found yet.** One production failure
-   was structural (4 required top-level fields missing entirely, not one
-   malformed item) but the raw LLM payload isn't captured anywhere, only
-   the post-hoc log line. Needs raw-response capture wired in before this
-   can be diagnosed properly — do not guess a fix without it.
+4. **News analyst — root cause found and fixed: one dropped opening quote
+   broke whole-document JSON parsing, not a real 4-field gap.** Also found
+   stale: PR #217's capture built to diagnose this was never deployed (box
+   was 40 commits behind). A second, different failure (a dropped symbol
+   key) was found and left unfixed — can't be auto-repaired without
+   inventing data. Full trail: `docs/INCIDENT_HISTORY.md`, 2026-09-03.
 5. **Evening analyst — audited. One real bug fixed, one already-fixed
    regression confirmed closed, one is by design.** Retained logs hold 61
    dropped-entry warnings (the "17" was stale), all isolated per-entry so
@@ -1145,7 +1146,7 @@ severity word. `src/cost_circuit.py` and `src/pipeline.py` still carry
 writeup: `docs/INCIDENT_HISTORY.md` "2026-09-03 — alerts stop relying on
 colour".
 
-**22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** `_qty_by_risk_budget` now reads `config.risk.max_position_risk_pct` (fallback 5.0) instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. Independent-recheck kept, only the stale percentage was wrong. Detail: `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction audit".
+**22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** Now reads `config.risk.max_position_risk_pct` instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. Detail: `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction audit".
 
 **23. Risk Manager edits to a trade were trusted for shape, never for substance — FIXED 2026-09-03.**
 
@@ -1166,7 +1167,7 @@ substance unchecked" shape as item 18's catalyst-door finding, one seat
 over. Whether this should be made deterministic is an owner call, not
 decided here.
 
-**26. RM modification matching is case-sensitive — minor, fail-open, never observed.** Not normalised like `SymbolRejection`; a mismatch ships UNMODIFIED. Not fixed; low priority.
+**26. RM modification matching is case-sensitive — minor, fail-open, never observed.** Not normalised like `SymbolRejection`. Not fixed; low priority.
 
 **27. Risk budget can undercount held-book risk when heat data is partially unavailable — DEFECT, real, conditional.**
 

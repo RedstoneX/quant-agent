@@ -519,6 +519,83 @@ rather than drift into it.
 
 ---
 
+### 2026-09-03 — the news analyst wasn't dropping data, it was tripping over one dropped quote mark
+
+**In plain words:** a rare news-report failure looked structural ("4 fields
+missing entirely") and was flagged as unsolved because nobody could see what
+the model actually said. The real answer was almost funny: the model wrote
+a complete, correct report and then forgot to type one opening quote mark.
+That one missing character made the whole thing look broken. Fixed by
+teaching the parser to notice and repair that exact typo. Also found, while
+checking: the instrumentation built on 2026-09-02 specifically to diagnose
+this (PR #217, raw-payload capture to `data/parse_failures/`) was never
+actually running on the live box — production was 40 commits behind
+`main`, deployed before that PR even existed. The deploy-drift alarm (see
+the 2026-08-27 entry below) should have caught this and did not; that is a
+second, separate gap, reported as-is and not fixed here.
+
+**What was checked and found.** `data/parse_failures/` does not exist on
+the production box — the capture code was never deployed. Confirmed via
+`git merge-base --is-ancestor`: the box's HEAD (`7f582209`, deployed
+2026-09-02 15:30 ET) does not contain the capture commit (`55632b85`,
+merged 2026-09-02 20:32 ET) or the 39 other commits after it. So "zero
+failures captured" was not a data question (too early, too rare) — the
+capture mechanism itself has never run in production.
+
+**How the real root cause was recovered anyway.** `agent_logs.full_response`
+is a separate, older capture path that stores the raw LLM text for every
+call regardless of parse outcome, and it was already deployed. Pulled the
+row for the exact failure the doc referenced (2026-09-02 19:30 ET,
+`agent_logs.id=365`) and read it directly: the JSON was complete and
+correct except that the `pm_briefing` key was missing its opening quote —
+`  pm_briefing": "..."` instead of `  "pm_briefing": "..."`. That single
+character breaks whole-document `json.loads()`. `AgentResult.parse_json()`
+then falls back to scanning the text for any well-formed JSON fragment and
+picking the best-scoring one — but no fragment of a document broken this
+way can contain the four required top-level fields at once (they were
+scattered on both sides of the break), so the scanner picked an inner
+sub-object instead and pydantic reported exactly "4 fields missing." Ruled
+out: truncation (`finish_reason='stop'`, `truncated=0`, only 1017 output
+tokens — nowhere near any ceiling) and a schema/prompt mismatch (every
+field the schema wants was present in the model's answer, correctly
+shaped). It was a one-character JSON formatting slip, nothing more.
+
+**A second, different structural failure was also found in the same
+history** (2026-08-25 15:00 ET, `agent_logs.id=176`): the model dropped an
+entire stock symbol's key (`"AMD": [`-style opener) mid-array, splicing one
+symbol's news items directly onto another's. This is NOT the same defect —
+there is no missing character to reinsert, the model omitted information
+that cannot be safely guessed back. Left unfixed; forcing a repair here
+would mean inventing data. It surfaces today as an ordinary validation
+failure, same as before.
+
+**The fix.** `AgentResult.parse_json()` (`src/agents/base.py`) now tries
+one extra, narrowly-scoped repair before falling back to fragment
+scanning: if the whole text fails to parse, look for a line that starts
+with a bare word immediately followed by `":` (a closing quote with no
+opening one) and add the missing quote, then retry the parse. This is safe
+specifically because Anthropic's pretty-printed JSON always starts a key on
+its own line, and a JSON string can never contain a literal newline — so
+that pattern can only ever be a key position, never the middle of a string
+value. Applied to both the raw text and to text extracted from a fenced
+code block. It fixes only the exact defect that was actually observed —
+deliberately not a general "fix any broken JSON" attempt, which would be
+exactly the guessing this investigation was set up to avoid.
+
+**Overall news_analyst health, checked independently of this one issue.**
+71 real calls in the retained `agent_logs` history (2026-08-14 to
+2026-09-03): every one has `status=success`, `finish_reason=stop`,
+`truncated=0` — no token-budget problem like the smart_money seat had.
+2 of 71 (2.8%) hit a JSON-malformation structural failure (the two above).
+9 of 71 (12.7%) used a `market_sentiment` value outside the accepted enum
+(`mixed`, `mixed-to-bearish`, `risk-off`) — this is the SAME defect already
+on record in `docs/WORK.md` (the vocabulary-rejection finding), re-measured
+here and confirmed still live and unfixed as of this check, not a new
+finding. No empty or truncated `pm_briefing` text found among the
+successfully parsed reports.
+
+---
+
 ### 2026-09-03 — item 17c: a watchdog for the desk going silent, not just the alarm breaking
 
 **In plain words:** on 2026-09-02 the desk stopped doing any work at all — a

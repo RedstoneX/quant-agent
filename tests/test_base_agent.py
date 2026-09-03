@@ -260,6 +260,83 @@ def test_parse_json_prefers_later_agent_shaped_correction_over_larger_draft():
     assert parsed == {"approved": False}
 
 
+# === Missing-opening-quote repair (root cause of the 2026-09-02 news_analyst
+# "4 required top-level fields missing" structural failure — see
+# docs/INCIDENT_HISTORY.md). The real production payload had every field
+# present and correct EXCEPT one interior key that lost its opening quote
+# (`  pm_briefing": "..."` instead of `  "pm_briefing": "..."`), which broke
+# whole-object json.loads() and made the fragment scanner below return an
+# inner sub-object lacking all 4 required fields. These tests reproduce the
+# same STRUCTURE (not the verbatim production text) to keep the fix's
+# behavior pinned. ===
+
+def test_parse_json_repairs_missing_opening_quote_on_a_key():
+    """A pretty-printed object with one key missing its opening quote must
+    still recover as the FULL object, not a garbage inner fragment."""
+    from src.agents.base import AgentResult
+
+    raw = (
+        "{\n"
+        '  "macro_narrative": {"current_regime": "risk-on"},\n'
+        '  "state_changes": [],\n'
+        '  "stock_news": {},\n'
+        '  pm_briefing": "Deploy capital, book is underexposed.",\n'
+        '  "market_sentiment": "neutral",\n'
+        '  "confidence": "high",\n'
+        '  "nominations": []\n'
+        "}"
+    )
+    result = AgentResult(raw_text=raw, tokens_used=0, model="test")
+    parsed = result.parse_json()
+    assert isinstance(parsed, dict)
+    assert parsed["pm_briefing"] == "Deploy capital, book is underexposed."
+    assert parsed["macro_narrative"] == {"current_regime": "risk-on"}
+    assert parsed["market_sentiment"] == "neutral"
+    assert parsed["confidence"] == "high"
+
+
+def test_parse_json_repairs_missing_opening_quote_inside_code_fence():
+    """The same repair must also apply to the fenced-block extraction path,
+    since real responses are typically wrapped in ```json fences."""
+    from src.agents.base import AgentResult
+
+    raw = (
+        "```json\n"
+        "{\n"
+        '  "macro_narrative": {"current_regime": "risk-on"},\n'
+        '  pm_briefing": "Deploy capital.",\n'
+        '  "market_sentiment": "neutral",\n'
+        '  "confidence": "high"\n'
+        "}\n"
+        "```"
+    )
+    result = AgentResult(raw_text=raw, tokens_used=0, model="test")
+    parsed = result.parse_json()
+    assert isinstance(parsed, dict)
+    assert parsed["pm_briefing"] == "Deploy capital."
+
+
+def test_parse_json_repair_does_not_alter_already_valid_json():
+    """The repair pass must never fire (or never change the result) when
+    the JSON already parses cleanly — it only runs as a fallback after the
+    direct parse fails."""
+    from src.agents.base import AgentResult
+
+    raw = '{"pm_briefing": "fine", "market_sentiment": "neutral"}'
+    result = AgentResult(raw_text=raw, tokens_used=0, model="test")
+    assert result.parse_json() == {"pm_briefing": "fine", "market_sentiment": "neutral"}
+
+
+def test_repair_unquoted_keys_leaves_string_values_alone():
+    """The repair regex only matches at the START of a line — it must not
+    rewrite a `word":` sequence that legitimately appears mid-value."""
+    from src.agents.base import AgentResult
+
+    text = '{"note": "the label word": here is not a key"}'
+    repaired = AgentResult._repair_unquoted_keys(text)
+    assert repaired == text
+
+
 # === Cost tracking edge cases (R7 self-audit) ===
 
 def test_run_records_cost_for_known_model(monkeypatch):
