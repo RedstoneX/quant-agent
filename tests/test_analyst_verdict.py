@@ -29,7 +29,8 @@ from ops.model_policy.deterministic_selection import evaluate
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import (
     RATING_DIRECTION, RATING_MAGNITUDE, AnalystVerdict, EarningsAnalysis,
-    TechAnalysisResult, TechReasoningChain, VerdictEvidence,
+    NewsIntelligenceReport, StockNewsItem, TechAnalysisResult,
+    TechReasoningChain, VerdictEvidence,
 )
 from src.risk.constants import REWARD_RISK_FLOOR
 from src.verdicts import (
@@ -422,10 +423,8 @@ def test_two_seats_on_one_symbol_average_at_the_research_informed_weight():
 
 def test_a_single_seat_verdict_is_unaffected_by_its_own_weight():
     """The weighting only changes how MULTIPLE seats are averaged together.
-    A symbol only Technical has a view on ranks by its own raw score either
-    way — today's actual production case, since only Technical produces a
-    Phase 13 verdict yet. This is what makes the 2026-09-03 amendment inert
-    in production until a second seat is wired in."""
+    A symbol only one seat has a view on ranks by its own raw score either
+    way, regardless of which seat that is or what its weight is."""
     tech = _tech("XLE", "buy", "high").to_verdict()
     [c] = rank_verdicts([tech])
     assert c.score == score_verdict(tech)
@@ -473,6 +472,137 @@ def test_pm_ranks_equally_eligible_candidates_deterministically():
     assert blocked == {}
     assert [c.symbol for c in ranked] == ["AAA", "BBB", "CCC", "DDD"]
     assert [c.score for c in ranked] == [2.0, 1.5, 1.0, 0.5]
+
+
+# ==========================================================================
+# 2c. All five seats through the real integration path (2026-09-03)
+# ==========================================================================
+
+def _news_intel(stock_news: dict) -> "NewsIntelligenceReport":
+    return NewsIntelligenceReport(
+        macro_narrative={
+            "last_updated": "2026-09-03", "era_themes": ["rates"],
+            "current_regime": "mid-cycle, rates on hold",
+        },
+        stock_news=stock_news, pm_briefing="ok",
+        market_sentiment="neutral", confidence="medium",
+    )
+
+
+def test_rank_candidates_combines_all_five_seats_at_their_researched_weight():
+    """End-to-end through the real PM entry point, not `rank_verdicts`
+    directly: one symbol where technical, news, and earnings all cover it
+    and agree bullish, must outrank a symbol only technical covers at the
+    same tech reading — proving the extra seats actually reach the ranking,
+    not just exist as unused methods."""
+    solo = _tech("SOLO", "buy", "medium")     # 0.5 + 0.5 = 1.0, alone
+    covered = _tech("MULTI", "buy", "medium")  # same tech reading as SOLO
+    analyses = [solo, covered]
+
+    news_intel = _news_intel({
+        "MULTI": [StockNewsItem(
+            headline="guidance raised", sentiment="bullish", conviction="high",
+            impact_summary="raised full-year guide",
+        )],
+    })
+    multi_earnings = _earnings("bullish", "high")
+    multi_earnings.symbol = "MULTI"
+    earnings_analyses = [{
+        "symbol": "MULTI",
+        "analysis": multi_earnings.model_dump(),
+    }]
+
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"SOLO", "MULTI"},
+        active_state_changes="", asof=SESSION,
+        news_intel=news_intel, earnings_analyses=earnings_analyses,
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["MULTI", "SOLO"]
+    assert ranked[0].seats == ["earnings", "news", "technical"]
+    # SOLO is untouched by the new seats: still exactly its own raw score.
+    solo_candidate = ranked[1]
+    assert solo_candidate.score == score_verdict(solo.to_verdict())
+
+
+def test_rank_candidates_survives_a_malformed_earnings_entry():
+    """A single bad earnings dict must drop only earnings' contribution for
+    that symbol — never crash the whole ranking call."""
+    analyses = [_tech("AAA", "buy", "medium")]
+    bad_earnings = [{"symbol": "AAA", "analysis": {"not_a_real_shape": True}}]
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        earnings_analyses=bad_earnings,
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["AAA"]
+    assert ranked[0].seats == ["technical"]  # earnings silently dropped, not crashed
+
+
+def test_rank_candidates_drops_earnings_on_a_wrapper_vs_analysis_symbol_mismatch():
+    """The pipeline wrapper's `symbol` is ground truth; `EarningsAnalysis.
+    symbol` is part of the LLM's own JSON and could disagree (a hallucinated
+    ticker). A mismatch must drop earnings' contribution for that entry, not
+    trust either side silently."""
+    analyses = [_tech("AAA", "buy", "medium")]
+    mismatched = _earnings("bullish", "high")  # symbol="AAPL" by fixture default
+    earnings_analyses = [{"symbol": "AAA", "analysis": mismatched.model_dump()}]
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        earnings_analyses=earnings_analyses,
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["AAA"]
+    assert ranked[0].seats == ["technical"]  # earnings dropped on mismatch
+
+
+def test_rank_candidates_survives_a_malformed_macro_dict():
+    """Same contract for macro: garbage input must not take down the run."""
+    analyses = [_tech("AAA", "buy", "medium")]
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        macro_analysis={"not_a_real_shape": True},
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["AAA"]
+    assert ranked[0].seats == ["technical"]
+
+
+def test_rank_candidates_macro_verdict_applies_uniformly_to_every_symbol():
+    """Documented simplification: macro's verdict is the same broad read for
+    every candidate, not sector-adjusted. Two unrelated symbols both get the
+    same macro contribution."""
+    analyses = [_tech("AAA", "buy", "medium"), _tech("BBB", "buy", "medium")]
+    macro = {
+        "reasoning_chain": {
+            "volatility_analysis": "VIX mid-range, flat trend",
+            "yield_curve_analysis": "2s10s modestly positive",
+            "monetary_policy_analysis": "Fed on hold, no forward guidance shift",
+            "inflation_labor_credit": "CPI cooling, unemployment stable, spreads tight",
+            "cross_signal_synthesis": "consistent risk-on read across signals",
+            "sector_implications": "broad, no strong sector tilt",
+        },
+        "regime": "risk-on", "confidence": "high", "equity_outlook": "bullish",
+        "position_guidance": {
+            "target_invested_pct": 90, "cash_recommendation_pct": 10,
+            "reasoning": "risk-on regime supports full deployment",
+        },
+        "summary": "broadly constructive",
+        "bear_triggers": ["CPI surprises hot"],
+    }
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA", "BBB"}, active_state_changes="",
+        asof=SESSION, macro_analysis=macro,
+    )
+    assert blocked == {}
+    assert {c.symbol for c in ranked} == {"AAA", "BBB"}
+    for c in ranked:
+        assert c.seats == ["macro", "technical"]
 
 
 def test_pm_never_orders_a_name_a_gate_refused():

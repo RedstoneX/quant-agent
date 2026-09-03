@@ -22,6 +22,48 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — the other four analysts finally reach the ranking, and one real bug caught on the way in
+
+**In plain words:** the desk's tiebreak among tied stock picks only ever
+listened to one of five analysts (technical), because that was the only
+one whose output had been translated into the shared format the ranking
+reads. The other four were built and wired in today, so the ranking now
+genuinely reflects all five — not just in principle, but in the actual
+code the desk runs.
+
+**The catch, found while testing this, not before shipping it:** an
+earnings filing's analysis carries a `symbol` field the AI itself writes
+as part of its answer — separate from the symbol the pipeline already
+knows the filing is about, from real deterministic record-keeping. Those
+two should always agree, but nothing checked that they actually did. A
+constructed test proved the gap was real (the ranking silently attributed
+a reading to the wrong stock when the two disagreed), not theoretical.
+Fixed: the pipeline's own record now wins, and a disagreement drops that
+one earnings reading rather than trusting either side blindly.
+
+**What's honestly still open, not hidden:** macro's read is applied the
+same way to every stock this run, not adjusted per sector the way the
+older evidence display already does elsewhere in the same message to the
+Portfolio Manager — a known simplification, not an oversight, since macro
+doesn't carry a separate reasoning set per sector to draw from. And three
+of the four new analysts' "how strongly does this argue" numbers are
+reasoned estimates, not measurements — each one's own builder flagged this
+explicitly rather than presenting a guess as settled.
+
+**Verification:** all five pieces (four analyst conversions plus a
+data-quality watchdog built the same day) were built independently, each
+proven with real before/after test failures — not just written and
+trusted. The wiring itself was tested end-to-end: a stock covered by three
+analysts correctly outranks an identical stock only one analyst covers,
+and three separate malformed-input cases (a broken earnings record, a
+broken macro record, the symbol-mismatch case above) all confirmed to drop
+gracefully rather than crash the run. Full paper-trading test suite: 4,552
+passed; the only 12 failures were already-known, pre-existing gaps
+unrelated to this change (confirmed by reproducing them against an
+untouched copy of the codebase first).
+
+---
+
 ### 2026-09-03 — analysts stop being treated equally in the ranking tiebreak
 
 **In plain words:** the desk had a rule that analysts should never be

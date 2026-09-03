@@ -8,8 +8,9 @@ from pydantic import ValidationError
 
 from src.agents.base import BaseAgent
 from src.models import (
-    NewsIntelligenceReport, PortfolioDecision, Position, TargetPosition,
-    TechAnalysisResult, SmartMoneyFinding, normalize_sector_stance,
+    AnalystVerdict, EarningsAnalysis, MacroAnalysis, NewsIntelligenceReport,
+    PortfolioDecision, Position, TargetPosition, TechAnalysisResult,
+    SmartMoneyFinding, news_verdict_for_symbol, normalize_sector_stance,
     parse_telemetry,
 )
 from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
@@ -450,6 +451,10 @@ class PortfolioManagerAgent(BaseAgent):
             allowed_buy_symbols=set(allowed_buy_symbols),
             active_state_changes=kwargs.get("active_state_changes") or "",
             rr_floor=float(kwargs.get("rr_floor", REWARD_RISK_FLOOR)),
+            news_intel=news_intel,
+            macro_analysis=macro_analysis,
+            earnings_analyses=earnings_analyses,
+            smart_money_findings=smart_money_findings,
         )
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
@@ -1171,6 +1176,133 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             verdicts[symbol] = blocked
         return verdicts
 
+    @staticmethod
+    def _collect_seat_verdicts(
+        *,
+        analyses: list[TechAnalysisResult],
+        news_intel: "NewsIntelligenceReport | None",
+        macro_analysis: dict | None,
+        earnings_analyses: list[dict],
+        smart_money_findings: list[SmartMoneyFinding] | None,
+    ) -> list[AnalystVerdict]:
+        """Every seat's Phase 13 verdict, best-effort, one bad entry never
+        drops another's or the run's.
+
+        2026-09-03: Technical was the only seat on this shape when ranking
+        first shipped. This extends it to the other four — news, macro,
+        earnings, smart_money — each via its own `to_verdict()` (or, for
+        news, the module-level `news_verdict_for_symbol`, since News files
+        several items per symbol with no single object to call it on).
+
+        Two of the four arrive in a DIFFERENT shape here than their own
+        agent modules use: `macro_analysis` and each `earnings_analyses`
+        entry's `"analysis"` key are plain dicts (already `model_dump()`'d
+        for the pipeline), not live `MacroAnalysis`/`EarningsAnalysis`
+        objects — re-parsed via `model_validate` before `to_verdict()` can
+        be called. `smart_money_findings` and `news_intel` are already the
+        real objects.
+
+        Every per-seat, per-symbol step is wrapped: a single malformed dict,
+        an `EarningsAnalysis` whose disclosed bull/bear case is the literal
+        "not disclosed" placeholder (which `to_verdict()` deliberately
+        refuses to construct from — see that method), or any other
+        unexpected shape must drop ONLY that one seat's contribution for
+        that one symbol, never the whole ranking. Mirrors the
+        never-block-the-run posture already established by
+        `_record_seat_stances` and `_check_levels_coverage`.
+
+        Macro is applied via its OWN plain `equity_outlook`, the same for
+        every symbol — NOT the sector-adjusted stance
+        `build_evidence_registry` computes for the evidence-registry prompt
+        section. Those two can disagree for a symbol whose sector view
+        differs from the broad market view (see
+        `build_evidence_registry`'s sector-guidance branch). Known
+        simplification, not an oversight — `MacroAnalysis` carries one
+        conviction/evidence/invalidation set for its whole read, not one per
+        sector, so there is nothing sector-specific to attach to a
+        sector-overridden direction without inventing content. Flagged in
+        `docs/WORK.md` as a follow-up, not resolved here.
+        """
+        verdicts: list[AnalystVerdict] = []
+
+        for analysis in analyses:
+            try:
+                verdicts.append(analysis.to_verdict())
+            except Exception:
+                logger.warning(
+                    "Phase 13: technical verdict failed for %s", analysis.symbol,
+                    exc_info=True,
+                )
+
+        if news_intel is not None:
+            for symbol, items in (news_intel.stock_news or {}).items():
+                if not items:
+                    continue
+                try:
+                    verdict = news_verdict_for_symbol(symbol, items)
+                    if verdict is not None:
+                        verdicts.append(verdict)
+                except Exception:
+                    logger.warning(
+                        "Phase 13: news verdict failed for %s", symbol, exc_info=True,
+                    )
+
+        if macro_analysis:
+            try:
+                macro = MacroAnalysis.model_validate(macro_analysis)
+            except Exception:
+                macro = None
+                logger.warning("Phase 13: macro_analysis failed to parse", exc_info=True)
+            if macro is not None:
+                symbols = {a.symbol.upper() for a in analyses}
+                for symbol in symbols:
+                    try:
+                        verdicts.append(macro.to_verdict(symbol))
+                    except Exception:
+                        logger.warning(
+                            "Phase 13: macro verdict failed for %s", symbol, exc_info=True,
+                        )
+
+        for item in earnings_analyses or []:
+            raw = item.get("analysis") if isinstance(item, dict) else None
+            if not isinstance(raw, dict):
+                continue
+            wrapper_symbol = str(item.get("symbol") or "").strip().upper()
+            try:
+                earnings = EarningsAnalysis.model_validate(raw)
+                # The wrapper's symbol is pipeline-set ground truth (the
+                # filing this analysis was actually run against);
+                # `EarningsAnalysis.symbol` is part of the LLM's own JSON
+                # response and could in principle disagree (a hallucinated
+                # or misread ticker) — `_earnings_stance_rows` above already
+                # trusts the wrapper's symbol for exactly this reason. A
+                # mismatch here is treated as malformed input, not silently
+                # resolved either way, matching this codebase's fail-closed
+                # posture on divergent ground-truth sources.
+                if wrapper_symbol and earnings.symbol.upper() != wrapper_symbol:
+                    logger.warning(
+                        "Phase 13: earnings symbol mismatch, wrapper=%s "
+                        "analysis=%s — dropped", wrapper_symbol, earnings.symbol,
+                    )
+                    continue
+                verdicts.append(earnings.to_verdict())
+            except Exception:
+                logger.warning(
+                    "Phase 13: earnings verdict failed for %s",
+                    wrapper_symbol or "?", exc_info=True,
+                )
+
+        for finding in smart_money_findings or []:
+            try:
+                verdicts.append(finding.to_verdict())
+            except Exception:
+                logger.warning(
+                    "Phase 13: smart_money verdict failed for %s",
+                    getattr(finding, "symbol", "?"), exc_info=True,
+                )
+
+        return verdicts
+
     @classmethod
     def rank_candidates(
         cls, *,
@@ -1181,11 +1313,25 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         active_state_changes: str,
         rr_floor: float = REWARD_RISK_FLOOR,
         asof: date | None = None,
+        news_intel: "NewsIntelligenceReport | None" = None,
+        macro_analysis: dict | None = None,
+        earnings_analyses: list[dict] | None = None,
+        smart_money_findings: list[SmartMoneyFinding] | None = None,
     ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
         """The eligible names in ranked order, plus the blocked names with
-        their reasons. Ordering is `src/verdicts.py::rank_verdicts` over the
-        seats' `AnalystVerdict`s — Technical's only, in this increment.
+        their reasons. Ordering is `src/verdicts.py::rank_verdicts` over
+        every seat's `AnalystVerdict` (2026-09-03: extended from Technical
+        alone to all five — see `_collect_seat_verdicts`), at the
+        research-informed prior weight (`src/verdicts.py::SEAT_WEIGHT`).
         Blocked names are never ordered: they are reported, not ranked.
+
+        Eligibility itself is still decided from Technical's own analyses
+        only (`candidate_eligibility` — the R/R floor, structural-level, and
+        catalyst gates all key off Technical's numbers) — the other seats
+        only ever ADD a second, third, fourth, or fifth vote onto a symbol
+        Technical already cleared. A symbol only news/macro/earnings/
+        smart_money covered, with no Technical read, can never appear here;
+        it was never eligible in the first place.
         """
         eligibility = cls.candidate_eligibility(
             analyses=analyses,
@@ -1196,9 +1342,16 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             rr_floor=rr_floor,
             asof=asof,
         )
+        all_verdicts = cls._collect_seat_verdicts(
+            analyses=analyses,
+            news_intel=news_intel,
+            macro_analysis=macro_analysis,
+            earnings_analyses=earnings_analyses or [],
+            smart_money_findings=smart_money_findings,
+        )
         eligible_verdicts = [
-            a.to_verdict() for a in analyses
-            if not eligibility.get(a.symbol.upper(), ["no eligibility row"])
+            v for v in all_verdicts
+            if not eligibility.get(v.symbol.upper(), ["no eligibility row"])
         ]
         ranked = rank_verdicts(eligible_verdicts)
         blocked = {s: why for s, why in eligibility.items() if why}
@@ -1210,7 +1363,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     ) -> str:
         """The prompt section. Order first, arithmetic beside each row, then
         the refused names with the gate that refused them."""
-        lines = ["## Candidate Ranking (deterministic — equal weight, Phase 13)"]
+        lines = ["## Candidate Ranking (deterministic, Phase 13)"]
         if not ranked and not blocked:
             lines.append("(no Technical reads this session — nothing to rank)")
             return "\n".join(lines)
@@ -1219,12 +1372,14 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             "decide (actionable rating; longs BUY-eligible; R/R at or above "
             "the floor, or a current state-change row naming the symbol; net "
             "independent evidence ≥ 1). They are ORDERED by a composite of "
-            "each reporting seat's direction magnitude and conviction, one "
-            "unit of weight each — no seat is weighted above another until "
-            "its own record earns it. This is the tiebreak among equally "
-            "eligible names: to take a lower-ranked name over a higher one, "
-            "say what the ranking does not see. It is not a size, and it "
-            "does not waive any rule below.",
+            "each reporting seat's direction magnitude and conviction — "
+            "technical and earnings weighted 1.2x, news at 1.0x baseline, "
+            "smart_money and macro at 0.8x, a research-informed prior "
+            "(2026-09-03), not a measurement of THIS desk's own analysts. "
+            "This is the tiebreak among equally eligible names: to take a "
+            "lower-ranked name over a higher one, say what the ranking does "
+            "not see. It is not a size, and it does not waive any rule "
+            "below.",
         ]
         if ranked:
             for i, c in enumerate(ranked, 1):
