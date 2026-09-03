@@ -811,3 +811,34 @@ def test_analyze_end_to_end_scope_guard_keeps_rsg_drops_googl_confusion(monkeypa
     assert report is not None
     syms = [g.symbol for g in report.buy_grades]
     assert syms == ["RSG"], f"expected only RSG in final report; got {syms}"
+
+
+def test_analyze_omitting_recent_buys_kwarg_keeps_guard_inactive(monkeypatch):
+    """Regression (caught in CI on the first version of this fix): a caller
+    of analyze() that doesn't pass recent_buys/recent_sells at all (they
+    default to None) must NOT have every legitimate grade wiped out. The
+    original fix built `allowed_symbols` via `recent_buys or []`, which
+    collapses "no scope info given" and "explicitly zero candidates" into
+    the same empty set — turning the guard on with nothing in it, so it
+    rejected every grade including well-formed ones. `None` must mean the
+    guard stays off; only an explicit `[]` should make it actively reject
+    everything."""
+    from src.agents.evening_analyst import EveningAnalystAgent
+
+    agent = EveningAnalystAgent.__new__(EveningAnalystAgent)
+    llm_response = _valid_evening_json()
+    llm_response["buy_grades"] = [_rsg_shaped_buy_grade()]
+
+    class _FakeResult:
+        def parse_json(self):
+            return llm_response
+
+    monkeypatch.setattr(agent, "run", lambda **kwargs: _FakeResult())
+
+    report, _result = agent.analyze(
+        positions=[], macro_summary={}, total_value=100_000.0,
+        daily_pnl=0.0, daily_return_pct=0.0,
+    )
+    assert report is not None
+    assert len(report.buy_grades) == 1
+    assert report.buy_grades[0].symbol == "RSG"

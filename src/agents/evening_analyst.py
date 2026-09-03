@@ -575,13 +575,20 @@ upcoming events that bear on held theses. Respond as JSON matching
         # tallied as ordinary schema-validation failures, which confused the
         # operator into thinking every grade that night was malformed rather
         # than "the model graded the wrong list."
-        recent_sell_symbols = {
+        # None means "caller didn't pass scope info at all" -> guard stays
+        # inactive (allowed_symbols=None). An explicit [] means "this run
+        # genuinely has zero candidates" -> guard is active and correctly
+        # rejects every grade entry. Collapsing both to `or []` here was
+        # itself a bug: it made every caller that omits these kwargs (e.g.
+        # existing unit tests) silently drop legitimate entries too, since
+        # an empty set matches nothing.
+        recent_sell_symbols = None if recent_sells is None else {
             str(s.get("symbol")).upper()
-            for s in (recent_sells or []) if isinstance(s, dict) and s.get("symbol")
+            for s in recent_sells if isinstance(s, dict) and s.get("symbol")
         }
-        recent_buy_symbols = {
+        recent_buy_symbols = None if recent_buys is None else {
             str(b.get("symbol")).upper()
-            for b in (recent_buys or []) if isinstance(b, dict) and b.get("symbol")
+            for b in recent_buys if isinstance(b, dict) and b.get("symbol")
         }
         parsed = self._drop_invalid_entries(
             parsed, "sell_grades", SellGrade, allowed_symbols=recent_sell_symbols,
