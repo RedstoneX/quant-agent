@@ -48,11 +48,17 @@ SUBFLOOR_SIZE_CAPPED_STATUS = "pm_subfloor_size_capped"
 
 #: One rendered `active_state_changes` row, as
 #: `TradingPipeline._build_active_state_changes` emits it:
-#:     - [2026-08-31] Anthropic signs a cloud deal with Lambda → NVDA
-#: The date and the affected-symbol list are the two fields the catalyst gate
-#: resolves a citation against; the event prose is deliberately NOT matched
-#: (see `_catalyst_cites_state_change`).
+#:     - [2026-08-31] Anthropic signs a cloud deal with Lambda → NVDA(bullish)
+#: The date and the affected-symbol+direction list are the fields the
+#: catalyst gate resolves a citation against; the event prose is
+#: deliberately NOT matched (see `_catalyst_cites_state_change`).
 _STATE_CHANGE_ROW_RE = re.compile(r"^\s*-\s*\[(\d{4}-\d{2}-\d{2})\]\s*(?P<rest>.+)$")
+
+#: One `SYMBOL(direction)` pair inside a state-change row's symbol list.
+#: A symbol rendered without a parenthesized direction (legacy format, or
+#: a stray comma) does not match and is treated as having no recorded
+#: direction — see `_state_change_symbols_by_date`.
+_SYMBOL_DIRECTION_RE = re.compile(r"^([A-Z0-9.\-]+)\((\w+)\)$")
 
 #: Any ISO date appearing anywhere in a `catalyst` string. The PM cites a row
 #: by its date; the symbol half of the pair is the target's own symbol, which
@@ -913,7 +919,9 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             "## Active News State Changes (HIGH conviction, last 14d)\n"
             "Cite a row by its `[date]` in a target's `catalyst` field. That is "
             "the ONLY way to claim the sub-floor R/R exception, and the row must "
-            "name the symbol.\n"
+            "name the symbol WITH a direction that supports the trade — "
+            "`SYMBOL(bullish)` for a long, `SYMBOL(bearish)` for a short. "
+            "`(neutral)` or `(unknown)` does not qualify either direction.\n"
             f"{active_state_changes}"
             if active_state_changes else
             "## Active News State Changes\n(none surfaced in the rolling 14-day "
@@ -1860,9 +1868,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     @staticmethod
     def _state_change_symbols_by_date(
         active_state_changes: str, asof: date | None = None,
-    ) -> dict[str, set[str]]:
+    ) -> dict[str, dict[str, set[str]]]:
         """Parse the rendered `active_state_changes` block into
-        `{iso_date: {SYMBOL, ...}}`.
+        `{iso_date: {SYMBOL: {direction, ...}, ...}}`.
 
         The block the PM is shown is built by
         `TradingPipeline._build_active_state_changes`, which is the only
@@ -1872,10 +1880,23 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         rather than raising: an unparseable row must narrow what can be
         cited, never fail the session.
 
-        Rows sharing a date are UNIONED. A citation therefore proves "a
-        HIGH-conviction state change affecting this symbol was recorded on
-        this date", which is the checkable claim; it does not distinguish
-        two same-day rows about the same name, and it does not need to.
+        DIRECTION. Each symbol is rendered as `SYMBOL(direction)` (Phase 13
+        catalyst-gate fix — see `StateChange.symbol_direction` in
+        src/models.py). A symbol rendered without a recognized
+        `(bullish|bearish|neutral)` suffix — including the `(unknown)` the
+        producer writes for a symbol with no recorded direction — is still
+        recorded (so the "row exists and names this symbol" fact is not
+        lost) but with an empty direction set, which cannot satisfy
+        `_catalyst_cites_state_change`'s directional check. Fail closed:
+        an undirected mention proves the row exists, not that it agrees
+        with the trade.
+
+        Rows sharing a date are UNIONED per symbol (a symbol's direction
+        set can pick up entries from more than one same-day row). A
+        citation therefore proves "a HIGH-conviction state change affecting
+        this symbol in THIS direction was recorded on this date", which is
+        the checkable claim; it does not distinguish two same-day rows
+        about the same name, and it does not need to.
 
         RECENCY. A row older than `ACTIVE_STATE_CHANGE_WINDOW_DAYS`, or dated
         in the future, is dropped. This is redundant TODAY — the producer
@@ -1898,7 +1919,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     SUBFLOOR_CATALYST_UNVERIFIED_STATUS, exc,
                 )
                 return {}
-        by_date: dict[str, set[str]] = {}
+        by_date: dict[str, dict[str, set[str]]] = {}
         for line in (active_state_changes or "").splitlines():
             match = _STATE_CHANGE_ROW_RE.match(line)
             if match is None:
@@ -1918,24 +1939,38 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             if "→" not in rest:
                 continue
             _event, _, symbol_text = rest.rpartition("→")
-            symbols = {
-                part.strip().upper()
-                for part in symbol_text.split(",")
-                if part.strip() and part.strip() != "—"
-            }
-            if not symbols:
+            row_symbols: dict[str, str | None] = {}
+            for part in symbol_text.split(","):
+                part = part.strip()
+                if not part or part == "—":
+                    continue
+                m = _SYMBOL_DIRECTION_RE.match(part)
+                if m:
+                    row_symbols[m.group(1).upper()] = m.group(2).lower()
+                else:
+                    # Legacy row with no `(direction)` suffix at all — the
+                    # symbol is still recorded (existence), just with no
+                    # direction to offer the gate.
+                    row_symbols[part.upper()] = None
+            if not row_symbols:
                 # `_build_active_state_changes` writes an em dash when the
                 # news analyst attached no affected symbols. A market-wide
                 # row names nobody, so it can back nobody.
                 continue
-            by_date.setdefault(match.group(1), set()).update(symbols)
+            date_bucket = by_date.setdefault(match.group(1), {})
+            for symbol, direction in row_symbols.items():
+                symbol_directions = date_bucket.setdefault(symbol, set())
+                if direction in ("bullish", "bearish", "neutral"):
+                    symbol_directions.add(direction)
         return by_date
 
     @classmethod
     def _catalyst_cites_state_change(
-        cls, catalyst: str, symbol: str, by_date: dict[str, set[str]],
+        cls, catalyst: str, symbol: str, required_direction: str,
+        by_date: dict[str, dict[str, set[str]]],
     ) -> bool:
-        """Does `catalyst` resolve to a state-change row that names `symbol`?
+        """Does `catalyst` resolve to a state-change row that names `symbol`
+        with a direction that actually supports this trade?
 
         The citation is a DATE + SYMBOL pair, because that is what the table
         already carries — there is no row id to cite (`news_store.
@@ -1944,20 +1979,32 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         target cannot misstate without being about a different name, so the
         model only has to supply the date.
 
-        HONESTY NOTE, and read it before describing this anywhere: this
-        proves the cited row EXISTS and COVERS THIS NAME. It does not prove
-        the row is bullish for a long or bearish for a short — the rendered
-        block carries no direction — and it does not prove the PM's prose
-        about the row is any good. Same posture as `_conflict_is_named`:
-        specificity of reference, not quality of reasoning. What it removes
-        is the free-text assertion that no reader could ever check.
+        `required_direction` is `"bullish"` for a long and `"bearish"` for a
+        short (see the call site in `_apply_subfloor_catalyst_rule`, which
+        derives it from `_target_intent`). A `"neutral"` direction, or a
+        symbol with no recorded direction at all, does NOT satisfy either
+        requirement — fail closed, same posture as everything else in this
+        gate.
+
+        HONESTY NOTE, and read it before describing this anywhere (Phase 13
+        catalyst-gate fix, 2026-09-03 — this replaced an EXISTENCE-only
+        check): this now proves the cited row EXISTS, COVERS THIS NAME, and
+        is recorded in the DIRECTION this trade needs. It still does not
+        prove the PM's prose about the row is any good, or that the news
+        analyst's direction call was correct — same posture as
+        `_conflict_is_named`: specificity and substance of the checkable
+        claim, not quality of reasoning or ground truth. What it removes is
+        the free-text assertion that no reader could ever check, and — as
+        of this fix — the ability for a stock moving on genuinely bad news
+        to walk through the door meant for good news (or vice versa for a
+        short).
         """
         text = (catalyst or "").strip()
         if not text:
             return False
         symbol = symbol.strip().upper()
         return any(
-            symbol in by_date.get(cited, set())
+            required_direction in by_date.get(cited, {}).get(symbol, set())
             for cited in _ISO_DATE_RE.findall(text)
         )
 
@@ -2023,20 +2070,30 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 kept.append(target)
                 continue
 
+            # Phase 13 catalyst-gate fix: the exception requires a row
+            # whose recorded direction actually supports THIS trade — a
+            # long needs a bullish row, a short needs a bearish one. A row
+            # that merely names the symbol (no direction, or a neutral /
+            # opposite one) no longer qualifies.
+            required_direction = "bullish" if intent == "buy" else "bearish"
             if not cls._catalyst_cites_state_change(
-                target.catalyst, symbol, by_date,
+                target.catalyst, symbol, required_direction, by_date,
             ):
                 logger.warning(
                     "%s: dropping %s (%s) — R/R %s is under the %.2f floor and "
                     "its catalyst resolves to no Active News State Change row "
-                    "naming %s. A sub-floor pick may only claim the catalyst "
-                    "exception by citing the ISO date of a row that covers the "
-                    "symbol; an asserted-in-prose catalyst is not checkable and "
-                    "does not qualify. The rest of this session's decision is "
-                    "unaffected. catalyst was: %r",
+                    "naming %s with a recorded %s direction. A sub-floor pick "
+                    "may only claim the catalyst exception by citing the ISO "
+                    "date of a row that covers the symbol AND is recorded "
+                    "%s for it; an asserted-in-prose catalyst, a row with no "
+                    "recorded direction, or a row recorded neutral/opposite "
+                    "is not checkable-and-supportive and does not qualify. "
+                    "The rest of this session's decision is unaffected. "
+                    "catalyst was: %r",
                     SUBFLOOR_CATALYST_UNVERIFIED_STATUS, target.symbol, intent,
                     "n/a" if reward_risk is None else f"{reward_risk:.2f}",
-                    rr_floor, symbol, (target.catalyst or "")[:200],
+                    rr_floor, symbol, required_direction, required_direction,
+                    (target.catalyst or "")[:200],
                 )
                 continue
 

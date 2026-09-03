@@ -2690,6 +2690,73 @@ revisable the same way every other placeholder threshold on this desk is.
 
 ---
 
+### 2026-09-03 — the catalyst exception only checked that news existed, not whether it was good or bad news; now it checks both
+
+**In plain words:** a below-floor trade can be let through if it points at a
+specific, dated news event about that stock (the "sub-floor catalyst
+exception," shipped 2026-09-02 — see §10.4a above). That check only
+confirmed the cited news event was real and about the right stock. It never
+asked whether the news was actually GOOD news for a BUY or BAD news for a
+SHORT. A stock could be sinking on genuinely bad news and still walk through
+the door meant for good news, because the door only checked "does this news
+exist," not "does this news agree with the trade." Now it checks both: the
+cited news must exist, name the stock, AND be recorded as supporting the
+direction of the trade — good news for a long, bad news for a short.
+Neutral news, or news with no recorded direction at all, no longer qualifies
+either way.
+
+**Why revise the rule instead of just deleting the exception.** Published
+research on rule overrides in trading systems says an override of a
+systematic rule only helps when it carries a real quality bar — a rule
+override with no quality bar tends to hurt more than it helps, because it
+lets exactly the weakest cases (the ones a systematic rule was designed to
+block) sneak through on a technicality. The owner reviewed this before
+authorizing the work. So the fix keeps the exception (it still lets a
+capped, small position through when the news genuinely supports the trade)
+and makes the bar it must clear a real one, rather than removing the escape
+hatch entirely.
+
+**Why this was buildable now, not before.** The news analyst was already
+making a bullish/bearish/neutral call for individual stock news items
+(`StockNewsItem.sentiment` in `src/models.py`) — it just never carried that
+judgment onto the separate table the catalyst gate actually reads
+(`StateChange`, which only had a free-text `market_impact` description, no
+structured field). This fix adds a `symbol_direction` field to
+`StateChange` — a dict from symbol to bullish/bearish/neutral, not a single
+value for the whole row, because one state-change event routinely means
+opposite things for different stocks (example already in the news analyst's
+own prompt: a ceasefire and falling oil is bullish for consumer names and
+bearish for energy names, in the same event). It is filled in by the exact
+same news_analyst call that already produces `StockNewsItem.sentiment` — no
+new LLM call, no new analyst seat, just a second structured field asked for
+in the same response.
+
+**Where it's wired.** `StateChange.symbol_direction` (`src/models.py`),
+normalized the same way `conviction` already is (case-folded; an
+unrecognized value is dropped for that symbol rather than crashing the
+whole news report). `TradingPipeline._build_active_state_changes`
+(`src/pipeline.py`) renders each symbol with its direction inline —
+`SYMBOL(bullish)` / `SYMBOL(bearish)` / `SYMBOL(neutral)` / `SYMBOL(unknown)`
+when no direction was recorded — into the same rendered block the PM has
+always read state-changes from. `PortfolioManagerAgent.
+_state_change_symbols_by_date` and `_catalyst_cites_state_change`
+(`src/agents/portfolio_manager.py`) parse that back out and require the
+cited row's direction for the target's own symbol to match what the trade
+needs: bullish for a BUY, bearish for a SHORT. Fail-closed throughout, same
+posture as the rest of this gate: a symbol with no recorded direction, or a
+neutral one, does not qualify — it is never treated as "probably fine."
+Config-prompt updated (`config/prompts/news_analyst.md`) so the news analyst
+knows this field is read by code, not decorative.
+
+**What did NOT change.** The existence-and-recency requirements from
+§10.4a (a citation must resolve to a stored row, dated correctly, within the
+14-day window, naming the symbol) are untouched — this adds a further
+requirement on top, it does not loosen or replace them. The starter-size cap
+on a qualifying sub-floor pick is unchanged. Exits and reductions remain
+exempt from the whole gate, as before.
+
+---
+
 ### 2026-08-28 — the new stop rule rejected four BUYs on its first day (RESOLVED)
 
 **In plain words:** four candidates got refused the day the new reward:risk

@@ -1299,6 +1299,14 @@ and makes every claimed exception auditable against a row a human can read;
 it does not, on this evidence, remove many trades. The size cap applies to all
 7 regardless.
 
+**FOLLOW-UP 2026-09-03 — resolution was still existence-only.** "Resolves to
+a row naming the symbol" said nothing about whether that row's news was GOOD
+or BAD for the trade — a stock sinking on genuinely bad news could cite the
+very row reporting that bad news to justify a BUY. See §13.1 and
+`docs/INCIDENT_HISTORY.md` for the direction check added on top of this
+resolution requirement; the existence check documented above is unchanged,
+this only narrows what a resolving citation is allowed to be.
+
 ### Ordering
 
 10.1 and 10.3 are contained schema/sizing changes. 10.2 requires the
@@ -2214,6 +2222,15 @@ rule code itself, for the first time):
 - **A "catalyst exception" checks that a citation exists, never that it
   supports the trade.** A stock can cite genuinely bad news and still pass —
   the code proves the news item exists and names the symbol, nothing more.
+  **FIXED 2026-09-03 for this specific gate** (`docs/INCIDENT_HISTORY.md`):
+  `StateChange` now carries a `symbol_direction` field, populated by the same
+  news_analyst call that already produces `StockNewsItem.sentiment`, and
+  `PortfolioManagerAgent._catalyst_cites_state_change` requires the cited
+  row's direction for that symbol to support the trade (bullish for a long,
+  bearish for a short) — missing or neutral no longer qualifies. This closes
+  the specific hole named here; it is a narrower fix than §13.2's full
+  standard-verdict-shape vision (which still applies to every seat, not just
+  the state-change table this one gate reads).
 
 Both are instances of the same root cause: analysts hand the PM free-form
 prose instead of a checkable, comparable judgment, so nothing downstream can

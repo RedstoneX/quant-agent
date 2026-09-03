@@ -4463,7 +4463,24 @@ class TradingPipeline:
             d = ch.get("first_seen_date", "?")
             event = (ch.get("event") or "")[:160]
             symbols = ch.get("affected_symbols") or []
-            syms = ", ".join(symbols[:6]) if symbols else "—"
+            # Phase 13 catalyst-gate fix: render each symbol's direction
+            # inline as `SYMBOL(direction)` so `PortfolioManagerAgent.
+            # _state_change_symbols_by_date` can parse it back out — this
+            # is a round-trip over a format this repo owns end to end
+            # (same discipline as the rest of this block). A symbol with
+            # no recorded `symbol_direction` (older persisted reports
+            # predating this field, or the news analyst genuinely
+            # omitting one) renders as `(unknown)`, which the PM-side
+            # parser treats as not qualifying — fail closed, never an
+            # upgrade to "assume it's good news."
+            directions = ch.get("symbol_direction") or {}
+            if symbols:
+                syms = ", ".join(
+                    f"{s.strip().upper()}({directions.get(s.strip().upper(), 'unknown')})"
+                    for s in symbols[:6]
+                )
+            else:
+                syms = "—"
             lines.append(f"- [{d}] {event} → {syms}")
         return "\n".join(lines)
 
