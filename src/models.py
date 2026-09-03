@@ -371,7 +371,20 @@ class LLMOutputModel(BaseModel):
             return values
         hits: list[str] = []
         for field_name in droppable:
-            if values.get(field_name, ...) is None:
+            # 2026-09-03: an empty string is the same "the model said nothing"
+            # signal as an explicit null for these fields — evening_analyst's
+            # `theme_durability` (Literal[...] = "unknown") was observed in
+            # production emitting `""` instead of `null` when left unfilled,
+            # which this validator's original None-only check did not catch,
+            # so it fell through to Literal validation and got the whole
+            # entry dropped. Comparing to "" is safe for every droppable
+            # field: droppable fields are exactly the ones with a default
+            # that itself rejects None, so on a str-typed field an "" hit
+            # either matches the field's own default (no behavior change,
+            # e.g. `universe_addition_reason`) or coerces to the declared
+            # non-empty default (the fix, e.g. `theme_durability`).
+            v = values.get(field_name, ...)
+            if v is None or v == "":
                 hits.append(field_name)
         if not hits:
             return values
@@ -380,9 +393,9 @@ class LLMOutputModel(BaseModel):
             del values[field_name]
             parse_telemetry.record_null_coercion(cls.__name__, field_name)
         logger.warning(
-            "%s: dropped explicit null on defaulted field(s) %s — the object "
-            "is kept and the declared default applies, but the model said "
-            "nothing where the prompt asked for something",
+            "%s: dropped explicit null/empty on defaulted field(s) %s — the "
+            "object is kept and the declared default applies, but the model "
+            "said nothing where the prompt asked for something",
             cls.__name__, ", ".join(sorted(hits)),
         )
         return values
