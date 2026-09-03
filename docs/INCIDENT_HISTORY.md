@@ -56,6 +56,54 @@ non-fix.
 
 ---
 
+### 2026-09-02/03 — funnel item 5 ("allocation rounds to zero shares") checked, not a live defect
+
+**In plain words:** the census found 3 of 68 proposals died because a
+$9.9k-scale account tried to buy a $200+ stock and the share count rounded
+down to zero. Fractional sizing was already on, so the open question was
+whether it was actually being used for these three, or getting bypassed.
+Checked in code — it is not a current bug.
+
+**Why:** fractional sizing merged 2026-09-01 23:24 UTC. The census window
+runs 2026-08-18 through 2026-09-02 18:01 — 14 of its ~15 days predate
+fractional sizing existing at all, when every BUY floored to a whole share
+regardless of account scale. That matches what the 2026-08-29 census already
+concluded about this same cause, before fractional was even built (see the
+ranked-causes table below).
+
+**Verified directly in code**, not just by timeline: in
+`src/pipeline_stages.py`, `_fractional_sizing_allowed` is resolved BEFORE
+`_size_shares` floors anything, so a BUY on a broker-confirmed-fractionable
+symbol cannot round to zero at this account scale — the 4-decimal floor only
+reaches zero below a 0.0001-share raw quantity, far under any allocation this
+desk sizes. New test
+`tests/test_fractional_sizing.py::test_a_9_9k_account_sizes_a_200_dollar_stock_without_rounding_to_zero`
+pins the census's own $9.9k/$200+ numbers as a regression guard;
+`test_a_sub_one_share_position_is_taken_not_skipped` already covered the
+general case.
+
+**Ruled out, not assumed:** a stale/disabled config flag (checked
+`config/settings.yaml` and `src/config.py` — `fractional_enabled: true` in
+both); a floor applied after fractional rounding that could re-zero it
+(`below_min_notional` is a distinct, separately-recorded skip reason, never
+folded into `qty_zero`); wrong evaluation order (fractional eligibility is
+decided first, size second, correctly).
+
+**What can still legitimately produce `qty_zero` today**, and is not this
+defect: a SHORT (a borrowed share cannot be fractional —
+`_fractional_sizing_allowed` returns `False` before even asking the broker,
+per `test_short_entries_are_always_whole_share`), or a symbol the broker does
+not confirm `fractionable` for (fails closed to whole shares, per
+`test_non_fractionable_symbol_falls_back_to_whole_shares`).
+
+**Not confirmed:** which of the 3 historical hits were shorts/non-fractionable
+symbols versus ordinary pre-fractional-era longs — the backing
+`data/resets/20260902T181859Z/quant_agent.db` is not in this checkout, only
+on the live desk. Re-measure the census against a fractional-sizing-only
+window before spending more time on this line.
+
+---
+
 ### 2026-09-02 — the full proposal-to-fill census: where every trade idea actually dies, counted, not guessed
 
 **In plain words:** the desk had a stale "23% of proposals become a fill"

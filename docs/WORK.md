@@ -655,11 +655,10 @@ Working as designed, but one quantity has two definitions with two different
 numbers, and neither is doctrinally grounded. Fold into item 1(b); do not
 resolve it separately.
 
-**5. Allocation rounds to zero shares — 3 of 68 (4%). DEFECT (probably).**
+**5. Allocation rounds to zero shares — 3 of 68 (4%). CHECKED, NOT A LIVE DEFECT.**
 
-An account-scale artifact: a ~$9.9k account against $200+ share prices.
-Fractional sizing is now enabled, so **the open question is why this still
-rounds to zero** — that needs checking before it is written off as scale.
+Full reasoning + regression test: `docs/INCIDENT_HISTORY.md` ("funnel item
+5"). Fractional sizing already prevents this; the 3 hits predate it.
 
 **6. No structural level from which to derive a target — 3 of 68 (4%). TOO NEW TO CLASSIFY.**
 

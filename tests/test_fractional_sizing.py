@@ -186,6 +186,45 @@ def test_a_sub_one_share_position_is_taken_not_skipped():
     assert ctx.execution_skips == []
 
 
+def test_a_9_9k_account_sizes_a_200_dollar_stock_without_rounding_to_zero():
+    """Funnel census item 5 (docs/WORK.md): 3 of 68 proposals were recorded
+    as `qty_zero` against "a ~$9.9k account and $200+ share prices" after
+    fractional sizing was already enabled. Root-caused: every BUY on a
+    broker-confirmed-fractionable symbol already produces a non-zero share
+    count at this scale — `_fractional_sizing_allowed` is checked BEFORE
+    `_size_shares` floors anything, and flooring to
+    `fractional_share_decimals` (4dp) only reaches zero below a 0.0001-share
+    raw quantity, far under any allocation this desk sizes. This test pins
+    the account/price numbers from the census itself so the exact scenario
+    that was reported dead stays alive. The residual ways `qty_zero` can
+    still fire — a SHORT (a borrowed share cannot be fractional,
+    `test_short_entries_are_always_whole_share`) or a symbol the broker does
+    not confirm fractionable (`test_non_fractionable_symbol_falls_back_to_whole_shares`)
+    — are both deliberate, documented exclusions, not this defect."""
+    pipeline = _pipeline(
+        live_price=205.0,
+        fractionable={"fractionable": True, "reason": "fractionable"},
+    )
+    # `_pipeline`'s default `_refresh_account_state` hardcodes a $10,000
+    # book; pin it to the census's own $9,900 so the executed quantity
+    # reflects the actual scenario under test, not the fixture default.
+    pipeline._refresh_account_state.return_value = (
+        {"cash": 1_000_000.0, "portfolio_value": 9_900.0}, [], {},
+    )
+    ctx = _ctx(
+        [_buy(symbol="COST", price=205.0, alloc=1.0, stop=195.0)],
+        total_value=9_900.0,
+    )
+
+    orders = ExecutionStage(pipeline=pipeline).run(ctx)
+
+    assert len(orders) == 1
+    # Floored to the configured 4dp, per `_size_shares` — never rounded up.
+    assert _submitted_qty(pipeline) == pytest.approx(0.4829)
+    assert _submitted_qty(pipeline) > 0
+    assert ctx.execution_skips == []
+
+
 def test_a_fractional_entry_is_not_re_pegged():
     """Alpaca's replace endpoint types qty as an int. Truncating would SHRINK
     a position the risk math already sized, so the replacement is refused and
