@@ -265,6 +265,42 @@ window before spending more time on this line.
 
 ---
 
+### 2026-09-03 — funnel item 2 (constructor-dropped share): the reason always existed, it just wasn't kept
+
+**In plain words:** the census found 19 trade ideas across a two-week window
+that just vanished — no database row, no explanation an operator could find.
+Nearly a fifth of everything the desk considered. It turned out the desk DID
+know why, every single time — it just never wrote that reason down anywhere
+a later query could reach.
+
+**Why:** the constructor (the code that turns a target allocation into an
+actual order) drops a target for many real reasons — the reward:risk floor,
+a missing structural stop, a sector-crowding refusal, about 20 different
+call sites in total — and every one of them already logs a real sentence
+explaining why. But that sentence only ever went to the log file. Nothing
+persisted it to the database, so `scripts/blocked_proposals_census.py` (the
+tool that answers "why didn't this trade happen") had nothing to read and
+filed all 19 under an unhelpful generic bucket.
+
+**The fix, and why it's not a rewrite:** threading a distinct reason string
+through all ~20 places the constructor can drop a target would touch a
+stateless, heavily-tested core sizing function in ~20 places — a much
+larger, riskier change for the same outcome. Instead, a log handler scoped
+to exactly one `construct_orders` call captures the constructor's own log
+lines and exposes them on the object afterward. The caller then writes one
+database row per dropped symbol, in the constructor's own words, instead of
+nothing. The reason was never missing — only unrecorded.
+
+**What this does not fix:** runs before this shipped still have no such row
+and still fall into the old unexplained bucket — this cannot retroactively
+explain history, only prevent it going forward. It also does not address a
+separate, structurally different 9-item shape where an order WAS built and
+then nothing else appears in any record at all (looks like an interrupted
+run, not a swallowed reason) — that is still open and needs its own
+investigation.
+
+---
+
 ### 2026-09-03 — item 15 (price provenance), position-mark slice shipped
 
 **In plain words:** every price the desk uses was just a bare number, with

@@ -2662,6 +2662,30 @@ class DecisionStage:
                 "PM's narrative mentioning them does not read as incoherence.",
                 ", ".join(portfolio_decision.constructor_dropped),
             )
+            # Funnel-queue item 2 (2026-09-03): a target the constructor
+            # drops before ever building a `proposed_order` row previously
+            # left NOTHING in the database — no verdict (RM never saw it),
+            # no execution_skip (execution never saw it either), just the
+            # generic aggregate log line above. `blocked_proposals_census.py`
+            # counts every one of these as `no_order_built`, its largest
+            # unexplained bucket. The constructor's OWN reason has always
+            # existed (its per-target logger.warning/info calls) but was
+            # never persisted — `last_drop_reasons` (see
+            # `PortfolioConstructor.construct_orders`) recovers it from the
+            # SAME call that just ran, so every dropped symbol now gets a
+            # terminal, real-reason evidence row instead of silence. Falls
+            # back to a generic label only if a future refactor adds a new
+            # drop path this capture's log-message pattern doesn't match —
+            # never nothing, even then.
+            drop_reasons = getattr(
+                pipeline.portfolio_constructor, "last_drop_reasons", {},
+            )
+            for sym in portfolio_decision.constructor_dropped:
+                _record_pipeline_event(
+                    pipeline, ctx, sym, "deterministic_gate", "blocked",
+                    "constructor_dropped",
+                    detail=drop_reasons.get(sym, "no matching constructor log line captured"),
+                )
         logger.info(
             "Constructor: %d targets → %d decisions "
             "(%d BUY, %d SELL, %d SHORT, %d COVER, %d HOLD)",

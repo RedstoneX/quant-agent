@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import math
 import logging
+import re
 from dataclasses import dataclass
 
 from src.data.levels import TargetDerivation, derive_structural_target
@@ -33,6 +34,58 @@ from src.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _DropReasonCapture(logging.Handler):
+    """Funnel-queue item 2 (2026-09-03): the census
+    (`scripts/blocked_proposals_census.py`) found ~19 PM targets per
+    reproduction window that never became a `proposed_order` row and
+    carried NO other evidence either — classified `no_order_built`. Root
+    cause, confirmed against `data/resets/20260902T181859Z/quant_agent.db`
+    plus the production `quant_agent.log*` files: the constructor's OWN
+    reason for dropping a target (`_resolve_entry_and_stop`,
+    `_derive_target`, the reward:risk floor, the sector-crowding refusal,
+    ~20 distinct call sites below) has ALWAYS been logger-only — the
+    module docstring on `blocked_proposals_census.py` already documents
+    this as something "only ever logger.info/logger.warning text — never
+    persisted to a table." Every one of the reproduced cases DID have a
+    real log line explaining it (in journalctl for a systemd-timer run, or
+    in the rotated `quant_agent.log*` file for a manually-triggered one) —
+    so "13 with no record anywhere" overstated it; the record existed, just
+    not in the database the census script reads and not always in the one
+    log sink an operator thinks to check first.
+
+    Rather than thread a reason string through every one of those ~20
+    return points (a much larger, riskier change to a stateless,
+    heavily-tested sizing function), this captures the SAME log lines the
+    module already emits, via a handler scoped to exactly one
+    `construct_orders` call, and exposes them on
+    `PortfolioConstructor.last_drop_reasons` so the caller
+    (`pipeline_stages.DecisionStage`) can persist a terminal per-symbol
+    evidence row for every constructor-dropped target — never nothing —
+    using the constructor's own real words instead of a generic label.
+    """
+
+    _SYMBOL = re.compile(
+        r"Constructor:\s*(?:BUY|SHORT|SELL|COVER)?\s*"
+        r"([A-Za-z][A-Za-z0-9.\-]{0,9})\s+"
+        r"(?:rejected|refused|skipped)\b"
+    )
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self.reasons: dict[str, list[str]] = {}
+
+    def emit(self, record: logging.LogRecord) -> None:  # noqa: D102
+        try:
+            msg = record.getMessage()
+        except Exception:  # noqa: BLE001 — a capture side-channel must never raise
+            return
+        m = self._SYMBOL.search(msg)
+        if not m:
+            return
+        symbol = m.group(1).strip().upper()
+        self.reasons.setdefault(symbol, []).append(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -293,8 +346,32 @@ class PortfolioConstructor:
 
     def __init__(self, config: ConstructorConfig | None = None):
         self.cfg = config or ConstructorConfig()
+        # Populated fresh by every `construct_orders` call — see
+        # `_DropReasonCapture`. {symbol: "Constructor: ... rejected/refused
+        # ..."} for every target dropped THIS call. Empty, never absent, so
+        # a caller can always `getattr(..., "last_drop_reasons", {})` — or
+        # just read the attribute — without a first-call special case.
+        self.last_drop_reasons: dict[str, str] = {}
 
-    def construct_orders(
+    def construct_orders(self, *args, **kwargs) -> list[TradeDecision]:
+        """Same contract as `_construct_orders_impl` — see its docstring for
+        every parameter. Wraps it only to capture, via `_DropReasonCapture`,
+        the real reason each dropped target's own log line already states,
+        onto `self.last_drop_reasons` (funnel-queue item 2, 2026-09-03: see
+        `_DropReasonCapture`'s docstring for why this exists instead of
+        threading a reason string through ~20 return points).
+        """
+        capture = _DropReasonCapture()
+        logger.addHandler(capture)
+        try:
+            return self._construct_orders_impl(*args, **kwargs)
+        finally:
+            logger.removeHandler(capture)
+            self.last_drop_reasons = {
+                sym: " | ".join(msgs) for sym, msgs in capture.reasons.items()
+            }
+
+    def _construct_orders_impl(
         self,
         targets: list[TargetPosition],
         positions: list[Position],

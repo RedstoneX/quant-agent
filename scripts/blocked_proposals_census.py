@@ -143,6 +143,36 @@ def _load_skips(con: sqlite3.Connection) -> dict[tuple[str, str], dict]:
     return out
 
 
+def _load_constructor_drops(con: sqlite3.Connection) -> dict[tuple[str, str], str]:
+    """2026-09-03: `pipeline_stages.DecisionStage` now persists a
+    `pipeline_event` row (stage='deterministic_gate', outcome='blocked',
+    reason='constructor_dropped') for every target the deterministic
+    constructor drops before ever building a `proposed_order` row — see
+    `PortfolioConstructor.last_drop_reasons`. Before this, a constructor
+    drop had NO row of any kind and fell into `no_order_built` with no
+    further explanation recoverable from the database (module docstring
+    above). Runs from before 2026-09-03 still have no such row and still
+    fall through to the old `no_order_built` bucket — this only narrows
+    the bucket going forward, it cannot retroactively explain history.
+    """
+    out: dict[tuple[str, str], str] = {}
+    for r in con.execute(
+        "SELECT decision_id, symbol, evidence_json FROM specialist_evidence "
+        "WHERE kind='pipeline_event'",
+    ).fetchall():
+        try:
+            d = json.loads(r["evidence_json"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if d.get("stage") != "deterministic_gate" or d.get("outcome") != "blocked":
+            continue
+        if d.get("reason") != "constructor_dropped":
+            continue
+        key = (r["decision_id"], (r["symbol"] or "").strip().upper())
+        out[key] = d.get("detail") or "constructor_dropped"
+    return out
+
+
 def _load_fills(con: sqlite3.Connection) -> dict[tuple[str, str], str]:
     """Winner-take-'filled' per (decision_id, symbol): a retry/repeg can emit
     more than one trades row for the same proposal; one fill converts it
@@ -166,6 +196,7 @@ def _load_fills(con: sqlite3.Connection) -> dict[tuple[str, str], str]:
 
 def classify(
     did: str, sym: str, *, ordered: set, verdicts: dict, skips: dict, fills: dict,
+    constructor_drops: dict | None = None,
 ) -> str | None:
     """None == converted (filled). Otherwise the verbatim/derived cause.
 
@@ -184,6 +215,12 @@ def classify(
         return f"order_{status}"
     if key in skips:
         return skips[key].get("reason") or "execution_skip_unlabeled"
+    if constructor_drops and key in constructor_drops:
+        # A fixed category, not the (per-symbol-unique) detail text, so the
+        # ranked-causes table still aggregates sensibly. The real sentence
+        # — the constructor's own words — is in `constructor_drops[key]`
+        # for anyone drilling into one proposal.
+        return "constructor_dropped"
     v = verdicts.get(did)
     if isinstance(v, dict) and key in ordered:
         if v.get("approved") is False:
@@ -226,10 +263,14 @@ def main(argv: list[str] | None = None) -> int:
         verdicts = _load_verdicts(con)
         skips = _load_skips(con)
         fills = _load_fills(con)
+        constructor_drops = _load_constructor_drops(con)
 
         results = []
         for t in entry:
-            reason = classify(t["decision_id"], t["symbol"], ordered=ordered, verdicts=verdicts, skips=skips, fills=fills)
+            reason = classify(
+                t["decision_id"], t["symbol"], ordered=ordered, verdicts=verdicts,
+                skips=skips, fills=fills, constructor_drops=constructor_drops,
+            )
             results.append({**t, "reason": reason})
 
         total = len(results)
