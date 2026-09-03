@@ -703,6 +703,115 @@ def test_risk_stage_persists_hard_risk_block_when_pre_rm_gate_blocks_everything(
     assert "exceed max 20%" in kwargs["full_response"]
 
 
+def test_risk_stage_post_rm_refilter_carries_in_drawdown_flag():
+    """2026-09-03 audit finding #3: the pre-RM hard-risk filter call passes
+    `in_drawdown`, but the post-modifications re-filter call previously
+    dropped it (defaulting to False) — the same drawdown state briefly
+    became invisible to the gate a second time in the same run, for no
+    reason tied to anything RM did. Assert the post-RM call now receives
+    the same `in_drawdown` value the pre-RM call computed."""
+    from src.models import PortfolioDecision, RiskVerdict
+
+    first_pass_decisions = [_buy("AAPL", 10)]
+    pipeline = _risk_stage_pipeline(first_pass_decisions)
+    pipeline._apply_risk_modifications = MagicMock(return_value=(first_pass_decisions, []))
+
+    verdict = RiskVerdict(
+        approved=True, reasoning_chain=_risk_rc(), reasoning="trim AAPL",
+        modifications=[{
+            "symbol": "AAPL", "field": "allocation_pct",
+            "original_value": 10, "new_value": 5, "reason": "trim sizing",
+        }],
+    )
+    rm_result = MagicMock()
+    rm_result.used_fallback = False
+    pipeline.risk_manager = MagicMock()
+    pipeline.risk_manager.review.return_value = (verdict, rm_result)
+
+    pipeline._filter_hard_risk_decisions = MagicMock(
+        side_effect=[
+            (first_pass_decisions, [], []),
+            (first_pass_decisions, [], []),
+        ],
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.decision_id = f"{ctx.run_id}-dec-000009"
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.recent_performance = {"in_drawdown": True}
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=first_pass_decisions, portfolio_view="test",
+    )
+
+    stage = RiskStage(pipeline=pipeline)
+    stage.run(ctx)
+
+    assert pipeline._filter_hard_risk_decisions.call_count == 2
+    pre_rm_kwargs = pipeline._filter_hard_risk_decisions.call_args_list[0].kwargs
+    post_rm_kwargs = pipeline._filter_hard_risk_decisions.call_args_list[1].kwargs
+    assert pre_rm_kwargs["in_drawdown"] is True
+    assert post_rm_kwargs["in_drawdown"] is True
+
+
+def test_risk_stage_records_visible_event_when_rm_zeroes_a_sell():
+    """End-to-end through RiskStage.run() with the REAL (unmocked)
+    `_apply_risk_modifications`: an RM modification that zeroes a SELL's
+    allocation_pct must not silently cancel the exit, and the refusal must
+    be persisted as a visible pipeline event rather than just vanishing.
+    Matches the two live 2026-08-24 incidents this fix closes."""
+    from src.models import PortfolioDecision, RiskVerdict
+
+    sell = _sell("XLE")
+    pipeline = _risk_stage_pipeline([sell])
+
+    verdict = RiskVerdict(
+        approved=True, reasoning_chain=_risk_rc(), reasoning="ok",
+        modifications=[{
+            "symbol": "XLE", "field": "allocation_pct",
+            "original_value": 100, "new_value": 0,
+            "reason": "RM believes this exit is unnecessary",
+        }],
+    )
+    rm_result = MagicMock()
+    rm_result.used_fallback = False
+    pipeline.risk_manager = MagicMock()
+    pipeline.risk_manager.review.return_value = (verdict, rm_result)
+
+    pipeline._filter_hard_risk_decisions = MagicMock(
+        side_effect=[
+            ([sell], [], []),
+            ([sell], [], []),
+        ],
+    )
+
+    ctx = RunContext.start("morning")
+    ctx.decision_id = f"{ctx.run_id}-dec-000010"
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=[sell], portfolio_view="test",
+    )
+
+    stage = RiskStage(pipeline=pipeline)
+    result = stage.run(ctx)
+
+    # The exit still ships — RM's edit was reverted, not the trade.
+    assert result is None
+    assert ctx.portfolio_decision.decisions[0].allocation_pct == 100.0
+
+    evidence_calls = pipeline.db.insert_specialist_evidence.call_args_list
+    rejection_calls = [
+        c for c in evidence_calls
+        if c.kwargs.get("kind") == "pipeline_event"
+        and "modification_rejected" in c.kwargs.get("evidence_json", "")
+    ]
+    assert len(rejection_calls) == 1
+    assert rejection_calls[0].kwargs["symbol"] == "XLE"
+
+
 def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_everything():
     """Second early-return site: RM approves with modifications, the
     re-filter after applying them blocks everything. risk_manager.review
@@ -713,7 +822,7 @@ def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_ev
 
     first_pass_decisions = [_buy("AAPL", 10)]
     pipeline = _risk_stage_pipeline(first_pass_decisions)
-    pipeline._apply_risk_modifications = MagicMock(return_value=first_pass_decisions)
+    pipeline._apply_risk_modifications = MagicMock(return_value=(first_pass_decisions, []))
 
     verdict = RiskVerdict(
         approved=True, reasoning_chain=_risk_rc(), reasoning="trim AAPL",
