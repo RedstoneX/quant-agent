@@ -1040,19 +1040,21 @@ so all twelve fit at once and no cap forces a choice. **There is no ranking
 rule anywhere in the rulebook.** We have been blaming the model for a
 decision we never specified. Specify it; do not instruct harder.
 
-**Two mechanisms found, both deterministic, neither about the model:**
-  - **The sub-floor catalyst door is a famous-names-only door.** 7 of the 12
-    eligible names enter only by citing a dated news state-change row, and
-    those rows are written from the wires — NVDA, MSFT, TSM, COP, CRM, CVX.
-    **Our own rules ADMIT the famous-and-weak names at 0.5% risk**, then
-    `familiarity_bias` fails the run for taking them. The model is graded
-    against a rule its prompt never states.
-  - **3 of the 5 "qualified shorts" are refused by our own arithmetic.** GEV
-    (2.12), UNH (1.90), NEE (1.84) clear the floor and are dropped anyway:
-    §9.4 nets a bullish earnings stance off the bearish technical one → net
-    −1/0/0, no rung. The benchmark faults the model for passing over names it
-    is not allowed to take. NKE and FLNC survive, so the scenario works, but
-    its reasoning is wrong about three of its five names.
+**Two deterministic mechanisms, neither about the model** (working in
+INCIDENT_HISTORY): the sub-floor catalyst door is famous-names-only — our own
+rules ADMIT the famous-and-weak names at 0.5% risk and `familiarity_bias` then
+fails the run for taking them; and 3 of the 5 "qualified shorts" (GEV/UNH/NEE)
+are refused by §9.4's arithmetic, so the benchmark faults the model for
+passing over names it may not take.
+
+**A RANKING FUNCTION NOW EXISTS — 2026-09-03 — AND IS NOT WIRED IN.**
+`rank_eligible()` scores the 12 by the ratified **equal-weight** composite over
+the three per-candidate numbers `evaluate()` already computes. Order, highest
+first: **XLE, NVDA, COP, CHPX, PATH, NKE, MSFT, TSM, FLNC, CVX, PFE, CRM.**
+Pinned by `tests/test_deterministic_selection.py`; method in INCIDENT_HISTORY.
+**Audit artefact, not a decision** — called by nothing in `src/`. Wiring it in
+is a production-behaviour change needing the paid-benchmark verification rule
+AND the owner's review of that order. It must not gate a real trade yet.
 
 **Only earnings transcribes** — the item-18 hypothesis, now answered.
 Technical (17,409 chars) and News (3,248) hand over real conclusions; Macro
