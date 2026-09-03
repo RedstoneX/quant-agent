@@ -92,6 +92,35 @@ logger = logging.getLogger(__name__)
 #: `execution.max_entry_slippage_bps`.
 MAX_ENTRY_SLIPPAGE_BPS = 40.0
 
+#: Share of resolved tech analyses (or of the fetch universe, for the bars
+#: variant) coming back with NO usable signal — empty `computed_levels`, or
+#: no bars at all — above which a run is treated as a DATA FAILURE rather
+#: than a quiet market, and pushed to the owner outside the session summary.
+#: 1.0 is the unambiguous case: literally every symbol came back empty. That
+#: can never be a legitimate market reading — `find_structural_levels`
+#: refusing on EVERY name in one run means the thing that varies per-symbol
+#: (each symbol's own chart) produced the same null result, which is a
+#: property of the feed, not of 60-100 unrelated instruments.
+LEVELS_BLIND_RUN_EMPTY_SHARE = 1.0
+
+#: 0.5 is deliberately coarse, NOT a fitted percentile — see the long
+#: comment on `_persist_levels_coverage` for why only one clean baseline run
+#: exists to derive it from (2026-09-02: 1/64 resolved symbols, 1.6%, came
+#: back with no computed level) and why n=1 cannot support a statistically
+#: fit threshold. 50% sits roughly 30x that single observed baseline, far
+#: above anything ordinary per-symbol noise (a thin IPO, a rangebound name)
+#: should ever produce across a whole run, while still catching a partial
+#: outage — a feed serving short/stale history to MOST but not literally
+#: ALL requests — that the 1.0 rule alone would miss.
+LEVELS_DEGRADED_RUN_EMPTY_SHARE = 0.5
+
+#: Below this many resolved symbols (or fetch attempts), a share is noise —
+#: one empty result out of three is 33% and means nothing. Production's
+#: universe is 100+ symbols; this only guards small/degenerate universes
+#: (tests, a misconfigured owner universe) from a false alarm, and is well
+#: below anything the real desk runs.
+LEVELS_COVERAGE_MIN_SAMPLE = 10
+
 
 def _macro_regime(macro_analysis) -> str | None:
     """The regime string, from either a MacroAnalysis or a carried-forward dict."""
@@ -560,6 +589,116 @@ def _persist_evidence(db: "Database", *, run_id: str, agent_name: str, kind: str
             "Failed to persist Stage 4 specialist evidence (agent=%s kind=%s "
             "scope=%s symbol=%s): %s", agent_name, kind, scope, symbol, e,
         )
+
+
+def _check_levels_coverage(db: "Database", ctx: RunContext,
+                            analyses: list["TechAnalysisResult"]) -> None:
+    """Record this run's structural-level coverage; alert if it looks blind.
+
+    2026-09-02, closing a hole found while checking whether 2026-09-01's
+    zero-trade day could recur through a silent data failure. It could not
+    have BEEN that day: this run's own persisted evidence shows
+    `TechAnalysisResult.computed_levels` did not exist in the code that ran
+    that morning (every one of that day's 59 tech_analyst evidence rows
+    lacks the key entirely, not just an empty list), and the true cause was
+    the R/R-geometry defect in docs/OUTCOME.md — a widened ATR stop dividing
+    into a target that was never derived from structure, unrelated to
+    whether structure existed. **Do not cite this function as what happened
+    2026-09-01.**
+
+    What IS true: the fix for that defect, shipped the same night, made
+    `computed_levels` load-bearing. `derive_structural_target`
+    (src/data/levels.py) now hard-refuses any trade when it is empty
+    (REFUSAL_NO_STRUCTURE) — correctly; a stop needs a level to sit on. But
+    empty-because-the-bar-feed-is-dead and empty-because-the-chart-really-
+    has-no-structure produce the identical `[]`, and until now neither this
+    run's per-symbol coverage nor its bars-fetch success was kept anywhere
+    a postmortem could read after the fact — only a per-symbol WARNING log
+    line for the latter, gone at the next log rotation, and the former not
+    even that.
+
+    `analyses` is scoped to RESOLVED symbols only (never-resolved symbols —
+    an LLM parse failure — are `data_status["tech"]` partial/failed and the
+    `analysis_parse_loss` advisory's job already; mixing that failure mode
+    into a levels-coverage number would double-count it under a misleading
+    label). The two share thresholds below are module constants —
+    `LEVELS_BLIND_RUN_EMPTY_SHARE` / `LEVELS_DEGRADED_RUN_EMPTY_SHARE` — see
+    their own comments for how they were derived and why 50% is a coarse
+    line, not a fitted percentile.
+
+    Best-effort and NEVER raises or blocks the research stage, matching
+    `_persist_evidence`'s contract (which this calls): a coverage-tracking
+    bug must never be able to stop a trading session, whatever it decides
+    about alerting.
+    """
+    try:
+        bars = ctx.tech_bars_coverage or {}
+        universe = int(bars.get("universe") or 0)
+        bars_missing = int(bars.get("bars_missing") or 0)
+
+        resolved = len(analyses)
+        levels_empty_symbols = sorted(
+            a.symbol for a in analyses if not a.computed_levels
+        )
+        levels_empty = len(levels_empty_symbols)
+
+        import json as _json
+        _persist_evidence(
+            db, run_id=ctx.run_id, agent_name="tech_analyst",
+            kind="levels_coverage", scope="run",
+            evidence_json=_json.dumps({
+                "universe": universe,
+                "bars_fetched": int(bars.get("bars_fetched") or 0),
+                "bars_missing": bars_missing,
+                "bars_missing_symbols": bars.get("bars_missing_symbols") or [],
+                "resolved": resolved,
+                "levels_present": resolved - levels_empty,
+                "levels_empty": levels_empty,
+                "levels_empty_symbols": levels_empty_symbols,
+            }, sort_keys=True),
+        )
+
+        blind, degraded = [], []
+        if universe >= LEVELS_COVERAGE_MIN_SAMPLE:
+            share = bars_missing / universe
+            if share >= LEVELS_BLIND_RUN_EMPTY_SHARE:
+                blind.append(
+                    f"bar fetch returned NOTHING for all {universe} "
+                    f"universe symbol(s) — the data feed, not the market, "
+                    f"is down"
+                )
+            elif share >= LEVELS_DEGRADED_RUN_EMPTY_SHARE:
+                degraded.append(
+                    f"bar fetch failed for {bars_missing}/{universe} "
+                    f"universe symbols ({share:.0%})"
+                )
+        if resolved >= LEVELS_COVERAGE_MIN_SAMPLE:
+            share = levels_empty / resolved
+            if share >= LEVELS_BLIND_RUN_EMPTY_SHARE:
+                blind.append(
+                    f"every one of {resolved} analyzed symbol(s) came back "
+                    f"with NO structural level — a live feed does not put "
+                    f"every chart in a batch into that state at once"
+                )
+            elif share >= LEVELS_DEGRADED_RUN_EMPTY_SHARE:
+                degraded.append(
+                    f"{levels_empty}/{resolved} analyzed symbols came back "
+                    f"with NO structural level ({share:.0%})"
+                )
+        if not (blind or degraded):
+            return
+
+        from src import notifier as _notifier
+        header = "🔴 TECH DATA BLIND SPOT\n" if blind else "🟠 TECH DATA DEGRADED\n"
+        _notifier.send_owner_alert(
+            header + "; ".join(blind + degraded) + ".\n"
+            "Every trade needs a structural level to set a stop against, so "
+            "today's refusals may be a dead data feed wearing the costume "
+            "of a quiet market rather than a genuine absence of setups. "
+            "Check the market data provider before trusting a no-trade day."
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("levels-coverage check failed: %s", exc)
 
 
 def _fractional_sizing_allowed(pipeline, symbol: str, *, is_short: bool) -> bool:
@@ -1556,15 +1695,29 @@ class MorningResearchStage:
         def _run_tech():
             all_symbols_data = []
             symbols_bars: dict[str, list] = {}
+            # Counted, not just logged (2026-09-02). "No data for %s,
+            # skipping" used to be the ONLY trace a bar fetch ever failed —
+            # gone the moment the log rotated, and never summed across the
+            # run, so a feed outage that silently dropped every symbol read
+            # exactly like a quiet market. See ctx.tech_bars_coverage and
+            # `_check_levels_coverage` below for where this is used.
+            bars_missing_symbols: list[str] = []
             for symbol in effective_symbols:
                 bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days)
                 if not bars:
                     logger.warning("No data for %s, skipping", symbol)
+                    bars_missing_symbols.append(symbol)
                     continue
                 indicators = compute_indicators(symbol, bars)
                 all_symbols_data.append({"symbol": symbol, "bars": bars, "indicators": indicators})
                 symbols_bars[symbol] = bars
             ctx.symbols_bars = symbols_bars
+            ctx.tech_bars_coverage = {
+                "universe": len(effective_symbols),
+                "bars_fetched": len(all_symbols_data),
+                "bars_missing": len(bars_missing_symbols),
+                "bars_missing_symbols": bars_missing_symbols,
+            }
             symbols_data = [
                 s for s in all_symbols_data
                 if (
@@ -2019,6 +2172,13 @@ class MorningResearchStage:
             logger.error("Tech analyst failed: %s. Continuing without technical data.", e)
             data_status["tech"] = "failed"
         ctx.analyses = analyses
+        # Outside the try/except above on purpose: it must run whether tech
+        # resolved cleanly, partially, or not at all — a bars outage severe
+        # enough to crash the batch entirely is exactly the case this exists
+        # to catch, not one to skip because the try block above already
+        # failed. Never raises (see its own docstring), so it cannot turn a
+        # degraded tech stage into a hard research-stage failure.
+        _check_levels_coverage(self.db, ctx, analyses)
 
         # Earnings
         earnings_results = []

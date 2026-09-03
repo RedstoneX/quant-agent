@@ -129,6 +129,23 @@ class RunContext:
     nomination_convictions: dict[str, dict[str, dict]] = field(default_factory=dict)
     symbols_bars: dict = field(default_factory=dict)  # {sym: list[OHLCV]}
     valuations: dict = field(default_factory=dict)  # {sym: {trailing_pe, ...}}
+    # Bar-fetch coverage for this run's tech universe: {"universe": N,
+    # "bars_fetched": N, "bars_missing": N, "bars_missing_symbols": [...]}.
+    # Populated by MorningResearchStage._run_tech (the only place
+    # `MarketDataProvider.get_ohlcv` is called per-symbol for the full
+    # universe) and read back once the tech future resolves to build the
+    # `levels_coverage` evidence row — see the long comment there.
+    #
+    # Added 2026-09-02 investigating whether 2026-09-01's zero-trade day
+    # could recur through a silent bars outage. It could not have BEEN that
+    # day (`TechAnalysisResult.computed_levels` did not exist in the code
+    # that ran that morning), but the fix shipped that same night made
+    # `computed_levels` load-bearing: `derive_structural_target` in
+    # src/data/levels.py now hard-refuses any trade when it is empty
+    # (REFUSAL_NO_STRUCTURE). A dead bar feed and a genuinely structureless
+    # market both produce that same empty list, and without this, nothing
+    # records which one happened.
+    tech_bars_coverage: dict = field(default_factory=dict)
     data_status: dict[str, str] = field(default_factory=dict)
     # What this session's LLM-response parsing lost or papered over
     # (src.models.parse_telemetry). Same relationship to `data_status` as
