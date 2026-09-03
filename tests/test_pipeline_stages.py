@@ -1868,3 +1868,44 @@ def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indi
     tech_kwargs = tech_agent.analyze_batch.call_args.kwargs
     assert tech_kwargs["prior_macro_regime"] == "risk-off"
     assert tech_kwargs["prior_macro_outlook"] == "bearish"
+
+
+# --------------------------------------------------------------------------
+# `_build_active_state_changes` — Phase 13 catalyst-gate fix: rendering the
+# per-symbol `(direction)` suffix `PortfolioManagerAgent.
+# _state_change_symbols_by_date` parses back out.
+# --------------------------------------------------------------------------
+
+def test_build_active_state_changes_renders_direction_per_symbol():
+    from src.pipeline import TradingPipeline
+
+    fake_pipeline = MagicMock()
+    fake_pipeline.news_store.recent_state_changes.return_value = [{
+        "first_seen_date": "2026-08-31",
+        "event": "Oil majors expand footprint, bearish for airlines",
+        "affected_symbols": ["XOM", "CVX", "COST"],
+        "symbol_direction": {"XOM": "bullish", "CVX": "bullish", "COST": "bearish"},
+    }]
+    rendered = TradingPipeline._build_active_state_changes(fake_pipeline)
+    assert rendered == (
+        "- [2026-08-31] Oil majors expand footprint, bearish for airlines "
+        "→ XOM(bullish), CVX(bullish), COST(bearish)"
+    )
+
+
+def test_build_active_state_changes_renders_unknown_for_a_symbol_with_no_direction():
+    """A symbol named in `affected_symbols` but absent from
+    `symbol_direction` (older persisted report predating this field, or a
+    genuine analyst omission) renders as `(unknown)` — never silently
+    treated as agreeing with any trade direction."""
+    from src.pipeline import TradingPipeline
+
+    fake_pipeline = MagicMock()
+    fake_pipeline.news_store.recent_state_changes.return_value = [{
+        "first_seen_date": "2026-08-30",
+        "event": "Some older event",
+        "affected_symbols": ["FOO"],
+        # no "symbol_direction" key at all — pre-Phase-13 persisted shape
+    }]
+    rendered = TradingPipeline._build_active_state_changes(fake_pipeline)
+    assert rendered == "- [2026-08-30] Some older event → FOO(unknown)"

@@ -1801,11 +1801,51 @@ class StateChange(LLMOutputModel):
     market_impact: str
     affected_symbols: list[str] = []
     conviction: Literal["high", "medium", "low"]
+    # Phase 13 catalyst-gate fix (2026-09-03): per-symbol direction for
+    # THIS state change, keyed by symbols named in `affected_symbols`.
+    # NOT a single scalar — `market_impact` is free text that routinely
+    # names OPPOSITE directions for different symbols in the same row
+    # (see the ceasefire/oil example in config/prompts/news_analyst.md:
+    # "Bullish for consumer discretionary and airlines, bearish for
+    # energy" over one row naming both XLY and XLE names). A scalar
+    # direction would misrepresent exactly the rows most likely to
+    # matter for this.
+    #
+    # Populated by the SAME news_analyst LLM call that already produces
+    # `StockNewsItem.sentiment` for individual stock items — no new LLM
+    # call, no new analyst seat. A symbol absent from this dict has no
+    # recorded direction; `PortfolioManagerAgent._catalyst_cites_state_
+    # change` (src/agents/portfolio_manager.py) treats that the same as
+    # an explicit "neutral": it does not qualify for the sub-floor
+    # catalyst exception. Fail closed, matching the rest of that gate.
+    symbol_direction: dict[str, Literal["bullish", "bearish", "neutral"]] = {}
 
     @model_validator(mode="before")
     @classmethod
     def _normalize_enum_case(cls, values):
-        return _normalize_enum_case_fields(values, lower_fields=("conviction",))
+        values = _normalize_enum_case_fields(values, lower_fields=("conviction",))
+        if isinstance(values, dict):
+            raw = values.get("symbol_direction")
+            if isinstance(raw, dict):
+                cleaned: dict[str, str] = {}
+                for sym, direction in raw.items():
+                    if not isinstance(sym, str) or not isinstance(direction, str):
+                        continue
+                    d = direction.strip().lower()
+                    # Unrecognized directions are DROPPED, not raised —
+                    # one malformed entry must narrow what can be cited,
+                    # never crash the whole news report (same posture as
+                    # `_normalize_enum_case_fields` above). A dropped
+                    # entry is indistinguishable from "no direction
+                    # recorded" downstream, which is exactly the fail-
+                    # closed behavior wanted.
+                    if d not in ("bullish", "bearish", "neutral"):
+                        continue
+                    s = sym.strip().upper()
+                    if s:
+                        cleaned[s] = d
+                values = {**values, "symbol_direction": cleaned}
+        return values
 
 
 class StockNewsItem(LLMOutputModel):

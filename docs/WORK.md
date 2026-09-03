@@ -991,11 +991,13 @@ rule anywhere in the rulebook.** We have been blaming the model for a
 decision we never specified. Specify it; do not instruct harder.
 
 **Two deterministic mechanisms, neither about the model** (working in
-INCIDENT_HISTORY): the sub-floor catalyst door is famous-names-only — our own
-rules ADMIT the famous-and-weak names at 0.5% risk and `familiarity_bias` then
-fails the run for taking them; and 3 of the 5 "qualified shorts" (GEV/UNH/NEE)
-are refused by §9.4's arithmetic, so the benchmark faults the model for
-passing over names it may not take.
+INCIDENT_HISTORY): the sub-floor catalyst door was famous-names-only — our own
+rules ADMITTED the famous-and-weak names at 0.5% risk regardless of whether
+the cited news even supported the trade direction, and `familiarity_bias`
+then failed the run for taking them (direction check now FIXED, see item b
+below); and 3 of the 5 "qualified shorts" (GEV/UNH/NEE) are refused by
+§9.4's arithmetic, so the benchmark faults the model for passing over names
+it may not take.
 
 **THE RANKING RULE IS NOW IN PRODUCTION — Phase 13, first increment,
 2026-09-03. See INCIDENT_HISTORY "Phase 13 — the desk now says which of the
@@ -1021,8 +1023,9 @@ times, as prose.
 **Next, in order, none of it needing a paid call:**
   a. ~~Write the missing ranking rule.~~ **DONE 2026-09-03 (Phase 13).**
      Open: whether R/R and net evidence join the composite (owner).
-  b. Narrow the sub-floor catalyst door, and put the `familiarity_bias` rule
-     into the PROMPT — it is graded but never stated.
+  b. **Catalyst-door existence-vs-direction gap FIXED 2026-09-03** — see
+     INCIDENT_HISTORY. Still open: put `familiarity_bias` into the PROMPT —
+     it is graded but never stated.
   c. Cut or summarise the earnings section; re-render and re-cost.
   d. Move BUY eligibility and Proposal Conversion to the TOP. **Deliberately
      NOT done here: a section reorder is aimed at model behaviour, so it

@@ -1,4 +1,5 @@
-"""The sub-floor reward:risk catalyst gate (2026-09-02).
+"""The sub-floor reward:risk catalyst gate (2026-09-02), and its direction
+check (Phase 13 fix, 2026-09-03).
 
 The prompt has always permitted a below-floor pick that names a catalyst.
 Benchmarked 2026-09-01 on the real opportunity set of the zero-trade day
@@ -7,20 +8,33 @@ runs and passed over GEV, which cleared the floor — WITHOUT DISOBEYING.
 Every sub-floor pick named a catalyst, cut size, and stated the ratio was
 below floor; the rule-compliance grader passed them all.
 
-The hole was that the catalyst was asserted, never checked. For a mega-cap
-the news feed always carries one, so the exception was a null constraint on
-exactly the names it needed to bind — and the desk's own
+The first hole was that the catalyst was asserted, never checked. For a
+mega-cap the news feed always carries one, so the exception was a null
+constraint on exactly the names it needed to bind — and the desk's own
 `active_state_changes` block was feeding the PM the catalyst it then used to
-justify the exception.
-
-So the fix is deterministic and lives AFTER the PM submits:
+justify the exception. That half of the fix is deterministic and lives
+AFTER the PM submits:
   * a sub-floor pick's `catalyst` must RESOLVE to an `active_state_changes`
     row — cited by that row's ISO date, and the row must name the symbol —
     or the target is dropped;
   * one that does resolve is capped at the smallest starter size.
 
-These tests pin both halves, the exemptions, and the bypasses that were
-deliberately closed.
+The SECOND hole (this file's newer half): resolving to a row only proved
+the row existed and named the symbol, never that the row's news was GOOD
+news for a long or BAD news for a short. A stock sinking on genuinely bad
+news could cite the very row reporting that bad news to justify a BUY.
+`StateChange.symbol_direction` (src/models.py) now carries a structured
+per-symbol direction — populated by the same news_analyst call that already
+produces `StockNewsItem.sentiment`, no new LLM call — and the gate requires
+the cited row's direction for that symbol to actually support the trade:
+bullish for a long, bearish for a short. A missing or neutral direction
+does not qualify either side. Real published research on rule overrides
+substantiates fixing this by making the exception check SUBSTANCE, not
+existence, rather than removing it: an override of a systematic rule only
+improves outcomes when it carries a real quality bar.
+
+These tests pin all three layers — existence, direction, and the
+exemptions/bypasses that were deliberately closed.
 """
 
 import json
@@ -56,21 +70,26 @@ def _freeze_session_date(monkeypatch):
 
 
 # The block as `TradingPipeline._build_active_state_changes` renders it —
-# these five rows are copied verbatim from the run-64290730 fixture
+# same five events as the run-64290730 fixture
 # (`ops/model_policy/fixtures/run_64290730_pm_input.json`,
-# `memory.active_state_changes`) so the format under test is the production
-# one, not a test-local invention.
+# `memory.active_state_changes`), with the `(direction)` suffix the Phase 13
+# fix added to each symbol. Directions are assigned to match each event's
+# actual meaning: the broad selloff/crude-pressure row is bearish across the
+# board; the deal/earnings-beat rows are bullish for the names they name.
 ACTIVE_STATE_CHANGES = (
     "- [2026-09-01] Global bond selloff lifts yields and rising crude "
-    "pressures equities to start September → SPY, QQQ, DIA, SMH, SOXX, NVDA\n"
+    "pressures equities to start September → SPY(bearish), QQQ(bearish), "
+    "DIA(bearish), SMH(bearish), SOXX(bearish), NVDA(bearish)\n"
     "- [2026-08-31] US oil firms designated to take over Venezuelan "
-    "oilfields, Exxon expanding footprint → XOM, CVX, XLE\n"
+    "oilfields, Exxon expanding footprint → XOM(bullish), CVX(bullish), "
+    "XLE(bullish)\n"
     "- [2026-08-31] Anthropic signs $35 billion cloud deal with "
-    "Nvidia-backed Lambda → NVDA\n"
-    "- [2026-08-27] Nvidia revenue forecast of 70% growth → NVDA, SMH, "
-    "SOXX, AMD, AVGO, TSM\n"
+    "Nvidia-backed Lambda → NVDA(bullish)\n"
+    "- [2026-08-27] Nvidia revenue forecast of 70% growth → NVDA(bullish), "
+    "SMH(bullish), SOXX(bullish), AMD(bullish), AVGO(bullish), TSM(bullish)\n"
     "- [2026-08-27] Salesforce beats Q2 earnings and expands AI "
-    "partnership → CRM, MSFT, GOOGL, AMZN, ORCL, ZS"
+    "partnership → CRM(bullish), MSFT(bullish), GOOGL(bullish), "
+    "AMZN(bullish), ORCL(bullish), ZS(bullish)"
 )
 
 # The catalyst the LIVE 2026-09-01 desk actually recorded for its NVDA
@@ -165,18 +184,27 @@ def _held(symbol: str, qty: float = 10.0) -> Position:
 # The rendered-block parser
 # --------------------------------------------------------------------------
 
-def test_parser_maps_each_row_date_to_the_symbols_it_names():
+def test_parser_maps_each_row_date_to_symbols_and_their_directions():
     by_date = PortfolioManagerAgent._state_change_symbols_by_date(
         ACTIVE_STATE_CHANGES,
     )
-    assert by_date["2026-09-01"] == {"SPY", "QQQ", "DIA", "SMH", "SOXX", "NVDA"}
+    assert by_date["2026-09-01"] == {
+        "SPY": {"bearish"}, "QQQ": {"bearish"}, "DIA": {"bearish"},
+        "SMH": {"bearish"}, "SOXX": {"bearish"}, "NVDA": {"bearish"},
+    }
     # Two rows share 2026-08-31, and two share 2026-08-27. Same-date rows are
-    # UNIONED: a citation proves "a HIGH-conviction state change affecting
-    # this symbol was recorded on this date", which is the checkable claim.
-    assert by_date["2026-08-31"] == {"XOM", "CVX", "XLE", "NVDA"}
+    # UNIONED per symbol: a citation proves "a HIGH-conviction state change
+    # affecting this symbol in this direction was recorded on this date",
+    # which is the checkable claim.
+    assert by_date["2026-08-31"] == {
+        "XOM": {"bullish"}, "CVX": {"bullish"}, "XLE": {"bullish"},
+        "NVDA": {"bullish"},
+    }
     assert by_date["2026-08-27"] == {
-        "NVDA", "SMH", "SOXX", "AMD", "AVGO", "TSM",
-        "CRM", "MSFT", "GOOGL", "AMZN", "ORCL", "ZS",
+        "NVDA": {"bullish"}, "SMH": {"bullish"}, "SOXX": {"bullish"},
+        "AMD": {"bullish"}, "AVGO": {"bullish"}, "TSM": {"bullish"},
+        "CRM": {"bullish"}, "MSFT": {"bullish"}, "GOOGL": {"bullish"},
+        "AMZN": {"bullish"}, "ORCL": {"bullish"}, "ZS": {"bullish"},
     }
 
 
@@ -184,52 +212,105 @@ def test_parser_skips_rows_with_no_affected_symbols_and_unparseable_lines():
     """`_build_active_state_changes` writes an em dash when the news analyst
     attached no symbols. A market-wide row names nobody, so it can back
     nobody — and a line that does not parse must narrow what can be cited,
-    never widen it or raise."""
+    never widen it or raise. `TLT` here has no `(direction)` suffix — the
+    legacy/malformed shape — so it is recorded as existing but with an
+    empty direction set."""
     by_date = PortfolioManagerAgent._state_change_symbols_by_date(
         "- [2026-08-30] Broad risk-off with no named exposure → —\n"
         "not a row at all\n"
         "- [2026-08-29] Missing the arrow entirely\n"
-        "- [not-a-date] Something → NVDA\n"
+        "- [not-a-date] Something → NVDA(bullish)\n"
         "- [2026-08-28] Yields fall → TLT",
     )
-    assert by_date == {"2026-08-28": {"TLT"}}
+    assert by_date == {"2026-08-28": {"TLT": set()}}
 
 
 def test_parser_splits_on_the_last_arrow_so_event_prose_may_contain_one():
     by_date = PortfolioManagerAgent._state_change_symbols_by_date(
-        "- [2026-08-31] Regime moved risk-off → risk-on overnight → SPY, QQQ",
+        "- [2026-08-31] Regime moved risk-off → risk-on overnight → "
+        "SPY(bullish), QQQ(bullish)",
     )
-    assert by_date == {"2026-08-31": {"SPY", "QQQ"}}
+    assert by_date == {"2026-08-31": {"SPY": {"bullish"}, "QQQ": {"bullish"}}}
 
 
 def test_parser_tolerates_an_empty_block():
     assert PortfolioManagerAgent._state_change_symbols_by_date("") == {}
 
 
+def test_parser_treats_unrecognized_direction_tokens_as_no_direction():
+    """`_build_active_state_changes` writes `(unknown)` for a symbol with no
+    recorded `symbol_direction` (older persisted reports, or a genuine
+    analyst omission). That token is not one of the three valid literals,
+    so it must not be silently treated as satisfying either side of the
+    gate."""
+    by_date = PortfolioManagerAgent._state_change_symbols_by_date(
+        "- [2026-08-28] Something happened → FOO(unknown)",
+    )
+    assert by_date == {"2026-08-28": {"FOO": set()}}
+
+
 # --------------------------------------------------------------------------
-# The citation check
+# The citation check — existence AND direction
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("catalyst,symbol,expected", [
-    ("2026-08-31: Anthropic/Lambda cloud deal", "NVDA", True),
+@pytest.mark.parametrize("catalyst,symbol,required_direction,expected", [
+    # Right row, right symbol, right (bullish) direction for a long.
+    ("2026-08-31: Anthropic/Lambda cloud deal", "NVDA", "bullish", True),
+    # Same row, but a short would need bearish — this row is bullish only.
+    ("2026-08-31: Anthropic/Lambda cloud deal", "NVDA", "bearish", False),
     # Same date, a symbol that row does not name.
-    ("2026-08-31: Anthropic/Lambda cloud deal", "GEV", False),
+    ("2026-08-31: Anthropic/Lambda cloud deal", "GEV", "bullish", False),
     # Right symbol, a date with no row.
-    ("2026-08-26: something happened", "NVDA", False),
+    ("2026-08-26: something happened", "NVDA", "bullish", False),
     # Concrete, specific, and citing nothing — the whole failure mode.
-    (LIVE_NVDA_CATALYST, "NVDA", False),
-    ("", "NVDA", False),
-    ("   ", "NVDA", False),
+    (LIVE_NVDA_CATALYST, "NVDA", "bullish", False),
+    ("", "NVDA", "bullish", False),
+    ("   ", "NVDA", "bullish", False),
     # A row whose symbols include the target, cited among other prose.
-    ("Energy takeover per the 2026-08-31 state change", "XLE", True),
+    ("Energy takeover per the 2026-08-31 state change", "XLE", "bullish", True),
+    # Same row for a short — XLE is recorded bullish, not bearish.
+    ("Energy takeover per the 2026-08-31 state change", "XLE", "bearish", False),
+    # NVDA is recorded BEARISH on 2026-09-01 (broad selloff) — a short can
+    # cite it, a long cannot.
+    ("2026-09-01: bond selloff pressure", "NVDA", "bearish", True),
+    ("2026-09-01: bond selloff pressure", "NVDA", "bullish", False),
 ])
-def test_catalyst_resolution(catalyst, symbol, expected):
+def test_catalyst_resolution(catalyst, symbol, required_direction, expected):
     by_date = PortfolioManagerAgent._state_change_symbols_by_date(
         ACTIVE_STATE_CHANGES,
     )
     assert PortfolioManagerAgent._catalyst_cites_state_change(
-        catalyst, symbol, by_date,
+        catalyst, symbol, required_direction, by_date,
     ) is expected
+
+
+def test_a_neutral_direction_does_not_qualify_either_side():
+    by_date = PortfolioManagerAgent._state_change_symbols_by_date(
+        "- [2026-08-20] Mixed signals, no clear read → FOO(neutral)",
+    )
+    assert not PortfolioManagerAgent._catalyst_cites_state_change(
+        "2026-08-20: mixed signals", "FOO", "bullish", by_date,
+    )
+    assert not PortfolioManagerAgent._catalyst_cites_state_change(
+        "2026-08-20: mixed signals", "FOO", "bearish", by_date,
+    )
+
+
+def test_a_row_missing_direction_data_entirely_fails_closed():
+    """A legacy-format row (no `(direction)` suffix at all) proves the row
+    exists and names the symbol, and nothing more. Same posture as the rest
+    of this gate: missing data must never be the thing that grants
+    permission."""
+    by_date = PortfolioManagerAgent._state_change_symbols_by_date(
+        "- [2026-08-20] Old-format row, no direction tag → FOO",
+    )
+    assert by_date["2026-08-20"]["FOO"] == set()
+    assert not PortfolioManagerAgent._catalyst_cites_state_change(
+        "2026-08-20: old format", "FOO", "bullish", by_date,
+    )
+    assert not PortfolioManagerAgent._catalyst_cites_state_change(
+        "2026-08-20: old format", "FOO", "bearish", by_date,
+    )
 
 
 def test_the_live_2026_09_01_nvda_catalyst_does_not_resolve():
@@ -267,13 +348,74 @@ def test_subfloor_pick_with_no_catalyst_at_all_is_dropped():
     assert result.targets == []
 
 
-def test_subfloor_pick_with_a_resolving_citation_survives_capped():
+def test_subfloor_long_citing_a_genuinely_bullish_catalyst_survives_capped():
+    """Regression: the happy path must still work. A long citing a row
+    recorded bullish for its symbol still qualifies for the exception."""
     decision = _decision([
         _target("NVDA", risk=3.0, catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
     result = _apply(decision, [_analysis("NVDA", target=104.0)])
     assert [t.symbol for t in result.targets] == ["NVDA"]
     assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+
+
+def test_subfloor_long_citing_a_bearish_catalyst_for_the_same_symbol_is_refused():
+    """THE fix's core case. NVDA is recorded BEARISH on 2026-09-01 (broad
+    bond-selloff/crude-pressure row). A LONG citing that exact date+symbol
+    used to qualify on existence alone; it must not qualify now — the news
+    it is citing argues against the trade it is trying to justify."""
+    decision = _decision([
+        _target("NVDA", risk=3.0, catalyst="2026-09-01 bond selloff pressure"),
+    ])
+    result = _apply(decision, [_analysis("NVDA", target=104.0)])
+    assert result.targets == []
+
+
+def test_subfloor_long_citing_a_neutral_catalyst_is_refused():
+    decision = _decision([
+        _target("ZZZZ", risk=3.0, catalyst="2026-08-20 mixed signals"),
+    ])
+    result = _apply(
+        decision, [_analysis("ZZZZ", target=104.0)],
+        asc="- [2026-08-20] Mixed signals, no clear read → ZZZZ(neutral)",
+    )
+    assert result.targets == []
+
+
+def test_subfloor_short_citing_a_genuinely_bearish_catalyst_survives_capped():
+    """Mirror of the long happy path: a short citing a row recorded bearish
+    for its symbol qualifies."""
+    decision = _decision([
+        _target("NVDA", direction="short", risk=3.0,
+                catalyst="2026-09-01 bond selloff pressure"),
+    ])
+    result = _apply(decision, [_analysis("NVDA", rating="sell", target=96.0)])
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+
+
+def test_subfloor_short_citing_a_bullish_catalyst_for_the_same_symbol_is_refused():
+    """Mirror of the core fix case for shorts: NVDA's 2026-08-31 row is
+    recorded bullish (the Anthropic/Lambda deal). A SHORT citing that exact
+    date+symbol must not qualify — bullish news does not support a short."""
+    decision = _decision([
+        _target("NVDA", direction="short", risk=3.0,
+                catalyst="2026-08-31 Anthropic/Lambda deal"),
+    ])
+    result = _apply(decision, [_analysis("NVDA", rating="sell", target=96.0)])
+    assert result.targets == []
+
+
+def test_subfloor_short_citing_a_neutral_catalyst_is_refused():
+    decision = _decision([
+        _target("ZZZZ", direction="short", risk=3.0,
+                catalyst="2026-08-20 mixed signals"),
+    ])
+    result = _apply(
+        decision, [_analysis("ZZZZ", rating="sell", target=96.0)],
+        asc="- [2026-08-20] Mixed signals, no clear read → ZZZZ(neutral)",
+    )
+    assert result.targets == []
 
 
 def test_the_cap_only_ever_reduces():
@@ -313,8 +455,8 @@ def test_missing_reward_risk_counts_as_subfloor():
     assert neutral.risk_reward is None
     decision = _decision([_target("NVDA", catalyst=LIVE_NVDA_CATALYST)])
     assert _apply(decision, [neutral]).targets == []
-    # ... and it is not simply always dropped: a resolving citation still
-    # buys it a capped starter.
+    # ... and it is not simply always dropped: a resolving, direction-
+    # correct citation still buys it a capped starter.
     cited = _decision([
         _target("NVDA", catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
@@ -325,19 +467,39 @@ def test_missing_reward_risk_counts_as_subfloor():
 
 def test_shorts_are_gated_on_the_same_terms_as_longs():
     """A qualified short is worth exactly as much as a qualified long, and an
-    unqualified one costs exactly as much."""
+    unqualified one costs exactly as much. CRM's citation here is a
+    dedicated bearish row (guidance cut) distinct from the bullish-Q2-beat
+    row in the shared fixture, so this test exercises a short qualifying on
+    its own bearish evidence, not accidentally riding the fixture's bullish
+    CRM row."""
     decision = _decision([
         _target("MSFT", direction="short", catalyst="no citation here"),
         _target("CRM", direction="short",
-                catalyst="2026-08-27 Salesforce Q2 beat"),
+                catalyst="2026-08-27 Salesforce guidance cut"),
     ])
     analyses = [
         _analysis("MSFT", rating="sell", target=96.0),   # R/R 0.8
         _analysis("CRM", rating="sell", target=96.0),    # R/R 0.8
     ]
-    result = _apply(decision, analyses)
+    result = _apply(
+        decision, analyses,
+        asc="- [2026-08-27] Salesforce cuts cloud spending guidance on "
+            "slowdown → CRM(bearish)",
+    )
     assert {t.symbol for t in result.targets} == {"CRM"}
     assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+
+
+def test_a_short_citing_the_fixtures_bullish_crm_row_does_not_qualify():
+    """The fixture's CRM row (2026-08-27, Q2 beat) is recorded bullish. A
+    short citing that same date+symbol must fail — this is the same
+    core-fix case as the NVDA one above, pinned on a second symbol."""
+    decision = _decision([
+        _target("CRM", direction="short", risk=3.0,
+                catalyst="2026-08-27 Salesforce Q2 beat"),
+    ])
+    result = _apply(decision, [_analysis("CRM", rating="sell", target=96.0)])
+    assert result.targets == []
 
 
 def test_exits_and_closes_are_exempt():
@@ -438,8 +600,9 @@ def test_decide_drops_the_live_nvda_pick_and_keeps_the_qualifying_one(mock_cls):
 
 @patch("anthropic.Anthropic")
 def test_decide_caps_a_verified_subfloor_pick_rather_than_dropping_it(mock_cls):
-    """The capability is preserved. NVDA cites a real row that names it, so
-    it trades — at the smallest size the desk can hold."""
+    """The capability is preserved. NVDA cites a real row that names it AND
+    is recorded bullish for it, so it trades — at the smallest size the desk
+    can hold."""
     agent = _mock_agent(mock_cls, _pm_response([
         _target("NVDA", risk=3.0,
                 catalyst="2026-08-31: Anthropic/Lambda $35bn cloud deal"),
@@ -454,6 +617,25 @@ def test_decide_caps_a_verified_subfloor_pick_rather_than_dropping_it(mock_cls):
     assert decision is not None
     assert [t.symbol for t in decision.targets] == ["NVDA"]
     assert decision.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+
+
+@patch("anthropic.Anthropic")
+def test_decide_drops_a_subfloor_pick_whose_citation_is_the_wrong_direction(mock_cls):
+    """End-to-end version of the core fix: NVDA cites its 2026-09-01 row,
+    which exists and names it, but is recorded BEARISH — wrong direction
+    for a BUY. `decide()` must drop it, not size it down."""
+    agent = _mock_agent(mock_cls, _pm_response([
+        _target("NVDA", risk=3.0, catalyst="2026-09-01: bond selloff pressure"),
+    ]))
+    decision, _ = agent.decide(
+        analyses=[_analysis("NVDA", target=104.0)],
+        positions=[], macro_analysis=None, cash_balance=50_000,
+        total_value=100_000,
+        active_state_changes=ACTIVE_STATE_CHANGES,
+        allowed_buy_symbols={"NVDA"},
+    )
+    assert decision is not None
+    assert decision.targets == []
 
 
 @patch("anthropic.Anthropic")
@@ -511,12 +693,14 @@ def test_a_row_older_than_the_producers_own_window_cannot_be_cited():
         days=ACTIVE_STATE_CHANGE_WINDOW_DAYS,
     )
     block = (
-        f"- [{stale}] Ancient but still on the table \u2192 NVDA\n"
-        f"- [{fresh}] Right on the edge of the window \u2192 GEV"
+        f"- [{stale}] Ancient but still on the table → NVDA(bullish)\n"
+        f"- [{fresh}] Right on the edge of the window → GEV(bullish)"
     )
     by_date = PortfolioManagerAgent._state_change_symbols_by_date(block)
     assert str(stale) not in by_date, "a stale row must not be citable"
-    assert by_date[str(fresh)] == {"GEV"}, "the window edge is inclusive"
+    assert by_date[str(fresh)] == {"GEV": {"bullish"}}, (
+        "the window edge is inclusive"
+    )
 
 
 def test_a_subfloor_pick_citing_a_stale_row_is_dropped():
@@ -526,7 +710,7 @@ def test_a_subfloor_pick_citing_a_stale_row_is_dropped():
     decision = _decision([_target("NVDA", catalyst=f"{stale}: the old deal")])
     result = _apply(
         decision, [_analysis("NVDA", target=104.0)],
-        asc=f"- [{stale}] The old deal \u2192 NVDA",
+        asc=f"- [{stale}] The old deal → NVDA(bullish)",
     )
     assert result.targets == [], "a stale catalyst is not a catalyst"
 
@@ -539,7 +723,7 @@ def test_a_future_dated_row_cannot_back_a_trade_taken_today():
     decision = _decision([_target("NVDA", catalyst=f"{ahead}: tomorrow's news")])
     result = _apply(
         decision, [_analysis("NVDA", target=104.0)],
-        asc=f"- [{ahead}] Tomorrow's news \u2192 NVDA",
+        asc=f"- [{ahead}] Tomorrow's news → NVDA(bullish)",
     )
     assert result.targets == []
 
@@ -559,7 +743,7 @@ def test_an_unreadable_clock_makes_the_exception_unavailable(monkeypatch):
 def test_a_nan_reward_risk_is_treated_as_subfloor_not_as_passing():
     """Every comparison against NaN is False, so a naive `if rr < floor`
     would wave a NaN straight through, and a missing value would be the thing
-    granting permission \u2014 the shape of the buying-power near-miss.
+    granting permission — the shape of the buying-power near-miss.
 
     VERIFIED REACHABLE, not hypothetical: `reference_target` is the analyst's
     guessed target and the least-validated price on the model. Pydantic
@@ -568,15 +752,15 @@ def test_a_nan_reward_risk_is_treated_as_subfloor_not_as_passing():
 
     WHAT `risk_reward` DOES WITH IT CHANGED, and this test was written before
     it did. Until `models.reward_to_risk` became the one definition of this
-    ratio (2026-09-02, spec 12.1b), the field returned `round(nan / 5)` \u2014 NaN
-    \u2014 and the whole hazard was that `nan < floor` is False. That function now
+    ratio (2026-09-02, spec 12.1b), the field returned `round(nan / 5)` — NaN
+    — and the whole hazard was that `nan < floor` is False. That function now
     refuses non-finite input at the door and returns None, which the gate
     below catches with an explicit `is not None` rather than with a
     comparison NaN can defeat, and which renders to the PM prompt as
     "R/R n/a" instead of "R/R nan:1".
 
-    So the premise assertion checks the property that actually matters \u2014 the
-    ratio is NOT a usable number \u2014 rather than the historical NaN
+    So the premise assertion checks the property that actually matters — the
+    ratio is NOT a usable number — rather than the historical NaN
     representation of it. Every substantive assertion below is unchanged: a
     NaN target must not buy the catalyst exception, and must not escape the
     starter-size cap.
@@ -611,7 +795,7 @@ def test_refusing_to_add_to_a_held_name_drops_it_and_never_zeroes_it():
     """THE non-obvious hazard. `risk_allocation_pct=0` on a held symbol is
     read downstream as CLOSE IT, so expressing this refusal as a zero would
     silently LIQUIDATE a position we already own rather than declining to add
-    to it. It does not error \u2014 it just sells. Omitting the symbol is HOLD,
+    to it. It does not error — it just sells. Omitting the symbol is HOLD,
     which is the only correct way to say no here."""
     decision = _decision([
         _target("NVDA", risk=4.0, catalyst=LIVE_NVDA_CATALYST),

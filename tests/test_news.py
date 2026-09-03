@@ -485,6 +485,44 @@ def test_drop_invalid_stock_news_strips_empty_headline_keeps_rest():
     assert len(out["stock_news"]["AAPL"]) == 1
 
 
+def test_state_change_symbol_direction_normalizes_case():
+    """`symbol_direction` keys/values arrive from an LLM, which can drift on
+    case the same way `conviction` does. Case-fold before the Literal check,
+    same discipline as `_normalize_enum_case_fields`."""
+    from src.models import StateChange
+
+    sc = StateChange(**{
+        **_valid_state_change(),
+        "affected_symbols": ["spy", "qqq"],
+        "symbol_direction": {"spy": "BULLISH", "qqq": "Bearish"},
+    })
+    assert sc.symbol_direction == {"SPY": "bullish", "QQQ": "bearish"}
+
+
+def test_state_change_symbol_direction_drops_unrecognized_values_not_the_row():
+    """An invalid direction token must narrow what can be cited (that
+    symbol simply has no recorded direction), never crash the whole
+    StateChange the way a bad `conviction` literal would."""
+    from src.models import StateChange
+
+    sc = StateChange(**{
+        **_valid_state_change(),
+        "affected_symbols": ["SPY", "QQQ"],
+        "symbol_direction": {"SPY": "bullish", "QQQ": "very_bullish"},
+    })
+    assert sc.symbol_direction == {"SPY": "bullish"}
+
+
+def test_state_change_symbol_direction_defaults_to_empty():
+    """Older persisted reports (and any caller that omits the field) parse
+    unchanged — no direction recorded for anyone, which the sub-floor
+    catalyst gate treats as fail-closed, not as a crash."""
+    from src.models import StateChange
+
+    sc = StateChange(**_valid_state_change())
+    assert sc.symbol_direction == {}
+
+
 def test_drop_invalid_stock_news_drops_symbol_when_all_items_bad():
     """If every bullet under a symbol is malformed, drop the symbol key
     entirely so PM doesn't see an empty list and infer 'no news' (which

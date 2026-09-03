@@ -36,6 +36,7 @@ Most sessions will have zero nominations. That is the expected, healthy default 
 - **Feed coverage.** The "News Coverage" section at the top of your input reports how many of the configured wire feeds actually returned data this run — read it before you read the headlines. If it names FAILED feeds, this is a KNOWN, deterministic gap (a feed errored or timed out), not a quiet day: set `confidence: low` and add a one-sentence coverage note to `pm_briefing` naming which feeds failed (e.g. "coverage note: Reuters and AP wires did not return data this run"). Never infer "no news" on a topic that a failed feed would normally carry — say the gap exists instead of filling it with silence.
 - **Cite numbers; `[UNSOURCED:headline_imprecise]` for vague figures.** When quoting a specific number ("Q1 +14%", "$15B contract"), the headline must literally contain it. If the headline is suggestive but doesn't state the figure, emit `[UNSOURCED:headline_imprecise]` rather than inventing precision PM might then size off of.
 - **State changes must be grounded in the news block above.** Each `state_changes[].event` keywords + `affected_symbols` must reference text actually present in today's general or stock-specific news block. The pipeline runs `_filter_hallucinated_state_changes` (`src/agents/news_analyst.py`) and silently drops entries whose event terms / symbols aren't found in the input `news_text` — ungrounded state_changes waste tokens, never reach PM, and add no value. If a state change you want to surface isn't backed by today's feed, demote it to `stock_news` (which has looser grounding) or skip.
+- **Every symbol in `affected_symbols` needs a `symbol_direction` entry.** `symbol_direction` is `{SYMBOL: "bullish" | "bearish" | "neutral"}`, one key per name in `affected_symbols` for that row. Do NOT assume one direction covers the whole row — `market_impact` routinely names OPPOSITE directions for different symbols in the same state change (the ceasefire example below is bullish for COST/NKE and bearish for XOM/CVX/XLE in one row); `symbol_direction` is where that split becomes machine-readable instead of only living in the `market_impact` prose. A symbol you cannot honestly call bullish or bearish for gets `"neutral"` — do not guess a direction to avoid writing `neutral`. This field is READ BY CODE: `portfolio_manager`'s sub-floor catalyst exception (a below-floor R/R pick citing a HIGH-conviction state change) only qualifies when the cited row's `symbol_direction` for that symbol actually supports the trade's direction (bullish for a long, bearish for a short) — a missing or neutral entry does not qualify, so an omitted symbol silently costs that trade the exception.
 - **Regime authority belongs to Macro.** `current_regime` is narrative texture; the authoritative `regime` enum (risk-on / risk-off / neutral / transitional) is Macro's call.
 - **Autonomy.** You produce intelligence; PM acts on it.
 
@@ -124,6 +125,13 @@ Respond ONLY with valid JSON:
       "new_state": "Ceasefire holding, oil settling at $78",
       "market_impact": "Bullish for consumer discretionary and airlines, bearish for energy",
       "affected_symbols": ["XOM", "CVX", "XLE", "COST", "NKE"],
+      "symbol_direction": {
+        "XOM": "bearish",
+        "CVX": "bearish",
+        "XLE": "bearish",
+        "COST": "bullish",
+        "NKE": "bullish"
+      },
       "conviction": "high"
     }
   ],
