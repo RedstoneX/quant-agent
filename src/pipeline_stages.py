@@ -653,7 +653,37 @@ def _fmt_shares(qty: float) -> str:
 
 # Spec §11.1 vol-adjusted sizing budget: the fraction of EQUITY a single
 # entry may put at risk between its fill and its stop.
-RISK_BUDGET_PCT = 0.5
+#
+# HISTORICAL NOTE (item 22, 2026-09-03 audit): this used to be a hardcoded
+# module constant, `RISK_BUDGET_PCT = 0.5`, predating the owner-ratified 5%
+# envelope (`config.risk.max_position_risk_pct`, decided 2026-08-27). Nothing
+# connected the two, so this independent recheck silently re-capped almost
+# every entry at ten times less risk than the constructor had already sized
+# it to under the real rule — confirmed against real NVDA/ORCL/RSG rows
+# risking ~$49 on a ~$9.85k book where ~$490 was ratified. Fixed by reading
+# the same config the constructor reads, the same defensive way
+# `TradingPipeline.__init__`'s `_risk_setting` reads it for
+# `ConstructorConfig.risk_budget_pct` — see `docs/INCIDENT_HISTORY.md`, "the
+# risk manager and order-construction audit". The 5.0 fallback here is the
+# ratified default, not an invented one.
+_DEFAULT_RISK_BUDGET_PCT = 5.0
+
+
+def _risk_budget_pct(pipeline) -> float:
+    """The configured §11.1 risk-budget percentage, or the ratified default.
+
+    Same Mock-safety posture as the `short_gap_risk_multiple` read just below
+    in this function, and as `TradingPipeline.__init__`'s `_risk_setting`:
+    a MagicMock config (common in tests) auto-creates a child attribute that
+    is neither the default nor a real number, so it must be checked rather
+    than trusted from a bare `getattr`.
+    """
+    raw = getattr(
+        getattr(pipeline.config, "risk", None), "max_position_risk_pct", None,
+    )
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw <= 0:
+        return _DEFAULT_RISK_BUDGET_PCT
+    return float(raw)
 
 
 def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
@@ -675,6 +705,14 @@ def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
     ATR-WIDEN that stop, which only increases risk-per-share and therefore
     only shrinks the final quantity. So the preflight's answer is an upper
     bound on what will be spent — funding still errs long, never short.
+
+    This is a genuinely independent recheck, not a rubber stamp of the
+    constructor's own number — it recomputes risk dollars from the REAL
+    executed stop/entry geometry (which can differ from what the constructor
+    assumed, e.g. after an ATR-widened stop or a marketable-limit price move)
+    against the ratified percentage, in Python, rather than trusting the
+    constructor's or PM's claimed ratio. Keep the mechanism; only the stale
+    percentage was wrong (item 22).
     """
     if not (stop_price > 0 and sizing_price > 0):
         return None
@@ -705,7 +743,7 @@ def _qty_by_risk_budget(pipeline, *, total_value: float, sizing_price: float,
         risk_per_share *= gap_multiple
     if risk_per_share <= 0:
         return None
-    risk_dollars = total_value * RISK_BUDGET_PCT / 100
+    risk_dollars = total_value * _risk_budget_pct(pipeline) / 100
     return _size_shares(
         pipeline, risk_dollars / risk_per_share, fractional=fractional,
     )
@@ -4318,13 +4356,14 @@ class ExecutionStage:
                     is_short=is_short, fractional=fractional,
                 )
                 if qty_by_risk is not None and qty_by_risk < qty_by_alloc:
+                    _risk_pct = _risk_budget_pct(pipeline)
                     logger.info(
                         "Vol-adjusted sizing for %s: qty_by_alloc=%s → qty_by_risk=%s "
                         "(risk %.2f/share, budget $%.0f = %.1f%% of equity)",
                         decision.symbol, _fmt_shares(qty_by_alloc),
                         _fmt_shares(qty_by_risk),
                         abs(sizing_price - stop_price),
-                        total_value * RISK_BUDGET_PCT / 100, RISK_BUDGET_PCT,
+                        total_value * _risk_pct / 100, _risk_pct,
                     )
                     qty = qty_by_risk
                 else:

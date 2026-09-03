@@ -88,6 +88,18 @@ the two size limits agree, or that a Risk Manager edit is re-checked against
 the same floors a fresh decision would face. Tests for both are part of the
 fix work already dispatched for finding #1 and #2.
 
+**Update, 2026-09-03 — finding #1 shipped.** `_qty_by_risk_budget` now reads
+`config.risk.max_position_risk_pct` (fallback 5.0, the ratified value) the
+same defensive way the constructor's own sizing reads it, instead of the
+hardcoded `RISK_BUDGET_PCT = 0.5`. Kept as a genuine independent recheck
+against the REAL executed stop/entry geometry — only the stale percentage
+was the defect, not the mechanism. Before/after on realistic geometry
+(entry $100, stop $90, $9,850 book, 20% allocation): the risk-budget leg
+alone now allows ~49 shares (5% × $9,850 / $10 risk-per-share) versus ~4-5
+before (0.5%) — the constructor's own allocation is now the binding
+constraint in the ordinary case, as intended, instead of this recheck
+silently re-capping it tenfold. Findings #2-#6 remain open.
+
 ---
 
 ### 2026-09-03 — Phase 13, first increment: the desk now says which of the twelve

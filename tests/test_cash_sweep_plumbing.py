@@ -119,21 +119,24 @@ def _events(pipeline) -> list[tuple]:
 
 def test_funding_is_capped_by_the_risk_budget_not_the_allocation():
     """20% of a $100k book is $20,000 of allocation. The §11.1 risk budget
-    (0.5% of equity = $500) against a $10/share stop distance allows 50
-    shares = $5,000. The submit loop spends $5,000, so the sweep must
-    liquidate $5,000 — not $20,000 with $15,000 re-parked minutes later."""
+    (item 22 fix: the ratified 5% of equity = $5,000, not the stale 0.5%)
+    against a $50/share stop distance allows 100 shares = $10,000. The
+    submit loop spends $10,000, so the sweep must liquidate $10,000 — not
+    $20,000 with $10,000 re-parked minutes later. `pipeline` is a MagicMock
+    here, so `config.risk.max_position_risk_pct` is an unset Mock attribute
+    and `_qty_by_risk_budget` falls back to the ratified 5.0 default."""
     pipeline = _pipeline(live_price=100.0, cash=50_000.0)
     recorded = _install_sweeper(pipeline)
     pipeline.broker.submit_order.return_value = {"id": "o1", "status": "accepted"}
     ctx = _ctx([TradeDecision(
         action="BUY", symbol="XLE", allocation_pct=20,
-        entry_price=100.0, stop_loss=90.0, take_profit=130.0,
+        entry_price=100.0, stop_loss=50.0, take_profit=175.0,
         reasoning="risk budget binds",
     )])
 
     ExecutionStage(pipeline=pipeline).run(ctx)
 
-    assert recorded["planned"] == 5_000.0, (
+    assert recorded["planned"] == 10_000.0, (
         "funding must cover the risk-capped size the submit loop will spend"
     )
 

@@ -576,10 +576,13 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     kw = mock_broker.submit_order.call_args.kwargs
     assert kw["symbol"] == "SPY"
     # Phase 2 sizing: PortfolioConstructor uses TA's stop (72) vs broker's
-    # live market (100) → risk_per_share = $28. 0.5% risk budget of $10k
-    # = $50 at-risk → qty_by_risk = 1 share. Target's 10% weight ($1000 at
-    # $100 = 10 shares) is capped by the risk budget.
-    assert kw["qty"] == 1
+    # live market (100) → risk_per_share = $28. The ratified 5% risk budget
+    # (item 22 fix: `cfg.risk.max_position_risk_pct` is an unset MagicMock
+    # here, so `_risk_budget_pct` falls back to the real 5.0 default, not
+    # the old stale 0.5) of $10k = $500 at-risk → qty_by_risk = 17 shares.
+    # Target's 10% weight ($1000 at $100 = 10 shares) is the binding
+    # constraint instead.
+    assert kw["qty"] == 10
     assert kw["side"] == "buy"
     assert kw["stop_loss_price"] == 72.0
 
@@ -2891,9 +2894,11 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
 
     buy_kw = mock_broker.submit_order.call_args_list[1].kwargs
     assert buy_kw["symbol"] == "QQQ"
-    # Vol-adjusted: equity $10k × 0.5% = $50 risk budget, stop 95 vs entry 100
-    # gives $5 risk/share → qty_by_risk = 10 (caps under qty_by_alloc of 30).
-    assert buy_kw["qty"] == 10
+    # Vol-adjusted (item 22 fix: ratified 5% envelope, not the stale 0.5%):
+    # equity $10k × 5% = $500 risk budget, stop 95 vs entry 100 gives $5
+    # risk/share → qty_by_risk = 100, no longer binding — target weight
+    # 15% of $10k / $100 = qty_by_alloc = 15 is the constraint instead.
+    assert buy_kw["qty"] == 15
     assert buy_kw["side"] == "buy"
     assert buy_kw["limit_price"] == 100.0
     assert buy_kw["stop_loss_price"] == 95.0

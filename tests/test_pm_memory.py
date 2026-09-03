@@ -483,39 +483,63 @@ def test_auto_take_profit_retries_after_canceled_zero_fill(tmp_path):
 
 
 def test_vol_adjusted_sizing_caps_qty_on_wide_stops():
-    """SQQQ-style wide-stop name gets fewer shares than raw allocation would suggest.
+    """SQQQ-style wide-stop name gets fewer shares than raw allocation would
+    suggest — but only when the geometry is genuinely extreme, not merely
+    because of a stale hardcoded percentage (item 22, fixed 2026-09-03).
 
-    This is a spec test. The sizing logic lives inside run_morning's BUY loop
-    rather than a standalone helper, so we verify the key invariant:
-    at a 5% allocation, a stop 8% below entry should give ~0.5%/0.08 = ~6.25%
-    of the expected qty-by-alloc (not exactly, because of integer truncation).
+    This exercises the real `_qty_by_risk_budget` helper (not a re-derived
+    copy of its arithmetic) against a stub pipeline whose
+    `config.risk.max_position_risk_pct` is the ratified 5.0 — the same value
+    `TradingPipeline.__init__` reads for the constructor's own sizing, so
+    this independent recheck agrees with it by construction rather than by
+    coincidence.
     """
+    from types import SimpleNamespace
+    from src.pipeline_stages import _qty_by_risk_budget
+
+    pipeline = SimpleNamespace(
+        config=SimpleNamespace(risk=SimpleNamespace(max_position_risk_pct=5.0)),
+    )
     total_value = 100_000
     entry = 50.0
-    wide_stop = 46.0  # 8% below entry
     alloc_pct = 5.0
-    RISK_BUDGET_PCT = 0.5
-
     qty_by_alloc = int((total_value * alloc_pct / 100) / entry)  # 100
-    risk_per_share = entry - wide_stop  # 4.0
-    qty_by_risk = int((total_value * RISK_BUDGET_PCT / 100) / risk_per_share)  # 125
 
-    # In this case, wider stop actually allowed MORE shares (risk budget was
-    # large relative to allocation). That's OK — rule is min(alloc, risk).
-    assert min(qty_by_alloc, qty_by_risk) == 100
+    def qty_by_risk(stop_price):
+        return _qty_by_risk_budget(
+            pipeline, total_value=total_value, sizing_price=entry,
+            stop_price=stop_price, is_short=False, fractional=False,
+        )
 
-    # A tighter-allocation scenario: with narrow 2% stop, risk budget allows
-    # many more shares than alloc; alloc is the binding constraint.
+    # Pre-fix regression case: an 8% stop used to sit right at the edge of
+    # the stale 0.5% budget. Under the real 5% envelope it isn't close —
+    # alloc is still the binding constraint, and the trade is NOT silently
+    # shrunk the way it used to be.
+    wide_stop = 46.0  # 8% below entry
+    assert min(qty_by_alloc, qty_by_risk(wide_stop)) == 100
+
+    # A tighter, narrow-stop scenario: risk budget allows far more shares
+    # than the allocation asks for; alloc is still the binding constraint.
     narrow_stop = 49.0  # 2% below entry
-    qty_by_risk_narrow = int((total_value * RISK_BUDGET_PCT / 100) / (entry - narrow_stop))
-    # 500 / 1.0 = 500 vs qty_by_alloc = 100; alloc still caps.
-    assert min(qty_by_alloc, qty_by_risk_narrow) == 100
+    assert min(qty_by_alloc, qty_by_risk(narrow_stop)) == 100
 
-    # Extreme-vol case: 20% stop on a $50 name, alloc 5%.
-    very_wide_stop = 40.0  # 20% below entry
-    qty_by_risk_extreme = int((total_value * RISK_BUDGET_PCT / 100) / (entry - very_wide_stop))
-    # 500 / 10 = 50 shares vs 100 by alloc → risk budget caps.
-    assert min(qty_by_alloc, qty_by_risk_extreme) == 50
+    # The mechanism is still a genuine independent safety recheck, not a
+    # rubber stamp. At MATCHED percentages (alloc == risk budget, both 5%)
+    # the risk leg can never bind on a valid long — its stop must sit
+    # strictly between 0 and entry, so risk-per-share can never exceed
+    # entry, and the two arithmetically cross only when risk-per-share
+    # exceeds entry. That is the correctly-sized common case this fix
+    # restores (both cases above). The recheck's real job is catching
+    # geometry that drifts AFTER allocation was decided — e.g. a much
+    # larger allocation (high conviction) paired with an abnormally wide
+    # stop: 20% allocation = 400 shares, but a $20/share stop against the
+    # 5%-of-equity budget ($5,000) allows only 250 — the independent
+    # recheck still caps it below what allocation alone would buy.
+    large_alloc_qty = int((total_value * 20.0 / 100) / entry)  # 400
+    wide_stop_for_large_alloc = entry - 20.0  # $20/share risk
+    assert min(
+        large_alloc_qty, qty_by_risk(wide_stop_for_large_alloc),
+    ) == 250
 
 
 def test_pm_memory_builders_warn_on_corrupt_json(caplog):
