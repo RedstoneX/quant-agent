@@ -363,6 +363,148 @@ class EarningsDataProvider:
             ))
         return filings
 
+    def _get_xbrl_financial_facts(self, cik: str, ticker: str, filing_date: str) -> str:
+        """Pull hard financial-statement figures from SEC's structured XBRL
+        data instead of hoping a text-regex found the right heading in the
+        filing's rendered HTML.
+
+        ROOT CAUSE this replaces: `_extract_key_sections` below regexes for
+        headings like "consolidated statements of operations" in flattened
+        plain text, and filing layout / heading phrasing varies enough by
+        filer that no amount of regex tuning holds up filing-to-filing.
+        Measured on production: ~20 of 67 filings recovered under 1,600
+        characters from a 184,000-character document this way, and 12 —
+        including MSFT, AAPL, GOOGL, BAC, CVX, NFLX — extracted exactly ZERO
+        financial figures. The earnings analyst had never seen a single
+        number for those names.
+
+        XBRL is the SEC-mandated structured version of these exact numbers,
+        served for free with no auth beyond the same User-Agent every other
+        SEC call here already sends. This is fetched INDEPENDENTLY of
+        whatever `_extract_key_sections` finds below, so it grounds the
+        numeric side of the analysis even when the text matcher fails
+        completely — it doesn't make the matcher smarter, it makes the
+        matcher's failure mode harmless for the numbers that matter most.
+        It does NOT cover MD&A / risk-factors prose: XBRL doesn't tag prose,
+        so that stays on the text-matching path exactly as before.
+
+        Fails open: any error (network, missing CIK in XBRL, no matching
+        concept) returns "" and the caller proceeds with text-only
+        extraction exactly as it did before this existed — a SEC API
+        hiccup can only leave the analysis as good as before, never worse.
+        """
+        padded_cik = cik.zfill(10)
+        url = f"{SEC_BASE}/api/xbrl/companyfacts/CIK{padded_cik}.json"
+        try:
+            data = json.loads(self._sec_get(url))
+        except Exception as e:  # noqa: BLE001 — fail open, see docstring
+            logger.warning(
+                "XBRL companyfacts fetch failed for %s (CIK %s): %s", ticker, cik, e,
+            )
+            return ""
+
+        facts = data.get("facts", {}).get("us-gaap", {})
+        if not facts:
+            return ""
+
+        try:
+            target = date.fromisoformat(filing_date)
+        except (TypeError, ValueError):
+            target = None
+
+        def _best_value(concept_names: list[str], unit_key: str):
+            # Gather candidates across ALL given concept names, not just the
+            # first one that has any data at all. Filers change which XBRL
+            # tag they report under over time — e.g. many large companies
+            # stopped using `Revenues` around ASC 606 adoption (~2018) in
+            # favor of `RevenueFromContractWithCustomerExcludingAssessedTax`.
+            # `Revenues` still HAS entries for those filers, just a decade
+            # stale — stopping at "first concept with any data" silently
+            # picked a ~10-year-old number for MSFT/AAPL revenue in testing.
+            # Comparing recency across every concept and picking the single
+            # freshest match closes that.
+            dated: list[tuple[date, dict]] = []
+            stale_fallbacks: list[tuple[date, dict]] = []
+            for concept in concept_names:
+                entries = facts.get(concept, {}).get("units", {}).get(unit_key, [])
+                if not entries:
+                    continue
+                candidates = [e for e in entries if e.get("form") in ("10-Q", "10-K")]
+                if not candidates:
+                    candidates = entries
+                for e in candidates:
+                    end = e.get("end")
+                    if not end:
+                        continue
+                    try:
+                        end_d = date.fromisoformat(end)
+                    except ValueError:
+                        continue
+                    if target is None or end_d <= target:
+                        dated.append((end_d, e))
+                    else:
+                        stale_fallbacks.append((end_d, e))
+            if dated:
+                dated.sort(key=lambda pair: pair[0])
+                chosen_end, chosen = dated[-1]
+            elif stale_fallbacks:
+                stale_fallbacks.sort(key=lambda pair: pair[0])
+                chosen_end, chosen = stale_fallbacks[-1]
+            else:
+                return None
+            # Some filers stop reporting a given XBRL tag (switch to a
+            # differently-named one, or fold it into a different line item)
+            # without ever filing a final value under the old tag — that
+            # stale entry still LOOKS like real data and would otherwise be
+            # presented as current. Measured while building this: BAC's
+            # cash tag was 5+ years stale, CVX's long-term-debt tag ~8
+            # years, NFLX's gross-profit tag ~5 years, despite each having
+            # CURRENT data available under the concept the analysis prompt
+            # actually needs. A number this old is worse than no number —
+            # it's the exact "PM sizes off an ungrounded field" failure
+            # mode this whole fix exists to close, just moved from text
+            # extraction into XBRL. One fiscal year plus one quarter of
+            # slack (~455 days) comfortably covers a filer that's merely
+            # running one quarter behind without accepting a genuinely
+            # abandoned tag.
+            MAX_STALENESS_DAYS = 455
+            if target is not None and (target - chosen_end).days > MAX_STALENESS_DAYS:
+                return None
+            val = chosen.get("val")
+            end = chosen.get("end", "?")
+            if val is None:
+                return None
+            return val, end
+
+        lines: list[str] = []
+        revenue = _best_value(
+            ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"], "USD",
+        )
+        if revenue is not None:
+            lines.append(f"Total Revenue: ${revenue[0]:,.0f} (period ending {revenue[1]})")
+        for concept, label in (
+            ("NetIncomeLoss", "Net Income"),
+            ("GrossProfit", "Gross Profit"),
+            ("OperatingIncomeLoss", "Operating Income"),
+            ("Assets", "Total Assets"),
+            ("CashAndCashEquivalentsAtCarryingValue", "Cash & Equivalents"),
+            ("LongTermDebtNoncurrent", "Long-Term Debt"),
+        ):
+            v = _best_value([concept], "USD")
+            if v is not None:
+                lines.append(f"{label}: ${v[0]:,.0f} (period ending {v[1]})")
+        eps = _best_value(["EarningsPerShareDiluted"], "USD/shares")
+        if eps is not None:
+            lines.append(f"Diluted EPS: ${eps[0]:.2f} (period ending {eps[1]})")
+
+        if not lines:
+            return ""
+        return (
+            "=== STRUCTURED FINANCIAL FACTS (SEC XBRL, not text-extracted) ===\n"
+            + "\n".join(lines)
+            + "\n"
+        )
+
     def _download_filing(self, cik: str, filing: FilingInfo) -> str | None:
         """Download filing HTML and save to local file. Returns local path."""
         symbol_dir = self.data_dir / filing.symbol
@@ -708,6 +850,9 @@ class EarningsDataProvider:
             return self._get_existing_analysis(symbol, form_type=latest.form_type)
 
         text = self._extract_text(local_path)
+        xbrl_block = self._get_xbrl_financial_facts(cik, symbol, latest.filing_date)
+        if xbrl_block:
+            text = xbrl_block + "\n" + text
         analysis_path = self._get_analysis_path(symbol, latest.form_type, latest.filing_date)
 
         return EarningsReport(

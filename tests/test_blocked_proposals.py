@@ -321,6 +321,44 @@ def test_rm_zeroing_one_symbol_blocks_only_that_symbol(tmp_path):
     assert "- XOM:" not in out
 
 
+def test_constructor_dropped_symbol_is_not_blamed_for_a_rm_veto(tmp_path):
+    """A Risk Manager veto only blames symbols that actually reached it.
+
+    PM can propose more symbols than the deterministic constructor ends up
+    building `proposed_order` rows for — the constructor drops some before
+    the Risk Manager ever sees the plan. When the Risk Manager then vetoes
+    what's left, only the symbols in its ORDERED plan were actually vetoed
+    by it; blaming the constructor-dropped symbols too (as the pre-fix
+    `_outcome` did, by checking `verdict.approved` before checking
+    membership in `ordered`) overcounts Risk Manager vetoes with names it
+    never reviewed. Mirrors `scripts/blocked_proposals_census.py::classify`,
+    which already applies this `ordered` gate.
+    """
+    pipeline, db = _pipeline(tmp_path)
+    # DROPPED1/DROPPED2: PM proposed them, but the constructor never built
+    # an order for them — they never reached the Risk Manager.
+    _target(db, "r1", "d1", "DROPPED1", days_ago=3)
+    _target(db, "r1", "d1", "DROPPED2", days_ago=3)
+    # SURVIVOR: the constructor kept it in the plan, and the Risk Manager
+    # then vetoed the whole plan.
+    _target(db, "r1", "d1", "SURVIVOR", days_ago=3)
+    _proposed_order(db, "r1", "d1", "SURVIVOR", days_ago=3)
+    _verdict(db, "r1", "d1", approved=False, category="rr_fail", days_ago=3)
+
+    out = pipeline._build_blocked_proposals(min_proposals=1)
+    assert "- SURVIVOR: proposed 1× across 1 sessions, filled 0 — most " \
+           "recent first: rm_rejected:rr_fail" in out
+    assert "DROPPED1: proposed 1× across 1 sessions, filled 0 — most " \
+           "recent first: no_order_built" in out
+    assert "DROPPED2: proposed 1× across 1 sessions, filled 0 — most " \
+           "recent first: no_order_built" in out
+    # Neither dropped symbol carries the Risk Manager's reason.
+    assert "DROPPED1: proposed 1× across 1 sessions, filled 0 — most " \
+           "recent first: rm_rejected" not in out
+    assert "DROPPED2: proposed 1× across 1 sessions, filled 0 — most " \
+           "recent first: rm_rejected" not in out
+
+
 def test_unfilled_order_status_is_rendered_verbatim(tmp_path):
     """`trades.fill_status` is copied through, so 'canceled' stays 'canceled'."""
     pipeline, db = _pipeline(tmp_path)
