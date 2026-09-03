@@ -208,6 +208,77 @@ by the end of the day.
 went from 6 to 2. The `DECIDE BY` line this shipped with in `docs/WORK.md` is
 resolved and removed accordingly.
 
+---
+
+### 2026-09-03 — the macro "no defect" audit finding was wrong; the sanity check overrides most regime-shift calls, and it's a calibration gap, not a broken pipeline
+
+**In plain words:** a prior audit said the macro analyst's "regime shift"
+warning was just a sanity check working correctly once in a while. Checking
+real logs shows it fires on roughly half of every macro run, not
+occasionally — but the underlying data pipeline turns out to be healthy.
+The real problem is a number in the rule that assumes government/market
+data refreshes faster than it actually does, so the check almost never lets
+a genuine regime call through. Fixing that number is a risk-appetite
+decision for the desk owner, not something to change without asking, so it
+is flagged rather than silently changed.
+
+**Detail.** `docs/WORK.md`'s DATA QUALITY AUDIT item 6 claimed "Macro
+analyst — no defect." Checking `journalctl` for the `qamc` user
+(2026-08-17..09-02, 27 retained macro_analyst runs) found the warning
+`Macro sanity-check: LLM set regime_shift=True but only N indicator(s) are
+fresh (staleness_days <= 1) ... clearing regime_shift` on 14 of those 27
+runs (52%) — 10 with zero fresh indicators, 4 with exactly one (3x vix,
+1x credit_spread). The production DB (`agent_logs`) has 33 total
+macro_analyst calls; the retained journal covers 27 of them (six 2026-08-31
+reruns rotated out of retention).
+
+Traced via `src/agents/macro_analyst.py`'s `_apply_sanity_checks`: a
+`regime_shift=True` call is only allowed to stand if >= 2 of the six
+primary indicators (vix, treasury, fed_funds_rate, inflation, unemployment,
+credit_spread) have `staleness_days <= 1`. Inflation/unemployment are
+monthly and were already known to never qualify (by design, documented in
+the same function). The new finding: treasury and fed_funds_rate — both
+DAILY series — also essentially never qualify. Nine production checkpoints
+(`data/checkpoints/*-morning.json`, 2026-08-18..09-02) show treasury and
+fed_funds_rate at `staleness_days=2` in 9 of 9 samples, never 1. A live
+check against FRED's own public `fredgraph.csv` endpoint on 2026-09-03
+confirmed this is not a fetch bug: DGS10, DGS2, DFF, VIXCLS and
+BAMLH0A0HYM2 were ALL sitting at a real, current 2-business-day lag at
+query time — FRED itself had not yet published a fresher print for any of
+the five daily series checked. The pipeline is correctly reporting what
+FRED actually has.
+
+Net effect: of six primary indicators, only vix and credit_spread ever
+reach `staleness_days<=1`, and only intermittently (2 of 9 sampled days
+each) — and both must land on staleness=1 on the SAME day to clear the
+>= 2 bar. That coincidence is rare, which is exactly what production
+showed. This is a genuine calibration bug (the `<=1` bar assumes a
+same/next-day FRED lag that the real world does not deliver), not a fetch
+or pipeline defect — the fetch code, retry logic, and per-cadence
+"staleness" labeling used elsewhere in the same file (the `confidence`
+gate, `_stale()` in the prompt builder) are all measured-correct and were
+NOT changed.
+
+**What was NOT done, and why.** The obvious fix — loosen `staleness_days
+<= 1` to something reachable, e.g. `<= 2` or `<= 3` — was deliberately not
+made. The `<= 1` bar is an explicit, reasoned risk-calibration choice
+written into `config/prompts/macro_analyst.md` ("calling a flip on stale
+data is guessing"), and replacing it with a different number is a
+risk-threshold decision, not a factual correction. That decision belongs to
+the desk owner. See the `docs/WORK.md` DECIDE BY line for the options
+considered (loosen the bar, keep it deliberately strict and accept
+regime_shift rarely fires, or source VIX from a same-day feed instead of
+lagged FRED data).
+
+**What shipped:** the corrected `docs/WORK.md` item 6, this record, and a
+regression test (`test_sanity_check_clears_regime_shift_under_realistic_fred_lag`
+in `tests/test_macro_analyst.py`) that pins the current, measured behavior
+using realistic (not zero-staleness) fixture data, so a future change to
+this gate has to consciously decide to change this documented outcome
+rather than drift into it.
+
+---
+
 ### 2026-09-03 — item 17c: a watchdog for the desk going silent, not just the alarm breaking
 
 **In plain words:** on 2026-09-02 the desk stopped doing any work at all — a

@@ -53,6 +53,14 @@ settled. Restored:**
   whether a level exists at all, a separate question. Detail:
   `docs/INCIDENT_HISTORY.md`, 2026-09-03 "a level needs 5 touches, not 2".
 
+- [ ] DECIDE BY 2026-09-17 — What should the macro `regime_shift`
+  freshness bar be, given real FRED lag (measured `staleness_days=2` on
+  all 5 daily series, gate requires `<=1`)? Deliberate risk-tolerance
+  choice, not a calibration an agent should pick. Options: (a) loosen to
+  match real FRED cadence, (b) keep it deliberately near-unreachable, (c)
+  source VIX same-day instead of lagged FRED. Full measurement:
+  `docs/INCIDENT_HISTORY.md`. Not decided.
+
 **RECONFIRM AFTER A FEW DAYS LIVE — item 14(c)'s call-count cap, owner
 instruction 2026-09-03.** Shipped at `max_calls_per_session: 40`, set from
 real production data (worst COMPLETE session on record made 14 calls,
@@ -117,9 +125,12 @@ Audited from real production logs, not assumed. Ranked by measured severity:
    recurring after it. The `theme_if_any` rejection for real miss
    categories (e.g. AGX) is the intended business rule, not a bug. See PR
    merging `fix/evening-analyst-audit` and `docs/INCIDENT_HISTORY.md`.
-6. **Macro analyst — no defect.** Its warnings are a sanity-check working
-   as designed (rejects an LLM-claimed regime shift on insufficient fresh
-   indicators).
+6. **Macro analyst — CORRECTED 2026-09-03, prior "no defect" claim was
+   wrong.** Fires on 52% of runs, not rare. NOT a fetch/pipeline defect —
+   FRED's real publication lag is 2 days, but the gate's freshness bar
+   assumes 1. Calibration bug, not broken data. Replacement number is a
+   risk-threshold call for the owner — see DECIDE BY below. Full
+   measurement: `docs/INCIDENT_HISTORY.md`.
 
 **Also shipped: a bad analyst seat now gets its OWN Telegram alert.**
 Before this, `data_status` anything but "ok"/"empty" only showed up as one

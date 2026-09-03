@@ -494,6 +494,72 @@ def test_sanity_check_keeps_regime_shift_with_two_fresh_indicators(mock_cls):
     assert analysis.shift_reason == "VIX + HY both jumped today"
 
 
+@patch("anthropic.Anthropic")
+def test_sanity_check_clears_regime_shift_under_realistic_fred_lag(mock_cls, caplog):
+    """Live-verified 2026-09-03: as of a real query against FRED's public
+    fredgraph.csv endpoint, DGS10/DGS2/DFF/VIXCLS/BAMLH0A0HYM2 ALL sat at
+    staleness_days=2 (their latest print trailed the query date by 2
+    business days) — not the 0-1 the existing fixtures above assume. Nine
+    independent production checkpoints (data/checkpoints/*-morning.json,
+    2026-08-18..2026-09-02) confirm this is the NORM, not a bad day:
+    treasury and fed_funds_rate read staleness_days=2 in 9/9 samples,
+    never 1. vix and credit_spread occasionally reach 1 (2/9 each) but
+    usually also sit at 2.
+
+    This means the regime-shift gate's `staleness_days <= 1` "fresh" bar
+    (macro_analyst.md 'Regime-Shift Detection', mirrored here) is only
+    reachable by the two indicators that occasionally get lucky (vix,
+    credit_spread) — and only when BOTH happen to land on staleness=1 on
+    the SAME day. Under the realistic, day-to-day-typical staleness
+    profile below (everything at its normal 2-business-day FRED lag,
+    which is NOT stale by the >3 cadence bar used everywhere else in this
+    file), the gate clears every regime_shift call. Production logs
+    confirm this isn't theoretical: 14 of 27 retained macro_analyst runs
+    (2026-08-17..09-02) hit this exact override — not the rare
+    edge-case the pre-audit docs described.
+
+    This test PINS today's actual code behavior (root-cause: no fetch
+    defect — FRED itself has not yet published a fresher print; verified
+    live). It intentionally does NOT change the `<=1` threshold — that
+    number is a deliberate, documented risk-calibration choice
+    (macro_analyst.md: "calling a flip on stale data is guessing") and
+    picking a replacement value is a threshold call for the desk owner,
+    not something to decide here. See docs/WORK.md DATA QUALITY AUDIT
+    item 6 and the DECIDE BY line under Open Decisions.
+    """
+    realistic_typical_lag = {
+        **MACRO_SUMMARY,
+        "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 2},
+        "treasury": {**MACRO_SUMMARY["treasury"], "staleness_days": 2},
+        "fed_funds_rate": {**MACRO_SUMMARY["fed_funds_rate"], "staleness_days": 2},
+        "credit_spread": {**MACRO_SUMMARY["credit_spread"], "staleness_days": 2},
+    }
+    _mock_macro_llm(
+        mock_cls,
+        _llm_response_dict(
+            confidence="medium", regime_shift=True,
+            shift_reason="Curve steepened and credit tightened together",
+        ),
+    )
+
+    agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
+    import logging
+    with caplog.at_level(logging.WARNING):
+        analysis, _ = agent.analyze(macro_summary=realistic_typical_lag, universe=["SPY"])
+
+    assert analysis is not None
+    assert analysis.regime_shift is False, (
+        "documents current behavior: a normal (not-stale-by-cadence) "
+        "day still clears regime_shift because none of the four daily "
+        "indicators land at staleness_days<=1 under real FRED lag — "
+        "see docstring for the live + production evidence"
+    )
+    assert any(
+        "only 0 indicator(s) are fresh" in r.message
+        for r in caplog.records
+    ), "typical-lag day should present as ZERO fresh indicators, not a rare partial miss"
+
+
 def test_prompt_uses_one_consistent_staleness_rule_for_daily_and_monthly():
     """External review: the UNSOURCED-token rule and the Confidence
     Calibration section previously disagreed on the daily threshold
