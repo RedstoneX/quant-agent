@@ -22,6 +22,7 @@ might leak internal details.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from functools import lru_cache
 
 from src.api.deps import (
@@ -42,6 +43,11 @@ def _position_direction(symbol: str, sweep_symbol: str) -> str:
     if symbol in INVERSE_ETF_SYMBOLS:
         return "bearish_hedge"
     return "long"
+
+
+def _utc_now() -> datetime:
+    """Seam for tests — real code never patches `datetime` itself."""
+    return datetime.now(timezone.utc)
 
 
 @lru_cache(maxsize=1)
@@ -102,6 +108,7 @@ def read_positions() -> dict:
             # as every other broker_reads function.
             logger.warning("broker_reads.read_positions: could not read cash_sweep symbol: %s", exc)
             sweep_symbol = None
+        retrieved_at = _utc_now().isoformat()
         out = []
         for p in positions:
             out.append({
@@ -109,6 +116,21 @@ def read_positions() -> dict:
                 "qty": p.qty,
                 "avg_entry": p.avg_entry,
                 "current_price": p.current_price,
+                # Alpaca's position response is a broker MARK, not a
+                # market-data quote, and supplies no mark timestamp — so
+                # market_as_of is always None and freshness is always
+                # "unknown" here by construction (docs/WORK.md item 15).
+                # retrieved_at is real: when THIS read happened, not when
+                # the market observed the price — never conflate the two.
+                "position_mark": {
+                    "value": p.current_price,
+                    "price_kind": "broker_position_mark",
+                    "provider": "alpaca",
+                    "feed": "broker_position",
+                    "market_as_of": None,
+                    "retrieved_at": retrieved_at,
+                    "freshness": "unknown",
+                },
                 "market_value": p.market_value,
                 "unrealized_pnl": p.unrealized_pnl,
                 "unrealized_intraday_pnl": getattr(p, "unrealized_intraday_pnl", None),

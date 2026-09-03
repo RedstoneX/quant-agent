@@ -118,6 +118,11 @@ def stub_broker(monkeypatch):
     monkeypatch.setattr(routes_live, "read_positions", lambda: {
         "positions": [{
             "symbol": "AAPL", "qty": 10, "avg_entry": 150.0, "current_price": 155.0,
+            "position_mark": {
+                "value": 155.0, "price_kind": "broker_position_mark",
+                "provider": "alpaca", "feed": None, "market_as_of": None,
+                "retrieved_at": "2026-08-08T14:30:00+00:00", "freshness": "unknown",
+            },
             "market_value": 1550.0, "unrealized_pnl": 50.0,
             "unrealized_intraday_pnl": 5.0, "sector": "Technology",
         }],

@@ -830,25 +830,17 @@ morning charges and latches on — so the day it darkens is not the day it
 broke (never observed; read from code). And cache hits record no cost, so
 the alert prints `cost: $?.??` and hides the real figure.
 
-**15. We cannot tell a stale price from a live one — ABANDONED WORK EXISTS.**
+**15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
 
-Every price the desk uses is currently just a number. Nothing records which
-feed it came from, when the MARKET observed it (as opposed to when we
-fetched it), or whether it is fresh enough to trade on. Retrieval time
-currently makes an old observation look current.
-
-This is upstream of at least three items already on this list: sizing that
-rounds to zero (item 5), the quote rejected as 14.6% off reference (item 9),
-and a blind data day that looks identical to a quiet one (item 11). It also
-bears on the paper-only IEX feed caveat that must be revisited before live
-capital.
-
-**~450 lines already exist on `rescue/price-provenance`** — rescued from the
-dev account 2026-09-01, never reviewed. It tags each price with its kind,
-provider, feed, market-as-of, retrieved-at and a freshness classification.
-**Health warning: it is a HALF-APPLIED PATCH.** Two `.rej` files are
-committed on the branch, meaning chunks failed to apply and nobody went
-back. Treat it as a strong starting point, not as work to merge.
+Full reasoning: `docs/INCIDENT_HISTORY.md` ("item 15"). Held positions now
+carry real provenance (`position_mark`: kind, provider, feed, market-as-of,
+retrieved-at, freshness) — a broker mark, correctly tagged `freshness:
+"unknown"` since Alpaca supplies no mark timestamp, never fabricated as
+fresh. The bigger half — tagging live quotes and historical bars the same
+way, which is what items 5/9/11 actually need — is still open: it needs an
+owner decision on which of two competing `read_price_bars` implementations
+wins (see the rescued `rescue/price-provenance` branch's `.rej` files), which
+is a real architecture choice, not a mechanical merge.
 
 **16. The afternoon spending reserve was built and never connected.**
 

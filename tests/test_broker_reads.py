@@ -117,12 +117,54 @@ def test_read_positions_flattens_position_objects(monkeypatch):
     ))
     out = broker_reads.read_positions()
     assert out["error"] is None
+    mark = out["positions"][0]["position_mark"]
+    assert mark["value"] == 110.0
+    assert mark["price_kind"] == "broker_position_mark"
+    assert mark["provider"] == "alpaca"
+    assert mark["market_as_of"] is None
+    assert mark["freshness"] == "unknown"
+    assert mark["retrieved_at"]  # a real, non-empty ISO timestamp — value varies per run
+    out["positions"][0].pop("position_mark")
     assert out["positions"] == [{
         "symbol": "NVDA", "qty": 10.0, "avg_entry": 100.0,
         "current_price": 110.0, "market_value": 1100.0,
         "unrealized_pnl": 100.0, "unrealized_intraday_pnl": 5.0,
         "sector": "Technology", "is_cash_equivalent": False, "direction": "long",
     }]
+
+
+def test_position_mark_has_unknown_market_freshness_and_preserves_broker_accounting(monkeypatch):
+    """docs/WORK.md item 15: a position's `current_price` is an Alpaca
+    broker MARK, not a market-data quote — it must never be presented as
+    fresher than it actually is. `market_as_of` is always None and
+    `freshness` is always "unknown" for this price_kind, by construction
+    (Alpaca's position response carries no mark timestamp), not because a
+    read failed. `retrieved_at` is real wall-clock time — when THIS read
+    happened — pinned here via the `_utc_now` seam."""
+    import datetime as dt
+
+    monkeypatch.setattr(broker_reads, "_get_broker", lambda: _broker(
+        get_positions=lambda: [_position()],
+    ))
+    monkeypatch.setattr(
+        broker_reads, "_utc_now",
+        lambda: dt.datetime(2026, 8, 21, 15, 0, tzinfo=dt.timezone.utc),
+    )
+
+    item = broker_reads.read_positions()["positions"][0]
+
+    assert item["position_mark"] == {
+        "value": 110.0,
+        "price_kind": "broker_position_mark",
+        "provider": "alpaca",
+        "feed": "broker_position",
+        "market_as_of": None,
+        "retrieved_at": "2026-08-21T15:00:00+00:00",
+        "freshness": "unknown",
+    }
+    # The provenance addition must not disturb the pre-existing accounting.
+    assert item["market_value"] == 1100.0
+    assert item["unrealized_pnl"] == 100.0
 
 
 def test_read_positions_tags_sweep_vehicle_and_inverse_etf(monkeypatch):
