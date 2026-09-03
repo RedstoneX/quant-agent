@@ -563,20 +563,12 @@ defect log is append-only and is never trimmed.
 
 ### Landed 2026-09-03 — RM-modification safety guards, FIXED
 
-A risk-manager "modification" could silently cancel a SELL/COVER exit
-(zeroed `allocation_pct` reads as skip at execution — hit live 2026-08-24,
-two symbols) or ship a stop/target edit that broke the same 1.5 R/R floor
-or noise-band check a fresh decision has to clear, because both re-checks
-compared the edited decision only against itself. Both guards now live in
-`_apply_risk_modifications`; an exit can no longer be zeroed by an edit
-(a real refusal goes through `rejected_symbols` instead, visibly), and a
-stop/target edit is re-measured against `REWARD_RISK_FLOOR` and (when bars
-are available) the ATR noise-band floor before it ships. Also fixed in the
-same pass: the post-modification hard-risk re-filter was dropping the
-`in_drawdown` flag the pre-modification call already computes. Full detail
-and the tests added: `docs/INCIDENT_HISTORY.md`, 2026-09-03, "a
-risk-manager 'modification' could silently cancel an exit or ship a trade a
-fresh one would have been refused."
+A risk-manager "modification" could silently cancel a SELL/COVER exit or
+ship a stop/target edit that broke the R/R or noise-band floor a fresh
+decision would have to clear. Both guards now live in
+`_apply_risk_modifications`. Full detail and tests: `docs/INCIDENT_HISTORY.md`,
+2026-09-03, "a risk-manager 'modification' could silently cancel an exit or
+ship a trade a fresh one would have been refused."
 
 ### Ordered backlog — RESUME POINT
 
@@ -1221,6 +1213,16 @@ order-construction and Risk Manager code end to end for the first time
 same read, applied one layer earlier). Full detail on all six:
 `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction
 audit".
+
+**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — DEFECT, blocks a clean full-suite baseline.**
+
+It still configures `llm_cost_circuit.reservation_min_history_samples`
+and `...session_reserved_exposure_limit_usd`, both deleted by item 14's
+2026-09-02 rewrite. `AppConfig` now rejects them outright, so both tests
+in the file error before running instead of testing anything. Confirmed
+against a clean `origin/main` checkout, independent of any in-flight PR.
+Needs the fixture's config dict updated to the post-item-14 shape
+(`max_calls_per_session`); not yet fixed.
 
 ---
 
