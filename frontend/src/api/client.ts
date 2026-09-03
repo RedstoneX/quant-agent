@@ -145,11 +145,38 @@ export interface AccountResponse {
 
 export type PositionDirection = "long" | "bearish_hedge" | "cash_equivalent";
 
+export type PriceKind =
+  | "broker_position_mark"
+  | "current_quote"
+  | "delayed_quote"
+  | "historical_daily_close"
+  | "unknown";
+
+export type FreshnessClassification = "current" | "delayed" | "historical" | "stale" | "unknown";
+
+/** One price plus enough provenance to say what it actually is.
+ * `market_as_of` is the provider's market timestamp when supplied;
+ * `retrieved_at` is when this API observed it — kept separate so retrieval
+ * time never makes an old market observation look current. */
+export interface PriceObservation {
+  value: number | null;
+  price_kind: PriceKind;
+  provider: string | null;
+  feed: string | null;
+  market_as_of: string | null;
+  retrieved_at: string;
+  freshness: FreshnessClassification;
+}
+
 export interface PositionItem {
   symbol: string;
   qty: number;
   avg_entry: number;
   current_price: number;
+  /** Canonical provenance for current_price — an Alpaca broker position
+   * mark, not a market-data quote; freshness is always "unknown" for this
+   * price_kind by construction, not because a read failed. */
+  position_mark: PriceObservation;
   market_value: number;
   unrealized_pnl: number;
   unrealized_intraday_pnl: number | null;
