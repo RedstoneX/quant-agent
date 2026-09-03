@@ -53,15 +53,14 @@ def _config(**overrides):
         "enabled": True,
         "session_cost_limit_usd": 10.0,
         "daily_cost_limit_usd": 20.0,
-        # Backstop only as of Defect 4 (2026-08-28) -- matches
-        # src/config.py's production default. Tests exercising the count
-        # cap itself override it explicitly.
-        "max_free_failure_sessions_per_mode": 8,
+        # Item 14 (2026-09-02): the runaway-loop backstop is now a plain
+        # call count (docs/WORK.md item 14c), not a reservation-era
+        # free-failure-session count. High by default so tests not
+        # exercising the cap itself never hit it; tests for the cap
+        # override it explicitly.
+        "max_calls_per_session": 1000,
         "max_provider_attempts_per_call": 2,
-        "max_retry_attempts_per_session": 2,
-        "reservation_ttl_minutes": 30,
         "input_chars_per_token": 3.5,
-        "reservation_multiplier": 1.05,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -97,46 +96,26 @@ def test_pipeline_attaches_breaker_to_every_paid_agent():
         agent.set_cost_circuit.assert_called_once_with(circuit)
 
 
-def test_projected_session_spend_blocks_before_provider_request(tmp_path):
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        _db_path(tmp_path),
-        _config(session_cost_limit_usd=0.01, daily_cost_limit_usd=1.0),
-        notifier,
-    )
-    circuit.activate_session("run-projected", "morning")
-
-    with pytest.raises(PaidAnalysisSuspended):
-        circuit.begin_call(
-            agent_name="portfolio_manager",
-            model="openai/gpt-5.5",
-            system_prompt="system",
-            user_message="input",
-            max_output_tokens=16_000,
-        )
-
-    state = circuit.status()
-    assert state["trigger_code"] == "projected_session_cost_limit"
-    assert state["provider_attempts"] == 0
-    assert len(notifier.messages) == 1
-    alert = notifier.messages[0]
-    assert "affected run: run-projected" in alert
-    assert "attempts: 0 provider attempts" in alert
-    assert "QAMC PAID ANALYSIS QUOTA HOLD" in alert
-    assert "scope: run run-projected only" in alert
-    assert "later independent sessions remain eligible" in alert
-    assert "preserved: broker-resident stops" in alert
 
 
 def test_optional_retry_budget_exhaustion_skips_without_opening_circuit(tmp_path):
+    """Item 14 (2026-09-02): the optional-retry skip is now keyed off the
+    plain per-session call-count backstop (14c), not a reservation-era
+    retry-attempts counter. A session that has already used its whole
+    call budget on real work still lets an OPTIONAL retry bow out quietly
+    (OptionalPaidAnalysisRetrySkipped) instead of tripping the circuit --
+    the caller may safely keep its already-completed primary analysis."""
     path = _db_path(tmp_path)
-    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
+    circuit = LLMCostCircuitBreaker(path, _config(max_calls_per_session=2), _Notifier())
     circuit.activate_session("run-optional-retry", "morning")
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE llm_budget_sessions SET retry_attempts=2 WHERE run_id=?",
-            ("run-optional-retry",),
+    for _ in range(2):
+        reservation = circuit.begin_call(
+            agent_name="tech_analyst",
+            model="google/gemini-3.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
         )
+        circuit.before_provider_attempt(reservation, model=reservation.model)
+        circuit.complete_call(reservation, 0.01)
 
     with pytest.raises(OptionalPaidAnalysisRetrySkipped):
         circuit.begin_call(
@@ -153,16 +132,13 @@ def test_optional_retry_budget_exhaustion_skips_without_opening_circuit(tmp_path
     assert state["suspended"] is False
     with sqlite3.connect(path) as conn:
         row = conn.execute(
-            "SELECT logical_calls, provider_attempts, retry_attempts, status "
-            "FROM llm_budget_sessions WHERE run_id=?",
+            "SELECT logical_calls, status FROM llm_budget_sessions WHERE run_id=?",
             ("run-optional-retry",),
         ).fetchone()
-        reservations = conn.execute(
-            "SELECT COUNT(*) FROM llm_budget_reservations WHERE run_id=?",
-            ("run-optional-retry",),
-        ).fetchone()[0]
-    assert row == (0, 0, 2, "active")
-    assert reservations == 0
+    # The skipped optional retry never incremented logical_calls or
+    # touched session status -- exactly like the reservation-era version,
+    # just measured by a raw count instead of a reservation row.
+    assert row == (2, "active")
 
 
 def test_completed_session_spend_holds_only_that_session_and_cannot_be_reset(tmp_path):
@@ -240,10 +216,7 @@ def test_base_agent_third_provider_attempt_is_blocked_before_network(tmp_path, m
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
         path,
-        _config(
-            max_provider_attempts_per_call=2,
-            max_retry_attempts_per_session=10,
-        ),
+        _config(max_provider_attempts_per_call=2),
         notifier,
     )
     circuit.activate_session("run-retries", "morning")
@@ -283,10 +256,17 @@ def test_base_agent_third_provider_attempt_is_blocked_before_network(tmp_path, m
     state = circuit.status()
     assert state["trigger_code"] == "failed_call_unknown_cost"
     assert len(notifier.messages) == 2
-    assert "without final usage telemetry" in notifier.messages[1]
+    assert "no provable-zero-cost telemetry" in notifier.messages[1]
 
 
-def test_failed_call_without_usage_consumes_reserve_and_latches(tmp_path, monkeypatch):
+def test_failed_call_with_ambiguous_cost_latches_without_inventing_a_charge(tmp_path, monkeypatch):
+    """Item 14 (2026-09-02): an ambiguous failure (not provably $0) still
+    fails closed -- but there is no reservation left to convert into a
+    dollar charge, so it marks the day/session inexact and latches on
+    THAT, rather than booking a guessed amount. Renamed from
+    `test_failed_call_without_usage_consumes_reserve_and_latches`, which
+    pinned the old "charge the conservative reserve" behavior this
+    replaces."""
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(path, _config(), notifier)
@@ -303,9 +283,11 @@ def test_failed_call_without_usage_consumes_reserve_and_latches(tmp_path, monkey
 
     state = circuit.status()
     assert state["trigger_code"] == "failed_call_unknown_cost"
-    assert state["current_session_cost_usd"] > 0
-    assert state["current_daily_cost_usd"] > 0
-    assert "without final usage telemetry" in notifier.messages[0]
+    # No reservation exists to charge any more -- an ambiguous failure
+    # costs the ledger nothing invented, only certainty.
+    assert state["current_session_cost_usd"] == 0
+    assert state["current_daily_cost_usd"] == 0
+    assert "no provable-zero-cost telemetry" in notifier.messages[0]
 
 
 # ============================================================================
@@ -364,20 +346,23 @@ def _assert_charged_nothing_and_did_not_trip(circuit, notifier, path, reservatio
     assert notifier.messages == []
     with sqlite3.connect(path) as conn:
         row = conn.execute(
-            "SELECT status, actual_cost_usd, reserved_cost_usd "
-            "FROM llm_budget_reservations WHERE reservation_id=?",
-            (reservation.reservation_id,),
+            "SELECT status, actual_cost_usd, costs_exact "
+            "FROM llm_budget_sessions WHERE run_id=?",
+            (reservation.run_id,),
         ).fetchone()
-    assert row == ("failed", 0.0, 0.0)
+    assert row == ("active", 0.0, 1)
 
 
 def _assert_charged_and_tripped(circuit, notifier, reservation):
     state = circuit.status()
     assert state["suspended"] is True
     assert state["trigger_code"] == "failed_call_unknown_cost"
-    assert state["current_session_cost_usd"] > 0
-    assert state["current_daily_cost_usd"] > 0
-    assert "without final usage telemetry" in notifier.messages[0]
+    # Item 14 (2026-09-02): no reservation exists to convert into a dollar
+    # charge any more -- an ambiguous failure marks the ledger inexact
+    # instead of booking a guessed amount.
+    assert state["current_session_cost_usd"] == 0
+    assert state["current_daily_cost_usd"] == 0
+    assert "no provable-zero-cost telemetry" in notifier.messages[0]
 
 
 @pytest.mark.parametrize("status_code", [429, 400, 401, 403, 404])
@@ -537,10 +522,14 @@ def _retry_then_succeed(circuit, *, run_id, first_error, actual_cost,
 
 
 def _settled(path, reservation):
+    """This logical call's settled cost. Item 14 (2026-09-02): there is no
+    per-call reservation row any more, so read the session's running total
+    instead -- exactly one call was made per run_id in every caller below,
+    so the session total IS this call's settled cost."""
     with sqlite3.connect(path) as conn:
         return conn.execute(
-            "SELECT actual_cost_usd FROM llm_budget_reservations "
-            "WHERE reservation_id=?", (reservation.reservation_id,),
+            "SELECT actual_cost_usd FROM llm_budget_sessions "
+            "WHERE run_id=?", (reservation.run_id,),
         ).fetchone()[0]
 
 
@@ -570,10 +559,17 @@ def test_success_after_provably_free_attempt_is_charged_only_the_real_cost(
         ).fetchone()[0] == 1
 
 
-def test_success_after_ambiguous_attempt_still_carries_the_failed_reserve(tmp_path):
-    """Fail closed, unchanged: a 500 might have billed for a stream that
-    started and died, so its reserve stays on the ledger and the day stops
-    being exact -- exactly the pre-2026-09-02 behaviour."""
+def test_success_after_ambiguous_attempt_marks_inexact_instead_of_a_phantom_charge(tmp_path):
+    """Renamed from `test_success_after_ambiguous_attempt_still_carries_the_
+    failed_reserve`, which pinned the OLD behaviour: a 500 might have billed
+    for a stream that started and died, so its conservative reserve was
+    added on top of the real settled cost. That assertion is now WRONG on
+    its own terms -- item 14 (2026-09-02) deleted the reservation there was
+    ever anything to add. The fail-closed intent survives in a different
+    place: the day/session is marked inexact (so `_enforce_settled_limits_
+    locked` latches on it), while the ledger itself only ever holds the
+    ACTUAL cost of the response that came back -- no invented figure for
+    what an ambiguous failed attempt might have cost."""
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
     ambiguous = _StatusCodeError(500, "upstream exploded mid-stream")
@@ -583,18 +579,23 @@ def test_success_after_ambiguous_attempt_still_carries_the_failed_reserve(tmp_pa
         actual_cost=0.0014, failed_attempt_errors=[ambiguous],
     )
 
-    assert _settled(path, reservation) > 0.0014
+    # Only the real, settled cost is ever booked -- never a guess.
+    assert _settled(path, reservation) == pytest.approx(0.0014)
     with sqlite3.connect(path) as conn:
         assert conn.execute(
             "SELECT costs_exact FROM llm_budget_sessions WHERE run_id=?",
             ("run-retry-500",),
         ).fetchone()[0] == 0
+    # Fail-closed is not lost: an inexact day hard-latches on the very next
+    # authorization boundary, same posture as the deleted phantom charge.
+    assert circuit.status()["trigger_code"] == "legacy_unknown_cost"
 
 
-def test_one_ambiguous_attempt_among_free_ones_keeps_the_whole_reserve(tmp_path):
-    """Ambiguity is contagious on purpose (see `_all_attempts_provably_free`):
-    the reservation covers the whole call, so one attempt that might have
-    been billed makes all of it chargeable."""
+def test_one_ambiguous_attempt_among_free_ones_still_marks_inexact(tmp_path):
+    """Renamed from `..._keeps_the_whole_reserve`: ambiguity is still
+    contagious (see `_all_attempts_provably_free`) -- one attempt that
+    might have been billed still makes the whole call's exactness suspect
+    -- but there is no reservation left to inflate a dollar charge with."""
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
     free = _StatusCodeError(429, "rate limited")
@@ -605,13 +606,20 @@ def test_one_ambiguous_attempt_among_free_ones_keeps_the_whole_reserve(tmp_path)
         actual_cost=0.0014, failed_attempt_errors=[free, ambiguous],
     )
 
-    assert _settled(path, reservation) > 0.0014
+    assert _settled(path, reservation) == pytest.approx(0.0014)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT costs_exact FROM llm_budget_sessions WHERE run_id=?",
+            ("run-retry-mixed",),
+        ).fetchone()[0] == 0
 
 
-def test_caller_that_names_no_attempts_keeps_the_old_conservative_charge(tmp_path):
-    """The parameter is optional, so an old caller (or a replay script) that
-    cannot enumerate its attempts must get the pre-fix accounting -- this can
-    only ever recognise MORE genuinely-free attempts, never fewer."""
+def test_caller_that_names_no_attempts_is_treated_as_exact(tmp_path):
+    """Renamed from `..._keeps_the_old_conservative_charge`: the parameter
+    is still optional, but with no reservation to inflate, a caller that
+    cannot enumerate its attempts no longer gets a worse-case guess -- it
+    gets exactly what the provider actually reported, same as a clean
+    first-attempt success. There is nothing left to be conservative WITH."""
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
 
@@ -621,7 +629,7 @@ def test_caller_that_names_no_attempts_keeps_the_old_conservative_charge(tmp_pat
         actual_cost=0.0014, failed_attempt_errors=None,
     )
 
-    assert _settled(path, reservation) > 0.0014
+    assert _settled(path, reservation) == pytest.approx(0.0014)
 
 
 def test_clean_first_attempt_success_is_unaffected_by_the_new_parameter(tmp_path):
@@ -675,32 +683,27 @@ def test_base_agent_reports_its_failed_attempts_to_the_circuit(tmp_path, monkeyp
     assert result.model == "claude-sonnet-4-6"
 
     with sqlite3.connect(path) as conn:
-        settled, exact = conn.execute(
-            "SELECT actual_cost_usd, costs_exact FROM llm_budget_sessions "
-            "WHERE run_id=?", ("run-agent-retry",),
+        settled, exact, attempts = conn.execute(
+            "SELECT actual_cost_usd, costs_exact, provider_attempts "
+            "FROM llm_budget_sessions WHERE run_id=?", ("run-agent-retry",),
         ).fetchone()
-        reserve_row = conn.execute(
-            "SELECT attempt_count FROM llm_budget_reservations WHERE run_id=?",
-            ("run-agent-retry",),
-        ).fetchone()
-    assert reserve_row[0] == 2, "both attempts must have been authorized"
-    # Two provider attempts were authorized, so the reservation carried two
-    # attempts' worth of reserve; only the one that produced a response may
-    # be charged, and the priced-from-usage figure is far below either.
+    assert attempts == 2, "both attempts must have been authorized"
+    # Item 14 (2026-09-02): no reservation exists to carry two attempts'
+    # worth of reserve any more -- only the actual settled cost of the
+    # response that came back is ever booked.
     assert exact == 1
     assert settled == pytest.approx(result.cost_usd, rel=1e-9)
     assert settled == pytest.approx(0.00045, rel=1e-9)
 
 
 # ============================================================================
-# Defect 4 (2026-08-28): `max_free_failure_sessions_per_mode` (default 2)
-# was the OPERATIVE per-mode limit, not a backstop -- intra_check fires 14
-# times between 09:30-16:00 ET, so its 3rd session of the day tripped at
-# 11:30 ET with only $0.1765 spent all day. Replaced with a dollar-based
-# per-mode allowance (`max_mode_daily_exposure_pct`) plus an afternoon
-# reserve (`afternoon_reserve_pct` / `afternoon_reserve_release_et_hour`);
-# the session count is kept only as a much-higher backstop against an
-# infinite loop.
+# Item 14 (OWNER-APPROVED 2026-09-02, docs/WORK.md): the runaway-loop
+# backstop is now a plain per-session call COUNT (`max_calls_per_session`),
+# independent of price -- replacing the reservation-era free-failure-session
+# counting query, its cooling-off window, and the dollar-based per-mode/
+# afternoon-reserve machinery that all existed to manage the deleted
+# reservation's over-holding. A loop is defined by call count, and counting
+# cannot be wrong about a rate the way a dollar estimate can.
 # ============================================================================
 
 def _settle_cheap_session(circuit, path, run_id, mode, cost):
@@ -713,916 +716,158 @@ def _settle_cheap_session(circuit, path, run_id, mode, cost):
     circuit.complete_call(reservation, cost, actual_model=reservation.model)
 
 
-def test_old_session_count_default_no_longer_blocks_paid_sessions(tmp_path):
-    """Historically (Defect 4, pre-4.1): with the OLD default (2), a 3rd
-    same-day intra_check session was blocked regardless of how little money
-    had actually been spent -- exactly the 11:30 ET stop at $0.1765/day.
-    That was a COUNTING bug (`logical_calls>0 OR provider_attempts>0` counts
-    every session that did anything, paid or not), not a config bug -- so
-    fixing the query, not just raising the number, must mean even this
-    dangerously-low old default (2) does not block a 3rd PAID session
-    (Defect 4.1, 2026-08-29)."""
+def test_session_count_cap_triggers_on_the_next_call(tmp_path):
+    """(c): a session that has already made N calls is stopped on call
+    N+1 -- a runaway loop is caught by COUNT, with no dollar amount
+    involved at all (every call here settles at exactly $0)."""
     path = _db_path(tmp_path)
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(
-        path, _config(max_free_failure_sessions_per_mode=2), notifier,
+        path, _config(max_calls_per_session=3), notifier,
     )
-    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.0588)
-    _settle_cheap_session(circuit, path, "intra_check-1", "intra_check", 0.0588)
-
-    circuit.activate_session("intra_check-2", "intra_check")
-    reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-        system_prompt="s", user_message="u", max_output_tokens=100,
-    )
-    assert reservation.reservation_id
-    state = circuit.status()
-    assert state["suspended"] is False
-    assert notifier.messages == []
-
-
-def test_fixed_default_no_longer_blocks_the_2026_08_28_scenario(tmp_path):
-    """NEW behaviour with the fixed default (8, backstop only): the same
-    three cheap intra_check sessions from the test above do not trip
-    anything -- the gate is now dollars, and $0.1765/day is nowhere near
-    any dollar ceiling."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(path, _config(), notifier)  # max_sessions default now 8
-    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.0588)
-    _settle_cheap_session(circuit, path, "intra_check-1", "intra_check", 0.0588)
-    _settle_cheap_session(circuit, path, "intra_check-2", "intra_check", 0.0588)
-
-    state = circuit.status()
-    assert state["suspended"] is False
-    assert notifier.messages == []
-
-
-def test_session_count_backstop_still_trips_a_genuine_runaway_loop(tmp_path):
-    """The count cap must still exist as a backstop: a loop of sessions
-    that spend essentially nothing (e.g. every attempt is a Defect-2
-    known-zero-cost rejection) would never trip a dollar-based check, so
-    something must still stop it.
-
-    Post-4.1 the trip is a bounded cooling-off window rather than a sticky
-    mode-day latch (see the cooling-off tests below), so unlike the old
-    behaviour `circuit.status()` right after is NOT expected to still show
-    it -- the raised exception's own state is the thing to check, exactly
-    like the afternoon reserve's non-sticky checks elsewhere in this file."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path, _config(max_free_failure_sessions_per_mode=3), notifier,
-    )
-    for i in range(3):
-        _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.0)
-
-    circuit.activate_session("intra_check-3", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended) as excinfo:
-        circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert excinfo.value.state["trigger_code"] == "session_retry_limit"
-
-
-def test_mode_daily_spend_limit_trips_on_dollars_not_session_count(tmp_path):
-    """The new operative per-mode gate: two sessions of the SAME mode have
-    already settled more than the per-mode dollar ceiling between them; a
-    3rd is blocked on dollars while the session-count backstop (100,
-    deliberately out of the way here) never enters into it."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path,
-        _config(
-            daily_reserved_exposure_limit_usd=1.0,
-            daily_cost_limit_usd=1.0,
-            max_mode_daily_exposure_pct=50.0,  # $0.50 ceiling for one mode
-            max_free_failure_sessions_per_mode=100,
-        ),
-        notifier,
-    )
-    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.30)
-    _settle_cheap_session(circuit, path, "intra_check-1", "intra_check", 0.25)
-
-    circuit.activate_session("intra_check-2", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended):
-        circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    state = circuit.status()
-    assert state["trigger_code"] == "mode_daily_spend_limit"
-    assert state["current_daily_cost_usd"] == pytest.approx(0.55)
-
-
-def test_mode_daily_spend_limit_does_not_block_a_different_mode(tmp_path):
-    """The allowance is per-MODE: a different mode on the same day, with
-    its own budget untouched, is unaffected by another mode's spend."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path,
-        _config(
-            daily_reserved_exposure_limit_usd=1.0,
-            daily_cost_limit_usd=1.0,
-            max_mode_daily_exposure_pct=50.0,
-            max_free_failure_sessions_per_mode=100,
-        ),
-        notifier,
-    )
-    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.45)
-
-    circuit.activate_session("run-morning", "morning")
-    reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-        system_prompt="s", user_message="u", max_output_tokens=100,
-    )
-    assert reservation.reservation_id
-
-
-# ============================================================================
-# Defect 4.1 (2026-08-29): the backstop's counting query counted every
-# session that did ANY work (`logical_calls>0 OR provider_attempts>0`), not
-# just a free-failure loop -- `logical_calls` is set the instant a
-# reservation is admitted, before any provider attempt, and is never
-# cleared on failure, so it is >0 for every session that ever placed a
-# reservation, paid or not. A normal trading day burned the backstop down
-# on its own, and raising the number (2 -> 8 -> 40) only masked that. Fixed
-# to count only sessions with a provider attempt that settled at zero cost,
-# and changed from a mode-day latch to a bounded, self-healing cooling-off
-# window (see the module-level NOTE on "session_retry_limit" in
-# src/cost_circuit.py).
-# ============================================================================
-
-def test_healthy_day_many_paid_sessions_never_trip_the_backstop(tmp_path):
-    """A normal trading day: successful, money-spending sessions must never
-    consume backstop budget, no matter how many of them there are. N=20 is
-    well above the cap of 8 -- under the OLD counting rule this would
-    definitely have latched the mode for the rest of the day, exactly like
-    2026-08-28."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path, _config(max_free_failure_sessions_per_mode=8), notifier,
-    )
-    for i in range(20):
-        _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.01)
-
-    circuit.activate_session("intra_check-20", "intra_check")
-    reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-        system_prompt="s", user_message="u", max_output_tokens=100,
-    )
-    assert reservation.reservation_id
-    assert circuit.status()["suspended"] is False
-    assert notifier.messages == []
-
-
-def test_genuine_free_failure_loop_trips_the_backstop_at_the_cap(tmp_path):
-    """The counterpart to the healthy-day test above: sessions that made a
-    provider attempt and settled at exactly zero cost DO count, and the 9th
-    such session in one mode/day is blocked with `session_retry_limit`."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path, _config(max_free_failure_sessions_per_mode=8), notifier,
-    )
-    for i in range(8):
-        _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.0)
-
-    circuit.activate_session("intra_check-8", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended) as excinfo:
-        circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert excinfo.value.state["trigger_code"] == "session_retry_limit"
-
-
-def test_mixed_day_only_free_failures_count_toward_the_backstop(tmp_path):
-    """Free failures interleaved with paid successes in the same mode/day:
-    only the free-failure sessions count. 8 paid successes contribute
-    nothing; the 8 free failures interleaved with them still trip the cap
-    of 8 on the 9th free failure."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path, _config(max_free_failure_sessions_per_mode=8), notifier,
-    )
-    for i in range(8):
-        _settle_cheap_session(circuit, path, f"paid-{i}", "intra_check", 0.02)
-        _settle_cheap_session(circuit, path, f"free-{i}", "intra_check", 0.0)
-
-    circuit.activate_session("intra_check-next", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended) as excinfo:
-        circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert excinfo.value.state["trigger_code"] == "session_retry_limit"
-    assert excinfo.value.state["daily_cost_usd"] == pytest.approx(0.16)
-
-
-def test_backstop_cools_off_after_the_configured_window(tmp_path):
-    """After a backstop trip, a call inside the cooling-off window is still
-    blocked; a call after `backstop_cooloff_minutes` have elapsed is
-    admitted again -- and the dollar ceilings, untouched by this change,
-    still fire normally afterward."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path,
-        _config(
-            max_free_failure_sessions_per_mode=3,
-            backstop_cooloff_minutes=10,
-            daily_cost_limit_usd=10.0,
-            daily_reserved_exposure_limit_usd=10.0,
-            session_cost_limit_usd=10.0,
-            session_reserved_exposure_limit_usd=10.0,
-        ),
-        notifier,
-    )
-    for i in range(3):
-        _settle_cheap_session(circuit, path, f"intra_check-{i}", "intra_check", 0.0)
-
-    circuit.activate_session("intra_check-3", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended) as excinfo:
-        circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert excinfo.value.state["trigger_code"] == "session_retry_limit"
-
-    # Still inside the 10-minute window (no time has passed): still blocked.
-    circuit.activate_session("intra_check-4", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended) as excinfo:
-        circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert excinfo.value.state["trigger_code"] == "session_retry_limit"
-
-    # Simulate the window elapsing: backdate the free-failure sessions'
-    # last activity past backstop_cooloff_minutes, the same technique
-    # _seed_agent_log_history above uses to backdate agent_logs rows.
-    stale = (datetime.now(timezone.utc) - timedelta(minutes=11)).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE llm_budget_sessions SET updated_at=? WHERE mode='intra_check' "
-            "AND run_id IN ('intra_check-0', 'intra_check-1', 'intra_check-2')",
-            (stale,),
-        )
-        conn.commit()
-
-    circuit.activate_session("intra_check-5", "intra_check")
-    reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-        system_prompt="s", user_message="u", max_output_tokens=100,
-    )
-    assert reservation.reservation_id
-    circuit.before_provider_attempt(reservation, model=reservation.model)
-    circuit.complete_call(reservation, 0.0, actual_model=reservation.model)
-
-    # Dollar ceilings are untouched by any of this: settle real spend right
-    # up to daily_cost_limit_usd and confirm the next call still trips a
-    # genuine dollar-based limit, exactly as before this change.
-    _settle_cheap_session(circuit, path, "intra_check-6", "intra_check", 10.0)
-    circuit.activate_session("intra_check-7", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended) as excinfo:
-        circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert excinfo.value.state["trigger_code"] == "daily_cost_limit"
-
-
-def test_mode_daily_spend_limit_still_latches_for_the_day_unaffected_by_cooloff(tmp_path):
-    """Proof the cooling-off change is scoped to session_retry_limit only:
-    a genuine dollar trip (mode_daily_spend_limit here) still latches
-    mode-day exactly as before, and does NOT recover just because time
-    passes the way the backstop now deliberately does -- only an ET-day
-    rollover clears it."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path,
-        _config(
-            daily_reserved_exposure_limit_usd=1.0,
-            daily_cost_limit_usd=1.0,
-            max_mode_daily_exposure_pct=50.0,
-            max_free_failure_sessions_per_mode=100,
-            backstop_cooloff_minutes=5,
-        ),
-        notifier,
-    )
-    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.30)
-    _settle_cheap_session(circuit, path, "intra_check-1", "intra_check", 0.25)
-
-    circuit.activate_session("intra_check-2", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended) as excinfo:
-        circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert excinfo.value.state["trigger_code"] == "mode_daily_spend_limit"
-    assert circuit.status()["hold_scope"] == "mode_day"
-
-    # Fast-forward well past even a short backstop cooloff -- a persisted
-    # mode_day hold must not release on a clock, only on day rollover.
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE llm_quota_holds SET created_at=? WHERE active=1",
-            (
-                (datetime.now(timezone.utc) - timedelta(hours=6)).strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
-            ),
-        )
-        conn.commit()
-
-    circuit.activate_session("intra_check-3", "intra_check")
-    with pytest.raises(PaidAnalysisSuspended) as excinfo:
-        circuit.begin_call(
-            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert excinfo.value.state["trigger_code"] == "mode_daily_spend_limit"
-
-
-def test_morning_spend_ceiling_pure_computation():
-    """Direct unit coverage of the time-gated ceiling itself: active before
-    the release hour, released at/after it, and disabled at pct=0."""
-    path_cfg = _config(
-        afternoon_reserve_pct=40.0, afternoon_reserve_release_et_hour=12,
-        daily_reserved_exposure_limit_usd=2.0, daily_cost_limit_usd=2.0,
-    )
-    circuit = LLMCostCircuitBreaker.__new__(LLMCostCircuitBreaker)
-    circuit.config = path_cfg
-
-    before_release = datetime(2026, 8, 28, 10, 0, tzinfo=_ET)
-    at_release = datetime(2026, 8, 28, 12, 0, tzinfo=_ET)
-    after_release = datetime(2026, 8, 28, 15, 0, tzinfo=_ET)
-    assert circuit._morning_spend_ceiling(before_release) == pytest.approx(1.2)
-    assert circuit._morning_spend_ceiling(at_release) is None
-    assert circuit._morning_spend_ceiling(after_release) is None
-
-    circuit.config = _config(afternoon_reserve_pct=0.0)
-    assert circuit._morning_spend_ceiling(before_release) is None
-
-
-def test_afternoon_reserve_blocks_morning_spend_above_the_ceiling(tmp_path):
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path,
-        _config(
-            daily_reserved_exposure_limit_usd=1.0,
-            daily_cost_limit_usd=1.0,
-            afternoon_reserve_pct=40.0,
-            afternoon_reserve_release_et_hour=12,
-        ),
-        notifier,
-    )
-    circuit.activate_session("run-morning", "morning")
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE llm_budget_sessions SET actual_cost_usd=0.65 "
-            "WHERE run_id='run-morning'"
-        )
-        conn.execute("UPDATE llm_budget_days SET incremental_cost_usd=0.65")
-
-    with patch.object(LLMCostCircuitBreaker, "_morning_spend_ceiling", return_value=0.60):
-        with pytest.raises(PaidAnalysisSuspended) as excinfo:
-            circuit.begin_call(
-                agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-                system_prompt="s", user_message="u", max_output_tokens=100,
-            )
-    assert excinfo.value.state["trigger_code"] == "morning_spend_ceiling"
-    with sqlite3.connect(path) as conn:
-        event = conn.execute(
-            "SELECT trigger_code FROM llm_circuit_events WHERE event_type='quota_held' "
-            "ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-    assert event[0] == "morning_spend_ceiling"
-
-
-def test_afternoon_reserve_recovers_the_same_day_without_a_rollover(tmp_path):
-    """The defining behavioural difference from every other quota hold in
-    this file: this one must stop blocking once the clock crosses the
-    release hour on the SAME ET day -- not at the next day's rollover."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path,
-        _config(
-            daily_reserved_exposure_limit_usd=1.0,
-            daily_cost_limit_usd=1.0,
-            afternoon_reserve_pct=40.0,
-            afternoon_reserve_release_et_hour=12,
-        ),
-        notifier,
-    )
-    circuit.activate_session("run-morning", "morning")
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE llm_budget_sessions SET actual_cost_usd=0.65 "
-            "WHERE run_id='run-morning'"
-        )
-        conn.execute("UPDATE llm_budget_days SET incremental_cost_usd=0.65")
-
-    with patch.object(LLMCostCircuitBreaker, "_morning_spend_ceiling", return_value=0.60):
-        with pytest.raises(PaidAnalysisSuspended):
-            circuit.begin_call(
-                agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-                system_prompt="s", user_message="u", max_output_tokens=100,
-            )
-
-    # No sticky hold: nothing in this call chain persisted a suspension.
-    assert circuit.status()["suspended"] is False
-
-    # Simulate the clock crossing the release hour -- same ET day, no
-    # rollover -- and confirm the identical session can now proceed.
-    with patch.object(LLMCostCircuitBreaker, "_morning_spend_ceiling", return_value=None):
+    circuit.activate_session("run-loop", "intra_check")
+    for _ in range(3):
         reservation = circuit.begin_call(
             agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
             system_prompt="s", user_message="u", max_output_tokens=100,
         )
-    assert reservation.reservation_id
-    assert notifier.messages == []
+        circuit.before_provider_attempt(reservation, model=reservation.model)
+        circuit.complete_call(reservation, 0.0, actual_model=reservation.model)
+
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    state = excinfo.value.state
+    assert state["trigger_code"] == "session_call_count_limit"
+    assert "3 call" in state["trigger_detail"]
+    # Session-scoped and self-healing: a genuinely different session is not
+    # affected by another session's runaway loop.
+    circuit.activate_session("run-independent", "intra_check")
+    reservation = circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    assert reservation.reservation_id != "disabled"
 
 
-# ============================================================================
-# Defect 1 (2026-08-28): the pre-fix reservation treated one UTF-8 byte as
-# one token and always reserved the full max_output_tokens ceiling. The
-# 09:32 ET portfolio_manager call reserved $1.8657 for a call that actually
-# cost ~$0.11. Reservation is now derived from this agent+model's own
-# measured history in agent_logs (LLMCostCircuitBreaker.
-# _measure_reservation_tokens), with an explicit, tested fallback to
-# exactly the old formula for thin/unknown/unreadable history.
-# ============================================================================
+def test_session_count_backstop_still_trips_a_genuine_runaway_loop(tmp_path):
+    """A loop of sessions that spend essentially nothing (e.g. every
+    attempt is a Defect-2 known-zero-cost rejection) would never trip a
+    dollar-based check -- the call-count cap is what stops it, one call
+    per session in this shape."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path, _config(max_calls_per_session=1), notifier,
+    )
+    _settle_cheap_session(circuit, path, "intra_check-0", "intra_check", 0.0)
 
-# 24 real production portfolio_manager / openai/gpt-5.5 calls, 2026-08-25
-# through 2026-08-28, read from the production ledger snapshot:
-# (bytes of the logged user_message, actual input_tokens, actual
-# output_tokens). Matches the spec's headline figures exactly: worst-ever
-# actual cost $0.578255, max output_tokens 11034 (never near a 16,000
-# reservation).
-_REAL_PM_GPT55_HISTORY = [
-    (11132, 13827, 3480), (185259, 50345, 9160), (10933, 13803, 5363),
-    (181159, 49447, 11034), (11163, 13885, 5587), (185793, 50270, 8432),
-    (11628, 13980, 6601), (174419, 48139, 8436), (12309, 14272, 4653),
-    (183283, 50027, 8096), (11814, 14098, 6501), (183182, 50396, 7018),
-    (13659, 14653, 3726), (13194, 14534, 4072), (189705, 51904, 8760),
-    (17547, 16277, 5159), (16709, 16073, 3614), (34066, 20875, 3989),
-    (32620, 20498, 4579), (32072, 20317, 3395), (30453, 19955, 4669),
-    (29954, 19893, 4945), (28469, 19480, 3688), (29604, 19781, 3197),
-]
-_REAL_PM_GPT55_WORST_COST = 0.578255
-_REAL_PM_GPT55_MAX_OUTPUT = 11034
+    circuit.activate_session("intra_check-0", "intra_check")
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert excinfo.value.state["trigger_code"] == "session_call_count_limit"
 
-# Mirrors the 09:32 ET call's inferred size (spec: "~259 KB prompt bounded
-# as 259k tokens" under the old byte=token formula). Plain ASCII so
-# len(str) == UTF-8 byte length exactly, keeping the arithmetic in these
-# tests exact rather than approximate.
-_INCIDENT_SYSTEM_PROMPT = "S" * 48_000
-_INCIDENT_USER_MESSAGE = "U" * 210_744  # + system + 256 == 259,000 bytes
-_INCIDENT_TOTAL_PROMPT_BYTES = 259_000
-
-
-def _seed_agent_log_history(path, *, agent_name, model, rows):
-    # Backdated well outside "today"'s UTC window: _seed_today() auto-
-    # creates a legacy llm_budget_sessions row (logical_calls=1) for every
-    # DISTINCT run_id it finds in agent_logs within TODAY's window, which
-    # would otherwise make each of these synthetic history rows count as
-    # an already-paid session today and trip the session-count backstop
-    # before the reservation logic under test is even reached. Real
-    # history legitimately spans many prior days anyway.
-    past = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
-    with sqlite3.connect(path) as conn:
-        for i, (msg_bytes, input_tokens, output_tokens) in enumerate(rows):
-            conn.execute(
-                "INSERT INTO agent_logs (agent_name, run_id, input_message, "
-                "model, input_tokens, output_tokens, cost_usd, timestamp) VALUES "
-                "(?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    agent_name, f"history-{i}", "x" * msg_bytes, model,
-                    input_tokens, output_tokens, 0.01, past,
-                ),
-            )
-        conn.commit()
 
 
 def _loose_config(**overrides):
-    """A config with exposure ceilings wide enough that only the specific
+    """A config with cost ceilings wide enough that only the specific
     check each test is exercising can fire."""
-    values = dict(
-        session_cost_limit_usd=10.0, daily_cost_limit_usd=10.0,
-        session_reserved_exposure_limit_usd=10.0,
-        daily_reserved_exposure_limit_usd=10.0,
-    )
+    values = dict(session_cost_limit_usd=10.0, daily_cost_limit_usd=10.0)
     values.update(overrides)
     return _config(**values)
 
 
-def _old_formula_reserve(total_prompt_bytes: int, max_output_tokens: int,
-                          *, in_rate=5.0, out_rate=30.0, multiplier=1.05) -> float:
-    """The exact pre-fix formula (byte=token, full output ceiling), for
-    comparison. openai/gpt-5.5 rates ($5/$30 per 1M) per src/cost_table.py."""
-    return multiplier * (
-        total_prompt_bytes * in_rate / 1_000_000
-        + max_output_tokens * out_rate / 1_000_000
-    )
 
 
-def test_reservation_from_real_measured_history_sits_between_worst_and_old(tmp_path):
-    """The required proof: given the REAL measured distribution, the new
-    reservation for a call the size of the 09:32 ET incident sits above
-    the worst actual cost ever recorded for this agent+model, but far
-    below what the old formula would have reserved for the same prompt."""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def test_call_count_cap_is_atomic_across_process_objects(tmp_path):
+    """Renamed/rewritten from `test_daily_reservation_is_atomic_across_
+    process_objects`: that test raced two `begin_call`s against a shared
+    DOLLAR reservation ceiling to prove the ``BEGIN IMMEDIATE`` write lock
+    made admission atomic across process objects (no double-admit). Item
+    14 (2026-09-02) deleted that dollar reservation, so there is nothing
+    left to race a projected cost against -- but the SAME atomicity
+    property still matters for the call-count cap (14c) that replaced it:
+    two processes racing the last slot on one session must still produce
+    exactly one winner, never two, and never zero."""
     path = _db_path(tmp_path)
-    _seed_agent_log_history(
-        path, agent_name="portfolio_manager", model="openai/gpt-5.5",
-        rows=_REAL_PM_GPT55_HISTORY,
-    )
-    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
-    circuit.activate_session("run-real-history", "morning")
-
-    reservation = circuit.begin_call(
-        agent_name="portfolio_manager", model="openai/gpt-5.5",
-        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
-        max_output_tokens=16_000,
-    )
-    with sqlite3.connect(path) as conn:
-        reserved = conn.execute(
-            "SELECT reserved_cost_usd FROM llm_budget_reservations "
-            "WHERE reservation_id=?", (reservation.reservation_id,),
-        ).fetchone()[0]
-
-    old_reserve = _old_formula_reserve(_INCIDENT_TOTAL_PROMPT_BYTES, 16_000)
-    assert old_reserve == pytest.approx(1.86375, abs=1e-3)  # sanity: ~= spec's $1.8657
-
-    assert reserved > _REAL_PM_GPT55_WORST_COST
-    assert reserved < old_reserve
-    # Comfortably below, not just technically below (spec: "far below").
-    assert reserved < old_reserve * 0.6
-    # Also reserves less output than the ceiling -- driven by the real max
-    # observed output (11034), not by max_output_tokens.
-    assert reservation.max_output_tokens < 16_000
-    assert reservation.max_output_tokens >= _REAL_PM_GPT55_MAX_OUTPUT
-
-
-def test_regression_2026_08_28_0932_scenario_no_longer_blocks(tmp_path):
-    """The actual incident, reproduced: session spend $0.0461, day spend
-    $0.0476, a portfolio_manager call the size of the one that tripped
-    projected_session_cost_limit at 09:32 ET. Under production exposure
-    ceilings (session $2.60, daily $5.50) and real measured history, it
-    must not trip anything."""
-    path = _db_path(tmp_path)
-    _seed_agent_log_history(
-        path, agent_name="portfolio_manager", model="openai/gpt-5.5",
-        rows=_REAL_PM_GPT55_HISTORY,
-    )
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path,
-        _config(
-            session_cost_limit_usd=0.90, daily_cost_limit_usd=2.75,
-            session_reserved_exposure_limit_usd=2.60,
-            daily_reserved_exposure_limit_usd=5.50,
-        ),
-        notifier,
-    )
-    circuit.activate_session("run-be9f8f06", "morning")
-    # Day spend ($0.0476) was this session ($0.0461) plus a separate
-    # already-settled call earlier that day; the day/session ledgers must
-    # agree exactly (_validate_accounting_invariants) or _seed_today fails
-    # closed on the fixture itself before the reservation logic under test
-    # is even reached.
-    circuit.activate_session("intra_check-earlier-am", "intra_check")
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE llm_budget_sessions SET actual_cost_usd=0.0461 "
-            "WHERE run_id='run-be9f8f06'"
-        )
-        conn.execute(
-            "UPDATE llm_budget_sessions SET actual_cost_usd=0.0015 "
-            "WHERE run_id='intra_check-earlier-am'"
-        )
-        conn.execute("UPDATE llm_budget_days SET incremental_cost_usd=0.0476")
-    circuit.activate_session("run-be9f8f06", "morning")
-
-    reservation = circuit.begin_call(
-        agent_name="portfolio_manager", model="openai/gpt-5.5",
-        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
-        max_output_tokens=16_000,
-    )
-
-    assert reservation.reservation_id
-    state = circuit.status()
-    assert state["suspended"] is False
-    assert notifier.messages == []
-
-
-def test_thin_history_falls_back_to_old_worst_case_formula(tmp_path):
-    """Fewer rows than reservation_min_history_samples (default 20) for
-    this exact agent+model -- must not guess from a handful of calls."""
-    path = _db_path(tmp_path)
-    _seed_agent_log_history(
-        path, agent_name="portfolio_manager", model="openai/gpt-5.5",
-        rows=_REAL_PM_GPT55_HISTORY[:5],
-    )
-    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
-    circuit.activate_session("run-thin-history", "morning")
-
-    reservation = circuit.begin_call(
-        agent_name="portfolio_manager", model="openai/gpt-5.5",
-        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
-        max_output_tokens=16_000,
-    )
-
-    assert reservation.input_tokens_estimate == _INCIDENT_TOTAL_PROMPT_BYTES
-    assert reservation.max_output_tokens == 16_000
-
-
-def test_unknown_agent_falls_back_to_old_worst_case_formula(tmp_path):
-    """A brand-new agent_name with zero rows in agent_logs at all."""
-    path = _db_path(tmp_path)
-    _seed_agent_log_history(
-        path, agent_name="portfolio_manager", model="openai/gpt-5.5",
-        rows=_REAL_PM_GPT55_HISTORY,
-    )
-    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
-    circuit.activate_session("run-unknown-agent", "morning")
-
-    reservation = circuit.begin_call(
-        agent_name="brand_new_agent_seat", model="openai/gpt-5.5",
-        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
-        max_output_tokens=16_000,
-    )
-
-    assert reservation.input_tokens_estimate == _INCIDENT_TOTAL_PROMPT_BYTES
-    assert reservation.max_output_tokens == 16_000
-
-
-def test_unknown_model_price_still_trips_regardless_of_history(tmp_path):
-    """A model this history exists for but that has no pinned price must
-    still trip unknown_model_price -- history changes what is RESERVED,
-    never whether an unpriceable model is allowed to proceed."""
-    path = _db_path(tmp_path)
-    _seed_agent_log_history(
-        path, agent_name="portfolio_manager", model="not-a-real/model",
-        rows=_REAL_PM_GPT55_HISTORY,
-    )
-    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
-    circuit.activate_session("run-unknown-model", "morning")
-
-    with pytest.raises(PaidAnalysisSuspended):
-        circuit.begin_call(
-            agent_name="portfolio_manager", model="not-a-real/model",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-    assert circuit.status()["trigger_code"] == "unknown_model_price"
-
-
-def test_corrupt_history_schema_falls_back_to_old_worst_case_formula(tmp_path):
-    """agent_logs exists but is missing the columns this measurement reads
-    (a real production shape drift, not merely empty/thin data). seed_today
-    only reads run_id/cost_usd/timestamp, so it still succeeds; only the
-    measurement itself must fail closed."""
-    path = _db_path(tmp_path)
-    with sqlite3.connect(path) as conn:
-        conn.execute("DROP TABLE agent_logs")
-        conn.execute(
-            "CREATE TABLE agent_logs (id INTEGER PRIMARY KEY, agent_name TEXT, "
-            "run_id TEXT, model TEXT, cost_usd REAL, "
-            "timestamp TEXT NOT NULL DEFAULT (datetime('now')))"
-        )
-        conn.commit()
-    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
-    circuit.activate_session("run-corrupt-schema", "morning")
-
-    reservation = circuit.begin_call(
-        agent_name="portfolio_manager", model="openai/gpt-5.5",
-        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
-        max_output_tokens=16_000,
-    )
-
-    assert reservation.input_tokens_estimate == _INCIDENT_TOTAL_PROMPT_BYTES
-    assert reservation.max_output_tokens == 16_000
-
-
-def test_error_reading_history_falls_back_to_old_worst_case_formula(tmp_path, monkeypatch):
-    """A transient DB-level failure reading agent_logs (lock contention,
-    I/O error, ...) -- distinct from a structurally corrupt table above --
-    must fail the SAME way: to the conservative fallback, not to circuit
-    unavailability and not to a cheaper guess."""
-    path = _db_path(tmp_path)
-    _seed_agent_log_history(
-        path, agent_name="portfolio_manager", model="openai/gpt-5.5",
-        rows=_REAL_PM_GPT55_HISTORY,
-    )
-    circuit = LLMCostCircuitBreaker(path, _loose_config(), _Notifier())
-    circuit.activate_session("run-read-error", "morning")
-
-    # sqlite3.Connection is a C-implemented, immutable type -- its methods
-    # can't be monkeypatched directly. Wrap the connection _connect()
-    # returns instead, so exactly one query (the history measurement's,
-    # uniquely identified by its `msg_bytes` alias) fails while everything
-    # else -- seeding, accounting, the reservation insert -- goes through
-    # the real connection untouched.
-    real_connect = circuit._connect
-
-    class _FlakyConn:
-        def __init__(self, real_conn):
-            self._real = real_conn
-
-        def execute(self, sql, *args, **kwargs):
-            if "msg_bytes" in sql:
-                raise sqlite3.OperationalError("disk I/O error")
-            return self._real.execute(sql, *args, **kwargs)
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc_info):
-            return self._real.__exit__(*exc_info)
-
-        def __getattr__(self, name):
-            return getattr(self._real, name)
-
-    monkeypatch.setattr(circuit, "_connect", lambda: _FlakyConn(real_connect()))
-
-    reservation = circuit.begin_call(
-        agent_name="portfolio_manager", model="openai/gpt-5.5",
-        system_prompt=_INCIDENT_SYSTEM_PROMPT, user_message=_INCIDENT_USER_MESSAGE,
-        max_output_tokens=16_000,
-    )
-
-    assert reservation.input_tokens_estimate == _INCIDENT_TOTAL_PROMPT_BYTES
-    assert reservation.max_output_tokens == 16_000
-
-
-def test_reservation_conservative_percentile_config_rejects_non_low_values():
-    """A structural guard against defeating the fix by configuration: the
-    percentile must stay below the median (the whole point of "conservative
-    low percentile" -- see reservation_conservative_percentile's docstring
-    in src/config.py)."""
-    from src.config import LLMCostCircuitConfig
-
-    with pytest.raises(Exception):
-        LLMCostCircuitConfig(reservation_conservative_percentile=0.75)
-
-
-def test_percentile_helper_matches_linear_interpolation():
-    from src.cost_circuit import _percentile
-
-    assert _percentile([1.0, 2.0, 3.0, 4.0], 0.0) == 1.0
-    assert _percentile([1.0, 2.0, 3.0, 4.0], 1.0) == 4.0
-    assert _percentile([1.0, 2.0, 3.0, 4.0], 0.5) == pytest.approx(2.5)
-    assert _percentile([5.0], 0.1) == 5.0
-
-
-def test_daily_reservation_is_atomic_across_process_objects(tmp_path):
-    path = _db_path(tmp_path)
-    # Limits sized to admit exactly ONE reservation at google/gemini-3.5-
-    # flash-lite's rate (~$0.0027/reservation here) but not two (~$0.0054) —
-    # same margin the pre-2026-08-31 numbers had against the OpenRouter rate
-    # in effect at the time (google/gemini-2.5-flash-lite, ~$0.00045).
-    cfg = _config(
-        session_cost_limit_usd=0.0042,
-        daily_cost_limit_usd=0.0042,
-        max_free_failure_sessions_per_mode=10,
-    )
+    cfg = _config(max_calls_per_session=1)
     first = LLMCostCircuitBreaker(path, cfg, _Notifier())
     second = LLMCostCircuitBreaker(path, cfg, _Notifier())
     barrier = threading.Barrier(2)
     outcomes: list[str] = []
 
-    def reserve(circuit, run_id, mode, agent_name):
+    def reserve(circuit):
         # ContextVars intentionally do not inherit into raw threads. Each
-        # independent worker/process activates its own paid session context.
-        circuit.activate_session(run_id, mode)
+        # independent worker/process activates its own paid session context
+        # for the SAME run_id -- exactly two systemd processes racing the
+        # same session's call budget.
+        circuit.activate_session("run-shared", "morning")
         barrier.wait()
         try:
             circuit.begin_call(
-                agent_name=agent_name,
-                model="google/gemini-3.5-flash-lite",
-                system_prompt="s",
-                user_message="u",
-                max_output_tokens=1_000,
+                agent_name="a", model="google/gemini-3.5-flash-lite",
+                system_prompt="s", user_message="u", max_output_tokens=1_000,
             )
-            outcomes.append("reserved")
+            outcomes.append("admitted")
         except PaidAnalysisSuspended:
             outcomes.append("blocked")
 
     threads = [
-        threading.Thread(target=reserve, args=(first, "run-a", "morning", "a")),
-        threading.Thread(target=reserve, args=(second, "run-b", "midday", "b")),
+        threading.Thread(target=reserve, args=(first,)),
+        threading.Thread(target=reserve, args=(second,)),
     ]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
 
-    assert sorted(outcomes) == ["blocked", "reserved"]
+    assert sorted(outcomes) == ["admitted", "blocked"]
     with sqlite3.connect(path) as conn:
-        active = conn.execute(
-            "SELECT COUNT(*) FROM llm_budget_reservations WHERE status='active'"
+        logical_calls = conn.execute(
+            "SELECT logical_calls FROM llm_budget_sessions WHERE run_id=?",
+            ("run-shared",),
         ).fetchone()[0]
-    assert active == 1
-    assert first.status()["suspended"] is True
+    assert logical_calls == 1
 
 
-def test_third_paid_session_in_same_mode_is_not_blocked_by_backstop(tmp_path):
-    """Pre-4.1 this blocked the 3rd session purely on count, even though
-    every session so far had settled real, positive cost -- the exact
-    counting defect Defect 4.1 fixes. A session that spent money is the
-    per-mode dollar allowance's problem (see the mode_daily_spend_limit
-    tests above), never this backstop's, no matter how low the count cap
-    is configured."""
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(
-        path, _config(max_free_failure_sessions_per_mode=2), notifier,
-    )
-    for run_id in ("run-one", "run-two"):
-        circuit.activate_session(run_id, "morning")
-        reservation = circuit.begin_call(
-            agent_name="tech_analyst",
-            model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-        circuit.before_provider_attempt(reservation, model=reservation.model)
-        circuit.complete_call(reservation, 0.001, actual_model=reservation.model)
-
-    circuit.activate_session("run-three", "morning")
-    reservation = circuit.begin_call(
-        agent_name="tech_analyst",
-        model="google/gemini-3.5-flash-lite",
-        system_prompt="s", user_message="u", max_output_tokens=100,
-    )
-    assert reservation.reservation_id
-    assert circuit.status()["suspended"] is False
-    assert notifier.messages == []
-    # No mode-scoping or require_paid_analysis assertions here any more:
-    # pre-4.1 this test also proved the trip was visible cross-call via
-    # `require_paid_analysis`/`status()` because it was a persisted
-    # mode_day quota hold. Post-4.1 the backstop is deliberately as
-    # non-sticky as the afternoon reserve (see the module-level NOTE on
-    # "session_retry_limit"): it only ever fires inside `begin_call` itself,
-    # never via `status()`/`require_paid_analysis()` -- see the cooling-off
-    # tests below for the trigger's real (bounded, self-healing) lifetime.
-
-
-def test_quota_hold_cannot_authorize_an_old_reservation_above_settled_cap(tmp_path):
-    path = _db_path(tmp_path)
-    circuit = LLMCostCircuitBreaker(
-        path,
-        _config(
-            session_cost_limit_usd=0.50,
-            daily_cost_limit_usd=2.0,
-            session_reserved_exposure_limit_usd=2.0,
-            daily_reserved_exposure_limit_usd=3.0,
-        ),
-        _Notifier(),
-    )
-    circuit.activate_session("run-reset-race", "morning")
-    first = circuit.begin_call(
-        agent_name="first", model="google/gemini-3.5-flash-lite",
-        system_prompt="s", user_message="u", max_output_tokens=100,
-    )
-    waiting = circuit.begin_call(
-        agent_name="waiting", model="google/gemini-3.5-flash-lite",
-        system_prompt="s", user_message="u", max_output_tokens=100,
-    )
-    circuit.before_provider_attempt(first, model=first.model)
-    circuit.complete_call(first, 0.60, actual_model=first.model)
-    assert circuit.status()["suspended"] is True
-
-    with pytest.raises(ValueError, match="no operator-resettable hard circuit"):
-        circuit.reset("reviewed; quota holds are not operator bypasses")
-    with pytest.raises(PaidAnalysisSuspended):
-        circuit.before_provider_attempt(waiting, model=waiting.model)
-
-    state = circuit.status()
-    assert state["trigger_code"] == "session_cost_limit"
-    assert state["provider_attempts"] == 1
 
 
 def test_provider_boundary_revalidates_ledger_after_reservation(tmp_path):
+    """The name predates item 14, but the property it pins does not: a
+    call authorized by `begin_call` can wait behind the provider semaphore
+    while a DIFFERENT session settles real cost and the ledger becomes
+    internally inconsistent. `before_provider_attempt` re-validates the
+    whole day's accounting invariants immediately before network I/O
+    rather than trusting whatever `begin_call` saw earlier -- unrelated to
+    the (deleted) reservation table, this is about not sending a request
+    on top of a damaged ledger."""
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(
         path,
-        _config(
-            session_cost_limit_usd=2.0,
-            daily_cost_limit_usd=1.0,
-            session_reserved_exposure_limit_usd=3.0,
-            daily_reserved_exposure_limit_usd=3.0,
-        ),
+        _config(session_cost_limit_usd=2.0, daily_cost_limit_usd=1.0),
         _Notifier(),
     )
     circuit.activate_session("run-waiting", "morning")
@@ -1639,8 +884,9 @@ def test_provider_boundary_revalidates_ledger_after_reservation(tmp_path):
     circuit.before_provider_attempt(settled, model=settled.model)
     circuit.complete_call(settled, 0.10, actual_model=settled.model)
 
-    # Simulate damage after the waiting call reserved but before it reaches
-    # the provider semaphore.  The day and session ledgers now disagree.
+    # Simulate damage after the waiting call was authorized but before it
+    # reaches the provider semaphore. The day and session ledgers now
+    # disagree.
     with sqlite3.connect(path) as conn:
         conn.execute("UPDATE llm_budget_days SET incremental_cost_usd=0")
 
@@ -1649,12 +895,9 @@ def test_provider_boundary_revalidates_ledger_after_reservation(tmp_path):
         match="day/session settled-cost ledgers disagree",
     ):
         circuit.before_provider_attempt(waiting, model=waiting.model)
-    with sqlite3.connect(path) as conn:
-        attempt_count = conn.execute(
-            "SELECT attempt_count FROM llm_budget_reservations "
-            "WHERE reservation_id=?", (waiting.reservation_id,),
-        ).fetchone()[0]
-    assert attempt_count == 0
+    # The waiting call never reached the network -- its in-process attempt
+    # counter is untouched.
+    assert waiting.attempt_count == 0
 
 
 def test_durable_emergency_latch_survives_new_process_and_preserves_trigger(tmp_path):
@@ -1712,13 +955,16 @@ def test_external_emergency_latch_blocks_inflight_response_at_completion(tmp_pat
     with pytest.raises(PaidAnalysisSuspended):
         worker.complete_call(reservation, 0.001, actual_model=reservation.model)
 
+    # The in-flight response's real cost was never accounted -- another
+    # process's accounting failure blocks it before any ledger write, so
+    # the session shows no settled spend at all rather than a phantom
+    # reservation charge.
     with sqlite3.connect(path) as conn:
         row = conn.execute(
-            "SELECT status, reserved_cost_usd FROM llm_budget_reservations "
-            "WHERE reservation_id=?", (reservation.reservation_id,),
+            "SELECT status, actual_cost_usd FROM llm_budget_sessions "
+            "WHERE run_id=?", (reservation.run_id,),
         ).fetchone()
-    assert row[0] == "active"
-    assert row[1] > 0
+    assert row == ("active", 0.0)
 
 
 def test_emergency_alert_prefers_exact_persisted_attempt_count(tmp_path):
@@ -1766,35 +1012,6 @@ def test_malformed_sidecar_metadata_still_constructs_clear_fail_closed_sentinel(
     assert "cost: unavailable" in notifier.messages[0]
 
 
-def test_two_expired_started_calls_are_both_charged_before_alert_snapshot(tmp_path):
-    path = _db_path(tmp_path)
-    notifier = _Notifier()
-    circuit = LLMCostCircuitBreaker(path, _config(), notifier)
-    circuit.activate_session("run-expired", "morning")
-    reservations = []
-    for agent_name in ("macro", "news"):
-        reservation = circuit.begin_call(
-            agent_name=agent_name, model="google/gemini-3.5-flash-lite",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
-        circuit.before_provider_attempt(reservation, model=reservation.model)
-        reservations.append(reservation)
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE llm_budget_reservations SET expires_at=datetime('now', '-1 minute')"
-        )
-
-    state = circuit.status()
-    with sqlite3.connect(path) as conn:
-        rows = conn.execute(
-            "SELECT status, actual_cost_usd FROM llm_budget_reservations "
-            "ORDER BY created_at, reservation_id"
-        ).fetchall()
-    assert [row[0] for row in rows] == ["expired_attempted", "expired_attempted"]
-    total = sum(row[1] for row in rows)
-    assert state["daily_cost_usd"] == pytest.approx(total)
-    assert state["costs_exact"] == 0
-    assert len(notifier.messages) == 1
 
 
 def test_missing_usage_latches_real_circuit_and_no_result_flows(tmp_path, monkeypatch):
@@ -1821,7 +1038,10 @@ def test_missing_usage_latches_real_circuit_and_no_result_flows(tmp_path, monkey
     assert result.cost_usd is None
     state = circuit.status()
     assert state["trigger_code"] == "unknown_actual_cost"
-    assert state["current_session_cost_usd"] > 0
+    # Item 14 (2026-09-02): no reservation exists to charge for a request
+    # with no usable telemetry any more -- the ledger stays exactly $0
+    # while the trip itself still fails closed on the missing usage data.
+    assert state["current_session_cost_usd"] == 0
     with pytest.raises(PaidAnalysisSuspended):
         circuit.require_paid_analysis("next_agent")
 
@@ -1847,7 +1067,7 @@ def test_corrupt_state_row_blocks_before_network_and_writes_durable_latch(
     assert Path(f"{path}.llm-circuit-unavailable").exists()
 
 
-@pytest.mark.parametrize("missing", ["day", "session", "reservation"])
+@pytest.mark.parametrize("missing", ["day", "session"])
 def test_accounting_row_deleted_after_authorization_blocks_response(
     tmp_path, monkeypatch, missing,
 ):
@@ -1872,14 +1092,9 @@ def test_accounting_row_deleted_after_authorization_blocks_response(
             if missing == "day":
                 conn.execute("DELETE FROM llm_budget_days")
             else:
-                if missing == "session":
-                    conn.execute(
-                        "DELETE FROM llm_budget_sessions WHERE run_id=?", (run_id,)
-                    )
-                else:
-                    conn.execute(
-                        "DELETE FROM llm_budget_reservations WHERE run_id=?", (run_id,)
-                    )
+                conn.execute(
+                    "DELETE FROM llm_budget_sessions WHERE run_id=?", (run_id,)
+                )
         return response
 
     client.messages.create.side_effect = answer_then_corrupt
@@ -1896,7 +1111,7 @@ def test_accounting_row_deleted_after_authorization_blocks_response(
 @pytest.mark.parametrize(
     "table",
     [
-        "llm_budget_days", "llm_budget_sessions", "llm_budget_reservations",
+        "llm_budget_days", "llm_budget_sessions",
         "llm_circuit_state", "llm_circuit_events",
     ],
 )
@@ -1915,93 +1130,39 @@ def test_partial_breaker_schema_never_recreates_missing_accounting_as_empty(
     assert Path(f"{path}.llm-circuit-unavailable").exists()
 
 
-def test_cross_et_day_reservation_is_never_authorized(tmp_path, monkeypatch):
-    path = _db_path(tmp_path)
-    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
-    circuit.activate_session("run-midnight", "morning")
-    reservation = circuit.begin_call(
-        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
-        system_prompt="s", user_message="u", max_output_tokens=100,
-    )
-    old_day = circuit.status()["current_day"]
-    monkeypatch.setattr(
-        "src.cost_circuit._et_day_and_utc_bounds",
-        lambda now=None: ("2099-01-02", "2099-01-02 05:00:00", "2099-01-03 04:59:59"),
-    )
-
-    with pytest.raises(PaidAnalysisSuspended, match="daily-budget boundary"):
-        circuit.before_provider_attempt(reservation, model=reservation.model)
-    with sqlite3.connect(path) as conn:
-        row = conn.execute(
-            "SELECT day, status, attempt_count FROM llm_budget_reservations "
-            "WHERE reservation_id=?", (reservation.reservation_id,),
-        ).fetchone()
-    assert row == (old_day, "expired_cross_day_unattempted", 0)
 
 
-def test_production_pm_sized_prompt_fits_reserved_exposure_cap(tmp_path):
-    circuit = LLMCostCircuitBreaker(
-        _db_path(tmp_path),
-        _config(
-            session_cost_limit_usd=0.90,
-            daily_cost_limit_usd=1.50,
-            session_reserved_exposure_limit_usd=1.80,
-            daily_reserved_exposure_limit_usd=1.90,
-        ),
-        _Notifier(),
-    )
-    circuit.activate_session("run-sized-pm", "morning")
-    # Current production PM system+user payloads are about 225 KB. Include
-    # already-settled specialist spend and prove one normal PM call remains
-    # viable under the conservative byte-per-token reservation.
-    with sqlite3.connect(circuit.db_path) as conn:
-        conn.execute(
-            "UPDATE llm_budget_sessions SET actual_cost_usd=0.05 "
-            "WHERE run_id='run-sized-pm'"
-        )
-        conn.execute(
-            "UPDATE llm_budget_days SET incremental_cost_usd=0.05"
-        )
-    reservation = circuit.begin_call(
-        agent_name="portfolio_manager", model="openai/gpt-5.5",
-        system_prompt="s" * 42_000, user_message="u" * 183_000,
-        max_output_tokens=16_000,
-    )
-    assert reservation.input_tokens_estimate == 225_256
-    assert circuit.status()["suspended"] is False
 
 
 @pytest.mark.parametrize(
     ("code", "scope"),
     [
+        # Item 14 (2026-09-02): every projection-based trigger this list
+        # used to carry ("projected_*_cost_limit", "provider_projected_*",
+        # "outstanding_projected_*", "mode_daily_spend_limit",
+        # "session_retry_attempt_limit") is gone along with the reservation
+        # layer that computed them. "daily_cost_limit"/"session_cost_limit"
+        # now fire on REAL SETTLED spend only; "session_call_count_limit"
+        # is the new call-count runaway-loop backstop (item 14c).
         ("daily_cost_limit", "day"),
-        ("projected_daily_cost_limit", "day"),
-        ("provider_projected_daily_cost_limit", "day"),
-        ("outstanding_projected_daily_cost_limit", "day"),
-        # "session_retry_limit" is deliberately absent here (Defect 4.1,
-        # 2026-08-29): like "morning_spend_ceiling", it is never passed to
-        # _trip_locked any more -- see the module-level NOTE on
-        # "session_retry_limit" by `_MODE_DAY_QUOTA_TRIGGERS` in
-        # src/cost_circuit.py.
-        ("mode_daily_spend_limit", "mode_day"),
         ("session_cost_limit", "session"),
-        ("projected_session_cost_limit", "session"),
-        ("provider_projected_session_cost_limit", "session"),
-        ("outstanding_projected_session_cost_limit", "session"),
-        ("session_retry_attempt_limit", "session"),
-        # Defect 5 (2026-08-31): "provider_attempt_limit" moved from "hard"
-        # to "session". It bounds attempts within ONE call -- strictly
-        # narrower than "session_retry_attempt_limit" directly above -- yet
-        # was the only one of the pair on the durable operator-reset latch,
-        # so the smaller problem produced the larger response. See the NOTE
+        ("session_call_count_limit", "session"),
+        # Defect 5 (2026-08-31, unaffected by item 14): "provider_attempt_
+        # limit" stays session-scoped. It bounds attempts within ONE call,
+        # independent of the item-14c call-count backstop -- see the NOTE
         # by _SESSION_QUOTA_TRIGGERS in src/cost_circuit.py.
         ("provider_attempt_limit", "session"),
         ("legacy_unknown_cost", "hard"),
         ("unknown_model_price", "hard"),
         ("unknown_actual_cost", "hard"),
         ("failed_call_unknown_cost", "hard"),
+        # Unrecognized/removed codes fail closed to "hard" by design --
+        # includes every reservation-era code deleted by item 14.
         ("expired_attempted_reservation", "hard"),
         ("cross_day_started_reservation", "hard"),
+        ("mode_daily_spend_limit", "hard"),
+        ("projected_daily_cost_limit", "hard"),
+        ("projected_session_cost_limit", "hard"),
     ],
 )
 def test_trigger_scope_classification_is_explicit(code, scope):
@@ -2213,42 +1374,15 @@ def test_clock_regression_with_future_quota_hold_fails_closed(tmp_path, monkeypa
         ).fetchone()[0] == 1
 
 
-def test_clock_regression_with_future_reservation_fails_closed(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "src.cost_circuit._et_day_and_utc_bounds",
-        lambda now=None: (
-            "2099-01-01", "2099-01-01 05:00:00", "2099-01-02 04:59:59",
-        ),
-    )
-    path = _db_path(tmp_path)
-    circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
-    circuit.activate_session("run-future-reservation", "morning")
-    reservation = circuit.begin_call(
-        agent_name="portfolio_manager", model="openai/gpt-5.5",
-        system_prompt="s", user_message="u", max_output_tokens=100,
-    )
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE llm_budget_reservations SET day='2099-01-02', "
-            "expires_at='2000-01-01 00:00:00' "
-            "WHERE reservation_id=?",
-            (reservation.reservation_id,),
-        )
-
-    state = circuit.activate_session("run-clock-regressed", "morning")
-
-    assert state["suspended"] is True
-    assert state["suspension_class"] == "hard"
-    assert state["trigger_code"] == "non_monotonic_reservation_day"
-    assert state["requires_operator_reset"] is True
-    with sqlite3.connect(path) as conn:
-        assert conn.execute(
-            "SELECT status FROM llm_budget_reservations WHERE reservation_id=?",
-            (reservation.reservation_id,),
-        ).fetchone()[0] == "active"
 
 
 def test_hard_latch_survives_et_rollover_until_audited_reset(tmp_path, monkeypatch):
+    """The hard-latch scenario used to be `begin_call` on an unpriced
+    model (`unknown_model_price`) -- gone along with the reservation layer
+    that priced calls at all. `unknown_actual_cost` (no usable cost/token
+    telemetry at completion) is a different, still-real hard trigger that
+    exercises the identical durability property: unlike a quota hold, it
+    does NOT clear on ET rollover and needs an audited `reset()`."""
     clock = {
         "value": ("2099-01-01", "2099-01-01 05:00:00", "2099-01-02 04:59:59")
     }
@@ -2258,11 +1392,12 @@ def test_hard_latch_survives_et_rollover_until_audited_reset(tmp_path, monkeypat
     notifier = _Notifier()
     circuit = LLMCostCircuitBreaker(_db_path(tmp_path), _config(), notifier)
     circuit.activate_session("run-hard", "morning")
-    with pytest.raises(PaidAnalysisSuspended):
-        circuit.begin_call(
-            agent_name="portfolio_manager", model="unknown/unpriced-model",
-            system_prompt="s", user_message="u", max_output_tokens=100,
-        )
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="openai/gpt-5.5",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(reservation, None)  # no usable telemetry -> hard latch
     assert circuit.status()["suspension_class"] == "hard"
     assert circuit.status()["requires_operator_reset"] is True
 
@@ -2271,9 +1406,9 @@ def test_hard_latch_survives_et_rollover_until_audited_reset(tmp_path, monkeypat
     )
     state = circuit.activate_session("run-next-day", "morning")
     assert state["suspended"] is True
-    assert state["trigger_code"] == "unknown_model_price"
+    assert state["trigger_code"] == "unknown_actual_cost"
     assert len(notifier.messages) == 1
-    circuit.reset("operator verified and pinned the missing model price")
+    circuit.reset("operator verified spend and the missing telemetry cause")
     assert circuit.status()["suspended"] is False
 
 
@@ -2416,63 +1551,6 @@ def test_legacy_quota_without_day_provenance_remains_hard(tmp_path):
 # reservation amount.
 
 
-def test_stale_within_grace_reservation_is_larger_than_fresh(tmp_path, monkeypatch):
-    """Integration-level proof, not just the pure-function one in
-    test_cost_table.py: for the IDENTICAL prompt/model/max_output_tokens,
-    begin_call's actual persisted reserved_cost_usd is provably larger when
-    the OpenRouter pricing cache is stale-but-within-grace than when it is
-    fresh -- the widened multiplier from cost_table.
-    openrouter_pricing_reservation_multiplier reaching all the way through
-    _attempt_reserve into the reservation row a real call would see."""
-    import os
-    import time
-    from src import cost_table
-
-    cache = tmp_path / "openrouter_pricing_cache.json"
-    cache.write_text("{}")  # only the file's mtime matters here
-    monkeypatch.setattr(cost_table, "_OPENROUTER_CACHE_PATH", cache)
-
-    grace_config = _loose_config(
-        openrouter_pricing_grace_period_hours=24.0,
-        openrouter_pricing_stale_multiplier_max=1.5,
-    )
-
-    def _reserve(age_hours: float, run_id: str) -> tuple[float, float]:
-        mtime = time.time() - age_hours * 3600
-        os.utime(cache, (mtime, mtime))
-        multiplier = cost_table.openrouter_pricing_reservation_multiplier(
-            1.05, grace_period_hours=24.0, max_stale_multiplier=1.5,
-        )
-        db_dir = tmp_path / run_id
-        db_dir.mkdir()
-        path = _db_path(db_dir)
-        circuit = LLMCostCircuitBreaker(path, grace_config, _Notifier())
-        circuit.activate_session(run_id, "morning")
-        reservation = circuit.begin_call(
-            agent_name="portfolio_manager", model="openai/gpt-5.5",
-            system_prompt="system prompt", user_message="user message",
-            max_output_tokens=16_000,
-        )
-        with sqlite3.connect(path) as conn:
-            reserved = conn.execute(
-                "SELECT reserved_cost_usd FROM llm_budget_reservations "
-                "WHERE reservation_id=?", (reservation.reservation_id,),
-            ).fetchone()[0]
-        return float(reserved), multiplier
-
-    fresh_reserved, fresh_multiplier = _reserve(1.0, "run-fresh-cache")   # well under 24h
-    stale_reserved, stale_multiplier = _reserve(30.0, "run-stale-cache")  # 6h into 24h grace
-
-    assert fresh_multiplier == 1.05  # hard literal: fresh path is untouched
-    assert stale_multiplier > fresh_multiplier
-    assert stale_reserved > fresh_reserved
-    # Loose (1%) relative tolerance: `multiplier` above is captured just
-    # BEFORE begin_call, which recomputes the same function internally a
-    # few milliseconds later against the same fixed cache mtime -- real
-    # wall-clock drift between the two reads, not a modeling error.
-    assert stale_reserved == pytest.approx(
-        fresh_reserved * stale_multiplier / fresh_multiplier, rel=1e-2,
-    )
 
 
 def test_activate_paid_call_session_proceeds_on_stale_within_grace_pricing(tmp_path, monkeypatch):
@@ -2551,3 +1629,129 @@ def test_activate_paid_call_session_still_latches_beyond_grace_pricing(tmp_path,
     assert state["suspended"] is True
     assert state["available"] is False
     assert Path(f"{circuit.db_path}.llm-circuit-unavailable").exists()
+
+
+# ============================================================================
+# Item 14 (OWNER-APPROVED 2026-09-02, docs/WORK.md): the three behaviors the
+# owner's replacement design specifies, pinned directly.
+# ============================================================================
+
+def test_settled_cost_cap_triggers_only_after_a_call_actually_pushes_it_over(tmp_path):
+    """(b): the desk stops when REAL SETTLED cost -- the actual amount a
+    completed call's provider response reported -- pushes today's spend
+    over the daily cap. No projection is involved: the call that trips it
+    is authorized normally (its own dollar amount is unknown until it
+    settles) and only the ACTUAL reported cost, applied by `complete_call`,
+    crosses the line."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path, _config(session_cost_limit_usd=5.0, daily_cost_limit_usd=1.00), notifier,
+    )
+    circuit.activate_session("run-daily-cap", "morning")
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="openai/gpt-5.5",
+        system_prompt="s", user_message="u", max_output_tokens=16_000,
+    )
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    # The call itself was never blocked going in -- only once its ACTUAL
+    # returned cost lands does the cap trip.
+    assert circuit.status()["suspended"] is False
+    circuit.complete_call(reservation, 1.20, actual_model=reservation.model)
+
+    state = circuit.status()
+    assert state["suspended"] is True
+    assert state["trigger_code"] == "daily_cost_limit"
+    assert state["current_daily_cost_usd"] == pytest.approx(1.20)
+
+    # And it stops the DESK, not just this one caller: the very next call,
+    # from any session, is refused before it can even be authorized.
+    circuit.activate_session("run-next", "midday")
+    with pytest.raises(PaidAnalysisSuspended):
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+
+
+def test_call_count_cap_triggers_correctly(tmp_path):
+    """(c): a session that exceeds `max_calls_per_session` calls is
+    stopped -- a runaway-loop guard by COUNT, independent of price. Every
+    call here settles at exactly $0, so a dollar-based check could never
+    catch this; only counting can."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    circuit = LLMCostCircuitBreaker(
+        path, _config(max_calls_per_session=5), notifier,
+    )
+    circuit.activate_session("run-loop", "intra_check")
+    for _ in range(5):
+        reservation = circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+        circuit.before_provider_attempt(reservation, model=reservation.model)
+        circuit.complete_call(reservation, 0.0, actual_model=reservation.model)
+
+    with pytest.raises(PaidAnalysisSuspended) as excinfo:
+        circuit.begin_call(
+            agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+            system_prompt="s", user_message="u", max_output_tokens=100,
+        )
+    assert excinfo.value.state["trigger_code"] == "session_call_count_limit"
+    assert circuit.status()["current_daily_cost_usd"] == 0
+    with sqlite3.connect(path) as conn:
+        logical_calls = conn.execute(
+            "SELECT logical_calls FROM llm_budget_sessions WHERE run_id=?",
+            ("run-loop",),
+        ).fetchone()[0]
+    assert logical_calls == 5
+
+
+def test_a_call_is_no_longer_preemptively_blocked_by_an_unspent_reservation(tmp_path):
+    """The actual defect item 14 replaces, pinned directly. Adapted from
+    the deleted `test_projected_session_spend_blocks_before_provider_
+    request`, which pinned the OLD, now-removed behavior: `begin_call`
+    computed a conservative worst-case dollar RESERVATION from the prompt
+    size and `max_output_tokens` alone, and refused the call outright if
+    that estimate alone would have projected session/daily spend over a
+    ("reserved-exposure") ceiling -- even though no money had been spent
+    yet. Measured: real calls settled at a median 0.38x of that estimate,
+    so the desk was stopped by money that was never spent (docs/WORK.md
+    item 14).
+
+    That old assertion is now WRONG on its own terms. Pinned here instead:
+    a call with a large prompt and a large `max_output_tokens` ceiling --
+    priced by the OLD formula alone at far more than the session limit --
+    is authorized without hesitation, because nothing is estimated or
+    reserved before the call. Only what the call actually, eventually
+    settles at can ever stop the desk."""
+    path = _db_path(tmp_path)
+    notifier = _Notifier()
+    # A limit an old worst-case reservation for this prompt/ceiling would
+    # have blown through instantly: ~$1.86 for a ~259KB prompt at
+    # openai/gpt-5.5 rates under the old byte=token/full-ceiling formula
+    # (see the 2026-08-28 09:32 ET incident in docs/WORK.md item 14),
+    # against a cap two orders of magnitude smaller.
+    circuit = LLMCostCircuitBreaker(
+        path, _config(session_cost_limit_usd=0.01, daily_cost_limit_usd=1.0), notifier,
+    )
+    circuit.activate_session("run-not-preemptively-blocked", "morning")
+
+    # No PaidAnalysisSuspended here: item (b)'s settled-cost check has
+    # nothing to compare against yet (this session has spent exactly $0
+    # so far), and there is no reservation left to project a worst case
+    # from at all.
+    reservation = circuit.begin_call(
+        agent_name="portfolio_manager", model="openai/gpt-5.5",
+        system_prompt="S" * 48_000, user_message="U" * 210_744,
+        max_output_tokens=16_000,
+    )
+    assert reservation.reservation_id != "disabled"
+    assert circuit.status()["suspended"] is False
+    assert notifier.messages == []
+
+    # The real cap still bites once real money is actually reported.
+    circuit.before_provider_attempt(reservation, model=reservation.model)
+    circuit.complete_call(reservation, 0.02, actual_model=reservation.model)
+    assert circuit.status()["trigger_code"] == "session_cost_limit"

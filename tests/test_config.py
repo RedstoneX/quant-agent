@@ -1070,12 +1070,13 @@ def test_shipped_settings_yaml_notifications_url_matches_default():
 
 def test_load_config_rejects_renamed_free_failure_key(tmp_path):
     # `llm_cost_circuit.max_paid_sessions_per_mode_per_day` was renamed to
-    # `max_free_failure_sessions_per_mode` (2026-08-29) once the counting
-    # query it gates stopped counting paid sessions at all. There is no
-    # backwards-compat alias: a settings file that still carries the old
-    # key must fail loudly at load time, naming the new key, rather than
-    # having pydantic's default `extra="ignore"` silently drop it and fall
-    # back to the field default.
+    # `max_free_failure_sessions_per_mode` (2026-08-29), which item 14
+    # (OWNER-APPROVED 2026-09-02, docs/WORK.md) then deleted outright along
+    # with the whole reservation layer it gated -- replaced by the plain
+    # call-count backstop `max_calls_per_session`. There is no backwards-
+    # compat alias for either old name: a settings file that still carries
+    # one must fail loudly at load time rather than having pydantic's
+    # default `extra="ignore"` silently drop it and fall back to a default.
     yaml_content = """
 api_keys:
   anthropic: "test-key"
@@ -1115,4 +1116,5 @@ llm_cost_circuit:
     with pytest.raises(ValidationError) as exc_info:
         load_config(config_file)
 
-    assert "max_free_failure_sessions_per_mode" in str(exc_info.value)
+    assert "max_paid_sessions_per_mode_per_day" in str(exc_info.value)
+    assert "max_calls_per_session" in str(exc_info.value)

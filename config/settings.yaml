@@ -857,54 +857,26 @@ llm_cost_circuit:
   require_telegram_alerts: true
   session_cost_limit_usd: 0.90
   daily_cost_limit_usd: 2.75
-  # Reservations are sized from measured per-(agent, model) history when
-  # there is enough of it (Defect 1, 2026-08-28; see
-  # reservation_min_history_samples etc. below), falling back to a strict
-  # UTF-8-byte token upper bound otherwise. These exposure ceilings permit
-  # one normal large PM prompt under EITHER path while actual settled
-  # spending remains governed by the lower limits above.
-  session_reserved_exposure_limit_usd: 2.60
-  daily_reserved_exposure_limit_usd: 5.50
-  # Backstop only (Defect 4, 2026-08-28) -- NOT the operative per-mode
-  # limit. Catches an infinite-loop session storm that the dollar check
-  # below cannot, because a loop of provably-zero-cost failures (Defect 2)
-  # spends nothing and so would never reach a dollar ceiling.
+  # Item 14 (OWNER-APPROVED 2026-09-02, docs/WORK.md): the per-call cost
+  # RESERVATION layer -- and every exposure ceiling / per-mode allowance /
+  # afternoon reserve / free-failure-session backstop that existed only to
+  # manage a reservation's over-holding -- is deleted. Real calls settled
+  # at a median 0.38x of the pinned worst-case reservation rate, so that
+  # machinery held ~2.6x what was ever spent and stopped the desk on money
+  # that was never spent -- three times in one hour on 2026-09-02, against
+  # ~$1/day of actual spend on this $2.75 ceiling. What replaces it:
+  #   (a) a spend cap on the OpenRouter API key itself, outside this repo --
+  #       see docs/WORK.md item 14(a). NOT configured here.
+  #   (b) session_cost_limit_usd / daily_cost_limit_usd above, checked
+  #       against REAL SETTLED cost only, no projection.
+  #   (c) max_calls_per_session below -- a count-based runaway-loop
+  #       backstop, independent of price.
   #
-  # It MUST sit far above legitimate operation, and twice it did not --
-  # but both times the real defect was the COUNTING query, not the number.
-  # At 2 it stopped intra_check on its 3rd session (measured 2026-08-25/26/
-  # 27: 4, 7, 6 such stops/day against ~$1.02 of a $2.75 budget). Raised to
-  # 8, still fired again at 20:00 UTC on 2026-08-28 benching intra_check on
-  # its 9th session having spent $0.68 of $2.75, then raised again to 40 as
-  # a stopgap. Every one of those sessions was successful and paid for
-  # itself; the query counted them anyway (`logical_calls>0 OR
-  # provider_attempts>0` -- true for any session that ever did anything,
-  # not just a free-failure loop), so a normal trading day burned this
-  # backstop down on its own no matter how high the number went.
-  #
-  # Defect 4.1 (2026-08-29): `LLMCostCircuitBreaker.begin_call` now counts
-  # only sessions that made a provider attempt and settled at zero cost --
-  # a session that spent money is the per-mode dollar allowance's problem,
-  # not this guard's. Under that corrected count, 8 means "eight entirely
-  # free, entirely failed sessions in one mode in one day", which is
-  # unambiguous breakage on any real trading day; 40 was never a real
-  # ceiling, it was the old counter's false-positive rate.
-  max_free_failure_sessions_per_mode: 8
-  # Defect 4.1 (2026-08-29): the backstop above now cools off instead of
-  # latching the mode for the rest of the ET day -- a free-failure loop is
-  # almost always a transient provider outage, and killing a mode until
-  # rollover on a transient is exactly the 2026-08-28 failure. Minutes;
-  # 5..720 (5 minutes .. 12 hours).
-  backstop_cooloff_minutes: 60
-  # Defect 4 operative limit: fraction of daily_reserved_exposure_limit_usd
-  # any ONE mode may reserve/spend per ET day.
-  max_mode_daily_exposure_pct: 60.0
-  # Defect 4 afternoon reserve: fraction of daily_reserved_exposure_limit_usd
-  # withheld from every session, in every mode, until the release hour below
-  # -- close/evening/position_reviewer carry the exit decisions and must not
-  # find the day's budget already spent by a busy or runaway morning.
-  afternoon_reserve_pct: 40.0
-  afternoon_reserve_release_et_hour: 12
+  # Placeholder pending owner confirmation (2026-09-02): no existing
+  # measurement of typical provider calls per session was found in this
+  # codebase or docs/WORK.md, so 60 is a conservative round number, not a
+  # measured ceiling.
+  max_calls_per_session: 60
   # max_provider_attempts_per_call is deliberately NOT pinned here. It must
   # cover what the agent retry loop can actually spend (primary attempts plus
   # the single cross-provider failover), and that budget lives in code, not
@@ -912,21 +884,6 @@ llm_cost_circuit:
   # here at 2 against a worst case of 3 is what made failover impossible to
   # complete and darkened the desk on 2026-08-31. Config now derives it, and
   # AppConfig refuses to load an explicit value below the real worst case.
-  max_retry_attempts_per_session: 2
-  reservation_ttl_minutes: 30
-  reservation_multiplier: 1.05
-  # Defect 1 (2026-08-28): below this many (agent, model) rows in
-  # agent_logs, reservation falls back to the byte=token / full-
-  # max_output_tokens formula above rather than trusting a handful of
-  # calls.
-  reservation_min_history_samples: 20
-  # Conservative LOW percentile of the measured bytes-per-token ratio (a
-  # low ratio means MORE tokens per byte, i.e. higher cost). Deliberately
-  # well below the median.
-  reservation_conservative_percentile: 0.10
-  # Safety margin over the maximum output_tokens observed for an agent+
-  # model; still capped at that call's own max_output_tokens.
-  reservation_output_margin: 1.20
   # Pricing-staleness SPOF fix (2026-08-28): before this, an OpenRouter
   # catalog outage overlapping the first session past the cache's 24h
   # freshness boundary latched the whole desk via mark_unavailable(),
@@ -935,12 +892,12 @@ llm_cost_circuit:
   # 24h of grace ON TOP OF the 24h freshness window (48h total tolerance)
   # covers a full extra outage cycle before genuinely failing closed, which
   # is the point at which an unattended desk should stop and a human should
-  # actually look at it.
+  # actually look at it. Independent of item 14: this bounds the pricing
+  # CATALOG's own staleness for the estimated-cost fallback, not a deleted
+  # per-call dollar reservation.
   openrouter_pricing_grace_period_hours: 24.0
-  # Reservation multiplier at the far edge of that grace window -- 50% wider
-  # than the in-hours 1.05 above, scaling up linearly from 1.05 (no
-  # widening) the instant the cache turns stale. See
-  # cost_table.openrouter_pricing_reservation_multiplier.
+  # Multiplier applied to a stale-but-in-grace rate at the far edge of that
+  # grace window. See cost_table.openrouter_pricing_reservation_multiplier.
   openrouter_pricing_stale_multiplier_max: 1.50
 
 evolution:
