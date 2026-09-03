@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, computed_field, field_validator, model_validator
 
+from src.quantities import collapse_stances
+
 logger = logging.getLogger(__name__)
 
 
@@ -1867,6 +1869,156 @@ class StockNewsItem(LLMOutputModel):
         return _normalize_enum_case_fields(
             values, lower_fields=("sentiment", "conviction"),
         )
+
+
+#: `news_verdict_for_symbol`'s conviction -> `AnalystVerdict.magnitude` map.
+#: Judgment call (flagged for review, Phase 13 §13.3 posture — start equal,
+#: adjust only on out-of-sample proof): a `StockNewsItem` carries no numeric
+#: field at all, only a three-rung conviction, so unlike
+#: `RATING_MAGNITUDE` (which has a true neutral rung at 0.0 to anchor
+#: against) there is nothing to equally space AROUND. Spacing the three
+#: rungs equally across (0, 1] — never landing on 0.0, which the
+#: `AnalystVerdict` validator reserves for a real neutral read — keeps "low
+#: conviction" a genuine (if weak) lean instead of a silent no-lean that
+#: would rank identically to a symbol nobody covered.
+NEWS_CONVICTION_MAGNITUDE: dict[str, float] = {
+    "low": round(1 / 3, 2), "medium": round(2 / 3, 2), "high": 1.0,
+}
+
+#: Same ordinal `_CONVICTION_RANK` idea as `src/nominations.py` and
+#: `CONVICTION_SCORE` in `src/verdicts.py` (low < medium < high), kept as a
+#: private copy here rather than imported: both of those modules import
+#: `src.models`, so importing either back would be circular. This is a
+#: single `max()` key, not a quantity computed and compared across files, so
+#: it does not trip the one-definition guard's arithmetic-shape matching —
+#: see `tests/test_one_definition_guard.py`.
+_NEWS_CONVICTION_RANK: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
+
+#: Evidence cap for `news_verdict_for_symbol` — see its docstring.
+_MAX_NEWS_EVIDENCE_ITEMS = 5
+
+
+def news_verdict_for_symbol(symbol: str, items: list["StockNewsItem"]) -> "AnalystVerdict":
+    """Collapse every `StockNewsItem` the News seat filed for one symbol
+    into the one `AnalystVerdict` the Portfolio Manager compares seats by.
+
+    Precondition: `items` is non-empty. News never calls this for a symbol
+    it did not cover (`NewsIntelligenceReport.stock_news` only has keys for
+    symbols with at least one item) — an empty list is handled below only
+    so the function fails soft (neutral, no lean) rather than raising, but
+    that path should never be exercised in production.
+
+    **direction** — the collapsed sentiment across every item, via
+    `src.quantities.collapse_stances` — the SAME reduction
+    `PortfolioManagerAgent.build_evidence_registry` already applies to
+    `(i.sentiment for i in items)` (see `PortfolioManagerAgent.
+    _collapse_stances`, now a thin wrapper over the same function). Reusing
+    it rather than inventing a second disagreement rule is deliberate: a
+    verdict and a registry stance about the same symbol must never resolve
+    a three-way sentiment split differently. `collapse_stances` returns
+    "mixed" for any unresolved disagreement (including a directional
+    sentiment sitting alongside a "neutral" one) — that is treated as
+    neutral here, same as an empty `items` list: an unresolved split is the
+    absence of a call, not a third direction `AnalystVerdict` has no room
+    for.
+
+    **conviction** — JUDGMENT CALL, flagged for review. `collapse_stances`
+    decides the winning DIRECTION but says nothing about conviction, so:
+    among the items whose own `sentiment` agrees with the final collapsed
+    direction, take the HIGHEST conviction. Rationale: an item that
+    disagreed with the eventual call was outvoted and its confidence in the
+    losing side is not evidence for how strongly to hold the winning one;
+    among the items that agree, the most confident one is the strongest
+    stated support the desk actually has for this call. A neutral verdict
+    (collapse resolved to neutral, or resolved to "mixed", or `items` was
+    empty) has no winning side to draw a conviction from, so it defaults to
+    "low" — the weakest assertion the scale offers, since there is
+    nothing here to be confident ABOUT.
+
+    **magnitude** — `NEWS_CONVICTION_MAGNITUDE[conviction]` for a
+    directional verdict (see that table's docstring for the mapping and why
+    it is a judgment call), or 0.0 for neutral — `AnalystVerdict` refuses a
+    neutral verdict with any other magnitude.
+
+    **evidence** — one `VerdictEvidence(label="headline", text=...)` per
+    item, `headline` and `impact_summary` joined so the check is visible
+    without opening the source article, capped at `_MAX_NEWS_EVIDENCE_ITEMS`
+    (JUDGMENT CALL, flagged for review) so a symbol with a long news day
+    does not bloat the verdict — earlier items are kept (arrival order,
+    unchanged from `NewsIntelligenceReport.stock_news`), on the assumption
+    that News files its most decision-relevant item first. Included even
+    for a neutral verdict (optional there, but still useful context).
+
+    **invalidation** — JUDGMENT CALL, flagged for review. News items carry
+    no stated falsifier the way `TechAnalysisResult.thesis_invalid_if` does,
+    but `AnalystVerdict` refuses a directional (non-neutral) verdict with a
+    blank one, so something honest has to be constructed.
+
+    The obvious candidate — quote whichever item disagreed with the final
+    direction as "the stated case against the call" — turns out to be
+    unreachable given `StockNewsItem.sentiment`'s domain (bullish/bearish/
+    neutral only): `collapse_stances` only resolves to a directional
+    (non-"mixed") result when EVERY surviving sentiment is that exact same
+    value (its `len(cleaned) == 1` branch — the positive/negative-SET
+    branches below it can never fire for a 3-valued domain where each
+    polarity set has exactly one reachable member). So whenever this
+    function's `direction` is bullish or bearish, by construction every
+    item already agrees with it and there is no opposing item to quote.
+    (Proven in `tests/test_news_verdict.py::
+    test_a_directional_call_never_has_a_disagreeing_item_to_quote`.)
+
+    So the only honest falsifier available is structural: a later headline
+    reporting the opposite sentiment on this symbol. That is a generic,
+    templated sentence, not a fabricated specific fact, and it is the same
+    sentence for every directional call — flagged so review can judge
+    whether that bar is met, or whether "" (like the neutral case) would be
+    more honest than a templated non-fact.
+
+    A neutral verdict states no invalidation ("") — a neutral read is the
+    absence of a call, so `AnalystVerdict` does not require one and none is
+    invented.
+
+    seat — "news", the same key `build_evidence_registry` puts news stances
+    under (`put(symbol, "news", ...)`).
+    """
+    direction = collapse_stances(item.sentiment for item in items) or "neutral"
+    if direction not in ("bullish", "bearish", "neutral"):
+        # "mixed" (or anything else collapse_stances might someday return
+        # that isn't one of the three verdict directions) is an unresolved
+        # split — treated as no lean, never guessed at.
+        direction = "neutral"
+
+    if direction == "neutral":
+        conviction = "low"
+        magnitude = 0.0
+        invalidation = ""
+    else:
+        agreeing = [item.conviction for item in items if item.sentiment == direction]
+        conviction = max(agreeing, key=lambda c: _NEWS_CONVICTION_RANK.get(c, -1)) if agreeing else "low"
+        magnitude = NEWS_CONVICTION_MAGNITUDE[conviction]
+        # No opposing item to quote — see the docstring's invalidation
+        # section for why that is provably always true here, not merely
+        # true of the fixtures this happens to have been tested against.
+        opposite = "bearish" if direction == "bullish" else "bullish"
+        invalidation = f"a subsequent headline reporting {opposite} sentiment on {symbol}"
+
+    evidence = [
+        VerdictEvidence(
+            label="headline",
+            text=f"{item.headline} — {item.impact_summary}".strip(" —"),
+        )
+        for item in items[:_MAX_NEWS_EVIDENCE_ITEMS]
+    ]
+
+    return AnalystVerdict(
+        seat="news",
+        symbol=symbol,
+        direction=direction,
+        magnitude=magnitude,
+        conviction=conviction,
+        evidence=evidence,
+        invalidation=invalidation,
+    )
 
 
 class NewsIntelligenceReport(LLMOutputModel):
