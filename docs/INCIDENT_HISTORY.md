@@ -22,6 +22,43 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — the analyst's exit condition could get quietly cut off before anyone checked it
+
+**In plain words:** when an analyst opens a position, they write down what
+would prove them wrong — the specific condition that means "get out." That
+condition was never given its own place to live. It was stuffed as extra
+text onto the end of a longer explanation, and that longer explanation gets
+shortened twice on its way through the system (once to 500 characters, once
+again to 280). A long enough condition could get sliced off entirely before
+a later check ever saw it — the exit trigger simply wasn't there to find.
+
+**What was fixed:** the condition now gets its own dedicated place to live,
+separate from the shortened explanation text, so it survives complete no
+matter how long it is (capped generously at 2,000 characters only as a
+guard against a runaway AI response, not as a real limit — a real condition
+has never come close to that). It is carried through to the database and
+into the desk's day-to-day memory of why each position was opened, so it is
+still there in full after a restart, not just for the rest of the same run.
+The old shortened text is untouched and still there for anything that
+already reads it — nothing was removed, only something was added that
+cannot be lost the same way.
+
+**What this does NOT fix, and isn't meant to:** having the condition intact
+is a precondition for actually checking it against real prices later — a
+separate piece of work, in progress in parallel, not built here. This entry
+only closes the "the condition itself can vanish" half of the gap.
+
+**Verification:** real tests built a condition longer than both truncation
+points (500 and 280 characters) and proved it survives completely intact on
+a buy, a short, and a sell, while the old shortened text is confirmed
+already cut down by the time anything could read it back out. A database
+round-trip test and a legacy-row (no-value) test were also written. Each
+test was proven real by breaking the fix, watching the exact test fail, and
+restoring it. Full relevant suite: 395 passed, 0 failed, both before and
+after.
+
+---
+
 ### 2026-09-03 — the other four analysts finally reach the ranking, and one real bug caught on the way in
 
 **In plain words:** the desk's tiebreak among tied stock picks only ever

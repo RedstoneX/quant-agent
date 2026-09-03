@@ -1859,6 +1859,9 @@ class PortfolioConstructor:
             stop_loss=0.0,
             take_profit=0.0,
             reasoning=reasoning[:500],
+            # Real, untruncated field alongside the embedded-in-reasoning
+            # text above — see TradeDecision.thesis_invalid_if.
+            thesis_invalid_if=target.thesis_invalid_if or None,
         )
 
     @staticmethod
@@ -1906,6 +1909,9 @@ class PortfolioConstructor:
             stop_loss=0.0,
             take_profit=0.0,
             reasoning=reasoning[:500],
+            # Real, untruncated field alongside the embedded-in-reasoning
+            # text above — see TradeDecision.thesis_invalid_if.
+            thesis_invalid_if=target.thesis_invalid_if or None,
         )
 
     def _build_buy(
@@ -2095,6 +2101,9 @@ class PortfolioConstructor:
             stop_rule=self.shipped_stop_rule(
                 analysis, entry_price, stop_loss, target.direction,
             ),
+            # Real, untruncated field alongside the embedded-in-reasoning
+            # text above — see TradeDecision.thesis_invalid_if.
+            thesis_invalid_if=target.thesis_invalid_if or None,
         )
 
     def _build_short(
@@ -2257,6 +2266,9 @@ class PortfolioConstructor:
             stop_rule=self.shipped_stop_rule(
                 analysis, entry_price, stop_loss, target.direction,
             ),
+            # Real, untruncated field alongside the embedded-in-reasoning
+            # text above — see TradeDecision.thesis_invalid_if.
+            thesis_invalid_if=target.thesis_invalid_if or None,
         )
 
     def _resolve_stop(

@@ -4399,6 +4399,15 @@ class TradingPipeline:
                 "entry_date": entry_date_str,
                 "entry_price": entry.get("price") if entry else None,
                 "entry_reasoning": (entry.get("reasoning") or "")[:280] if entry else "",
+                # Real, untruncated falsifier condition — see
+                # TradeDecision.thesis_invalid_if in models.py. Carried
+                # ALONGSIDE entry_reasoning (never a replacement for it):
+                # the embedded "(invalid if: ...)"/"(thesis_invalid_if: ...)"
+                # text above is truncated at 280 chars here (and 500 chars
+                # upstream in the constructor), which could silently cut off
+                # a long condition. This column is None for legacy rows
+                # written before the trades.thesis_invalid_if column existed.
+                "thesis_invalid_if": entry.get("thesis_invalid_if") if entry else None,
                 "days_held": days_held,
                 "tech_history": tech_history,
             }

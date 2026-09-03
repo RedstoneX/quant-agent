@@ -879,6 +879,16 @@ class Database:
         _ensure_column("trades", "allocated_risk_pct", "allocated_risk_pct REAL")
         _ensure_column("trades", "conviction", "conviction TEXT")
         _ensure_column("trades", "decision_model", "decision_model TEXT")
+        # Thesis invalidation, as a real column (2026-09-03). Mirrors the
+        # conviction-ledger columns immediately above: pinned at ENTRY
+        # (BUY/SHORT) only, from `TradeDecision.thesis_invalid_if` (see that
+        # field in models.py for the full history — it used to live ONLY as
+        # truncated text inside `reasoning`, which could silently lose a
+        # long analyst-stated falsifier condition before a later holding-
+        # discipline check ever saw it). NULL on every legacy row and on any
+        # entry whose target carried no stated condition — never fabricated,
+        # only ever pinned from a real PM decision.
+        _ensure_column("trades", "thesis_invalid_if", "thesis_invalid_if TEXT")
         # decision_id_status: the honest-absence label for `decision_id` on
         # an exit-family row, mirroring Phase 3.1's pace/pace_status pattern
         # (see `_resolve_decision_id_status` above `class Database`). ALWAYS
@@ -1132,7 +1142,8 @@ class Database:
                      conviction: str | None = None,
                      requested_risk_pct: float | None = None,
                      allocated_risk_pct: float | None = None,
-                     decision_model: str | None = None) -> int:
+                     decision_model: str | None = None,
+                     thesis_invalid_if: str | None = None) -> int:
         """Insert a trade record. Returns the new row's id.
 
         `fill_status` semantics:
@@ -1157,6 +1168,11 @@ class Database:
         only (see `TradeDecision` in models.py for what each figure means);
         every existing caller that never passes them gets None, which is
         correct for every non-entry row and every legacy caller.
+
+        `thesis_invalid_if` mirrors that same entry-only pinning — see
+        `TradeDecision.thesis_invalid_if` in models.py. None for every
+        non-entry row, every legacy caller, and any entry whose target
+        stated no falsifier condition.
         """
         def _do():
             position_id = self._resolve_new_row_position_id(
@@ -1169,13 +1185,13 @@ class Database:
                 "stop_loss, take_profit, broker_order_id, fill_status, decision_id, "
                 "expected_horizon_sessions, setup_type, position_id, exit_reason_category, "
                 "conviction, requested_risk_pct, allocated_risk_pct, decision_model, "
-                "decision_id_status) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "decision_id_status, thesis_invalid_if) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (symbol, action, qty, price, reasoning, run_id,
                  stop_loss, take_profit, broker_order_id, fill_status, decision_id,
                  expected_horizon_sessions, setup_type, position_id, exit_category,
                  conviction, requested_risk_pct, allocated_risk_pct, decision_model,
-                 decision_link_status),
+                 decision_link_status, thesis_invalid_if),
             )
             self.conn.commit()
             return cur.lastrowid

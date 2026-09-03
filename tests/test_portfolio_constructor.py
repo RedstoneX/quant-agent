@@ -575,3 +575,129 @@ def test_dropped_target_reason_is_captured_not_silently_lost():
         total_value=10_000.0, price_map={"XLF": 100.0},
     )
     assert constructor.last_drop_reasons == {}
+
+
+# === thesis_invalid_if: dedicated field, not lossy text (2026-09-03) ===
+#
+# `TargetPosition.thesis_invalid_if` used to reach `TradeDecision` ONLY as
+# text appended to `reasoning` — "(invalid if: ...)" / "(thesis_invalid_if:
+# ...)" — and `reasoning` is truncated to 500 chars at every builder site
+# below, then AGAIN to 280 chars by `TradingPipeline._build_position_
+# history`. A long condition could silently fall past either cut. These
+# tests prove the new `TradeDecision.thesis_invalid_if` field survives
+# completely intact regardless of what happens to `reasoning`.
+
+_LONG_INVALID_IF = (
+    "This thesis is invalidated if the stock closes below the rising "
+    "50-day simple moving average on a weekly closing basis for two "
+    "consecutive weeks, OR if the company's next quarterly earnings "
+    "report shows gross margin compression of more than 300 basis points "
+    "year-over-year, OR if the sector rotation model flips this GICS "
+    "sub-industry from leadership to laggard status for more than ten "
+    "consecutive trading sessions, OR if a director or the CEO sells "
+    "more than 2% of their disclosed beneficial ownership stake outside "
+    "of a pre-scheduled 10b5-1 trading plan in a single reported window."
+)
+# Long enough to survive nothing: it blows past both the 500-char builder
+# truncation AND the 280-char position-history truncation.
+assert len(_LONG_INVALID_IF) > 500
+
+
+def _extract_embedded_invalid_if(reasoning: str) -> str | None:
+    """Mirrors how a downstream reader would regex the OLD embedded marker
+    back out of `reasoning` — used here only to demonstrate that path is
+    lossy once truncation has already run over it."""
+    import re
+    m = re.search(r"\((?:invalid if|thesis_invalid_if): (.*)\)\s*$", reasoning)
+    return m.group(1) if m else None
+
+
+def test_buy_thesis_invalid_if_survives_full_length_unlike_embedded_reasoning():
+    constructor = PortfolioConstructor()
+    target = TargetPosition(
+        symbol="NVDA", target_weight_pct=8.0, conviction="high",
+        thesis="AI leadership", thesis_invalid_if=_LONG_INVALID_IF,
+    )
+    analyses = [_analysis("NVDA", entry=100, stop=95, target=115)]
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[], analyses=analyses,
+        total_value=100_000, price_map={"NVDA": 100.0},
+    )
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d.action == "BUY"
+    # The new field: complete, untruncated.
+    assert d.thesis_invalid_if == _LONG_INVALID_IF
+
+    # The old path really is lossy: `reasoning` is capped at 500 chars, so
+    # the embedded marker's payload — appended AFTER the cut — never makes
+    # it into the string a regex could extract at all.
+    assert len(d.reasoning) <= 500 + 200  # + cap_note/target_note headroom
+    embedded = _extract_embedded_invalid_if(d.reasoning)
+    assert embedded is None or embedded != _LONG_INVALID_IF
+
+
+def test_short_thesis_invalid_if_survives_full_length_unlike_embedded_reasoning():
+    constructor = PortfolioConstructor()
+    target = TargetPosition(
+        symbol="TSLA", direction="short", target_weight_pct=5.0,
+        conviction="high", thesis="overvalued",
+        thesis_invalid_if=_LONG_INVALID_IF,
+    )
+    analysis = TechAnalysisResult(
+        symbol="TSLA", rating="sell", entry_price=250.0, stop_loss=262.5,
+        reference_target=200.0, reasoning="test",
+        support_levels=[200.0], resistance_levels=[262.5],
+        computed_levels=[200.0],
+        computed_level_touches={200.0: 5},
+        setup_type="range", expected_horizon_sessions=60,
+        reasoning_chain=_tech_rc(),
+        atr_14=(262.5 - 250.0) / 3.5,
+    )
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[], analyses=[analysis],
+        total_value=100_000, price_map={"TSLA": 250.0},
+    )
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d.action == "SHORT"
+    assert d.thesis_invalid_if == _LONG_INVALID_IF
+    embedded = _extract_embedded_invalid_if(d.reasoning)
+    assert embedded is None or embedded != _LONG_INVALID_IF
+
+
+def test_sell_thesis_invalid_if_survives_full_length_unlike_embedded_reasoning():
+    constructor = PortfolioConstructor()
+    positions = [_pos("AAPL", qty=50, avg_entry=180, current_price=200)]
+    target = TargetPosition(
+        symbol="AAPL", target_weight_pct=0.0, conviction="low",
+        thesis="close — thesis broken", thesis_invalid_if=_LONG_INVALID_IF,
+    )
+    decisions = constructor.construct_orders(
+        targets=[target], positions=positions, analyses=[],
+        total_value=100_000,
+    )
+    assert len(decisions) == 1
+    d = decisions[0]
+    assert d.action == "SELL"
+    assert d.thesis_invalid_if == _LONG_INVALID_IF
+    # reasoning is capped hard at 500 with no headroom for SELL.
+    assert len(d.reasoning) <= 500
+    embedded = _extract_embedded_invalid_if(d.reasoning)
+    assert embedded is None or embedded != _LONG_INVALID_IF
+
+
+def test_hold_and_no_condition_leave_the_field_none():
+    """No stated condition → the field is None, not an empty string, on
+    every action — matching the conviction-ledger fields' own discipline."""
+    constructor = PortfolioConstructor()
+    positions = [_pos("NVDA", qty=81, avg_entry=100, current_price=100)]
+    target = TargetPosition(symbol="NVDA", target_weight_pct=8.2,
+                             conviction="high", thesis="keep")
+    decisions = constructor.construct_orders(
+        targets=[target], positions=positions, analyses=[],
+        total_value=100_000, price_map={"NVDA": 100.0},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].action == "HOLD"
+    assert decisions[0].thesis_invalid_if is None
