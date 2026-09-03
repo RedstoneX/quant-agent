@@ -1106,6 +1106,42 @@ class LLMCostCircuitConfig(BaseModel):
     openrouter_pricing_stale_multiplier_max: float = Field(
         default=1.50, ge=1.0, le=5.0, allow_inf_nan=False,
     )
+    # === Infrastructure-fault retry (docs/WORK.md item 17a, 2026-09-03) ===
+    # Before this, ANY exception while reading/seeding the ledger --
+    # "I cannot read the budget", e.g. a transient SQLite lock or disk I/O
+    # error -- was treated exactly like "I am over budget" (a real, measured
+    # breach): both latched paid analysis via the durable file marker on the
+    # very first occurrence, requiring an operator to clear it by hand. A
+    # real breach still latches immediately and correctly (`_trip_locked`
+    # writes the in-DB `llm_circuit_state` row, unaffected by this block).
+    # This block only bounds retries for the DB-open/read path itself
+    # (`LLMCostCircuitBreaker._run_with_infra_retry`, used by construction,
+    # `activate_session`, and `enforce_current_limits`) before IT escalates
+    # to the same durable latch.
+    #
+    # Shape and defaults mirror `MacroConfig` above (`max_retries`,
+    # `retry_backoff_base_s`, `retry_backoff_max_s`, `retry_backoff_jitter_s`)
+    # -- the same "bounded exponential-backoff retry before a harder failure
+    # mode" pattern this codebase already uses for FRED's transient network
+    # faults (`MacroDataProvider._next_backoff`), reused rather than a fresh
+    # number invented for this circuit.
+    infra_fault_max_retries: int = Field(default=2, ge=0, le=5)
+    """Bounded retries for a transient cost-circuit infrastructure fault
+    BEFORE it escalates to the durable emergency latch. Mirrors
+    `MacroConfig.max_retries`."""
+
+    infra_fault_retry_backoff_base_s: float = Field(default=2.0, gt=0, le=30.0)
+    """First retry's backoff, in seconds; doubles each subsequent retry,
+    capped at `infra_fault_retry_backoff_max_s`. Mirrors
+    `MacroConfig.retry_backoff_base_s`."""
+
+    infra_fault_retry_backoff_max_s: float = Field(default=8.0, gt=0, le=60.0)
+    """Ceiling on the exponential backoff. Mirrors
+    `MacroConfig.retry_backoff_max_s`."""
+
+    infra_fault_retry_backoff_jitter_s: float = Field(default=1.0, ge=0, le=10.0)
+    """Uniform jitter, 0..this many seconds, added to every backoff sleep.
+    Mirrors `MacroConfig.retry_backoff_jitter_s`."""
 
     @model_validator(mode="before")
     @classmethod

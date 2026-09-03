@@ -22,6 +22,100 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — item 17(a)/(b): a database hiccup shouldn't need a human, and a failed alert shouldn't vanish
+
+**In plain words:** two related gaps closed. First, a brief database hiccup
+("I cannot read the budget right now") used to shut off all paid analysis
+just as hard and just as permanently as a real, measured overspend ("I am
+over budget") — both required a human to clear a file by hand before trading
+could resume. Now a hiccup gets a few quick retries first and only shuts
+things off if it keeps failing; a real overspend still shuts off instantly,
+exactly as before. Second, the alert that is supposed to tell the owner
+"paid analysis just got shut off" could itself fail to send — and until now
+that failure just vanished: nothing else happened, and nobody could tell
+later whether the owner had ever actually been warned. Now that failure is
+written down where a later run will find it and try again, and the running
+count of failed attempts is visible wherever the circuit's status is
+checked, so it cannot go unnoticed forever the way it did on 2026-09-02.
+
+**(a) — infra fault vs. real breach.** `LLMCostCircuitBreaker` had exactly
+one outcome for "something went wrong touching the ledger": the durable,
+cross-process file latch (`mark_unavailable`), fired on the very first
+exception. That conflated two different situations that were already
+mechanically distinct everywhere else in the module: a real, measured
+spend breach is recorded by `_trip_locked` straight into the in-database
+`llm_circuit_state` row and was never routed through the file latch at all
+— it already latched immediately and correctly. Everything that DID reach
+`mark_unavailable` (construction, session activation, the preflight
+spend-check) was, by construction, an infrastructure/config problem, never
+a breach — so retrying it before latching could never accidentally delay a
+real overspend.
+
+The fix adds `LLMCostCircuitBreaker._run_with_infra_retry`, wrapping the
+three places that read/seed the ledger before any money is at stake
+(`_initialize` at construction, `activate_session`, and
+`enforce_current_limits`, which backs the `require_paid_analysis` preflight
+gate). It retries a bounded number of times with exponential backoff, then
+escalates to the exact same durable latch as before. `PaidAnalysisSuspended`
+/ `OptionalPaidAnalysisRetrySkipped` — the real-breach signal, when it
+surfaces through one of these paths — passes straight through unretried,
+so a genuine breach is never delayed by this change. The call-accounting
+paths (`begin_call`, `before_provider_attempt`, `complete_call`,
+`fail_call`, `status`) are deliberately untouched: they run after a call has
+already been authorized or settled, where an automatic retry of a write
+carries more risk than the conservative fail-closed-immediately behavior
+already in place there.
+
+The retry count and backoff shape are not a new number invented for this:
+they mirror `MacroConfig` (`src/config.py`) — the bounded
+exponential-backoff-with-jitter retry this codebase already uses for FRED's
+transient network faults (`MacroDataProvider._next_backoff`,
+`src/data/macro.py`) — reused as
+`LLMCostCircuitConfig.infra_fault_max_retries` /
+`infra_fault_retry_backoff_base_s` / `_max_s` / `_jitter_s`, same defaults
+(2 retries, 2s doubling to 8s, 1s jitter).
+
+**(b) — a failed alert must be persisted and retried, not dropped.** The
+sentinel object that fires the "paid analysis suspended" alert
+(`UnavailableLLMCostCircuit`) tracked delivery success only in an in-process
+boolean. If the Telegram send failed and the process then exited (or simply
+never touched the circuit again), that failure was both terminal and
+invisible — nothing durable recorded that the owner had never actually been
+told. This is exactly what happened on 2026-09-02 (see item 17c's entry
+above): the database fault latched, and the alert about it also failed to
+send, with no trace.
+
+The fix folds alert-delivery bookkeeping (`alert_delivered`,
+`alert_attempts`, `last_alert_attempt_at`) into the SAME durable JSON marker
+`mark_unavailable` already writes for the latch itself — deliberately not a
+database row, since the whole scenario this sentinel exists for is the
+database being the thing that's broken. Every time any circuit boundary is
+touched (session activation, a preflight check, a fresh process after a
+restart), the sentinel re-reads that marker: if already delivered, it stops
+trying; if not, it retries the send and records the outcome, success or
+failure, back into the file. `alert_attempts` and `alert_delivered` are also
+surfaced through `status()` (already read by session summaries and would
+feed Mission Control), so a string of failed attempts is visible on that
+surface, not just in process logs. A genuine second notification channel
+does not exist in this codebase yet (Telegram is the only one), so this
+ships the "at minimum, durably recorded and retried" half of the original
+ask; a real second channel is a separate, larger decision and is called out
+in `docs/WORK.md` rather than invented here.
+
+**What was NOT decided here:** whether to build an actual second alert
+channel (e.g. email/SMS/PagerDuty) beyond Telegram. That is a new paid
+dependency and a real design tradeoff, not a retry-count choice — flagged
+for the owner in `docs/WORK.md`, not decided unilaterally.
+
+**Tests added** (`tests/test_cost_circuit.py`): a transient DB-open failure
+retries with backoff and does not latch on the first occurrence, but does
+latch once retries are exhausted; a real, measured spend breach still
+latches immediately with zero retries and never touches the file latch; a
+failed alert send is durably recorded and successfully retried by a later
+process; and repeated alert failures across several simulated process
+restarts keep accumulating in the durable record (and on `status()`)
+instead of silently disappearing after the first attempt.
+
 ### 2026-09-03 — item 17c: a watchdog for the desk going silent, not just the alarm breaking
 
 **In plain words:** on 2026-09-02 the desk stopped doing any work at all — a
