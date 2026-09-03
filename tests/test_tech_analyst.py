@@ -845,6 +845,13 @@ def test_a_model_asserted_computed_levels_field_is_overwritten_by_code(
     assert spy.computed_levels == expected
     assert 999.0 not in spy.computed_levels
     assert 1000.0 not in spy.computed_levels
+    # 2026-09-03, Phase 12.1 — `computed_level_touches` is the same
+    # PYTHON-set, never-model-writable data, carrying each level's touch
+    # count so `_level_backing_stop` can enforce
+    # `min_level_touches_for_stop_honor` (docs/RESEARCH_FINDINGS.md §7).
+    assert spy.computed_level_touches == {
+        lv.price: lv.touches for lv in (*supports, *resistances)
+    }
 
 
 @patch("anthropic.Anthropic")

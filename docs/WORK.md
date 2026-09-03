@@ -43,27 +43,15 @@ settled. Restored:**
   stays until that re-run exists. Re-running is a re-run, not a rebuild — the
   rig reads the prompt from disk.
 
-- [ ] DECIDE BY 2026-09-09 — Level quality bar for Phase 12.1.
-  **DATE MOVED 2026-09-02, and the item got MORE load-bearing, not less.**
-  `wt/levels-wire` merged the same day and now scores level strength by TOUCH
-  COUNT (the unmeasured 252-session recency half-life is gone), which changes
-  top-6 level selection on 66 of 99 symbols. Touch count is now the primary
-  ranking signal AND the unresolved quality bar, so this compounds.
-  It is deferred only because `wt/rr-geometry` is actively editing stop and
-  level logic and two writers must not collide — start this the moment that
-  branch lands.
-  **This is NOT an owner-picks-a-number question.** Standing project rule:
-  market-structure thresholds come from published technical-analysis
-  literature, never from a model's training-recall, never from speculation,
-  and are never handed to the owner to guess. Research the doctrine, propose
-  the number WITH its source, then ratify. A stop is now
-  honoured if it sits on a computed structural level, but a level currently
-  qualifies on **two touches ever, anywhere in ~3 years** — so two old swing
-  points can justify a very tight stop. **The 3x ATR floor used to hide this
-  by widening such stops; 12.1 honours them instead, which makes the bar for
-  "is this a real level" load-bearing in a way it never was before.** Needs a
-  recency and/or touch-count requirement. Risk judgement, owner's call, NOT an
-  agent decision — no agent may pick a threshold here.
+- [x] RESOLVED 2026-09-03 — Level quality bar for Phase 12.1. A stop is
+  honoured however tight only when the computed level backing it has 5+
+  touches (`risk.min_level_touches_for_stop_honor`), derived from the
+  measured touch-count table in `docs/RESEARCH_FINDINGS.md` §7 (owner
+  pre-approved going with whatever the research supports). Below the bar
+  the stop falls back to the ATR floor, same as an unbacked stop.
+  `find_structural_levels`' own `MIN_TOUCHES = 2` is unchanged — that gates
+  whether a level exists at all, a separate question. Detail:
+  `docs/INCIDENT_HISTORY.md`, 2026-09-03 "a level needs 5 touches, not 2".
 
 **RECONFIRM AFTER A FEW DAYS LIVE — item 14(c)'s call-count cap, owner
 instruction 2026-09-03.** Shipped at `max_calls_per_session: 40`, set from

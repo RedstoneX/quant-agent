@@ -292,6 +292,19 @@ class ConstructorConfig:
     # 0 disables the floor entirely. Kept in sync with
     # `risk.absolute_min_stop_atr_multiple`.
     absolute_min_stop_atr_multiple: float = 1.0
+    # How many prior touches a computed level needs before `_level_backing_stop`
+    # treats a stop resting on it as verified enough for the exemption above
+    # (Phase 12.1, 2026-09-03). `find_structural_levels` already requires 2
+    # touches to register a level at all, but that was never a quality bar
+    # for trusting a TIGHT stop on it — see docs/RESEARCH_FINDINGS.md §7's
+    # measured table. Real-vs-shuffled bounce probability only separates with
+    # non-overlapping 95% CIs at 5+ touches (real 0.644 [0.590, 0.696] vs
+    # shuffled 0.505 [0.470, 0.539]); every lower bucket's CIs overlap or
+    # nearly touch, i.e. could be noise. A level below this bar is not
+    # "verified" here and the stop falls back to the ATR floors, exactly as
+    # an unbacked stop does. Kept in sync with
+    # `risk.min_level_touches_for_stop_honor`.
+    min_level_touches_for_stop_honor: int = 5
     # --- Target derivation (2026-09-01) ---------------------------------
     # The stop has been computed from measured volatility since 2026-08-27;
     # the target was still the language model's `reference_target`, so the
@@ -1115,9 +1128,17 @@ class PortfolioConstructor:
         for the same reason — see the `levels` note in its docstring.
 
         Returns the CLOSEST matching level so the log names the one the
-        stop is actually sitting on.
+        stop is actually sitting on. A level with fewer than
+        `risk.min_level_touches_for_stop_honor` prior touches is skipped
+        entirely here — it is real enough to register in `computed_levels`
+        and to anchor a target, but not (per docs/RESEARCH_FINDINGS.md §7's
+        measured table) trusted enough to earn the tight-stop exemption. A
+        stop resting on it falls through to the ATR floors below, same as a
+        stop with nothing computed under it at all.
         """
         raw_levels = getattr(analysis, "computed_levels", None) or []
+        touches_by_price = getattr(analysis, "computed_level_touches", None) or {}
+        min_touches = self.cfg.min_level_touches_for_stop_honor
         tolerance = self.cfg.level_match_atr_tolerance * atr
         if tolerance <= 0:
             return None
@@ -1137,6 +1158,13 @@ class PortfolioConstructor:
             if is_short and price < entry_price:
                 continue
             if not is_short and price > entry_price:
+                continue
+            touches = touches_by_price.get(price)
+            if touches is None or touches < min_touches:
+                # Unverified touch count (missing map entry, e.g. an older
+                # caller/fixture that never set it) is treated the same as
+                # "below the bar" — fail closed, per Invariant 2, rather than
+                # honour a tight stop we cannot show cleared the bar.
                 continue
             gap = abs(stop_loss - price)
             if gap <= tolerance and gap < best_gap:

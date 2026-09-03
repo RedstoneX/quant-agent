@@ -41,6 +41,7 @@ def _analysis(
         reference_target=target, reasoning="test",
         support_levels=[stop], resistance_levels=[target],
         computed_levels=[stop, target],
+        computed_level_touches={stop: 5, target: 5},
         atr_14=(entry - stop) / 3.5 if atr is None else atr,
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
@@ -552,7 +553,7 @@ def test_the_ceiling_flattens_conviction_at_realistic_stop_distances():
 # --------------------------------------------------------------------------
 
 def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
-                  computed=None):
+                  computed=None, touches=None):
     """A widening fixture: the stop is NOT at a computed structural level.
 
     `computed_levels` defaults to the target alone, and that default is
@@ -567,14 +568,25 @@ def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
     nothing computed under it, which is precisely the case the band exists
     for. `computed` is available for the level-backed tests, which say so
     in their own names.
+
+    `touches` (2026-09-03, Phase 12.1) is the per-price touch count
+    `_level_backing_stop` now requires before honouring a tight stop — see
+    `ConstructorConfig.min_level_touches_for_stop_honor` and
+    docs/RESEARCH_FINDINGS.md §7. Every price in `computed` defaults to 5
+    touches (the derived bar) so existing "honoured" fixtures keep meaning
+    "this level is verified enough" unless a test overrides it to exercise
+    the gate itself.
     """
     from src.models import TechReasoningChain
+    levels = [target] if computed is None else computed
+    default_touches = {price: 5 for price in levels}
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test", support_levels=[stop],
         resistance_levels=[target], setup_type=setup,
         expected_horizon_sessions=horizon, atr_14=atr,
-        computed_levels=[target] if computed is None else computed,
+        computed_levels=levels,
+        computed_level_touches=default_touches if touches is None else touches,
         reasoning_chain=TechReasoningChain(
             trend="x", momentum="x", volatility="x", volume="x",
             support_resistance="x"),
@@ -853,6 +865,63 @@ def test_a_level_the_model_asserted_does_not_earn_the_exemption():
         "MSFT", analysis, entry_price=_ENTRY, stop_loss=96.0,
         target_price=130.0,
     ), 2) == _BAND_EDGE
+
+
+def test_a_level_below_the_touch_bar_does_not_earn_the_exemption():
+    """Phase 12.1, 2026-09-03. `min_level_touches_for_stop_honor` (5, derived
+    in docs/RESEARCH_FINDINGS.md §7 from the measured touch-count table) is
+    a SEPARATE gate from `find_structural_levels`' own `MIN_TOUCHES` (2):
+    the level is real enough to appear in `computed_levels` and to be a
+    legal target, but not yet trusted enough for a tight-stop exemption.
+    Identical fixture to the flagship honoured case, except the level's
+    touch count sits below the bar — the stop is widened to the band exactly
+    as an unbacked stop would be."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        analyses=[_vol_analysis(
+            "MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
+            computed=[96.0, _UPPER_LEVEL],
+            touches={96.0: 4, _UPPER_LEVEL: 5},  # stop's own level: 4 touches
+        )],
+        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+    )
+    # R/R against the band stop is 1.48 here (see the unbacked-tight-stop
+    # test above) — under the 1.5 floor, so the trade is refused rather than
+    # merely widened. That refusal IS the assertion: it proves the level was
+    # NOT treated as backing the stop.
+    assert decisions == []
+
+
+def test_a_level_exactly_at_the_touch_bar_earns_the_exemption():
+    """The other edge of the same gate: 5 touches — the bar itself, not one
+    more — is enough."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("MSFT", 1.0)], positions=[],
+        analyses=[_vol_analysis(
+            "MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
+            computed=[96.0, _UPPER_LEVEL],
+            touches={96.0: 5, _UPPER_LEVEL: 5},
+        )],
+        total_value=EQUITY, price_map={"MSFT": _ENTRY},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == 96.0
+
+
+def test_a_level_with_no_touch_count_on_record_fails_closed():
+    """A level price present in `computed_levels` but absent from
+    `computed_level_touches` (an older caller, a stale fixture, a partial
+    write) must NOT be honoured by default — Invariant 2 requires the
+    deterministic layer to fail closed, not to assume a level is good
+    because its touch count is simply missing."""
+    constructor = PortfolioConstructor()
+    assert constructor._level_backing_stop(
+        _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
+                      computed=[96.0, _UPPER_LEVEL], touches={}),
+        _ENTRY, 96.0, _ATR, is_short=False,
+    ) is None
 
 
 def test_a_level_on_the_wrong_side_of_entry_cannot_back_a_stop():

@@ -77,6 +77,7 @@ def _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0,
         reference_target=target, reasoning="test",
         support_levels=[stop], resistance_levels=[target],
         computed_levels=[stop, target],
+        computed_level_touches={stop: 5, target: 5},
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
@@ -84,7 +85,8 @@ def _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0,
 
 
 def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
-                     atr_14=None, horizon=60, computed=None) -> TechAnalysisResult:
+                     atr_14=None, horizon=60, computed=None,
+                     touches=None) -> TechAnalysisResult:
     """`computed_levels` deliberately carries the TARGET and not the stop.
 
     Since spec §12.1 that field also decides whether the ATR noise band
@@ -93,12 +95,21 @@ def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
     widening tests below into level-backed tests. Here the stop is the
     analyst's own number with nothing computed under it — the case the band
     exists for. `computed` is available for tests that want the other case.
+
+    `touches` (2026-09-03, Phase 12.1) mirrors `_vol_analysis` in
+    `test_risk_based_sizing.py`: every price in `computed` defaults to 5
+    touches (the derived `min_level_touches_for_stop_honor` bar — see
+    docs/RESEARCH_FINDINGS.md §7) unless a test overrides it to exercise
+    the gate below the bar.
     """
+    levels = [target] if computed is None else computed
+    default_touches = {price: 5 for price in levels}
     return TechAnalysisResult(
         symbol=symbol, rating="sell", entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test",
         support_levels=[target], resistance_levels=[stop],
-        computed_levels=[target] if computed is None else computed,
+        computed_levels=levels,
+        computed_level_touches=default_touches if touches is None else touches,
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
@@ -542,6 +553,41 @@ def test_short_level_the_model_asserted_does_not_earn_the_exemption():
         "TSLA", analysis, entry_price=_S_ENTRY, stop_loss=258.5,
         direction="short", target_price=_S_TARGET_LEVEL,
     ) == _S_BAND_EDGE
+
+
+def test_short_a_level_below_the_touch_bar_does_not_earn_the_exemption():
+    """Phase 12.1, 2026-09-03, mirrored on the short side. The resistance at
+    258.5 is real enough to be a computed level, but 4 touches is below
+    `min_level_touches_for_stop_honor` (5, derived in
+    docs/RESEARCH_FINDINGS.md §7), so the stop widens to the band exactly as
+    an unbacked short stop does."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_short_target()], positions=[],
+        analyses=[_short_analysis(
+            entry=_S_ENTRY, stop=258.5, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+            computed=[_S_TARGET_LEVEL, 258.5],
+            touches={_S_TARGET_LEVEL: 5, 258.5: 4},
+        )],
+        total_value=100_000, price_map={"TSLA": _S_ENTRY},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == _S_BAND_EDGE
+
+
+def test_short_a_level_at_the_touch_bar_earns_the_exemption():
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_short_target()], positions=[],
+        analyses=[_short_analysis(
+            entry=_S_ENTRY, stop=258.5, target=_S_TARGET_LEVEL, atr_14=_S_ATR,
+            computed=[_S_TARGET_LEVEL, 258.5],
+            touches={_S_TARGET_LEVEL: 5, 258.5: 5},
+        )],
+        total_value=100_000, price_map={"TSLA": _S_ENTRY},
+    )
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == 258.5
 
 
 def test_short_a_level_below_entry_cannot_back_a_shorts_stop():

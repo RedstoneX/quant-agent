@@ -641,6 +641,12 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # prompt-rendering seam with snapshot tests over it — widening its
         # return type to smuggle data out would be the worse trade.
         computed_levels_by_sym: dict[str, list[float]] = {}
+        # Touch count per level, keyed the same way (Phase 12.1, 2026-09-03).
+        # `computed_levels` alone cannot tell the constructor whether a
+        # matched level is a coincidence or real structure — see
+        # `TechAnalysisResult.computed_level_touches` and
+        # docs/RESEARCH_FINDINGS.md §7.
+        computed_level_touches_by_sym: dict[str, dict[float, int]] = {}
         for s in symbols_data:
             if not isinstance(s, dict):
                 continue
@@ -651,9 +657,11 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             bars = s.get("bars")
             if sym and bars:
                 supports, resistances = find_structural_levels(bars)
-                computed_levels_by_sym[sym] = sorted(
-                    lv.price for lv in (*supports, *resistances)
-                )
+                all_levels = (*supports, *resistances)
+                computed_levels_by_sym[sym] = sorted(lv.price for lv in all_levels)
+                computed_level_touches_by_sym[sym] = {
+                    lv.price: lv.touches for lv in all_levels
+                }
 
         analyses: dict[str, TechAnalysisResult] = {}
         failed_symbols: list[str] = []
@@ -685,6 +693,9 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     # Python, carried on the result, never asked of the model.
                     analysis.computed_levels = computed_levels_by_sym.get(
                         analysis.symbol, [],
+                    )
+                    analysis.computed_level_touches = (
+                        computed_level_touches_by_sym.get(analysis.symbol, {})
                     )
                     analyses[analysis.symbol] = analysis
                 except Exception as e:

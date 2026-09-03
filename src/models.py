@@ -547,6 +547,18 @@ class TechAnalysisResult(LLMOutputModel):
     # price that can sit on the other side of it, so the partition is redone
     # against the actual entry at derivation time.
     computed_levels: list[float] = Field(default_factory=list)
+    # PYTHON-SET, keyed by the same prices as `computed_levels` above: how
+    # many pivots `find_structural_levels` clustered into each one (Phase
+    # 12.1, 2026-09-03). `computed_levels` collapses every qualifying level
+    # to a bare price, which is enough to derive a target but not enough to
+    # ask "how much do we trust this specific level" — and §12.1 made that
+    # question load-bearing by honouring a level-backed stop however tight.
+    # `PortfolioConstructor._level_backing_stop` reads this to enforce
+    # `risk.min_level_touches_for_stop_honor`; nothing else consumes it, and
+    # target derivation is deliberately untouched by this field — see
+    # docs/RESEARCH_FINDINGS.md §7 for the touch-count evidence and the
+    # threshold derived from it.
+    computed_level_touches: dict[float, int] = Field(default_factory=dict)
     # How the position must be MANAGED, decided at entry from the chart:
     #   "range"    — clear structure on both sides. Fixed target is meaningful;
     #                thesis_progress and pace are valid measurements.
