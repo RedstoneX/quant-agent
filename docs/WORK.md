@@ -85,22 +85,17 @@ macro, earnings, smart_money, evening) has data-quality issues — empty
 fields, silent death, or empty data passed to the PM as if it were real.
 Audited from real production logs, not assumed. Ranked by measured severity:
 
-1. **Earnings — worst, fixed.** ~20 of 67 filings recovered under 1,600
-   chars from a 184k-char filing (failed section match, not sparse data);
-   12 including MSFT/AAPL/GOOGL/BAC/CVX/NFLX extracted ZERO figures. Root
-   cause: text-regex heading match is inherently unreliable across filers.
-   Fixed by pulling the numbers from SEC's structured XBRL API instead,
-   independent of the text matcher — verified against live SEC data.
-   Separately, a fabricated valuation claim (P/E, market cap invented
-   despite no price data given) was detected but never closed the loop —
-   the same bad number re-served from cache for days (KO, MTZ). Now
-   redacted and the cache self-heals. See PR merging
-   `fix/earnings-data-quality`.
-2. **Smart money — fixed.** Token ceiling (1200) was 13x smaller than
-   every other seat with no measured justification; a real call truncated
-   in production. Resized to 3000 from measured production usage, and
-   truncation now gets its own `data_status` value instead of hiding
-   inside "empty". See PR merging `fix/smart-money-tokens`.
+1. **Earnings — worst, fixed.** Text-regex section matching was unreliable
+   across filers — 12 of 67 filings (incl. MSFT/AAPL/GOOGL/BAC/CVX/NFLX)
+   extracted ZERO figures. Fixed via SEC's structured XBRL API instead. A
+   fabricated valuation claim (re-served from cache for days on KO/MTZ) is
+   now redacted with a self-healing cache. See PR merging
+   `fix/earnings-data-quality`; full detail in `docs/INCIDENT_HISTORY.md`.
+2. **Smart money — fixed.** Token ceiling was 13x smaller than every
+   other seat with no measured justification, truncating a real call in
+   production; resized from measured usage, truncation now gets its own
+   `data_status` value. See PR merging `fix/smart-money-tokens`; full
+   detail in `docs/INCIDENT_HISTORY.md`.
 3. **Tech analyst — already fixed by an earlier 2026-09-02 session**
    (`thesis_invalid_if` null crash); confirmed no recurrence post-deploy.
 4. **News analyst — root cause NOT found yet.** One production failure
@@ -108,8 +103,20 @@ Audited from real production logs, not assumed. Ranked by measured severity:
    malformed item) but the raw LLM payload isn't captured anywhere, only
    the post-hoc log line. Needs raw-response capture wired in before this
    can be diagnosed properly — do not guess a fix without it.
-5. **Evening analyst — flagged by a peer session (17 validation
-   failures), NOT YET AUDITED.** Next up.
+5. **Evening analyst — audited. One real bug fixed, one already-fixed
+   regression confirmed closed, one is by design.** Retained logs hold 61
+   dropped-entry warnings (the "17" was stale), all isolated per-entry so
+   none tanked a whole report. Real bug: the LLM emits `""` instead of
+   `null` for optional Literal fields (`theme_durability`); the existing
+   null-coercion guard matched `None` only, so `""` fell through to
+   Literal validation and the entry got dropped (e.g. BIAF/GPRO,
+   2026-09-03). Fixed in `LLMOutputModel._explicit_null_means_absent` to
+   also treat `""` as absent. Separately confirmed: the `buy_grades`/
+   `sell_grades` scope-confusion drops (RSG etc., Aug29-Sep2) exactly
+   match tonight's already-merged scope-guard fix (#216) and stop
+   recurring after it. The `theme_if_any` rejection for real miss
+   categories (e.g. AGX) is the intended business rule, not a bug. See PR
+   merging `fix/evening-analyst-audit` and `docs/INCIDENT_HISTORY.md`.
 6. **Macro analyst — no defect.** Its warnings are a sanity-check working
    as designed (rejects an LLM-claimed regime shift on insufficient fresh
    indicators).
@@ -1524,7 +1531,6 @@ Two facts worth acting on:
 
 
 #### SMALLER, RECORDED
-- `db_reads.get_recent_agent_logs` uses `SELECT *` and `GET /agents/{agent_name}` returns 20 rows; PM prompts run 13KB-190KB, so that response could reach several MB. Harmless today because nothing in `frontend/src/` calls it.
 - After the constructor rejects a BUY for reward:risk, it logs a second confusing line — "no valid stop below entry (stop=None)" — because the None propagates. Cosmetic.
 - OneCLI: OpenRouter spend from a live rehearsal would be real money on the same account, but the rehearsal runs its own cost-circuit database, so production would under-count the true daily bill.
 - OneCLI: production's Alpaca secret matches `*.alpaca.markets`, which also covers the paper host, so both credential sets match the same address. The gateway fails closed on the ambiguity. Narrowing the production pattern risks breaking live credential resolution and was deliberately left for the owner.
@@ -1532,7 +1538,8 @@ Two facts worth acting on:
 - `feat/news-dedup` — still unmerged; disposition being decided separately.
 
 #### THE NEW STOP RULE REJECTED FOUR BUYS ON ITS FIRST DAY — RESOLVED 2026-09-01
-On 2026-08-28 the reward:risk floor rejected four candidates (CRM 0.39, ONDS 0.78, MP 0.80, NVDA 1.30), which asked whether the targets were too conservative or the stops too wide. **Answered: neither — the targets were not measurements at all**, so those ratios never meant what they appeared to. Do not cite them as evidence about stop width. That day's zero trades had two causes, not one: the cost circuit blocked the morning, and separately these four were refused on payoff.
+Moved to `docs/INCIDENT_HISTORY.md` (2026-08-28 four-candidate reward:risk
+rejection; answer was that the targets were never real measurements).
 
 #### RECURSION FAULT IN THE BAR FETCH
 `broker.get_bars failed for DSPC: maximum recursion depth exceeded` — 14 times on 2026-08-28, all for the same symbol. Contained (the call returns an empty list rather than crashing the session) but it is a real fault, not noise. DSPC is a delisted warrant, so the trigger appears to be the fallback path handling a symbol with no data.

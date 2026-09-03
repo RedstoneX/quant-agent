@@ -2407,8 +2407,6 @@ merged as `46b2029`):**
   targets reappearing in the cockpit funnel, `300ea14` + `6f897a1` + `55f0e05`
   the benchmark-harness repair and its guards, and the `docs:` commits.
 
----
-
 ### 2026-09-03 — a level needs 5 touches, not 2, before a tight stop trusts it
 
 **In plain words:** Phase 12.1 lets the desk honour a stop however tight,
@@ -2462,3 +2460,109 @@ have my approval to just go with whatever the research says, we can always
 make adjustments if that isn't working" — this is a research-derived
 threshold, not an agent guess at a market-structure constant, and it is
 revisable the same way every other placeholder threshold on this desk is.
+
+---
+
+### 2026-08-28 — the new stop rule rejected four BUYs on its first day (RESOLVED)
+
+**In plain words:** four candidates got refused the day the new reward:risk
+floor shipped, which looked like the new rule was too strict. It wasn't —
+the numbers it was checking were never real measurements to begin with.
+
+CRM (0.39), ONDS (0.78), MP (0.80) and NVDA (1.30) were all rejected on
+reward:risk, prompting the question of whether the profit targets were too
+conservative or the stops too wide. Answered: neither. The targets being
+compared against the stops were not measurements at all, so those ratios
+never meant what they appeared to — do not cite them as evidence about
+stop width. That day's zero trades had two independent causes, not one:
+the cost circuit separately blocked the whole morning, and these four were
+refused on payoff.
+
+### 2026-09-02 — earnings data quality: broken section-matching, fixed with SEC's own numbers
+
+**In plain words:** the earnings reader was truncating filings so badly
+that a third of what it read back was worthless, and it also let a made-up
+valuation number get stuck in the cache for days. Both fixed.
+
+Text-regex heading match to find the right section of a 10-Q/10-K is
+inherently unreliable across filers: ~20 of 67 filings recovered under
+1,600 characters out of a 184k-character filing, and 12 — including
+MSFT/AAPL/GOOGL/BAC/CVX/NFLX — extracted ZERO figures. Root cause was the
+section-match approach itself, not sparse underlying data. Fixed by pulling
+the numbers from SEC's structured XBRL API instead, independent of the
+text matcher, and verified against live SEC data.
+
+Separately, a fabricated valuation claim (P/E, market cap invented despite
+no price data given to the model) was detected but never closed the loop —
+the same bad number re-served from cache for days on KO and MTZ. Now
+redacted at source, and the cache self-heals instead of re-serving a
+flagged value. See PR merging `fix/earnings-data-quality`.
+
+### 2026-09-02 — smart_money token ceiling was 13x too small, truncating real calls
+
+**In plain words:** one research seat had a much smaller word limit than
+every other seat, for no measured reason, and it was cutting off real
+answers in production.
+
+Token ceiling (1200) was 13x smaller than every other seat with no
+measured justification; a real call truncated in production as a result.
+Resized to 3000 from measured production usage, and truncation now gets
+its own `data_status` value instead of hiding inside "empty" (which made
+it indistinguishable from a seat that legitimately had nothing to say).
+See PR merging `fix/smart-money-tokens`.
+
+### 2026-09-03 — evening analyst audit: empty-string Literal fields slipped past the null guard
+
+**In plain words:** the evening reviewer's "missed opportunity" notes were
+getting silently dropped some nights — not because the model refused to
+answer, but because when it left an optional field blank it sometimes
+wrote an empty string instead of a proper "no answer" marker, and the
+existing safety net only recognized the proper marker.
+
+This seat was flagged by a peer session as having "17 validation
+failures, NOT YET AUDITED" — that count was stale. The retained journal
+(2026-08-14 through 2026-09-03) holds 61 per-entry drop warnings across
+`missed_opportunities` and `buy_grades`/`sell_grades`, none of which ever
+took down a whole evening report — the per-entry isolation added after the
+2026-05-01 incident (see PR #73) was already doing its job.
+
+Three genuinely different things were bundled under that one number:
+
+1. **A real, still-open bug, now fixed.** `MissedOpportunity.theme_durability`
+   is an optional Literal field defaulting to `"unknown"`. The 2026-09-02
+   fix for "explicit null means absent" (`LLMOutputModel
+   ._explicit_null_means_absent`) taught the schema to treat a JSON `null`
+   on such a field as "field omitted, apply the default" — but the model
+   doesn't only say `null` when it means "no answer"; on
+   2026-09-03 it emitted `""` for BIAF and GPRO, which is the identical
+   intent expressed differently. `""` is not `None`, so the guard's
+   `is None` check missed it, the empty string then failed Literal
+   validation, and the whole entry was dropped. Fixed by extending the
+   guard to treat `""` the same as `null` for every field already covered
+   by it — safe because those fields were chosen specifically for
+   rejecting `None` while carrying their own default, so on a
+   already-empty-by-default field (like `universe_addition_reason`) the
+   change is a no-op, and on every other affected field (all in this
+   codebase's LLM-output models) an empty string was never a meaningful,
+   distinct value in the first place.
+2. **An already-fixed regression, confirmed closed by the evidence.** A
+   separate, disjoint set of `buy_grades` drops (RSG, ONDS, CCJ, DIS,
+   CMCSA, MSFT, ABT, V, OKLO — 3 validation errors each) recurred on
+   2026-08-29, 09-01 and 09-02: the model was confusing the "Recent BUY
+   decisions to grade" list with the much larger "Thesis Health Review"
+   section and emitting `BuyGrade`-shaped junk with `SellGrade` field
+   names for symbols outside the actual grading candidate list. This
+   pattern stopped appearing in the log the moment the earlier-tonight
+   scope-guard fix (`fix/evening-buy-grades-scope`, PR #216, plus its own
+   follow-up fix `db81e20` for the `allowed_symbols=None` vs `[]`
+   distinction) landed — exact symbol list and error count match. Not
+   re-fixed here; this entry exists to record that the "17 failures" claim
+   was, in part, this already-closed issue.
+3. **Working as designed, not a bug.** `MissedOpportunity._theme_required_
+   for_real_misses` rejects a `value_entry_missed`/`trend_timing_miss`/etc.
+   entry with an empty `theme_if_any` (e.g. AGX on 2026-09-03) — this is
+   the deliberate quarterly-aggregation discipline documented at the
+   validator's call site (2026-05-01 incident note), not a defect. Left
+   alone.
+
+See PR merging `fix/evening-analyst-audit`.
