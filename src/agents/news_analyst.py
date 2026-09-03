@@ -1,6 +1,8 @@
 import json
 import logging
 import re
+import time
+import uuid
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -11,6 +13,69 @@ from src.models import NewsIntelligenceReport, StateChange, StockNewsItem
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "news_analyst.md"
+
+# Where a NewsIntelligenceReport parse/validation failure's raw evidence is
+# dumped for offline diagnosis. `agent_logs.full_response` (see
+# src/storage/db.py / src/pipeline.py's insert_agent_log call after
+# NewsAnalystAgent.analyze) already carries the raw text for a SUCCESSFUL
+# insert, but that write happens downstream in the caller, after several
+# more lines of pipeline code that could themselves raise before reaching
+# it — and it never carries the intermediate parsed-but-invalid dict, which
+# is exactly the artifact that distinguishes "malformed JSON" from
+# "well-formed JSON, wrong shape" (the ambiguity that blocked diagnosis of
+# the 2026-09-02 four-field-missing failure). `specialist_evidence`
+# (src/pipeline_stages.py:_persist_evidence) was considered and rejected:
+# its own schema comment states it holds "already-VALIDATED structured
+# evidence... never raw LLM prose" — reusing it for raw/invalid payloads
+# would violate a documented invariant Mission Control relies on. A small
+# append-only JSON-per-failure directory, written with the same atomic
+# tmp+rename discipline as news_store/macro_store/tech_store/earnings_analyst
+# (see earnings_analyst._save_analysis), is the simplest mechanism that is
+# both durable and trivially inspectable (`ls`, `cat`, `jq`) without a DB
+# migration.
+PARSE_FAILURE_DIR = Path(__file__).parent.parent.parent / "data" / "parse_failures"
+
+
+def _persist_parse_failure(*, agent_name: str, session: str, raw_text: str,
+                            parsed: object, error: str) -> None:
+    """Best-effort dump of a parse/validation failure's raw evidence.
+
+    NEVER raises. This is purely a forensic-display gap fix (mirrors
+    `_persist_evidence`'s "NEVER raises" contract in pipeline_stages.py):
+    a disk-write failure here (full disk, permissions, whatever) must only
+    log a warning and let the ORIGINAL error/failure path continue exactly
+    as it would have without this call — never mask or replace it.
+
+    `parsed` is the JSON-decoded object at the point of failure (already
+    dict/list — NOT re-serialized from raw_text) when JSON parsing itself
+    succeeded but pydantic validation failed; None when JSON parsing never
+    succeeded (raw_text alone is then the only evidence). Keeping both
+    lets a later reader tell "the JSON was malformed" apart from "the JSON
+    was well-formed but the wrong shape" — the exact ambiguity that made
+    the 2026-09-02 four-missing-fields failure undiagnosable from the log
+    line alone.
+    """
+    try:
+        PARSE_FAILURE_DIR.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        fname = f"{agent_name}_{session}_{ts}_{uuid.uuid4().hex[:8]}.json"
+        path = PARSE_FAILURE_DIR / fname
+        payload = {
+            "agent_name": agent_name,
+            "session": session,
+            "timestamp": ts,
+            "error": error,
+            "raw_text": raw_text,
+            "parsed": parsed,
+        }
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(payload, indent=2, default=str))
+        tmp_path.rename(path)  # atomic — see earnings_analyst._save_analysis
+    except Exception as e:  # noqa: BLE001 — capture must never mask the real failure
+        logger.warning(
+            "Failed to persist news_analyst parse-failure evidence "
+            "(session=%s): %s", session, e,
+        )
 
 # Tokens too common to anchor an event on — they'd let any hallucinated event
 # survive a keyword match. Deliberately conservative: we only want to exclude
@@ -324,6 +389,10 @@ Analyze all the above and produce your intelligence report as JSON."""
         parsed = result.parse_json()
         if parsed is None:
             logger.error("News analyst returned non-JSON response")
+            _persist_parse_failure(
+                agent_name=self.name, session=session, raw_text=result.raw_text,
+                parsed=None, error="non-JSON response (parse_json() returned None)",
+            )
             return None, result
         # Per-entry isolation: a single malformed StockNewsItem (e.g. empty
         # headline) or StateChange (e.g. bad conviction enum) must not drop
@@ -338,6 +407,10 @@ Analyze all the above and produce your intelligence report as JSON."""
             report = NewsIntelligenceReport(**parsed)
         except Exception as e:
             logger.error("Failed to parse news intelligence report: %s", e)
+            _persist_parse_failure(
+                agent_name=self.name, session=session, raw_text=result.raw_text,
+                parsed=parsed, error=str(e),
+            )
             return None, result
         report = self._filter_hallucinated_state_changes(
             report, news_text, prior_session_report=prior_session_report,
