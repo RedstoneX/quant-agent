@@ -334,6 +334,47 @@ def test_book_risk_inputs_return_none_when_the_book_cannot_be_seen():
     assert _book_risk_inputs(ctx, 100_000.0) == (None, None)
 
 
+def test_book_risk_inputs_return_clusters_alone_when_only_heat_fails():
+    """Heat and clusters are built independently in `_book_risk_inputs`; a
+    heat failure (or a book with no facts.heat at all) must not silently
+    swallow clusters that DID build. This is the partial-failure input the
+    2026-09-03 incident is about — the caller, not this function, is what
+    has to treat a lone `existing=None` as unenforceable."""
+    from types import SimpleNamespace
+
+    from src.pipeline_stages import _book_risk_inputs
+
+    ctx = SimpleNamespace(facts=SimpleNamespace(
+        heat=None, correlation_clusters=[["OKLO", "CEG"]],
+    ))
+    existing, clusters = _book_risk_inputs(ctx, total_value=100_000.0)
+    assert existing is None
+    assert clusters == [["OKLO", "CEG"]]
+
+
+def test_a_heat_failure_leaves_the_budget_unenforced_even_with_clusters():
+    """2026-09-03 incident: `allocate_risk_budget` treats a missing
+    `existing_pct` as an empty dict — a book with ZERO risk — not as
+    "unknown". Before the fix, `clusters` being present was enough on its
+    own to run the allocator, so a heat failure made the cluster cap bind
+    against a held book the constructor could not actually see. The fix
+    requires `existing_risk_pct` before the allocator runs at all; clusters
+    alone must leave the ceilings unenforced, exactly like the both-missing
+    case in `test_the_budget_gate_is_inert_when_the_caller_supplies_no_book_risk`."""
+    constructor = PortfolioConstructor()
+    targets, analyses, prices = _nuclear_setup(*NUCLEAR)
+    decisions = constructor.construct_orders(
+        targets=targets, positions=[], analyses=analyses,
+        total_value=EQUITY, price_map=prices,
+        existing_risk_pct=None, clusters=[NUCLEAR],
+    )
+    # All four survive: the cluster cap must NOT bind when the book's
+    # existing risk is unknown. (Compare test_a_single_theme_cannot_take_
+    # the_whole_risk_budget, where existing_risk_pct={} — a KNOWN empty book
+    # — correctly lets the cap cut this down to two.)
+    assert {d.symbol for d in decisions} == set(NUCLEAR)
+
+
 def test_the_cluster_cap_is_rendered_to_the_portfolio_manager():
     """The PM is told a per-cluster cap exists; it must also be shown the
     number, or it sizes a theme blind and meets the cap as a surprise."""

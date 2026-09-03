@@ -3182,3 +3182,50 @@ elsewhere in this codebase. Covered by
 `tests/test_bugfixes.py::test_risk_mod_matches_decision_symbol_case_insensitively`
 and `::test_risk_mod_symbol_normalized_at_the_model_boundary` (the second
 comparison site, proven directly).
+
+### 2026-09-03 — a held position's risk could vanish from the portfolio ceiling if only heat data failed
+
+**In plain words:** two independent portfolio-level ceilings (25% of equity
+at risk total, plus a per-theme cap) exist to stop the desk piling into
+correlated bets. Both ceilings need to know what's ALREADY on the book, not
+just what's being requested today. That "already on the book" number comes
+from one data source (heat); the theme groupings come from a separate one
+(correlation clusters). If heat failed to build but clusters still did, the
+code ran the ceiling check anyway — treating the unmeasurable held book as
+if it held zero risk. New trades could then be approved on top of a real,
+already-at-risk book, right up to the full ceiling, with nothing in the
+logs distinguishing this from a legitimately empty book. Item 27 in
+`docs/WORK.md`.
+
+**The mechanism.** `_book_risk_inputs` (`src/pipeline_stages.py`) builds
+`existing` (per-symbol risk %, from `facts.heat`) and `clusters` (from
+`facts.correlation_clusters`) independently, so a heat failure alone
+returns `(None, clusters)` rather than `(None, None)`. The call site in
+`PortfolioConstructor._plan_risk_targets` (`src/portfolio_constructor.py`)
+gated `allocate_risk_budget(...)` on `existing_risk_pct is not None or
+clusters is not None` — an OR, so `clusters` alone was enough to run the
+allocator. Inside `allocate_risk_budget` (`src/risk/budget.py`), a `None`
+`existing_pct` becomes `{}`, so `committed = sum(... for sym not in
+by_symbol)` came out to 0 regardless of what the book actually carried.
+This is the same failure direction the code already gets right when BOTH
+inputs are missing (ceilings deliberately unenforced, since "enforcing a
+number against a book you can't see" is worse than not enforcing it) — the
+OR condition just meant that reasoning only applied to the total-failure
+case, not the equally-blind partial one.
+
+**The fix.** The gate now reads `existing_risk_pct is not None` only.
+`clusters` remains an optional refinement once `existing_risk_pct` is
+known — `allocate_risk_budget` already handles `clusters=None` by applying
+just the total ceiling, which is an honest degraded mode. A heat failure
+now degrades exactly like a total facts failure: ceilings unenforced,
+per-position and single-name sizing unaffected.
+
+New tests in `tests/test_risk_based_sizing.py` reproduce the exact defect
+(a `NUCLEAR`-cluster set of four requests, `existing_risk_pct=None`,
+`clusters` present) — confirmed to fail against the reverted (OR) condition
+with only two of four names surviving the wrongly-applied cluster cap, and
+to pass against the fix with all four surviving — plus a companion test on
+`_book_risk_inputs` documenting the `(None, clusters)` return shape
+directly.
+
+See PR merging `fix/risk-budget-partial-heat-failure`.
