@@ -2015,6 +2015,87 @@ class EarningsAnalysis(LLMOutputModel):
     # way `earnings_results` itself already aggregates per-filing output.
     nominations: list[Nomination] = []
 
+    def to_verdict(self) -> "AnalystVerdict":
+        """This filing's read, restated in the shared Phase 13 verdict shape.
+
+        A RESTATEMENT, not a second opinion: every field is read off
+        `investment_implications`, which the earnings analyst already fills
+        and already validates (`EarningsInvestmentImplications`) — no new
+        prompting.
+
+        direction  — `investment_implications.sentiment`, verbatim (already
+                     bullish/bearish/neutral, the exact vocabulary the shared
+                     shape uses).
+        conviction — `investment_implications.conviction`, verbatim.
+        magnitude  — UNLIKE Technical (which has two directional rungs a
+                     side — buy/strong_buy — to encode as 0.5/1.0), earnings
+                     sentiment is a single bullish/bearish rung with no
+                     numeric or ordinal strength field anywhere on this
+                     model or `EarningsInvestmentImplications`: `risk_flags`
+                     is unstructured lists of free-text risks, and
+                     `data_quality` is free prose, not a graded scale.
+                     Inventing a gradient from either would be a fake
+                     precision this seat cannot back. So every directional
+                     call gets one flat magnitude (0.5, the same "ordinary
+                     conviction" rung Technical uses for its single-strength
+                     buy/sell), and neutral gets 0.0. Flagged for review.
+        evidence   — `key_thesis` (the seat's own summary of its call) plus
+                     the five reasoning-chain steps, labelled, plus
+                     `data_quality` when the analyst said anything past the
+                     bare default.
+        invalidation — the case the analyst built AGAINST its own call:
+                     `bear_case` for a bullish read, `bull_case` for a
+                     bearish one. Both fields default to the literal string
+                     "not disclosed" when the analyst didn't fill them in
+                     (see the field definitions above) — that placeholder is
+                     not a real falsifier, so it is treated as blank rather
+                     than passed through as if it were content. UNLIKE
+                     Technical, there is no numeric stop-price to fall back
+                     to here, so a directional call whose falsifier is left
+                     undisclosed ends up with a blank `invalidation` and
+                     `AnalystVerdict`'s own validator refuses to construct
+                     it — this seat cannot manufacture a falsifier out of
+                     nothing, and an error at construction is more honest
+                     than inventing one.
+        """
+        impl = self.investment_implications
+        direction = impl.sentiment
+        magnitude = 0.0 if direction == "neutral" else 0.5
+
+        evidence: list[VerdictEvidence] = []
+        if impl.key_thesis.strip():
+            evidence.append(VerdictEvidence(label="key_thesis", text=impl.key_thesis.strip()))
+        chain = impl.reasoning_chain
+        for label in (
+            "fundamental_quality", "growth_trajectory", "strategic_risks",
+            "management_execution", "valuation_context",
+        ):
+            text = getattr(chain, label, "") or ""
+            if text.strip():
+                evidence.append(VerdictEvidence(label=label, text=text.strip()))
+        data_quality = (self.data_quality or "").strip()
+        if data_quality and data_quality.lower() != "not disclosed":
+            evidence.append(VerdictEvidence(label="data_quality", text=data_quality))
+
+        if direction == "bullish":
+            falsifier = impl.bear_case
+        elif direction == "bearish":
+            falsifier = impl.bull_case
+        else:
+            falsifier = ""
+        falsifier = (falsifier or "").strip()
+        invalidation = "" if falsifier.lower() == "not disclosed" else falsifier
+
+        return AnalystVerdict(
+            seat="earnings",
+            symbol=self.symbol,
+            direction=direction,
+            magnitude=magnitude,
+            conviction=impl.conviction,
+            evidence=evidence,
+            invalidation=invalidation,
+        )
+
     @field_validator("symbol")
     @classmethod
     def normalize_symbol(cls, value: str) -> str:

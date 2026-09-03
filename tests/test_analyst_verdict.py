@@ -28,8 +28,8 @@ from ops.model_policy import scenarios as S
 from ops.model_policy.deterministic_selection import evaluate
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import (
-    RATING_DIRECTION, RATING_MAGNITUDE, AnalystVerdict, TechAnalysisResult,
-    TechReasoningChain, VerdictEvidence,
+    RATING_DIRECTION, RATING_MAGNITUDE, AnalystVerdict, EarningsAnalysis,
+    TechAnalysisResult, TechReasoningChain, VerdictEvidence,
 )
 from src.risk.constants import REWARD_RISK_FLOOR
 from src.verdicts import (
@@ -242,6 +242,82 @@ def test_every_real_technical_read_on_the_fixture_day_maps_to_a_valid_verdict():
     for a, v in zip(S._SELECTION_ANALYSES, verdicts):
         assert v.direction == RATING_DIRECTION[a.rating]
         assert v.conviction == a.conviction
+
+
+# ==========================================================================
+# 2b. Earnings' mapping
+# ==========================================================================
+
+def _earnings(sentiment: str = "bullish", conviction: str = "medium",
+              bull_case: str = "services mix reaccelerates",
+              bear_case: str = "China demand craters",
+              data_quality: str = "complete filing, no estimates") -> EarningsAnalysis:
+    return EarningsAnalysis(
+        symbol="AAPL", form_type="10-Q", filing_date="2026-03-15",
+        revenue={"total": "$95.4B"}, profitability={}, cash_flow={},
+        balance_sheet={}, guidance="flat", data_quality=data_quality,
+        investment_implications={
+            "sentiment": sentiment, "conviction": conviction,
+            "key_thesis": "services mix offsets hardware softness",
+            "bull_case": bull_case, "bear_case": bear_case,
+            "reasoning_chain": {
+                "fundamental_quality": "gross margin expanding 40bps",
+                "growth_trajectory": "services +12% YoY, hardware flat",
+                "strategic_risks": "vision pro adoption unproven",
+                "management_execution": "buyback pace matches prior guide",
+                "valuation_context": "premium holds only if services mix keeps rising",
+            },
+        },
+    )
+
+
+def test_a_bullish_earnings_read_maps_onto_the_verdict():
+    v = _earnings("bullish", "high").to_verdict()
+    assert v.seat == "earnings"
+    assert v.symbol == "AAPL"
+    assert (v.direction, v.magnitude, v.conviction) == ("bullish", 0.5, "high")
+    assert v.invalidation == "China demand craters"
+    by_label = {e.label: e for e in v.evidence}
+    assert by_label["key_thesis"].text == "services mix offsets hardware softness"
+    assert by_label["fundamental_quality"].text == "gross margin expanding 40bps"
+    assert by_label["growth_trajectory"].text == "services +12% YoY, hardware flat"
+    assert by_label["strategic_risks"].text == "vision pro adoption unproven"
+    assert by_label["management_execution"].text == "buyback pace matches prior guide"
+    assert by_label["valuation_context"].text == "premium holds only if services mix keeps rising"
+    assert by_label["data_quality"].text == "complete filing, no estimates"
+
+
+def test_a_bearish_earnings_read_uses_the_bull_case_as_its_invalidation():
+    v = _earnings("bearish", "low").to_verdict()
+    assert (v.direction, v.magnitude, v.conviction) == ("bearish", 0.5, "low")
+    assert v.invalidation == "services mix reaccelerates"
+    assert v.signed_magnitude == -0.5
+
+
+def test_a_neutral_earnings_read_maps_to_a_neutral_verdict_with_no_lean():
+    v = _earnings("neutral", "medium").to_verdict()
+    assert (v.direction, v.magnitude, v.invalidation) == ("neutral", 0.0, "")
+
+
+def test_an_undisclosed_falsifier_is_treated_as_blank_not_as_content():
+    """`bull_case`/`bear_case` default to the literal 'not disclosed' — that
+    placeholder must not be passed through as if it were a real falsifier.
+    With no numeric stop to fall back to (unlike Technical), a directional
+    call with nothing disclosed against it has a blank invalidation, and
+    `AnalystVerdict` itself refuses to construct with a directional call and
+    no invalidation — the seat cannot invent a falsifier from nothing."""
+    a = _earnings("bullish", "medium", bear_case="not disclosed")
+    with pytest.raises(ValidationError, match="invalidation"):
+        a.to_verdict()
+    # Case-insensitive / whitespace-padded placeholder is caught too.
+    a2 = _earnings("bearish", "medium", bull_case="  Not Disclosed  ")
+    with pytest.raises(ValidationError, match="invalidation"):
+        a2.to_verdict()
+
+
+def test_data_quality_evidence_is_omitted_when_it_is_the_bare_default():
+    v = _earnings("bullish", "medium", data_quality="not disclosed").to_verdict()
+    assert "data_quality" not in {e.label for e in v.evidence}
 
 
 # ==========================================================================
