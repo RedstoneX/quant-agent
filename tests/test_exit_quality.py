@@ -233,9 +233,10 @@ def test_entry_stop_floor_widens_tight_stop_and_resizes():
     submit = pipeline.broker.submit_order.call_args.kwargs
     assert submit["symbol"] == "NVDA"
     assert submit["stop_loss_price"] == 96.0        # 100 - 1×ATR(=4)
-    # alloc sizing binds here (10% / $100 = 100 sh; risk budget $500/$4 = 125
-    # doesn't). The floor's effect on qty shows via qty_by_risk when alloc is
-    # large; what matters structurally: sizing used the WIDENED distance.
+    # alloc sizing binds here (10% of $100k / $100 = 100 sh; the ratified 5%
+    # risk budget of $100k = $5,000 / $4 risk-per-share = 1,250 sh doesn't).
+    # The floor's effect on qty shows via qty_by_risk when alloc is large;
+    # what matters structurally: sizing used the WIDENED distance.
     assert submit["qty"] == 100
     # write-ahead row carries the widened stop too
     insert = pipeline.db.insert_trade.call_args_list[0].kwargs

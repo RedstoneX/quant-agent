@@ -1152,18 +1152,18 @@ severity word. `src/cost_circuit.py` and `src/pipeline.py` still carry
 writeup: `docs/INCIDENT_HISTORY.md` "2026-09-03 — alerts stop relying on
 colour".
 
-**22. A hard-coded 0.5% risk cap silently overrides the ratified 5% envelope — DEFECT, live, binds on nearly every trade.**
+**22. A hard-coded 0.5% risk cap silently overrides the ratified 5% envelope — FIXED.**
 
-Found reading `src/portfolio_constructor.py`/`src/pipeline_stages.py` end to
-end (not testing outputs — reading the actual rule code). `RISK_BUDGET_PCT =
-0.5` (`pipeline_stages.py`, not wired to `config.max_position_risk_pct:
-5.0`) takes `min(qty_by_alloc, qty_by_risk)` at execution, re-shrinking
-almost every entry the constructor already sized correctly under the
-owner-ratified 5% envelope (invariant #4 below). Confirmed against real
-trade rows (NVDA/ORCL/RSG) risking ~$49 on a ~$9.85k book where the
-ratified rule would allow ~$490. Predates QAMC (upstream 2026-04-18
-commit); the two envelopes were never reconciled when 5% was ratified
-2026-08-27. Not yet fixed — dispatched, see `docs/INCIDENT_HISTORY.md`.
+`_qty_by_risk_budget` (`pipeline_stages.py`) now reads
+`config.risk.max_position_risk_pct` the same defensive way
+`TradingPipeline.__init__` reads it for the constructor's own sizing
+(fallback to the ratified 5.0, not the stale 0.5), instead of the hardcoded
+`RISK_BUDGET_PCT = 0.5` module constant. The independent-recheck mechanism
+itself was kept — it recomputes risk from REAL executed stop/entry geometry
+rather than trusting the constructor's or PM's claimed ratio, which is a
+legitimate reason for it to exist — only the stale percentage was wrong.
+Full detail and the before/after sizing math: `docs/INCIDENT_HISTORY.md`,
+"the risk manager and order-construction audit".
 
 **23. Risk Manager edits to a trade are trusted for shape, never for substance — DEFECT, live, observed cancelling real exits.**
 
