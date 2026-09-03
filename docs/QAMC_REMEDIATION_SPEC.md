@@ -2253,19 +2253,68 @@ every call:
 This is what makes the PM's comparison across candidates a real comparison
 instead of reading several different essays and picking one.
 
-### 13.3 Weighting: measured per-seat skill, not one blanket trust level
+### 13.3 Weighting: a research-informed prior, refined by measured skill
 
 Per the composite-score work above, corroboration only counts to the extent
 signals are independent, and combining skill requires knowing each source's
-actual reliability — never assumed. Applied here: each analyst's contribution
-is weighted by ITS OWN measured reliability **for the specific type of
-judgment it is making**, not a single trust level applied to everything it
-says. A seat can be highly reliable on one kind of call (e.g. the technical
-analyst's stop/target geometry, already independently verified in code) and
-unreliable on another. Measure before weighting; **start equal-weight and
-adjust only on out-of-sample proof**, per 13.2's own already-ratified
-discipline above — no agent invents a weight or a reliability score without
-showing the measurement it came from.
+actual reliability — never assumed. Each analyst's contribution is weighted
+by ITS OWN reliability **for the specific type of judgment it is making**,
+not a single trust level applied to everything it says.
+
+**AMENDED 2026-09-03 (owner decision, ranking module only —
+`src/verdicts.py`).** The original rule here was "start equal-weight, adjust
+only on this desk's own out-of-sample proof." The owner's correction: "equal
+until we have our own data" is functionally identical to "always equal" for
+however long that data takes to accumulate, which contradicts the desk's own
+repeated instruction that analysts are never interchangeable. The fix is not
+to guess a weight — it is to use a REAL, externally published prior (a claim
+about how the general TYPE of analysis performs across many markets and
+decades, backed by real citations) rather than an unfounded blanket "start
+flat" default, refined later by this desk's own measured record once it
+exists. Five parallel literature reviews (2026-09-03, WebSearch-verified,
+real papers not impression) found:
+
+- **Technical (momentum) — strong, well-replicated.** Jegadeesh & Titman
+  (1993), replicated internationally by Rouwenhorst (1998); decays over time
+  as more capital trades on it (McLean & Pontiff 2016) and carries real
+  crash risk (Daniel & Moskowitz 2016) — a real edge, not a permanent one.
+- **Earnings (post-earnings drift) — strong, well-replicated.** Ball & Brown
+  (1968), Bernard & Thomas (1989/1990); also documented as decaying in
+  magnitude decade over decade, still present.
+- **News/sentiment — real but narrow.** Tetlock (2007) is the foundational
+  result; short-horizon (days), concentrated in small/illiquid names, and
+  the literature specifically flags LLM-generated sentiment as looking
+  strong in-sample and failing out-of-sample (Benhenda 2026) — directly
+  relevant to an LLM news seat. Left at the unweighted baseline.
+- **Smart money/insider — real edge, mostly gone by the time it's public.**
+  Cohen, Malloy & Pomorski (2012) and a 2025 Finance Research Letters lag
+  study both locate the edge in the pre-disclosure window; this desk only
+  ever sees the disclosed, lagged version.
+- **Macro timing — the specific capability asked of this seat is one of the
+  most repeatedly debunked findings in applied macroeconomics.** IMF
+  WP/18/39 studied 153 recession episodes across 63 countries and found
+  professional forecasters missed the onset in the vast majority of them.
+  "Regime matters for returns" is well supported; "this seat's specific
+  turning-point calls are reliable" has no such support.
+
+Applied as modest, bounded multipliers in `src/verdicts.py::SEAT_WEIGHT`:
+technical 1.2, earnings 1.2, news 1.0, smart_money 0.8, macro 0.8. No source
+handed over an exact cross-category ratio — only a real, sourced ranking —
+so these are deliberately modest, not aggressive.
+
+**What did NOT change: the sizing path.** `src/risk/rules.py::SEAT_WEIGHT`
+— the §9.4 signed sum that actually prices position size — is untouched and
+still requires the desk's OWN measured record (20+ resolved calls per seat,
+`_CONVICTION_OUTCOME_MIN_N`) before any weight applies there, per the
+2026-08-31 owner decision recorded in `src/conviction_ledger.py` and
+mechanically enforced by `tests/test_signed_dissent.py`. That rule is about
+a materially different claim — how good THIS desk's specific analyst prompts
+are with real capital on the line — and a general literature prior cannot
+stand in for it. This amendment applies only to `src/verdicts.py`'s
+tiebreak-ordering among already-eligible, already-agreeing candidates, which
+changes WHICH stock is picked among several, never how much is risked on it.
+The two SEAT_WEIGHT constants are deliberately different types (a dict here,
+an int there) so they can never be confused for each other.
 
 ### 13.4 What this does NOT authorize
 

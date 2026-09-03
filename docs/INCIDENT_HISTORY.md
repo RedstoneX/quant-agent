@@ -22,6 +22,51 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — analysts stop being treated equally in the ranking tiebreak
+
+**In plain words:** the desk had a rule that analysts should never be
+treated as interchangeable, and a separate, real, more-carefully-thought
+rule (2026-08-31) saying no analyst gets extra trust until this desk has
+personally watched it be right 20+ times. Both are correct on their own
+terms, but together they meant "equal weight" for as long as it takes to
+build that history — which could be weeks or months, and functionally
+contradicts the first rule for the whole time. The fix: use REAL, published
+outside research as a starting point instead of a flat default, while
+still handing full control back to the desk's own track record the moment
+it exists.
+
+**What changed and where.** `src/verdicts.py::SEAT_WEIGHT` (Phase 13's
+candidate-ranking tiebreak — decides which of several already-eligible,
+already-agreeing stocks gets picked first, never how much money is risked)
+moved from a flat 1-for-all weight to a per-seat multiplier: technical 1.2,
+earnings 1.2 (the two most-replicated effects in the finance literature —
+momentum and post-earnings drift), news 1.0 (real but narrow, and
+specifically flagged in the literature as prone to looking good in testing
+and failing in practice for LLM-generated sentiment — directly relevant to
+this seat), smart_money 0.8 and macro 0.8 (both have documented edges that
+are substantially eroded by exactly how this desk consumes them — insider
+signals only look good before public disclosure, and macro's specific
+turning-point-calling ability is one of the most repeatedly debunked
+findings in applied economics, distinct from "macro conditions matter,"
+which is well supported).
+
+**What did NOT change.** `src/risk/rules.py::SEAT_WEIGHT` — the sizing
+path that actually prices a position — is untouched and still requires the
+desk's own 20+ resolved calls per seat before any weight applies, per the
+2026-08-31 decision. That rule answers a different question (how good are
+THIS desk's specific prompts, with real capital on the line) that outside
+literature cannot answer for it. Extending the same treatment to sizing is
+logged separately (`docs/WORK.md` item 30) because the sizing schedule is
+built around whole-number agreement counts and a fractional weight needs
+that schedule redesigned first — a second decision, not bundled into this
+one.
+
+**Currently has no effect on live behavior.** Only the Technical seat
+produces a Phase 13 verdict so far; the weighting only changes anything
+once a second seat is wired into the same shape.
+
+---
+
 ### 2026-09-03 — the analyst scorecard got written up as missing work; it already existed
 
 **In plain words:** the owner asked for a per-analyst track record — how

@@ -1010,6 +1010,9 @@ times, as prose.
 **Next, in order, none of it needing a paid call:**
   a. ~~Write the missing ranking rule.~~ **DONE 2026-09-03 (Phase 13).**
      Open: whether R/R and net evidence join the composite (owner).
+     **Sub-update 2026-09-03: `SEAT_WEIGHT` in this ranking module moved
+     from equal-weight to a research-informed prior (item 30) — owner
+     decision, amending §13.3.**
   b. **Catalyst-door existence-vs-direction gap FIXED 2026-09-03** — see
      INCIDENT_HISTORY. Still open: put `familiarity_bias` into the PROMPT —
      it is graded but never stated.
@@ -1142,7 +1145,7 @@ severity word. `src/cost_circuit.py` and `src/pipeline.py` still carry
 writeup: `docs/INCIDENT_HISTORY.md` "2026-09-03 — alerts stop relying on
 colour".
 
-**22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** `_qty_by_risk_budget` now reads `config.risk.max_position_risk_pct` (fallback 5.0, not the stale 0.5) instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. The independent-recheck itself was kept — it still recomputes risk from real stop/entry geometry — only the stale percentage was wrong. Full detail: `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction audit".
+**22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** `_qty_by_risk_budget` now reads `config.risk.max_position_risk_pct` (fallback 5.0) instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. Independent-recheck kept, only the stale percentage was wrong. Detail: `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction audit".
 
 **23. Risk Manager edits to a trade were trusted for shape, never for substance — FIXED 2026-09-03.**
 
@@ -1163,7 +1166,7 @@ substance unchecked" shape as item 18's catalyst-door finding, one seat
 over. Whether this should be made deterministic is an owner call, not
 decided here.
 
-**26. Risk Manager modification matching is case-sensitive — minor, fail-open, never observed.** `RiskModification.symbol` isn't normalised like `SymbolRejection` is; a mismatch ships the trade UNMODIFIED — opposite of the fail-closed norm elsewhere. Not yet fixed; low priority.
+**26. RM modification matching is case-sensitive — minor, fail-open, never observed.** Not normalised like `SymbolRejection`; a mismatch ships UNMODIFIED. Not fixed; low priority.
 
 **27. Risk budget can undercount held-book risk when heat data is partially unavailable — DEFECT, real, conditional.**
 
@@ -1208,15 +1211,20 @@ counts shown however few. Confirmed live and wired into the real pipeline
 reports zero resolved calls, which is the ledger correctly reporting an
 honestly thin history (started 2026-08-31, trading timers paused most of
 today), not a defect.
-hiding a short history either — show the real count and let the reader
-judge.
 
-**Where the real numbers live:** trade outcomes/R-multiples already exist
-in the trades table; per-analyst attribution needs tracing which seats fed
-each decision (`AnalystVerdict`, Phase 13, is the first seat with a
-structured record of this). Build against real data as far back as it
-goes; be honest about which analysts have too little history to show
-anything yet under the new shape.
+**30. The sizing path still owes the same amendment the ranking path just
+got — deliberately NOT done yet, owner should decide scope first.**
+
+2026-09-03: `src/verdicts.py::SEAT_WEIGHT` (ranking/tiebreak only) moved
+from equal-weight to a research-informed prior — owner-amended §13.3.
+`src/risk/rules.py::SEAT_WEIGHT` (the §9.4 signed sum that actually PRICES
+position size) was deliberately left untouched in the same pass, for a real
+reason, not an oversight: `agreement_ceiling_for_score` indexes a discrete
+ceiling schedule by an INTEGER net-agreement count. A per-seat float weight
+turns that into a fractional score, which needs the schedule itself
+redesigned (round to nearest int? interpolate between rungs?) — a second,
+separate risk-logic decision, not a drop-in constant swap. Flagged rather
+than bundled in.
 
 ---
 
