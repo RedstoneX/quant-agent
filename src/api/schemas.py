@@ -13,6 +13,8 @@ CLAUDE.md/AGENTS.md "Health" and "Global criteria" sections.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel
 
 # Stage 4: reused directly as typed sub-fields of CandidateDetailResponse
@@ -194,11 +196,54 @@ class AccountResponse(BaseModel):
 # /positions
 # ---------------------------------------------------------------------------
 
+PriceKind = Literal[
+    "broker_position_mark",
+    "current_quote",
+    "delayed_quote",
+    "historical_daily_close",
+    "unknown",
+]
+
+FreshnessClassification = Literal[
+    "current",
+    "delayed",
+    "historical",
+    "stale",
+    "unknown",
+]
+
+
+class PriceObservation(BaseModel):
+    """One price plus enough provenance to say what it actually is.
+
+    ``market_as_of`` is the provider's market timestamp when supplied;
+    ``retrieved_at`` is when this API observed it. They are deliberately
+    separate: retrieval time must never make an old market observation look
+    current (docs/WORK.md item 15 — "we cannot tell a stale price from a
+    live one").
+    """
+
+    value: float | None = None
+    price_kind: PriceKind
+    provider: str | None = None
+    feed: str | None = None
+    market_as_of: str | None = None
+    retrieved_at: str
+    freshness: FreshnessClassification
+
+
 class PositionItem(BaseModel):
     symbol: str
     qty: float
     avg_entry: float
     current_price: float
+    # Canonical provenance for `current_price`. The scalar is retained for
+    # compatibility, but it is an Alpaca broker position mark, not a
+    # market-data quote, and Alpaca's position response supplies no mark
+    # timestamp — so `market_as_of` is always None here and `freshness` is
+    # always "unknown" for this specific price_kind, by construction, not
+    # by a read failure.
+    position_mark: PriceObservation
     market_value: float
     unrealized_pnl: float
     unrealized_intraday_pnl: float | None = None
