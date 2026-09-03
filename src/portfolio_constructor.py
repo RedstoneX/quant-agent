@@ -836,6 +836,15 @@ class PortfolioConstructor:
                 )
             requests.append(RiskRequest(sym, requested_pct))
 
+        # `clusters` alone is not enough to run the allocator: without
+        # `existing_risk_pct` the held book's risk is invisible, and
+        # `allocate_risk_budget` treats a missing map as `{}` — i.e. as a
+        # book carrying ZERO existing risk — rather than as "unknown". Ceilings
+        # computed against a book presumed empty are computed against the
+        # wrong number, not a smaller one, so a partial failure (heat missing,
+        # clusters present) must degrade the SAME way as a total one: ceilings
+        # unenforced, per-position sizing still applies. See
+        # `_book_risk_inputs` in `src/pipeline_stages.py`.
         allocation = allocate_risk_budget(
             requests,
             existing_pct=existing_risk_pct,
@@ -843,7 +852,7 @@ class PortfolioConstructor:
             ceiling_pct=self.cfg.max_portfolio_risk_pct,
             cluster_share_pct=self.cfg.max_cluster_risk_share_pct,
             floor_pct=self.cfg.min_risk_pct,
-        ) if (existing_risk_pct is not None or clusters is not None) else None
+        ) if existing_risk_pct is not None else None
 
         plans: dict[str, RiskPlan] = {}
         for sym in closes:

@@ -1154,7 +1154,7 @@ colour".
 
 **26. RM modification matching is case-sensitive — FIXED 2026-09-03.** See `docs/INCIDENT_HISTORY.md`.
 
-**27. Risk budget can undercount held-book risk when heat data is partially unavailable — DEFECT, real, conditional.** If heat fails while cluster data succeeds, the 25%/cluster ceilings measure new requests only — the existing book's risk silently drops from the sum. Not yet fixed.
+**27. Risk budget can undercount held-book risk when heat data is partially unavailable — FIXED 2026-09-03.** Gate now requires `existing_risk_pct` before the allocator runs at all; see `docs/INCIDENT_HISTORY.md`, "a held position's risk could vanish from the portfolio ceiling if only heat data failed".
 
 All six found in the same 2026-09-03 pass that read the Portfolio Manager,
 order-construction and Risk Manager code end to end for the first time

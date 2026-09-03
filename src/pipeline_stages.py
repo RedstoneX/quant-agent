@@ -171,6 +171,16 @@ def _book_risk_inputs(ctx, total_value: float):
     here: enforcing a 25% ceiling against a book we cannot actually see would
     either block every trade or wave everything through, and both are worse
     than the per-position sizing that still applies regardless.
+
+    The same reasoning applies when only ONE of the two fails: this can also
+    return `(None, clusters)` — heat missing, correlation clusters present —
+    when `facts.heat` is `None` or building the per-symbol map raises.
+    `clusters` on its own says nothing about what the book currently holds,
+    so the caller (`PortfolioConstructor._plan_risk_targets`) must treat a
+    missing `existing` the same as a missing pair and leave the ceilings
+    unenforced rather than run the allocator against a book it wrongly
+    presumes to be empty (2026-09-03 incident — see
+    `docs/INCIDENT_HISTORY.md`).
     """
     facts = getattr(ctx, "facts", None)
     if facts is None:
