@@ -4,7 +4,7 @@ import threading
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, date
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, computed_field, field_validator, model_validator
 
@@ -1735,6 +1735,135 @@ class MacroAnalysis(LLMOutputModel):
     # parses unchanged. Bounded and deduped by the pipeline, not here —
     # see src/nominations.py.
     nominations: list[Nomination] = []
+
+    #: `regime_shift=True` is the macro analyst declaring the world just
+    #: changed underneath the position, not routine commentary — a strictly
+    #: stronger claim than an ordinary directional read at the same
+    #: confidence. Encoded as a magnitude BONUS on top of the confidence-based
+    #: base rate below, same "equal-spacing, nothing tuned" posture as
+    #: `RATING_MAGNITUDE` (Phase 13 §13.3: start equal, adjust only on
+    #: out-of-sample proof). NOT independently measured — flagged for review
+    #: in the PR that introduces this mapping.
+    _MAGNITUDE_BY_CONFIDENCE: ClassVar[dict[str, float]] = {
+        "high": 0.75, "medium": 0.5, "low": 0.25,
+    }
+    _REGIME_SHIFT_BONUS: ClassVar[float] = 0.25
+
+    def to_verdict(self, symbol: str) -> "AnalystVerdict":
+        """This read, restated in the shared Phase 13 verdict shape.
+
+        A RESTATEMENT, not a second opinion, mirroring
+        `TechAnalysisResult.to_verdict` — see that method for the pattern
+        this follows.
+
+        `MacroAnalysis` is market-wide, not per-symbol (no `symbol` field
+        on this model — see the evidence-registry seat-name comment
+        threaded through `PortfolioManagerAgent.build_evidence_registry`,
+        which already applies one macro read to many symbols). The caller
+        supplies which symbol this verdict is being cast for.
+
+        direction    — `equity_outlook` verbatim; already bullish/bearish/
+                       neutral, the same vocabulary `AnalystVerdict` uses.
+        conviction   — `confidence` verbatim; already high/medium/low.
+        magnitude    — MacroAnalysis carries no numeric magnitude field
+                       (unlike Technical's rating rungs), so one is DERIVED:
+                       a confidence-keyed base rate (`_MAGNITUDE_BY_CONFIDENCE`)
+                       plus a fixed bonus when `regime_shift` is True (a
+                       claimed regime change is a stronger claim than routine
+                       commentary at the same confidence level), clamped to
+                       1.0. Neutral is always 0.0 regardless of confidence or
+                       regime_shift — `AnalystVerdict` refuses a neutral
+                       verdict with nonzero magnitude, and a "neutral, but
+                       shifting" read is a contradiction in terms this method
+                       does not try to resolve silently.
+                       THIS MAPPING IS UNMEASURED — same posture as
+                       `RATING_MAGNITUDE`, called out explicitly for owner
+                       review before it feeds a ranking or a netting rule.
+        evidence     — `key_observations` (indicator/reading/interpretation,
+                       one VerdictEvidence each), `sector_guidance` (sector +
+                       stance + reason), and `risk_factors` (one per item).
+                       All qualitative (`text=`); MacroAnalysis carries no
+                       evidence-shaped numbers to attach as `value=`.
+        invalidation — `shift_reason` when `regime_shift` is True and the
+                       reason is non-empty: the stated condition already IS
+                       the falsifier for a regime call. Otherwise, mirroring
+                       Technical's "fall back to the analyst's own stated
+                       falsifier" pattern: for a bullish call, the first
+                       `bear_triggers` entry (what would prove it wrong); for
+                       a bearish call, the first `bull_triggers` entry.
+                       UNLIKE Technical, when direction is not neutral and
+                       none of the above is available (no shift_reason, no
+                       trigger on the falsifying side), a generic fallback
+                       string is used rather than leaving this blank —
+                       `AnalystVerdict` REQUIRES a non-empty invalidation for
+                       any non-neutral call (see its
+                       `_a_call_must_be_falsifiable_and_backed` validator) and
+                       raises `ValidationError` otherwise, so an empty string
+                       is only ever valid here for a neutral outlook.
+        """
+        direction = self.equity_outlook
+        if direction == "neutral":
+            magnitude = 0.0
+        else:
+            magnitude = self._MAGNITUDE_BY_CONFIDENCE[self.confidence]
+            if self.regime_shift:
+                magnitude = min(1.0, magnitude + self._REGIME_SHIFT_BONUS)
+
+        evidence: list[VerdictEvidence] = []
+        for obs in self.key_observations:
+            evidence.append(VerdictEvidence(
+                label=obs.indicator,
+                text=f"{obs.reading} — {obs.interpretation}",
+            ))
+        for row in self.sector_guidance:
+            evidence.append(VerdictEvidence(
+                label=f"sector:{row.sector}",
+                text=f"{row.stance} — {row.reason}",
+            ))
+        for i, factor in enumerate(self.risk_factors):
+            evidence.append(VerdictEvidence(label=f"risk_factor_{i}", text=factor))
+        if not evidence and direction != "neutral":
+            # `key_observations`/`sector_guidance`/`risk_factors` are all
+            # `= []` defaults — an actionable read that populated none of
+            # them still has to satisfy `AnalystVerdict`'s "a directional
+            # call must cite at least one piece of evidence" rule. The
+            # reasoning chain is mandatory (`min_length=1` on every field),
+            # so it is always available as a last-resort citation — nothing
+            # is invented, this is the analyst's own synthesis restated.
+            evidence.append(VerdictEvidence(
+                label="cross_signal_synthesis",
+                text=self.reasoning_chain.cross_signal_synthesis,
+            ))
+
+        invalidation = ""
+        if direction != "neutral":
+            shift_reason = (self.shift_reason or "").strip()
+            if self.regime_shift and shift_reason:
+                invalidation = shift_reason
+            elif direction == "bullish" and self.bear_triggers:
+                invalidation = self.bear_triggers[0]
+            elif direction == "bearish" and self.bull_triggers:
+                invalidation = self.bull_triggers[0]
+            else:
+                # No stated falsifier anywhere on the read. Technical can
+                # fall back to its own hard stop; macro has no analogous
+                # always-present number, so the fallback is a generic but
+                # honest statement rather than a blank field that would
+                # fail `AnalystVerdict`'s non-neutral-invalidation rule.
+                invalidation = (
+                    f"equity_outlook reverses from {direction} "
+                    "(macro analyst stated no explicit trigger)"
+                )
+
+        return AnalystVerdict(
+            seat="macro",
+            symbol=symbol,
+            direction=direction,
+            magnitude=magnitude,
+            conviction=self.confidence,
+            evidence=evidence,
+            invalidation=invalidation,
+        )
 
     @model_validator(mode="before")
     @classmethod
