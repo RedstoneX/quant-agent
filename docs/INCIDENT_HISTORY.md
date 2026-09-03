@@ -101,6 +101,40 @@ in `docs/WORK.md` and neither was touched here.
 
 ---
 
+### 2026-09-03 — the desk's own report was blaming the wrong stage for a blocked trade
+
+**In plain words:** when a proposed trade never turned into a fill, the desk's
+own conversion report tried to say why. If the Risk Manager vetoed the whole
+plan, the report blamed the Risk Manager for EVERY symbol PM had originally
+asked for — even ones the deterministic constructor had already dropped
+earlier in the same run, before the Risk Manager ever saw them. That made the
+Risk Manager look like the cause of blocks it never touched, and hid the
+constructor's own (perfectly good) reason for dropping them.
+
+A companion script (`scripts/blocked_proposals_census.py`, built 2026-09-02)
+already did this attribution correctly; the desk's own live reporting code
+(`_outcome` in `src/pipeline.py`) did not, so the two tools disagreed on the
+same data.
+
+**Fixed in two parts, same day.** First, a symbol is only ever blamed on a
+Risk Manager veto if it's confirmed to have reached the constructor's own
+order list — a symbol the constructor dropped earlier no longer qualifies
+(PR #215). Second, once the constructor's own drop reason started being
+saved to the database (funnel-queue item 2, same day — see
+`PortfolioConstructor.last_drop_reasons`), the live reporting code was taught
+to read it, so a constructor-dropped symbol now shows the constructor's real
+reason instead of falling into the unexplained "no order was ever built"
+catch-all.
+
+**Verified against the correction the census script already had.** Ran both
+the desk's own report and the census script over the same historical
+database; conversion rate and every block-reason count matched exactly.
+Added a regression test that drops one symbol at the constructor and lets a
+Risk Manager veto reach the two survivors, and asserts the dropped symbol is
+never credited to the veto.
+
+---
+
 ### 2026-09-03 — alerts stop relying on colour
 
 **In plain words:** the owner is red/green colour blind — red, orange and
