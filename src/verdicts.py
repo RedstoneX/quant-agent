@@ -163,15 +163,31 @@ def rank_verdicts(verdicts: list[AnalystVerdict]) -> list[RankedCandidate]:
     a conflict for §9.3/§9.4 to adjudicate, and ordering it would hide the
     disagreement inside a number. It is dropped with the reason recorded on
     the caller's side (`candidate_eligibility`), never silently.
+
+    **One verdict per (symbol, seat).** A caller CAN hand this two verdicts
+    from the same seat on the same symbol in one run — e.g. earnings, if two
+    filings for one ticker were both analysed the same session (a real,
+    if uncommon, case: nothing upstream enforces one-filing-per-symbol-per-
+    run). Averaging every seat's contribution already assumes one vote per
+    seat (`SEAT_WEIGHT` is keyed by seat name, not by verdict) — silently
+    letting a duplicate through would double that seat's weight without
+    anyone deciding it should count twice. Found and fixed 2026-09-03 by an
+    adversarial review before this shipped: caught via the concrete case of
+    two earnings verdicts pushing earnings' effective weight from 50% to
+    66.7% of a two-seat group. LAST ONE WINS per (symbol, seat), input
+    order — the same "last-wins per symbol" convention already used for
+    the evidence registry (`PortfolioManagerAgent._earnings_stance_rows`),
+    applied one level finer (per seat, not just per symbol).
     """
-    by_symbol: dict[str, list[AnalystVerdict]] = {}
+    by_symbol: dict[str, dict[str, AnalystVerdict]] = {}
     for verdict in verdicts:
         if verdict.direction == "neutral":
             continue
-        by_symbol.setdefault(verdict.symbol.upper(), []).append(verdict)
+        by_symbol.setdefault(verdict.symbol.upper(), {})[verdict.seat] = verdict
 
     ranked: list[RankedCandidate] = []
-    for symbol, group in by_symbol.items():
+    for symbol, seat_verdicts in by_symbol.items():
+        group = list(seat_verdicts.values())
         directions = {v.direction for v in group}
         if len(directions) != 1:
             continue

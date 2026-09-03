@@ -28,7 +28,8 @@ from ops.model_policy import scenarios as S
 from ops.model_policy.deterministic_selection import evaluate
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import (
-    RATING_DIRECTION, RATING_MAGNITUDE, AnalystVerdict, TechAnalysisResult,
+    RATING_DIRECTION, RATING_MAGNITUDE, AnalystVerdict, EarningsAnalysis,
+    NewsIntelligenceReport, StockNewsItem, TechAnalysisResult,
     TechReasoningChain, VerdictEvidence,
 )
 from src.risk.constants import REWARD_RISK_FLOOR
@@ -245,6 +246,82 @@ def test_every_real_technical_read_on_the_fixture_day_maps_to_a_valid_verdict():
 
 
 # ==========================================================================
+# 2b. Earnings' mapping
+# ==========================================================================
+
+def _earnings(sentiment: str = "bullish", conviction: str = "medium",
+              bull_case: str = "services mix reaccelerates",
+              bear_case: str = "China demand craters",
+              data_quality: str = "complete filing, no estimates") -> EarningsAnalysis:
+    return EarningsAnalysis(
+        symbol="AAPL", form_type="10-Q", filing_date="2026-03-15",
+        revenue={"total": "$95.4B"}, profitability={}, cash_flow={},
+        balance_sheet={}, guidance="flat", data_quality=data_quality,
+        investment_implications={
+            "sentiment": sentiment, "conviction": conviction,
+            "key_thesis": "services mix offsets hardware softness",
+            "bull_case": bull_case, "bear_case": bear_case,
+            "reasoning_chain": {
+                "fundamental_quality": "gross margin expanding 40bps",
+                "growth_trajectory": "services +12% YoY, hardware flat",
+                "strategic_risks": "vision pro adoption unproven",
+                "management_execution": "buyback pace matches prior guide",
+                "valuation_context": "premium holds only if services mix keeps rising",
+            },
+        },
+    )
+
+
+def test_a_bullish_earnings_read_maps_onto_the_verdict():
+    v = _earnings("bullish", "high").to_verdict()
+    assert v.seat == "earnings"
+    assert v.symbol == "AAPL"
+    assert (v.direction, v.magnitude, v.conviction) == ("bullish", 0.5, "high")
+    assert v.invalidation == "China demand craters"
+    by_label = {e.label: e for e in v.evidence}
+    assert by_label["key_thesis"].text == "services mix offsets hardware softness"
+    assert by_label["fundamental_quality"].text == "gross margin expanding 40bps"
+    assert by_label["growth_trajectory"].text == "services +12% YoY, hardware flat"
+    assert by_label["strategic_risks"].text == "vision pro adoption unproven"
+    assert by_label["management_execution"].text == "buyback pace matches prior guide"
+    assert by_label["valuation_context"].text == "premium holds only if services mix keeps rising"
+    assert by_label["data_quality"].text == "complete filing, no estimates"
+
+
+def test_a_bearish_earnings_read_uses_the_bull_case_as_its_invalidation():
+    v = _earnings("bearish", "low").to_verdict()
+    assert (v.direction, v.magnitude, v.conviction) == ("bearish", 0.5, "low")
+    assert v.invalidation == "services mix reaccelerates"
+    assert v.signed_magnitude == -0.5
+
+
+def test_a_neutral_earnings_read_maps_to_a_neutral_verdict_with_no_lean():
+    v = _earnings("neutral", "medium").to_verdict()
+    assert (v.direction, v.magnitude, v.invalidation) == ("neutral", 0.0, "")
+
+
+def test_an_undisclosed_falsifier_is_treated_as_blank_not_as_content():
+    """`bull_case`/`bear_case` default to the literal 'not disclosed' — that
+    placeholder must not be passed through as if it were a real falsifier.
+    With no numeric stop to fall back to (unlike Technical), a directional
+    call with nothing disclosed against it has a blank invalidation, and
+    `AnalystVerdict` itself refuses to construct with a directional call and
+    no invalidation — the seat cannot invent a falsifier from nothing."""
+    a = _earnings("bullish", "medium", bear_case="not disclosed")
+    with pytest.raises(ValidationError, match="invalidation"):
+        a.to_verdict()
+    # Case-insensitive / whitespace-padded placeholder is caught too.
+    a2 = _earnings("bearish", "medium", bull_case="  Not Disclosed  ")
+    with pytest.raises(ValidationError, match="invalidation"):
+        a2.to_verdict()
+
+
+def test_data_quality_evidence_is_omitted_when_it_is_the_bare_default():
+    v = _earnings("bullish", "medium", data_quality="not disclosed").to_verdict()
+    assert "data_quality" not in {e.label for e in v.evidence}
+
+
+# ==========================================================================
 # 3. The ranking
 # ==========================================================================
 
@@ -346,13 +423,38 @@ def test_two_seats_on_one_symbol_average_at_the_research_informed_weight():
 
 def test_a_single_seat_verdict_is_unaffected_by_its_own_weight():
     """The weighting only changes how MULTIPLE seats are averaged together.
-    A symbol only Technical has a view on ranks by its own raw score either
-    way — today's actual production case, since only Technical produces a
-    Phase 13 verdict yet. This is what makes the 2026-09-03 amendment inert
-    in production until a second seat is wired in."""
+    A symbol only one seat has a view on ranks by its own raw score either
+    way, regardless of which seat that is or what its weight is."""
     tech = _tech("XLE", "buy", "high").to_verdict()
     [c] = rank_verdicts([tech])
     assert c.score == score_verdict(tech)
+
+
+def test_two_verdicts_from_the_same_seat_do_not_double_that_seats_weight():
+    """Found by adversarial review, 2026-09-03: two earnings filings for one
+    symbol in the same run (nothing upstream enforces one filing per symbol
+    per run) used to push earnings' 1.2 weight from 50% of a two-seat group
+    to 66.7%, silently. `rank_verdicts` must count at most ONE verdict per
+    (symbol, seat) — last one wins, matching the same convention already
+    used for the evidence registry."""
+    tech = _tech("XLE", "buy", "high").to_verdict()          # weight 1.2
+    first_earnings = AnalystVerdict(
+        seat="earnings", symbol="XLE", direction="bullish", magnitude=0.2,
+        conviction="low", evidence=_evidence(), invalidation="x",
+    )
+    second_earnings = AnalystVerdict(
+        seat="earnings", symbol="XLE", direction="bullish", magnitude=0.9,
+        conviction="high", evidence=_evidence(), invalidation="y",
+    )
+    [with_one] = rank_verdicts([tech, first_earnings])
+    [with_duplicate] = rank_verdicts([tech, first_earnings, second_earnings])
+    # The duplicate must be treated as a REPLACEMENT (last wins), not an
+    # ADDITION — group size, and therefore each seat's share of the total
+    # weight, must be identical whether one or two earnings verdicts arrive.
+    assert with_one.seats == with_duplicate.seats == ["earnings", "technical"]
+    [with_second_only] = rank_verdicts([tech, second_earnings])
+    assert with_duplicate.score == with_second_only.score
+    assert with_duplicate.score != score_verdict(tech)  # earnings still counts, just once
 
 
 def test_seats_disagreeing_on_direction_are_not_ranked():
@@ -397,6 +499,155 @@ def test_pm_ranks_equally_eligible_candidates_deterministically():
     assert blocked == {}
     assert [c.symbol for c in ranked] == ["AAA", "BBB", "CCC", "DDD"]
     assert [c.score for c in ranked] == [2.0, 1.5, 1.0, 0.5]
+
+
+# ==========================================================================
+# 2c. All five seats through the real integration path (2026-09-03)
+# ==========================================================================
+
+def _news_intel(stock_news: dict) -> "NewsIntelligenceReport":
+    return NewsIntelligenceReport(
+        macro_narrative={
+            "last_updated": "2026-09-03", "era_themes": ["rates"],
+            "current_regime": "mid-cycle, rates on hold",
+        },
+        stock_news=stock_news, pm_briefing="ok",
+        market_sentiment="neutral", confidence="medium",
+    )
+
+
+def test_rank_candidates_combines_all_five_seats_at_their_researched_weight():
+    """End-to-end through the real PM entry point, not `rank_verdicts`
+    directly: one symbol where technical, news, and earnings all cover it
+    and agree bullish, must outrank a symbol only technical covers at the
+    same tech reading — proving the extra seats actually reach the ranking,
+    not just exist as unused methods."""
+    solo = _tech("SOLO", "buy", "medium")     # 0.5 + 0.5 = 1.0, alone
+    covered = _tech("MULTI", "buy", "medium")  # same tech reading as SOLO
+    analyses = [solo, covered]
+
+    news_intel = _news_intel({
+        "MULTI": [StockNewsItem(
+            headline="guidance raised", sentiment="bullish", conviction="high",
+            impact_summary="raised full-year guide",
+        )],
+    })
+    multi_earnings = _earnings("bullish", "high")
+    multi_earnings.symbol = "MULTI"
+    earnings_analyses = [{
+        "symbol": "MULTI",
+        "analysis": multi_earnings.model_dump(),
+    }]
+
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"SOLO", "MULTI"},
+        active_state_changes="", asof=SESSION,
+        news_intel=news_intel, earnings_analyses=earnings_analyses,
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["MULTI", "SOLO"]
+    assert ranked[0].seats == ["earnings", "news", "technical"]
+    # SOLO is untouched by the new seats: still exactly its own raw score.
+    solo_candidate = ranked[1]
+    assert solo_candidate.score == score_verdict(solo.to_verdict())
+
+
+def test_rank_candidates_survives_a_malformed_earnings_entry():
+    """A single bad earnings dict must drop only earnings' contribution for
+    that symbol — never crash the whole ranking call."""
+    analyses = [_tech("AAA", "buy", "medium")]
+    bad_earnings = [{"symbol": "AAA", "analysis": {"not_a_real_shape": True}}]
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        earnings_analyses=bad_earnings,
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["AAA"]
+    assert ranked[0].seats == ["technical"]  # earnings silently dropped, not crashed
+
+
+def test_rank_candidates_drops_earnings_with_no_wrapper_symbol_at_all():
+    """A blank/missing wrapper symbol means there's no ground truth to check
+    the LLM's own claimed symbol against — must drop, not trust it anyway.
+    Matches `_earnings_stance_rows`'s identical handling of this case."""
+    analyses = [_tech("AAA", "buy", "medium")]
+    no_symbol_wrapper = [{
+        "symbol": "", "analysis": _earnings("bullish", "high").model_dump(),
+    }]
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        earnings_analyses=no_symbol_wrapper,
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["AAA"]
+    assert ranked[0].seats == ["technical"]
+
+
+def test_rank_candidates_drops_earnings_on_a_wrapper_vs_analysis_symbol_mismatch():
+    """The pipeline wrapper's `symbol` is ground truth; `EarningsAnalysis.
+    symbol` is part of the LLM's own JSON and could disagree (a hallucinated
+    ticker). A mismatch must drop earnings' contribution for that entry, not
+    trust either side silently."""
+    analyses = [_tech("AAA", "buy", "medium")]
+    mismatched = _earnings("bullish", "high")  # symbol="AAPL" by fixture default
+    earnings_analyses = [{"symbol": "AAA", "analysis": mismatched.model_dump()}]
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        earnings_analyses=earnings_analyses,
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["AAA"]
+    assert ranked[0].seats == ["technical"]  # earnings dropped on mismatch
+
+
+def test_rank_candidates_survives_a_malformed_macro_dict():
+    """Same contract for macro: garbage input must not take down the run."""
+    analyses = [_tech("AAA", "buy", "medium")]
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        macro_analysis={"not_a_real_shape": True},
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["AAA"]
+    assert ranked[0].seats == ["technical"]
+
+
+def test_rank_candidates_macro_verdict_applies_uniformly_to_every_symbol():
+    """Documented simplification: macro's verdict is the same broad read for
+    every candidate, not sector-adjusted. Two unrelated symbols both get the
+    same macro contribution."""
+    analyses = [_tech("AAA", "buy", "medium"), _tech("BBB", "buy", "medium")]
+    macro = {
+        "reasoning_chain": {
+            "volatility_analysis": "VIX mid-range, flat trend",
+            "yield_curve_analysis": "2s10s modestly positive",
+            "monetary_policy_analysis": "Fed on hold, no forward guidance shift",
+            "inflation_labor_credit": "CPI cooling, unemployment stable, spreads tight",
+            "cross_signal_synthesis": "consistent risk-on read across signals",
+            "sector_implications": "broad, no strong sector tilt",
+        },
+        "regime": "risk-on", "confidence": "high", "equity_outlook": "bullish",
+        "position_guidance": {
+            "target_invested_pct": 90, "cash_recommendation_pct": 10,
+            "reasoning": "risk-on regime supports full deployment",
+        },
+        "summary": "broadly constructive",
+        "bear_triggers": ["CPI surprises hot"],
+    }
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA", "BBB"}, active_state_changes="",
+        asof=SESSION, macro_analysis=macro,
+    )
+    assert blocked == {}
+    assert {c.symbol for c in ranked} == {"AAA", "BBB"}
+    for c in ranked:
+        assert c.seats == ["macro", "technical"]
 
 
 def test_pm_never_orders_a_name_a_gate_refused():

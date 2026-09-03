@@ -173,17 +173,10 @@ the rewritten PM prompt. Full suite green: **3,961 passing**, only the two known
 `test_rehearsal_reproduces_cost_ceiling.py` failures that read live production
 state. **NOT DEPLOYED.**
 
-**PHASE 11 IS HALF-BUILT AND NONE OF IT IS MERGED.** Four agents were dispatched;
-the process exited before three of them finished. Their work is committed on
-their own branches and pushed, labelled WIP UNVERIFIED. **It is untested and
-unreviewed — do not merge any of it without running the suite.**
-
-| branch | what it holds | state |
-|---|---|---|
-| `worktree-agent-a133d12fa507af335` | margin interest tracker | committed by the agent, suite result never reported |
-| `worktree-agent-a68a5aa21271ccbea` | 11.2 gross cap + de-levering ladder | WIP, interrupted, UNVERIFIED |
-| `worktree-agent-ab445cf7c4b9aa358` | 11.1 fractional sizing + stop guards | WIP, interrupted, UNVERIFIED |
-| `worktree-agent-af17eb92755512448` | sector cap fails loudly on unresolved sector | WIP, interrupted, UNVERIFIED |
+**PHASE 11's original four-branch WIP state (dispatched, interrupted,
+unverified) is superseded below and fully recorded in
+`docs/INCIDENT_HISTORY.md`'s 2026-09-01 handoff entry** — branch names and
+per-branch status live there now, not duplicated here.
 
 **SUPERSEDED 2026-09-02 — `allow_margin` is now `true`.** The condition below
 was met: the gross cap and the ladder merged and were verified, and the PM
@@ -733,8 +726,15 @@ owner decision, not made here.
 
 The desk produced **zero proposals that entire day** and this was not noticed
 at the time. A day of total silence looks identical to a quiet market from
-every surface we have. Related to item 2 and to the blind-data-day work
-parked on `wt/empty-levels`.
+every surface we have. Related to item 2.
+
+The related-but-separate silent-feed-outage watchdog once parked on
+`wt/empty-levels` is now built and merged (it does not fix or explain
+2026-08-25 itself — see the caveat in its own docstring). Every run now
+counts what share of resolved symbols came back with no structural level or
+no bars at all, persists it, and pages the owner directly when the share
+crosses a threshold too high to be a coincidental quiet market. Full
+detail: `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 
 **12. The desk's own funnel reporting misattributes vetoes. FIXED 2026-09-03.**
 
@@ -1009,11 +1009,9 @@ its verdict. Item 20 wants that field as a status; it is already there, 67
 times, as prose.
 
 **Next, in order, none of it needing a paid call:**
-  a. ~~Write the missing ranking rule.~~ **DONE 2026-09-03 (Phase 13).**
-     Open: whether R/R and net evidence join the composite (owner).
-     **Sub-update 2026-09-03: `SEAT_WEIGHT` in this ranking module moved
-     from equal-weight to a research-informed prior (item 30) — owner
-     decision, amending §13.3.**
+  a. ~~Write the missing ranking rule.~~ **DONE 2026-09-03 (Phase 13),
+     extended to all five seats by item 31.** Open: whether R/R and net
+     evidence join the composite (owner); sizing-path parity is item 30.
   b. **Catalyst-door existence-vs-direction gap FIXED 2026-09-03** — see
      INCIDENT_HISTORY. Still open: put `familiarity_bias` into the PROMPT —
      it is graded but never stated.
@@ -1148,35 +1146,15 @@ colour".
 
 **22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** Now reads `config.risk.max_position_risk_pct` instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. Detail: `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction audit".
 
-**23. Risk Manager edits to a trade were trusted for shape, never for substance — FIXED 2026-09-03.**
+**23. Risk Manager edits to a trade were trusted for shape, never for substance — FIXED 2026-09-03.** Now rejects an edit that zeros an exit's allocation or breaches the R/R or noise-band floor. See `docs/INCIDENT_HISTORY.md`, "a risk-manager 'modification' could silently cancel an exit or ship a trade a fresh one would have been refused."
 
-`_apply_risk_modifications` now rejects an edit that zeros an exit's
-allocation (silent cancel) or that would breach the R/R or noise-band
-floor. See `docs/INCIDENT_HISTORY.md`, "a risk-manager 'modification'
-could silently cancel an exit or ship a trade a fresh one would have been
-refused."
+**24. The drawdown position cap could be skipped after a Risk Manager edit — FIXED 2026-09-03**, same PR as item 23.
 
-**24. The drawdown position cap could be skipped after a Risk Manager edit — FIXED 2026-09-03**, same PR as item 23: the post-RM re-check now carries `in_drawdown` through consistently.
+**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DESIGN, not yet decided.** `risk_manager.md` asks the RM to confirm a sell trigger itself; no Python verifies it against real data. Same "citation exists, substance unchecked" shape as item 18's catalyst-door finding. Owner call, not decided here.
 
-**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DESIGN, not yet decided.**
+**26. RM modification matching is case-sensitive — minor, fail-open, never observed.** Not fixed; low priority.
 
-`risk_manager.md` asks the RM to confirm a sell trigger was named and to
-cross-check it itself; no Python compares days-held against the sell or
-verifies the named trigger against real data. Same "citation exists,
-substance unchecked" shape as item 18's catalyst-door finding, one seat
-over. Whether this should be made deterministic is an owner call, not
-decided here.
-
-**26. RM modification matching is case-sensitive — minor, fail-open, never observed.** Not normalised like `SymbolRejection`. Not fixed; low priority.
-
-**27. Risk budget can undercount held-book risk when heat data is partially unavailable — DEFECT, real, conditional.**
-
-`allocate_risk_budget` runs whenever EITHER heat or cluster data is
-available, but if heat specifically fails while clusters succeed, the
-25%/cluster ceilings get measured against new requests only — the
-existing book's risk silently drops out of the sum. The module's own
-docstring names exactly this failure mode as the one thing it must never
-do. Not yet fixed.
+**27. Risk budget can undercount held-book risk when heat data is partially unavailable — DEFECT, real, conditional.** If heat fails while cluster data succeeds, the 25%/cluster ceilings measure new requests only — the existing book's risk silently drops from the sum. Not yet fixed.
 
 All six found in the same 2026-09-03 pass that read the Portfolio Manager,
 order-construction and Risk Manager code end to end for the first time
@@ -1226,6 +1204,18 @@ turns that into a fractional score, which needs the schedule itself
 redesigned (round to nearest int? interpolate between rungs?) — a second,
 separate risk-logic decision, not a drop-in constant swap. Flagged rather
 than bundled in.
+
+**31. All five seats now reach the ranking, not just Technical — 2026-09-03.**
+News, macro, earnings, smart_money each got a `to_verdict()`, wired into
+`rank_candidates` via `_collect_seat_verdicts` (one bad entry drops only
+that seat, never the run — caught and fixed a real gap: an
+`EarningsAnalysis`'s own `symbol` is LLM-declared and can diverge from the
+pipeline's ground-truth wrapper symbol, now dropped on mismatch). Known
+simplification: macro's verdict is one broad read applied to every symbol,
+not the sector-adjusted stance `build_evidence_registry` already computes
+elsewhere in the same prompt. Also open: three of the four new seats'
+magnitude mappings are reasoned but unmeasured judgment calls, flagged by
+their own authors, not yet independently reviewed.
 
 ---
 

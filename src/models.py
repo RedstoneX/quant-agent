@@ -4,9 +4,11 @@ import threading
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, date
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, computed_field, field_validator, model_validator
+
+from src.quantities import collapse_stances
 
 logger = logging.getLogger(__name__)
 
@@ -1209,6 +1211,43 @@ class SmartMoneyObservation(LLMOutputModel):
         return self
 
 
+#: `SmartMoneyFinding.economic_role` -> `AnalystVerdict.conviction`. NEW
+#: JUDGMENT, not a restatement (the finding carries no confidence field to
+#: read off). The ordering is not invented here: `_ROLE_RANK` in
+#: `src/agents/smart_money_analyst.py` already ranks these four labels
+#: actionable(3) > confirmatory(2) > contradictory(1) > historical(0) to
+#: decide which fact the seat surfaces first, and the seat's own prompt
+#: explains WHY — "actionable" is present-tense, source-backed trading
+#: evidence; "confirmatory" is thematic context (congressional/13F, filed
+#: up to 45 days late); "historical" is stale and cannot support a target
+#: (`build_evidence_registry`/`stance_is_aligned` refuse it); "contradictory"
+#: describes a fact's RELATIONSHIP to the current thesis, not its own
+#: strength, so folding it in at the bottom alongside "historical" is the
+#: more conservative of two readings, not the only defensible one. Squeezed
+#: onto the desk's 3-rung high/medium/low scale, contradictory and
+#: historical collapse to the same "low" rung. Flag for review.
+_SMART_MONEY_ROLE_CONVICTION: dict[str, str] = {
+    "actionable": "high",
+    "confirmatory": "medium",
+    "contradictory": "low",
+    "historical": "low",
+}
+
+#: `SmartMoneyFinding.economic_role` -> `AnalystVerdict.magnitude` for a
+#: directional (non-neutral) stance. Also NEW JUDGMENT: no field on this
+#: model measures how far the seat leans. Reuses the same conviction-style
+#: ordering as `_SMART_MONEY_ROLE_CONVICTION` above, equal-spaced in the
+#: style of `RATING_MAGNITUDE` (Phase 13 §13.3: start equal, adjust only on
+#: out-of-sample proof) — nothing here has been measured either. Flag for
+#: review.
+_SMART_MONEY_ROLE_MAGNITUDE: dict[str, float] = {
+    "actionable": 1.0,
+    "confirmatory": 0.6,
+    "contradictory": 0.3,
+    "historical": 0.3,
+}
+
+
 class SmartMoneyFinding(LLMOutputModel):
     symbol: str
     stance: Literal["bullish", "bearish", "neutral", "mixed"]
@@ -1264,6 +1303,76 @@ class SmartMoneyFinding(LLMOutputModel):
             for o in self.observations
         )
         return self
+
+    def to_verdict(self) -> "AnalystVerdict":
+        """This finding, restated in the shared Phase 13 verdict shape.
+
+        UNLIKE `TechAnalysisResult.to_verdict`, this is only a PARTIAL
+        restatement — see `_SMART_MONEY_ROLE_CONVICTION` and
+        `_SMART_MONEY_ROLE_MAGNITUDE` above for the two fields that are new
+        judgment, not a value already sitting on this model. Flagged for
+        review.
+
+        direction    — `stance`, with "mixed" folded into "neutral". This
+                       is a restatement of existing desk convention, not a
+                       new call: `PortfolioManagerAgent._collapse_stances`
+                       and `_stance_matches_source`
+                       (src/agents/portfolio_manager.py,
+                       src/agents/smart_money_analyst.py) already treat
+                       "mixed" and "neutral" as the same non-directional
+                       bucket — conflicting buy/sell activity supports
+                       neither a bullish nor a bearish call.
+        magnitude    — 0.0 for neutral (including former "mixed"); else
+                       `_SMART_MONEY_ROLE_MAGNITUDE[economic_role]`. New
+                       judgment.
+        conviction   — `_SMART_MONEY_ROLE_CONVICTION[economic_role]`. New
+                       judgment.
+        evidence     — `summary` and `why_now`, each as one labelled item
+                       when present, plus up to 5 observations (most recent
+                       transaction_date first) summarized as text.
+        invalidation — SmartMoneyFinding has no invalidation-style field to
+                       restate. Left "" for a neutral verdict (allowed).
+                       For a directional verdict the base model REQUIRES a
+                       non-empty invalidation, so one is constructed from
+                       `why_now`, framed as a condition: the call stands
+                       only while that stated reasoning holds. This is
+                       genuinely invented, not read off the model — flagged
+                       for review, not presented as a restatement.
+        """
+        stance = "neutral" if self.stance in ("neutral", "mixed") else self.stance
+        magnitude = 0.0 if stance == "neutral" else _SMART_MONEY_ROLE_MAGNITUDE[self.economic_role]
+        conviction = _SMART_MONEY_ROLE_CONVICTION[self.economic_role]
+
+        evidence: list[VerdictEvidence] = []
+        if self.summary.strip():
+            evidence.append(VerdictEvidence(label="summary", text=self.summary.strip()))
+        if self.why_now.strip():
+            evidence.append(VerdictEvidence(label="why_now", text=self.why_now.strip()))
+        most_recent = sorted(
+            self.observations, key=lambda o: o.transaction_date, reverse=True,
+        )[:5]
+        for obs in most_recent:
+            detail = f"{obs.actor}: {obs.direction}"
+            if obs.amount_range:
+                detail += f" {obs.amount_range}"
+            detail += f" on {obs.transaction_date.isoformat()}"
+            evidence.append(VerdictEvidence(label="observation", text=detail))
+
+        invalidation = ""
+        if stance != "neutral":
+            invalidation = (
+                f"the why-now premise no longer holds: {self.why_now.strip()}"
+            )
+
+        return AnalystVerdict(
+            seat="smart_money",
+            symbol=self.symbol,
+            direction=stance,
+            magnitude=magnitude,
+            conviction=conviction,
+            evidence=evidence,
+            invalidation=invalidation,
+        )
 
 
 class TargetPosition(LLMOutputModel):
@@ -1736,6 +1845,135 @@ class MacroAnalysis(LLMOutputModel):
     # see src/nominations.py.
     nominations: list[Nomination] = []
 
+    #: `regime_shift=True` is the macro analyst declaring the world just
+    #: changed underneath the position, not routine commentary — a strictly
+    #: stronger claim than an ordinary directional read at the same
+    #: confidence. Encoded as a magnitude BONUS on top of the confidence-based
+    #: base rate below, same "equal-spacing, nothing tuned" posture as
+    #: `RATING_MAGNITUDE` (Phase 13 §13.3: start equal, adjust only on
+    #: out-of-sample proof). NOT independently measured — flagged for review
+    #: in the PR that introduces this mapping.
+    _MAGNITUDE_BY_CONFIDENCE: ClassVar[dict[str, float]] = {
+        "high": 0.75, "medium": 0.5, "low": 0.25,
+    }
+    _REGIME_SHIFT_BONUS: ClassVar[float] = 0.25
+
+    def to_verdict(self, symbol: str) -> "AnalystVerdict":
+        """This read, restated in the shared Phase 13 verdict shape.
+
+        A RESTATEMENT, not a second opinion, mirroring
+        `TechAnalysisResult.to_verdict` — see that method for the pattern
+        this follows.
+
+        `MacroAnalysis` is market-wide, not per-symbol (no `symbol` field
+        on this model — see the evidence-registry seat-name comment
+        threaded through `PortfolioManagerAgent.build_evidence_registry`,
+        which already applies one macro read to many symbols). The caller
+        supplies which symbol this verdict is being cast for.
+
+        direction    — `equity_outlook` verbatim; already bullish/bearish/
+                       neutral, the same vocabulary `AnalystVerdict` uses.
+        conviction   — `confidence` verbatim; already high/medium/low.
+        magnitude    — MacroAnalysis carries no numeric magnitude field
+                       (unlike Technical's rating rungs), so one is DERIVED:
+                       a confidence-keyed base rate (`_MAGNITUDE_BY_CONFIDENCE`)
+                       plus a fixed bonus when `regime_shift` is True (a
+                       claimed regime change is a stronger claim than routine
+                       commentary at the same confidence level), clamped to
+                       1.0. Neutral is always 0.0 regardless of confidence or
+                       regime_shift — `AnalystVerdict` refuses a neutral
+                       verdict with nonzero magnitude, and a "neutral, but
+                       shifting" read is a contradiction in terms this method
+                       does not try to resolve silently.
+                       THIS MAPPING IS UNMEASURED — same posture as
+                       `RATING_MAGNITUDE`, called out explicitly for owner
+                       review before it feeds a ranking or a netting rule.
+        evidence     — `key_observations` (indicator/reading/interpretation,
+                       one VerdictEvidence each), `sector_guidance` (sector +
+                       stance + reason), and `risk_factors` (one per item).
+                       All qualitative (`text=`); MacroAnalysis carries no
+                       evidence-shaped numbers to attach as `value=`.
+        invalidation — `shift_reason` when `regime_shift` is True and the
+                       reason is non-empty: the stated condition already IS
+                       the falsifier for a regime call. Otherwise, mirroring
+                       Technical's "fall back to the analyst's own stated
+                       falsifier" pattern: for a bullish call, the first
+                       `bear_triggers` entry (what would prove it wrong); for
+                       a bearish call, the first `bull_triggers` entry.
+                       UNLIKE Technical, when direction is not neutral and
+                       none of the above is available (no shift_reason, no
+                       trigger on the falsifying side), a generic fallback
+                       string is used rather than leaving this blank —
+                       `AnalystVerdict` REQUIRES a non-empty invalidation for
+                       any non-neutral call (see its
+                       `_a_call_must_be_falsifiable_and_backed` validator) and
+                       raises `ValidationError` otherwise, so an empty string
+                       is only ever valid here for a neutral outlook.
+        """
+        direction = self.equity_outlook
+        if direction == "neutral":
+            magnitude = 0.0
+        else:
+            magnitude = self._MAGNITUDE_BY_CONFIDENCE[self.confidence]
+            if self.regime_shift:
+                magnitude = min(1.0, magnitude + self._REGIME_SHIFT_BONUS)
+
+        evidence: list[VerdictEvidence] = []
+        for obs in self.key_observations:
+            evidence.append(VerdictEvidence(
+                label=obs.indicator,
+                text=f"{obs.reading} — {obs.interpretation}",
+            ))
+        for row in self.sector_guidance:
+            evidence.append(VerdictEvidence(
+                label=f"sector:{row.sector}",
+                text=f"{row.stance} — {row.reason}",
+            ))
+        for i, factor in enumerate(self.risk_factors):
+            evidence.append(VerdictEvidence(label=f"risk_factor_{i}", text=factor))
+        if not evidence and direction != "neutral":
+            # `key_observations`/`sector_guidance`/`risk_factors` are all
+            # `= []` defaults — an actionable read that populated none of
+            # them still has to satisfy `AnalystVerdict`'s "a directional
+            # call must cite at least one piece of evidence" rule. The
+            # reasoning chain is mandatory (`min_length=1` on every field),
+            # so it is always available as a last-resort citation — nothing
+            # is invented, this is the analyst's own synthesis restated.
+            evidence.append(VerdictEvidence(
+                label="cross_signal_synthesis",
+                text=self.reasoning_chain.cross_signal_synthesis,
+            ))
+
+        invalidation = ""
+        if direction != "neutral":
+            shift_reason = (self.shift_reason or "").strip()
+            if self.regime_shift and shift_reason:
+                invalidation = shift_reason
+            elif direction == "bullish" and self.bear_triggers:
+                invalidation = self.bear_triggers[0]
+            elif direction == "bearish" and self.bull_triggers:
+                invalidation = self.bull_triggers[0]
+            else:
+                # No stated falsifier anywhere on the read. Technical can
+                # fall back to its own hard stop; macro has no analogous
+                # always-present number, so the fallback is a generic but
+                # honest statement rather than a blank field that would
+                # fail `AnalystVerdict`'s non-neutral-invalidation rule.
+                invalidation = (
+                    f"equity_outlook reverses from {direction} "
+                    "(macro analyst stated no explicit trigger)"
+                )
+
+        return AnalystVerdict(
+            seat="macro",
+            symbol=symbol,
+            direction=direction,
+            magnitude=magnitude,
+            conviction=self.confidence,
+            evidence=evidence,
+            invalidation=invalidation,
+        )
+
     @model_validator(mode="before")
     @classmethod
     def _normalize_enum_case(cls, values):
@@ -1867,6 +2105,156 @@ class StockNewsItem(LLMOutputModel):
         return _normalize_enum_case_fields(
             values, lower_fields=("sentiment", "conviction"),
         )
+
+
+#: `news_verdict_for_symbol`'s conviction -> `AnalystVerdict.magnitude` map.
+#: Judgment call (flagged for review, Phase 13 §13.3 posture — start equal,
+#: adjust only on out-of-sample proof): a `StockNewsItem` carries no numeric
+#: field at all, only a three-rung conviction, so unlike
+#: `RATING_MAGNITUDE` (which has a true neutral rung at 0.0 to anchor
+#: against) there is nothing to equally space AROUND. Spacing the three
+#: rungs equally across (0, 1] — never landing on 0.0, which the
+#: `AnalystVerdict` validator reserves for a real neutral read — keeps "low
+#: conviction" a genuine (if weak) lean instead of a silent no-lean that
+#: would rank identically to a symbol nobody covered.
+NEWS_CONVICTION_MAGNITUDE: dict[str, float] = {
+    "low": round(1 / 3, 2), "medium": round(2 / 3, 2), "high": 1.0,
+}
+
+#: Same ordinal `_CONVICTION_RANK` idea as `src/nominations.py` and
+#: `CONVICTION_SCORE` in `src/verdicts.py` (low < medium < high), kept as a
+#: private copy here rather than imported: both of those modules import
+#: `src.models`, so importing either back would be circular. This is a
+#: single `max()` key, not a quantity computed and compared across files, so
+#: it does not trip the one-definition guard's arithmetic-shape matching —
+#: see `tests/test_one_definition_guard.py`.
+_NEWS_CONVICTION_RANK: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
+
+#: Evidence cap for `news_verdict_for_symbol` — see its docstring.
+_MAX_NEWS_EVIDENCE_ITEMS = 5
+
+
+def news_verdict_for_symbol(symbol: str, items: list["StockNewsItem"]) -> "AnalystVerdict":
+    """Collapse every `StockNewsItem` the News seat filed for one symbol
+    into the one `AnalystVerdict` the Portfolio Manager compares seats by.
+
+    Precondition: `items` is non-empty. News never calls this for a symbol
+    it did not cover (`NewsIntelligenceReport.stock_news` only has keys for
+    symbols with at least one item) — an empty list is handled below only
+    so the function fails soft (neutral, no lean) rather than raising, but
+    that path should never be exercised in production.
+
+    **direction** — the collapsed sentiment across every item, via
+    `src.quantities.collapse_stances` — the SAME reduction
+    `PortfolioManagerAgent.build_evidence_registry` already applies to
+    `(i.sentiment for i in items)` (see `PortfolioManagerAgent.
+    _collapse_stances`, now a thin wrapper over the same function). Reusing
+    it rather than inventing a second disagreement rule is deliberate: a
+    verdict and a registry stance about the same symbol must never resolve
+    a three-way sentiment split differently. `collapse_stances` returns
+    "mixed" for any unresolved disagreement (including a directional
+    sentiment sitting alongside a "neutral" one) — that is treated as
+    neutral here, same as an empty `items` list: an unresolved split is the
+    absence of a call, not a third direction `AnalystVerdict` has no room
+    for.
+
+    **conviction** — JUDGMENT CALL, flagged for review. `collapse_stances`
+    decides the winning DIRECTION but says nothing about conviction, so:
+    among the items whose own `sentiment` agrees with the final collapsed
+    direction, take the HIGHEST conviction. Rationale: an item that
+    disagreed with the eventual call was outvoted and its confidence in the
+    losing side is not evidence for how strongly to hold the winning one;
+    among the items that agree, the most confident one is the strongest
+    stated support the desk actually has for this call. A neutral verdict
+    (collapse resolved to neutral, or resolved to "mixed", or `items` was
+    empty) has no winning side to draw a conviction from, so it defaults to
+    "low" — the weakest assertion the scale offers, since there is
+    nothing here to be confident ABOUT.
+
+    **magnitude** — `NEWS_CONVICTION_MAGNITUDE[conviction]` for a
+    directional verdict (see that table's docstring for the mapping and why
+    it is a judgment call), or 0.0 for neutral — `AnalystVerdict` refuses a
+    neutral verdict with any other magnitude.
+
+    **evidence** — one `VerdictEvidence(label="headline", text=...)` per
+    item, `headline` and `impact_summary` joined so the check is visible
+    without opening the source article, capped at `_MAX_NEWS_EVIDENCE_ITEMS`
+    (JUDGMENT CALL, flagged for review) so a symbol with a long news day
+    does not bloat the verdict — earlier items are kept (arrival order,
+    unchanged from `NewsIntelligenceReport.stock_news`), on the assumption
+    that News files its most decision-relevant item first. Included even
+    for a neutral verdict (optional there, but still useful context).
+
+    **invalidation** — JUDGMENT CALL, flagged for review. News items carry
+    no stated falsifier the way `TechAnalysisResult.thesis_invalid_if` does,
+    but `AnalystVerdict` refuses a directional (non-neutral) verdict with a
+    blank one, so something honest has to be constructed.
+
+    The obvious candidate — quote whichever item disagreed with the final
+    direction as "the stated case against the call" — turns out to be
+    unreachable given `StockNewsItem.sentiment`'s domain (bullish/bearish/
+    neutral only): `collapse_stances` only resolves to a directional
+    (non-"mixed") result when EVERY surviving sentiment is that exact same
+    value (its `len(cleaned) == 1` branch — the positive/negative-SET
+    branches below it can never fire for a 3-valued domain where each
+    polarity set has exactly one reachable member). So whenever this
+    function's `direction` is bullish or bearish, by construction every
+    item already agrees with it and there is no opposing item to quote.
+    (Proven in `tests/test_news_verdict.py::
+    test_a_directional_call_never_has_a_disagreeing_item_to_quote`.)
+
+    So the only honest falsifier available is structural: a later headline
+    reporting the opposite sentiment on this symbol. That is a generic,
+    templated sentence, not a fabricated specific fact, and it is the same
+    sentence for every directional call — flagged so review can judge
+    whether that bar is met, or whether "" (like the neutral case) would be
+    more honest than a templated non-fact.
+
+    A neutral verdict states no invalidation ("") — a neutral read is the
+    absence of a call, so `AnalystVerdict` does not require one and none is
+    invented.
+
+    seat — "news", the same key `build_evidence_registry` puts news stances
+    under (`put(symbol, "news", ...)`).
+    """
+    direction = collapse_stances(item.sentiment for item in items) or "neutral"
+    if direction not in ("bullish", "bearish", "neutral"):
+        # "mixed" (or anything else collapse_stances might someday return
+        # that isn't one of the three verdict directions) is an unresolved
+        # split — treated as no lean, never guessed at.
+        direction = "neutral"
+
+    if direction == "neutral":
+        conviction = "low"
+        magnitude = 0.0
+        invalidation = ""
+    else:
+        agreeing = [item.conviction for item in items if item.sentiment == direction]
+        conviction = max(agreeing, key=lambda c: _NEWS_CONVICTION_RANK.get(c, -1)) if agreeing else "low"
+        magnitude = NEWS_CONVICTION_MAGNITUDE[conviction]
+        # No opposing item to quote — see the docstring's invalidation
+        # section for why that is provably always true here, not merely
+        # true of the fixtures this happens to have been tested against.
+        opposite = "bearish" if direction == "bullish" else "bullish"
+        invalidation = f"a subsequent headline reporting {opposite} sentiment on {symbol}"
+
+    evidence = [
+        VerdictEvidence(
+            label="headline",
+            text=f"{item.headline} — {item.impact_summary}".strip(" —"),
+        )
+        for item in items[:_MAX_NEWS_EVIDENCE_ITEMS]
+    ]
+
+    return AnalystVerdict(
+        seat="news",
+        symbol=symbol,
+        direction=direction,
+        magnitude=magnitude,
+        conviction=conviction,
+        evidence=evidence,
+        invalidation=invalidation,
+    )
 
 
 class NewsIntelligenceReport(LLMOutputModel):
@@ -2014,6 +2402,87 @@ class EarningsAnalysis(LLMOutputModel):
     # filing's analysis this run (`_collect_seat_nominations`), the same
     # way `earnings_results` itself already aggregates per-filing output.
     nominations: list[Nomination] = []
+
+    def to_verdict(self) -> "AnalystVerdict":
+        """This filing's read, restated in the shared Phase 13 verdict shape.
+
+        A RESTATEMENT, not a second opinion: every field is read off
+        `investment_implications`, which the earnings analyst already fills
+        and already validates (`EarningsInvestmentImplications`) — no new
+        prompting.
+
+        direction  — `investment_implications.sentiment`, verbatim (already
+                     bullish/bearish/neutral, the exact vocabulary the shared
+                     shape uses).
+        conviction — `investment_implications.conviction`, verbatim.
+        magnitude  — UNLIKE Technical (which has two directional rungs a
+                     side — buy/strong_buy — to encode as 0.5/1.0), earnings
+                     sentiment is a single bullish/bearish rung with no
+                     numeric or ordinal strength field anywhere on this
+                     model or `EarningsInvestmentImplications`: `risk_flags`
+                     is unstructured lists of free-text risks, and
+                     `data_quality` is free prose, not a graded scale.
+                     Inventing a gradient from either would be a fake
+                     precision this seat cannot back. So every directional
+                     call gets one flat magnitude (0.5, the same "ordinary
+                     conviction" rung Technical uses for its single-strength
+                     buy/sell), and neutral gets 0.0. Flagged for review.
+        evidence   — `key_thesis` (the seat's own summary of its call) plus
+                     the five reasoning-chain steps, labelled, plus
+                     `data_quality` when the analyst said anything past the
+                     bare default.
+        invalidation — the case the analyst built AGAINST its own call:
+                     `bear_case` for a bullish read, `bull_case` for a
+                     bearish one. Both fields default to the literal string
+                     "not disclosed" when the analyst didn't fill them in
+                     (see the field definitions above) — that placeholder is
+                     not a real falsifier, so it is treated as blank rather
+                     than passed through as if it were content. UNLIKE
+                     Technical, there is no numeric stop-price to fall back
+                     to here, so a directional call whose falsifier is left
+                     undisclosed ends up with a blank `invalidation` and
+                     `AnalystVerdict`'s own validator refuses to construct
+                     it — this seat cannot manufacture a falsifier out of
+                     nothing, and an error at construction is more honest
+                     than inventing one.
+        """
+        impl = self.investment_implications
+        direction = impl.sentiment
+        magnitude = 0.0 if direction == "neutral" else 0.5
+
+        evidence: list[VerdictEvidence] = []
+        if impl.key_thesis.strip():
+            evidence.append(VerdictEvidence(label="key_thesis", text=impl.key_thesis.strip()))
+        chain = impl.reasoning_chain
+        for label in (
+            "fundamental_quality", "growth_trajectory", "strategic_risks",
+            "management_execution", "valuation_context",
+        ):
+            text = getattr(chain, label, "") or ""
+            if text.strip():
+                evidence.append(VerdictEvidence(label=label, text=text.strip()))
+        data_quality = (self.data_quality or "").strip()
+        if data_quality and data_quality.lower() != "not disclosed":
+            evidence.append(VerdictEvidence(label="data_quality", text=data_quality))
+
+        if direction == "bullish":
+            falsifier = impl.bear_case
+        elif direction == "bearish":
+            falsifier = impl.bull_case
+        else:
+            falsifier = ""
+        falsifier = (falsifier or "").strip()
+        invalidation = "" if falsifier.lower() == "not disclosed" else falsifier
+
+        return AnalystVerdict(
+            seat="earnings",
+            symbol=self.symbol,
+            direction=direction,
+            magnitude=magnitude,
+            conviction=impl.conviction,
+            evidence=evidence,
+            invalidation=invalidation,
+        )
 
     @field_validator("symbol")
     @classmethod

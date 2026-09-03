@@ -22,6 +22,62 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — the other four analysts finally reach the ranking, and one real bug caught on the way in
+
+**In plain words:** the desk's tiebreak among tied stock picks only ever
+listened to one of five analysts (technical), because that was the only
+one whose output had been translated into the shared format the ranking
+reads. The other four were built and wired in today, so the ranking now
+genuinely reflects all five — not just in principle, but in the actual
+code the desk runs.
+
+**The catch, found while testing this, not before shipping it:** an
+earnings filing's analysis carries a `symbol` field the AI itself writes
+as part of its answer — separate from the symbol the pipeline already
+knows the filing is about, from real deterministic record-keeping. Those
+two should always agree, but nothing checked that they actually did. A
+constructed test proved the gap was real (the ranking silently attributed
+a reading to the wrong stock when the two disagreed), not theoretical.
+Fixed: the pipeline's own record now wins, and a disagreement drops that
+one earnings reading rather than trusting either side blindly. A follow-up
+pass with no wrapper symbol to check against at all was also caught and
+closed the same way, rather than trusting the AI's claim unverified.
+
+**A second, more consequential bug, caught by an independent adversarial
+review before this shipped, not by the original testing:** nothing stopped
+the SAME analyst from voting twice on the SAME stock in one run — a real
+case, since two filings for one ticker can legitimately land in one
+session. That analyst's influence then silently doubled: a concrete
+example moved earnings' effective say in a two-analyst tiebreak from half
+to two-thirds, with nobody deciding it should. Fixed with the same rule
+already used elsewhere on this desk for "which of several records about
+the same thing counts": the newest one wins, the rest don't count twice.
+Proven with a test that fails without the fix and passes with it, not
+just written and trusted.
+
+**What's honestly still open, not hidden:** macro's read is applied the
+same way to every stock this run, not adjusted per sector the way the
+older evidence display already does elsewhere in the same message to the
+Portfolio Manager — a known simplification, not an oversight, since macro
+doesn't carry a separate reasoning set per sector to draw from. And three
+of the four new analysts' "how strongly does this argue" numbers are
+reasoned estimates, not measurements — each one's own builder flagged this
+explicitly rather than presenting a guess as settled.
+
+**Verification:** all five pieces (four analyst conversions plus a
+data-quality watchdog built the same day) were built independently, each
+proven with real before/after test failures — not just written and
+trusted. The wiring itself was tested end-to-end: a stock covered by three
+analysts correctly outranks an identical stock only one analyst covers,
+and three separate malformed-input cases (a broken earnings record, a
+broken macro record, the symbol-mismatch case above) all confirmed to drop
+gracefully rather than crash the run. Full paper-trading test suite: 4,552
+passed; the only 12 failures were already-known, pre-existing gaps
+unrelated to this change (confirmed by reproducing them against an
+untouched copy of the codebase first).
+
+---
+
 ### 2026-09-03 — analysts stop being treated equally in the ranking tiebreak
 
 **In plain words:** the desk had a rule that analysts should never be
@@ -3021,3 +3077,76 @@ Three genuinely different things were bundled under that one number:
    alone.
 
 See PR merging `fix/evening-analyst-audit`.
+
+### 2026-09-03 — a dead price feed and a genuinely quiet market used to look identical; now the desk can tell them apart
+
+**In plain words:** every trade needs a real chart level to set a stop
+against, so the code has always refused to trade a symbol when it can't
+find one. That refusal is correct. The problem was that "no level because
+the price feed died" and "no level because this stock's chart is genuinely
+flat right now" produced the exact same blank result, and nothing counted
+how often it happened across a run — so a morning where the data feed
+silently went dark would have shown up in every log and report as an
+ordinary quiet day. This closes that gap: the desk now counts, every run,
+what share of symbols came back with no usable price history or no
+structural level, and pages the owner directly — outside the routine
+end-of-session summary — when that share is too high to be a coincidence.
+
+This was built proactively, not in response to a live incident. It was
+investigated after 2026-08-25's zero-trade day (item 11 in
+`docs/WORK.md`) raised the question of whether a silent feed outage could
+produce a day like that; it could not have been THAT day specifically
+(`TechAnalysisResult.computed_levels`, the field this watchdog reads,
+did not exist yet in the code that ran that morning — the real cause was
+the unrelated R/R-geometry defect recorded elsewhere in this file), but
+the fix that shipped that same night made `computed_levels` load-bearing
+going forward, and this closes the resulting hole before it causes a
+second, real incident.
+
+**The mechanism.** `MorningResearchStage._run_tech` already fetches bars
+for the whole tech universe before anything else happens; it now also
+counts how many of those fetches came back empty (`ctx.tech_bars_coverage`
+— universe size, bars fetched, bars missing, and which symbols). Once the
+tech analyses for the run resolve, `_check_levels_coverage` computes a
+second figure: what share of the RESOLVED analyses carry an empty
+`computed_levels`. Both are persisted as one `levels_coverage`
+`specialist_evidence` row every run, whether or not anything looks wrong —
+observability here is not conditional on severity, because the one normal
+day nobody re-checks is exactly the day a silent regression needs a
+record.
+
+Two thresholds, both module constants in `src/pipeline_stages.py`, gate
+whether the owner is paged and require at least
+`LEVELS_COVERAGE_MIN_SAMPLE` (10) resolved symbols or fetch attempts
+before either can fire — a 1-in-3 empty result on a 3-symbol test run is
+noise, not a signal, and 10 is well below the real universe's 100+ names:
+
+- `LEVELS_BLIND_RUN_EMPTY_SHARE = 1.0` — every single symbol came back
+  empty. A live feed does not put every unrelated chart in one batch into
+  the identical null state at once; this can only be a property of the
+  feed, not of the market. Alerts 🔴 TECH DATA BLIND SPOT.
+- `LEVELS_DEGRADED_RUN_EMPTY_SHARE = 0.5` — a deliberately coarse line,
+  not a fitted percentile: only one clean baseline run exists to derive it
+  from (2026-09-02's morning run, 1 empty out of 64 resolved, 1.6%), and
+  n=1 cannot support a statistically fit threshold. 50% sits roughly 30x
+  that single observed baseline — far above anything an ordinary quiet
+  name (a thin IPO, a rangebound stock) should produce across a whole run
+  — while still catching a partial outage that the 1.0 rule alone would
+  miss, such as a feed serving short or stale history to most but not
+  literally all requests. Alerts 🟠 TECH DATA DEGRADED.
+
+The alert reuses the desk's existing out-of-band channel
+(`src/notifier.send_owner_alert`, the same path the "NO STOP AT ALL" /
+"STOP PARTIALLY COVERS" protective-stop alerts use) rather than a new one,
+and matches the standing alert-design rule from the 2026-09-02 data-quality
+work: its own Telegram message, never bundled into the routine session
+summary, severity carried in text rather than colour alone.
+
+The check runs unconditionally after the tech stage's try/except, whether
+tech resolved cleanly, partially, not at all, or crashed outright — a bars
+outage severe enough to crash the whole batch is exactly the case this
+exists to catch, not one to skip because the surrounding try/except already
+handled the crash. Like `_persist_evidence`, it never raises: a bug in the
+watchdog itself must never be able to stop a trading session.
+
+See PR merging `feat/finish-levels-coverage-watchdog`.
