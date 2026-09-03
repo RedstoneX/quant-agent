@@ -83,14 +83,11 @@ abstract risk. Set to **2** (roughly one hour of total desk-wide silence)
 instead — see `src/silence_watchdog.py` (`DEFAULT_SILENT_WINDOW_THRESHOLD`)
 for the reasoning on why 2 is still a strong signal despite being short.
 
-- [ ] DECIDE BY 2026-09-17 — Does the desk need a second, independent alert
-  channel beyond Telegram? Item 17(b), shipped 2026-09-03, made a failed
-  latch alert durable and retried, but Telegram remains the only channel —
-  if Telegram itself is down (revoked token, blocked bot, egress rule),
-  every alert on this desk is silent, including the retries. A second
-  channel is a new dependency and a real design tradeoff (which service,
-  what it costs, what credential it needs), not a threshold — owner call,
-  not an agent one.
+**DEFERRED 2026-09-03 — a second, independent alert channel beyond
+Telegram.** Owner decision: not now, bigger problems to solve first;
+revisit at his discretion, no due date. Item 17(b) (failed-alert retry) is
+already shipped regardless — this is only about a channel to fall back to
+if Telegram itself goes down, still a real gap, just not an urgent one.
 
 **DATA QUALITY AUDIT — 2026-09-02, owner priority: this pillar (garbage in,
 garbage out) must work before anything else.**
