@@ -53,6 +53,7 @@ __all__ = [
     "net_exposure_pct",
     "dollar_volumes",
     "avg_dollar_volume",
+    "collapse_stances",
 ]
 
 
@@ -324,3 +325,49 @@ def avg_dollar_volume(
     if not any(v > 0 for v in values):
         return None
     return sum(values) / len(values)
+
+
+def collapse_stances(values: Iterable[Any]) -> str | None:
+    """Reduce several per-source stance labels to one, or `None` if there is
+    nothing usable to reduce.
+
+    One definition: this used to live only as
+    `PortfolioManagerAgent._collapse_stances`, which `build_evidence_registry`
+    calls to fold `(item.sentiment for item in items)` down to one stance per
+    symbol. Phase 13's news verdict (`src/models.py::news_verdict_for_symbol`)
+    needs the SAME reduction — multiple `StockNewsItem`s per symbol collapsed
+    to one `AnalystVerdict.direction` — and `src/models.py` cannot import
+    `src.agents.portfolio_manager` (that module already imports `src.models`,
+    so the reverse would be circular). Moving the arithmetic here, dependency-
+    free and upstream of both, lets `PortfolioManagerAgent._collapse_stances`
+    become a thin wrapper instead of a second definition that could drift
+    from this one.
+
+    Case- and whitespace-normalized; "none"/"n/a"/"na"/"unknown"/
+    "unavailable"/"not_available" are treated as absent. A single surviving
+    value is returned verbatim (whatever vocabulary it came from — the
+    caller may not use bullish/bearish/neutral, e.g. `TechAnalysisResult`
+    ratings). Multiple surviving values are only resolved to "bullish" or
+    "bearish" when EVERY value is drawn from the matching polarity set below;
+    any other disagreement (including a directional value alongside
+    "neutral") returns "mixed" — an unresolved split, not invented agreement.
+    """
+    cleaned = {
+        str(value).strip().lower().replace(" ", "_")
+        for value in values
+        if value is not None and str(value).strip()
+    }
+    cleaned -= {"none", "n/a", "na", "unknown", "unavailable", "not_available"}
+    if not cleaned:
+        return None
+    if len(cleaned) == 1:
+        return next(iter(cleaned))
+    positive = {"strong_buy", "buy", "bullish", "positive", "risk_on", "overweight", "favorable"}
+    negative = {"strong_sell", "sell", "bearish", "negative", "risk_off", "underweight", "unfavorable"}
+    if cleaned <= positive:
+        return "bullish"
+    if cleaned <= negative:
+        return "bearish"
+    if cleaned <= {"neutral", "mixed"}:
+        return "neutral" if cleaned == {"neutral"} else "mixed"
+    return "mixed"

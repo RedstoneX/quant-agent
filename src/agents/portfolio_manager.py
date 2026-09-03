@@ -13,6 +13,7 @@ from src.models import (
     parse_telemetry,
 )
 from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
+from src.quantities import collapse_stances
 from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
@@ -79,25 +80,16 @@ class PortfolioManagerAgent(BaseAgent):
 
     @staticmethod
     def _collapse_stances(values) -> str | None:
-        cleaned = {
-            str(value).strip().lower().replace(" ", "_")
-            for value in values
-            if value is not None and str(value).strip()
-        }
-        cleaned -= {"none", "n/a", "na", "unknown", "unavailable", "not_available"}
-        if not cleaned:
-            return None
-        if len(cleaned) == 1:
-            return next(iter(cleaned))
-        positive = {"strong_buy", "buy", "bullish", "positive", "risk_on", "overweight", "favorable"}
-        negative = {"strong_sell", "sell", "bearish", "negative", "risk_off", "underweight", "unfavorable"}
-        if cleaned <= positive:
-            return "bullish"
-        if cleaned <= negative:
-            return "bearish"
-        if cleaned <= {"neutral", "mixed"}:
-            return "neutral" if cleaned == {"neutral"} else "mixed"
-        return "mixed"
+        """Thin wrapper — the reduction itself lives in `src.quantities.
+        collapse_stances` now, so `src/models.py::news_verdict_for_symbol`
+        (Phase 13) can share the exact same rule without this module
+        importing that one (this module already imports `src.models`, so
+        the reverse would be circular). See that function's docstring for
+        the full rule; this wrapper exists only so every existing call site
+        here (`build_evidence_registry`, `_earnings_stance_rows`, ...) keeps
+        working unchanged.
+        """
+        return collapse_stances(values)
 
     @staticmethod
     def _sector_guidance_rows(raw) -> list[dict]:
