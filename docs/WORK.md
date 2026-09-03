@@ -76,6 +76,17 @@ confirm 40 still sits comfortably above the real ceiling — raise it if a
 legitimate session ever gets close, do not lower it on a hunch. Not a
 blocking decision; the mechanism is live either way.
 
+- [ ] DECIDE BY 2026-09-17 — How many consecutive scheduled windows of
+  silence before the desk-wide silence watchdog (item 17c, shipped
+  2026-09-03) alerts? Shipped with a placeholder of **6** (one full
+  scheduled trading day — earnings_preprocess/morning/intra_check/midday/
+  close/evening) because no measured or agreed figure exists. Same shape as
+  item 14's `max_calls_per_session` placeholder: a shorter run of misses has
+  mundane causes (one self-gated skip, a timer landing outside its window);
+  a full day of zero completed sessions across every mode has not happened
+  on a healthy desk. No agent may pick this number — see
+  `src/silence_watchdog.py` (`DEFAULT_SILENT_WINDOW_THRESHOLD`).
+
 **DATA QUALITY AUDIT — 2026-09-02, owner priority: this pillar (garbage in,
 garbage out) must work before anything else.**
 
@@ -803,38 +814,17 @@ stopped until a person happens to look. On an unattended desk that is a day
      A notification failure is currently terminal and unrecorded. It must be
      persisted and retried, and escalate to a second channel — an alert path
      with no fallback is not an alert path.
-  **CHECKED 2026-09-02 — the heartbeat tests the PIPE, not the DESK. Half
-     of item (c) is already built; do not rebuild it.**
-     `quant-agent-alert-heartbeat.timer` fires daily at 10:15 UTC and logs
-     `alert channel PROVED (stage=delivered)`. It ran clean on 09-01 and
-     09-02. But it proves only that a Telegram message CAN be sent — it says
-     nothing about whether the desk did any work. It would report the
-     channel healthy while the desk sat frozen all day.
-     **So the sending half exists and works. What is missing is the
-     "has anything happened" half** — no completed session in N scheduled
-     windows, no proposals produced, no run recorded. Build that and reuse
-     the proven channel.
-     **And note the gap it does not close:** on 2026-09-02 the heartbeat
-     proved delivery at 10:15, and that same afternoon the cost-circuit
-     alert still failed to send ("cost-circuit unavailable alert was not
-     delivered to Telegram"). A provable channel does not mean every alert
-     PATH uses it correctly. Test the paths, not just the pipe.
+  c. **SHIPPED 2026-09-03 — `src/silence_watchdog.py` +
+     `scripts/silence_heartbeat.py`.** Alerts on "no completed session in N
+     scheduled windows", desk-wide, reusing the proven Telegram path. Full
+     detail: `docs/INCIDENT_HISTORY.md` ("item 17c"). **The window-count
+     threshold (6) is a placeholder, not ratified** — see the DECIDE BY
+     line above.
 
-  c. **Nothing watches for SILENCE.** Every alarm we have fires on an event.
-     None fires on the absence of events, which is exactly the shape this
-     failure takes. `quant-agent-alert-heartbeat.timer` exists on the box —
-     **verify whether it actually detects a latched circuit or only a dead
-     process. Do not assume it covers this; it did not shout today.**
-
-**Proposed fix, in dependency order:** (c) first — a heartbeat that alerts on
-"no completed session in N scheduled windows" catches this failure AND every
-future one shaped like it, including ones we have not imagined. Then (a),
-which stops the latch firing for reasons that do not deserve it. Then (b).
-
-**Why (c) leads:** an alert that fires on a known failure can itself fail, as
-it did here. An alarm on silence cannot be defeated by the thing it watches
-going quiet — that IS its trigger. Owner's framing, and it is right: relying
-on alerts firing correctly is a recipe for disaster.
+**Remaining, in dependency order:** (a), which stops the latch firing for
+reasons that do not deserve it. Then (b). (c) led because an alert on a
+known failure can itself fail, as it did here — a silence alarm cannot be
+defeated by the thing it watches going quiet.
 
 Related: `qamc-openrouter-pricing-spof` records the same latch reachable via
 a stale price list. That path was fixed 2026-09-02; **this one was not** —

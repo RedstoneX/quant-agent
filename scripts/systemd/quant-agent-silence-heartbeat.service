@@ -1,0 +1,24 @@
+# Desk-wide silence watchdog — pairs with quant-agent-silence-heartbeat.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-silence-heartbeat.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-silence-heartbeat.timer
+[Unit]
+Description=quant-agent desk-wide silence watchdog (no LLM, no trading)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Reads alert_channel_checks (read-only), advances an on-box marker, and
+# sends ONE Telegram alert through the proven owner-alert path only when the
+# desk-wide silence has crossed the threshold and no alert has already gone
+# out for the current baseline. Sends nothing on a healthy desk.
+ExecStart=/home/qamc/quant-agent/scripts/run_silence_heartbeat.sh
+# Exit 1 means the desk-wide silence threshold was crossed this run and an
+# alert was (attempted to be) sent — a real finding, not a script bug.
+# Marking the unit failed keeps it visible in `systemctl --user status` and
+# the journal even if the Telegram send itself also failed.
+SuccessExitStatus=0
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal

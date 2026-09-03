@@ -22,6 +22,85 @@ what would catch it next time.
 
 ---
 
+### 2026-09-03 — item 17c: a watchdog for the desk going silent, not just the alarm breaking
+
+**In plain words:** on 2026-09-02 the desk stopped doing any work at all — a
+database fault latched trading off — and nobody was told, because the only
+existing check (`quant-agent-alert-heartbeat.timer`) only proves the
+Telegram messaging pipe works, not that the desk is actually running
+sessions. Worse, the alert about that specific fault also failed to send.
+This ships the missing half: an alarm that fires on the ABSENCE of a
+completed session, across every scheduled mode, rather than on any one
+known failure — so it catches this incident and any future one shaped like
+it, imagined or not.
+
+**What "a completed session" means, and why not `agent_logs`.** A crashed
+or partially-run session can leave `agent_logs` rows behind (one LLM call
+succeeded before the crash), so their presence does not prove a session
+finished. Instead this reuses `alert_channel_checks` — the table
+`src/alert_watchdog.py` already owns — keyed by `source`. Every one of
+`main.py`'s six scheduled modes writes exactly one row there from its
+`finally` block, which is reached even when the pipeline body raised. That
+write already existed for an unrelated reason (proving the sessions
+exercise the Telegram path); this is a new READER of state the trading path
+already produces, not new instrumentation on it.
+
+**Desk-wide, not per-mode.** The six modes
+(`earnings_preprocess`/`morning`/`intra_check`/`midday`/`close`/`evening`)
+are one desk taking turns through a day, not six independent things to
+watch separately — a single mode legitimately producing nothing one day
+(e.g. `close` with no open position to review) must not read as an outage
+while the others run fine either side of it. So "silence" is judged across
+all modes together: any completed session in any mode counts as evidence
+the desk is alive.
+
+**Why a persisted "last known alive" marker instead of re-scanning the
+database every run.** The failure this watches for includes "the database
+cannot be opened" — the same database a naive design would have to re-query
+on every check. `data/alerting/silence_heartbeat.json` (same on-box pattern
+and reasoning as `scripts/alert_heartbeat.py`'s heartbeat.json) carries the
+timestamp of the last known completed session forward across runs. Each run
+tries to advance it from the database; if the database cannot be read, the
+marker simply does not advance, and the elapsed-window count keeps growing
+on wall-clock time alone. The alert itself goes out through
+`src.notifier.send_owner_alert`, which never touches this database, so a
+broken database cannot suppress the alert about itself.
+
+**One alert per silence episode.** The same on-box record tracks which
+"last known alive" baseline an alert was already sent for, so a still-silent
+desk does not get paged on every 30-minute tick — only once per continuous
+episode, clearing when a fresh session is recorded (mirrors
+`alert_heartbeat.py`'s consecutive-failure reset-on-success shape).
+
+**What shipped:** `src/silence_watchdog.py` (the check), `scripts/
+silence_heartbeat.py` + `scripts/run_silence_heartbeat.sh` (the CLI entry
+point, same `.env`-sourcing wrapper shape as the existing heartbeat), and
+`scripts/systemd/quant-agent-silence-heartbeat.{timer,service}` (installed
+the same way as the existing heartbeat unit — not installed on the live box
+by this change). Tests in `tests/test_silence_watchdog.py` cover: no alert
+on a healthy schedule; a single legitimately quiet mode not triggering while
+others run; a full day of desk-wide silence crossing the threshold; the
+alert firing exactly once per episode and again after a later, separate
+episode; an unreadable database still letting the streak accumulate to an
+alert rather than going blind; and weekends never manufacturing a false
+alarm (no scheduled windows exist on a weekend, matching
+`run_if_et_window.sh`'s own weekday gate).
+
+**What was NOT decided by this work, and must not be read as decided:** the
+threshold — how many consecutive scheduled windows of silence before
+alerting — shipped as a placeholder of 6 (one full scheduled trading day).
+No agent may pick a threshold like this unilaterally, same rule item 14's
+`max_calls_per_session` placeholder followed; it is recorded as an open
+decision in `docs/WORK.md`, not silently finalized.
+
+**Left alone, explicitly out of scope for this change:** items 17(a) (a
+transient infrastructure fault should retry-with-backoff rather than latch
+immediately) and 17(b) (a failed alert should be persisted, retried, and
+escalate to a second channel) are unchanged — both are sequenced after (c)
+in `docs/WORK.md` and neither was touched here.
+
+---
+
 ### 2026-09-03 — alerts stop relying on colour
 
 **In plain words:** the owner is red/green colour blind — red, orange and
