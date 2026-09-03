@@ -708,13 +708,22 @@ refusal stands.
 Insufficient cash (1), a quote 14.6% off reference rejected as dirty data (1),
 outright broker rejection (1). Not material; do not spend time here.
 
-**10. Slots burned re-proposing names that never fill. NOT YET DIAGNOSED.**
+**10. Slots burned re-proposing names that never fill. PARTIALLY CLOSED,
+re-measured 2026-09-03 — see `docs/INCIDENT_HISTORY.md`.**
 
-NVDA proposed **9 times, filled once**. JPM, VLO and PATH proposed 3 times
-each and filled **zero**. The desk has no memory of having already been
-refused, so it re-litigates the same names while genuinely new ideas go
-unexamined. Partially addressed on `wt/stuck-loops` (merged 2026-09-02) —
-**re-measure before assuming it is closed.**
+The memory gap is fixed: `_build_blocked_proposals` (`src/pipeline.py`,
+merged 2026-09-02 via `feat/blocked-trade-memory`) gives the PM a
+`## Proposal Conversion` section naming its own repeat-offender names and
+conversion rate. But it is diagnostic only by explicit design — it gates,
+filters and caps nothing — so it cannot fully close this item by itself.
+Whether it changes PM behavior is UNTESTED: an unrelated live desk reset
+(`scripts/desk_reset.py`, 2026-09-02 18:19 UTC, real tool, working as
+intended) wiped all decision-shaped proposal history the same day the fix
+shipped, leaving under a day of post-fix data — one proposal (ORCL),
+which filled. Not enough signal either way yet. Re-measure again once
+several full trading days have accumulated. Actually stopping re-proposals
+(vs. just showing them) would need a new gating threshold — that is an
+owner decision, not made here.
 
 **11. Fourteen outright agent failures, ten of them on 2026-08-25 alone. DEFECT.**
 
