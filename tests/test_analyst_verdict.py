@@ -34,6 +34,7 @@ from src.models import (
 from src.risk.constants import REWARD_RISK_FLOOR
 from src.verdicts import (
     CONVICTION_SCORE, RANKING_SIGNALS, SEAT_WEIGHT, rank_verdicts, score_verdict,
+    seat_weight,
 )
 
 REPO = Path(__file__).parent.parent
@@ -247,23 +248,56 @@ def test_every_real_technical_read_on_the_fixture_day_maps_to_a_valid_verdict():
 # 3. The ranking
 # ==========================================================================
 
-def test_ranking_reads_two_signals_at_equal_weight_and_seats_at_unit_weight():
+def test_ranking_reads_two_signals_at_equal_weight():
     assert RANKING_SIGNALS == ("magnitude", "conviction_score")
     assert CONVICTION_SCORE == {"low": 0.0, "medium": 0.5, "high": 1.0}
-    assert SEAT_WEIGHT == 1 and isinstance(SEAT_WEIGHT, int)
-    assert not isinstance(SEAT_WEIGHT, dict)
 
 
-def test_no_per_seat_weight_table_in_the_ranking_module():
-    """Same guard `tests/test_signed_dissent.py` keeps over §9.4: a dict
-    keyed by seat names holding numbers is a chosen weight, which §13.3
-    rules out until a seat's own record justifies one."""
+def test_seat_weight_is_the_ratified_research_informed_prior():
+    """§13.3 AMENDED 2026-09-03, this module only. `src/risk/rules.py`'s
+    sizing-path SEAT_WEIGHT is untouched and stays pinned at 1 — see
+    `tests/test_signed_dissent.py`. This one may hold a per-seat prior
+    because it only reorders already-eligible, already-agreeing candidates;
+    it never changes how much money a trade risks."""
+    assert SEAT_WEIGHT == {
+        "technical": 1.2, "earnings": 1.2, "news": 1.0,
+        "smart_money": 0.8, "macro": 0.8,
+    }
+    assert seat_weight("technical") == 1.2
+    assert seat_weight("some_future_seat_not_yet_reviewed") == 1.0, (
+        "an unreviewed seat must default to unweighted, never zero or missing"
+    )
+
+
+def test_only_one_seat_weight_table_exists_in_the_ranking_module():
+    """A SECOND, undocumented seat-keyed numeric dict sneaking in alongside
+    the ratified `SEAT_WEIGHT` would be an uncited, chosen weight — the
+    exact thing §13.3 still forbids anywhere except the one reviewed table.
+
+    Catches both a `{}` literal AND a `dict(seat=weight, ...)` call — a
+    prior version of this guard only walked `ast.Dict` nodes and an
+    adversarial review (2026-09-03) found `dict(technical=1.1, ...)` sailed
+    straight through it undetected."""
     seats = {"technical", "news", "earnings", "macro", "smart_money"}
     tree = ast.parse((REPO / "src" / "verdicts.py").read_text())
+    hits = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Dict):
             keys = {k.value for k in node.keys if isinstance(k, ast.Constant)}
-            assert not (keys & seats), f"seat-keyed dict at line {node.lineno}"
+            if keys & seats:
+                hits.append(node.lineno)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "dict"
+        ):
+            kw_keys = {kw.arg for kw in node.keywords if kw.arg is not None}
+            if kw_keys & seats:
+                hits.append(node.lineno)
+    assert len(hits) == 1, (
+        f"expected exactly one seat-keyed table (SEAT_WEIGHT), found at "
+        f"lines {hits}"
+    )
 
 
 def test_score_is_magnitude_plus_conviction():
@@ -292,16 +326,33 @@ def test_rank_verdicts_orders_by_score_then_symbol_and_skips_neutral():
     assert [c.symbol for c in rank_verdicts(verdicts)] == ["BBB", "AAA", "CCC", "DDD"]
 
 
-def test_two_seats_on_one_symbol_average_at_unit_weight():
-    tech = _tech("XLE", "buy", "high").to_verdict()             # 0.5 + 1.0
+def test_two_seats_on_one_symbol_average_at_the_research_informed_weight():
+    """Same fixture as the old unit-weight test, recomputed for §13.3's
+    2026-09-03 amendment: technical enters at 1.2x, news at 1.0x, so
+    technical's numbers pull the weighted average further than a plain
+    mean would — the whole point of giving it a higher prior."""
+    tech = _tech("XLE", "buy", "high").to_verdict()             # 0.5 + 1.0, weight 1.2
     other = AnalystVerdict(
         seat="news", symbol="XLE", direction="bullish", magnitude=1.0,
-        conviction="low", evidence=_evidence(), invalidation="x",  # 1.0 + 0.0
+        conviction="low", evidence=_evidence(), invalidation="x",  # 1.0 + 0.0, weight 1.0
     )
     [c] = rank_verdicts([tech, other])
-    assert c.components == {"magnitude": 0.75, "conviction_score": 0.5}
-    assert c.score == 1.25
+    # magnitude: (0.5*1.2 + 1.0*1.0) / 2.2 = 0.7273
+    # conviction: (1.0*1.2 + 0.0*1.0) / 2.2 = 0.5455
+    assert c.components == {"magnitude": 0.7273, "conviction_score": 0.5455}
+    assert c.score == 1.2728
     assert c.seats == ["news", "technical"]
+
+
+def test_a_single_seat_verdict_is_unaffected_by_its_own_weight():
+    """The weighting only changes how MULTIPLE seats are averaged together.
+    A symbol only Technical has a view on ranks by its own raw score either
+    way — today's actual production case, since only Technical produces a
+    Phase 13 verdict yet. This is what makes the 2026-09-03 amendment inert
+    in production until a second seat is wired in."""
+    tech = _tech("XLE", "buy", "high").to_verdict()
+    [c] = rank_verdicts([tech])
+    assert c.score == score_verdict(tech)
 
 
 def test_seats_disagreeing_on_direction_are_not_ranked():

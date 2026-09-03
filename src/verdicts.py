@@ -1,4 +1,4 @@
-"""Phase 13 — ranking analyst verdicts, at the ratified equal weight.
+"""Phase 13 — ranking analyst verdicts, at a research-informed prior weight.
 
 `docs/QAMC_REMEDIATION_SPEC.md` §13: the Portfolio Manager's rules gate and
 ceiling but never ORDER. Read as code on run-64290730 (item 18, 2026-09-03)
@@ -11,8 +11,7 @@ same reason as `src/nominations.py`. Which candidates are ELIGIBLE is not
 decided here; `PortfolioManagerAgent.candidate_eligibility` applies the
 desk's gates, and this module orders only what it is handed.
 
-**The score.** Two signals a verdict carries, both already on a 0..1 scale,
-summed at weight 1.0 each:
+**The score.** Two signals a verdict carries, both already on a 0..1 scale:
 
   * `magnitude`        — how far the seat leans (`AnalystVerdict.magnitude`).
   * `conviction_score` — the seat's declared conviction, low/medium/high
@@ -25,16 +24,63 @@ No min-max normalisation across the candidate set: both inputs are absolute,
 so a candidate's score does not move when a different peer joins the list —
 which is what makes the order reproducible from the verdicts alone.
 
-**Equal weight is not a placeholder for a better number** (§13.3): each
-seat's contribution is to be weighted by ITS OWN measured reliability for the
-kind of judgement it is making, and no such measurement exists yet — the
-book has too few resolved calls (`_CONVICTION_OUTCOME_MIN_N` in
-`src/storage/db.py`). `SEAT_WEIGHT` here is pinned at one for the same reason
-`src/risk/rules.py::SEAT_WEIGHT` is, and `tests/test_analyst_verdict.py`
-fails if it becomes a table. When more than one seat has a verdict on the
-same symbol (not yet — only Technical produces one in this increment), the
-per-seat scores are AVERAGED at unit weight, so a name covered by two seats
-is not double-counted against a name covered by one.
+**§13.3 AMENDED 2026-09-03 (owner decision, this ranking module only —
+`src/risk/rules.py::SEAT_WEIGHT`, which sizes real positions, is untouched
+and still requires 20+ of this desk's own resolved calls per seat before any
+weight applies there).** The original rule was "start equal, adjust only on
+this desk's own out-of-sample proof" — sound in principle, but the owner's
+point is that "equal until we have our own data" is functionally identical
+to "always equal," for however long that data takes to accumulate, which
+directly contradicts the desk's own repeated, load-bearing instruction that
+analysts are never interchangeable. The amendment: use a real, externally
+published prior now, on outside literature about the general reliability of
+each TYPE of analysis (not a claim about how good THIS desk's specific
+analyst prompts are) — and let it be overridden the moment the desk's own
+conviction ledger clears the 20-resolved-call bar per seat
+(`_CONVICTION_OUTCOME_MIN_N`, `src/storage/db.py`; not yet wired — tracked in
+`docs/WORK.md`).
+
+`SEAT_WEIGHT` is a per-seat multiplier, sourced from real published research
+(five parallel literature reviews, 2026-09-03, WebSearch-verified — see
+`docs/QAMC_REMEDIATION_SPEC.md` §13.3 for the full citation list per seat):
+
+  * **technical 1.2, earnings 1.2** — the two strongest, most-replicated
+    effects found: cross-sectional momentum (Jegadeesh & Titman 1993,
+    replicated internationally by Rouwenhorst 1998) and post-earnings-
+    announcement drift (Ball & Brown 1968; Bernard & Thomas 1989/1990) are
+    among the most persistent anomalies in the academic literature, though
+    both are documented to be decaying over time as more capital trades on
+    them — this is a real edge, not a permanent one.
+  * **news 1.0** — a genuine, replicated effect (Tetlock 2007) but narrow:
+    short-horizon (days), concentrated in small/illiquid names, and the
+    literature specifically flags LLM-generated sentiment for looking strong
+    in-sample and failing out-of-sample (Benhenda 2026) — directly relevant
+    to this seat's own nature. Left at the unweighted baseline rather than
+    above it.
+  * **smart_money 0.8, macro 0.8** — both carry a real effect in the
+    literature that is specifically undermined by how this desk actually
+    consumes the signal: smart-money/insider edges live almost entirely in
+    the pre-disclosure window and are largely gone by the time a filing is
+    public (Cohen, Malloy & Pomorski 2012; a 2025 Finance Research Letters
+    lag study) — all this desk ever sees is the public, lagged version.
+    Macro's "regime matters" claim is well supported, but the specific
+    capability this seat is asked for — calling turning points — is one of
+    the most consistently, repeatedly debunked findings in applied
+    macroeconomics (IMF WP/18/39 studied 153 recession episodes across 63
+    countries and found professional forecasters missed the onset in the
+    vast majority of them).
+
+These are modest, deliberately bounded multipliers (not aggressive ones) —
+no source in the research handed over an exact cross-category ratio, only a
+real, sourced ordinal ranking of confidence. Treat the specific numbers as a
+considered but revisable starting point, not a measured fact.
+
+When more than one seat has a verdict on the same symbol (not yet — only
+Technical produces one in this increment, so this weighting has **no
+observable effect on today's ranking** until a second seat is wired in —
+tracked in `docs/WORK.md`), the per-seat scores are averaged AT THIS WEIGHT,
+so two agreeing seats of different trustworthiness are not treated as
+interchangeable votes.
 
 Ties break on symbol, so the order is stable and testable.
 """
@@ -52,6 +98,7 @@ __all__ = [
     "RankedCandidate",
     "conviction_score",
     "score_verdict",
+    "seat_weight",
     "rank_verdicts",
 ]
 
@@ -62,9 +109,26 @@ CONVICTION_SCORE: dict[str, float] = {"low": 0.0, "medium": 0.5, "high": 1.0}
 #: The two verdict fields the score reads, each at weight 1.0.
 RANKING_SIGNALS: tuple[str, ...] = ("magnitude", "conviction_score")
 
-#: Every seat's verdict enters at unit weight. Not a table, on purpose —
-#: see the module docstring and `src/risk/rules.py::SEAT_WEIGHT`.
-SEAT_WEIGHT: int = 1
+#: Research-informed prior, per seat. See the module docstring for the
+#: citations behind each number and why this module (ranking only, no
+#: sizing impact) is allowed one while `src/risk/rules.py::SEAT_WEIGHT`
+#: (sizing) is not.
+SEAT_WEIGHT: dict[str, float] = {
+    "technical": 1.2,
+    "earnings": 1.2,
+    "news": 1.0,
+    "smart_money": 0.8,
+    "macro": 0.8,
+}
+
+#: Fallback for a seat this table doesn't name (a future seat added to the
+#: Phase 13 shape before its own literature review lands) — unweighted,
+#: never zero, so an unreviewed seat is never silently muted.
+_DEFAULT_SEAT_WEIGHT = 1.0
+
+
+def seat_weight(seat: str) -> float:
+    return SEAT_WEIGHT.get(seat, _DEFAULT_SEAT_WEIGHT)
 
 
 def conviction_score(conviction: str) -> float:
@@ -111,9 +175,12 @@ def rank_verdicts(verdicts: list[AnalystVerdict]) -> list[RankedCandidate]:
         directions = {v.direction for v in group}
         if len(directions) != 1:
             continue
-        n = len(group)
-        magnitude = sum(v.magnitude for v in group) / n
-        conviction = sum(conviction_score(v.conviction) for v in group) / n
+        weights = [seat_weight(v.seat) for v in group]
+        total_weight = sum(weights)
+        magnitude = sum(v.magnitude * w for v, w in zip(group, weights)) / total_weight
+        conviction = sum(
+            conviction_score(v.conviction) * w for v, w in zip(group, weights)
+        ) / total_weight
         components = {
             "magnitude": round(magnitude, 4),
             "conviction_score": round(conviction, 4),
