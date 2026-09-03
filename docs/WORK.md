@@ -1630,3 +1630,5 @@ Do not interrupt natural validation for these unless current evidence shows they
 
 `get_latest_price` is **not** on this list solely because its request omits `feed`; that concern has been reconciled. Reopen only on concrete production evidence.
 
+- invalid_if: 9/3 log.
+
