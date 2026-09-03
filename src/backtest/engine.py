@@ -206,32 +206,40 @@ def _setup_type_for(bars_through_signal: list[OHLCV]) -> str:
 
 def _resolve_structural_stop_and_target(
     bars_through_signal: list[OHLCV], direction: str,
-) -> tuple[float | None, float | None, list[float]]:
+) -> tuple[float | None, float | None, list[float], dict[float, int]]:
     """Nearest structural level on the protective side becomes the stop
     candidate; the nearest level on the other side becomes the reference
-    target. Returns (None, None, []) when there is no level to defend a stop
-    with — `find_structural_levels` already returns "no structure" honestly
-    (empty lists) rather than inventing one, and this engine declines the
-    signal on the same terms the live analyst is told to.
+    target. Returns (None, None, [], {}) when there is no level to defend a
+    stop with — `find_structural_levels` already returns "no structure"
+    honestly (empty lists) rather than inventing one, and this engine
+    declines the signal on the same terms the live analyst is told to.
 
     The third element is every computed level, supports and resistances
     unioned — the same shape `TechAnalysisResult.computed_levels` carries in
     live. Spec §12.1 keys the stop rule off it, so without it this engine
     would silently measure the OLD behaviour and the parity claim in the
-    module docstring would stop being true."""
+    module docstring would stop being true.
+
+    The fourth element is the touch count behind each of those prices — the
+    same shape `TechAnalysisResult.computed_level_touches` carries in live
+    (Phase 12.1, 2026-09-03). Without it this engine would honour a
+    level-backed stop regardless of touch count while the live path enforces
+    `risk.min_level_touches_for_stop_honor`, which is not the same rule."""
     supports, resistances = find_structural_levels(bars_through_signal)
-    all_levels = sorted(lv.price for lv in (*supports, *resistances))
+    all_level_objs = (*supports, *resistances)
+    all_levels = sorted(lv.price for lv in all_level_objs)
+    touches = {lv.price: lv.touches for lv in all_level_objs}
     if direction == "long":
         if not supports:
-            return None, None, []
+            return None, None, [], {}
         stop = max(lv.price for lv in supports)  # nearest support below close
         target = min((lv.price for lv in resistances), default=None)
     else:
         if not resistances:
-            return None, None, []
+            return None, None, [], {}
         stop = min(lv.price for lv in resistances)  # nearest resistance above close
         target = max((lv.price for lv in supports), default=None)
-    return stop, target, all_levels
+    return stop, target, all_levels, touches
 
 
 def _resolve_stop_for_signal(
@@ -245,6 +253,7 @@ def _resolve_stop_for_signal(
     setup_type: str,
     ref_entry: float,
     computed_levels: list[float] | None = None,
+    computed_level_touches: dict[float, int] | None = None,
 ) -> float | None:
     """Reuses `PortfolioConstructor._resolve_stop` (direction-agnostic — it
     only reads whichever of `target.suggested_stop_price` /
@@ -254,11 +263,16 @@ def _resolve_stop_for_signal(
     `computed_levels` carries the levels §12.1's stop rule verifies against,
     the same field `TechAnalystAgent` sets in Python on the live path. This
     engine's stop candidate IS one of them, so without this the backtest
-    would exercise the pre-§12.1 rule while claiming to run the real one."""
+    would exercise the pre-§12.1 rule while claiming to run the real one.
+    `computed_level_touches` is the touch count behind each of those prices
+    (2026-09-03) — without it `_level_backing_stop` would honour every
+    level regardless of `risk.min_level_touches_for_stop_honor`, which is
+    not the rule the live path runs."""
     analysis = SimpleNamespace(
         stop_loss=structural_stop, atr_14=atr_14,
         setup_type=setup_type, reference_target=target,
         computed_levels=list(computed_levels or []),
+        computed_level_touches=dict(computed_level_touches or {}),
     )
     target_shim = SimpleNamespace(suggested_stop_price=None)
     stop = constructor._resolve_stop(target_shim, analysis, ref_entry)
@@ -479,7 +493,7 @@ def run_backtest(
                 continue
 
             direction = "long"  # see module docstring: real-data run is long-only
-            structural_stop, target, computed_levels = (
+            structural_stop, target, computed_levels, computed_level_touches = (
                 _resolve_structural_stop_and_target(bars_through_today, direction)
             )
             if structural_stop is None:
@@ -505,6 +519,7 @@ def run_backtest(
                 structural_stop=structural_stop, target=target,
                 atr_14=indicators.atr_14, setup_type=setup_type, ref_entry=ref_entry,
                 computed_levels=computed_levels,
+                computed_level_touches=computed_level_touches,
             )
             if stop is None:
                 continue

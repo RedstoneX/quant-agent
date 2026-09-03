@@ -2406,3 +2406,59 @@ merged as `46b2029`):**
   sector-stance vocabulary + `TypeError` crash fix, `002095c` risk-sized
   targets reappearing in the cockpit funnel, `300ea14` + `6f897a1` + `55f0e05`
   the benchmark-harness repair and its guards, and the `docs:` commits.
+
+---
+
+### 2026-09-03 — a level needs 5 touches, not 2, before a tight stop trusts it
+
+**In plain words:** Phase 12.1 lets the desk honour a stop however tight,
+as long as it sits on a real price level the system computed from the
+chart. That was safe only if "real level" meant something solid — but the
+bar for a level to count at all was just 2 touches, ever, anywhere across
+roughly three years of history. Two old, possibly coincidental turning
+points could justify a razor-thin stop. This closes that gap: a level now
+needs 5 touches before a stop resting on it earns the tight-stop exemption.
+Below 5, the stop is widened to the ATR band instead, exactly as if nothing
+computed backed it at all — the trade does not become untradeable, it just
+loses the exemption.
+
+**Why 5, not some other number:** derived from the measured table in
+`docs/RESEARCH_FINDINGS.md` §7 (101 symbols, 5 years of daily bars, real
+price series against a shuffled control that keeps the same volatility and
+destroys only the ordering). Real-vs-shuffled bounce probability only
+separates with non-overlapping 95% confidence intervals at 5+ touches — real
+0.644 [0.590, 0.696] against shuffled 0.505 [0.470, 0.539], a full 0.05 gap
+between the real floor and the shuffled ceiling. Every bucket below that
+overlaps or nearly touches the shuffled range (2 touches: real floor 0.510
+equals shuffled ceiling 0.510; 3 and 4 touches overlap outright), which
+means the apparent edge at those touch counts could be noise rather than a
+real effect. 5 is the first point in the table where the finding stops being
+marginal. Recency was deliberately NOT added as a second requirement — the
+same research found no age effect in the daily sample at all (likelihood
+ratio 0.00), so a level defended three years ago predicts a bounce exactly
+as well as one defended last week, in the data actually measured.
+
+**What did NOT change:** `find_structural_levels`' own `MIN_TOUCHES = 2` in
+`src/data/levels.py`, which decides whether a level exists at all (shown to
+the analyst, eligible as a target). That bar was deliberately left alone —
+§12.1's own text already treats "does a level exist" and "do we trust this
+level enough to honour a razor-thin stop on it" as two different questions,
+and only the second one is being answered here. The fallback when a level
+misses the new bar is the pre-existing ATR-floor widening logic — unchanged,
+just now reached from one more path.
+
+**Where it's wired:** `TechAnalysisResult.computed_level_touches` (new
+field, Python-set like `computed_levels`, never model-writable) carries each
+level's touch count alongside its price. `PortfolioConstructor.
+_level_backing_stop` now requires `risk.min_level_touches_for_stop_honor`
+(shipped at 5) touches on the matched level before treating a stop as
+verified; a level present but missing from the touches map fails closed
+(treated as unverified), per Invariant 2. The backtest engine
+(`src/backtest/engine.py`) computes and threads the same touch map so it
+keeps exercising the same rule the live path runs.
+
+**Owner's standing instruction, recorded so it isn't re-litigated:** "you
+have my approval to just go with whatever the research says, we can always
+make adjustments if that isn't working" — this is a research-derived
+threshold, not an agent guess at a market-structure constant, and it is
+revisable the same way every other placeholder threshold on this desk is.

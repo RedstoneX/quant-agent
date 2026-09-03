@@ -353,6 +353,67 @@ The touch-count finding should be treated as promising, not settled, here exactl
 as it is above: two settings were changed after an initial run found nothing, and
 the shuffle control does not isolate levels from ordinary volatility clustering.
 
+### The stop-honouring threshold, ratified 2026-09-03
+
+Phase 12.1 (docs/QAMC_REMEDIATION_SPEC.md §12.1, "What this does NOT license"
+above, and docs/WORK.md's tracked decision) asked the question this section
+explicitly declined to answer: how many prior touches should a level need
+before a stop resting on it is trusted enough to be honoured however tight?
+That is a decision about wiring level quality into stops — separate evidence,
+separate decision, made here rather than left in the measurement above.
+
+**Decided: 5 touches** (`risk.min_level_touches_for_stop_honor`, wired in
+`PortfolioConstructor._level_backing_stop`). Below the table, restated with
+the CI overlap made explicit — the thing that actually decides where the
+line goes:
+
+| Prior touches | REAL P(bounce) [95%] | SHUFFLED P(bounce) [95%] | CIs overlap? |
+|---|---|---|---|
+| 0 | 0.516 [0.500, 0.533] | 0.471 [0.465, 0.478] | No — but only 1 touch above "no structure" |
+| 1 | 0.507 [0.483, 0.530] | 0.486 [0.476, 0.497] | Yes (0.483-0.497) |
+| 2 | 0.544 [0.510, 0.577] | 0.495 [0.479, 0.510] | Touching (real floor 0.510 = shuffled ceiling 0.510) |
+| 3 | 0.556 [0.509, 0.602] | 0.506 [0.483, 0.528] | Yes (0.509-0.528) |
+| 4 | 0.580 [0.515, 0.644] | 0.484 [0.452, 0.516] | Touching (0.515 vs 0.516) |
+| 5+ | 0.644 [0.590, 0.696] | 0.505 [0.470, 0.539] | **No — 0.05 clear gap** |
+
+5+ is the only bucket where the real and shuffled 95% intervals do not
+overlap or touch at all — every other bucket's separation could plausibly be
+sampling noise around a coin flip, given the interval widths actually
+measured (small per-bucket sample sizes: n=222 to n=439 for buckets 2-4,
+against 310 for 5+, so the non-monotonic overlap pattern across 2/3/4 is
+itself evidence of noise at that resolution, not a reason to pick 3 or 4).
+0 touches also does not overlap, but a 0-touch "level" is not structure by
+this system's own definition (`MIN_TOUCHES = 2` in `find_structural_levels`)
+and is excluded from consideration on that basis alone, not on the strength
+of its separation.
+
+Recency was deliberately NOT added as a second gate: the "Recency decay"
+subsection above found no age effect at daily scale at all (likelihood
+ratio 0.00 on both age definitions) and stated plainly that importing an
+untested decay rate would be "inventing a market-structure constant." A
+5-touch level defended three years ago is trusted exactly as much as one
+defended last week, on the same evidence that says touch count matters and
+age does not.
+
+**What this does not change:** `find_structural_levels`' `MIN_TOUCHES = 2`
+in `src/data/levels.py` is untouched — that constant decides whether a level
+is shown to the analyst and eligible as a target at all, a question §12.1's
+own spec text already treated as settled and separate from "trusted enough
+for a tight stop." A level with 2, 3 or 4 touches still exists, still ranks
+by touch-count `strength`, and can still anchor a derived target
+(`TechAnalysisResult.computed_levels`, consumed by
+`derive_structural_target`) — none of that reads
+`computed_level_touches` or the new threshold. Only the stop-honouring
+exemption in `_level_backing_stop` is gated by it. A level below the bar
+does not make the trade untradeable — the stop falls back to the
+pre-existing ATR-floor widening logic, the same fallback an unbacked stop
+has always used.
+
+**Status:** ratified, not merely proposed — the owner's standing instruction
+was "go with whatever the research says," and 5 is what the measured
+separation supports. Revisable the same way every other placeholder
+threshold on this desk is, on new evidence, not a re-guess.
+
 ---
 
 ## Summary of what to build, in order
@@ -365,6 +426,6 @@ the shuffle control does not isolate levels from ordinary volatility clustering.
 | 4 | Deterministic macro regime; LLM confined to FOMC text | Python + LLM |
 | 5 | Insider purchase as % of holdings, role weighting, cap tilt | Python |
 | 6 | Post-cutoff discipline in the backtester | Process |
-| 7 | Level-quality measurement — built, measured, `levels.py` strength now touch-count-based; `level_quality.py` itself NOT wired | Python |
+| 7 | Level-quality measurement — built, measured, `levels.py` strength now touch-count-based; `level_quality.py` itself NOT wired; stop-honouring touch bar (5) ratified 2026-09-03 | Python |
 
 Items 1, 2 and 5 need no new data source and no model spend.
