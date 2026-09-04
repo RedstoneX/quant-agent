@@ -1634,6 +1634,252 @@ def test_morning_research_stage_news_full_coverage_marks_status_ok():
     assert result_ctx.data_status["news"] == "ok"
 
 
+# === Earnings content-honesty (2026-09-04) ===
+#
+# Real incident this closes: `data_status["earnings"]` used to be "ok"
+# whenever `earnings_future.result()` returned without raising, with zero
+# check of what the returned `earnings_results` actually contained — the
+# exact shape of a real production incident where 12/67 filings once came
+# back schema-valid with ZERO extracted figures. See
+# `_classify_earnings_status` in src/pipeline_stages.py.
+
+def _valid_earnings_analysis(symbol="AAPL", **field_overrides) -> dict:
+    """A schema-valid `EarningsAnalysis.model_dump()` with real figures in
+    every checked field — the clean control case. Tests override just the
+    fields they care about via dotted-path shortcuts below."""
+    from src.models import (
+        EarningsAnalysis, EarningsBalanceSheet, EarningsCashFlow,
+        EarningsInvestmentImplications, EarningsProfitability,
+        EarningsReasoningChain, EarningsRevenue,
+    )
+    analysis = EarningsAnalysis(
+        symbol=symbol, form_type="10-Q", filing_date="2026-09-01",
+        revenue=EarningsRevenue(total="$50B", yoy_growth="12%"),
+        profitability=EarningsProfitability(
+            gross_margin="45%", operating_margin="20%",
+            net_income="$5B", eps="$2.50",
+        ),
+        cash_flow=EarningsCashFlow(
+            operating_cf="$8B", free_cf="$6B", capex="$2B",
+        ),
+        balance_sheet=EarningsBalanceSheet(
+            cash_and_equivalents="$10B", total_debt="$0",
+            assessment="strong balance sheet",
+        ),
+        guidance="Raised FY guidance.",
+        investment_implications=EarningsInvestmentImplications(
+            sentiment="bullish", conviction="medium",
+            reasoning_chain=EarningsReasoningChain(
+                fundamental_quality="x", growth_trajectory="x",
+                strategic_risks="x", management_execution="x",
+                valuation_context="x",
+            ),
+            key_thesis="Strong quarter.",
+        ),
+        data_quality="All figures sourced directly from the filing.",
+    )
+    dumped = analysis.model_dump()
+    for dotted_path, value in field_overrides.items():
+        parts = dotted_path.split(".")
+        target = dumped
+        for part in parts[:-1]:
+            target = target[part]
+        target[parts[-1]] = value
+    return dumped
+
+
+def _empty_earnings_analysis(symbol="AAPL", **field_overrides) -> dict:
+    """A schema-valid `EarningsAnalysis.model_dump()` that structurally has
+    NO real figures anywhere — every checked field left at its
+    'not disclosed' default. Reproduces the real 12/67-zero-figures
+    incident: the LLM call succeeds, the schema validates, but nothing
+    usable came back."""
+    return _valid_earnings_analysis(
+        symbol=symbol,
+        **{
+            "revenue.total": "not disclosed",
+            "revenue.yoy_growth": "not disclosed",
+            "profitability.gross_margin": "not disclosed",
+            "profitability.operating_margin": "not disclosed",
+            "profitability.net_income": "not disclosed",
+            "profitability.eps": "not disclosed",
+            "cash_flow.operating_cf": "not disclosed",
+            "cash_flow.free_cf": "not disclosed",
+            "cash_flow.capex": "not disclosed",
+            "balance_sheet.cash_and_equivalents": "not disclosed",
+            "balance_sheet.total_debt": "not disclosed",
+            **field_overrides,
+        },
+    )
+
+
+def _earnings_stage_for(load_earnings_analyses_fn):
+    """Minimal MorningResearchStage wiring shared by the earnings
+    content-honesty tests below — only the earnings branch varies."""
+    mock_config = MagicMock()
+    mock_config.trading.universe = ["AAPL"]
+    mock_config.trading.lookback_days = 30
+
+    market = MagicMock()
+    market.get_ohlcv.return_value = []  # skip tech entirely, not under test here
+
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+    macro_agent = MagicMock()
+    macro_agent.analyze.return_value = (None, MagicMock(
+        user_message="m", raw_text="{}", tokens_used=1, model="t",
+        input_tokens=1, output_tokens=1, cost_usd=0.0,
+    ))
+
+    return MorningResearchStage(
+        config=mock_config,
+        db=MagicMock(),
+        market=market,
+        macro=MagicMock(),
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=MagicMock(),
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_agent,
+        news_analyst=MagicMock(),
+        tech_analyst=MagicMock(),
+        earnings_analyst=MagicMock(),
+        has_actionable_signal_fn=lambda *args, **kw: False,
+        run_news_update_fn=lambda run_id, session: (None, None),
+        load_earnings_analyses_fn=load_earnings_analyses_fn,
+    )
+
+
+def test_earnings_status_ok_when_no_new_filing_today():
+    """The ordinary, most-common day: no filings at all. This is legitimately
+    benign, not a failure — must stay 'ok', never read as 'empty' or worse."""
+    stage = _earnings_stage_for(lambda run_id, session, ctx=None: ([], []))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["earnings"] == "ok"
+
+
+def test_earnings_status_ok_when_filing_has_real_figures():
+    """Control case: a filing was analyzed and the structured fields carry
+    real content — clean 'ok', matching the pre-fix behavior for the
+    genuinely-good case."""
+    results = [{"symbol": "AAPL", "analysis": _valid_earnings_analysis(), "is_new": True}]
+    stage = _earnings_stage_for(lambda run_id, session, ctx=None: ([], results))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["earnings"] == "ok"
+
+
+def test_earnings_status_content_missing_when_structured_fields_all_empty():
+    """The real incident, reproduced: the future resolves without raising and
+    the schema validates, but every checked figure is the 'not disclosed'
+    sentinel — no real content was actually extracted. Before this fix,
+    data_status['earnings'] would have read 'ok'. Must alert (excluded from
+    the notifier's ('ok', 'empty') non-alerting set), so it must NOT be
+    literally 'empty'."""
+    results = [{"symbol": "AAPL", "analysis": _empty_earnings_analysis(), "is_new": True}]
+    stage = _earnings_stage_for(lambda run_id, session, ctx=None: ([], results))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["earnings"] == "content_missing"
+    assert result_ctx.data_status["earnings"] not in ("ok", "empty")
+
+
+def test_earnings_status_content_missing_when_self_reported_data_quality_flags_problem():
+    """Second real bug: the structured fields technically parse (real
+    figures present) but the LLM's own `data_quality` self-report says it
+    could not actually get the data. The owner's own framing: a seat must
+    never claim 'ok' while its own free-text field says something is wrong.
+    This must downgrade status even though structured content looks fine."""
+    results = [{
+        "symbol": "AAPL",
+        "analysis": _valid_earnings_analysis(
+            data_quality="Unable to extract segment detail; filing incomplete in the excerpt provided.",
+        ),
+        "is_new": True,
+    }]
+    stage = _earnings_stage_for(lambda run_id, session, ctx=None: ([], results))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["earnings"] == "content_missing"
+
+
+def test_earnings_status_partial_when_some_filings_good_some_not():
+    """Mixed batch: one filing genuinely has figures, another came back
+    content-empty. Mirrors tech's 'partial' semantics for a mixed batch —
+    not blanket 'ok', not blanket failure either."""
+    results = [
+        {"symbol": "AAPL", "analysis": _valid_earnings_analysis(symbol="AAPL"), "is_new": True},
+        {"symbol": "MSFT", "analysis": _empty_earnings_analysis(symbol="MSFT"), "is_new": True},
+    ]
+    stage = _earnings_stage_for(lambda run_id, session, ctx=None: ([], results))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["earnings"] == "partial"
+
+
+def test_earnings_status_ok_when_only_queued_placeholders():
+    """A filing exists but preprocess hasn't analyzed it yet (`queued=True`,
+    `analysis=None`) — already surfaced honestly via the `queued` flag and
+    sized around downstream. This pass does not repurpose that state; a
+    queued-only run stays 'ok' rather than inventing a new status for it."""
+    results = [{
+        "symbol": "AAPL", "analysis": None, "is_new": True,
+        "queued": True, "form_type": "10-Q", "filing_date": "2026-09-01",
+    }]
+    stage = _earnings_stage_for(lambda run_id, session, ctx=None: ([], results))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["earnings"] == "ok"
+
+
+def test_classify_earnings_status_real_zero_is_not_treated_as_missing():
+    """A legitimately zero figure (e.g. a company that carries no debt,
+    reported as an explicit '$0') must NOT be conflated with the 'not
+    disclosed' absence sentinel — the exact 'zero is overloaded' mistake
+    this codebase already paid for once (docs/WORK.md item 13, PR #255)."""
+    from src.pipeline_stages import _classify_earnings_status
+
+    analysis = _valid_earnings_analysis(**{"balance_sheet.total_debt": "$0"})
+    results = [{"symbol": "AAPL", "analysis": analysis, "is_new": True}]
+
+    assert _classify_earnings_status(results) == "ok"
+
+
+def test_earnings_data_quality_flags_problem_matches_real_failure_phrases():
+    from src.pipeline_stages import _earnings_data_quality_flags_problem
+
+    assert _earnings_data_quality_flags_problem(
+        "Unable to find revenue breakdown in the excerpt.",
+    ) is True
+    assert _earnings_data_quality_flags_problem(
+        "All figures sourced directly from the filing.",
+    ) is False
+    assert _earnings_data_quality_flags_problem("not disclosed") is False
+    assert _earnings_data_quality_flags_problem("") is False
+
+
 @patch("src.pipeline_stages.compute_indicators")
 def test_morning_research_stage_persists_specialist_evidence(mock_compute_indicators, tmp_path):
     """Stage 4: MorningResearchStage persists already-validated macro/news/

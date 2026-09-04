@@ -711,6 +711,144 @@ def _check_levels_coverage(db: "Database", ctx: RunContext,
         logger.error("levels-coverage check failed: %s", exc)
 
 
+# 2026-09-04 fix: before this, `data_status["earnings"]` was "ok" purely on
+# whether `earnings_future.result()` returned without raising — the exact
+# shape of a real production incident where 12/67 filings once came back
+# with a schema-valid `EarningsAnalysis` that had ZERO real extracted
+# figures (a parsing bug at the root cause, since fixed). Exception-only
+# status can never catch that class of failure, or a future one shaped like
+# it, because it never inspects what the seat actually returned. Mirrors the
+# macro/news/tech fixes above: coverage of REAL CONTENT is authoritative
+# over "did the call merely not crash."
+#
+# `EarningsAnalysis`'s financial fields are all plain `str`, not
+# `Optional[float]` — every one of profitability/cash_flow/balance_sheet
+# defaults to the literal sentinel "not disclosed" (see src/models.py) when
+# the LLM has nothing to report, and `revenue.total` (no default) can still
+# just BE that sentinel string since the schema only requires "some string",
+# not a real figure. That sentinel — not `None` and not `0`/falsy — is the
+# only honest signal of "absent" this model exposes. A genuinely zero
+# balance (e.g. a company with no debt) is reported as an explicit "$0" or
+# "0", which is real content and must NOT be confused with "not disclosed" —
+# the same "zero is overloaded" mistake this codebase already paid for once
+# (docs/WORK.md item 13, PR #255 — a 0% target weight ambiguously meant
+# refuse/close/short until it was split into distinct intents). Checking
+# for the exact sentinel string, not truthiness, keeps those cases apart.
+_EARNINGS_NOT_DISCLOSED = "not disclosed"
+
+
+def _earnings_field_disclosed(value) -> bool:
+    """True when a single EarningsAnalysis string field carries real content
+    (anything but blank or the "not disclosed" sentinel, case/whitespace
+    insensitive)."""
+    text = str(value or "").strip()
+    return bool(text) and text.lower() != _EARNINGS_NOT_DISCLOSED
+
+
+def _earnings_analysis_has_real_figures(analysis: dict) -> bool:
+    """Structural content check for one filing's `EarningsAnalysis.model_dump()`.
+
+    Only the fields that should carry an actual filed number are checked —
+    `revenue.total`/`yoy_growth`, all of `profitability`, all of `cash_flow`,
+    and the two `balance_sheet` figures. `balance_sheet.assessment` is
+    deliberately excluded: it is the analyst's own prose judgement, not a
+    filed figure, and an LLM will always have SOMETHING to say there even
+    when every real number above it is missing — including it would let a
+    genuinely content-free filing still read as "has real content".
+    """
+    if not isinstance(analysis, dict):
+        return False
+    revenue = analysis.get("revenue") or {}
+    profitability = analysis.get("profitability") or {}
+    cash_flow = analysis.get("cash_flow") or {}
+    balance_sheet = analysis.get("balance_sheet") or {}
+    candidate_fields = [
+        revenue.get("total"), revenue.get("yoy_growth"),
+        profitability.get("gross_margin"), profitability.get("operating_margin"),
+        profitability.get("net_income"), profitability.get("eps"),
+        cash_flow.get("operating_cf"), cash_flow.get("free_cf"), cash_flow.get("capex"),
+        balance_sheet.get("cash_and_equivalents"), balance_sheet.get("total_debt"),
+    ]
+    return any(_earnings_field_disclosed(v) for v in candidate_fields)
+
+
+# Phrases in the LLM's own self-reported `EarningsAnalysis.data_quality`
+# that indicate a genuine self-reported problem, not routine hedging. The
+# owner's own framing (2026-09-04): a seat must never be able to claim "ok"
+# while its own free-text field says something is wrong — "if there's no
+# data, can it still be... everything's good, just plain lying... since
+# it's critical". This is prose, not a structured field, so it is judged by
+# substring match on phrases that mean "I could not actually get this data",
+# not by one hardcoded exact string.
+_EARNINGS_DATA_QUALITY_RED_FLAGS = (
+    "unable to find", "unable to extract", "unable to locate",
+    "could not extract", "could not find", "could not locate",
+    "no figures available", "no financial data", "no data available",
+    "not available in the filing", "filing incomplete", "incomplete filing",
+    "insufficient data", "no meaningful data", "unable to determine",
+    "unable to assess", "data not found", "figures not found",
+)
+
+
+def _earnings_data_quality_flags_problem(data_quality) -> bool:
+    """True when the analyst's own `data_quality` self-report describes a
+    real extraction problem, even if every structured field technically
+    validated. The bare "not disclosed" default (no self-report at all) is
+    NOT a red flag by itself — see `_earnings_field_disclosed`'s docstring;
+    only prose that actively says something went wrong counts."""
+    text = str(data_quality or "").strip().lower()
+    if not text or text == _EARNINGS_NOT_DISCLOSED:
+        return False
+    return any(phrase in text for phrase in _EARNINGS_DATA_QUALITY_RED_FLAGS)
+
+
+def _classify_earnings_status(earnings_results: list) -> str:
+    """Turn this run's `earnings_results` into an honest `data_status["earnings"]`.
+
+    `earnings_results` items are `{"symbol", "analysis", "queued", ...}`
+    dicts from `EarningsAnalystAgent`/`_load_earnings_analyses` — see
+    `EarningsAnalystAgent._analyze_new`/`_load_analysis`. Only items that
+    actually carry an `analysis` dict are judged for content here; a
+    `queued=True` placeholder (a new filing preprocess hasn't analyzed yet)
+    is already surfaced honestly by that flag and sized around downstream —
+    that is a separate, already-handled state this pass does not touch.
+
+    - No analyzed items at all (no filings today, or every filing is still
+      queued) is the ordinary, most-common day and stays "ok" — earnings
+      not existing is not a data failure.
+    - Every analyzed item has real figures and a clean self-report → "ok".
+    - Some real, some not → "partial" (mirrors tech's partial for a
+      mixed batch).
+    - An analyzed item exists but NONE of them have real content (bad
+      structural content, a red-flagged self-report, or both) → a status
+      distinct from both "ok" and "empty". Deliberately NOT "empty": the
+      notifier's data-quality alert (`maybe_alert_data_quality`,
+      src/notifier.py) treats any status outside `("ok", "empty")` as
+      alert-worthy, and unlike smart_money's "empty" (a quiet day is
+      genuinely benign), earnings content going missing AFTER a real
+      filing existed and was run through the LLM is never benign — it is
+      the exact silent-failure shape this fix exists to catch, so it must
+      alert every time, not blend into the "nothing to see" bucket.
+    """
+    analyzed = [
+        item.get("analysis") for item in earnings_results
+        if isinstance(item, dict) and isinstance(item.get("analysis"), dict)
+    ]
+    if not analyzed:
+        return "ok"
+
+    good = [
+        a for a in analyzed
+        if _earnings_analysis_has_real_figures(a)
+        and not _earnings_data_quality_flags_problem(a.get("data_quality"))
+    ]
+    if len(good) == len(analyzed):
+        return "ok"
+    if good:
+        return "partial"
+    return "content_missing"
+
+
 def _fractional_sizing_allowed(pipeline, symbol: str, *, is_short: bool) -> bool:
     """Spec §11.1 — may THIS symbol be sized in fractional shares right now?
 
@@ -2191,10 +2329,28 @@ class MorningResearchStage:
         _check_levels_coverage(self.db, ctx, analyses)
 
         # Earnings
+        #
+        # 2026-09-04 fix: before this, `data_status["earnings"]` was "ok"
+        # purely on whether the future returned without raising — see
+        # `_classify_earnings_status`'s docstring above for the real
+        # incident this closes and why content, not exception-vs-not, is
+        # authoritative now.
         earnings_results = []
         try:
             _, earnings_results = earnings_future.result()
-            data_status["earnings"] = "ok"
+            data_status["earnings"] = _classify_earnings_status(earnings_results)
+            if data_status["earnings"] == "content_missing":
+                logger.error(
+                    "Earnings: every analyzed filing this run came back with "
+                    "no real figures and/or a self-reported data problem — "
+                    "treating as a content failure, not 'ok'."
+                )
+            elif data_status["earnings"] == "partial":
+                logger.warning(
+                    "Earnings: at least one analyzed filing this run came "
+                    "back with no real figures and/or a self-reported data "
+                    "problem alongside others that were clean."
+                )
             import json as _json
             for item in earnings_results:
                 analysis = item.get("analysis") if isinstance(item, dict) else None
