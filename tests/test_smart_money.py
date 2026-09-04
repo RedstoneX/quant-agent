@@ -237,6 +237,50 @@ def test_independent_owner_cluster_survives_but_repeat_owner_does_not(tmp_path):
     rows, _ = provider.fetch(["NVDA"])
     assert len(rows) == 2
 
+
+def test_cluster_window_default_matches_alldredge_blank_citation(tmp_path):
+    """docs/RESEARCH_FINDINGS.md:19 cites ~2 days, not the old 14."""
+    provider = SECForm4Provider(data_dir=str(tmp_path))
+    assert provider.cluster_window_days == 2
+
+
+def test_two_owners_two_days_apart_form_a_cluster(tmp_path):
+    provider = SECForm4Provider(data_dir=str(tmp_path))
+    two_days_apart = [
+        _insider(owner="1", value=60_000, age=0, accession="0000000001-26-000001"),
+        _insider(owner="2", value=60_000, age=2, accession="0000000002-26-000001"),
+    ]
+    _write_rows(provider, two_days_apart)
+    rows, _ = provider.fetch(["NVDA"])
+    assert len(rows) == 2
+
+
+def test_two_owners_three_days_apart_do_not_cluster(tmp_path):
+    """Boundary case: one day past the corrected 2-day window."""
+    provider = SECForm4Provider(data_dir=str(tmp_path))
+    three_days_apart = [
+        _insider(owner="1", value=60_000, age=0, accession="0000000001-26-000001"),
+        _insider(owner="2", value=60_000, age=3, accession="0000000002-26-000001"),
+    ]
+    _write_rows(provider, three_days_apart)
+    rows, _ = provider.fetch(["NVDA"])
+    assert rows == []
+
+
+def test_old_14_day_window_would_have_wrongly_clustered_these(tmp_path):
+    """Same transactions as the boundary case above, with the old 14-day
+    window restored explicitly. Demonstrates the bug: it incorrectly
+    clustered trades 3 days apart, which the corrected 2-day window (and
+    the cited research) does not support."""
+    provider = SECForm4Provider(data_dir=str(tmp_path), cluster_window_days=14)
+    three_days_apart = [
+        _insider(owner="1", value=60_000, age=0, accession="0000000001-26-000001"),
+        _insider(owner="2", value=60_000, age=3, accession="0000000002-26-000001"),
+    ]
+    _write_rows(provider, three_days_apart)
+    rows, _ = provider.fetch(["NVDA"])
+    assert len(rows) == 2
+
     repeated = [
         _insider(owner="1", value=60_000, accession="0000000001-26-000001"),
         _insider(owner="1", value=60_000, accession="0000000002-26-000001"),
