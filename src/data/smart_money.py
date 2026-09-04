@@ -28,6 +28,7 @@ from src.data.insider_signal import (
     InsiderSignalThresholds,
     classify_transaction,
 )
+from src.data.smart_money_cluster import cluster_survivors, observation_key
 from src.models import SmartMoneyObservation
 from src.util.time import et_today
 
@@ -679,16 +680,11 @@ class SECForm4Provider:
                 bucket.append(entry)
         return InsiderHistory(merged)
 
-    @staticmethod
-    def _observation_key(item: SmartMoneyObservation) -> tuple:
-        return (
-            item.accession_number,
-            item.transaction_row,
-            item.symbol,
-            item.actor_cik,
-            item.transaction_date,
-            item.transaction_code,
-        )
+    # Kept as a thin alias: several tests and call sites still spell this
+    # `provider._observation_key(...)`. The real implementation now lives in
+    # `src.data.smart_money_cluster` so `CongressionalTradingProvider` can
+    # share it exactly rather than growing its own copy.
+    _observation_key = staticmethod(observation_key)
 
     def fetch(self, symbols: list[str]) -> tuple[list[SmartMoneyObservation], str | None]:
         """Cache-only broad fetch; ``symbols`` marks core but does not filter."""
@@ -748,36 +744,15 @@ class SECForm4Provider:
                 "freshness": freshness,
             }))
 
-        by_group: dict[tuple[str, str], list[SmartMoneyObservation]] = defaultdict(list)
-        for item in parsed:
-            # An amendment is retained in the raw cache for provenance, but
-            # cannot independently clear materiality or cluster gates. This
-            # prevents an original and its correction from being counted as
-            # two separate insider actions.
-            if item.amendment:
-                continue
-            by_group[(item.symbol, item.direction)].append(item)
-        survivors: dict[tuple, SmartMoneyObservation] = {}
-        for (symbol, _direction), group in by_group.items():
-            threshold = (
+        survivors = cluster_survivors(
+            parsed,
+            threshold_fn=lambda symbol: (
                 self.min_transaction_value_usd
                 if symbol in core else self.external_min_transaction_value_usd
-            )
-            for item in group:
-                if item.transaction_value_usd is not None and item.transaction_value_usd >= threshold:
-                    survivors[self._observation_key(item)] = item
-            for anchor in group:
-                window = [
-                    item for item in group
-                    if abs((item.transaction_date - anchor.transaction_date).days)
-                    <= self.cluster_window_days
-                    and item.transaction_value_usd is not None
-                ]
-                independent = {item.actor_cik for item in window if item.actor_cik}
-                total = sum(item.transaction_value_usd or 0 for item in window)
-                if len(independent) >= self.min_cluster_owners and total >= threshold:
-                    for item in window:
-                        survivors[self._observation_key(item)] = item
+            ),
+            cluster_window_days=self.cluster_window_days,
+            min_cluster_owners=self.min_cluster_owners,
+        )
 
         ordered = sorted(
             survivors.values(),

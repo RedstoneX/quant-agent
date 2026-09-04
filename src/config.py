@@ -1053,6 +1053,46 @@ class SmartMoneyConfig(BaseModel):
     # years (5 * 366 days, leap-safe).
     insider_history_retention_days: int = Field(default=5 * 366, ge=366, le=20 * 366)
 
+    # --- Congress (House + Senate) trading-disclosure cross-check ---------
+    # `src/data/congressional_trading.py::CongressionalTradingProvider`.
+    # Two independent free, credentialless sources are cross-checked against
+    # each other rather than trusted singly: both are single-operator, young
+    # projects with no track record. Off by default, same conservative
+    # rollout pattern as other new autonomous-decision surfaces in this
+    # file (see `intra_check.enabled` above) — an operator opts in
+    # deliberately after reviewing the PR.
+    congress_enabled: bool = False
+    congress_kadoa_url: str = (
+        "https://raw.githubusercontent.com/kadoa-org/"
+        "congress-trading-monitor/main/public/data/trades.json"
+    )
+    congress_congresswatch_url: str = "https://congresswatch.us/data/trades.json"
+    congress_data_dir: str = "data/smart_money/congressional"
+    congress_request_timeout_s: float = Field(default=15.0, ge=1, le=60)
+    congress_refresh_deadline_s: float = Field(default=60.0, ge=10, le=300)
+    # kadoa's top-level `trades.json` is itself capped at a 5,000-row recent
+    # slice (not our choice, theirs); congresswatch's bulk file is ~8,000
+    # rows. This just bounds how many of either we hold in memory per
+    # refresh, as a sanity ceiling rather than a real limiter.
+    congress_max_trades_per_source: int = Field(default=10_000, ge=100, le=50_000)
+    # Congressional disclosures can lag up to ~45 days after the transaction
+    # (already documented in src/agents/smart_money_analyst.py's module
+    # docstring — not a new number invented here). congresswatch.us's live
+    # schema carries no filing/disclosure-date field at all, so when a
+    # congresswatch-only trade cannot be cross-matched against kadoa (which
+    # does carry a real filing_date), this ceiling is used as the
+    # conservative disclosure-date estimate: assume the latest date the
+    # statute allows, never an earlier one that would overstate freshness.
+    congress_assumed_max_disclosure_lag_days: int = Field(default=45, ge=1, le=90)
+    # How recent a congressional disclosure must be to stay in `fetch()`'s
+    # output. Deliberately looser than `lookback_days` (7): that window is
+    # sized for SEC Form 4's ~2-business-day filing deadline, and applying
+    # it to a stream that can legally lag 45 days would silently discard
+    # nearly every real disclosure. This is a judgment call, not a
+    # research-derived number — kept here, operator-tunable, rather than
+    # buried in code, exactly like every other threshold in this class.
+    congress_lookback_days: int = Field(default=30, ge=1, le=60)
+
     @model_validator(mode="after")
     def _insider_cadence_window_is_well_formed(self):
         if self.insider_cadence_min_mean_gap_days >= self.insider_cadence_max_mean_gap_days:

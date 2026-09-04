@@ -1040,15 +1040,29 @@ dig into this specific historical instance now.
 
 No DECIDE BY — revisit only if it recurs.
 
-**36. Add a live congressional trading data stream to smart-money? No free option is currently reliable.**
+**36. Congressional (House + Senate) trading data added to smart-money — SHIPPED 2026-09-04.**
 
-Investigated 2026-09-04 (`docs/INCIDENT_HISTORY.md` has the full detail).
-The two well-known free aggregators are both dead in practice despite
-still claiming to be live. Real choices: an unproven brand-new free
-source, in-house PDF parsing against official disclosures, or a paid
-commercial feed. New dependency / reliability tradeoff — owner's call.
-
-- [ ] DECIDE BY 2026-09-18 — which path, if any, for congressional data?
+The "both known aggregators are dead" read recorded below was stale: two
+different free, credentialless sources were verified live 2026-09-04
+(`docs/INCIDENT_HISTORY.md` has the full detail) —
+`kadoa-org/congress-trading-monitor` on GitHub as primary,
+`congresswatch.us` as secondary cross-check. `CongressionalTradingProvider`
+(`src/data/congressional_trading.py`) fetches both, dedupes the same real
+trade across them by (ticker, normalized filer name, transaction date), and
+flags — never silently resolves — a disagreement between them on direction
+or dollar bracket via a new `cross_source_agreement`/`cross_source_note`
+pair on `SmartMoneyObservation`. Reuses the exact same 2-day cluster-window
+materiality logic as SEC Form 4 (extracted to
+`src/data/smart_money_cluster.py` so the two cannot drift), and the same
+$ thresholds, applied to the bracket LOW value conservatively since
+congressional disclosures are ranges, not exact dollars. Congressional data
+never grows the trading universe or triggers admission — it stays
+confirmatory context for symbols already in the configured universe, per
+the seat's existing acceptance contract. Off by default
+(`smart_money.congress_enabled`); wired into the existing single
+`smart_money_provider` slot via a new `CombinedSmartMoneyProvider` that
+fans one `SmartMoneySource` call out to SEC Form 4 and this new provider,
+isolating either one's failure from the other and from the rest of the run.
 
 **37. Eleven PRs open at once tonight (#249-#262) — merge ORDER matters, see `docs/INCIDENT_HISTORY.md`.** None conflict in logic; several share files (`portfolio_manager.py`/`.md` especially — #257, #259, #261). Full recommended order recorded there so it survives a compaction, not just this session's head.
 
