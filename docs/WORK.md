@@ -552,12 +552,9 @@ deleted here to make room, which is how this file stays under its
 
 ### Landed 2026-09-03 — RM-modification safety guards, FIXED
 
-A risk-manager "modification" could silently cancel a SELL/COVER exit or
-ship a stop/target edit that broke the R/R or noise-band floor a fresh
-decision would have to clear. Both guards now live in
-`_apply_risk_modifications`. Full detail and tests: `docs/INCIDENT_HISTORY.md`,
-2026-09-03, "a risk-manager 'modification' could silently cancel an exit or
-ship a trade a fresh one would have been refused."
+Same fix as item 23 below. Full detail: `docs/INCIDENT_HISTORY.md`, 2026-09-03,
+"a risk-manager 'modification' could silently cancel an exit or ship a trade
+a fresh one would have been refused."
 
 ### Ordered backlog — RESUME POINT
 
@@ -779,18 +776,7 @@ point of the pattern — the guarantee is structural, not procedural.
 Sequence it AFTER item 1. It is latent (no measured loss yet), while item 1
 is costing 25% of all proposals now.
 
-**14. Replace the budget guard — SHIPPED on `feat/replace-budget-reservation`.**
-
-Per-call cost reservation deleted entirely (it held ~2.6x what it actually
-spent, stopping the desk on money never spent — full reasoning in
-`docs/INCIDENT_HISTORY.md`, "item 14"). Replaced with (b) a settled-cost cap
-checked before and after each call, and (c) a plain per-session call-count
-cap as the real defence against a runaway loop. (a), an API-key-level spend
-cap outside our code, is NOT built — flagged in `cost_circuit.py` pointing
-back here, needs the provider's exact limit options verified first.
-
-**(c)'s number is a placeholder, not measured — see the DECIDE BY line
-above.** Everything else in this item is implemented and tested.
+**14. Replace the budget guard — SHIPPED on `feat/replace-budget-reservation`.** (a), an API-key-level spend cap outside our code, is NOT built. **(c)'s call-count number is a placeholder, not measured — see the DECIDE BY line above.** Detail: `docs/INCIDENT_HISTORY.md`, "item 14: the budget guard was stopping the desk on money it never spent".
 
 **15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
 
@@ -1133,7 +1119,7 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE.** Failure-as-own-message shipped earlier (`maybe_alert_data_quality`); colour-only severity fixed 2026-09-03 across notifier/pipeline_stages/trader_feed/alert scripts (🛑/🛑🛑🛑/⚠️ + leading plain-text word). `cost_circuit.py`/`pipeline.py` still carry 🔴/🟠 — parallel work in progress. Detail: `docs/INCIDENT_HISTORY.md`, "2026-09-03 — alerts stop relying on colour".
+**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE**, except `cost_circuit.py`/`pipeline.py` still carry colour-only severity — parallel work in progress. Detail: `docs/INCIDENT_HISTORY.md`, "2026-09-03 — alerts stop relying on colour".
 
 **22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** Now reads `config.risk.max_position_risk_pct` instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. Detail: `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction audit".
 
@@ -1154,12 +1140,7 @@ same read, applied one layer earlier). Full detail on all six:
 `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction
 audit".
 
-**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — FIXED 2026-09-04.**
-
-Removed config_overrides referencing deleted `reservation_min_history_samples` and
-`session_reserved_exposure_limit_usd` keys (deleted by item 14's cost-circuit rewrite);
-deleted the second test that tried to force pre-fix behavior (impossible with new config shape);
-updated first test's docstring to explain the architectural change. PR #[n] test counts before/after.
+**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — FIXED 2026-09-04.** Detail: `docs/INCIDENT_HISTORY.md`, "2026-09-04 — acceptance test broken on main by deleted cost-circuit config keys".
 
 **29. The analyst scorecard was already built and is already live — item withdrawn 2026-09-03, corrected after being written up as new work in error.** The conviction-ledger scorecard (`docs/QAMC_REMEDIATION_SPEC.md` §9.5, shipped 2026-08-31, `src/api/routes_scorecard.py`, live at `GET /analysts/scorecard`) already covers everything this item asked for — per-analyst win rate, win/loss size, running P&L at fixed risk/call, drawdown-from-own-peak, per-trade credit attribution, read-only, no sample-size gate. Wired into the real pipeline, not dead code. Reports zero resolved calls today — an honestly thin history (started 2026-08-31, timers paused most of today), not a defect.
 
