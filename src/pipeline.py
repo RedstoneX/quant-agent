@@ -7971,6 +7971,13 @@ class TradingPipeline:
                 # regardless — this is forward-compatible plumbing, not a
                 # behaviour change on today's long-only book.
                 qty=position.qty,
+                # Fix #3 (2026-09-04 audit): the ENTRY stop, never the live
+                # one -- buy.stop_loss is written once at BUY and never
+                # mutated by a later TRAIL_STOP (that writes a separate
+                # trade row), so it stays the true initial risk for the
+                # life of the position. Powers the Type A +1R breakeven
+                # ratchet.
+                initial_stop=(buy or {}).get("stop_loss"),
             )
             if proposal is None:
                 continue
