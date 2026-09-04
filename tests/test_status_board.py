@@ -1026,3 +1026,76 @@ def test_nothing_waiting_says_so_rather_than_showing_a_blank(tmp_path):
     p = tmp_path / "WORK.md"
     p.write_text("no decisions here\n")
     assert "Nothing is waiting on you" in sb._render_decisions(sb.load_pending_decisions(p))
+
+
+# ---------------------------------------------------------------------------
+# an item cannot be allowed to disagree with its own title
+#
+# Eleven real items said FIXED/DONE/MERGED in their own title while the board
+# still showed them as open, because striking a title through (the mechanism
+# that already existed) was a remembered step, never an enforced one. This
+# pins the check that replaces the memory with a build failure.
+# ---------------------------------------------------------------------------
+
+def test_the_real_backlog_has_no_item_contradicting_its_own_title():
+    """The real docs/WORK.md, not a fixture — the failure mode is real items
+    drifting out of sync with their own `~~done~~` marker over time."""
+    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    flagged = sb.find_closed_items_not_marked_done(work)
+    assert not flagged, (
+        "these backlog items claim to be finished in their own title but are "
+        "not struck through, so the status board still shows them as open "
+        "work:\n  " + "\n  ".join(flagged) +
+        "\n\nEither wrap the title in ~~...~~ (it is actually done) or "
+        "reword the title so it no longer claims a closure it hasn't reached."
+    )
+
+
+def test_a_title_claiming_closure_without_strikethrough_is_flagged(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. Real bug — FIXED 2026-09-04.**\n\n"
+        "**2. Another one — MERGED, PR #999.**\n"
+    )
+    flagged = sb.find_closed_items_not_marked_done(p)
+    assert len(flagged) == 2
+    assert "item 1" in flagged[0]
+    assert "item 2" in flagged[1]
+
+
+def test_a_struck_through_title_is_not_flagged(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**~~1. Real bug — FIXED 2026-09-04.~~**\n"
+    )
+    assert sb.find_closed_items_not_marked_done(p) == []
+
+
+def test_a_partial_or_pending_closure_is_not_flagged():
+    """"MOSTLY FIXED, one real judgment call left" and "FIXED, pending
+    review" are honest about not being finished yet — they must stay open,
+    not get swept into a false-done state just because they contain a
+    closure word."""
+    p_partial = "**1. Thing — MOSTLY FIXED, one real judgment call left.**"
+    p_pending = "**2. Other thing — FIXED, pending review.**"
+    for line in (p_partial, p_pending):
+        text = f"## THE FUNNEL QUEUE\n\n{line}\n"
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False,
+        ) as f:
+            f.write(text)
+            path = Path(f.name)
+        try:
+            assert sb.find_closed_items_not_marked_done(path) == [], line
+        finally:
+            path.unlink()
+
+
+def test_a_missing_backlog_or_heading_flags_nothing(tmp_path):
+    assert sb.find_closed_items_not_marked_done(tmp_path / "nope.md") == []
+    p = tmp_path / "WORK.md"
+    p.write_text("# Work\n\nno funnel queue heading here\n")
+    assert sb.find_closed_items_not_marked_done(p) == []

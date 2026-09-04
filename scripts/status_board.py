@@ -504,6 +504,57 @@ def load_funnel_queue(work_md: Path) -> tuple[list[QueueItem], str | None]:
     return sorted(items, key=lambda i: i.rank), None
 
 
+#: Words an item's own title uses to claim it is fully closed. Deliberately
+#: excludes "WITHDRAWN" acting alone from nothing else — see
+#: `_CLOSURE_EXEMPT_WORDS` below for the qualifiers that mean "not actually
+#: closed yet" even in the presence of one of these.
+_CLOSURE_WORDS = ("FIXED", "DONE", "MERGED", "RESOLVED", "WITHDRAWN")
+
+#: A closure word next to one of these means the item is claiming progress,
+#: not a finished state — it must stay visibly open, not be struck through.
+_CLOSURE_EXEMPT_WORDS = ("PARTIALLY", "PARTIAL", "PENDING", "MOSTLY")
+
+
+def find_closed_items_not_marked_done(work_md: Path) -> list[str]:
+    """Items whose own title claims full closure but were never marked
+    `done` (the `~~title~~` convention `load_funnel_queue` reads).
+
+    This exists because it already happened silently: eleven items in the
+    real backlog said "FIXED", "DONE" or "MERGED" in their own title — one
+    even said "FIXED AND MERGED" — while still rendering as open work on the
+    owner's status board, because striking a title through has always been a
+    remembered step, never a checked one. The board is supposed to be the one
+    place that would rather say `unknown` than something false; an item
+    contradicting its own title is exactly that kind of false statement, and
+    it stood for days before anyone noticed. Returns a list of plain
+    descriptions for CI to fail on, empty when there is nothing to flag.
+    """
+    if not work_md.exists():
+        return []
+    text = work_md.read_text()
+    if _QUEUE_HEADING not in text:
+        return []
+    body = text.split(_QUEUE_HEADING, 1)[1]
+    for stop in ("### Re-measure gate", "\n## ", "\n### "):
+        if stop in body:
+            body = body.split(stop, 1)[0]
+
+    flagged = []
+    for raw in body.splitlines():
+        m = _QUEUE_ITEM_RE.match(raw.strip())
+        if not m:
+            continue
+        rank, rest = m.group(1), m.group(2)
+        if "~~" in raw:
+            continue
+        upper = rest.upper()
+        claims_closed = any(w in upper for w in _CLOSURE_WORDS)
+        actually_open = any(w in upper for w in _CLOSURE_EXEMPT_WORDS)
+        if claims_closed and not actually_open:
+            flagged.append(f"item {rank}: {rest[:100]}")
+    return flagged
+
+
 #: `- [ ] DECIDE BY 2026-09-16 — question` — the same shape
 #: `test_no_pending_decision_is_overdue` enforces, deliberately, so the board
 #: and the build are reading one format and cannot disagree about it.
