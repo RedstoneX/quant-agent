@@ -3482,3 +3482,79 @@ unaffected.
 See PR `fix/single-name-notional-cap` (open, not merged — needs
 independent adversarial review before merge, same posture as every other
 risk-touching change tonight).
+
+### 2026-09-04 — item 32's conviction-band fork decided; a portfolio volatility target was investigated and rejected
+
+**In plain words.** PR #258 fixed the 20% notional cap but left one
+question open (item 32): now that trades can actually deliver the risk
+the PM asks for, should the conviction-to-risk bands widen back to their
+original numbers, or should sizing move to something more sophisticated —
+an explicit volatility-parity overlay, or a full CTA-style
+portfolio-level volatility TARGET (one dial, ~10-20% annualized, that
+scales every position to hit it)? Tonight's task was to build the
+volatility-target version. Before writing it, the design was checked
+against what this codebase already does and against the owner's actual
+mandate, and both checks said stop.
+
+**What was checked.** The per-trade sizing path
+(`PortfolioConstructor._plan_risk_targets`, `src/portfolio_constructor.py`)
+was read in full end to end: a target's requested risk comes from the
+PM's own conviction judgement (a real per-idea range the model chooses
+within, not a single number applied to everything), is then reduced —
+never raised — by the §9.4 agreement ceiling (signed source score) and by
+`allocate_risk_budget`'s total/cluster ceilings, and is converted to a
+position size by `risk_pct x entry / |entry - stop|`, where the stop is
+already ATR/volatility-derived (`risk.min_stop_atr_multiple`). There is
+no second, hidden flat number anywhere in that path — the only hard caps
+are the disclosed backstops (5% single-name, 25% total, 40% per cluster),
+each independent and each already ratified.
+
+**Why a portfolio volatility target was rejected, not built.** Two
+distinct objections surfaced, either one sufficient on its own:
+
+1. **It would mostly duplicate machinery that already exists.** The
+   book-level "don't let too much ride on one bet" job already has an
+   owner: `max_portfolio_risk_pct` (25%, the sum of every position's
+   loss-if-stopped) plus `max_cluster_risk_share_pct` (40%, correlated
+   names sharing one bet's budget via `src/data/correlation.py`'s
+   measured 5-year return correlation, connected components at
+   `|corr| >= 0.7`). A real, rigorous portfolio-volatility number (one
+   that actually accounts for how positions move together, i.e.
+   `w'*Σ*w` over a real covariance matrix) would be MORE rigorous than
+   the threshold-clustering approximation currently in place — that part
+   of the owner's own question was fair — but building it honestly would
+   need a full covariance-weighted sizing engine, not a config dial, and
+   this book has no realized-return history yet to calibrate or validate
+   one against (reset 2026-09-02). A single scalar "target %" bolted on
+   without that machinery would just be a second, cruder version of the
+   cluster cap wearing a more sophisticated-sounding name — exactly the
+   "two dials doing almost the same job" the owner does not want.
+2. **The practice itself belongs to a different mandate.** CTA/trend-
+   following funds target annualized portfolio volatility because they
+   are selling outside LPs a smooth, comparable return stream — the
+   target exists to serve THAT goal. This desk trades one owner's own
+   capital and is judged on survival, not smoothness
+   (`docs/OUTCOME.md`, "a trading desk, not a retirement portfolio" —
+   the same principle that already rejected retirement-style sector
+   diversification for its own sake). Importing the target quietly
+   imports the goal it was built for, which this desk never had.
+
+**What actually shipped.** Item 32's fork is resolved as (a), not (b):
+the conviction bands (`config/prompts/portfolio_manager.md`, Step 5) are
+restored to their original, pre-2026-08-27-compression values —
+2.0-4.0% / 1.0-2.5% / 0.5-1.0% for high/moderate/low conviction, and the
+sizing-formula worked example's base mids updated to match (3.0 / 1.75 /
+0.75) — now that the notional ceiling that forced them down to
+1.5-3.0% / 1.0-2.0% (PR #258) is fixed at 100%. The 5% hard cap, the 25%
+total ceiling and the 40% cluster share are all UNCHANGED; nothing about
+them conflicts with or is made redundant by this — they were never the
+same category of defect as the flat per-trade guess, because they act as
+backstops on top of idea-specific sizing rather than substituting for it.
+`docs/WORK.md` item 32 marked resolved.
+
+No code in `src/` changed for this entry — the fix is confined to the
+prompt's stated bands and this documentation. No new tests were added:
+the sizing arithmetic itself (`risk_pct x entry / |entry - stop|`,
+`allocate_risk_budget`, the cluster cap) is unchanged and already covered
+by `tests/test_risk_based_sizing.py`, `tests/test_portfolio_constructor.py`
+and `tests/test_risk_budget.py`.

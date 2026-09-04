@@ -368,8 +368,8 @@ target — or vice versa for a long — fails grounding.
 **Base RISK allocation by conviction** (from Step 4). These are shares
 of equity the idea may LOSE if stopped, not weights it may occupy:
 
-- High conviction (strong confirmation from at least 3 available sources): 1.5-3.0%
-- Moderate conviction (partial confirmation or one named conflict): 1.0-2.0%
+- High conviction (strong confirmation from at least 3 available sources): 2.0-4.0%
+- Moderate conviction (partial confirmation or one named conflict): 1.0-2.5%
 - Low conviction: 0.5-1.0% or skip
 - **Hard cap: never exceed 5% risk per position.** The resulting
   notional weight is separately capped at 100% single-name (a
@@ -395,17 +395,22 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   number to guess at a name's volatility, the stop distance already
   carries that.
 
-  **Open, NOT yet decided (owner call, 2026-09-04):** whether the
-  conviction bands above (1.5-3.0% / 1.0-2.0% / 0.5-1.0%) — compressed
-  DOWN from their original 2.0-4.0% / 1.0-2.5% on 2026-08-27 specifically
-  to fit under the wrongly-binding 20% ceiling — should now widen back
-  toward the original numbers, or whether risk-per-trade should instead
-  move to an explicit volatility-parity design (sizing each trade to a
-  similar risk-contribution via its own ATR, on top of what the
-  stop-distance divisor already does) or a future Kelly-derived unit off
-  the analyst scorecard's real track record once enough resolved trades
-  exist. See `docs/WORK.md` item 32. Do not treat either resolution as
-  decided — these bands are unchanged pending that call.
+  **DECIDED, 2026-09-04 (owner call, item 32).** The bands above are
+  restored to their pre-2026-08-27 values now that the real constraint
+  (the notional ceiling, fixed above) no longer clamps them artificially.
+  A parallel idea — an explicit portfolio-level volatility-TARGET overlay,
+  CTA/trend-following-fund style, scaling every position to hit one
+  annualized book-volatility number — was considered and explicitly
+  REJECTED for this desk. That practice exists so a fund can sell outside
+  LPs a smooth, predictable return stream; it is not this desk's mandate
+  (`docs/OUTCOME.md`, "a trading desk, not a retirement portfolio"). This
+  desk sizes each idea on conviction and that name's OWN volatility (via
+  the stop-distance formula above — already real vol-scaling, nothing to
+  add), and bounds the whole book only by survival ceilings that already
+  exist and are independent of any single idea's sizing: the 5% cap right
+  above, the 25% total-at-risk ceiling, and the 40%-per-cluster share of
+  it (correlated names sharing one bet's budget). No fourth number is
+  introduced here.
 
 - **Agreement ceiling (Phase 9.4, 2026-08-30; signed 2026-09-02), on top
   of the 5% cap.** However many sources you cite as `supports`, the
@@ -512,7 +517,7 @@ mornings with the same inputs produce the same number:
 
 ```
 base       = conviction_to_base(alignment)
-             # high=2.25 (mid of 1.5-3.0), moderate=1.5 (mid of 1.0-2.0),
+             # high=3.0 (mid of 2.0-4.0), moderate=1.75 (mid of 1.0-2.5),
              # low=0.75 (mid of 0.5-1.0)
 rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
 evening    = 1.0  + evening_tilt   # +0.20 / +0.10 / 0 / -0.10 / -0.20 per "How much to be invested"
