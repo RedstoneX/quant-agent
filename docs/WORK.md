@@ -742,42 +742,22 @@ detail: `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 drop is attributed to the constructor, never to a Risk Manager veto of
 whatever plan survived it. See `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 
-**13. One number is carrying three different meanings. DEFECT, latent.**
+**13. One number was carrying three different meanings. FIXED 2026-09-04,
+PR pending review — not yet merged.**
 
-Not from the census — this one is structural, and it was raised in
-conversation, never written down, and then lost to a context compaction. The
-owner asked for it back by name. Recording it here so that cannot happen a
-second time.
-
-A target weight of **0%** currently means three incompatible things and the
-plumbing cannot tell them apart:
-  1. *"Do not open this"* — a refusal. Nothing should happen.
-  2. *"Close what is held"* — a real exit instruction.
-  3. *"Open a short"* — a new position in the other direction.
-
-A zero-weight entry reads to the delta loop as meaning 2. So a rule that
-refuses to BUY something can silently SELL a position nobody asked to sell.
-It does not error; it just liquidates. The signed-dissent rule shipped
-2026-09-02 works around this by DROPPING a refused target rather than sizing
-it at zero — but that is one caller remembering, and every future rule that
-can refuse a target inherits the same trap.
-
-**The fix is borrowed, not invented.** `pysystemtrade` (Rob Carver) solves
-exactly this with an override algebra: an override is not a number, it is a
-value in a small ordered set, and combining two of them is defined by rule
-rather than by arithmetic. Its order is absorbing —
-
-    no_trading  >  close  >  reduce_only  >  (a plain multiplier)
-
-— so combining any two overrides yields the more restrictive one, always, and
-"do not trade" can never be diluted back into "trade a bit" by multiplication.
-Applied here: make the three intents DISTINCT VALUES with defined combination
-rather than three readings of one float, so the mistake stops being
-expressible instead of relying on each caller to remember. That is the whole
-point of the pattern — the guarantee is structural, not procedural.
-
-Sequence it AFTER item 1. It is latent (no measured loss yet), while item 1
-is costing 25% of all proposals now.
+A target weight of 0% used to mean three incompatible things the plumbing
+could not tell apart (refuse / close / short) — a rule that refused to BUY
+something could silently SELL a position nobody asked to sell. Fixed by
+porting `pysystemtrade`'s override algebra: `SizeOverride`
+(`src/risk/size_override.py`) makes the intents distinct values
+(`no_trading > close > reduce_only > multiplier`) with a combination function
+that always keeps the more restrictive one, so the mistake is no longer
+expressible in the type rather than relying on a caller to remember a special
+case. The one live caller that needed migrating — the 2026-09-02
+signed-dissent workaround in `PortfolioConstructor._plan_risk_targets` — now
+produces `SizeOverride.no_trading()` instead of dropping a target on a bare
+`<= 0.0` float check; behaviour is unchanged (same tests pass). Full detail:
+`docs/INCIDENT_HISTORY.md`, 2026-09-04 entry.
 
 **14. Replace the budget guard — SHIPPED on `feat/replace-budget-reservation`.**
 

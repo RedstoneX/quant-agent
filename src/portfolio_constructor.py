@@ -675,6 +675,7 @@ class PortfolioConstructor:
             _gross_multiplier, agreement_ceiling_for_score, count_aligned_sources,
             count_opposing_sources, signed_source_score,
         )
+        from src.risk.size_override import SizeOverride
 
         priced: dict[str, tuple[float, float]] = {}   # symbol -> (entry, stop)
         # Stage 3: direction is tracked alongside the priced entry/stop so
@@ -720,6 +721,11 @@ class PortfolioConstructor:
             # asking for more than the ratified envelope is clamped rather
             # than refused — the idea is sound, the size is not.
             envelope_capped = min(target.risk_allocation_pct, self.cfg.risk_budget_pct)
+            # docs/WORK.md item 13: this cap is always a plain multiplier —
+            # the envelope can shrink a request, it never refuses one — so it
+            # is never anything but SizeOverride.sized(). The refusal case
+            # lives entirely in the agreement ceiling below.
+            envelope_override = SizeOverride.sized(envelope_capped)
             # §9.4: then the agreement ceiling, computed from THIS session's
             # canonical registry (not from target.provenance — see
             # `count_aligned_sources`), before the request ever reaches the
@@ -759,6 +765,18 @@ class PortfolioConstructor:
                 agreement_ceiling = agreement_ceiling_for_score(
                     self.cfg.agreement_ceiling_pct, source_score,
                 )
+                # docs/WORK.md item 13: `agreement_ceiling_for_score` returns
+                # a bare 0.0 for "no rung at or below zero" — arithmetically
+                # identical to a real zero-weight close. Read that meaning
+                # explicitly, here, at the one place it is produced, instead
+                # of letting a plain float carry it downstream where a
+                # `<= 0.0` check could no longer tell a refusal apart from an
+                # intentional close. `SizeOverride.no_trading()` cannot be
+                # misread as a size because it has no `.value` at all.
+                agreement_override = (
+                    SizeOverride.no_trading() if agreement_ceiling <= 0.0
+                    else SizeOverride.sized(agreement_ceiling)
+                )
                 if ignored:
                     gated = sorted(s for s in ignored if s in sources)
                     if gated:
@@ -776,11 +794,22 @@ class PortfolioConstructor:
                 )
             else:
                 agreement_ceiling = float("inf")
-            requested_pct = min(envelope_capped, agreement_ceiling)
-            if requested_pct <= 0.0:
-                # Net evidence at or below zero: the schedule has no rung for
-                # this and `agreement_ceiling_for_score` returned 0.0. Drop
-                # the target entirely rather than sizing it at zero — a
+                # No registry to check dissent against — same "no view, don't
+                # invent one" posture as everywhere else in this method: an
+                # unbounded multiplier, never a refusal.
+                agreement_override = SizeOverride.sized(float("inf"))
+            # docs/WORK.md item 13 / the pysystemtrade override algebra: the
+            # combined override is always the MORE RESTRICTIVE of the two —
+            # `no_trading` absorbs a multiplier no matter how large, so this
+            # can never be diluted back into "trade a bit". This is the exact
+            # generalization of the 2026-09-02 signed-dissent workaround: that
+            # patch dropped a target whose combined float landed at or below
+            # zero; this makes "combined float at or below zero" and "the
+            # combination IS a refusal" the same statement, structurally,
+            # rather than two things a future caller could let drift apart.
+            combined_override = envelope_override.combine(agreement_override)
+            if combined_override.is_refusal:
+                # Drop the target entirely rather than sizing it at zero — a
                 # zero-weight RiskPlan reads to the delta loop as "PM wants
                 # this position CLOSED", so letting a 0% request through would
                 # turn a refusal to open into a forced liquidation of whatever
@@ -800,6 +829,11 @@ class PortfolioConstructor:
                 del priced[sym]
                 del directions[sym]
                 continue
+            # `.value` is safe here — `combined_override` is a `multiplier`
+            # override by construction whenever it is not a refusal (the only
+            # other kinds this method ever produces are `no_trading`, handled
+            # above, so nothing else reaches this line).
+            requested_pct = combined_override.value
             if agreement_ceiling < envelope_capped:
                 logger.info(
                     "Constructor: %s risk capped by the agreement ceiling "
