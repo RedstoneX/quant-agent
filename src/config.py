@@ -431,13 +431,43 @@ class RiskConfig(BaseModel):
     # breaker convention referenced in the same entry) rather than a flat
     # percent, so a future change to `max_position_risk_pct` moves this with
     # it instead of silently going stale again — the exact failure mode item
-    # 32 found. The multiplier N=3 itself is INHERITED, not re-derived: there
-    # is no measured drawdown/track record to validate N against (the
+    # 32 found.
+    #
+    # BUG 1, FIXED 2026-09-04 (docs/WORK.md item 32,
+    # docs/INCIDENT_HISTORY.md). N was 3.0 — the SAME multiple as the 5-day
+    # window's (`drawdown_5d_risk_multiple`). Two windows of very different
+    # length cannot share one multiple and fire at a comparable rate: a
+    # one-day threshold set at the five-day threshold's level is, in
+    # practice, only reachable on a single-name gap event, so the daily
+    # circuit breaker was decorative.
+    #
+    #   DERIVATION (square-root-of-time). Drawdown magnitude over a window
+    #   scales with the square root of the window length — Van Hemert, Ganz,
+    #   Harvey et al., "Drawdowns", Journal of Portfolio Management, 2020.
+    #   For the same statistical firing rate across windows, thresholds must
+    #   therefore scale as sqrt(T), not sit flat.
+    #
+    #   Anchor on the 5-day window, which the item-32 research found is the
+    #   reasonably calibrated one of the three:
+    #
+    #       N_1d = N_5d * sqrt(1 / 5)
+    #            = 3.0   * 0.4472135955
+    #            = 1.3416407865...
+    #            -> 1.34  (2dp; the input multiples are provisional to
+    #                      roughly the nearest half, so more digits would
+    #                      be false precision)
+    #
+    #   At the ratified 5% per-trade risk unit that is a -6.7% daily
+    #   circuit breaker, down from -15%. Ratio to the 5-day window is now
+    #   1 : 2.24 (= sqrt(5)) rather than the old, incoherent 1 : 1.
+    #
+    # The ANCHOR multiple N_5d = 3 is still INHERITED, not re-derived: there
+    # is no measured drawdown/track record to validate it against (the
     # 2026-09-02 clean-slate reset wiped the equity history that would let
-    # anyone check it), so only the UNIT (R = max_position_risk_pct) is
-    # fixed here — N is carried over unchanged and is flagged provisional in
-    # docs/WORK.md pending real post-fix trade history.
-    daily_loss_risk_multiple: float = Field(default=3.0, gt=0)
+    # anyone check it). This fix corrects the RELATIVE scaling between
+    # windows, which is doctrine; the absolute calibration of the anchor
+    # stays flagged provisional in docs/WORK.md pending real trade history.
+    daily_loss_risk_multiple: float = Field(default=1.34, gt=0)
     max_sector_pct: float = Field(gt=0, le=100)
     # Spec §10.3 (owner-ratified 2026-09-01). `max_sector_pct` above is no
     # longer a veto — it is the diversification TARGET, past which further
@@ -486,15 +516,47 @@ class RiskConfig(BaseModel):
     # below, so the brake auto-rescales if the risk unit ever changes again
     # rather than silently going stale a second time.
     #
-    # The multiples (3 and 8) are UNCHANGED from the pre-existing, never
-    # independently validated constants — there is no measured drawdown
-    # history to check them against (the 2026-09-02 clean-slate reset wiped
-    # the equity curve they'd need; the 20-day one in particular cannot even
-    # evaluate yet for lack of 20 real trading days since). Only the UNIT is
-    # fixed here. Flagged PROVISIONAL in docs/WORK.md pending real post-fix
-    # drawdown data — an owner call, not decided by this change.
+    # The 5-day multiple (3) is UNCHANGED from the pre-existing, never
+    # independently validated constant — there is no measured drawdown
+    # history to check it against (the 2026-09-02 clean-slate reset wiped
+    # the equity curve it'd need). It remains the ANCHOR the other two
+    # windows are scaled from, and stays flagged PROVISIONAL in
+    # docs/WORK.md pending real post-fix drawdown data. At the ratified 5%
+    # risk unit it is a -15% threshold, which happens to land exactly on
+    # the de-levering ladder's -15% -> 1.0x rung
+    # (`src/risk/rules.py::GROSS_LADDER`) — the two systems agree at this
+    # window, so nothing here needed reconciling.
+    #
+    # BUG 2, FIXED 2026-09-04 (docs/WORK.md item 32,
+    # docs/INCIDENT_HISTORY.md). The 20-day multiple WAS 8, i.e. a -40%
+    # threshold at the 5% risk unit. This desk carries a SECOND, older
+    # drawdown-response system — the §11.2 peak-to-trough gross-exposure
+    # de-levering ladder in `src/risk/rules.py` — which starts cutting
+    # exposure at -8%, is down to 1.0x by -15%, and at -20%
+    # (`GROSS_LADDER_ALERT_PCT`) drops to 0.5x AND alerts the owner. The
+    # two systems were never reconciled: the ladder had already halved the
+    # book and woken the owner while this brake was still completely
+    # silent, and stayed silent for another twenty points of drawdown.
+    # That is not a conservative-vs-aggressive difference of opinion, it is
+    # two systems that disagree about whether the desk is in trouble.
+    #
+    #   MINIMAL HONEST FIX: the 20-day brake must not still be asleep past
+    #   the point the ladder escalates to the owner.
+    #
+    #       N_20d <= |GROSS_LADDER_ALERT_PCT| / max_position_risk_pct
+    #              = 20 / 5
+    #              = 4.0        -> threshold -20%, exactly the alert rung
+    #
+    # NOTE this is TIGHTER than square-root-of-time from the 5-day anchor
+    # would give (N_5d * sqrt(20/5) = 3 * 2 = 6, i.e. -30%). The ladder
+    # constraint binds first, and where doctrine and an already-live
+    # sibling system disagree, matching the live system is the honest
+    # minimal move. FULL reconciliation of the two systems — whether they
+    # should share one drawdown response at all, and which one governs —
+    # is a real open design question and an OWNER call, deliberately not
+    # decided here. See docs/WORK.md item 32.
     drawdown_5d_risk_multiple: float = Field(default=3.0, gt=0)
-    drawdown_20d_risk_multiple: float = Field(default=8.0, gt=0)
+    drawdown_20d_risk_multiple: float = Field(default=4.0, gt=0)
     # Below this an idea is not worth trading: a token position pays full
     # commission and full attention for an immaterial payoff. A request
     # rationed under the floor is denied outright rather than shrunk.
