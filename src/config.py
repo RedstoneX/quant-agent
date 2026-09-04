@@ -1085,13 +1085,31 @@ class SmartMoneyConfig(BaseModel):
     # statute allows, never an earlier one that would overstate freshness.
     congress_assumed_max_disclosure_lag_days: int = Field(default=45, ge=1, le=90)
     # How recent a congressional disclosure must be to stay in `fetch()`'s
-    # output. Deliberately looser than `lookback_days` (7): that window is
-    # sized for SEC Form 4's ~2-business-day filing deadline, and applying
+    # output. Deliberately MUCH looser than `lookback_days` (7): that window
+    # is sized for SEC Form 4's ~2-business-day filing deadline, and applying
     # it to a stream that can legally lag 45 days would silently discard
-    # nearly every real disclosure. This is a judgment call, not a
-    # research-derived number — kept here, operator-tunable, rather than
-    # buried in code, exactly like every other threshold in this class.
-    congress_lookback_days: int = Field(default=30, ge=1, le=60)
+    # nearly every real disclosure. Do NOT "harmonise" the two — they measure
+    # two different statutory regimes and the Form 4 one is intentionally
+    # tighter.
+    #
+    # Why 180 and not the 30 this shipped with:
+    #   * The STOCK Act deadline is "no later than 45 days after the
+    #     transaction" (House Ethics / Senate Select Committee on Ethics PTR
+    #     instructions, re-verified 2026-09-04) — so a 30-day window cannot
+    #     even cover the LEGAL lag, let alone real behaviour.
+    #   * Filers in practice file at or near the deadline, and late filings
+    #     (past 45 days) are common and still legitimate, recent trades.
+    #   * Corroborating real-world datapoint: the author of a comparable free
+    #     congressional-trading tool documented choosing a 180-day default for
+    #     exactly this reason — a short window silently returned almost
+    #     nothing. 180 is that observed-in-the-wild figure, not one invented
+    #     here.
+    # This is a data-COVERAGE window, not a signal-strength one: widening it
+    # cannot make stale data load-bearing, because
+    # `SmartMoneyFinding.deterministic_eligibility` (src/models.py) separately
+    # requires congressional-only evidence to be <=7 days old. Widening only
+    # stops real rows being thrown away before the analyst ever sees them.
+    congress_lookback_days: int = Field(default=180, ge=1, le=365)
 
     @model_validator(mode="after")
     def _insider_cadence_window_is_well_formed(self):

@@ -90,14 +90,85 @@ def _normalize_actor_name(raw: str) -> str:
     return " ".join(parts)
 
 
+# Real STOCK Act transaction-type values, as they actually appear across the
+# two feeds and the systems they derive from. Verified 2026-09-04 against the
+# House Ethics Committee's PTR instructions and the Senate Select Committee on
+# Ethics' PTR instructions, which define exactly three reportable transaction
+# kinds — purchase, sale, exchange — and the House PTR form's own short codes:
+#
+#   P            Purchase
+#   S            Sale (full)
+#   S (partial)  Partial sale (only part of a holding sold)
+#   E            Exchange (rare; e.g. share swap in a merger)
+#
+# Senate eFD and the House Clerk's own web export render the same three kinds
+# as full words, and the widely-mirrored House-Clerk-derived JSON schema both
+# our sources ultimately descend from uses the snake_case forms
+# ``purchase`` / ``sale_full`` / ``sale_partial`` / ``exchange``.
+#
+# This is an EXPLICIT allowlist on purpose. The previous implementation
+# prefix-matched full words only, so a row carrying the form's short code fell
+# through to "unknown" and was silently lost — for a feed whose entire point is
+# buy/sell direction, that is real data loss, not a cosmetic gap. It is
+# deliberately NOT a loose single-letter prefix test either: a bare
+# ``startswith("s")`` would wrongly read "Stock Split" or "Stock Dividend" as a
+# sale. Short codes match only as an exact whole token.
+_BUY_TYPES = frozenset({"p", "purchase", "purchased", "buy"})
+_SELL_TYPES = frozenset({
+    "s", "s (partial)", "s (full)", "s(partial)", "s(full)",
+    "sale", "sold", "sell",
+    "sale (full)", "sale (partial)", "sale_full", "sale_partial",
+    "sale full", "sale partial", "partial sale",
+})
+_EXCHANGE_TYPES = frozenset({"e", "exchange", "exchanged"})
+
+#: Distinct raw transaction-type values that matched nothing above. Populated
+#: (and warned about, once per distinct value) by `_direction` so a future
+#: unrecognized upstream format is VISIBLE rather than silently swallowed as
+#: "unknown". Tests clear this; production only ever reads it.
+_UNRECOGNIZED_TRANSACTION_TYPES: set[str] = set()
+_UNRECOGNIZED_LOCK = threading.Lock()
+
+
 def _direction(transaction_type: str) -> Literal["buy", "sell", "exchange", "unknown"]:
-    label = str(transaction_type or "").strip().lower()
+    """Map a raw STOCK Act transaction-type value to a trade direction.
+
+    Handles both the full-word forms and the House PTR form's short codes
+    (``P``/``S``/``S (partial)``/``E``). Anything that still matches nothing is
+    returned as "unknown" AND recorded/logged, never dropped quietly.
+    """
+    raw = str(transaction_type or "").strip()
+    # Collapse internal whitespace so "S  (partial)" and "S (Partial)" fold to
+    # the same key as the canonical form.
+    label = " ".join(raw.lower().split())
+    if not label:
+        return "unknown"
+    if label in _BUY_TYPES:
+        return "buy"
+    if label in _SELL_TYPES:
+        return "sell"
+    if label in _EXCHANGE_TYPES:
+        return "exchange"
+    # Full-word prefix fallback, preserved from the original implementation so
+    # trailing qualifiers we have not enumerated (e.g. "purchase (partial)")
+    # still resolve. Only ever applied to whole words, never to a short code.
     if label.startswith("purchase"):
         return "buy"
     if label.startswith("sale"):
         return "sell"
     if label.startswith("exchange"):
         return "exchange"
+    with _UNRECOGNIZED_LOCK:
+        first_time = raw not in _UNRECOGNIZED_TRANSACTION_TYPES
+        _UNRECOGNIZED_TRANSACTION_TYPES.add(raw)
+    if first_time:
+        logger.warning(
+            "congressional_trading: unrecognized transaction_type %r — row "
+            "kept with direction='unknown'. If this is a real STOCK Act "
+            "transaction code, add it to _BUY_TYPES/_SELL_TYPES/"
+            "_EXCHANGE_TYPES in src/data/congressional_trading.py.",
+            raw,
+        )
     return "unknown"
 
 
@@ -170,7 +241,13 @@ class CongressionalTradingProvider:
         request_timeout_s: float = 15.0,
         max_trades_per_source: int = 10_000,
         assumed_max_disclosure_lag_days: int = 45,
-        lookback_days: int = 30,
+        # 180, not 30 — see `SmartMoneyConfig.congress_lookback_days` in
+        # src/config.py for the full reasoning (45-day STOCK Act deadline,
+        # filing-at-the-deadline behaviour in practice, and a comparable free
+        # tool's documented 180-day default). Intentionally unrelated to
+        # `SECForm4Provider`'s much tighter window, which tracks Form 4's
+        # ~2-business-day deadline instead.
+        lookback_days: int = 180,
         min_transaction_value_usd: float = 100_000,
         external_min_transaction_value_usd: float = 250_000,
         cluster_window_days: int = 2,
