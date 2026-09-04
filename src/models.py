@@ -1305,13 +1305,16 @@ class SmartMoneyFinding(LLMOutputModel):
         }
         if streams == {"congressional"}:
             # Preserve the original conservative congressional contract.
+            # lag_days cap raised 30 -> 45: the STOCK Act's own legal filing
+            # deadline is 45 days after the transaction, so a lag of up to
+            # 45 days is a legally on-time disclosure, not a stale one.
             actors = {o.actor.strip().casefold() for o in self.observations}
             self.support_eligible = (
                 len(self.observations) >= 2
                 and len(actors) >= 2
                 and len(directional) == 1
                 and all(o.disclosure_age_days <= 7 for o in self.observations)
-                and all(o.lag_days <= 30 for o in self.observations)
+                and all(o.lag_days <= 45 for o in self.observations)
                 and all(o.freshness != "stale" for o in self.observations)
             )
             if not self.support_eligible:

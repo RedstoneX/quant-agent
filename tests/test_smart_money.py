@@ -22,7 +22,7 @@ def _congress(*, lag=40, age=0, actor="Example Member", direction="buy"):
         transaction_date=disclosed - timedelta(days=lag), disclosure_date=disclosed,
         source_url="https://example.test/filing", lag_days=lag,
         disclosure_age_days=age,
-        freshness="stale" if age > 30 or lag > 30 else "fresh",
+        freshness="stale" if age > 30 or lag > 45 else "fresh",
         economic_role="historical",
     )
 
@@ -116,6 +116,28 @@ def test_congressional_compatibility_remains_conservative():
         observations=[_congress(lag=2, actor="A"), _congress(lag=3, actor="B")],
     )
     assert cluster.support_eligible is True
+
+
+def test_congressional_eligibility_boundary_is_the_stock_act_45_day_deadline():
+    """45 days is the actual legal filing deadline (STOCK Act) -- a filer
+    right at the deadline is legally on-time, not stale evidence."""
+    on_time = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="confirmatory",
+        summary="cluster", why_now="two disclosures",
+        observations=[
+            _congress(lag=45, actor="A"), _congress(lag=45, actor="B"),
+        ],
+    )
+    assert on_time.support_eligible is True
+
+    late = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="confirmatory",
+        summary="cluster", why_now="two disclosures",
+        observations=[
+            _congress(lag=46, actor="A"), _congress(lag=46, actor="B"),
+        ],
+    )
+    assert late.support_eligible is False
 
 
 def test_exact_non_derivative_purchase_parse_preserves_sec_facts(tmp_path):
