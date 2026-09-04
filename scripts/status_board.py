@@ -449,28 +449,11 @@ class QueueItem:
         return "open"
 
 
-def load_funnel_queue(work_md: Path) -> tuple[list[QueueItem], str | None]:
-    """Parse the ranked funnel queue out of docs/WORK.md.
-
-    Returns `(items, problem)`. `problem` is a plain-English sentence when the
-    queue could not be read, and None when it could — the caller renders the
-    sentence instead of an empty list, so a shape change is visible rather
-    than silently looking like an empty backlog.
+def _parse_numbered_items(body: str) -> list[QueueItem]:
+    """Shared parser behind every `**N. Title — ...**` numbered section this
+    board reads. One shape, one parser, so a funnel-queue item and a PM-gate
+    item can never silently drift into two different conventions.
     """
-    if not work_md.exists():
-        return [], "The backlog file is missing, so the queue could not be read."
-    text = work_md.read_text()
-    if _QUEUE_HEADING not in text:
-        return [], (
-            "The backlog no longer has a section headed "
-            f"{_QUEUE_HEADING.lstrip('# ')!r}, so the queue could not be read."
-        )
-    body = text.split(_QUEUE_HEADING, 1)[1]
-    # The queue ends at the re-measure gate; anything after is other backlog.
-    for stop in ("### Re-measure gate", "\n## ", "\n### "):
-        if stop in body:
-            body = body.split(stop, 1)[0]
-
     items: list[QueueItem] = []
     for raw in body.splitlines():
         m = _QUEUE_ITEM_RE.match(raw.strip())
@@ -495,13 +478,79 @@ def load_funnel_queue(work_md: Path) -> tuple[list[QueueItem], str | None]:
         title = re.sub(r"\s*[.,]\s*(?=[.,])", "", title)
         title = re.sub(r"\s{2,}", " ", title).strip().rstrip(".,").strip("~ ").strip()
         items.append(QueueItem(rank, title, classification, share, pct, done))
+    return sorted(items, key=lambda i: i.rank)
 
+
+def load_funnel_queue(work_md: Path) -> tuple[list[QueueItem], str | None]:
+    """Parse the ranked funnel queue out of docs/WORK.md.
+
+    Returns `(items, problem)`. `problem` is a plain-English sentence when the
+    queue could not be read, and None when it could — the caller renders the
+    sentence instead of an empty list, so a shape change is visible rather
+    than silently looking like an empty backlog.
+    """
+    if not work_md.exists():
+        return [], "The backlog file is missing, so the queue could not be read."
+    text = work_md.read_text()
+    if _QUEUE_HEADING not in text:
+        return [], (
+            "The backlog no longer has a section headed "
+            f"{_QUEUE_HEADING.lstrip('# ')!r}, so the queue could not be read."
+        )
+    body = text.split(_QUEUE_HEADING, 1)[1]
+    # The queue ends at the re-measure gate; anything after is other backlog.
+    for stop in ("### Re-measure gate", "\n## ", "\n### "):
+        if stop in body:
+            body = body.split(stop, 1)[0]
+
+    items = _parse_numbered_items(body)
     if not items:
         return [], (
             "The queue heading is there but no numbered items could be read "
             "from it, so its shape has changed."
         )
-    return sorted(items, key=lambda i: i.rank), None
+    return items, None
+
+
+#: `## PM TEST GATE` — the owner's own framing, repeated over multiple
+#: sessions: the PM model-choice test cannot mean anything until everything
+#: feeding the PM is clean. This is a curated INDEX into work already
+#: recorded elsewhere in WORK.md (the data-quality audit, the PM-input
+#: architecture note) — it exists so the board can show these specific
+#: items as their own line items rather than them being buried in prose the
+#: board does not otherwise render at all.
+_PM_GATE_HEADING = "## PM TEST GATE"
+_PM_GATE_STOP = "<!-- END PM TEST GATE -->"
+
+
+def load_pm_gate(work_md: Path) -> tuple[list[QueueItem], str | None]:
+    """Parse the PM-test-readiness gate out of docs/WORK.md.
+
+    Same shape and same failure behaviour as `load_funnel_queue`: a missing
+    heading or an unparseable body is reported as a plain-English problem,
+    never rendered as a silent empty (and therefore falsely "nothing is
+    blocking this") section.
+    """
+    if not work_md.exists():
+        return [], "The backlog file is missing, so the gate could not be read."
+    text = work_md.read_text()
+    if _PM_GATE_HEADING not in text:
+        return [], (
+            "The backlog no longer has a section headed "
+            f"{_PM_GATE_HEADING.lstrip('# ')!r}, so the gate could not be read."
+        )
+    body = text.split(_PM_GATE_HEADING, 1)[1]
+    for stop in (_PM_GATE_STOP, "\n## ", "\n### "):
+        if stop in body:
+            body = body.split(stop, 1)[0]
+
+    items = _parse_numbered_items(body)
+    if not items:
+        return [], (
+            "The gate heading is there but no numbered items could be read "
+            "from it, so its shape has changed."
+        )
+    return items, None
 
 
 #: Words an item's own title uses to claim it is fully closed. Deliberately
@@ -991,6 +1040,11 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path) -> st
     body = body.replace("{{QUEUE}}", _render_queue(queue_items, queue_problem))
     body = body.replace("{{DECISIONS}}", _render_decisions(decisions))
     body = body.replace("{{QUEUE_OPEN}}", str(open_count))
+    pm_gate_items, pm_gate_problem = load_pm_gate(REPO_ROOT / "docs" / "WORK.md")
+    pm_gate_open = sum(1 for i in pm_gate_items if not i.done)
+    body = body.replace("{{PM_GATE}}", _render_queue(pm_gate_items, pm_gate_problem))
+    body = body.replace("{{PM_GATE_OPEN}}", str(pm_gate_open))
+    body = body.replace("{{PM_GATE_TOTAL}}", str(len(pm_gate_items)))
     body = body.replace("{{QUEUE_TOTAL}}", str(len(queue_items)))
     body = body.replace("{{ROWS}}", rows)
     body = body.replace("{{ALARM}}", alarm)

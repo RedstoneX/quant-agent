@@ -84,6 +84,24 @@ revisit at his discretion, no due date. Item 17(b) (failed-alert retry) is
 already shipped regardless — this is only about a channel to fall back to
 if Telegram itself goes down, still a real gap, just not an urgent one.
 
+## PM TEST GATE — GARBAGE IN, GARBAGE OUT
+
+**Owner's framing: the PM model test means nothing until everything feeding
+the PM is clean.** Blocks the "which model runs the PM seat" decision above.
+Index into the audit below, for the board — struck-through = cleared.
+
+**~~1. Earnings seat data quality — FIXED.~~**
+**~~2. Smart money seat data quality — FIXED.~~**
+**~~3. Tech analyst seat data quality — FIXED.~~**
+**4. News analyst seat data quality — PARTIALLY FIXED, one gap open.**
+**~~5. Evening analyst seat data quality — FIXED.~~**
+**6. Macro analyst seat data quality — OPEN, owner risk-threshold call needed.**
+**7. PM-input shape/volume redesign (bounded recommendation, not raw reasoning) — NOT STARTED.**
+
+Detail below, under "DATA QUALITY AUDIT" and "PM-INPUT ARCHITECTURE".
+
+<!-- END PM TEST GATE -->
+
 **DATA QUALITY AUDIT — 2026-09-02, owner priority: this pillar (garbage in,
 garbage out) must work before anything else.**
 

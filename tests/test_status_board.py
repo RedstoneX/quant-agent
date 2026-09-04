@@ -1031,7 +1031,7 @@ def test_nothing_waiting_says_so_rather_than_showing_a_blank(tmp_path):
 # ---------------------------------------------------------------------------
 # an item cannot be allowed to disagree with its own title
 #
-# Eleven real items said FIXED/DONE/MERGED in their own title while the board
+# Three real items said FIXED/MERGED in their own title while the board
 # still showed them as open, because striking a title through (the mechanism
 # that already existed) was a remembered step, never an enforced one. This
 # pins the check that replaces the memory with a build failure.
@@ -1099,3 +1099,75 @@ def test_a_missing_backlog_or_heading_flags_nothing(tmp_path):
     p = tmp_path / "WORK.md"
     p.write_text("# Work\n\nno funnel queue heading here\n")
     assert sb.find_closed_items_not_marked_done(p) == []
+
+
+# ---------------------------------------------------------------------------
+# the PM test gate: "garbage in, garbage out" as its own board section
+#
+# The owner's own repeated framing: the PM model-choice test cannot mean
+# anything until everything feeding the PM is clean. That framing lived only
+# as prose scattered across the data-quality audit and the PM-input-
+# architecture note in docs/WORK.md — neither of which the board renders at
+# all. This is a curated index into that same material, in the one shape
+# (`**N. Title — status.**`) the board already knows how to render, so the
+# owner can find "what's blocking the PM test" as its own line items instead
+# of hunting through paragraphs.
+# ---------------------------------------------------------------------------
+
+def test_the_real_pm_gate_parses_and_has_at_least_one_open_item():
+    """The shipped docs/WORK.md must actually yield the gate. Not a
+    synthetic fixture — the real file, same reasoning as the funnel-queue
+    equivalent: the thing that breaks is the real file being edited into a
+    shape the parser no longer recognises."""
+    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    items, problem = sb.load_pm_gate(work)
+    assert problem is None, problem
+    assert len(items) >= 5, f"only {len(items)} PM-gate items parsed"
+    open_items = [i for i in items if not i.done]
+    assert open_items, "the gate reports nothing open — that would mean the PM test is unblocked"
+
+
+def test_a_renamed_pm_gate_heading_says_so_instead_of_rendering_empty(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text("# Work\n\n## Some Other Heading\n\n**1. A thing — FIXED.**\n")
+    items, problem = sb.load_pm_gate(p)
+    assert items == []
+    assert problem and "could not be read" in problem
+
+
+def test_a_missing_backlog_file_says_so_for_the_pm_gate(tmp_path):
+    items, problem = sb.load_pm_gate(tmp_path / "nope.md")
+    assert items == []
+    assert problem and "missing" in problem
+
+
+def test_pm_gate_stops_at_its_own_end_marker_not_the_rest_of_the_file(tmp_path):
+    """Without an explicit stop marker, the gate would swallow every heading-
+    free paragraph after it — including unrelated backlog content that just
+    happens to share the same `##`-free run of text."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## PM TEST GATE\n\n"
+        "**1. Seat one — FIXED.**\n"
+        "**2. Seat two — OPEN.**\n\n"
+        "<!-- END PM TEST GATE -->\n\n"
+        "**3. Unrelated later item — FIXED.**\n"
+    )
+    items, problem = sb.load_pm_gate(p)
+    assert problem is None
+    assert [i.rank for i in items] == [1, 2]
+
+
+def test_pm_gate_items_do_not_leak_into_the_funnel_queue_or_vice_versa(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## PM TEST GATE\n\n"
+        "**1. Gate item — OPEN.**\n\n"
+        "<!-- END PM TEST GATE -->\n\n"
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. Queue item — DEFECT.**\n"
+    )
+    gate_items, _ = sb.load_pm_gate(p)
+    queue_items, _ = sb.load_funnel_queue(p)
+    assert [i.title for i in gate_items] == ["Gate item"]
+    assert [i.title for i in queue_items] == ["Queue item"]
