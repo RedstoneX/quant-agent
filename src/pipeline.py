@@ -7971,6 +7971,13 @@ class TradingPipeline:
                 # regardless — this is forward-compatible plumbing, not a
                 # behaviour change on today's long-only book.
                 qty=position.qty,
+                # Fix #3 (2026-09-04 audit): the ENTRY stop, never the live
+                # one -- buy.stop_loss is written once at BUY and never
+                # mutated by a later TRAIL_STOP (that writes a separate
+                # trade row), so it stays the true initial risk for the
+                # life of the position. Powers the Type A +1R breakeven
+                # ratchet.
+                initial_stop=(buy or {}).get("stop_loss"),
             )
             if proposal is None:
                 continue
@@ -8164,6 +8171,7 @@ class TradingPipeline:
         already_trimmed_today: set[str] | None = None,
         metric_deltas: dict | None = None,
         risk_vetoed_symbols: set[str] | None = None,
+        position_facts: dict | None = None,
     ) -> list[dict]:
         """Dispatch LLM-recommended SELL / REDUCE / TRAIL_STOP / COVER actions
         to broker.
@@ -8316,25 +8324,45 @@ class TradingPipeline:
                 # convention as _submit_protected_sell's `side` param.
                 close_side = "buy" if act == "COVER" else "sell"
                 if held_now is not None and not cites_external_information(reason_for_band):
+                    from src.risk.exit_guard import noise_band_atr
+
                     atr = self._atr_for_symbol(symbol)
+                    # Phase 3.6 audit follow-up (2026-09-04, fix #1): the band
+                    # widens with sqrt(sessions_held) — same convention as
+                    # levels.py's target projection — instead of a flat 1.0x
+                    # ATR regardless of how long the position has aged. See
+                    # `exit_guard.noise_band_atr` for the rationale.
+                    #
+                    # 2026-09-04 audit follow-up (fix, second pass): this MUST
+                    # be `sessions_held` (weekend-aware trading-session count,
+                    # `trading_calendar.trading_sessions_held`), NOT the plain
+                    # calendar-day `days_held` — levels.py's own precedent
+                    # scales by sqrt(TRADING sessions), and a calendar-day
+                    # count silently over-widens the band by sqrt(3/1) after
+                    # every weekend (Friday entry reviewed Monday shows 3
+                    # calendar days but only 1 real session of price action).
+                    sessions_held_for_band = (position_facts or {}).get(symbol, {}).get("sessions_held")
                     if adverse_move_is_noise(
                         held_now.avg_entry, held_now.current_price, atr,
-                        side=close_side,
+                        side=close_side, days_held=sessions_held_for_band,
                     ):
                         adverse_move = (
                             held_now.current_price - held_now.avg_entry
                             if close_side == "buy"
                             else held_now.avg_entry - held_now.current_price
                         )
+                        band_multiple = noise_band_atr(sessions_held_for_band)
                         logger.warning(
                             "Position reviewer: blocking %s %s — adverse "
                             "$%.2f move from entry $%.2f, which is inside the "
-                            "1.0xATR noise band (ATR14 $%.2f). A price-derived "
-                            "failure this small has not distinguished itself "
-                            "from one day's normal range. External-information "
-                            "triggers bypass this. Reason: %r",
+                            "%.2fxATR noise band (ATR14 $%.2f, sessions_held=%s). "
+                            "A price-derived failure this small has not "
+                            "distinguished itself from this position's normal "
+                            "range so far. External-information triggers "
+                            "bypass this. Reason: %r",
                             act, symbol, adverse_move,
-                            held_now.avg_entry, atr or 0.0,
+                            held_now.avg_entry, band_multiple, atr or 0.0,
+                            sessions_held_for_band,
                             reason_for_band[:160],
                         )
                         try:
@@ -9654,18 +9682,27 @@ class TradingPipeline:
                 stop_loss = float(live_stop)
 
             # days_held — from BUY timestamp; fall back to None.
+            #
+            # sessions_held is the weekend-aware companion count (Mon-Fri
+            # only, see `trading_calendar.trading_sessions_held`) — the
+            # noise-band scaling below needs TRADING SESSIONS, not calendar
+            # days, per the 2026-09-04 audit follow-up.
             days_held = None
+            sessions_held = None
             buy_ts = (buy or {}).get("timestamp")
             if buy_ts:
                 try:
-                    from src.trading_calendar import to_et
+                    from src.trading_calendar import to_et, trading_sessions_held
                     from datetime import datetime as _dt
                     dt = _dt.fromisoformat(buy_ts.replace("Z", "+00:00")) if "T" in buy_ts \
                         else _dt.strptime(buy_ts, "%Y-%m-%d %H:%M:%S")
-                    days_held = (et_today() - to_et(dt).date()).days
+                    entry_date = to_et(dt).date()
+                    days_held = (et_today() - entry_date).days
                     days_held = max(0, days_held)
+                    sessions_held = trading_sessions_held(entry_date, et_today())
                 except Exception:
                     days_held = None
+                    sessions_held = None
 
             # Phase 3.1 — the thesis horizon and setup type PINNED AT ENTRY.
             # Read from the BUY row, never recomputed. NULL for positions
@@ -9774,6 +9811,7 @@ class TradingPipeline:
 
             facts[sym] = {
                 "days_held": days_held,
+                "sessions_held": sessions_held,
                 "expected_horizon_sessions": pinned_horizon,
                 "setup_type": setup_type,
                 "pace_status": pace_status,
@@ -10387,6 +10425,7 @@ class TradingPipeline:
                     already_trimmed_today=already_trimmed_today,
                     metric_deltas=metric_deltas,
                     risk_vetoed_symbols=risk_vetoed,
+                    position_facts=position_facts,
                 ))
 
             # Snapshot AFTER the review so the next session compares against

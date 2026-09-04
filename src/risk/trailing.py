@@ -13,11 +13,30 @@ The rule depends on how the position is MANAGED, which the Technical Analyst
 decides at entry and which is pinned to the trade row alongside the horizon:
 
 **Type A — `range`.** There is structure on both sides and the target is a
-level someone is defending. Do not trail at all until price EXCEEDS that
-target; the stop stays where it was placed at entry. Trailing a range trade
-early is how a position gets stopped out inside the very range it was bought
-to traverse. (Short mirror: the target is a level BELOW the short, and the
-stop does not move until price falls PAST it.)
+level someone is defending. Do not trail STRUCTURALLY until price EXCEEDS
+that target; the stop stays where it was placed at entry until then, so a
+position gets stopped out inside the very range it was bought to traverse
+if it trails on every wiggle. (Short mirror: the target is a level BELOW
+the short, and the stop does not move until price falls PAST it.)
+
+2026-09-04 audit fix #3: "no trailing until the target is exceeded" used to
+mean a Type A trade got ZERO profit protection for its entire life until it
+had captured 100% of the planned move — the single largest un-backtested,
+asymmetric-downside rule found in the exit-management audit, and Type A is
+this desk's most common setup by real observed frequency. A trade could
+travel 90%+ of the way to its target and give back all of it with nothing
+in place. Standard, widely cited practice (Van Tharp's R-multiple framework;
+Elder's "Triple Screen"; the same R-multiple convention this codebase's own
+docs already use elsewhere) is to move the stop to breakeven once a trade
+has banked a defensible fraction of its planned risk — commonly +1R (one
+initial-risk-unit of profit). `compute_trailing_stop` now does exactly that
+for Type A specifically, ADDITIVE to the existing "no structural trail below
+target" rule above, which is unchanged: once price reaches entry +/- 1R (see
+`RANGE_BREAKEVEN_R_MULTIPLE`), the stop ratchets to breakeven if it hasn't
+already reached breakeven or better; once price then goes on to exceed the
+full target, the pre-existing structural/chandelier trail below takes back
+over exactly as before. Type B's trail-from-entry behaviour is untouched —
+it already rides the position from day one and has no equivalent gap.
 
 **Type B — `breakout`.** There is no overhead structure and the target is a
 measured-move reference, not a level. Progress and pace are meaningless here
@@ -62,6 +81,7 @@ __all__ = [
     "CHANDELIER_ATR_MULTIPLE",
     "NOISE_BAND_ATR_MULTIPLE",
     "PIVOT_WINDOW",
+    "RANGE_BREAKEVEN_R_MULTIPLE",
 ]
 
 #: A proposed stop must sit at least this far above the live stop. Mirrors the
@@ -81,6 +101,16 @@ NOISE_BAND_ATR_MULTIPLE = 1.25
 #: Bars either side of a candidate swing low. Matches `src/data/levels.py`'s
 #: pivot detection so "a higher low" means the same thing in both places.
 PIVOT_WINDOW = 3
+
+#: How many initial-risk-units (R) of profit a Type A / range trade must
+#: bank before its stop ratchets to breakeven. 1.0 is the standard,
+#: widely-cited default (Van Tharp's R-multiple framework; Elder's Triple
+#: Screen) — not a backtested or desk-specific tuning, a conventional
+#: starting point for "this trade has proven itself enough to stop risking
+#: the full original bet." R itself is `abs(entry - initial_stop)`, i.e. the
+#: risk actually taken at entry, never the (possibly already-ratcheted)
+#: live stop.
+RANGE_BREAKEVEN_R_MULTIPLE = 1.0
 
 
 def _finite(value: object) -> float | None:
@@ -153,6 +183,63 @@ def _swing_highs(bars, window: int = PIVOT_WINDOW) -> list[float]:
     return highs
 
 
+def _range_breakeven_ratchet(
+    *, symbol: str, ent: float, cur: float, stop: float,
+    initial_stop: float | None, is_short: bool, setup_type: str | None,
+) -> TrailProposal | None:
+    """Type A's +1R breakeven ratchet — see the module docstring's 2026-09-04
+    fix #3 note.
+
+    Fails closed: with no `initial_stop` (the ENTRY stop, never the live one
+    a prior trail may have already moved), R cannot be measured, so this
+    proposes nothing rather than guessing at the risk that was taken.
+    Deliberately skips the ordinary `min_ratchet_pct` / noise-band invariants
+    below — this move is not a structural ratchet being tuned to avoid
+    churn, it is a one-time, always-worthwhile transition from "full initial
+    risk" to "no risk", regardless of how small the percentage move to
+    breakeven happens to be.
+    """
+    init_stop = _finite(initial_stop) if initial_stop is not None else None
+    if init_stop is None or init_stop <= 0:
+        return None
+    risk = abs(ent - init_stop)
+    if risk <= 0:
+        return None
+
+    if is_short:
+        trigger = ent - RANGE_BREAKEVEN_R_MULTIPLE * risk
+        reached_1r = cur <= trigger
+        already_protected = stop <= ent  # breakeven or better already
+    else:
+        trigger = ent + RANGE_BREAKEVEN_R_MULTIPLE * risk
+        reached_1r = cur >= trigger
+        already_protected = stop >= ent
+
+    if not reached_1r or already_protected:
+        return None
+
+    candidate = round(ent, 2)
+    if is_short:
+        if not (cur < candidate < stop):
+            return None
+    else:
+        if not (stop < candidate < cur):
+            return None
+
+    return TrailProposal(
+        symbol=symbol.upper(), new_stop=candidate, previous_stop=stop,
+        source="breakeven_ratchet",
+        reason=(
+            f"deterministic trail (breakeven_ratchet): {setup_type or 'unknown'} "
+            f"setup reached +{RANGE_BREAKEVEN_R_MULTIPLE:.0f}R (price ${cur:.2f}, "
+            f"entry ${ent:.2f}, initial risk ${risk:.2f}); stop ${stop:.2f} -> "
+            f"${candidate:.2f} (breakeven) per standard R-multiple practice "
+            f"(Van Tharp / Elder) rather than staying fully unprotected until "
+            f"the whole target is hit"
+        ),
+    )
+
+
 def compute_trailing_stop(
     *,
     symbol: str,
@@ -165,6 +252,7 @@ def compute_trailing_stop(
     atr: float | None = None,
     min_ratchet_pct: float = MIN_RATCHET_PCT,
     qty: float = 1.0,
+    initial_stop: float | None = None,
 ) -> TrailProposal | None:
     """Propose a tightened stop, or None when no move is warranted.
 
@@ -177,6 +265,12 @@ def compute_trailing_stop(
     price. A long's stop lives BELOW price and ratchets UP toward it as the
     trade works; a short's stop lives ABOVE price and ratchets DOWN toward it.
     Defaults to +1.0 so every existing (long-only) call site is unchanged.
+
+    `initial_stop` is the stop AT ENTRY (before any trail ever moved it) —
+    used only by the Type A breakeven ratchet (fix #3, see module docstring)
+    to measure the risk actually taken. Optional and additive: omitting it
+    (every pre-fix call site, until updated) simply means that ratchet never
+    fires, reproducing the exact old behaviour.
     """
     ent = _finite(entry)
     cur = _finite(current_price)
@@ -193,19 +287,26 @@ def compute_trailing_stop(
 
     is_short = (_finite(qty) or 1.0) < 0
 
-    # --- Type A: no trailing until the target is actually exceeded ---------
+    # --- Type A: no STRUCTURAL trailing until the target is exceeded -------
     if setup_type != "breakout":
         target = _finite(reference_target) if reference_target is not None else None
-        if target is None:
-            return None
-        if is_short:
+        exceeded = False
+        if target is not None:
             # Short mirror: the target is a level BELOW entry someone is
-            # defending. Hold the entry stop until price falls PAST it.
-            if cur >= target:
-                return None
-        else:
-            if cur <= target:
-                return None
+            # defending. "Exceeded" means price fell PAST it.
+            exceeded = (cur < target) if is_short else (cur > target)
+        if not exceeded:
+            # Fix #3: not yet past the target, so no STRUCTURAL trail — but
+            # the +1R breakeven ratchet still applies here, which is exactly
+            # the gap this fix closes (previously: fully unprotected until
+            # 100% of target, target-missing data included).
+            return _range_breakeven_ratchet(
+                symbol=symbol, ent=ent, cur=cur, stop=stop,
+                initial_stop=initial_stop, is_short=is_short,
+                setup_type=setup_type,
+            )
+        # Target exceeded: fall through to the structural/chandelier trail
+        # below exactly as before fix #3 — unchanged.
 
     # --- Candidate: structure first ---------------------------------------
     candidate: float | None = None

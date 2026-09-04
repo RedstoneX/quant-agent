@@ -12,6 +12,7 @@ import pytest
 from src.risk.trailing import (
     CHANDELIER_ATR_MULTIPLE,
     MIN_RATCHET_PCT,
+    RANGE_BREAKEVEN_R_MULTIPLE,
     compute_trailing_stop,
 )
 
@@ -66,13 +67,139 @@ def test_range_setup_trails_once_the_target_is_exceeded():
 
 
 def test_range_setup_with_no_target_never_trails():
-    """No target means no defined point at which trailing begins. Silence is
-    the correct answer, not a guess."""
+    """No target means no defined point at which STRUCTURAL trailing begins.
+    Silence is the correct answer, not a guess. (No `initial_stop` is passed
+    here either, so the +1R breakeven ratchet below also has nothing to
+    measure risk from — see `test_range_setup_with_no_target_still_gets_the_
+    breakeven_ratchet` for the case where it does.)"""
     assert compute_trailing_stop(
         symbol="AAA", setup_type="range", entry=100.0, current_price=125.0,
         current_stop=95.0, reference_target=None,
         bars=_rising_with_higher_lows(), atr=2.0,
     ) is None
+
+
+# ---------------------------------------------------------------------------
+# Type A (range) +1R breakeven ratchet — 2026-09-04 audit fix #3.
+#
+# Standard practice (Van Tharp's R-multiple framework; Elder's Triple
+# Screen): move the stop to breakeven once a trade has banked +1R, instead
+# of leaving it fully exposed to the original risk until 100% of a possibly
+# much larger target is hit. Additive to the target-exceeded structural
+# trail above, which is unchanged.
+# ---------------------------------------------------------------------------
+
+def test_range_setup_reaches_breakeven_at_plus_1r():
+    """Entry 100, initial stop 90 -> R = 10. +1R = price 110. Below target
+    (130), so the OLD code proposed nothing at all here; the new code moves
+    the stop to breakeven (100)."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=90.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=90.0,
+    )
+    assert proposal is not None
+    assert proposal.new_stop == 100.0
+    assert proposal.source == "breakeven_ratchet"
+
+
+def test_range_setup_below_1r_still_gets_no_protection():
+    """Same trade, price only at 105 (0.5R) — not yet earned breakeven."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=105.0,
+        current_stop=90.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=90.0,
+    ) is None
+
+
+def test_range_setup_does_not_re_propose_breakeven_once_already_there():
+    """Once the stop is already at or beyond breakeven, no repeat order."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=115.0,
+        current_stop=100.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=90.0,
+    ) is None
+
+
+def test_range_setup_retrace_after_1r_no_longer_gives_back_the_full_risk():
+    """The audit's concrete failure mode: a range trade reaches +1R, then
+    retraces hard. Under the OLD logic (no protection below target) it would
+    ride all the way back down to the original stop, giving back the full
+    initial risk (100 -> 90) for zero net gain. Under the fix, +1R already
+    ratcheted the stop to breakeven, so the SAME retrace only gives back the
+    gain, never the original risk."""
+    initial_stop = 90.0
+    # Step 1: price reaches +1R (110) -> stop ratchets to breakeven.
+    first = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=initial_stop, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=initial_stop,
+    )
+    assert first is not None and first.new_stop == 100.0
+    live_stop = first.new_stop
+
+    # Step 2: price retraces hard, back toward the original stop.
+    second = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=91.0,
+        current_stop=live_stop, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=initial_stop,
+    )
+    assert second is None  # no further ratchet proposed on the way down
+    # The live stop is what the broker actually holds; it stayed at
+    # breakeven rather than reverting to the original risk level.
+    assert live_stop == 100.0 > initial_stop
+
+
+def test_range_setup_short_mirror_reaches_breakeven_at_plus_1r():
+    """Short mirror: entry 100, initial stop 110 -> R = 10, +1R at price 90."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=90.0,
+        current_stop=110.0, reference_target=70.0,
+        bars=[], atr=2.0, initial_stop=110.0, qty=-10,
+    )
+    assert proposal is not None
+    assert proposal.new_stop == 100.0
+    assert proposal.source == "breakeven_ratchet"
+
+
+def test_range_setup_with_no_initial_stop_gets_no_breakeven_ratchet():
+    """Backward compatibility: omitting `initial_stop` (every pre-fix call
+    site until updated) means R cannot be measured, so nothing is proposed —
+    fails closed, exactly the old behaviour, never a guessed risk."""
+    assert compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=90.0, reference_target=130.0,
+        bars=[], atr=2.0,
+    ) is None
+
+
+def test_range_setup_with_no_target_still_gets_the_breakeven_ratchet():
+    """The breakeven ratchet does not require a target at all — only entry,
+    stop and current price — so a range trade with no recorded target still
+    gets SOME protection at +1R instead of the old blanket 'no target -> no
+    trailing ever' answer."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=90.0, reference_target=None,
+        bars=[], atr=2.0, initial_stop=90.0,
+    )
+    assert proposal is not None
+    assert proposal.new_stop == 100.0
+    assert proposal.source == "breakeven_ratchet"
+
+
+def test_breakeven_ratchet_uses_the_initial_stop_not_the_live_one():
+    """R must be measured from the risk actually taken at entry. If the live
+    stop had already been ratcheted elsewhere (here: further out, at 80, as
+    if a previous move had gone the wrong way), the breakeven trigger still
+    uses the original 90 -> R = 10, not the live 20."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="range", entry=100.0, current_price=110.0,
+        current_stop=80.0, reference_target=130.0,
+        bars=[], atr=2.0, initial_stop=90.0,
+    )
+    assert proposal is not None
+    assert proposal.new_stop == 100.0
 
 
 # ---------------------------------------------------------------------------

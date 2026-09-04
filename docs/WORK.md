@@ -1017,9 +1017,13 @@ real exits this month were the broker's stop firing, not a judgment call.
 Ranking ties broke alphabetically on most real days — an undisclosed bias
 toward early-alphabet tickers. "Range" trades never protected gains until
 price fully reached target. **Fixed 2026-09-04, PR #256** — exit buffer
-now scales with holding time (√days, matching the target model), ties
-break on real reward:risk quality, range trades get a standard +1R
-breakeven ratchet. All three pending review, not pending a decision.
+now scales with real trading sessions held (√sessions, matching the
+target model; a same-day review caught the first version of this fix
+using calendar days instead, over-widening the band across every
+weekend — corrected before merge, residual gap: still counts a market
+holiday as a session), ties break on real reward:risk quality, range
+trades get a standard +1R breakeven ratchet. All three pending review,
+not pending a decision.
 
 **35. A stop-widening was observed in pre-clean-slate trade history (Visa, Aug 2026) — DEFERRED, not investigated further for now.**
 
