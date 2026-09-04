@@ -8164,6 +8164,7 @@ class TradingPipeline:
         already_trimmed_today: set[str] | None = None,
         metric_deltas: dict | None = None,
         risk_vetoed_symbols: set[str] | None = None,
+        position_facts: dict | None = None,
     ) -> list[dict]:
         """Dispatch LLM-recommended SELL / REDUCE / TRAIL_STOP / COVER actions
         to broker.
@@ -8316,25 +8317,36 @@ class TradingPipeline:
                 # convention as _submit_protected_sell's `side` param.
                 close_side = "buy" if act == "COVER" else "sell"
                 if held_now is not None and not cites_external_information(reason_for_band):
+                    from src.risk.exit_guard import noise_band_atr
+
                     atr = self._atr_for_symbol(symbol)
+                    # Phase 3.6 audit follow-up (2026-09-04, fix #1): the band
+                    # widens with sqrt(days_held) — same convention as
+                    # levels.py's target projection — instead of a flat 1.0x
+                    # ATR regardless of how long the position has aged. See
+                    # `exit_guard.noise_band_atr` for the rationale.
+                    days_held_for_band = (position_facts or {}).get(symbol, {}).get("days_held")
                     if adverse_move_is_noise(
                         held_now.avg_entry, held_now.current_price, atr,
-                        side=close_side,
+                        side=close_side, days_held=days_held_for_band,
                     ):
                         adverse_move = (
                             held_now.current_price - held_now.avg_entry
                             if close_side == "buy"
                             else held_now.avg_entry - held_now.current_price
                         )
+                        band_multiple = noise_band_atr(days_held_for_band)
                         logger.warning(
                             "Position reviewer: blocking %s %s — adverse "
                             "$%.2f move from entry $%.2f, which is inside the "
-                            "1.0xATR noise band (ATR14 $%.2f). A price-derived "
-                            "failure this small has not distinguished itself "
-                            "from one day's normal range. External-information "
-                            "triggers bypass this. Reason: %r",
+                            "%.2fxATR noise band (ATR14 $%.2f, days_held=%s). "
+                            "A price-derived failure this small has not "
+                            "distinguished itself from this position's normal "
+                            "range so far. External-information triggers "
+                            "bypass this. Reason: %r",
                             act, symbol, adverse_move,
-                            held_now.avg_entry, atr or 0.0,
+                            held_now.avg_entry, band_multiple, atr or 0.0,
+                            days_held_for_band,
                             reason_for_band[:160],
                         )
                         try:
@@ -10387,6 +10399,7 @@ class TradingPipeline:
                     already_trimmed_today=already_trimmed_today,
                     metric_deltas=metric_deltas,
                     risk_vetoed_symbols=risk_vetoed,
+                    position_facts=position_facts,
                 ))
 
             # Snapshot AFTER the review so the next session compares against
