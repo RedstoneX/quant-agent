@@ -2631,6 +2631,33 @@ class DecisionStage:
         trading_config = getattr(pipeline.config, "trading", None)
         configured_universe = getattr(trading_config, "universe", []) or []
 
+        # 2026-09-04 fix (audit finding): the PM's own eligibility gate
+        # (`candidate_eligibility` / `_apply_subfloor_catalyst_rule`) used
+        # to read `TechAnalysisResult.risk_reward` — real arithmetic, but
+        # over the analyst's own GUESSED target, never checked against
+        # structure. `construct_orders` below has computed the REAL
+        # derived-target, noise-floor-widened reward:risk since 2026-09-01
+        # (§12.1); this gate never got it. Measured on a real day, the two
+        # gates passed DISJOINT eligible sets. Computed here, before the PM
+        # decides, using the same `PortfolioConstructor` instance
+        # `construct_orders` uses below — same config, same derivation, no
+        # second copy of the logic. Necessarily a PREVIEW, not the final
+        # number: entry is the analyst's snapshot, not the live price, and
+        # the stop is the analyst's own, not yet a PM-suggested one — both
+        # are only known at construction time. See
+        # `PortfolioConstructor.real_reward_risk_preview`.
+        _regime_for_preview = _macro_regime(macro_analysis)
+        real_reward_risk_by_symbol: dict[str, float | None] = {}
+        for _a in analyses:
+            _direction = (
+                "short" if _a.rating in ("sell", "strong_sell") else "long"
+            )
+            real_reward_risk_by_symbol[_a.symbol.upper()] = (
+                pipeline.portfolio_constructor.real_reward_risk_preview(
+                    _a, _direction, regime=_regime_for_preview,
+                )
+            )
+
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             analyses=analyses,
             positions=positions,
@@ -2678,6 +2705,7 @@ class DecisionStage:
                 pipeline.config.risk, "min_position_risk_pct",
                 STARTER_POSITION_RISK_PCT,
             )),
+            real_reward_risk_by_symbol=real_reward_risk_by_symbol,
         )
 
         if portfolio_decision and portfolio_decision.reasoning_chain:

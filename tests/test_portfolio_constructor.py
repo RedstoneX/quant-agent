@@ -701,3 +701,99 @@ def test_hold_and_no_condition_leave_the_field_none():
     assert len(decisions) == 1
     assert decisions[0].action == "HOLD"
     assert decisions[0].thesis_invalid_if is None
+
+
+# --------------------------------------------------------------------------
+# `real_reward_risk_preview` — 2026-09-04 fix (audit finding).
+#
+# The PM's own eligibility gate used to read `TechAnalysisResult.
+# risk_reward`, real arithmetic but over the analyst's own GUESSED target,
+# never checked against structure. This method gives that earlier gate the
+# SAME derived-target, noise-floor-widened number `construct_orders` gates
+# on, by calling the same `_derive_target` / `_widen_stop_past_noise`
+# rather than a second copy of the logic. These tests hand-verify the
+# arithmetic on the same entry/stop/ATR fixture shape `_analysis` above
+# uses, with `computed_levels` chosen to land exactly on a directly
+# reachable structural level — no measured-move sqrt term to hand-check.
+# --------------------------------------------------------------------------
+
+def _structured_analysis(
+    symbol: str, *, entry: float, stop: float, model_target: float,
+    computed_levels: list[float], rating: str = "buy",
+    horizon: int = 60,
+) -> TechAnalysisResult:
+    """Same ATR convention as `_analysis`: `(entry - stop) / 3.5` sits the
+    unwidened stop just outside the noise band (§12.1's `OUTSIDE_BAND`
+    path), so the stop the preview measures against is `stop`, unchanged.
+    `model_target` never affects the derivation — see `derive_structural_
+    target` — it only sets `TechAnalysisResult.risk_reward`, the self-
+    reported figure this fix stops trusting.
+    """
+    is_short = rating in ("sell", "strong_sell")
+    return TechAnalysisResult(
+        symbol=symbol, rating=rating, conviction="medium", entry_price=entry,
+        stop_loss=stop, reference_target=model_target,
+        support_levels=[stop], resistance_levels=[model_target],
+        computed_levels=computed_levels,
+        atr_14=abs(entry - stop) / 3.5,
+        setup_type="range", expected_horizon_sessions=horizon,
+        reasoning="test", reasoning_chain=_tech_rc(),
+    )
+
+
+def test_real_preview_excludes_a_candidate_the_model_overstates():
+    """Model claims R/R 10.0 (target $150 off a $5 stop). The nearest REAL
+    structural level above entry is $103 — reward $3 / risk $5 = 0.60,
+    under the 1.5 floor. The self-reported number would have passed the
+    OLD gate; the real one must not."""
+    analysis = _structured_analysis(
+        "NVDA", entry=100.0, stop=95.0, model_target=150.0,
+        computed_levels=[95.0, 103.0],
+    )
+    assert analysis.risk_reward == 10.0  # the self-reported figure — overstated
+    constructor = PortfolioConstructor()
+    real_rr = constructor.real_reward_risk_preview(analysis, "long")
+    assert real_rr is None  # unmeasurable-or-under-floor, same contract as _widen_stop_past_noise
+
+
+def test_real_preview_includes_a_candidate_the_model_understates():
+    """Model claims R/R 0.8 (target $104 off a $5 stop) — sub-floor.
+    The nearest REAL structural level above entry is $108, directly
+    reachable — reward $8 / risk $5 = 1.60, clearing the 1.5 floor. The
+    self-reported number would have pruned this at the OLD gate; the real
+    one must keep it."""
+    analysis = _structured_analysis(
+        "GEV", entry=100.0, stop=95.0, model_target=104.0,
+        computed_levels=[95.0, 108.0],
+    )
+    assert analysis.risk_reward == 0.8  # the self-reported figure — understated
+    constructor = PortfolioConstructor()
+    real_rr = constructor.real_reward_risk_preview(analysis, "long")
+    assert real_rr == 1.6
+
+
+def test_real_preview_mirrors_the_shorts_construction_would_take():
+    """Direction-aware, same as every other §12.1 rule: a short's nearest
+    real level is BELOW entry. Entry $100 / stop $105 (risk $5) / nearest
+    computed level $92 (reward $8) — R/R 1.60, clears the floor — while the
+    model's own guessed target of $99 would self-report as sub-floor
+    (R/R 0.2)."""
+    analysis = _structured_analysis(
+        "TSLA", entry=100.0, stop=105.0, model_target=99.0,
+        computed_levels=[105.0, 92.0], rating="sell",
+    )
+    assert analysis.risk_reward == 0.2
+    constructor = PortfolioConstructor()
+    real_rr = constructor.real_reward_risk_preview(analysis, "short")
+    assert real_rr == 1.6
+
+
+def test_real_preview_is_none_with_no_computed_structure():
+    """A fixture with no `computed_levels` (e.g. a pre-§12.1 recording, or
+    a name with too little price history to compute structure) refuses —
+    same fail-closed contract as `derive_structural_target` itself, never
+    silently permitted through."""
+    analysis = _analysis("NVDA", entry=100, stop=95, target=150)
+    analysis.computed_levels = []
+    constructor = PortfolioConstructor()
+    assert constructor.real_reward_risk_preview(analysis, "long") is None

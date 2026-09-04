@@ -1154,12 +1154,8 @@ same read, applied one layer earlier). Full detail on all six:
 `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction
 audit".
 
-**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — FIXED 2026-09-04.**
-
-Removed config_overrides referencing deleted `reservation_min_history_samples` and
-`session_reserved_exposure_limit_usd` keys (deleted by item 14's cost-circuit rewrite);
-deleted the second test that tried to force pre-fix behavior (impossible with new config shape);
-updated first test's docstring to explain the architectural change. PR #[n] test counts before/after.
+**28. `test_rehearsal_reproduces_cost_ceiling.py` was broken on main — FIXED
+2026-09-04 (#251).** Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-04.
 
 **29. The analyst scorecard was already built and is already live — item withdrawn 2026-09-03, corrected after being written up as new work in error.** The conviction-ledger scorecard (`docs/QAMC_REMEDIATION_SPEC.md` §9.5, shipped 2026-08-31, `src/api/routes_scorecard.py`, live at `GET /analysts/scorecard`) already covers everything this item asked for — per-analyst win rate, win/loss size, running P&L at fixed risk/call, drawdown-from-own-peak, per-trade credit attribution, read-only, no sample-size gate. Wired into the real pipeline, not dead code. Reports zero resolved calls today — an honestly thin history (started 2026-08-31, timers paused most of today), not a defect.
 
@@ -1188,6 +1184,16 @@ not the sector-adjusted stance `build_evidence_registry` already computes
 elsewhere in the same prompt. Also open: three of the four new seats'
 magnitude mappings are reasoned but unmeasured judgment calls, flagged by
 their own authors, not yet independently reviewed.
+
+**32. The PM's eligibility gate never got item 1(a)'s fix — FIXED
+2026-09-04, PR open.** The PM's earlier gate kept the model's own
+guessed-target R/R after item 1(a) moved construction onto the real
+derived one; on run-64290730, the gates passed disjoint sets (8 names
+vs. 2, zero overlap), since the PM's gate runs first. Fixed via
+`PortfolioConstructor.real_reward_risk_preview`. Re-measured 2026-09-02
+(only real day with `computed_levels` populated): overlap 0/0, confirming
+the fix and surfacing that item 1's stop floor suppresses nearly
+everything once the two gates agree. Detail: `docs/INCIDENT_HISTORY.md`.
 
 ---
 
