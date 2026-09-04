@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--set", dest="overrides", action="append", default=[], metavar="KEY=VALUE",
         help=(
             "override a config value, dotted "
-            "(e.g. llm_cost_circuit.session_reserved_exposure_limit_usd=1.80)"
+            "(e.g. llm_cost_circuit.session_cost_limit_usd=0.50)"
         ),
     )
     parser.add_argument(

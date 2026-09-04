@@ -22,6 +22,36 @@ what would catch it next time.
 
 ---
 
+### 2026-09-04 — acceptance test broken on main by deleted cost-circuit config keys
+
+**In plain words:** a test that validates the rehearsal harness (offline
+reproduction of past sessions) was misconfigured for the new cost-circuit
+architecture. It tried to set two config keys that item 14's rewrite deleted.
+The test failed at config load time before it could run, blocking a clean
+full-suite baseline.
+
+**What was broken:** `tests/test_rehearsal_reproduces_cost_ceiling.py` had two
+test functions. The first one was valid; the second one tried to reproduce a
+pre-fix failure mode by forcing old config (`reservation_min_history_samples`,
+`session_reserved_exposure_limit_usd`) that no longer exists after item 14
+replaced the per-call cost-reservation layer with a settled-cost cap plus a
+call-count cap. The config validator correctly rejects these keys, so the test
+errored before it could run.
+
+**What was fixed:** the second test was deleted entirely (its purpose —
+proving the old failure mode could still reproduce — is architecturally moot:
+the old failure mode is gone and cannot be forced through config anymore). The
+first test's docstring was updated to explain why the second test is no longer
+applicable and what the new cost-circuit architecture is. A stale example in
+`ops/rehearsal/run.py` (help text) was updated from the deleted key to a
+valid one.
+
+**Verification:** the first test syntax compiles and can be collected. The
+config module's own validator tests for the deletion already pass. No other
+references to the deleted keys exist in the codebase outside the docs.
+
+---
+
 ### 2026-09-03 — the analyst's exit condition could get quietly cut off before anyone checked it
 
 **In plain words:** when an analyst opens a position, they write down what

@@ -141,12 +141,17 @@ def test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure(tmp_path):
     # trades, session suspended. That is now the wrong answer.
     #
     # With the fixes in, the session gets PAST the ceiling and reaches the
-    # PM. The reproduction of the original failure has not been thrown
-    # away — it moved to
-    # `test_the_pre_fix_estimator_still_reproduces_the_2026_08_28_block`
-    # below, which forces the old estimator behaviour through config and
-    # asserts the block still happens. Deleting the reproduction would
-    # leave nothing to catch a regression that re-tightens the circuit.
+    # PM. The pre-fix failure mode (reserved-exposure ceiling) cannot be
+    # reproduced anymore: item 14 (2026-09-02) deleted the entire per-call
+    # cost reservation layer and replaced it with: (a) a settled-cost cap,
+    # (b) a per-session call-count cap, and (c) an API-key-level cap
+    # (not implemented in code). The old config keys
+    # (reservation_min_history_samples, session_reserved_exposure_limit_usd)
+    # were deleted and their validation rejects any settings.yaml carrying
+    # them. So regression testing for "can we still reproduce the old
+    # failure" is not applicable — the old failure mode is architecturally
+    # gone. Instead, this test verifies the harness works correctly under
+    # the current (fixed) design.
     ceiling_blocks = [
         b for b in report.blocked_agents
         if b["agent"] == "portfolio_manager"
@@ -178,60 +183,3 @@ def test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure(tmp_path):
         f"agents_ran={[a['agent'] for a in report.agents_ran]} "
         f"status={report.status!r} error={report.error!r}"
     )
-
-
-def test_the_pre_fix_estimator_still_reproduces_the_2026_08_28_block(tmp_path):
-    """The original failure, preserved.
-
-    Forces the pre-fix estimator by demanding more measured history than
-    exists, which is exactly the documented fail-closed path back to the old
-    byte-as-a-token worst-case bound, and restores the session ceiling that
-    was live that morning ($1.80). Under those settings the Portfolio Manager
-    must still be stopped by the reserved-exposure ceiling.
-
-    Without this, the suite would only prove the circuit is loose. It would
-    not prove the harness can still SEE the failure, and a change that
-    quietly re-tightened the estimator would pass unnoticed.
-    """
-    from ops.rehearsal.isolation import Sandbox
-    from ops.rehearsal.runner import run_rehearsal
-    from src.trading_calendar import ET
-
-    sandbox = Sandbox.prepare(
-        source_db=PRODUCTION_DB,
-        root=tmp_path / "sandbox",
-        source_data_dir=PRODUCTION_DATA,
-        sudo_user=SUDO_USER,
-    )
-    report = run_rehearsal(
-        sandbox,
-        session="morning",
-        now_et=datetime(2026, 8, 28, 9, 35, tzinfo=ET),
-        replay_run=INCIDENT_RUN_ID,
-        production_db=PRODUCTION_DB,
-        sudo_user=SUDO_USER,
-        config_overrides={
-            # More history than the ledger holds for any single agent (the
-            # busiest has under 150 rows) -> falls back to the old worst-case
-            # bound, which is the behaviour being reproduced. 1000 is the
-            # field's own validated maximum.
-            "llm_cost_circuit.reservation_min_history_samples": 1000,
-            # The ceiling that was actually live on the morning of the block.
-            "llm_cost_circuit.session_reserved_exposure_limit_usd": 1.80,
-        },
-    )
-
-    assert any("byte-identical" in c for c in report.isolation_checks)
-
-    ceiling_blocks = [
-        b for b in report.blocked_agents
-        if b["agent"] == "portfolio_manager"
-        and b["trigger_code"] in RESERVED_EXPOSURE_TRIP_CODES
-    ]
-    assert ceiling_blocks, (
-        "the pre-fix configuration no longer reproduces the 2026-08-28 block, "
-        "so this harness can no longer see the failure it was built for. "
-        f"blocked_agents={report.blocked_agents}"
-    )
-    assert report.executed == 0
-    assert report.proposed == 0
