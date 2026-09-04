@@ -187,7 +187,8 @@ This file records what is accepted and true **now**. Git history preserves imple
   the risk engine actually enforces (`max_position_pct` is a HARD BLOCK, not
   a trim — without this, the sizing above computed orders the engine would
   silently drop). `3dff940` widens an entry stop to a minimum ATR distance
-  (`risk.min_stop_atr_multiple`, base 3.0, scaled by setup type and macro
+  (`risk.min_stop_atr_multiple`, base 1.5 since 2026-09-04 — was 3.0, re-derived
+  from real Maximum Adverse Excursion data; scaled by setup type and macro
   regime) when the analyst placed it inside ordinary volatility, and rejects
   the trade if the widened stop drops reward:risk below
   `risk.min_reward_risk_after_widening` (1.5). **Since 2026-09-01 both sides

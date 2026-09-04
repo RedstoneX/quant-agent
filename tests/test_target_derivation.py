@@ -397,9 +397,17 @@ class TestSLB:
     STOP = 55.50
     RISK = ENTRY - STOP                       # $4.60 / share
     MODEL_TARGET = ENTRY + 1.28 * RISK        # ~$65.99, the 1.28 R/R figure
-    # The stop is `min_stop_atr_multiple` (3.0) x 1.15 (range setup) = 3.45
-    # ATRs out, which back-solves the ATR the run must have been working
-    # with. Stated, not assumed silently.
+    # The stop SLB actually shipped with on 2026-09-01 was
+    # `min_stop_atr_multiple` (3.0 at the time) x 1.15 (the range scaler at
+    # the time) = 3.45 ATRs out, which back-solves the ATR the run must have
+    # been working with. Stated, not assumed silently.
+    #
+    # 3.45 is deliberately kept here as a HISTORICAL constant and is not
+    # re-derived from config. The floor became 1.5 base / 0.90 range on
+    # 2026-09-04 (= 1.35 ATRs), but this class reproduces what that specific
+    # run did, and re-deriving it from live settings would silently rewrite
+    # the historical record every time the config moves. Tests that assert
+    # CURRENT behaviour read the config; this one asserts the past.
     ATR = RISK / 3.45                         # ~$1.33, 2.2% of price
     FLOOR = 1.5
 
@@ -461,9 +469,19 @@ class TestSLB:
         ))
         # Structural stop deliberately inside the noise band, so widening
         # fires and the reward:risk gate is reached.
+        #
+        # Numbers reworked 2026-09-04 for the 1.5 floor (range 1.35 ATRs).
+        # Worked by hand, and both conditions still have to hold:
+        #   band distance  1.35 x 1.3333 = $1.80  -> widened stop $58.30
+        #   stop $59.00 is $1.10 out, INSIDE $1.80, so widening fires
+        #   nearest shelf $62.50 -> reward $2.40, risk $1.80, R/R 1.33 < 1.5
+        # The old shelf here was $63.50, which against the old 3.45-ATR band
+        # ($4.60 of risk) gave 0.74 and refused. At the new band it gives
+        # 1.89 and TRADES, so the shelf had to move for the test to still be
+        # about a geometry refusal rather than about the old floor.
         analysis = _analysis(
             symbol="SLB", rating="buy", entry=self.ENTRY, stop=59.0,
-            model_target=self.MODEL_TARGET, levels=[55.0, 63.50],
+            model_target=self.MODEL_TARGET, levels=[55.0, 62.50],
             atr=self.ATR, horizon=30,
         )
         decisions = constructor.construct_orders(

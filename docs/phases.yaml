@@ -236,8 +236,8 @@ phases:
       - kind: setting_equals
         path: "config/settings.yaml"
         key: "risk.min_stop_atr_multiple"
-        value: 3.0
-        note: "stop-width floor (3dff940)"
+        value: 1.5
+        note: "stop-width floor (3dff940); base re-derived 3.0 -> 1.5 on 2026-09-04 from Sweeney MAE analysis on real signals — see docs/INCIDENT_HISTORY.md"
       - kind: setting_equals
         path: "config/settings.yaml"
         key: "risk.min_reward_risk_after_widening"

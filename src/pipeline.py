@@ -891,7 +891,7 @@ class TradingPipeline:
                 if bool(getattr(getattr(config, "cash_sweep", None), "enabled", False))
                 else None
             ),
-            min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 3.0),
+            min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 1.5),
             min_reward_risk_after_widening=_risk_setting(
                 "min_reward_risk_after_widening", 1.5,
             ),

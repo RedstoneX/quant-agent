@@ -570,6 +570,10 @@ the same 68.
 
 **1. The reward:risk floor — 17 of 68 (25%). TOO STRICT. IN FLIGHT.**
 
+*2026-09-04: the stop-geometry half of this is now fixed — see item 33. The
+floor itself (1.5) did not move; the stop it divides by did. Not yet
+re-measured against the same 68.*
+
 The single largest cause; nothing else is close. 10 died before an order was
 built, 7 were killed by the AI Risk Manager citing the 1.5 floor by name.
 
@@ -995,21 +999,52 @@ DIDN'T INTERSECT AT ALL. **Fixed 2026-09-04, PR #257** — PM eligibility
 now reads the same derived target construction uses, re-measured against
 real data (0/0 overlap on two separate real samples before the fix).
 
-**Uncovered by the fix, now MEASURED 2026-09-04, not just suspected —
-the entry stop-width floor is structurally broken, not merely tight.**
-Real data (1,301 stored analyses, 222 real actionable signals, two
-weeks): at the current floor (3.0× ATR, itself never derived from any
+**Uncovered by that fix, and now FIXED IN TURN — the entry stop-width
+floor was structurally broken, not merely tight.** Measured 2026-09-04
+on real data (1,301 stored analyses, 222 real actionable signals, two
+weeks): at the old floor (3.0× ATR, itself never derived from any
 measurement — traced to a comment jumping from a measured 1.25 to a
 chosen 3.0 with nothing cited), **0 of 42 real candidates cleared on the
 one day with usable structural-level data**, and for range trades (this
-desk's majority setup) **0 of 222 real signals clear at ANY horizon this
-desk has ever stated — not tight, categorically closed for that setup
-type.** The only number in this codebase with real measurement behind it
-(1.0–1.25× ATR, the existing noise-band figures) would recover roughly a
-quarter of the funnel. Full methodology, alternative floors ranked, and
-honest data-coverage caveats (mostly one trading day, no risk-off regime,
-no realised-stop-out data to derive a floor from): `docs/INCIDENT_HISTORY.md`.
-**Owner decision needed on the replacement value/approach — not a code fix.**
+desk's majority setup) **0 of 222 real signals cleared at ANY horizon
+this desk has ever stated — not tight, categorically closed for that
+setup type.**
+
+**Replacement derived and shipped 2026-09-04: the floor is now 1.5× ATR.**
+It comes from a Sweeney Maximum Adverse Excursion study on this desk's own
+real trade signals — how far trades that EVENTUALLY WON dipped against
+entry before they worked. Worst real winner drew down 1.84× ATR, so a
+1.5× floor would have stopped out about 1% of real winners while roughly
+tripling the reward:risk arithmetic (size is derived from stop distance,
+so a tighter stop at the same dollar risk is a larger position on the same
+target). The number is bracketed by real measurement on both sides:
+outside the measured 1.25× ATR one-day noise band, inside the 1.84× worst
+real winner excursion.
+
+**The setup scalers were also backwards and are corrected in the same
+change.** Range setups — the calmest, most common, and the ones the old
+floor closed outright — were getting the WIDEST floor (×1.15) and
+breakouts the tightest (×0.85). Now breakout ×1.00, range ×0.90. Every
+reachable floor lands in 1.28–1.80× ATR.
+
+**Confidence is NOT uniform across this change, and that matters.** The
+1.5 base is well grounded. The scaler magnitudes are a secondary,
+less-verified layer: there is no per-setup-type MAE breakdown to size them
+from, so the range scaler is set at the tightest value that keeps the
+narrowest reachable stop outside the measured 1.25× noise band, and the
+breakout scaler is 1.00 because no measurement supports a specific
+widening — the correction was made by REMOVING the unearned discount
+rather than inventing a number. Data-coverage caveats stand: roughly two
+weeks, no risk-off regime, no post-fix realised stop-out data. **Re-measure
+once there is real post-fix trade history.** Full derivation and
+methodology: `docs/INCIDENT_HISTORY.md`, 2026-09-04.
+
+**Known consequence, recorded not fixed:** halving stop distances roughly
+doubles the notional a full 5%-risk trade wants, so the 100% single-name
+cap binds again on tight-stop names (~3.5% delivered risk rather than 5%).
+That is `allow_margin: false` showing through, not a regression — >100% of
+equity in one name is unreachable cash-only regardless. Enabling margin is
+an owner call.
 
 **34. Exit management barely managed, and ranking was close to alphabetical — FIXED, pending review.**
 

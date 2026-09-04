@@ -385,7 +385,9 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   **2026-09-04 real-data audit: the 20% notional ceiling was silently
   the OPERATIVE risk limit, not this 5% band.** `notional = risk_pct x
   entry / (entry - stop)`, so at this book's real stop distances
-  (roughly 5-9%, `risk.min_stop_atr_multiple`) a 20% ceiling capped
+  (roughly 5-9% at the time, under the then-3.0 `risk.min_stop_atr_
+  multiple`; that floor is 1.5 since 2026-09-04, so real stops are now
+  roughly half those distances) a 20% ceiling capped
   DELIVERED risk to `20% x stop_distance` — about 1.0-1.8% — regardless
   of stated conviction; 6 of 13 real proposed orders pinned at exactly
   20% notional, and a 2.8% and a 1.0% risk request both delivered ~1%
