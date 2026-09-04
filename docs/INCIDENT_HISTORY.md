@@ -22,6 +22,65 @@ what would catch it next time.
 
 ---
 
+### 2026-09-04 — item 25: a sell whose stated reason is provably untrue now actually gets stopped, and the owner is told
+
+**In plain words:** the desk already had a check that could catch the AI
+saying something untrue to justify selling a position it should be holding —
+claiming the market turned risk-off today when the recorded macro reading
+says it did not, or claiming fresh bad news on the stock when the recorded
+news for today says the opposite. Until now that check only wrote a note in
+the log. The trade went through anyway. It now stops the trade, and sends a
+Telegram message saying which position, what was claimed, and why it was
+found untrue. The owner approved this change so the desk can also start
+measuring how often it actually happens.
+
+**The one distinction the whole change rests on.** "We proved this claim
+false" and "we could not check this claim" are different answers and must
+never be collapsed into one. Only the first blocks anything.
+
+- *Proven false* — the reasoning asserts a checkable fact and the desk's own
+  recorded data for TODAY says the opposite: a claimed risk-off flip against
+  a trusted macro read showing a different regime; a claimed high-conviction
+  bearish news event against a same-day news row that names the symbol with
+  a non-bearish direction. Blocks the decision, alerts the owner.
+- *Unverifiable* — the claim was made but the data needed to judge it is not
+  there this run: the macro seat failed or was untrusted, or no same-day news
+  row names the symbol at all. Logged exactly as before, never blocked, never
+  alerted. The news pipeline can simply not have written a real catalyst up
+  as a formal row yet, so treating "not found" as "false" would manufacture
+  vetoes against honest exits — which would be a worse bug than the gap being
+  closed.
+- The third allowed exit trigger, the trade's own `thesis_invalid_if`, is
+  still never evaluated here at all, so a sell resting on it is untouched.
+
+Before this, the code had no name for the middle case: an unverifiable claim
+and a confirmed claim both simply returned nothing. Adding the veto forced
+the three-way split to be made explicit, which is most of the change.
+
+**What was deliberately NOT changed:** the bar for reaching "false". The
+claim-detection is still phrase matching over free text with a short
+negation-cue guard, and the reason that used to be given for keeping this
+check toothless is now the reason the FALSE bar stays exactly where it is.
+The known residual risk is accepted with eyes open and was the owner's call:
+a correctly-read false claim about the macro or news trigger does not by
+itself prove the sell is wrong, because an unverifiable `thesis_invalid_if`
+might independently justify it. The Risk Manager can re-propose the exit next
+cycle citing something true. The alert exists so the frequency of that
+trade-off gets measured rather than assumed — and, like the data-quality
+alert, it is deliberately not deduplicated, because suppressing repeats would
+destroy the count that is the point of it.
+
+**What would catch a regression:** `tests/test_holding_discipline_block.py`
+pins all three verdicts at the unit level and end to end through the risk
+stage — proven-false blocks and alerts once; unverifiable is logged with no
+alert and the decision survives; a true claim produces no event at all. It
+also pins that an alerting failure cannot break the trading path, and that
+blocking the last surviving leg ends the run through the same terminal
+"rejected" status a per-symbol Risk Manager refusal already used. The veto
+reuses that existing refusal mechanism rather than adding a second one.
+
+---
+
 ### 2026-09-04 — three independent exit-management defects fixed in one PR
 
 **In plain words:** a real-data audit of tonight's exit and ranking

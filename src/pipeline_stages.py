@@ -1164,6 +1164,49 @@ def _alert_owner_protection_failed(pipeline, spec: dict, protection,
         logger.error("protection-failure owner alert failed: %s", exc)
 
 
+def _alert_holding_discipline_block(
+    *, symbol: str, action: str, reasons: tuple[str, ...] | list[str],
+) -> None:
+    """Standalone owner alert: an exit was BLOCKED because the justification
+    the Risk Manager gave for it is contradicted by the desk's own data.
+
+    Own message, never bundled into the run summary, and severity carried in
+    plain words — not colour and not an emoji standing in as the only signal
+    (item 21, owner's alert-design rule; he is red/green colour blind). The
+    leading emoji here is decoration on top of a plain-text header that
+    already says everything, exactly as `_alert_protection_failure` above
+    does.
+
+    Deliberately NOT deduplicated, for the same reason
+    `maybe_alert_data_quality` is not: the whole point of wiring this alert
+    in alongside the 2026-09-04 escalation to a real veto is to MEASURE how
+    often a stated exit reason turns out to be false. Suppressing repeats
+    would destroy the count the owner asked for.
+
+    Never raises — an alerting bug must not break the trading path it
+    reports on.
+    """
+    try:
+        detail = "\n".join(f"- The reasoning {r}." for r in reasons)
+        body = (
+            "🛑 TRADE BLOCKED — THE STATED REASON FOR SELLING WAS NOT TRUE\n"
+            f"{symbol}: a {action} was proposed on a position whose thesis is "
+            "still structurally intact, and the reason given for it does not "
+            "match what actually happened today:\n"
+            f"{detail}\n"
+            "The trade was BLOCKED and no order was sent. This is not a "
+            "judgement about whether selling is right — only that the "
+            "specific justification given is contradicted by the data on "
+            "record, so it cannot stand on that reason. If there is a real "
+            "reason to exit, it can be proposed again next cycle citing it."
+        )
+        from src import notifier as _notifier
+
+        _notifier.send_owner_alert(body, symbols=[str(symbol)])
+    except Exception as exc:  # noqa: BLE001
+        logger.error("holding-discipline block owner alert failed: %s", exc)
+
+
 def _record_execution_skip(pipeline, ctx, symbol: str, reason: str,
                            detail: str) -> None:
     """Durable record of a deterministic BUY skip in the execution phase.
@@ -3593,13 +3636,21 @@ class RiskStage:
         # (config/prompts/risk_manager.md, "Holding-discipline compliance")
         # asks it to itself verify that a SELL/REDUCE/COVER on a PROTECTED
         # position names a real trigger; nothing in Python checked that the
-        # trigger claimed is real. `holding_discipline_false_claim` is
+        # trigger claimed is real. `holding_discipline_claim_check` is
         # deliberately narrow — it can only ever catch a PROVABLY FALSE claim
         # about (b) a regime flip or (c) a same-day HIGH-conviction bearish
         # state_change, never (a) thesis_invalid_if, which it does not (and
-        # cannot reliably) check — see that function's module docstring for
-        # why, and why even a caught false claim is only ever logged/recorded
-        # here, never used to veto or drop the decision.
+        # cannot reliably) check — see that function's module docstring.
+        #
+        # 2026-09-04, owner-approved escalation: a PROVEN-FALSE claim now
+        # DROPS the decision, using the exact same mechanism as a Risk
+        # Manager per-symbol refusal directly above (build `surviving`,
+        # record a "rejected" pipeline event per dropped symbol, and if
+        # nothing survives return the same terminal rejected status) — not a
+        # new veto path. An UNVERIFIABLE claim keeps the old behaviour
+        # exactly: logged and recorded, never dropped, never alerted. That
+        # split is the owner's explicit instruction; `check.blocks` is the
+        # single place it is decided.
         #
         # "Protected" no longer means "held under 5 days" (that flat window
         # had no backtest behind it and the owner rejected it as arbitrary).
@@ -3613,7 +3664,9 @@ class RiskStage:
         # not an automatic unprotect — when neither a stated condition nor
         # a qualifying level exists.
         if portfolio_decision.decisions:
-            from src.risk.exit_guard import holding_discipline_false_claim
+            from src.risk.exit_guard import holding_discipline_claim_check
+            hd_surviving: list = []
+            hd_blocked: list[tuple[str, str]] = []
             macro_regime_today = _macro_regime(macro_analysis)
             macro_status = data_status.get("macro") if data_status else None
             try:
@@ -3627,6 +3680,7 @@ class RiskStage:
                 hd_active_state_changes = ""
             for decision in portfolio_decision.decisions:
                 if decision.action not in ("SELL", "REDUCE", "COVER"):
+                    hd_surviving.append(decision)
                     continue
                 symbol_u = decision.symbol.strip().upper()
                 hist = rm_position_history.get(decision.symbol) or {}
@@ -3647,7 +3701,7 @@ class RiskStage:
                     symbol_u, protection.protected, protection.basis,
                     protection.detail,
                 )
-                finding = holding_discipline_false_claim(
+                check = holding_discipline_claim_check(
                     action=decision.action,
                     reason=decision.reasoning,
                     symbol=decision.symbol,
@@ -3656,12 +3710,57 @@ class RiskStage:
                     macro_status=macro_status,
                     active_state_changes=hd_active_state_changes,
                 )
-                if finding:
-                    logger.warning("Holding discipline: %s", finding)
+                if check.blocks:
+                    # PROVEN FALSE. Drop the decision exactly the way a
+                    # per-symbol RM refusal above does: same "rejected"
+                    # pipeline event, same surviving-list mechanism.
+                    logger.warning(
+                        "Holding discipline BLOCK (claim proven false): %s",
+                        check.finding,
+                    )
                     _record_pipeline_event(
                         pipeline, ctx, decision.symbol, "risk",
-                        "holding_discipline_claim_unverified", finding,
+                        "rejected", check.finding,
                     )
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "risk",
+                        "holding_discipline_claim_false", check.finding,
+                    )
+                    hd_blocked.append((symbol_u, check.finding or ""))
+                    _alert_holding_discipline_block(
+                        symbol=symbol_u,
+                        action=decision.action,
+                        reasons=check.reasons,
+                    )
+                    continue
+                if check.verdict == "unverifiable":
+                    # Unchanged from before the 2026-09-04 escalation:
+                    # recorded for the audit trail, and that is all. No
+                    # drop, no alert — absence of proof is not proof.
+                    logger.warning("Holding discipline: %s", check.finding)
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "risk",
+                        "holding_discipline_claim_unverified", check.finding,
+                    )
+                hd_surviving.append(decision)
+
+            if hd_blocked:
+                portfolio_decision.decisions = hd_surviving
+                if not hd_surviving:
+                    # Every remaining leg was blocked on a provably false
+                    # justification. Same terminal status as the per-symbol
+                    # refusal path above, and for the same reason: no orders,
+                    # with each symbol carrying its OWN reason.
+                    reasons = "; ".join(
+                        finding for _sym, finding in hd_blocked
+                    )
+                    logger.info(
+                        "Every remaining trade was blocked on a provably "
+                        "false holding-discipline claim: %s", reasons,
+                    )
+                    return {
+                        "status": "rejected", "orders": [], "reason": reasons,
+                    }
 
         if verdict.modifications:
             portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
