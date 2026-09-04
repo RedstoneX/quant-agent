@@ -1,0 +1,415 @@
+<!--
+  Canonical source: docs/qamc_trading_desk_workflow.html in this repo.
+  Also published live as the Claude Artifact "QAMC Trading Desk Workflow"
+  (see docs/WORK.md's documentation-policy note for the current link) — the
+  two must be updated TOGETHER, same content, whenever a change lands that
+  this diagram depicts: analyst seat weights, what the Portfolio Manager or
+  Risk Manager actually checks, or the deterministic risk layer's stages.
+  Ship the update in the SAME PR as the code change it reflects, not as
+  separate follow-up work — this is a documentation-sync item like any
+  other.
+-->
+<title>QAMC Trading Desk Workflow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,600;1,9..144,400&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  :root{
+    --bg: #0a0d13;
+    --surface: #121826;
+    --surface-2: #1a2233;
+    --line: #29334a;
+    --line-soft: #1e2739;
+    --ink: #edf0f6;
+    --dim: #9aa6bd;
+    --faint: #5c6680;
+    --accent: #f0b429;
+    --accent-soft: #f0b42922;
+    --accent-line: #f0b42955;
+    --flow: #6fd3e8;
+    --flow-soft: #6fd3e822;
+    --serif: "Fraunces", Georgia, "Iowan Old Style", serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  @media (prefers-reduced-motion: reduce){ *{animation-duration:0.01ms !important; transition-duration:0.01ms !important;} }
+
+  .page{ max-width:1180px; margin:0 auto; padding:64px 32px 100px; }
+
+  /* ---------- masthead ---------- */
+  .masthead{ margin-bottom:56px; }
+  .kicker{
+    font-family:var(--mono); font-size:11px; letter-spacing:.32em; text-transform:uppercase;
+    color:var(--accent); margin:0 0 18px;
+  }
+  h1{
+    font-family:var(--serif); font-weight:500; font-style:normal;
+    font-size:clamp(38px,6vw,68px); line-height:.98; letter-spacing:-.01em;
+    margin:0 0 20px; text-wrap:balance; color:var(--ink);
+  }
+  h1 em{ font-style:italic; font-weight:400; color:var(--accent); }
+  .lede{
+    max-width:62ch; color:var(--dim); font-size:16.5px; line-height:1.7; margin:0;
+  }
+  .rule{ height:1px; background:linear-gradient(90deg,var(--line),transparent); margin-top:36px; }
+
+  /* ---------- section labels ---------- */
+  .seclabel{
+    display:flex; align-items:baseline; gap:14px; margin:0 0 28px;
+  }
+  .seclabel .num{ font-family:var(--mono); font-size:12px; color:var(--faint); }
+  .seclabel h2{
+    font-family:var(--serif); font-weight:500; font-size:26px; margin:0; color:var(--ink);
+  }
+  .seclabel .tag{
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--flow); margin-left:auto; text-align:right;
+  }
+
+  /* ---------- five agent cards ---------- */
+  .desk{
+    display:grid; grid-template-columns:repeat(5,1fr); gap:14px;
+    margin-bottom:0;
+  }
+  @media (max-width:980px){ .desk{ grid-template-columns:repeat(2,1fr); } }
+  @media (max-width:600px){ .desk{ grid-template-columns:1fr; } }
+
+  .card{
+    background:var(--surface); border:1px solid var(--line-soft); border-radius:3px;
+    padding:22px 18px 20px; display:flex; flex-direction:column; position:relative;
+    opacity:0; animation:rise .5s ease forwards;
+  }
+  .card::before{
+    content:""; position:absolute; top:0; left:0; right:0; height:2px;
+    background:var(--accent); opacity:.85;
+  }
+  @keyframes rise{ from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);} }
+  .card:nth-child(1){animation-delay:.02s;} .card:nth-child(2){animation-delay:.08s;}
+  .card:nth-child(3){animation-delay:.14s;} .card:nth-child(4){animation-delay:.2s;}
+  .card:nth-child(5){animation-delay:.26s;}
+
+  .seat{
+    font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--faint); margin-bottom:8px;
+  }
+  .card h3{
+    font-family:var(--serif); font-size:21px; font-weight:600; margin:0 0 10px; color:var(--ink);
+  }
+  .reads{
+    font-size:12.5px; color:var(--dim); line-height:1.6; margin:0 0 16px; min-height:60px;
+  }
+
+  .weightrow{ margin-bottom:16px; }
+  .weightlabel{
+    display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;
+    font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint);
+  }
+  .weightlabel b{
+    font-family:var(--mono); font-size:16px; letter-spacing:0; color:var(--accent); font-weight:600;
+  }
+  .bartrack{ height:5px; background:var(--surface-2); border-radius:2px; overflow:hidden; }
+  .barfill{ height:100%; background:var(--accent); border-radius:2px; }
+
+  .why{
+    font-size:11.5px; color:var(--faint); line-height:1.55; margin:0 0 16px; flex-grow:1;
+  }
+
+  .chain{
+    border-top:1px solid var(--line-soft); padding-top:12px; margin-top:auto;
+  }
+  .chain .chaintitle{
+    font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--flow); margin-bottom:8px;
+  }
+  .chain ol{ margin:0; padding-left:16px; font-size:11px; color:var(--dim); line-height:1.65; }
+  .chain li::marker{ font-family:var(--mono); color:var(--faint); }
+
+  /* ---------- convergence ---------- */
+  .converge{ position:relative; height:70px; margin:0 auto; max-width:1180px; }
+  .converge svg{ width:100%; height:100%; display:block; overflow:visible; }
+  .converge-label{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    background:var(--bg); padding:6px 14px; border:1px solid var(--flow); border-radius:20px;
+    font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--flow);
+    white-space:nowrap;
+  }
+
+  /* ---------- pipeline ---------- */
+  .pipeline{ max-width:640px; margin:0 auto; }
+  .stage{
+    display:grid; grid-template-columns:52px 1fr; gap:20px; padding-bottom:6px;
+  }
+  .stage .rail{ display:flex; flex-direction:column; align-items:center; }
+  .stage .dot{
+    width:14px; height:14px; border-radius:50%; background:var(--bg);
+    border:2px solid var(--flow); flex-shrink:0; margin-top:4px;
+  }
+  .stage.final .dot{ background:var(--accent); border-color:var(--accent); }
+  .stage .connector{ width:2px; flex-grow:1; background:var(--line); margin-top:2px; min-height:44px; }
+  .stage:last-child .connector{ display:none; }
+  .stage-body{ padding-bottom:38px; }
+  .stage-eyebrow{
+    font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--faint); margin-bottom:5px;
+  }
+  .stage h4{
+    font-family:var(--serif); font-size:20px; font-weight:600; margin:0 0 8px; color:var(--ink);
+  }
+  .stage p{ font-size:13.5px; color:var(--dim); margin:0; max-width:52ch; line-height:1.65; }
+  .stage .badge{
+    display:inline-block; font-family:var(--mono); font-size:9.5px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--accent); border:1px solid var(--accent-line);
+    background:var(--accent-soft); padding:3px 9px; border-radius:20px; margin-top:10px;
+  }
+
+  /* ---------- footer notes ---------- */
+  .notes{
+    margin-top:70px; padding-top:28px; border-top:1px solid var(--line-soft);
+    display:grid; grid-template-columns:1fr 1fr; gap:28px;
+  }
+  @media (max-width:700px){ .notes{ grid-template-columns:1fr; } }
+  .note-eyebrow{
+    font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--flow); margin-bottom:8px;
+  }
+  .notes p{ font-size:12.5px; color:var(--dim); line-height:1.7; margin:0; max-width:48ch; }
+  .notes strong{ color:var(--ink); font-weight:600; }
+
+  .foot{
+    margin-top:40px; font-family:var(--mono); font-size:10px; letter-spacing:.08em;
+    color:var(--faint); text-transform:uppercase;
+  }
+</style>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="kicker">QAMC &middot; how a trade actually gets decided</div>
+    <h1>Trading Desk<br><em>Workflow</em></h1>
+    <p class="lede">
+      Five specialist agents read five different kinds of evidence. Each reduces its own read
+      to the same shape — a direction, a strength, a conviction, and a condition that would
+      prove it wrong — before anything is combined, ranked, or acted on.
+    </p>
+    <div class="rule"></div>
+  </header>
+
+  <section>
+    <div class="seclabel">
+      <span class="num">01</span>
+      <h2>The desk</h2>
+      <span class="tag">weight set 2026&#8209;09&#8209;03</span>
+    </div>
+
+    <div class="desk">
+
+      <div class="card">
+        <div class="seat">Seat &middot; technical</div>
+        <h3>Technical</h3>
+        <p class="reads">Price and volume history. Finds real structural support/resistance
+          levels and counts how many times price actually defended each one.</p>
+        <div class="weightrow">
+          <div class="weightlabel">Weight <b>1.2&times;</b></div>
+          <div class="bartrack"><div class="barfill" style="width:100%"></div></div>
+        </div>
+        <p class="why">Momentum is the single most-replicated effect in the finance literature —
+          confirmed across markets and decades.</p>
+        <div class="chain">
+          <div class="chaintitle">Reasoning chain</div>
+          <ol>
+            <li>Trend</li><li>Momentum</li><li>Volatility</li>
+            <li>Volume</li><li>Support &amp; resistance</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="seat">Seat &middot; earnings</div>
+        <h3>Earnings</h3>
+        <p class="reads">The actual 10&#8209;Q/10&#8209;K filing, pulled from SEC's structured
+          data — not a text scrape. Reduced to a stated call before it reaches the desk; the
+          full filing stays on record for audit, not couriered along by default.</p>
+        <div class="weightrow">
+          <div class="weightlabel">Weight <b>1.2&times;</b></div>
+          <div class="bartrack"><div class="barfill" style="width:100%"></div></div>
+        </div>
+        <p class="why">Post-earnings drift is one of the most persistent, most-replicated
+          anomalies in finance.</p>
+        <div class="chain">
+          <div class="chaintitle">Reasoning chain</div>
+          <ol>
+            <li>Fundamental quality</li><li>Growth trajectory</li><li>Strategic risks</li>
+            <li>Management execution</li><li>Valuation context</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="seat">Seat &middot; news</div>
+        <h3>News</h3>
+        <p class="reads">Real headlines, per stock. Several same-day headlines reduce to one
+          verdict by one tested rule.</p>
+        <div class="weightrow">
+          <div class="weightlabel">Weight <b>1.0&times;</b></div>
+          <div class="bartrack"><div class="barfill" style="width:83%"></div></div>
+        </div>
+        <p class="why">A real effect, but narrow and short-lived — and LLM-written sentiment
+          specifically tends to look strong in testing, then fail in practice.</p>
+        <div class="chain">
+          <div class="chaintitle">Per headline</div>
+          <ol>
+            <li>Sentiment</li><li>Conviction</li><li>Impact summary</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="seat">Seat &middot; macro</div>
+        <h3>Macro</h3>
+        <p class="reads">VIX, the yield curve, Fed funds, inflation, unemployment, credit
+          spreads — read together, not in isolation.</p>
+        <div class="weightrow">
+          <div class="weightlabel">Weight <b>0.8&times;</b></div>
+          <div class="bartrack"><div class="barfill" style="width:67%"></div></div>
+        </div>
+        <p class="why">"Regime matters" is well supported. "This seat calls the turning point
+          correctly" is one of the most repeatedly disproven claims in applied economics.</p>
+        <div class="chain">
+          <div class="chaintitle">Reasoning chain</div>
+          <ol>
+            <li>Volatility</li><li>Yield curve</li><li>Monetary policy</li>
+            <li>Inflation / labor / credit</li><li>Cross-signal synthesis</li><li>Sector read</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="seat">Seat &middot; smart money</div>
+        <h3>Smart Money</h3>
+        <p class="reads">Form&nbsp;4 insider filings and congressional trading disclosures —
+          the public, lagged version of both.</p>
+        <div class="weightrow">
+          <div class="weightlabel">Weight <b>0.8&times;</b></div>
+          <div class="bartrack"><div class="barfill" style="width:67%"></div></div>
+        </div>
+        <p class="why">The real edge lives almost entirely before disclosure. By the time it's
+          legally visible, most of it is already gone.</p>
+        <div class="chain">
+          <div class="chaintitle">Per observation</div>
+          <ol>
+            <li>Stance</li><li>How much it matters right now</li><li>Why the timing matters</li>
+          </ol>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <div class="converge" aria-hidden="true">
+    <svg viewBox="0 0 1180 70" preserveAspectRatio="none">
+      <path d="M 108 0 V 20 Q 108 34 122 34 H 466 Q 480 34 480 48 V 70" fill="none" stroke="#29334a" stroke-width="2"/>
+      <path d="M 344 0 V 30 Q 344 34 348 34 H 476 Q 480 34 480 40 V 70" fill="none" stroke="#29334a" stroke-width="2"/>
+      <path d="M 590 0 V 70" fill="none" stroke="#6fd3e8" stroke-width="2"/>
+      <path d="M 836 0 V 30 Q 836 34 832 34 H 704 Q 700 34 700 40 V 70" fill="none" stroke="#29334a" stroke-width="2"/>
+      <path d="M 1072 0 V 20 Q 1072 34 1058 34 H 714 Q 700 34 700 48 V 70" fill="none" stroke="#29334a" stroke-width="2"/>
+    </svg>
+    <div class="converge-label">combined per stock, at weight</div>
+  </div>
+
+  <section>
+    <div class="seclabel">
+      <span class="num">02</span>
+      <h2>Where the verdicts go</h2>
+      <span class="tag">deterministic below the AI line</span>
+    </div>
+
+    <div class="pipeline">
+
+      <div class="stage">
+        <div class="rail"><div class="dot"></div><div class="connector"></div></div>
+        <div class="stage-body">
+          <div class="stage-eyebrow">Stage 1 &middot; code, not a model</div>
+          <h4>Ranking</h4>
+          <p>Every seat covering a stock is averaged at its weight — deterministic Python,
+            not an LLM doing arithmetic. This only orders which of several already-eligible
+            stocks comes first; it never decides eligibility and never sizes anything.</p>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="dot"></div><div class="connector"></div></div>
+        <div class="stage-body">
+          <div class="stage-eyebrow">Stage 2 &middot; AI</div>
+          <h4>Portfolio Manager</h4>
+          <p>Reads the ranked result plus full account context and decides buy, sell, or hold.
+            It sees the order the desk arrived at — it does not re-weigh the five seats itself.</p>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="dot"></div><div class="connector"></div></div>
+        <div class="stage-body">
+          <div class="stage-eyebrow">Stage 3 &middot; AI, independent + verified</div>
+          <h4>Risk Manager</h4>
+          <p>A second, separate AI reviews the proposed trade on its own — a check, not a
+            rubber stamp on the first model's reasoning. A held position stays protected from
+            an early, no-real-reason exit until code confirms the level backing its thesis has
+            actually broken — a closing-price break, held for two trading days, not a single
+            wick and not a calendar countdown. The old rule simply expired every position after
+            a fixed number of days, whether the reason it was bought still held or not.</p>
+          <span class="badge">Data-verified, not calendar&#8209;based &middot; 09&#8209;04</span>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="rail"><div class="dot"></div><div class="connector"></div></div>
+        <div class="stage-body">
+          <div class="stage-eyebrow">Stage 4 &middot; code, not a model</div>
+          <h4>Deterministic Risk Layer</h4>
+          <p>Real stop-loss floors and position-size caps, computed in Python from real
+            numbers. Nothing above this line can override it.</p>
+          <span class="badge">Final veto</span>
+        </div>
+      </div>
+
+      <div class="stage final">
+        <div class="rail"><div class="dot"></div></div>
+        <div class="stage-body">
+          <div class="stage-eyebrow">Stage 5</div>
+          <h4>Broker</h4>
+          <p>The order is placed.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <div class="notes">
+    <div>
+      <div class="note-eyebrow">Weight vs. conviction</div>
+      <p><strong>Weight is fixed</strong> — set once, per seat, from outside research. It
+        does not change trade to trade. <strong>Conviction is not</strong> — every seat
+        declares high, medium, or low on every individual call, independent of its weight.
+        A low-weight seat can still call one specific trade with high conviction.</p>
+    </div>
+    <div>
+      <div class="note-eyebrow">What this doesn't decide</div>
+      <p>This pipeline decides <strong>which</strong> stock the desk prefers among several
+        already-eligible ones. <strong>How big</strong> the trade is still runs on an older,
+        separate mechanism that weighs every seat equally — until the desk has enough of its
+        own resolved trades to earn a different number.</p>
+    </div>
+  </div>
+
+  <div class="foot">QAMC &middot; Phase 13 &middot; last updated 2026&#8209;09&#8209;04</div>
+
+</div>
+
