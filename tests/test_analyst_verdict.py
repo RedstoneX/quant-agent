@@ -416,7 +416,13 @@ def test_two_seats_on_one_symbol_average_at_the_research_informed_weight():
     [c] = rank_verdicts([tech, other])
     # magnitude: (0.5*1.2 + 1.0*1.0) / 2.2 = 0.7273
     # conviction: (1.0*1.2 + 0.0*1.0) / 2.2 = 0.5455
-    assert c.components == {"magnitude": 0.7273, "conviction_score": 0.5455}
+    # risk_reward_tiebreak (fix #2): only technical carries risk_reward
+    # evidence (2.40, from its 100/95/112 fixture geometry) — "news" has no
+    # risk_reward evidence, so it contributes 0 weight, not 0 value:
+    # (2.40*1.2) / 1.2 = 2.40. Tiebreak only — never folded into `score`.
+    assert c.components == {
+        "magnitude": 0.7273, "conviction_score": 0.5455, "risk_reward_tiebreak": 2.4,
+    }
     assert c.score == 1.2728
     assert c.seats == ["news", "technical"]
 
@@ -464,6 +470,37 @@ def test_seats_disagreeing_on_direction_are_not_ranked():
         conviction="high", evidence=_evidence(), invalidation="x",
     )
     assert rank_verdicts([tech, other]) == []
+
+
+def test_tied_score_breaks_on_risk_reward_not_alphabet():
+    """2026-09-04 audit fix #2. Real production data: ties on the coarse
+    composite score are the COMMON case (one real day had 9 of 12 eligible
+    names tied, another 23 of 33), and breaking on symbol alone gave every
+    early-alphabet ticker a permanent, undisclosed edge on tie days. AAA and
+    ZZZ tie exactly on score (1.0 = 0.5 magnitude + 0.5 conviction) here;
+    ZZZ's fixture geometry (100/95/130) gives it a materially better R/R
+    (7.0) than AAA's default (100/95/112, R/R 2.4). ZZZ must rank FIRST —
+    the opposite of what a symbol-only tiebreak would do — because it is
+    genuinely the better-supported call, not because of where its ticker
+    falls in the alphabet."""
+    aaa = _tech("AAA", "buy", "medium").to_verdict()               # R/R 2.4
+    zzz = _tech("ZZZ", "buy", "medium", target=130).to_verdict()   # R/R 7.0
+    assert score_verdict(aaa) == score_verdict(zzz) == 1.0
+    ranked = rank_verdicts([aaa, zzz])
+    assert [c.symbol for c in ranked] == ["ZZZ", "AAA"]
+    assert ranked[0].components["risk_reward_tiebreak"] > ranked[1].components["risk_reward_tiebreak"]
+
+
+def test_risk_reward_tiebreak_defaults_to_zero_without_evidence():
+    """A verdict with no `risk_reward` evidence (e.g. missing target/stop
+    geometry) must never crash the ranking or silently win a tie it has no
+    supporting evidence for — it sorts as if its tiebreak signal were 0."""
+    v = AnalystVerdict(
+        seat="news", symbol="AAA", direction="bullish", magnitude=0.5,
+        conviction="medium", evidence=_evidence(), invalidation="x",
+    )
+    [c] = rank_verdicts([v])
+    assert c.components["risk_reward_tiebreak"] == 0.0
 
 
 # --- eligibility + ranking through the PM -----------------------------------
@@ -721,12 +758,17 @@ def test_production_eligibility_matches_the_item_18_audit_on_the_real_day():
     assert len(audit) == 12
     assert not (set(blocked) & set(audit))
     # The pinned order at equal weight over Technical's verdicts alone. Nine
-    # of the twelve tie at 1.00 (all `buy`/`sell` at `medium`), and ties
-    # break on symbol — see docs/WORK.md item 18 for why that is reported
-    # rather than "fixed" with a weight nobody has measured.
+    # of the twelve tie at 1.00 (all `buy`/`sell` at `medium`) and two more
+    # tie at 0.5 — see docs/WORK.md item 18 for why the coarse composite
+    # score itself is reported rather than "fixed" with a weight nobody has
+    # measured. 2026-09-04 audit fix #2: ties among those now break on
+    # `risk_reward` (real information already on each verdict) instead of
+    # `symbol` — this is exactly the real production day the audit cited (9
+    # of these 12 names tied on score), and the order below is no longer
+    # alphabetical within either tied group; it is ordered by R/R quality.
     assert [c.symbol for c in ranked] == [
-        "XLE", "COP", "CVX", "FLNC", "MSFT", "NKE", "NVDA", "PATH", "PFE",
-        "TSM", "CHPX", "CRM",
+        "XLE", "NKE", "FLNC", "PFE", "PATH", "NVDA", "MSFT", "TSM", "COP",
+        "CVX", "CHPX", "CRM",
     ]
 
 
