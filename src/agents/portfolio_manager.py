@@ -166,6 +166,70 @@ class PortfolioManagerAgent(BaseAgent):
             rows.append((symbol, stance, filing_date))
         return rows
 
+    @staticmethod
+    def _render_earnings_verdict(
+        *, sym: str, analysis: dict, filing_label: str, source_note: str,
+        analysis_path: str | None,
+    ) -> str:
+        """Item 18 (2026-09-04): earnings used to courier its whole eight-
+        field extraction form into this prompt (~1,400 chars/filing, 70% of
+        a 200k-char PM prompt across dozens of filings/day) for one line of
+        actual judgement. This renders the SHORT verdict instead — call,
+        conviction, a 2-3 sentence thesis, and a pointer to the full record.
+
+        Reuses `EarningsAnalysis.to_verdict()` (Phase 13, `src/verdicts.py`
+        ranking shape) rather than inventing a second short-form
+        representation — see that method for why direction/conviction are
+        verbatim and why the falsifier comes from bear_case/bull_case.
+
+        `to_verdict()` (via `AnalystVerdict`'s own validator) REFUSES to
+        construct a directional call with no stated invalidation — a real
+        gap surfaced during item 18: PM's evidence needs are lower-stakes
+        than the ranking machinery's, so a directional read with no
+        disclosed falsifier still belongs in the PM prompt (marked as
+        such) rather than being dropped from PM's picture entirely, which
+        is what happened to a *ranking* candidate in this situation. Fall
+        back to the raw `investment_implications` fields when that happens.
+        """
+        impl = (analysis or {}).get("investment_implications") or {}
+        sentiment = impl.get("sentiment", "neutral")
+        conviction = impl.get("conviction", "N/A")
+        thesis = (impl.get("key_thesis") or "").strip() or "not disclosed"
+
+        pointer = (
+            f"data/earnings/{sym}/... ({filing_label})" if not analysis_path
+            else analysis_path
+        )
+
+        verdict = None
+        try:
+            verdict = EarningsAnalysis.model_validate(analysis).to_verdict()
+        except Exception:  # noqa: BLE001 — see docstring: fall back to the
+            # raw fields rather than dropping this filing from PM's prompt.
+            verdict = None
+
+        if verdict is not None:
+            falsifier_line = (
+                f"- Invalidated if: {verdict.invalidation}" if verdict.invalidation
+                else "- Invalidated if: not disclosed by the analyst"
+            )
+        else:
+            falsifier = impl.get("bear_case") if sentiment == "bullish" else impl.get("bull_case")
+            falsifier = (falsifier or "").strip()
+            falsifier_line = (
+                f"- Invalidated if: {falsifier}" if falsifier and falsifier.lower() != "not disclosed"
+                else "- Invalidated if: not disclosed by the analyst"
+            )
+
+        return (
+            f"### {sym} — {filing_label}{source_note}\n"
+            f"- Call: {sentiment} ({conviction})\n"
+            f"- Thesis: {thesis}\n"
+            f"{falsifier_line}\n"
+            f"- Full 8-field extraction (metrics, guidance, strategy, risks, "
+            f"data quality): {pointer}"
+        )
+
     @classmethod
     def stale_evidence_sources(
         cls,
@@ -679,10 +743,6 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                 analysis = ea.get("analysis")
                 if not analysis:
                     continue
-                impl = analysis.get("investment_implications", {})
-                rev = analysis.get("revenue", {})
-                prof = analysis.get("profitability", {})
-                guidance = analysis.get("guidance", "N/A")
                 filing_label = f"{ea.get('form_type', '?')} ({ea.get('filing_date', '?')})"
                 source_note = " [from cache]" if not ea.get("is_new") else " [new filing]"
                 # §9.4 freshness: `[from cache]` and a filing date were
@@ -697,37 +757,11 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                         "does NOT count toward the agreement ceiling]"
                     )
 
-                # Strategic direction
-                strat = analysis.get("strategic_direction", {})
-                initiatives = strat.get("key_initiatives", [])
-                initiatives_text = "; ".join(initiatives[:3]) if initiatives else "not disclosed"
-                competitive = strat.get("competitive_positioning", "not disclosed")
-
-                # Risk flags (structured or legacy list)
-                risks = analysis.get("risk_flags", {})
-                if isinstance(risks, dict):
-                    strat_risks = risks.get("strategic_risks", [])
-                    ops_risks = risks.get("operational_risks", [])
-                    strat_risks_text = "; ".join(strat_risks[:2]) if strat_risks else "none flagged"
-                    ops_risks_text = "; ".join(ops_risks[:2]) if ops_risks else "none flagged"
-                    risk_line = f"- Strategic risks: {strat_risks_text}\n- Operational risks: {ops_risks_text}"
-                else:
-                    risk_line = f"- Risk flags: {'; '.join(risks[:3]) if risks else 'none flagged'}"
-
-                consistency = analysis.get("strategy_consistency", "")
-                consistency_line = f"\n- Strategy consistency: {consistency}" if consistency else ""
-
                 earnings_items.append(
-                    f"### {sym} — {filing_label}{source_note}\n"
-                    f"- Filing metrics: Revenue {rev.get('total', 'N/A')} (YoY: {rev.get('yoy_growth', 'N/A')}), "
-                    f"Gross margin {prof.get('gross_margin', 'N/A')}, Operating margin {prof.get('operating_margin', 'N/A')}, "
-                    f"EPS {prof.get('eps', 'N/A')}\n"
-                    f"- Filing guidance: {guidance}\n"
-                    f"- Strategy: {initiatives_text}\n"
-                    f"- Competitive positioning: {competitive}\n"
-                    f"{risk_line}{consistency_line}\n"
-                    f"- Analyst synthesis: {impl.get('sentiment', 'N/A')} ({impl.get('conviction', 'N/A')}) — {impl.get('key_thesis', 'N/A')}\n"
-                    f"- Data quality: {analysis.get('data_quality', 'N/A')}"
+                    self._render_earnings_verdict(
+                        sym=sym, analysis=analysis, filing_label=filing_label,
+                        source_note=source_note, analysis_path=ea.get("analysis_path"),
+                    )
                 )
             earnings_section = "## Earnings Analysis (from SEC Filings)\n\n" + "\n\n".join(earnings_items)
         else:
