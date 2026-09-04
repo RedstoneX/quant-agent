@@ -4216,3 +4216,139 @@ model when the proxy is reachable. PR #252 merged 2026-09-04 on this
 basis. Caveat: this box's proxy credential may differ from production's;
 if a live desk run ever produces degraded earnings verdicts, re-check
 this rather than assume the n=1 result generalizes.
+
+---
+
+## 2026-09-04 — two bugs in the drawdown-brake multipliers themselves: a decorative daily circuit breaker, and a 20-day brake that contradicted the de-levering ladder by twenty points
+
+PR #263 (same day, merged) fixed the *unit* the three drawdown brakes are
+expressed in — from flat hard-coded percentages to `N × max_position_risk_pct`
+— and deliberately left every multiplier `N` untouched, on the grounds that
+the 2026-09-02 clean-slate reset wiped the equity history needed to validate
+them. That was right about the anchor. It was wrong that nothing about the
+multipliers could be checked: two of the three were wrong for reasons that
+need no trade history at all, only internal consistency. Both are fixed here.
+
+The multiplier calibration itself — the anchor `N_5d = 3` — is **not** touched
+and stays provisional (docs/WORK.md item 32).
+
+### Bug 1 — the daily circuit breaker shared the 5-day window's multiplier, which made it decorative
+
+**State before.** `risk.daily_loss_risk_multiple: 3` and
+`risk.drawdown_5d_risk_multiple: 3` — the same number. At the ratified 5%
+per-trade risk unit both resolved to a **-15%** threshold: one at the end of a
+single session, one at the end of five.
+
+**Why that is wrong on its face.** Two windows of very different length cannot
+share one threshold and fire at anything like a comparable rate. A -15% loss in
+one session on a long-only book of this size is not a bad trading day; it is a
+single-name gap event. The breaker could therefore only ever fire on a tail it
+was never the right instrument for, and never on the ordinary run of bad days it
+exists to stop. In practice: decorative.
+
+**The doctrine.** Drawdown magnitude over a window scales with the square root
+of the window length — Van Hemert, Ganz, Harvey et al., *"Drawdowns"*, Journal
+of Portfolio Management, 2020. For a consistent statistical firing rate across
+windows, thresholds must scale as `√T`, not sit flat.
+
+**Derivation.** The 5-day window is the one item 32's research found reasonably
+calibrated, so it is the anchor:
+
+```
+N_1d = N_5d × √(1/5)
+     = 3.0  × 0.4472135955
+     = 1.3416407865...
+     → 1.34                (2dp — the anchor is provisional to roughly the
+                            nearest half, so more digits would be false
+                            precision)
+
+threshold = 1.34 × max_position_risk_pct
+          = 1.34 × 5%
+          = 6.7%
+```
+
+**Result.** `daily_loss_risk_multiple: 3 → 1.34`, `max_daily_loss_pct: 15 →
+6.7`. The 1-day : 5-day ratio is now **1 : √5 = 1 : 2.24** instead of 1 : 1.
+The shipped 1.34 gives 2.2388, 0.12% off exact √5 — the residual of rounding to
+2dp, orders of magnitude smaller than the uncertainty in the provisional anchor.
+
+Worked case, now covered by a test: an **-8% day** on a $100k book. Under the
+old 15% breaker: no violation. Under 6.7%: violation raised.
+
+### Bug 2 — the 20-day brake stayed silent long past the point the desk's OTHER drawdown system had already alerted the owner
+
+**This desk has two independent drawdown-response systems and they were never
+reconciled.**
+
+1. The **§11.2 gross-exposure de-levering ladder**
+   (`src/risk/rules.py::GROSS_LADDER`, owner-ratified 2026-09-01), on
+   *peak-to-trough* drawdown:
+
+   | drawdown | gross ceiling |
+   |---|---|
+   | better than -8% | 2.0× |
+   | -8% to -15% | 1.5× |
+   | -15% to -20% | 1.0× |
+   | worse than -20% | 0.5×, **and the owner is alerted** (`GROSS_LADDER_ALERT_PCT`) |
+
+2. The newer **rolling-return drawdown brakes**
+   (`RiskConfig.drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct`,
+   halving new BUY size via `apply_drawdown_scale`), which after PR #263 sat at
+   **-15%** (5-day) and **-40%** (20-day).
+
+**The contradiction.** At -20% the ladder has cut gross exposure to 0.5× — it
+has halved the book — and woken the owner. The 20-day brake, at -40%, was at
+that point still completely silent, and stayed silent for another **twenty
+points** of drawdown. That is not a difference of conservatism between two
+tuned systems; it is two systems that disagree about whether the desk is in
+trouble at all. Neither was written with reference to the other.
+
+**Minimal honest fix.** The newer brake must not still be asleep past the point
+the older system escalates to the owner:
+
+```
+N_20d ≤ |GROSS_LADDER_ALERT_PCT| / max_position_risk_pct
+      = 20 / 5
+      = 4.0        → threshold -20%, exactly the alert rung
+```
+
+`drawdown_20d_risk_multiple: 8 → 4`.
+
+**The 5-day brake was left alone, on purpose.** At -15% it lands exactly on the
+ladder's -15% → 1.0× rung. The two systems already agree at that window, so
+there was nothing to reconcile and no reason to move a provisional number.
+
+**The ladder itself was not touched.** Its calibration is owner-ratified and was
+not the subject of this fix. A cross-referencing comment was added above
+`GROSS_LADDER` so the next person to re-tune either side sees the other.
+
+**Note the tension, stated rather than hidden.** -20% is *tighter* than √time
+scaling from the 5-day anchor would give (`3 × √(20/5) = 6`, i.e. -30%). The
+ladder constraint binds before the sqrt-consistency one. Where published
+doctrine and an already-live sibling system disagree, matching the live system
+is the honest minimal move — but it does mean the three windows are no longer on
+a single consistent √time curve, and that is a real cost.
+
+### What is still open — an owner-level decision, not a mechanical fix
+
+Full reconciliation of the two drawdown systems is **not done and not decided
+here.** What shipped is a *floor on the disagreement*, not agreement. The two
+measure genuinely different quantities (peak-to-trough equity vs rolling-window
+return), were calibrated independently years apart in this repo's history, and
+nobody has decided whether this desk should have one drawdown response or two,
+which of them governs, or whether the rolling-return brake should be expressed
+in peak-to-trough terms so the two are even comparable. Flagged in docs/WORK.md
+item 32 with a decide-by date.
+
+### Verification
+
+`tests/test_drawdown_brake_rescale.py` extended with the worked numbers above,
+including two regression guards that reproduce each defect (setting the daily
+multiple back to 3.0, or the 20-day back to 8.0, and asserting the wrong
+behaviour follows) so neither can be silently reintroduced.
+
+Suite before: 4908 passed, 1 failed, 1 skipped. Suite after: unchanged pass
+posture with the new tests added. The single failure,
+`tests/test_rehearsal_reproduces_cost_ceiling.py::test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure`,
+is **pre-existing on main and unrelated** — docs/WORK.md item 28 records it as
+fixed, which is stale; it is still red.

@@ -325,10 +325,28 @@ risk:
   # (an "April-2026-era constant" sized for this desk's real per-trade risk
   # when a since-fixed notional-cap bug, PRs #258/#259, suppressed it to
   # ~1% regardless of stated conviction). Re-derived as
-  # `daily_loss_risk_multiple x max_position_risk_pct` = 3 x 5 = 15 so it
-  # tracks the REAL per-trade risk unit those PRs restore, enforced by the
-  # `_daily_loss_matches_risk_unit` validator in src/config.py (config
-  # fails to load if these two drift apart again).
+  # `daily_loss_risk_multiple x max_position_risk_pct` so it tracks the REAL
+  # per-trade risk unit those PRs restore, rather than sitting as an
+  # independently-chosen flat percent that goes stale the next time the risk
+  # unit moves (`RiskConfig.effective_max_daily_loss_pct`, src/config.py).
+  #
+  # BUG 1, FIXED 2026-09-04 — the multiple was 3, giving 3 x 5 = 15. That is
+  # the SAME multiple as the 5-day window's, and two windows of different
+  # length cannot share one multiple and fire at a comparable rate. At -15%
+  # in a single session the daily breaker was only ever reachable on a
+  # single-name gap event, not on any realistic bad trading day: decorative.
+  #
+  #   Square-root-of-time (Van Hemert/Ganz/Harvey et al., "Drawdowns",
+  #   Journal of Portfolio Management 2020 — drawdown magnitude over a
+  #   window scales with sqrt(time)), anchored on the 5-day window:
+  #
+  #       N_1d = N_5d x sqrt(1/5) = 3 x 0.44721 = 1.34164... -> 1.34
+  #
+  #   giving 1.34 x 5 = 6.7%. The 1-day : 5-day ratio is now 1 : sqrt(5)
+  #   = 1 : 2.24, instead of the old incoherent 1 : 1.
+  #
+  # Full derivation in the `daily_loss_risk_multiple` field comment in
+  # src/config.py.
   #
   # DEPENDS ON PRs #258/#259 LANDING FIRST: `max_position_risk_pct` (5,
   # below) has said 5 since 2026-08-27, but PR #258's notional-cap fix is
@@ -337,24 +355,46 @@ risk:
   # a state that does not exist on main yet. Do not merge this ahead of
   # #258/#259; see this PR's description.
   #
-  # The multiplier (3) is UNCHANGED from the pre-existing, never
+  # The ANCHOR multiple (N_5d = 3) is UNCHANGED from the pre-existing, never
   # independently validated constant — there is no measured drawdown
   # history to check it against (the 2026-09-02 clean-slate reset wiped the
-  # equity curve). Only the UNIT is fixed here; the multiplier is flagged
-  # PROVISIONAL in docs/WORK.md pending real post-fix trade data — an owner
-  # call, not decided by this change.
-  max_daily_loss_pct: 15
-  daily_loss_risk_multiple: 3
+  # equity curve). Bug 1 fixes the RELATIVE scaling between windows, which
+  # is doctrine; the anchor's absolute calibration is flagged PROVISIONAL in
+  # docs/WORK.md pending real post-fix trade data — an owner call, not
+  # decided by this change.
+  max_daily_loss_pct: 6.7
+  daily_loss_risk_multiple: 1.34
   # docs/WORK.md item 32. Same derivation and same #258/#259 dependency as
   # `max_daily_loss_pct` above, for the two rolling-return "drawdown brake"
   # windows in src/pipeline.py::_compute_recent_performance
   # (`RiskConfig.drawdown_5d_threshold_pct` /
   # `drawdown_20d_threshold_pct`): was flat -3.0 / -8.0, now
-  # `-(multiple x max_position_risk_pct)` = -(3 x 5) = -15 / -(8 x 5) = -40.
-  # Multipliers (3, 8) UNCHANGED and PROVISIONAL for the same reason —
-  # see src/config.py field comments.
+  # `-(multiple x max_position_risk_pct)`.
+  #
+  # 5-day: 3 x 5 = -15%. UNCHANGED and still the provisional anchor. It
+  # lands exactly on the de-levering ladder's -15% -> 1.0x rung
+  # (src/risk/rules.py::GROSS_LADDER), so at this window the desk's two
+  # drawdown-response systems already agree.
+  #
+  # BUG 2, FIXED 2026-09-04 — 20-day was 8, i.e. -40%. This desk has a
+  # SECOND, older drawdown-response system, the §11.2 peak-to-trough
+  # gross-exposure de-levering LADDER, which de-levers from -8%, is at 1.0x
+  # by -15%, and at -20% drops to 0.5x AND alerts the owner
+  # (GROSS_LADDER_ALERT_PCT). The two were never reconciled: the ladder had
+  # already halved the book and woken the owner while this brake sat
+  # silent, and stayed silent for another twenty points.
+  #
+  #   Minimal honest fix — the 20-day brake must not still be asleep past
+  #   the ladder's own owner-alert point:
+  #
+  #       N_20d <= 20 / max_position_risk_pct = 20 / 5 = 4
+  #
+  # This is TIGHTER than sqrt-time from the 5-day anchor would give
+  # (3 x sqrt(20/5) = 6, i.e. -30%); the ladder constraint binds first.
+  # FULL reconciliation of the two systems is a real open design question
+  # and an OWNER call — see docs/WORK.md item 32.
   drawdown_5d_risk_multiple: 3
-  drawdown_20d_risk_multiple: 8
+  drawdown_20d_risk_multiple: 4
   # Spec §10.3 (owner-ratified 2026-09-01) — this is the concentration
   # TARGET, not a veto. A sector at or over it no longer refuses the next
   # trade in it; the constructor SHRINKS that trade instead, progressively,
@@ -368,8 +408,8 @@ risk:
   # this limit's ONLY remaining job is bounding correlated blow-up risk.
   #
   # THE COST, STATED PLAINLY: at 75% of equity in one sector, an ordinary
-  # 20% sector-wide drawdown costs 15% of equity — FIVE TIMES the 3%
-  # max_daily_loss_pct circuit breaker below, and it will trip the
+  # 20% sector-wide drawdown costs 15% of equity — more than TWICE the 6.7%
+  # max_daily_loss_pct circuit breaker above, and it will trip the
   # de-levering ladder. That is the accepted price of a concentrated
   # trading desk, not an oversight.
   #
