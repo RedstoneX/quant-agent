@@ -248,13 +248,22 @@ def veto_contradicted_exit(
 #: (0.89-1.12 ATR) — meaning almost every attempted discretionary exit on an
 #: aging position was blocked, and 5 of 9 real exits ended up as plain broker
 #: stop-outs instead of a deliberate call. See `adverse_move_is_noise` below,
-#: which now scales this constant by sqrt(days_held) — the same convention
-#: `src/data/levels.py::derive_structural_target` already uses for target
-#: projection (`ATR * sqrt(sessions)`), on the same random-walk basis:
-#: expected price dispersion grows with the square root of elapsed time, not
-#: linearly. `days_held` is floored at 1 session so day-zero/day-one behaviour
-#: is UNCHANGED — only positions held longer than one session get a wider
-#: band than before.
+#: which now scales this constant by sqrt(sessions_held) — the same
+#: convention `src/data/levels.py::derive_structural_target` already uses
+#: for target projection (`ATR * sqrt(sessions)`), on the same random-walk
+#: basis: expected price dispersion grows with the square root of elapsed
+#: TRADING TIME, not linearly and not with calendar time. The `days_held`
+#: parameter name below is legacy from the first pass of this fix (2026-09-04
+#: audit, real-data fix #1); a follow-up on the same date caught it actually
+#: being fed calendar days (`(today - entry_date).days`, weekends included)
+#: rather than trading sessions, which over-widened the band by sqrt(3) on
+#: every Friday-to-Monday hold — the opposite of the fix's own intent, since
+#: only one real session's price action had occurred. Callers MUST pass a
+#: trading-session count (see `trading_calendar.trading_sessions_held`, a
+#: weekend-aware approximation — Mon-Fri only, no market-holiday calendar),
+#: never a raw calendar-day count. `sessions_held` is floored at 1 session so
+#: day-zero/day-one behaviour is UNCHANGED — only positions held longer than
+#: one session get a wider band than before.
 NOISE_BAND_ATR_MULTIPLE = 1.0
 
 #: Triggers that come from OUTSIDE the price series. These bypass the noise
@@ -301,6 +310,15 @@ def noise_band_atr(days_held: int | float | None, *, multiple: float = NOISE_BAN
     (`travel = volatility * math.sqrt(horizon)`), on the same random-walk
     basis: expected price dispersion from a fixed starting point (here,
     entry) grows with the square root of elapsed time, not linearly.
+
+    Despite the parameter name (kept for call-site compatibility), this
+    MUST be a TRADING-SESSION count, not a calendar-day count — see
+    `trading_calendar.trading_sessions_held` for the weekend-aware counter
+    `pipeline.py` feeds in. A 2026-09-04 audit follow-up caught this
+    function being fed raw calendar days, which silently over-widened the
+    band by sqrt(3) instead of sqrt(1) across a Friday-to-Monday hold (3
+    calendar days, 1 real trading session) — the opposite of this fix's own
+    intent.
 
     `days_held` is floored at 1 session — None, non-finite, zero, or negative
     all collapse to 1 — so a brand-new position gets exactly the old flat
