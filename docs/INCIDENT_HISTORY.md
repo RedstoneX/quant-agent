@@ -22,6 +22,298 @@ what would catch it next time.
 
 ---
 
+### 2026-09-04 — three independent exit-management defects fixed in one PR
+
+**In plain words:** a real-data audit of tonight's exit and ranking
+behaviour found three separate problems. They live in related files and
+shipped together, but each is its own bug with its own cause and its own
+standard fix — none of them is a personal risk-preference question, so each
+was fixed against established professional practice rather than invented or
+held for individual sign-off, per explicit owner instruction. Read as three
+fixes, not one change.
+
+**Fix 1 — the "is this move noise" exit veto was flat, so it choked off
+exits on older positions.** The Position Reviewer's guard against exiting on
+an ordinary day's price wobble (`src/risk/exit_guard.py::adverse_move_is_
+noise`) compared the adverse move to a FLAT 1.0xATR band no matter how long
+the position had been held. Measured against 12 real positions opened
+before item 22's stop-floor fix: on 8 of those 12, that flat band came out
+about the same width as the entry stop itself (0.89-1.12 ATR), so almost
+every attempted early, deliberate exit was blocked — 5 of 9 real exits ended
+up as plain broker stop-outs instead. This codebase already trusts
+sqrt(time) scaling for the mirror-image question (how far a target should
+be projected, in `src/data/levels.py`), on the standard statistical basis
+that expected price dispersion grows with the square root of elapsed time,
+not linearly. The noise band now uses the same scaling and the same
+constant convention: `1.0xATR * sqrt(days_held)`, floored at one session so
+a brand-new position sees no change at all. `src/pipeline.py`'s executor was
+updated to pass the position's actual `days_held` through; before, the
+noise-band call site did not have (and did not need) that number at all.
+
+**Fix 2 — ranking ties broke alphabetically, a real and undisclosed bias.**
+Item 18's own audit (see "2026-09-03 — Phase 13, first increment" below)
+already named this as a stated but meaningless rule; this pass measured how
+often it actually fires on real days (9 of 12 eligible names tied one day,
+23 of 33 another) — common enough that "tied, so alphabetical" was
+effectively deciding which stock got picked on most trading days. Every
+early-alphabet ticker was getting a permanent, free edge that had nothing to
+do with the quality of the call. Fixed in `src/verdicts.py::rank_verdicts`:
+before falling back to the ticker symbol, ties now break on `risk_reward` —
+the reward-to-risk ratio each seat already computes and attaches as
+evidence for its own call (`VerdictEvidence(label="risk_reward", ...)`).
+That is real, already-available information about which candidate is
+actually better supported, at no new cost. Symbol is still the very last
+tiebreaker, reached only once two candidates are equal on every real signal
+this module has — at that point nothing distinguishes them anyway, so a
+fixed, reproducible order is a housekeeping need, not a bias.
+
+**Fix 3 — a "range"-type trade got zero profit protection until it hit
+100% of its target.** `src/risk/trailing.py`'s Type A (range) management —
+this desk's most common setup by real observed frequency — never moved the
+stop at all until price exceeded the full target. A trade could travel 90%
+or more of the way to its goal and give back every cent of it, with nothing
+in place the whole time; the audit flagged this as the single largest
+un-backtested, asymmetric-downside rule found in the whole exit-management
+review. Standard practice, cited across professional trading literature
+(Van Tharp's R-multiple framework, Elder's Triple Screen), is to move the
+stop to breakeven once a trade has locked in a defensible fraction of its
+planned move — conventionally +1R, one initial-risk-unit of profit. That is
+now implemented as an additive ratchet: once a range position reaches its
+entry stop's original risk distance in profit, and the stop has not already
+reached breakeven or better, the stop moves to breakeven. The existing rule
+— no *structural* trailing (following swing lows/highs) until the target is
+actually exceeded — is unchanged, and Type B (breakout) trailing, which
+already rides the position from entry, was not touched.
+
+**What would catch a regression.** `tests/test_phase3_exit_rework.py`
+(noise-band sqrt-time scaling, including a same-move/different-days-held
+comparison and an executor-level end-to-end case); `tests/test_analyst_
+verdict.py` (a real tied-score pair resolved by risk_reward instead of the
+alphabet, a no-evidence case that never crashes or wins undeservedly, and
+the real production fixture's order re-pinned to the new, non-alphabetical
+result); `tests/test_trailing_stops.py` (a range position ratcheting to
+breakeven at +1R, staying there through a hard retrace that would have given
+back the full original risk under the old logic, the short-side mirror, and
+backward compatibility for every call site that does not yet pass the new
+`initial_stop` argument).
+
+---
+
+### 2026-09-04 — a refusal to open a position and a real order to close it were the same number
+
+**In plain words:** the desk's sizing math used the number **0%** to mean
+three different things: "don't open this," "close what's already held," and
+"open the opposite position." A refusal to buy something and a decision to
+sell an existing position looked identical to the code that turns targets
+into orders. That code defaulted to reading a zero as "close" — so a rule
+that said "no" to a new trade could, in principle, have silently sold a real
+position nobody asked to sell. It never actually happened (no trade log shows
+it), but the trap was real and structural, not a one-off bug. This closes
+item 13 in `docs/WORK.md`.
+
+**How it was caught:** raised verbally by the owner, lost once to a context
+compaction, then written down permanently in `docs/WORK.md` item 13 so it
+could not be lost again. A partial workaround already existed: the
+2026-09-02 "signed-dissent" change, when it decided a name's evidence didn't
+support opening a position, deleted that name from its internal list rather
+than sizing it at a literal zero — which avoided the trap for that one code
+path, but only because that one path remembered to special-case it. Nothing
+stopped a different rule, written later, from forgetting.
+
+**The fix.** Borrowed, not invented: `pysystemtrade` (Rob Carver's
+open-source systematic trading framework) solves exactly this with what it
+calls an override algebra. Instead of a plain number, a sizing decision is
+one of four distinct kinds — "don't trade," "close it," "only allow
+shrinking," or "trade this amount" — and there is a fixed rule for combining
+two of them: the more cautious one always wins. "Don't trade" can never be
+watered back down into "trade a little" by combining it with something else,
+the way `min(0, 5)` is still just the number zero with no memory of where it
+came from.
+
+`src/risk/size_override.py` implements this as a small type,
+`SizeOverride`, with that same ordering (`no_trading > close > reduce_only >
+multiplier`) and a `combine()` method enforcing it. The important design
+choice: asking a "don't trade" value for its size is now a hard error, not a
+0.0 you can accidentally treat as a real number. That is what makes the old
+bug impossible to write by accident rather than merely unlikely.
+
+**What was migrated.** The one real caller that had the bug and worked
+around it — `PortfolioConstructor._plan_risk_targets`, the place that
+combines the PM's risk envelope with the agreement-ceiling check from the
+2026-09-02 dissent rule — now builds `SizeOverride` values for both caps and
+combines them instead of taking a raw `min()` of two floats and checking
+`<= 0.0`. When the result is a refusal, the target is still dropped from the
+order-construction list exactly as before (so a refused BUY still leaves any
+held position untouched) — but now because the type says so, not because
+this one function remembered to check for it.
+
+**What was deliberately not touched.** `TargetPosition.risk_allocation_pct
+== 0.0` (the PM's own explicit "close this" instruction) was left as a plain
+float. That zero is not ambiguous — it is the one legitimate, sourced case
+where 0% really does mean "close," authored directly by the Portfolio
+Manager, and it already routes through its own code path
+(`PortfolioConstructor._plan_risk_targets`'s `closes` set) before the
+envelope/agreement-ceiling logic ever runs. Converting it to `SizeOverride`
+as well would have been a larger, purely stylistic change with no bug behind
+it, so it was left alone. Every other place a target's weight is combined
+with a real refusal — the code in `_plan_risk_targets` this incident is
+about — was migrated; no ambiguous-zero call site was knowingly left
+half-fixed.
+
+**Verification:** `tests/test_size_override.py` (new) proves the combination
+rule for every pairwise combination of the four kinds, proves "don't trade"
+wins no matter what it's combined with (including an arbitrarily large
+trade size), and proves the old bug can no longer be expressed — reading a
+size off a "don't trade" or "close" value raises instead of returning a
+number. The existing agreement-ceiling tests
+(`tests/test_agreement_sizing.py`, `tests/test_signed_dissent.py`,
+`tests/test_portfolio_constructor.py`) all pass unchanged, confirming the
+migration is a pure refactor of the 2026-09-02 workaround with no behaviour
+change for real sessions.
+
+---
+
+### 2026-09-04 — insider cluster window was 7x wider than the research it was supposedly built on
+
+**In plain words:** the code that decides whether several insiders buying or
+selling around the same time counts as a "cluster" (a stronger signal than
+one person trading alone) used a 14-day window. The desk's own research
+notes cite a real published paper for exactly this feature, and that paper
+defines a cluster as trades within about 2 days — not 14. There was no
+comment or rationale anywhere explaining the wider number; git blame traces
+it to the feature's original commit (2026-08-25), before the research
+citation was even written down (2026-08-27), so it was carried over from an
+unrelated constant (`lookback_days`), not a deliberate choice.
+
+**What was checked before changing it:** whether congressional-trade
+disclosure lag (which is genuinely slower than SEC Form 4 insider filing
+lag) could justify a wider window specifically for congressional data. It
+does not apply — this provider only ever ingests SEC Form 4 insider filings;
+there is no congressional-trading data source in this codebase to which a
+different lag would apply.
+
+**What was verified with real, fresh data, not just theory:** pulled 332
+live Form 4 observations from SEC EDGAR (5 days, market-wide, the desk's own
+production code path) and re-ran the real clustering logic at both the old
+14-day and the corrected 2-day window. Result: identical — every real
+multi-owner cluster found in the live sample had its owners trading within 2
+days of each other anyway; the maximum spread across all 36 clustered
+symbol/direction groups was 2 days. The wider window was not just
+undocumented, it was contributing zero real clusters beyond what 2 days
+already caught. Separately confirmed that a single insider's trade is never
+discarded for failing to cluster — clustering only rescues transactions that
+are below the individual dollar threshold on their own; of 40 real
+observations that passed every gate in the sample, only one needed the
+cluster rescue at all, and it survived under both window sizes.
+
+**Fix:** `cluster_window_days` corrected from 14 to 2 in
+`src/data/smart_money.py`, `src/config.py`, and `config/settings.yaml`,
+with a comment citing the source. See `docs/WORK.md` item 32.
+
+**Not fixed here, flagged as a separate question:** the same cited paper
+says a sell should be judged by size relative to the insider's own
+holdings, not an absolute dollar amount, and QAMC's filter is currently a
+flat dollar threshold. This is a real, larger gap — but fixing it needs
+insider holdings-size data the desk does not currently fetch, which is a
+bigger design question than this fix's scope. Left for an owner decision.
+
+---
+
+### 2026-09-04 — the desk's own eligibility check and its own order-builder disagreed on which trades were even worth considering
+
+**In plain words:** on 2026-09-01 the desk decided that its real reward-to-
+risk number — the one that decides whether a trade is worth the risk — must
+be computed from the real chart, not taken from whatever number the AI
+analyst claims. That fix landed in the step that BUILDS the order, but never
+in the EARLIER step that decides which candidates are even allowed to reach
+the order-builder. So the desk had two different opinions about the same
+number, at two different points in the same pipeline, and the earlier,
+wrong one decided what the later, correct one ever got to see. Measured on a
+real day: the early gate let through 8 names, the order-builder's real gate
+would have let through 2 different names — none of them the same 8.
+
+**What was broken:** `PortfolioManagerAgent.candidate_eligibility` and
+`_apply_subfloor_catalyst_rule` (`src/agents/portfolio_manager.py`) read
+`TechAnalysisResult.risk_reward` — real Python arithmetic, but computed
+over the AI analyst's own entry price and its own GUESSED target, never
+checked against the chart. `PortfolioConstructor` (the step that turns a
+decision into an actual order) had already stopped trusting that number on
+2026-09-01: it derives the take-profit from real support/resistance levels
+and widens a too-tight stop to a real noise floor, then computes
+reward:risk from THAT. The PM's gate runs first and decides which names the
+model even gets to consider; the constructor's real answer runs later and
+never gets a say over a name the PM already screened out — or a chance to
+correctly admit a name the PM already screened out for looking bad on paper
+when the real chart said otherwise.
+
+**What was ruled out.** Not a new bug in the constructor's arithmetic — that
+was already fixed and correct on its own terms. Not a config or a threshold
+disagreement — both gates use the identical 1.5 floor
+(`risk.min_reward_risk_after_widening`), confirmed by reading the value each
+one is threaded. The only disagreement was WHICH input feeds that same
+arithmetic.
+
+**The fix.** `PortfolioConstructor.real_reward_risk_preview` (new method)
+runs the constructor's own `_derive_target` / `_widen_stop_past_noise`
+logic — not a second copy of it — against the analyst's snapshot entry and
+stated stop (the live price and any PM-suggested stop do not exist yet this
+early). `src/pipeline_stages.py` computes one of these per analysed
+candidate, using the pipeline's already-configured `PortfolioConstructor`,
+and passes the resulting map into `PortfolioManagerAgent.decide()` as
+`real_reward_risk_by_symbol`; both eligibility gates now key off that map
+instead of the self-reported field. A symbol the map cannot resolve a
+number for is treated as sub-floor — fail closed, the same posture this
+gate has always taken for an unmeasurable ratio.
+
+**Re-measured, not just asserted fixed.** `ops/model_policy/
+deterministic_selection.py`'s `evaluate()` gained the same real number as an
+informational `rr_real` column, but its own gate was deliberately left
+reading the self-reported figure: its one frozen fixture
+(`run_64290730_pm_input.json`, 2026-09-01) predates
+`TechAnalysisResult.computed_levels` being populated at all — every row's
+list is empty — so the real derivation refuses every single name on that
+fixture for lack of chart structure to derive from, which is a fact about
+the fixture's age, not a finding about the rule. Switching that script's
+gate would have silently replaced "the desk's own stated rules" with "no
+data," corrupting the item-18 numbers this file and `docs/WORK.md` already
+record, rather than correcting them.
+
+The only real production data on hand with `computed_levels` populated
+(the field this fix depends on) is 2026-09-02 — every earlier day in the
+read-only snapshot available for this work predates that field being
+emitted. Replayed both ways, hand-verified: one full morning session (34
+actionable names: 8 eligible on the old self-reported gate, 0 on the new
+real gate) and fourteen intraday re-checks that same day (49 more
+actionable name-instances: 22 eligible old, 0 new). Zero overlap both
+times — the audit's finding reproduces on a second, independent day, not
+just the one fixture that first surfaced it.
+
+**A second, more important finding fell out of the same measurement.** Real
+eligibility came back at ZERO on the only day this could be checked against
+real data — not "different names," genuinely none. Every candidate's own
+stated stop was tighter than `min_stop_atr_multiple`'s required noise band,
+so every stop gets widened before the reward:risk check runs; after
+widening, the ratio essentially never clears 1.5. The tight-stop exemption
+(a stop resting on a real, verified chart level is honoured however tight)
+never fired for any of them — not because it is broken, but because the
+touch-count field it checks (`computed_level_touches`, shipped 2026-09-03)
+postdates every real record available to check it against. **This closes
+the two-gates mismatch; it does not touch the width of the floor itself,**
+which is a separate, real risk-tolerance question already tracked as item 1
+in `docs/WORK.md` and explicitly left to the owner there. Fresh data dated
+after 2026-09-03 (so the touch-count field has a chance to actually
+populate) would give the floor question a fairer second read.
+
+**What would catch this next time.** New tests in `tests/
+test_portfolio_constructor.py`, `tests/test_subfloor_catalyst_gate.py` and
+`tests/test_analyst_verdict.py` pin both directions of the disagreement by
+hand-computed example — a candidate the model overstates (high self-
+reported ratio, poor real one) and one it understates (low self-reported
+ratio, good real one) — and assert the fixed gate lands on the real answer
+either way, not just the direction that happened to fail first.
+
+---
+
 ### 2026-09-04 — acceptance test broken on main by deleted cost-circuit config keys
 
 **In plain words:** a test that validates the rehearsal harness (offline
@@ -3458,3 +3750,587 @@ to pass against the fix with all four surviving — plus a companion test on
 directly.
 
 See PR merging `fix/risk-budget-partial-heat-failure`.
+
+### 2026-09-04 — drawdown brakes rescaled to the real per-trade risk unit
+
+**In plain words.** docs/WORK.md item 32 found the ratified 5% per-trade
+risk envelope was never actually reachable — an old 20% notional cap
+(`risk.max_position_pct`) bound first and suppressed real delivered risk
+to ~1.0-1.8% (PR #258, open). That same audit flagged, but explicitly did
+not fix, a second consequence: three "drawdown brake" thresholds were
+calibrated against that old ~1% unit and would misfire once #258 makes 5%
+the real one —
+
+- `in_drawdown`'s rolling 5-day return check
+  (`src/pipeline.py::_compute_recent_performance`): flat `< -3.0`.
+- The same function's rolling 20-day check: flat `< -8.0`.
+- The 3% daily-loss circuit breaker (`risk.max_daily_loss_pct`, enforced
+  in `src/risk/rules.py::RiskRuleEngine.check` /
+  `RiskRuleEngine.check_daily_loss`).
+
+All three read, in effect, as "N losing max-size trades in a window" —
+3 in 5 days, 3 in a day, 8 in 20 days — under the OLD ~1% unit. Left as
+flat literals, they would silently become ~5x too loose relative to that
+original intent the moment #258/#259 make 5% the real per-trade risk.
+
+**The fix.** Three new `RiskConfig` fields (`src/config.py`):
+`drawdown_5d_risk_multiple`, `drawdown_20d_risk_multiple`,
+`daily_loss_risk_multiple` — all default to the pre-existing, UNCHANGED
+multipliers (3, 8, 3). Two new derived properties,
+`drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct`, compute
+`-(multiple x max_position_risk_pct)` and are what
+`_compute_recent_performance` now reads instead of the old hardcoded
+`-3.0` / `-8.0`. `max_daily_loss_pct` keeps the exact override pattern
+`max_sector_hard_pct` already uses one field up: an explicit value always
+wins (kept for the ~50 existing tests/fixtures across this repo that set
+it to an arbitrary literal for unrelated reasons); absent one, a new
+`effective_max_daily_loss_pct` property derives
+`daily_loss_risk_multiple x max_position_risk_pct`. `RiskRuleEngine`'s two
+daily-loss checks and the two read-only display paths
+(`src/api/routes_live.py`, `src/pipeline.py`'s notifier payload) now read
+the effective property, not the raw field.
+
+`config/settings.yaml` sets `max_daily_loss_pct: 15` (= 3 x 5, was 3),
+`daily_loss_risk_multiple: 3`, `drawdown_5d_risk_multiple: 3`,
+`drawdown_20d_risk_multiple: 8` — the 5-day/20-day thresholds are no
+longer separately configured percentages at all, only the multipliers
+are, so they cannot drift from the risk unit the way the daily-loss field
+could.
+
+**What is derived versus what is inherited, stated precisely because this
+desk holds "no arbitrary numbers" as a standard (docs/OUTCOME.md).** The
+UNIT conversion is real: old ~1.0-1.8% delivered risk and the new 5%
+`max_position_risk_pct` are both documented, measured/ratified figures
+(see the 2026-09-04 notional-cap entry above), and every threshold here is
+now expressed as a multiple of that unit rather than a flat percent. The
+multiplier N (3 for daily and 5-day, 8 for 20-day) is NOT re-derived —
+it is carried over from the pre-existing, never independently validated
+constant, because there is no measured drawdown/track-record history to
+check it against: the 2026-09-02 clean-slate reset wiped the equity curve
+these checks read, and per the #258 incident entry the 20-day check in
+particular cannot evaluate at all yet for lack of 20 real trading days of
+history since. This is flagged PROVISIONAL in docs/WORK.md item 32,
+explicitly an owner decision once real post-fix drawdown data exists —
+not decided or guessed at here.
+
+**Sequencing dependency, stated plainly.** These settings.yaml values are
+sized for the state PRs #258/#259 create (`max_position_risk_pct`
+actually delivering 5% real risk), not the state main is in today. Merging
+this change ahead of #258/#259 would loosen the brakes roughly 5x while
+real per-trade risk is still the suppressed ~1-1.8% — this PR must land
+after #258 and #259, not before.
+
+**Tests.** New file `tests/test_drawdown_brake_rescale.py` (11 tests, all
+new — no existing test exercised this threshold arithmetic before): the
+two `RiskConfig` derivation properties at two different risk-unit values
+(pins the rescaling behaviour, not just one static number);
+`effective_max_daily_loss_pct`'s explicit-wins and derives-when-unset
+paths; `RiskRuleEngine.check_daily_loss` with a concrete regression case
+(a 10% daily loss that would have tripped the old flat 3% breaker no
+longer trips at the derived 15%, a 16% loss still does) plus the explicit-
+override path; `TradingPipeline._compute_recent_performance` with
+concrete 5-day and 20-day regression cases showing a move that would have
+tripped the old hardcoded -3.0/-8.0 no longer trips at the derived
+-15%/-40%, and a deeper move still does; and a
+`PortfolioManagerAgent.build_user_message` case confirming the prompt now
+renders the actual configured thresholds rather than the old hand-typed
+"5d < -3% OR 20d < -8%" string (also fixed in
+`src/agents/portfolio_manager.py`, the one prompt-facing surface that
+restated the numbers rather than just echoing computed values — threaded
+through via two new `_compute_recent_performance` return keys,
+`drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct`). Full suite:
+4799 passed / 1 skipped / 1 failed before this change, 4810 passed / 1
+skipped / 1 failed after (net +11, all new; the 1 failure is
+`test_rehearsal_reproduces_cost_ceiling.py`, the same pre-existing,
+environment-dependent failure PR #258 also excluded from its counts —
+unrelated to this change, fails identically before and after it).
+
+See PR `fix/drawdown-brake-rescale` (open, not merged — depends on
+#258/#259 landing first, needs independent adversarial review before
+merge, same posture as every other risk-touching change this week).
+
+### 2026-09-04 — the notional cap, not the 5% envelope, was the real per-trade risk limit
+
+**In plain words.** The owner ratified "risk up to 5% of the book per
+trade" on 2026-08-27. A much older, unrelated rule — "never put more than
+20% of the book's notional value in one name" — sat in front of it in the
+order the constructor applies clamps, and bound first almost every time.
+`notional = risk_pct x entry / (entry - stop)`, so a 20% notional ceiling
+caps DELIVERED risk to `20% x stop_distance` regardless of what conviction
+asked for. At this desk's real stop distances (roughly 5-9%, after the
+2026-08-27 ATR-floor fix), that ceiling delivered ~1.0-1.8% risk no matter
+whether the PM asked for 1% or 5%. Real-data audit tonight: 6 of 13 real
+proposed orders pinned at exactly 20% notional; a 2.8%-risk request and a
+1.0%-risk request both delivered ~1% risk either way. The 5% figure was
+ratified but never actually reachable — closing this gap is catch-up on an
+already-made decision, not a new one.
+
+Compounding it: the PM prompt's conviction-to-risk-% bands
+(`config/prompts/portfolio_manager.md`, Step 5) were tuned DOWN on
+2026-08-27 (high 2.0-4.0% -> 1.5-3.0%, moderate 1.0-2.5% -> 1.0-2.0%,
+commit `19641f5`) specifically to fit under this wrongly-binding 20%
+ceiling, rather than the cap being sized to the mandate. And the
+drawdown-response rules (`in_drawdown` in `src/pipeline.py`: 5-day <-3% or
+20-day <-8% halves size; the 3% daily-loss circuit breaker in
+`src/risk/rules.py`/`settings.yaml`) are April-2026-era constants
+calibrated to a desk risking a fraction of a percent per trade — under the
+real ~1% delivered risk they were already too easy to trip relative to
+normal trade variance, and would be more so once real risk moves toward 5%.
+
+**The fix shipped tonight.** `risk.max_position_pct` (settings.yaml) moved
+20 -> 100, mirrored in `ConstructorConfig.max_position_pct`
+(`src/portfolio_constructor.py`) and the pipeline's fallback default. 100
+is derived from this desk's own real numbers, not picked: at the tight end
+of the documented real range (5%), 5% risk needs `5 / 5 x 100 = 100%`
+notional — and since `allow_margin` is false, 100% of one name's equity is
+already the real reachable ceiling regardless of the number configured
+here, so 100 covers the real range without inventing headroom that was
+never usable. A stop tighter than 5% — reachable today only via the
+level-backed exception down to `absolute_min_stop_atr_multiple` — still
+gets clamped, which is exactly the "genuinely too tight" case this ceiling
+exists for rather than the ordinary one. Full derivation in the
+settings.yaml and portfolio_constructor.py comments at that setting.
+
+**Interaction with the other ceilings, checked before shipping.**
+`max_portfolio_risk_pct` (25%, the book-wide risk ceiling) is enforced by
+`allocate_risk_budget` BEFORE the single-name notional clamp ever runs in
+`_build_buy`/`_build_short`, and does not read `max_position_pct` at all —
+raising the notional cap cannot raise total book risk past 25%. Pinned as
+a test:
+`test_raising_the_single_name_notional_cap_does_not_raise_the_total_risk_ceiling`
+in `tests/test_risk_based_sizing.py`. One real interaction the fix
+surfaced (not caused): `max_sector_hard_pct` (90%, spec §12.3, unchanged)
+is an ABSOLUTE per-sector ceiling that applies even to a single, uncrowded
+name — since 90 sits below the new 100, it now binds ahead of the
+single-name cap whenever an isolated position in a real sector asks for
+more than 90% notional. A 5%-risk/5%-stop request, for example, lands on
+90% notional (4.5% delivered risk) rather than the full 100%/5%. That is a
+different, already-ratified, unchanged ceiling doing its own job — not a
+gap this fix opened, and not touched, per instruction not to move sector
+caps without their own independent review. `max_single_short_pct` (10%)
+was historically "half of max_position_pct" when both were chosen at
+20/10; that relationship is now stale (shorts were out of scope for this
+fix and were not scaled with it) — the comments at that setting
+(settings.yaml, src/config.py) now say so explicitly rather than leaving
+the old, now-inaccurate "deliberately half" framing in place.
+
+**NOT shipped tonight — a genuine design fork, not decided here.** The
+conviction bands and the drawdown brakes both need re-deriving now the
+notional cap is fixed, but two materially different, both-defensible
+designs disagree on how:
+
+- **(a) Widen the bands back** toward their original 2.0-4.0% / 1.0-2.5%
+  numbers, and re-scale the drawdown brakes as multiples of the real
+  per-trade risk unit (the standard "N consecutive losing R's cuts size"
+  convention) — restoring what 2026-08-27 compressed, now that the thing
+  it was compressed for no longer applies.
+- **(b) An explicit volatility-parity overlay.** Size each trade to a
+  similar risk-CONTRIBUTION via its own ATR — standard CTA/managed-futures
+  practice — on top of what `notional = risk_pct x entry/(entry-stop)`
+  already does. Note for whoever picks this apart next: the stop is
+  already ATR-derived (`risk.min_stop_atr_multiple`), so (a) already
+  carries a form of volatility scaling through the stop-distance
+  denominator; (b) would be a SEPARATE overlay on top of that, and risks
+  double-counting volatility unless deliberately unified with (a) rather
+  than simply added alongside it.
+
+The real long-term answer — sizing risk-per-trade off this desk's own
+measured track record via fractional Kelly, using the analyst scorecard
+(`src/api/routes_scorecard.py`, `docs/WORK.md` item 29) — is not buildable
+honestly yet: that scorecard reports zero resolved calls as of tonight
+(started 2026-08-31, timers paused most of that day), and a Kelly figure
+derived from too few resolved trades would not be honest either. This is
+the correct next step once enough resolved-trade history exists, flagged
+here rather than built now.
+
+This is escalated as a genuine fork rather than resolved by picking one,
+per this task's own instruction to only escalate a real disagreement in
+established practice, not a preference question — (a) and (b) are both
+standard and materially disagree on where volatility should enter the
+sizing formula. See the pending decision in `docs/WORK.md`. The conviction
+bands and drawdown brakes are UNCHANGED pending that call.
+
+**Also noted, not a new defect.** The 20-day drawdown rule
+(`rolling_20d_pct`) cannot evaluate yet regardless of which design wins —
+the equity-curve history it reads was wiped by the deliberate 2026-09-02
+clean-slate reset, and there has not been 20 trading days of real
+evening-close rows since. Expected; it starts evaluating once that history
+accumulates.
+
+Tests: `tests/test_risk_based_sizing.py` — the single-name-ceiling section
+rewritten to use the real 100 default (mechanism tests that need a tight
+cap for isolation now pass one explicitly), plus three new tests: the
+realistic-stop-distance case no longer flattening conviction, a genuinely
+too-tight stop still binding (via the sector ceiling in practice), and the
+total-risk ceiling holding regardless of the raised notional cap. Also
+fixed two unrelated existing tests (`test_the_budget_gate_is_inert_when_
+the_caller_supplies_no_book_risk`,
+`test_a_heat_failure_leaves_the_budget_unenforced_even_with_clusters`)
+whose fixture happened to put four same-sector names at a size large
+enough, post-fix, to hit the (real, unrelated) sector hard cap — loosened
+the sector config in those two tests to keep them isolated to what they
+actually test. `tests/test_prompts_anchors.py` anchor updated to the new
+100% wording. Full suite: `tests/test_config.py`,
+`tests/test_correlation_risk.py`, `tests/test_event_risk_calendar.py`,
+`tests/test_phase2_risk_wiring.py`, `tests/test_pipeline.py`,
+`tests/test_pipeline_context.py`, `tests/test_pipeline_stages.py`,
+`tests/test_portfolio_constructor.py`, `tests/test_risk_based_sizing.py`,
+`tests/test_risk_budget.py`, `tests/test_risk_manager.py`,
+`tests/test_risk_metrics.py`, `tests/test_risk_outcome_logging.py`,
+`tests/test_risk_rules.py`, `tests/test_risk_verdict_per_symbol.py`: 520
+passed before this change, 522 after (net +2: one test renamed in place,
+two added). Risk/sector/exposure suite
+(`tests/test_risk_rules.py`, `tests/test_sector_dial.py`,
+`tests/test_gross_exposure_ladder.py`, `tests/test_gross_bearish_exposure.py`,
+`tests/test_shorts_stage3.py`, `tests/test_correlation_risk.py`,
+`tests/test_single_definition_quantities.py`, `tests/test_invariants.py`,
+`tests/test_bugfixes.py`, `tests/test_prompts_anchors.py`): 498 passed,
+unaffected.
+
+See PR `fix/single-name-notional-cap` (open, not merged — needs
+independent adversarial review before merge, same posture as every other
+risk-touching change tonight).
+
+### 2026-09-04 — opportunity-cost rotation: capital could sit in a weak holding while a stronger idea got refused for "no room" (item 39)
+
+**In plain words.** The desk has a hard rule that total risk across the book
+can't exceed 25% of equity, and a related rule capping how much correlated
+names can carry together. Both rules are working as designed — they correctly
+say no to a new trade once the book is full. But neither one, nor anything
+else, ever asked the follow-up question: is the new idea actually BETTER than
+something the book is already holding? A desk that is fully committed to
+weak, stale, or barely-justified positions could refuse a genuinely stronger
+new idea for no reason other than "no room", with nothing anywhere comparing
+the two. This was a real, owner-identified gap, not a bug in existing code —
+nothing was broken; a capability the owner wanted simply did not exist yet.
+
+**What was built.** A new module, `src/rotation.py`, and a new prompt section
+in the Portfolio Manager's own briefing (`PortfolioManagerAgent
+._render_rotation_section`, wired into `build_user_message`). Every session,
+Technical already re-reads the whole configured universe — held positions
+included — so the existing candidate ranking (`src/verdicts.py::rank_verdicts`,
+item 31) already places held names and new candidates on one shared scale
+without any change needed there. The new logic asks two questions, in order:
+
+1. **Is capital actually constrained right now?** Computed from the book's
+   EXISTING risk alone (before anything this session proposes), using the
+   same `allocate_risk_budget` function the risk ceiling itself already runs
+   on (`src/risk/budget.py`). If real headroom is left — enough for at least
+   one more minimum-sized position — nothing is surfaced at all. This was a
+   deliberate design choice: the feature must never activate as a "could we
+   do better" nudge on an otherwise fine book, only when refusal is actually
+   the reason nothing new can be added.
+2. **If constrained, is there a real opportunity being missed?** Two tiers:
+   - **Categorical.** A held position that no longer clears the desk's OWN
+     entry rules (`PortfolioManagerAgent.candidate_eligibility` — the same
+     R/R floor, BUY-eligibility, and evidence checks a brand-new buy must
+     pass) needs no ranking margin to flag: it would not be bought today, by
+     the identical rule a new buy is held to. This is not a ranking
+     judgement, it is a fact about whether today's own rules would open the
+     position now.
+   - **Ranked margin.** Among held positions that ARE still eligible, a new
+     candidate must outrank the weakest held one by a real margin before a
+     rotation is surfaced — otherwise the system would churn on marginal,
+     noise-level differences in the ranking score every session.
+
+**Why 25%, and why it is marked PROVISIONAL.** This is a well-studied pattern
+in systematic and cross-sectional portfolio construction — rank everything on
+one scale, replace the weakest holding with a stronger candidate only past a
+real margin, specifically to prevent turnover driven by noise rather than a
+real edge. Grinold & Kahn's *Active Portfolio Management* formalises this as
+a "no-trade region": a rebalance is only worth making once the expected
+improvement clears a real breakeven against transaction costs, not at every
+marginal rank change. FTSE Russell's own published index-reconstitution
+methodology applies the identical shape in live production — a "banding" /
+buffer rule that requires a candidate to clear a materially different bar
+than an incumbent before a membership swap happens, precisely to damp
+turnover from marginal, boundary-level rank changes (FTSE Russell, "Russell
+US Indexes Construction and Methodology"; summarised at
+https://www.lseg.com/en/insights/ftse-russell — "percentile banding...
+allows previous membership to be considered in order to limit unnecessary
+index turnover"). Neither source, nor any other found, hands over one
+universal number: practitioner discussion of rebalancing tolerance bands
+clusters loosely in a 5%-25% relative range depending on the asset and cost
+profile (see e.g. Alpha Architect's writing on rebalancing tolerance bands).
+This module took the CONSERVATIVE end of that range — 25%, the hardest to
+trigger — and marks it PROVISIONAL, the same posture `src/verdicts.py
+::SEAT_WEIGHT` (item 31) already uses for its own literature-grounded but
+unmeasured numbers: a considered starting point, not a measured fact,
+revisable the moment this desk has its own rotation-outcome data to spend.
+
+**What this deliberately does NOT do.** It never edits a position, never
+submits an exit, and never changes sizing or eligibility — it is purely a new
+paragraph in the Portfolio Manager's own prompt, read by the same AI that
+already decides trade choice today. This was a deliberate architecture
+choice, not a shortcut: the codebase's existing division of labor is
+deterministic Python for eligibility/sizing/ceilings, and the PM's own
+judgement for which trade to take. Whether to trim a name is a trade-choice
+question, not an eligibility question, so it stays with the PM — the same
+reasoning already applied to the Phase 13 candidate ranking (item 31), which
+orders candidates but never picks for the PM. If the PM acts on the surfaced
+comparison, that action is still an ordinary edit to a held position and
+still owes the same substantive justification any other exit does (items
+22-24) — the rotation note is information, never a reason on its own.
+
+**Known simplification, flagged rather than solved here.** The check looks
+only at the TOTAL portfolio risk ceiling's headroom, not the per-cluster
+ceiling or the gross-exposure ladder (`docs/WORK.md` background, spec
+§11.2) — both are real, separate ways capital can be constrained, and are
+left for a follow-up rather than bundled into this first increment.
+
+**Tests.** `tests/test_rotation.py` — hand-computed scenarios: a
+clearly-stronger candidate rotating out a categorically-ineligible holding
+(no margin needed) and out of a weak-but-still-eligible one (margin
+cleared); a marginal edge that does NOT trigger (and the exact margin
+boundary, which does); real headroom suppressing the check entirely, at and
+above the floor; and edge cases (nothing held to compare against, an empty
+`blocked` reasons list not misread as a categorical hit, and multiple
+ineligible holdings resolved deterministically). Full existing suite run
+before/after — see the PR for exact counts.
+
+See PR for `feat/opportunity-cost-rotation`.
+
+---
+
+### 2026-09-04 — full technical inventory from the night's three parallel audits
+
+`docs/WORK.md` items 32-35 carry the headline findings from three parallel
+audits (entry/eligibility, position sizing/risk budget, exit management/
+ranking) run the same night the "no arbitrary numbers" principle was
+written down (see `docs/OUTCOME.md`). Those items are deliberately short,
+per this file's own size discipline — this entry is the full, unabridged
+catalog underneath them: every individual constant found, its
+classification (MEASURED / REASONED-DEFAULT-DISCLOSED /
+ARBITRARY-UNDISCLOSED), and its real-data doctrine check, so a future
+session or agent can find the exact file:line for any one of them without
+re-running the audits from scratch.
+
+**Full detail preserved verbatim in this session's own memory** at
+`qamc-full-audit-inventory-2026-09-04.md` — three ranked tables (one per
+audit) plus the "passes review, wrong in practice" findings from each.
+Key items already resolved same night, for quick reference:
+
+- Entry: two disjoint reward:risk gates unified (PR #257); smart-money
+  cluster window 14→2 days to match cited research (PR #260); PM
+  conviction bands restored after being compressed to fit an unrelated,
+  since-fixed cap (PR #259).
+- Sizing: single-name notional cap raised from an unratified 20% to a
+  value derived from this desk's own real stop distances (PR #258);
+  portfolio-level volatility-targeting was investigated and explicitly
+  REJECTED as importing the wrong mandate (a fund's smoothness goal, not
+  a trader's survival goal) — see `qamc-no-fund-style-sizing.md`.
+- Exit/ranking: noise-veto band now scales with √(days held) instead of a
+  flat multiplier; ranking ties now break on real reward:risk quality
+  instead of alphabetically; range-setup positions now get a standard
+  +1R breakeven ratchet instead of zero protection until full target (all
+  three: PR #256).
+
+**Not yet fixed, real and open** (ranked, full detail in the memory file):
+undisclosed drift-detection thresholds and a fixed-50%-reduce rule in
+exit management; decorative/duplicate day-count tiers in the Risk
+Manager's own maturity labels; short-selling limits that need
+re-deriving now the notional cap changed; whether the drawdown brakes
+need rescaling to the new real per-trade risk unit (a genuine open fork,
+not decided); the smart-money minimum-dollar filter, which needs insider
+holdings-size data this desk doesn't fetch yet; and a long tail of
+individually-cheap prompt-level folklore (extension guards, PE
+thresholds, stale-day counts) in the technical analyst's own prompt.
+
+**Also from the same stretch:** the two "real-looking" API keys in
+production `.env` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) were found to be
+the literal, unmodified placeholder text from this project's own
+`.env.example` (added by the original developer 2026-05-08 when
+open-sourcing the repo) — never real credentials, never exposed. Fixed
+on the box with an explanatory comment so this doesn't get re-investigated
+as a false alarm again. Separately, GitHub Pages was enabled for this repo
+(public, `main`/`docs`), so anything added to `docs/` renders at
+`https://redstonex.github.io/quant-agent/<filename>` automatically.
+
+**Real, still-open decision, not resolved here:** whether to add a live
+congressional (US House/Senate) trading data stream to the smart-money
+seat. Investigated 2026-09-04: no free, currently-reliable option exists.
+The two well-known free aggregator projects (house-stock-watcher,
+senate-stock-watcher) are both dead — one's domain no longer resolves, the
+other's last real data commit was 2021 despite its own page still
+claiming to be live. One brand-new free alternative surfaced the same
+week but is unverified, single-maintainer, no track record. Real options
+are: adopt the unproven free source and accept the risk, build in-house
+PDF parsing against the official House/Senate disclosures (real
+engineering cost, the House side is still scanned/mixed-format PDFs, not
+clean text), or pay for a commercial feed (Quiver Quantitative is the
+most API-native paid option). Owner's call — this is a new-dependency /
+reliability tradeoff, not something to adopt unilaterally.
+
+---
+
+### 2026-09-04 — merge order for tonight's open PRs (they share files, not logic)
+
+Eleven PRs from tonight's session are open at once (#249, #252, #254-#262).
+None conflict in what they DO — each is independently reviewed and correct
+on its own — but several share the same files, so merging them in the
+wrong order (or all at once) will produce ordinary git conflicts, not
+logic bugs. Recorded here so this isn't only in one session's head before
+a compaction erases it.
+
+**Known file-sharing collisions, confirmed by reading the actual diffs:**
+- `src/agents/portfolio_manager.py`: shared by #257 (reward:risk gate
+  unification) and #261 (opportunity-cost rotation).
+- `config/prompts/portfolio_manager.md`: shared by #259 (conviction-band
+  restore) and #261 (opportunity-cost rotation).
+- `docs/WORK.md` / `docs/INCIDENT_HISTORY.md`: shared by nearly all of
+  them, as usual for this project — the established convention (keep
+  both sides, reconcile headers/separators) applies same as always.
+- #261 also branched slightly before the diagram rename landed (#253) —
+  it will try to re-add `docs/verdict_pipeline.html` under its old name;
+  a rebase onto current `main` resolves this automatically, it is not a
+  real content conflict.
+
+**Recommended order, since #258/#259 are already sequential (259 is based
+on 258's branch) and #257/#261 touch the PM directly:**
+1. Merge #249, #252, #254, #255, #260 first — no shared-file overlap with
+   anything else in the list, safe to land independently once reviewed.
+2. Merge #258, then #259 (already built on top of it).
+3. Merge #257 next (PM eligibility fix).
+4. Rebase #261 onto the result, resolve the small PM-file overlap with
+   #257 and the diagram-filename artifact, then merge.
+5. #256 and #262 don't share files with the PM-touching group — safe to
+   land in parallel with steps 2-4 once independently reviewed.
+
+None of this changes what any PR does — it is purely the order to avoid
+avoidable merge conflicts. If a session resumes cold and some of these
+are already merged, this list is stale for whichever ones are done —
+check `gh pr list` for the real current state before following it blindly.
+
+---
+
+### 2026-09-04 — earnings stopped transcribing and started concluding (item 18c)
+
+**In plain words:** the earnings seat used to hand the Portfolio Manager a
+complete extraction form for every filing — revenue, margins, guidance,
+strategy, competitive positioning, strategic risks, operational risks, data
+quality — ending in one line of actual judgement. That form was ~1,400
+characters per filing, and across the ~35 companies it covers on a normal
+day it was 70% of PM's entire 200,000-character prompt (item 18, measured
+2026-09-02) and a large share of why that one seat was 93% of the LLM bill
+(item 14). PM was doing the analyst's own summarizing work, at PM's LLM
+price, on every call. Every other analyst seat already hands PM a
+conclusion, not raw extraction — earnings was the outlier. Owner-ratified
+fix, not a design question: return a call and a short thesis, keep the full
+extraction on disk for audit.
+
+**What changed.**
+
+- `config/prompts/earnings_analyst.md`: `key_thesis` is now specified as
+  the field PM actually reads — 2-3 sentences stating the call, the single
+  strongest reason from the reasoning chain, and the condition that would
+  break it (pulled from whichever of `bull_case`/`bear_case` falsifies the
+  stated `sentiment`). The eight extraction fields are unchanged in shape
+  and are still required in full — they no longer reach PM, but
+  `position_reviewer`, `evening_analyst`, `meta_reflector`, and a human
+  pulling the record for audit still read them straight off disk.
+- `src/agents/earnings_analyst.py`: the per-filing result dict
+  (`_analyze_one`, both the fresh-analysis and cached-analysis branches) now
+  carries `analysis_path` — the pointer PM's short verdict needs to name
+  where the full extraction lives. This didn't exist on the wrapper before;
+  `EarningsReport.analysis_path` existed but nothing threaded it through to
+  the pipeline's `earnings_results` list PM actually receives.
+- `src/agents/portfolio_manager.py`: the earnings section of
+  `build_user_message` (previously ~70 lines rendering all eight fields
+  per filing) now renders four lines — `Call: <sentiment> (<conviction>)`,
+  `Thesis: <key_thesis>`, `Invalidated if: <falsifier>`, and a pointer to
+  the full extraction. It reuses `EarningsAnalysis.to_verdict()` — the same
+  Phase 13 / item 31 shape already used to rank candidates — rather than
+  building a second, different short-form representation of the same
+  report. `to_verdict()`'s own validator (`AnalystVerdict`) refuses to
+  construct a directional call with no stated invalidation, which is
+  correct for a ranking score (an unfalsifiable call should not win a
+  ranking slot) but wrong for a PROMPT (PM should see the seat's read even
+  when the analyst left `bull_case`/`bear_case` at "not disclosed" — a
+  degraded citation, not a missing one). `_render_earnings_verdict` falls
+  back to the raw `investment_implications` fields and an explicit
+  "not disclosed by the analyst" note in that case, rather than dropping
+  the filing from PM's prompt.
+
+**Measured, same method as the original 199,646-char figure**: render
+`PortfolioManagerAgent.build_user_message` over the real run-64290730 pull
+(`ops/model_policy/fixtures/run_64290730_pm_input.json`) and isolate the
+`## Earnings Analysis` section. **Before: 205,607 chars total, 140,106
+earnings (68.1%). After: 98,351 chars total, 32,850 earnings (33.4%).** The
+205,607/140,106 figures track the originally-reported 199,646/140,107
+production numbers closely (this is a rendered-fixture reconstruction, not
+the live production prompt itself — see `ops/model_policy/README.md`'s
+documented ~91% fidelity gap) but are not identical, which is expected and
+not a new discrepancy. Earnings analysis is still the single largest
+section of the prompt after this change — the volume is real (~35
+filings/day), only the per-filing verbosity was fixed here.
+
+**Tests.** `tests/test_earnings_analyst.py`:
+`test_analyze_reports_wrapper_carries_analysis_path_to_full_extraction` and
+`test_existing_analysis_wrapper_also_carries_analysis_path` prove the full
+eight-field extraction is still computed, still saved to disk, and still
+locatable from the wrapper dict for both the fresh and cached branches.
+`tests/test_portfolio_manager.py`:
+`test_earnings_section_renders_short_verdict_not_the_eight_field_form`
+proves the rendered PM prompt carries the short verdict and none of the
+old form labels (`Filing metrics:`, `Competitive positioning:`, etc.), and
+that the section is under 700 characters instead of ~1,400+;
+`test_earnings_section_falls_back_when_falsifier_undisclosed` proves the
+fallback path when `to_verdict()` refuses construction.
+
+**Exact suite counts** (branch merged onto main at item 28's fix, so the
+comparison is apples-to-apples): the earnings/PM-focused slice —
+`tests/test_earnings_analyst.py`, `test_portfolio_manager.py`,
+`test_earnings_deep_dive.py`, `test_earnings_preprocess.py`,
+`test_analyst_verdict.py` — went from **130 passed** (pre-change) to
+**134 passed** (post-change, the 4 new tests above, zero regressions).
+Full repo suite (excluding files this sandbox cannot even collect —
+`test_api_*`, `test_status_board.py` — all `ModuleNotFoundError:
+fastapi`, a missing dependency in this sandbox unrelated to this change):
+**4,438 passed, 1 skipped, 1 failed** — the 1 failure
+(`test_rehearsal_reproduces_cost_ceiling.py::
+test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure`,
+`MissingRecordedResponse` for a replay fixture) reproduces identically
+against unmodified current main, confirmed by running it there directly —
+pre-existing and unrelated to earnings or PM prompt assembly, not
+introduced by this change.
+
+**Known gap, not resolved here:** earnings runs `gemini-3.5-flash-lite`
+(Google-direct), chosen and verified for the transcription task this item
+is replacing — this item's own "the cheap-model verdict is now invalid"
+finding above applies directly: concluding is a harder task than
+extracting, and this environment has no `GOOGLE_API_KEY` to run the
+redesigned prompt against the real production model before opening the PR.
+Needs a live check on real recent filings before merge.
+
+See PR opened from `feat/earnings-analyst-concludes` (not merged — needs
+independent adversarial review, same posture as items 18a/18b/28).
+
+**2026-09-04 follow-up — the live check was attempted and is still blocked,
+plus a real finding about how credentials work on this box.** A later pass
+fetched three real, current filings straight from SEC EDGAR (AAPL, MU, UNH
+10-Qs) and ran the actual redesigned earnings agent against them — but the
+call failed before reaching the model. `GOOGLE_API_KEY` in production
+`.env` is not a real key by design: it is a placeholder, and the real
+credential is injected transparently by the OneCLI gateway proxy at call
+time (same pattern as Alpaca's keys). Reading `.env` directly and calling
+Google's API without going through that proxy will always fail, regardless
+of environment. The model-quality check therefore still needs to run
+through the real OneCLI-proxied path (as the production desk itself does),
+not a direct `.env` read — this is still open, not a pass or a fail.
+
+**2026-09-04 second follow-up — the live check actually succeeded, this
+note above is now stale.** An independent adversarial reviewer confirmed
+the OneCLI proxy at `127.0.0.1:10255` is reachable from this box right
+now, authenticated through it using the real production call path, and
+ran a real, current AAPL 10-Q from SEC EDGAR through the redesigned
+prompt against the live `gemini-3.5-flash-lite` model. Output was
+coherent: correct real numbers pulled from the filing, a sensible
+`sentiment`/`conviction`, and a `key_thesis` that reads as an actual
+analytical call. This is n=1, not a validated sample across the ~35
+filings/day this seat actually covers — do not treat it as a full
+model-quality sign-off — but it does answer the specific open question
+above: the redesigned prompt produces usable output on the production
+model when the proxy is reachable. PR #252 merged 2026-09-04 on this
+basis. Caveat: this box's proxy credential may differ from production's;
+if a live desk run ever produces degraded earnings verdicts, re-check
+this rather than assume the n=1 result generalizes.

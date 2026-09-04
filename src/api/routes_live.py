@@ -347,7 +347,8 @@ def _compute_risk_limits() -> RiskLimits:
     return RiskLimits(
         max_position_pct=limits.max_position_pct,
         max_total_position_pct=limits.max_total_position_pct,
-        max_daily_loss_pct=limits.max_daily_loss_pct,
+        # docs/WORK.md item 32: effective (possibly derived) value.
+        max_daily_loss_pct=limits.effective_max_daily_loss_pct,
         max_sector_pct=limits.max_sector_pct,
         # Spec §11.2 — the standing gross-exposure cap. Distinct from
         # max_total_position_pct, which bounds NET exposure.

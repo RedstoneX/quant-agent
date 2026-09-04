@@ -82,7 +82,31 @@ tracked in `docs/WORK.md`), the per-seat scores are averaged AT THIS WEIGHT,
 so two agreeing seats of different trustworthiness are not treated as
 interchangeable votes.
 
-Ties break on symbol, so the order is stable and testable.
+**2026-09-04 audit (real-data fix #2).** Ties used to break on `symbol`
+alone. `score_verdict` only ever lands on {0.5, 1.0, 1.5, 2.0} when a single
+seat is live (magnitude in {0, 0.5, 1} in practice, conviction in
+{0, 0.5, 1}), so ties were the COMMON case, not the exception — one real
+production day had 9 of 12 eligible names tied, another 23 of 33 — and
+breaking on `symbol` gave every tied ticker earlier in the alphabet a real,
+systematic, permanent, undisclosed edge that had nothing to do with the
+call's quality.
+
+Fix: before falling back to `symbol`, break ties on `risk_reward` — the
+reward:risk ratio each seat ALREADY computes and attaches as evidence
+(`VerdictEvidence(label="risk_reward", value=...)`, see
+`TechAnalysisResult.risk_reward` / `.to_verdict`). This is real information
+about the candidate already sitting on the verdict at ranking time, costs no
+new call, and a higher reward:risk on an otherwise-tied score is a
+defensible reason to prefer one candidate over another (the same ratio this
+desk already gates entries on elsewhere). A verdict with no `risk_reward`
+evidence (missing entry/stop/target geometry) sorts as if it were 0 for this
+purpose — never crashes the ranking, never wins a tie it has no evidence
+for. Only once BOTH the composite score and the risk_reward tiebreak are
+equal does `symbol` still decide the order — at that point the two
+candidates are equivalent on every signal this module has, and a
+deterministic (not random) final order is still needed for reproducibility;
+that residual is not the systematic bias being fixed here, because nothing
+distinguishes the two by then anyway.
 """
 
 from __future__ import annotations
@@ -138,6 +162,23 @@ def conviction_score(conviction: str) -> float:
 def score_verdict(verdict: AnalystVerdict) -> float:
     """One verdict's composite: magnitude + conviction_score, weight 1 each."""
     return round(verdict.magnitude + conviction_score(verdict.conviction), 4)
+
+
+def risk_reward_of(verdict: AnalystVerdict) -> float | None:
+    """The `risk_reward` value already carried in `verdict.evidence`, if any.
+
+    Reads the evidence item a seat's own `to_verdict()` attaches
+    (`VerdictEvidence(label="risk_reward", value=...)`, see
+    `TechAnalysisResult.risk_reward`) rather than recomputing anything — this
+    module never derives new geometry, it only orders what it is handed.
+    Returns None when the seat didn't attach one (missing entry/stop/target
+    geometry), which the tiebreak below treats as the lowest possible value
+    rather than a crash.
+    """
+    for item in verdict.evidence:
+        if item.label == "risk_reward" and item.value is not None:
+            return float(item.value)
+    return None
 
 
 @dataclass
@@ -201,12 +242,28 @@ def rank_verdicts(verdicts: list[AnalystVerdict]) -> list[RankedCandidate]:
             "magnitude": round(magnitude, 4),
             "conviction_score": round(conviction, 4),
         }
+        # Tiebreak signal only — never added into `score` itself, so it
+        # changes ORDER among ties without changing the composite any
+        # existing caller/test reads. Weighted the same way as the score's
+        # own inputs; a seat with no risk_reward evidence contributes 0.
+        rr_values = [risk_reward_of(v) for v in group]
+        rr_total_weight = sum(w for w, rr in zip(weights, rr_values) if rr is not None)
+        risk_reward = (
+            sum(rr * w for w, rr in zip(weights, rr_values) if rr is not None) / rr_total_weight
+            if rr_total_weight > 0
+            else 0.0
+        )
+        components["risk_reward_tiebreak"] = round(risk_reward, 4)
         ranked.append(RankedCandidate(
             symbol=symbol,
             direction=directions.pop(),
-            score=round(sum(components.values()), 4),
+            score=round(sum(v for k, v in components.items() if k != "risk_reward_tiebreak"), 4),
             verdicts=sorted(group, key=lambda v: v.seat),
             components=components,
         ))
-    ranked.sort(key=lambda c: (-c.score, c.symbol))
+    # Highest composite first; on a tie, highest risk_reward next (real
+    # information already on the verdict, see module docstring fix #2);
+    # `symbol` is the final, deterministic-but-arbitrary stabiliser only
+    # reached once both real signals are equal.
+    ranked.sort(key=lambda c: (-c.score, -c.components.get("risk_reward_tiebreak", 0.0), c.symbol))
     return ranked

@@ -42,6 +42,7 @@ __all__ = [
     "EXTERNAL_INFORMATION_PATTERNS",
     "cites_external_information",
     "adverse_move_is_noise",
+    "noise_band_atr",
     "NOISE_BAND_ATR_MULTIPLE",
     "ThesisInvalidationCheck",
     "check_thesis_invalid_if",
@@ -237,8 +238,8 @@ def veto_contradicted_exit(
 # Noise band on exits — spec Phase 3.6
 # ---------------------------------------------------------------------------
 
-#: An adverse move smaller than this many ATRs from entry cannot be
-#: distinguished from one ordinary day's range. `TRAIL_STOP` already uses
+#: An adverse move smaller than this many ATRs from entry, ON DAY ONE, cannot
+#: be distinguished from one ordinary day's range. `TRAIL_STOP` already uses
 #: 1.25x ATR14 against CURRENT price for the same reason; this is the
 #: equivalent floor for a discretionary exit, measured from ENTRY.
 #:
@@ -246,6 +247,31 @@ def veto_contradicted_exit(
 #: day zero. The evening review graded the buy "wrong" and the sell "correct",
 #: but the honest reading is that nothing had happened yet in either
 #: direction: the position was never given one day's normal range to breathe.
+#:
+#: 2026-09-04 audit (real-data fix #1): this constant was applied FLAT,
+#: regardless of how long the position had been held, so a position on day 10
+#: was judged against the same one-day noise band as a position on day 0. On
+#: 8 of 12 real positions opened before the 2026-08-27 stop-floor fix, that
+#: flat band came out roughly the SAME WIDTH as the entry stop itself
+#: (0.89-1.12 ATR) — meaning almost every attempted discretionary exit on an
+#: aging position was blocked, and 5 of 9 real exits ended up as plain broker
+#: stop-outs instead of a deliberate call. See `adverse_move_is_noise` below,
+#: which now scales this constant by sqrt(sessions_held) — the same
+#: convention `src/data/levels.py::derive_structural_target` already uses
+#: for target projection (`ATR * sqrt(sessions)`), on the same random-walk
+#: basis: expected price dispersion grows with the square root of elapsed
+#: TRADING TIME, not linearly and not with calendar time. The `days_held`
+#: parameter name below is legacy from the first pass of this fix (2026-09-04
+#: audit, real-data fix #1); a follow-up on the same date caught it actually
+#: being fed calendar days (`(today - entry_date).days`, weekends included)
+#: rather than trading sessions, which over-widened the band by sqrt(3) on
+#: every Friday-to-Monday hold — the opposite of the fix's own intent, since
+#: only one real session's price action had occurred. Callers MUST pass a
+#: trading-session count (see `trading_calendar.trading_sessions_held`, a
+#: weekend-aware approximation — Mon-Fri only, no market-holiday calendar),
+#: never a raw calendar-day count. `sessions_held` is floored at 1 session so
+#: day-zero/day-one behaviour is UNCHANGED — only positions held longer than
+#: one session get a wider band than before.
 NOISE_BAND_ATR_MULTIPLE = 1.0
 
 #: Triggers that come from OUTSIDE the price series. These bypass the noise
@@ -284,6 +310,38 @@ def cites_external_information(reason: str) -> bool:
     return bool(reason) and bool(_EXTERNAL_RE.search(reason))
 
 
+def noise_band_atr(days_held: int | float | None, *, multiple: float = NOISE_BAND_ATR_MULTIPLE) -> float:
+    """The noise-band width, in ATRs, for a position held `days_held` sessions.
+
+    `ATR * sqrt(sessions)` — the exact scaling convention already used by
+    `src/data/levels.py::derive_structural_target` for target projection
+    (`travel = volatility * math.sqrt(horizon)`), on the same random-walk
+    basis: expected price dispersion from a fixed starting point (here,
+    entry) grows with the square root of elapsed time, not linearly.
+
+    Despite the parameter name (kept for call-site compatibility), this
+    MUST be a TRADING-SESSION count, not a calendar-day count — see
+    `trading_calendar.trading_sessions_held` for the weekend-aware counter
+    `pipeline.py` feeds in. A 2026-09-04 audit follow-up caught this
+    function being fed raw calendar days, which silently over-widened the
+    band by sqrt(3) instead of sqrt(1) across a Friday-to-Monday hold (3
+    calendar days, 1 real trading session) — the opposite of this fix's own
+    intent.
+
+    `days_held` is floored at 1 session — None, non-finite, zero, or negative
+    all collapse to 1 — so a brand-new position gets exactly the old flat
+    `multiple` behaviour (sqrt(1) == 1) and only positions held longer than
+    one session see a wider band.
+    """
+    try:
+        days = float(days_held) if days_held is not None else 1.0
+    except (TypeError, ValueError):
+        days = 1.0
+    if not math.isfinite(days) or days < 1.0:
+        days = 1.0
+    return multiple * math.sqrt(days)
+
+
 def adverse_move_is_noise(
     entry: float,
     current_price: float,
@@ -291,9 +349,14 @@ def adverse_move_is_noise(
     *,
     multiple: float = NOISE_BAND_ATR_MULTIPLE,
     side: str = "sell",
+    days_held: int | float | None = None,
 ) -> bool:
     """True when the position has moved ADVERSELY from entry by less than
-    `multiple` ATRs.
+    the noise band for how long it has been held.
+
+    The band is `multiple * ATR * sqrt(days_held)` (floor 1 session) — see
+    `noise_band_atr`. Passing no `days_held` (the old call shape) reproduces
+    the original flat `multiple * ATR` band exactly, since sqrt(1) == 1.
 
     `side` is the CLOSING side, same convention as
     `TradingPipeline._submit_protected_sell` / `_forced_close_side_and_qty`:
@@ -317,7 +380,7 @@ def adverse_move_is_noise(
     adverse = (cur - ent) if str(side).lower() == "buy" else (ent - cur)
     if adverse <= 0:
         return False   # flat or winning — not this guard's business
-    return adverse < multiple * atr_f
+    return adverse < noise_band_atr(days_held, multiple=multiple) * atr_f
 
 
 # ---------------------------------------------------------------------------

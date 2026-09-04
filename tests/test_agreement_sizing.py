@@ -322,8 +322,10 @@ def test_missing_evidence_registry_leaves_ceiling_unenforced():
     )
     assert len(decisions) == 1
     assert "agreement ceiling" not in decisions[0].reasoning
-    # 5.0% / $20 * $100 = 25% -> clamped only by the single-name (20%) cap.
-    assert abs(decisions[0].allocation_pct - 20.0) < 0.05
+    # 5.0% / $20 * $100 = 25% notional, under the single-name cap (100%
+    # since 2026-09-04) and the sector's absolute ceiling (90%) alike, so
+    # nothing clamps it.
+    assert abs(decisions[0].allocation_pct - 25.0) < 0.05
 
 
 def test_composition_agreement_ceiling_then_budget_allocator_then_single_name():
@@ -336,9 +338,14 @@ def test_composition_agreement_ceiling_then_budget_allocator_then_single_name():
     so the allocator actually has to ration between two single-source
     (agreement-ceilinged to 3.0% each) requests — 6.0% combined otherwise
     fits the default 10% cluster cap without the allocator doing anything,
-    which would leave this layer untested.
+    which would leave this layer untested. `max_position_pct` pinned back
+    to its pre-2026-09-04 value of 20 (real deployed value is 100 since
+    that date, see settings.yaml) so this fixture's 30% notional request
+    still exercises the single-name clamp this test is specifically about.
     """
-    constructor = PortfolioConstructor(ConstructorConfig(max_cluster_risk_share_pct=16.0))
+    constructor = PortfolioConstructor(ConstructorConfig(
+        max_cluster_risk_share_pct=16.0, max_position_pct=20.0,
+    ))
     # Two single-source (agreement ceiling 3.0%) targets in the same
     # correlation cluster, both requesting the full 5% envelope.
     targets = [

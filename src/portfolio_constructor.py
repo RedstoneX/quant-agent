@@ -174,14 +174,27 @@ class ConstructorConfig:
     max_cluster_risk_share_pct: float = 40.0
     # The risk engine's single-name GROSS notional ceiling, mirrored here so
     # the constructor sizes UNDER it instead of proposing an order the engine
-    # will hard-block. Risk-based sizing (§2.1) makes this binding in the
-    # ordinary case, not the exotic one: notional = risk_pct x entry/(entry -
-    # stop), so at this book's median 4.3% stop distance even 1.5% risk asks
-    # for 35% of equity in one name. `max_position_pct` is in
-    # HARD_BLOCK_RULES, so without this clamp those BUYs are dropped entirely
-    # and the session trades nothing. Keep in sync with
-    # `risk.max_position_pct` — pipeline.py wires them from the same setting.
-    max_position_pct: float = 20.0
+    # will hard-block. `max_position_pct` is in HARD_BLOCK_RULES, so without
+    # this clamp a BUY over the ceiling is dropped entirely rather than
+    # trimmed.
+    #
+    # 20 -> 100 on 2026-09-04 (real-data audit): a concentration/liquidity
+    # BACKSTOP is supposed to only bind on a genuinely too-tight stop, not
+    # the ordinary case. At 20 it bound on nearly every trade — notional =
+    # risk_pct x entry/(entry - stop), so at this book's real ~5-9% stop
+    # distances (see `risk.min_stop_atr_multiple`'s own comment in
+    # settings.yaml) even the full 5% envelope needed 55-100% notional,
+    # 6 of 13 real proposed orders pinned at exactly 20%, and delivered risk
+    # collapsed to ~1% regardless of stated conviction. 100 is where that
+    # real 5-9% range stops being clipped (5% risk / 5% stop = 100%
+    # notional), while a stop tighter than 5% — reachable today only via the
+    # level-backed exception down to `absolute_min_stop_atr_multiple` — still
+    # gets clamped, which is the genuinely-too-tight case this ceiling
+    # exists for. `allow_margin` is false, so 100 is also the real ceiling:
+    # nothing past 100% of one name's equity is reachable cash-only anyway.
+    # Keep in sync with `risk.max_position_pct` — pipeline.py wires them from
+    # the same setting.
+    max_position_pct: float = 100.0
     # Spec §10.3 "concentration scales size, it does not veto". The sector
     # diversification target and the absolute ceiling behind it. Unlike every
     # other ceiling in this dataclass these do not merely make the constructor
@@ -675,6 +688,7 @@ class PortfolioConstructor:
             _gross_multiplier, agreement_ceiling_for_score, count_aligned_sources,
             count_opposing_sources, signed_source_score,
         )
+        from src.risk.size_override import SizeOverride
 
         priced: dict[str, tuple[float, float]] = {}   # symbol -> (entry, stop)
         # Stage 3: direction is tracked alongside the priced entry/stop so
@@ -720,6 +734,11 @@ class PortfolioConstructor:
             # asking for more than the ratified envelope is clamped rather
             # than refused — the idea is sound, the size is not.
             envelope_capped = min(target.risk_allocation_pct, self.cfg.risk_budget_pct)
+            # docs/WORK.md item 13: this cap is always a plain multiplier —
+            # the envelope can shrink a request, it never refuses one — so it
+            # is never anything but SizeOverride.sized(). The refusal case
+            # lives entirely in the agreement ceiling below.
+            envelope_override = SizeOverride.sized(envelope_capped)
             # §9.4: then the agreement ceiling, computed from THIS session's
             # canonical registry (not from target.provenance — see
             # `count_aligned_sources`), before the request ever reaches the
@@ -759,6 +778,18 @@ class PortfolioConstructor:
                 agreement_ceiling = agreement_ceiling_for_score(
                     self.cfg.agreement_ceiling_pct, source_score,
                 )
+                # docs/WORK.md item 13: `agreement_ceiling_for_score` returns
+                # a bare 0.0 for "no rung at or below zero" — arithmetically
+                # identical to a real zero-weight close. Read that meaning
+                # explicitly, here, at the one place it is produced, instead
+                # of letting a plain float carry it downstream where a
+                # `<= 0.0` check could no longer tell a refusal apart from an
+                # intentional close. `SizeOverride.no_trading()` cannot be
+                # misread as a size because it has no `.value` at all.
+                agreement_override = (
+                    SizeOverride.no_trading() if agreement_ceiling <= 0.0
+                    else SizeOverride.sized(agreement_ceiling)
+                )
                 if ignored:
                     gated = sorted(s for s in ignored if s in sources)
                     if gated:
@@ -776,11 +807,22 @@ class PortfolioConstructor:
                 )
             else:
                 agreement_ceiling = float("inf")
-            requested_pct = min(envelope_capped, agreement_ceiling)
-            if requested_pct <= 0.0:
-                # Net evidence at or below zero: the schedule has no rung for
-                # this and `agreement_ceiling_for_score` returned 0.0. Drop
-                # the target entirely rather than sizing it at zero — a
+                # No registry to check dissent against — same "no view, don't
+                # invent one" posture as everywhere else in this method: an
+                # unbounded multiplier, never a refusal.
+                agreement_override = SizeOverride.sized(float("inf"))
+            # docs/WORK.md item 13 / the pysystemtrade override algebra: the
+            # combined override is always the MORE RESTRICTIVE of the two —
+            # `no_trading` absorbs a multiplier no matter how large, so this
+            # can never be diluted back into "trade a bit". This is the exact
+            # generalization of the 2026-09-02 signed-dissent workaround: that
+            # patch dropped a target whose combined float landed at or below
+            # zero; this makes "combined float at or below zero" and "the
+            # combination IS a refusal" the same statement, structurally,
+            # rather than two things a future caller could let drift apart.
+            combined_override = envelope_override.combine(agreement_override)
+            if combined_override.is_refusal:
+                # Drop the target entirely rather than sizing it at zero — a
                 # zero-weight RiskPlan reads to the delta loop as "PM wants
                 # this position CLOSED", so letting a 0% request through would
                 # turn a refusal to open into a forced liquidation of whatever
@@ -800,6 +842,11 @@ class PortfolioConstructor:
                 del priced[sym]
                 del directions[sym]
                 continue
+            # `.value` is safe here — `combined_override` is a `multiplier`
+            # override by construction whenever it is not a refusal (the only
+            # other kinds this method ever produces are `no_trading`, handled
+            # above, so nothing else reaches this line).
+            requested_pct = combined_override.value
             if agreement_ceiling < envelope_capped:
                 logger.info(
                     "Constructor: %s risk capped by the agreement ceiling "
@@ -1206,6 +1253,95 @@ class PortfolioConstructor:
         return reward_to_risk(
             entry_price, stop_price, target_price, is_short=is_short,
         )
+
+    def real_reward_risk_preview(
+        self,
+        analysis: TechAnalysisResult | None,
+        direction: str,
+        regime: str | None = None,
+    ) -> float | None:
+        """The reward:risk this candidate would actually clear at
+        construction time — same target derivation and stop-widening
+        `construct_orders` applies — computed BEFORE a `TargetPosition`
+        exists.
+
+        Exists to close a gap found in a 2026-09-04 audit: the 2026-09-01
+        decision that reward:risk must be "evidence, never arithmetic"
+        (this class's own `_derive_target` / `_widen_stop_past_noise`) was
+        applied to order construction but never reached
+        `PortfolioManagerAgent.candidate_eligibility` /
+        `_apply_subfloor_catalyst_rule` — the EARLIER gate that decides
+        which candidates even reach construction. That gate kept reading
+        `TechAnalysisResult.risk_reward`, which is real arithmetic but over
+        the ANALYST's own guessed target, never checked against structure
+        (see that field's docstring). On a measured real day the two gates
+        passed disjoint sets — zero overlap — because the first gate
+        screened out exactly the names the second would have allowed
+        through, and vice versa. This method gives the earlier gate the
+        SAME real number the later one uses, by calling the same
+        `_derive_target` / `_widen_stop_past_noise` this class already
+        runs, rather than a second copy of that logic.
+
+        Two inputs are necessarily earlier-stage approximations, because
+        nothing later exists yet at PM eligibility time:
+          - entry is the analyst's SNAPSHOT `entry_price`, not the live
+            market price `construct_orders` prices the real order at —
+            that price does not exist until the PM has decided to trade
+            the name.
+          - the stop is `analysis.stop_loss`, mirroring `_resolve_stop`'s
+            second-priority source. There is no `TargetPosition.
+            suggested_stop_price` yet, because the PM has not proposed one.
+        Both are re-resolved for real at construction time against the
+        live price and (if the PM supplies one) its own suggested stop, so
+        a name can still legitimately move between preview and shipped
+        order — but it will no longer move because of TWO DIFFERENT
+        DEFINITIONS of reward:risk, which is the defect this closes: the
+        derived target and the noise-floor stop widening were never
+        applied before the PM's gate at all.
+
+        None means "cannot judge, or under this desk's floor" — the same
+        fail-closed contract as `_widen_stop_past_noise`, which this calls.
+        """
+        if analysis is None:
+            return None
+        entry_price = getattr(analysis, "entry_price", None)
+        if not entry_price or entry_price <= 0:
+            return None
+        entry_price = float(entry_price)
+        is_short = direction == "short"
+
+        derivation = self._derive_target(
+            analysis.symbol, analysis, entry_price, direction,
+        )
+        if derivation.price is None:
+            return None
+
+        raw_stop = getattr(analysis, "stop_loss", None)
+        if not raw_stop or raw_stop <= 0:
+            return None
+        raw_stop = float(raw_stop)
+        # Geometry must already hold before any widening is attempted — a
+        # stop on the wrong side of entry is not a candidate for the noise
+        # floor, it is not a stop at all.
+        if is_short:
+            if raw_stop <= entry_price:
+                return None
+        elif raw_stop >= entry_price:
+            return None
+
+        honoured_stop = self._widen_stop_past_noise(
+            analysis.symbol, analysis, entry_price, raw_stop, regime=regime,
+            direction=direction, target_price=derivation.price,
+        )
+        if honoured_stop is None:
+            # Either ungeometric or under `min_reward_risk_after_widening`
+            # against the real target and the stop that would actually
+            # ship — `_widen_stop_past_noise` already fails closed here.
+            return None
+        ratio = self._reward_risk_at(
+            entry_price, honoured_stop, derivation.price, is_short,
+        )
+        return None if ratio is None else round(ratio, 2)
 
     def _widen_stop_past_noise(
         self,
