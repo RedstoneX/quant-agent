@@ -50,6 +50,8 @@ __all__ = [
     "claims_regime_flip",
     "claims_bearish_state_change",
     "holding_discipline_false_claim",
+    "HoldingDisciplineClaimCheck",
+    "holding_discipline_claim_check",
     "StructuralProtectionCheck",
     "check_structural_protection",
     "structural_protection_broken",
@@ -664,24 +666,40 @@ def check_thesis_invalid_if(
 # for TODAY says otherwise. That is provable dishonesty, not an unprovable
 # gap, and is the only thing `holding_discipline_false_claim` flags.
 #
-# Even a provable false claim is only ever LOGGED and recorded as a pipeline
-# event here — never used to veto or drop the trade. Two reasons: first, the
-# claim-detection is phrase matching over free text (see the two regexes
-# below plus `_is_negated`'s short negation-cue guard). Adversarial review
-# (2026-09-03) produced a concrete reproducing sentence — "No regime shift
-# to risk-off has occurred; exiting purely on thesis_invalid_if" was matched
-# as CLAIMING a flip before the negation guard existed, which would have
-# produced a wrong "contradiction" finding against a decision whose
-# reasoning never actually asserted one. `_is_negated` closes that specific,
-# demonstrated case; it is a short common-word list, not a general negation
-# parser, and does not claim to close every case phrase-matching over free
-# text can get wrong. A veto on a misread would be exactly the kind of
-# wrongly-blocked-legitimate-exit failure this fix must not introduce.
-# Second, even a correctly-read false claim about (b)/(c) does not itself
-# prove the SELL is wrong — (a) might still independently justify it, and
-# this module cannot tell. FLAGGED FOR REVIEW: whether this should ever
-# escalate to a veto (once claim-detection is more than phrase matching) is
-# a judgment call left to a human, not resolved here.
+# UPDATE, 2026-09-04 — a PROVEN-FALSE claim now BLOCKS the exit (owner
+# approved). This module previously only ever LOGGED, and the "FLAGGED FOR
+# REVIEW: should this ever escalate to a veto" question recorded here has
+# been answered: yes, and only for `verdict == "false"`. What did NOT change
+# is the bar for reaching that verdict — every reason the old note gave for
+# caution is a reason the FALSE bar stays exactly where it was, not a reason
+# to keep the finding toothless:
+#
+#   - claim-detection is phrase matching over free text (the two regexes
+#     below plus `_is_negated`'s short negation-cue guard). Adversarial
+#     review (2026-09-03) produced a concrete reproducing sentence — "No
+#     regime shift to risk-off has occurred; exiting purely on
+#     thesis_invalid_if" was matched as CLAIMING a flip before the negation
+#     guard existed. `_is_negated` closes that specific, demonstrated case;
+#     it is a short common-word list, not a general negation parser. So the
+#     veto only ever fires when the text asserts a claim AND real recorded
+#     data for TODAY affirmatively says the opposite.
+#   - anything that merely CANNOT be checked (macro untrusted this run, or
+#     no same-day state-change row names the symbol at all) is verdict
+#     "unverifiable": still logged and recorded as a pipeline event, exactly
+#     as before, and NEVER blocked and never alerted on. Absence of proof
+#     stays absence of proof. This is the owner's explicit instruction and
+#     it is the whole reason the verdict is three-valued rather than a bool.
+#   - (a) `thesis_invalid_if` is still never evaluated here, so a SELL
+#     resting on it is never touched by any of this.
+#
+# The residual risk the old note named is real and accepted with eyes open:
+# a correctly-read false (b)/(c) claim does not by itself prove the SELL is
+# wrong, because an unverifiable (a) might independently justify it. The
+# owner's call is that an exit whose *stated* justification is provably
+# contradicted by the desk's own recorded data should not execute on that
+# justification — the RM can re-propose it next cycle citing something true.
+# Every block fires a standalone owner alert (see `RiskStage`) precisely so
+# the frequency of that trade-off is measured, not assumed.
 
 #: Phrases that assert a regime flip to risk-off. Deliberately the same two
 #: patterns `EXTERNAL_INFORMATION_PATTERNS` already uses for the identical
@@ -760,7 +778,50 @@ def claims_bearish_state_change(reason: str) -> bool:
     return bool(match) and not _is_negated(reason, match)
 
 
-def holding_discipline_false_claim(
+@dataclass(frozen=True)
+class HoldingDisciplineClaimCheck:
+    """Three-valued verdict on a SELL/REDUCE/COVER's stated (b)/(c) trigger.
+
+    The three-valued shape is the whole point, and is the owner's explicit
+    2026-09-04 instruction: a claim the desk's own recorded data
+    AFFIRMATIVELY CONTRADICTS is a different thing from a claim the desk
+    simply could not check this run, and only the first may block a trade.
+    Collapsing the two into one bool is exactly how "we could not verify it"
+    turns into "we proved it false", which would veto honest exits.
+
+    `verdict`:
+      "ok"           - no checkable (b)/(c) claim was made, or every claim
+                       made was CONFIRMED by real data, or the decision is
+                       out of scope (not an exit / not a protected position).
+                       Nothing is logged, nothing blocks.
+      "unverifiable" - a (b)/(c) claim WAS made but the data needed to judge
+                       it is not available this run (macro status outside
+                       `TRUSTED_MACRO_STATUSES`, or no same-day state-change
+                       row names the symbol at all). LOGGED ONLY: never
+                       blocks, never alerts. Absence of proof is not proof.
+      "false"        - a (b)/(c) claim was made and real recorded data for
+                       TODAY says the opposite. BLOCKS the decision and
+                       fires a standalone owner alert.
+
+    `finding` is the human-readable audit-trail sentence (None when
+    `verdict` is "ok"). `reasons` holds the individual contradiction or
+    unverifiability clauses, so an alert can name them without re-parsing
+    the rendered sentence.
+    """
+
+    verdict: Literal["ok", "unverifiable", "false"]
+    finding: str | None = None
+    reasons: tuple[str, ...] = ()
+
+    @property
+    def blocks(self) -> bool:
+        """True only for a PROVEN-FALSE claim. The one thing callers gate a
+        veto on — deliberately not `finding is not None`, which would also
+        be true for the log-only unverifiable case."""
+        return self.verdict == "false"
+
+
+def holding_discipline_claim_check(
     *,
     action: str,
     reason: str,
@@ -770,9 +831,9 @@ def holding_discipline_false_claim(
     macro_status: str | None,
     active_state_changes: str = "",
     asof: date | None = None,
-) -> str | None:
-    """Return a finding string when `reason` makes a PROVABLY FALSE holding-
-    discipline claim about a PROTECTED position's exit, else None.
+) -> HoldingDisciplineClaimCheck:
+    """Judge whether a PROTECTED position's exit states a (b)/(c) trigger
+    that real recorded data CONTRADICTS, merely cannot CHECK, or CONFIRMS.
 
     `protected` replaces the old flat `days_held < 5` gate (owner decision,
     2026-09-03/04 — see `check_structural_protection`'s module note for the
@@ -780,59 +841,65 @@ def holding_discipline_false_claim(
     `check_structural_protection(...).protected` — data-driven and no
     longer time-bound at all — and passes the single bool in here; this
     function itself only decides whether the STATED (b)/(c) trigger is
-    provably real, exactly as before.
+    provably real.
 
     Checks ONLY:
-      (b) a claimed regime flip to risk-off, contradicted when today's macro
-          read (`macro_status` in `TRUSTED_MACRO_STATUSES`) shows a DIFFERENT,
-          non-risk-off regime;
-      (c) a claimed HIGH-conviction bearish state_change, contradicted when a
+      (b) a claimed regime flip to risk-off. CONTRADICTED when today's macro
+          read (`macro_status` in `TRUSTED_MACRO_STATUSES`) shows a
+          DIFFERENT, non-risk-off regime; UNVERIFIABLE when the macro status
+          is not trusted this run or no regime was read at all.
+      (c) a claimed HIGH-conviction bearish state_change. CONTRADICTED when a
           same-day `active_state_changes` row DOES name the symbol but with a
           recorded direction that is NOT bearish (parsed via
           `PortfolioManagerAgent._state_change_symbols_by_date`, the exact
           function that already owns this parsing for the sub-floor catalyst
-          gate — not reimplemented here).
+          gate — not reimplemented here); UNVERIFIABLE when no same-day row
+          names the symbol at all, because the news pipeline can simply not
+          have logged a real catalyst as a formal `state_change` row yet.
 
-    Never flags:
+    Returns verdict "ok" (nothing to say) for:
       - an action other than SELL/REDUCE/COVER;
       - a position that is not currently `protected` (its thesis-backing
         level has broken and been confirmed, or it has no basis and is
         outside the noise band) — a plain SELL there needs no special
         justification, so nothing here is worth checking;
       - a reason that makes neither claim;
-      - a claim that cannot be checked at all (macro status not trusted, or
-        no same-day row names the symbol) — absence of proof is not proof of
-        a false claim, and in particular a missing state-change row is much
-        weaker evidence than a definite non-matching macro regime: the news
-        pipeline can simply not have logged a real catalyst as a formal
-        `state_change` row yet, so treating "not found" as "false" here
-        would manufacture false positives on legitimate exits;
+      - a claim real data CONFIRMS;
       - (a) `thesis_invalid_if` — not itself re-evaluated here (it already
         fed into `protected` upstream), so a SELL resting entirely on it is
         never flagged just because (b) and (c) are absent or unverifiable.
 
-    This is a FINDING for the audit trail, not a veto: see the module-level
-    note above for why a provable false claim still is not, by itself, made
-    to block the trade here.
+    A "false" verdict is a veto (see the module note above for the owner
+    decision and the accepted trade-off). An "unverifiable" verdict is an
+    audit-trail record and nothing more.
     """
     if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
-        return None
+        return HoldingDisciplineClaimCheck("ok")
     if not protected:
-        return None
+        return HoldingDisciplineClaimCheck("ok")
     reason = reason or ""
     symbol_u = symbol.strip().upper()
-    findings: list[str] = []
+    contradictions: list[str] = []
+    unverifiable: list[str] = []
 
     if claims_regime_flip(reason):
         if macro_status in TRUSTED_MACRO_STATUSES and macro_regime_today:
             if macro_regime_today != "risk-off":
-                findings.append(
+                contradictions.append(
                     f"claims a regime flip to risk-off today, but today's "
                     f"macro read ({macro_status}) shows regime="
                     f"{macro_regime_today!r}, not risk-off"
                 )
-        # else: macro unavailable/untrusted this run — cannot verify, so
-        # this claim is silently left unchecked rather than flagged.
+            # else: the claim is CONFIRMED — say nothing.
+        else:
+            # Macro unavailable/untrusted this run. Recorded so the gap is
+            # visible in the audit trail, but never blocked and never
+            # alerted on: this is the exact case the owner separated out.
+            unverifiable.append(
+                f"claims a regime flip to risk-off today, but this run's "
+                f"macro read (status={macro_status!r}) cannot confirm or "
+                f"deny it"
+            )
 
     if claims_bearish_state_change(reason):
         from src.agents.portfolio_manager import PortfolioManagerAgent
@@ -847,25 +914,85 @@ def holding_discipline_false_claim(
             today_iso = None
         directions = by_date.get(today_iso) if today_iso else None
         symbol_directions = directions.get(symbol_u) if directions else None
-        if symbol_directions is not None and "bearish" not in symbol_directions:
+        if symbol_directions is None:
+            # No same-day row names the symbol at all -> unverifiable, not
+            # false. A missing state-change row is much weaker evidence than
+            # a definite non-matching macro regime: the news pipeline can
+            # simply not have logged a real catalyst as a formal row yet, so
+            # treating "not found" as "false" would manufacture false
+            # positives on legitimate exits.
+            unverifiable.append(
+                f"claims a HIGH-conviction bearish state change today, but "
+                f"no same-day Active News State Change row names {symbol_u} "
+                f"either way"
+            )
+        elif "bearish" not in symbol_directions:
             rendered = ", ".join(sorted(symbol_directions)) or "no recorded direction"
-            findings.append(
+            contradictions.append(
                 f"claims a HIGH-conviction bearish state change today, but "
                 f"today's Active News State Change block names {symbol_u} "
                 f"with direction(s) {rendered} instead of bearish"
             )
-        # symbol_directions is None (no same-day row names the symbol at
-        # all) -> unverifiable, not flagged; see docstring.
+        # else: the claim is CONFIRMED — say nothing.
 
-    if not findings:
-        return None
-    return (
-        f"{symbol_u}: {action} on a structurally-protected position — "
-        f"reasoning " + "; and ".join(findings) +
-        f". This is a provable contradiction of a checkable claim, not a "
-        f"veto — thesis_invalid_if (which this module cannot verify either "
-        f"way) may independently justify this exit. Recorded for review."
+    if contradictions:
+        # A contradiction outranks any co-occurring unverifiable clause: one
+        # provably false claim is enough, and mixing "we could not check the
+        # other one" into the same verdict would only muddy it.
+        return HoldingDisciplineClaimCheck(
+            "false",
+            f"{symbol_u}: {action} on a structurally-protected position — "
+            f"reasoning " + "; and ".join(contradictions) +
+            f". This is a provable contradiction of a checkable claim: the "
+            f"exit is BLOCKED on the justification given. thesis_invalid_if "
+            f"(which this module cannot verify either way) may independently "
+            f"justify this exit — if so it can be re-proposed citing that.",
+            tuple(contradictions),
+        )
+    if unverifiable:
+        return HoldingDisciplineClaimCheck(
+            "unverifiable",
+            f"{symbol_u}: {action} on a structurally-protected position — "
+            f"reasoning " + "; and ".join(unverifiable) +
+            f". NOT treated as false and NOT blocked — absence of proof is "
+            f"not proof of a false claim. Recorded for review only.",
+            tuple(unverifiable),
+        )
+    return HoldingDisciplineClaimCheck("ok")
+
+
+def holding_discipline_false_claim(
+    *,
+    action: str,
+    reason: str,
+    symbol: str,
+    protected: bool,
+    macro_regime_today: str | None,
+    macro_status: str | None,
+    active_state_changes: str = "",
+    asof: date | None = None,
+) -> str | None:
+    """Return the finding string for a PROVABLY FALSE holding-discipline
+    claim, else None.
+
+    Thin wrapper over `holding_discipline_claim_check` kept because
+    "provably false, or nothing" is genuinely the question most callers
+    want, and because collapsing it here — in one place, explicitly on
+    `verdict == "false"` — is safer than letting each caller decide what
+    counts as false. An UNVERIFIABLE claim returns None here by design: use
+    `holding_discipline_claim_check` directly to see (and log) that case.
+    """
+    result = holding_discipline_claim_check(
+        action=action,
+        reason=reason,
+        symbol=symbol,
+        protected=protected,
+        macro_regime_today=macro_regime_today,
+        macro_status=macro_status,
+        active_state_changes=active_state_changes,
+        asof=asof,
     )
+    return result.finding if result.blocks else None
 
 
 # ---------------------------------------------------------------------------
