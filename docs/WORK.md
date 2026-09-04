@@ -4,18 +4,25 @@
 
 ### Session start — read this first
 
+**STANDING PRINCIPLE — NO ARBITRARY NUMBERS, EVER.** Every trade constant
+must come from real data or this desk's own record — never a flat
+count, round %, or a number that "sounds prudent." **Approval does not
+make a flat number non-arbitrary.** Same bug, three times: the flat
+5-day hold → a level-break check; a same-day trigger → a two-day close
+confirmation (a reclaimed dip is reversal, not breakdown); a flat 5%
+risk/trade defended as ratified, when the fix is volatility-based sizing.
+Mark unmeasured numbers provisional, never settled.
+
 ## DECISIONS PENDING — CI FAILS WHEN ONE GOES OVERDUE
 
-**Do not delete a line to make the build pass. Decide it, then record the
-decision and remove the line in the SAME commit.** Format is fixed —
-`- [ ] DECIDE BY YYYY-MM-DD — question` — because
-`test_no_pending_decision_is_overdue` parses it.
+**Do not delete a line to pass the build — decide it, then remove it in
+the SAME commit.** Format: `- [ ] DECIDE BY YYYY-MM-DD — question`
+(`test_no_pending_decision_is_overdue` parses it).
 
-This block exists because a decision was deferred here once and forgotten. On
-2026-08-28 this file said, of the reward:risk floor: *"gather a week of these
-rejections first, then decide which of the two numbers is wrong."* Nobody came
-back. Four days later the desk reviewed 38 qualified signals and placed zero
-trades for exactly that reason.
+This exists because a decision was deferred here and forgotten: on
+2026-08-28 this file said to "gather a week of rejections then decide."
+Nobody came back; four days later the desk reviewed 38 signals and placed
+zero trades for it.
 
 **THREE of the four raised on 2026-09-01 were ratified that day and are spec
 Phase 12. The fourth was NOT — it was deferred, and I wrongly deleted its line
