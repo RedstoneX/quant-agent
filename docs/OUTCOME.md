@@ -110,6 +110,42 @@ The operator should be able to understand, without reading raw logs:
 - what meaningful bullish or bearish opportunities the system missed;
 - whether model/prompt choices appear to add measurable value over time.
 
+## No arbitrary numbers, ever
+
+**Owner correction, 2026-09-04, restated after recurring on the same
+pattern multiple times in one night — read this before setting or
+defending any threshold, cap, or rule in this codebase.** See
+`docs/WORK.md`'s session-start section for the current short version; this
+is the fuller statement of the same principle.
+
+Every constant that governs a real trade decision — a stop distance, a
+holding period, a risk percentage, a reward:risk floor, a tolerance band —
+must be derived from real market data (volatility, structure, confirmed
+price action) or from this desk's own measured track record. It must
+never be a flat calendar count, a round percentage, or a number chosen
+because it "sounds prudent."
+
+**A number does not become non-arbitrary because it was previously
+approved.** This applies to Claude's own reasoning as much as to the
+code: on the same night this was written down, an earlier flat 5%
+risk-per-trade figure was defended as correct on the grounds that the
+owner had ratified it weeks before — that is the identical mistake in a
+different location, just wearing a sign-off instead of a comment. Approving
+the wrong SHAPE of a rule does not fix it.
+
+This has recurred enough times to name the shape: a flat "protect for 5
+days" holding rule, later replaced with a real price-level-break check; a
+same-day break trigger that had to be corrected to a two-trading-day
+closing confirmation once it was pointed out that a one-day dip which
+reclaims its level is a well-known reversal pattern, not evidence of a
+breakdown; an ATR-based tolerance reused for a new purpose at the wrong
+tightness because nobody checked whether the number fit the new job; and
+the 5%-risk defense above. Treat a new instance of this shape as the same
+recurring bug, not a fresh question — and see `docs/RESEARCH_FINDINGS.md`
+for what in this codebase has actually been measured versus merely
+asserted. If a real number cannot yet be derived from data or a measured
+record, mark it explicitly as provisional — never let it read as settled.
+
 ## Execution-environment principle
 
 Paper and live operation share one trading architecture. No agent, portfolio-construction, risk, position-management, reflection or Dashboard semantics should become easier, looser, or materially different merely because the current broker account is Paper.
