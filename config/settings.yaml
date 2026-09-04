@@ -273,7 +273,35 @@ execution:
   fractional_share_decimals: 4
 
 risk:
-  max_position_pct: 20
+  # Single-name NOTIONAL ceiling — a concentration/liquidity backstop, not
+  # the operative risk constraint. `max_position_risk_pct` (5%, owner-
+  # ratified 2026-08-27) is supposed to be the real per-trade limit; this
+  # cap was supposed to only ever bind on a genuinely too-tight stop.
+  #
+  # 20 -> 100 on 2026-09-04, real-data audit. It never worked as a backstop:
+  # `notional_pct = risk_pct / stop_distance_pct`, and at this book's real
+  # stop distances a 20% ceiling caps DELIVERED risk to `20% x stop_pct`
+  # regardless of stated conviction. Measured live: 6 of 13 proposed orders
+  # pinned at exactly 20% notional; a 2.8% and a 1.0% risk request both
+  # delivered ~1% either way. The 2026-08-27 stop-width fix (`min_stop_atr_
+  # multiple: 3.0` above) independently pushes quiet-name stops out to
+  # roughly 5-9% (see that setting's own comment) — at the tight end of
+  # that range, reaching the full 5% envelope needs `5 / 5 x 100 = 100%`
+  # notional. 100 is therefore the number where the 20-100% "normal" range
+  # this desk actually produces (see min_stop_atr_multiple's own measured
+  # 5-9% figure) stops being clipped, while a stop tighter than 5% — only
+  # reachable today via the level-backed exception down to
+  # `absolute_min_stop_atr_multiple: 1.0` (~2.56% at the median 2.56% ATR
+  # this desk trades) — still gets clamped, which is exactly the
+  # "genuinely too tight" case this cap exists for.
+  #
+  # 100 was chosen over a larger number (the math above tops out needing
+  # ~195% notional for that 1x-ATR degenerate floor) because `allow_margin`
+  # is false: the cash-only rule already makes anything past 100% of equity
+  # in one name unreachable in practice, so 100 IS the real ceiling — this
+  # only documents it rather than leaving a number that does nothing.
+  # Revisit together if `allow_margin` ever flips on.
+  max_position_pct: 100
   # Caps NET exposure (longs minus shorts) as % of equity.
   #
   # 90 -> 200 on 2026-09-02. This number PREDATES the gross-exposure ladder
@@ -504,9 +532,14 @@ risk:
   # 25 is Alpaca's standard equity requirement; at 2.0x it reads ~33%.
   maintenance_margin_pct: 25
   # --- Stage 3 (shorts) -------------------------------------------------
-  # Deliberately half of max_position_pct: a short's loss is unbounded
-  # while a long's is capped at -100%, so one short's concentration budget
-  # is tighter. Hard block on opening/adding a short; never blocks a COVER.
+  # Was set to half of max_position_pct (20 -> 10) when both were chosen; a
+  # short's loss is unbounded while a long's is capped at -100%, so one
+  # short's concentration budget was made tighter. HISTORICAL relationship
+  # only, not live: `max_position_pct` moved to 100 on 2026-09-04 once it
+  # stopped functioning as a concentration lever (cash-only already makes
+  # 100% the real ceiling), and shorts were out of scope for that change —
+  # 10 stands on the unbounded-loss justification alone until its own
+  # review. Hard block on opening/adding a short; never blocks a COVER.
   max_single_short_pct: 10
   # Largest total gross BEARISH exposure across the book, as % of equity —
   # true shorts plus LONG positions in an inverse/leveraged ETF (SH, SDS,

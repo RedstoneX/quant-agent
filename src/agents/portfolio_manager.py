@@ -521,6 +521,7 @@ class PortfolioManagerAgent(BaseAgent):
             macro_analysis=macro_analysis,
             earnings_analyses=earnings_analyses,
             smart_money_findings=smart_money_findings,
+            real_reward_risk_by_symbol=kwargs.get("real_reward_risk_by_symbol"),
         )
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
@@ -1172,6 +1173,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         active_state_changes: str,
         rr_floor: float = REWARD_RISK_FLOOR,
         asof: date | None = None,
+        real_reward_risk_by_symbol: dict[str, float | None] | None = None,
     ) -> dict[str, list[str]]:
         """Which analysed names the desk's own rules ADMIT, before the PM
         decides — `{SYMBOL: [reasons it is blocked]}`, empty list = eligible.
@@ -1198,6 +1200,24 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         analysis in `analyses` are considered at all. Nothing here removes or
         weakens a gate — a name this admits can still be dropped after
         submission by the stricter post-decision checks.
+
+        **R4's number, 2026-09-04 fix.** `real_reward_risk_by_symbol` — when
+        supplied, keyed by upper-case symbol — is
+        `PortfolioConstructor.real_reward_risk_preview`'s output: the SAME
+        derived-target, noise-floor-widened reward:risk `construct_orders`
+        gates on, not `TechAnalysisResult.risk_reward` (the analyst's own
+        guessed target, real arithmetic but never checked against
+        structure). A 2026-09-04 audit found this gate and the
+        constructor's real one passing DISJOINT sets on a real day — zero
+        overlap — because this gate ran first and screened candidates on a
+        different number than the one that would decide them one stage
+        later. A symbol absent from the map is treated as `None` (fail
+        closed, same as an unmeasurable ratio always has been here).
+        Omitted entirely (`None`), this falls back to `analysis.risk_reward`
+        for callers that have not wired a constructor preview through
+        (rare — pre-existing tests, and any harness with no
+        `PortfolioConstructor` instance to hand); production always
+        supplies it.
         """
         allowed = {
             str(s).strip().upper() for s in (allowed_buy_symbols or set())
@@ -1220,7 +1240,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             direction = "short" if analysis.rating in ("sell", "strong_sell") else "long"
             if direction == "long" and symbol not in allowed:
                 blocked.append("R3 not BUY-eligible")
-            reward_risk = analysis.risk_reward
+            if real_reward_risk_by_symbol is not None:
+                reward_risk = real_reward_risk_by_symbol.get(symbol)
+            else:
+                reward_risk = analysis.risk_reward
             if reward_risk is None or reward_risk < rr_floor:
                 if symbol not in catalyst_symbols:
                     shown = "n/a" if reward_risk is None else f"{reward_risk:.2f}"
@@ -1388,6 +1411,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         macro_analysis: dict | None = None,
         earnings_analyses: list[dict] | None = None,
         smart_money_findings: list[SmartMoneyFinding] | None = None,
+        real_reward_risk_by_symbol: dict[str, float | None] | None = None,
     ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
         """The eligible names in ranked order, plus the blocked names with
         their reasons. Ordering is `src/verdicts.py::rank_verdicts` over
@@ -1403,6 +1427,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         Technical already cleared. A symbol only news/macro/earnings/
         smart_money covered, with no Technical read, can never appear here;
         it was never eligible in the first place.
+
+        `real_reward_risk_by_symbol` is passed straight through to
+        `candidate_eligibility` — see that method's docstring.
         """
         eligibility = cls.candidate_eligibility(
             analyses=analyses,
@@ -1411,6 +1438,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             allowed_buy_symbols=allowed_buy_symbols,
             active_state_changes=active_state_changes,
             rr_floor=rr_floor,
+            real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             asof=asof,
         )
         all_verdicts = cls._collect_seat_verdicts(
@@ -1616,6 +1644,14 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # "book is empty" view — see `_render_rotation_section`.
                existing_risk_pct: dict[str, float] | None = None,
                max_portfolio_risk_pct: float = 25.0,
+               # 2026-09-04 fix: the SAME real derived reward:risk
+               # `PortfolioConstructor.construct_orders` gates on,
+               # keyed by upper-case symbol — see `candidate_eligibility`
+               # and `_apply_subfloor_catalyst_rule` for why this replaces
+               # `TechAnalysisResult.risk_reward` at both eligibility gates.
+               # `None` (the default) falls back to that field, for the rare
+               # caller with no `PortfolioConstructor` to preview from.
+               real_reward_risk_by_symbol: dict[str, float | None] | None = None,
                ) -> tuple[PortfolioDecision | None, "AgentResult"]:
         result = self.run(
             analyses=analyses,
@@ -1654,6 +1690,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # Phase 14: opportunity-cost rotation pre-check inputs.
             existing_risk_pct=existing_risk_pct,
             max_portfolio_risk_pct=max_portfolio_risk_pct,
+            real_reward_risk_by_symbol=real_reward_risk_by_symbol,
         )
         parsed = result.parse_json()
         if parsed is None:
@@ -1723,6 +1760,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 total_value=total_value,
                 active_state_changes=active_state_changes,
                 rr_floor=rr_floor, starter_risk_pct=starter_risk_pct,
+                real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             )
             errors = self.validate_grounding(
                 decision, analyses=analyses, positions=positions,
@@ -1809,6 +1847,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         total_value=total_value,
                         active_state_changes=active_state_changes,
                         rr_floor=rr_floor, starter_risk_pct=starter_risk_pct,
+                        real_reward_risk_by_symbol=real_reward_risk_by_symbol,
                     )
                     errors = self.validate_grounding(
                         decision, analyses=analyses, positions=positions,
@@ -2341,6 +2380,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         rr_floor: float,
         starter_risk_pct: float,
         asof: date | None = None,
+        real_reward_risk_by_symbol: dict[str, float | None] | None = None,
     ) -> PortfolioDecision:
         """Gate and cap every target whose Technical read is below the
         reward:risk floor.
@@ -2361,14 +2401,29 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         — are gated. Exits and reductions are exempt; this desk must never
         find it harder to cut risk than to add it.
 
-        WHICH RATIO. `TechAnalysisResult.risk_reward` — Python's arithmetic
-        over the analyst's own entry/stop/target, computed in `src/models.py`
-        and never trusted to a model's claim about its own ratio. It is also
-        the exact number rendered into the prompt as `R/R x.xx:1`, so the PM
-        is held to the figure it was shown. `None` (neutral rating, or
-        malformed geometry) counts as sub-floor: the prompt already says
-        "R/R n/a — treat as low-R/R", and a target with no computable payoff
-        is precisely the case a checkable catalyst has to justify.
+        WHICH RATIO. As of 2026-09-04, `real_reward_risk_by_symbol` (when
+        supplied) — `PortfolioConstructor.real_reward_risk_preview`'s
+        output, the same derived-target, noise-floor-widened reward:risk
+        `construct_orders` gates on. Before this fix it was
+        `TechAnalysisResult.risk_reward`: real Python arithmetic, but over
+        the analyst's own GUESSED target, never checked against structure —
+        a 2026-09-04 audit found this gate and the constructor's real one
+        passing disjoint sets on a real day because of exactly that gap. A
+        symbol absent from the map is `None` (fail closed, same as an
+        unmeasurable ratio always has been here). If the map is not
+        supplied at all (`None`, not merely missing an entry),
+        `TechAnalysisResult.risk_reward` is used as a last-resort fallback
+        for callers with no `PortfolioConstructor` to preview from —
+        production always supplies it. It is `TechAnalysisResult.
+        risk_reward` that is still rendered into the prompt as `R/R
+        x.xx:1` (that number is the analyst's own stated geometry, shown
+        as context — see `_fmt_tech` — not the number this gate now uses),
+        so the PM sees both: what the analyst claimed and, in the ranking
+        section, which names the desk's real gate actually admits. `None`
+        (neutral rating, unmeasurable geometry, or a target this desk's own
+        structure derivation refuses) counts as sub-floor: a target with no
+        computable REAL payoff is precisely the case a checkable catalyst
+        has to justify.
 
         WHY THE CAP EXISTS EVEN WHEN THE CATALYST IS REAL. A verified
         catalyst makes the trade permissible, not good — the payoff geometry
@@ -2379,7 +2434,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         desk can express rather than removing it.
         """
         by_date = cls._state_change_symbols_by_date(active_state_changes, asof)
-        rr_by_symbol = {a.symbol.upper(): a.risk_reward for a in analyses}
+        if real_reward_risk_by_symbol is not None:
+            rr_by_symbol = {
+                a.symbol.upper(): real_reward_risk_by_symbol.get(a.symbol.upper())
+                for a in analyses
+            }
+        else:
+            rr_by_symbol = {a.symbol.upper(): a.risk_reward for a in analyses}
         held = {p.symbol.upper(): p for p in positions}
         kept: list[TargetPosition] = []
         for target in decision.targets:

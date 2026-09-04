@@ -174,14 +174,27 @@ class ConstructorConfig:
     max_cluster_risk_share_pct: float = 40.0
     # The risk engine's single-name GROSS notional ceiling, mirrored here so
     # the constructor sizes UNDER it instead of proposing an order the engine
-    # will hard-block. Risk-based sizing (§2.1) makes this binding in the
-    # ordinary case, not the exotic one: notional = risk_pct x entry/(entry -
-    # stop), so at this book's median 4.3% stop distance even 1.5% risk asks
-    # for 35% of equity in one name. `max_position_pct` is in
-    # HARD_BLOCK_RULES, so without this clamp those BUYs are dropped entirely
-    # and the session trades nothing. Keep in sync with
-    # `risk.max_position_pct` — pipeline.py wires them from the same setting.
-    max_position_pct: float = 20.0
+    # will hard-block. `max_position_pct` is in HARD_BLOCK_RULES, so without
+    # this clamp a BUY over the ceiling is dropped entirely rather than
+    # trimmed.
+    #
+    # 20 -> 100 on 2026-09-04 (real-data audit): a concentration/liquidity
+    # BACKSTOP is supposed to only bind on a genuinely too-tight stop, not
+    # the ordinary case. At 20 it bound on nearly every trade — notional =
+    # risk_pct x entry/(entry - stop), so at this book's real ~5-9% stop
+    # distances (see `risk.min_stop_atr_multiple`'s own comment in
+    # settings.yaml) even the full 5% envelope needed 55-100% notional,
+    # 6 of 13 real proposed orders pinned at exactly 20%, and delivered risk
+    # collapsed to ~1% regardless of stated conviction. 100 is where that
+    # real 5-9% range stops being clipped (5% risk / 5% stop = 100%
+    # notional), while a stop tighter than 5% — reachable today only via the
+    # level-backed exception down to `absolute_min_stop_atr_multiple` — still
+    # gets clamped, which is the genuinely-too-tight case this ceiling
+    # exists for. `allow_margin` is false, so 100 is also the real ceiling:
+    # nothing past 100% of one name's equity is reachable cash-only anyway.
+    # Keep in sync with `risk.max_position_pct` — pipeline.py wires them from
+    # the same setting.
+    max_position_pct: float = 100.0
     # Spec §10.3 "concentration scales size, it does not veto". The sector
     # diversification target and the absolute ceiling behind it. Unlike every
     # other ceiling in this dataclass these do not merely make the constructor
@@ -1206,6 +1219,95 @@ class PortfolioConstructor:
         return reward_to_risk(
             entry_price, stop_price, target_price, is_short=is_short,
         )
+
+    def real_reward_risk_preview(
+        self,
+        analysis: TechAnalysisResult | None,
+        direction: str,
+        regime: str | None = None,
+    ) -> float | None:
+        """The reward:risk this candidate would actually clear at
+        construction time — same target derivation and stop-widening
+        `construct_orders` applies — computed BEFORE a `TargetPosition`
+        exists.
+
+        Exists to close a gap found in a 2026-09-04 audit: the 2026-09-01
+        decision that reward:risk must be "evidence, never arithmetic"
+        (this class's own `_derive_target` / `_widen_stop_past_noise`) was
+        applied to order construction but never reached
+        `PortfolioManagerAgent.candidate_eligibility` /
+        `_apply_subfloor_catalyst_rule` — the EARLIER gate that decides
+        which candidates even reach construction. That gate kept reading
+        `TechAnalysisResult.risk_reward`, which is real arithmetic but over
+        the ANALYST's own guessed target, never checked against structure
+        (see that field's docstring). On a measured real day the two gates
+        passed disjoint sets — zero overlap — because the first gate
+        screened out exactly the names the second would have allowed
+        through, and vice versa. This method gives the earlier gate the
+        SAME real number the later one uses, by calling the same
+        `_derive_target` / `_widen_stop_past_noise` this class already
+        runs, rather than a second copy of that logic.
+
+        Two inputs are necessarily earlier-stage approximations, because
+        nothing later exists yet at PM eligibility time:
+          - entry is the analyst's SNAPSHOT `entry_price`, not the live
+            market price `construct_orders` prices the real order at —
+            that price does not exist until the PM has decided to trade
+            the name.
+          - the stop is `analysis.stop_loss`, mirroring `_resolve_stop`'s
+            second-priority source. There is no `TargetPosition.
+            suggested_stop_price` yet, because the PM has not proposed one.
+        Both are re-resolved for real at construction time against the
+        live price and (if the PM supplies one) its own suggested stop, so
+        a name can still legitimately move between preview and shipped
+        order — but it will no longer move because of TWO DIFFERENT
+        DEFINITIONS of reward:risk, which is the defect this closes: the
+        derived target and the noise-floor stop widening were never
+        applied before the PM's gate at all.
+
+        None means "cannot judge, or under this desk's floor" — the same
+        fail-closed contract as `_widen_stop_past_noise`, which this calls.
+        """
+        if analysis is None:
+            return None
+        entry_price = getattr(analysis, "entry_price", None)
+        if not entry_price or entry_price <= 0:
+            return None
+        entry_price = float(entry_price)
+        is_short = direction == "short"
+
+        derivation = self._derive_target(
+            analysis.symbol, analysis, entry_price, direction,
+        )
+        if derivation.price is None:
+            return None
+
+        raw_stop = getattr(analysis, "stop_loss", None)
+        if not raw_stop or raw_stop <= 0:
+            return None
+        raw_stop = float(raw_stop)
+        # Geometry must already hold before any widening is attempted — a
+        # stop on the wrong side of entry is not a candidate for the noise
+        # floor, it is not a stop at all.
+        if is_short:
+            if raw_stop <= entry_price:
+                return None
+        elif raw_stop >= entry_price:
+            return None
+
+        honoured_stop = self._widen_stop_past_noise(
+            analysis.symbol, analysis, entry_price, raw_stop, regime=regime,
+            direction=direction, target_price=derivation.price,
+        )
+        if honoured_stop is None:
+            # Either ungeometric or under `min_reward_risk_after_widening`
+            # against the real target and the stop that would actually
+            # ship — `_widen_stop_past_noise` already fails closed here.
+            return None
+        ratio = self._reward_risk_at(
+            entry_price, honoured_stop, derivation.price, is_short,
+        )
+        return None if ratio is None else round(ratio, 2)
 
     def _widen_stop_past_noise(
         self,
