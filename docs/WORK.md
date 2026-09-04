@@ -980,15 +980,45 @@ ask, not a resumption of #259.
 after #258 was confirmed live.** The 5-day/-3%, 20-day/-8%, and 3% daily
 circuit breaker were pre-mandate constants sized for the OLD ~1% risk
 unit; all three now scale as `N × max_position_risk_pct` so they track
-the real risk unit automatically instead of going stale again. **The
-multiplier N itself (3× daily/5-day, 8× 20-day) is left UNCHANGED and
-explicitly PROVISIONAL** — the 2026-09-02 clean-slate reset wiped the
-equity history needed to validate it, and the 20-day check literally
-cannot evaluate yet for lack of 20 trading days since. Real owner
-decision, not a guess to make.
+the real risk unit automatically instead of going stale again.
 
-**DECIDE BY 2026-09-11** — the drawdown-brake multiplier, and whether
-the conviction-band question gets reopened.
+**Two bugs in the multipliers themselves — FIXED 2026-09-04, follow-up
+PR.** #263 fixed the UNIT and left every N untouched; two of the three
+turned out to be wrong for reasons that need no trade history at all.
+
+- **Daily breaker was decorative.** It used the SAME multiple as the
+  5-day window (3×), i.e. -15% of equity in one session — reachable only
+  on a single-name gap, not on any realistic bad day. Drawdown magnitude
+  scales with √time (Van Hemert/Ganz/Harvey, *Drawdowns*, JPM 2020), so
+  anchoring on the 5-day window: `3 × √(1/5) = 1.3416… → 1.34`, a **-6.7%
+  breaker**. The two windows now sit at 1 : √5, not 1 : 1.
+- **The 20-day brake contradicted the desk's OTHER drawdown system.** The
+  older §11.2 gross-exposure de-levering ladder cuts exposure from -8%,
+  is at 1.0× by -15%, and at **-20% halves the book and alerts the
+  owner** — while the 20-day brake said nothing until -40%. One system
+  was waking the owner while the other called the desk fine, for twenty
+  points. Moved to `20 / 5 = 4×`, i.e. **-20%**, so it can never again be
+  silent past the ladder's own alert. The 5-day brake (-15%) already
+  landed on the ladder's -15% rung and was left alone.
+
+**STILL OPEN, OWNER CALL — full reconciliation of the two drawdown
+systems.** The above is a *floor on the disagreement*, not agreement.
+They measure different things (peak-to-trough vs rolling-window return),
+were calibrated independently, and nobody has decided whether the desk
+should have one drawdown response or two, or which governs. Note the
+-20% choice is TIGHTER than √time from the 5-day anchor would give
+(`3 × √4 = 6×`, i.e. -30%); the ladder constraint binds first, and
+matching the already-live system was judged the honest minimal move.
+
+**The ANCHOR multiplier (N=3 at 5 days) remains UNCHANGED and explicitly
+PROVISIONAL** — the 2026-09-02 clean-slate reset wiped the equity history
+needed to validate it, and the 20-day check cannot evaluate yet for lack
+of 20 trading days since. The fixes above correct *relative* scaling and
+a cross-system contradiction; neither calibrates the anchor.
+
+**DECIDE BY 2026-09-11** — the anchor multiplier, whether the two
+drawdown systems get reconciled properly, and whether the
+conviction-band question gets reopened.
 
 **33. The two "is this trade worth the risk" checks disagreed with each other — FIXED, pending review.**
 
