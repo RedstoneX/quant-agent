@@ -4359,3 +4359,136 @@ test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure`,
 `MissingRecordedResponse` for a replay fixture) reproduces byte-identically
 against unmodified origin/main — pre-existing, unrelated to this change,
 not introduced by it.
+
+---
+
+## 2026-09-04 — Congressional-trading feed was throwing away real trades two different ways (found before merge, PR #271)
+
+**In plain words.** The brand-new "what did members of Congress buy and sell"
+data feed was quietly losing real trades before anyone could look at them, for
+two unrelated reasons. Neither was a crash and neither showed up as an error —
+the feed just returned less than it should have, and looked healthy doing it.
+Both were caught while the pull request was still open, so nothing broken ever
+ran.
+
+**Where the two findings actually came from — not from us.** Someone had
+already built a free congressional-trading workflow (an n8n template) and
+published his own list of things that bit him. Reading that list is what
+surfaced both of these. This matters for the record: these are field reports
+from a person who had already run this exact kind of data against the real
+disclosure systems, not defects we deduced from first principles or guessed
+at. Where a claim of his was load-bearing here, it was checked independently
+against the primary source before being acted on (see below).
+
+### Finding 1 — the freshness window was shorter than the law's own deadline
+
+The provider only kept disclosures filed in the last **30 days**.
+
+The STOCK Act gives a member up to **45 days** after a trade to file the
+disclosure. So a 30-day window could not cover even the *legal* lag, never
+mind real behaviour — and in practice filings cluster at or past the deadline
+rather than early. The effect: a genuine, recent, perfectly legitimate trade
+that happened to be filed on day 38 was dropped on the floor. Silently. No
+error, no counter, no log line — the feed simply returned fewer rows.
+
+Verified independently rather than taken on the workflow author's word: the
+45-day statutory ceiling was re-confirmed 2026-09-04 against the House
+Committee on Ethics' own PTR instructions and the Senate Select Committee on
+Ethics' PTR instructions, both of which state the "no later than 45 days after
+the transaction" rule directly. The 45-day number was already in this repo
+(`smart_money_analyst.py`'s module docstring, and the provider's own
+`assumed_max_disclosure_lag_days`) — the bug was that the *retention* window
+had been set below a number the same codebase already knew.
+
+**Now 180 days.** Not an invented figure: it is the default that comparable
+free tool's author settled on, for exactly this reason, after a short window
+returned almost nothing for him. It is generous on purpose — this is a
+*coverage* window, deciding what the analyst is allowed to see at all, not a
+*strength* window deciding what counts as evidence.
+
+**What was deliberately NOT changed, and why it matters:**
+
+* **SEC Form 4's own window stays tight (7 days config / 14 days provider).**
+  Form 4 has a ~2-business-day filing deadline — a completely different
+  statute with a completely different lag profile. Widening it to match the
+  congressional one would be exactly the wrong lesson to draw. There is now a
+  test that asserts the two windows are different and that the Form 4 one is
+  the smaller, so a future "tidy-up" cannot quietly harmonise them.
+* **The eligibility contract stays at 7 days.**
+  `SmartMoneyFinding.deterministic_eligibility` still requires congressional-
+  only evidence to be >=2 observations, >=2 distinct members, one direction,
+  and every disclosure <=7 days old. A 180-day coverage window therefore
+  cannot make stale data load-bearing — it only stops fresh data being binned
+  before it is ever assessed. There is a test asserting exactly that.
+
+**Related tension noted, NOT fixed here** (flagging, not self-authorising):
+that same contract also requires `lag_days <= 30`, i.e. the gap between the
+trade and its disclosure must be under 30 days. Since the statute permits 45,
+a trade disclosed legally at day 40 can never support a thesis under the
+current contract no matter how fresh the disclosure is. That may well be
+intentional conservatism, but it is an owner-level judgment about what counts
+as evidence, not a bug to be quietly widened by whoever happens to be in the
+file. Left exactly as it was.
+
+### Finding 2 — direction parsing did not understand the disclosure form's own codes
+
+The function turning a raw transaction-type value into buy/sell/exchange only
+matched full words: anything starting "purchase", "sale" or "exchange".
+Everything else became `"unknown"`.
+
+But the House Periodic Transaction Report form does not use full words. It
+uses **short codes**:
+
+| Code | Meaning |
+| --- | --- |
+| `P` | Purchase |
+| `S` | Sale (full) |
+| `S (partial)` | Partial sale — only part of a holding sold |
+| `E` | Exchange (rare; e.g. a share swap in a merger) |
+
+Every row carrying a short code was read as direction-unknown. For a data
+source whose entire reason to exist is knowing *which way* a member traded,
+that is not a cosmetic gap — it is the signal being deleted. It also polluted
+the cross-source check: one feed rendering "Sale" and the other rendering "S"
+for the same real trade would have been flagged as the two sources
+*disagreeing about direction*, which is a false alarm on the one signal the
+cross-check exists to raise honestly.
+
+**Source for the code set, since it is now load-bearing.** Confirmed
+2026-09-04 against the House Committee on Ethics' financial-disclosure
+instruction guide and the House Clerk's published PTR forms, plus the Senate
+Select Committee on Ethics' PTR instructions — which between them define
+exactly three reportable transaction kinds (purchase, sale, exchange), the
+partial-sale qualifier, and the single-letter codes above. The full-word and
+`sale_full`/`sale_partial` snake_case renderings are the forms the two live
+feeds and the widely-mirrored House-Clerk-derived JSON schema actually emit.
+
+**Now an explicit allowlist, not a loose match.** The obvious cheap fix — "if
+it starts with `s`, call it a sale" — is worse than the bug: it would read
+"Stock Split" and "Stock Dividend" as sales, i.e. invent a sell signal out of
+a corporate action. Short codes are therefore matched only as an exact whole
+token; full-word prefix matching is kept as a fallback for qualifiers we have
+not enumerated. There are tests for both, including one asserting "Stock
+Split" stays unknown.
+
+**And the class of bug is now visible instead of silent.** Anything that still
+matches nothing is recorded in a module-level set and logged once per distinct
+value, with the offending raw string and where to add it. The original
+failure mode was not really "short codes were missing" — it was that an
+unrecognized value produced no trace at all, so a future upstream format
+change would have degraded the feed exactly as invisibly. That is the part
+that is actually fixed.
+
+**Exact suite counts** (both runs on this sandbox, full repo suite,
+same collection exclusions as the entry above): PR #271 head before these
+fixes (`7c9d0fd`, run in a separate disposable worktree) — **1 failed, 4922
+passed, 1 skipped**; this branch after the fixes — **1 failed, 4953 passed,
+1 skipped**. `tests/test_congressional_trading.py` goes from **14 to 45
+tests** (+31), which accounts for the entire delta (4953 - 4922 = 31),
+confirming zero regressions in the pre-existing suite. The subsequent
+`origin/main` merge on this branch touched `docs/WORK.md` only — no code —
+so those counts stand. The 1 failure
+is `test_rehearsal_reproduces_cost_ceiling.py::
+test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure`, reproduced
+byte-identically against the unmodified PR head in a separate worktree —
+pre-existing, unrelated, not introduced here.

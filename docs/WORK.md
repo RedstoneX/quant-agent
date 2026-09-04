@@ -1069,6 +1069,29 @@ the seat's existing acceptance contract. Off by default
 fans one `SmartMoneySource` call out to SEC Form 4 and this new provider,
 isolating either one's failure from the other and from the rest of the run.
 
+**Two data-loss bugs found and fixed on the same PR before merge, 2026-09-04.**
+Both came from reading a comparable free tool's author documenting his own
+gotchas (an n8n congressional-trading workflow template shared on Reddit) —
+real-world lessons from someone who already ran this data in anger, not
+defects we reasoned our way to. (1) The disclosure window was 30 days, which
+cannot even cover the STOCK Act's own 45-day filing deadline — members
+routinely file at or past it, so real, recent, legitimate trades were being
+thrown away before the analyst ever saw them. Widened to 180 days, the same
+figure that tool's author landed on for the same reason. This is a coverage
+window only: the separate contract that decides whether congressional
+evidence may actually support a thesis still demands disclosures <=7 days
+old, so nothing stale became load-bearing. SEC Form 4's own much tighter
+7-day window is untouched and must stay that way — Form 4 has a
+2-business-day legal deadline, a different statute entirely. (2) Direction
+parsing only understood full words ("Purchase"/"Sale"/"Exchange"), but real
+House disclosure forms use short codes — `P`, `S`, `S (partial)`, `E`. Every
+such row silently became "unknown" direction, on a feed whose whole purpose is
+knowing who bought and who sold. Now an explicit allowlist of the real code
+and word forms (deliberately not a loose single-letter match, which would
+misread "Stock Split" as a sale), and anything still unrecognized is logged
+and recorded once rather than vanishing — so the next upstream format change
+is visible instead of silent.
+
 **37. Eleven PRs open at once tonight (#249-#262) — merge ORDER matters, see `docs/INCIDENT_HISTORY.md`.** None conflict in logic; several share files (`portfolio_manager.py`/`.md` especially — #257, #259, #261). Full recommended order recorded there so it survives a compaction, not just this session's head.
 
 **38. Insider cluster window was 7x the cited research — FIXED 2026-09-04.**
