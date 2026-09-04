@@ -1207,6 +1207,95 @@ class PortfolioConstructor:
             entry_price, stop_price, target_price, is_short=is_short,
         )
 
+    def real_reward_risk_preview(
+        self,
+        analysis: TechAnalysisResult | None,
+        direction: str,
+        regime: str | None = None,
+    ) -> float | None:
+        """The reward:risk this candidate would actually clear at
+        construction time — same target derivation and stop-widening
+        `construct_orders` applies — computed BEFORE a `TargetPosition`
+        exists.
+
+        Exists to close a gap found in a 2026-09-04 audit: the 2026-09-01
+        decision that reward:risk must be "evidence, never arithmetic"
+        (this class's own `_derive_target` / `_widen_stop_past_noise`) was
+        applied to order construction but never reached
+        `PortfolioManagerAgent.candidate_eligibility` /
+        `_apply_subfloor_catalyst_rule` — the EARLIER gate that decides
+        which candidates even reach construction. That gate kept reading
+        `TechAnalysisResult.risk_reward`, which is real arithmetic but over
+        the ANALYST's own guessed target, never checked against structure
+        (see that field's docstring). On a measured real day the two gates
+        passed disjoint sets — zero overlap — because the first gate
+        screened out exactly the names the second would have allowed
+        through, and vice versa. This method gives the earlier gate the
+        SAME real number the later one uses, by calling the same
+        `_derive_target` / `_widen_stop_past_noise` this class already
+        runs, rather than a second copy of that logic.
+
+        Two inputs are necessarily earlier-stage approximations, because
+        nothing later exists yet at PM eligibility time:
+          - entry is the analyst's SNAPSHOT `entry_price`, not the live
+            market price `construct_orders` prices the real order at —
+            that price does not exist until the PM has decided to trade
+            the name.
+          - the stop is `analysis.stop_loss`, mirroring `_resolve_stop`'s
+            second-priority source. There is no `TargetPosition.
+            suggested_stop_price` yet, because the PM has not proposed one.
+        Both are re-resolved for real at construction time against the
+        live price and (if the PM supplies one) its own suggested stop, so
+        a name can still legitimately move between preview and shipped
+        order — but it will no longer move because of TWO DIFFERENT
+        DEFINITIONS of reward:risk, which is the defect this closes: the
+        derived target and the noise-floor stop widening were never
+        applied before the PM's gate at all.
+
+        None means "cannot judge, or under this desk's floor" — the same
+        fail-closed contract as `_widen_stop_past_noise`, which this calls.
+        """
+        if analysis is None:
+            return None
+        entry_price = getattr(analysis, "entry_price", None)
+        if not entry_price or entry_price <= 0:
+            return None
+        entry_price = float(entry_price)
+        is_short = direction == "short"
+
+        derivation = self._derive_target(
+            analysis.symbol, analysis, entry_price, direction,
+        )
+        if derivation.price is None:
+            return None
+
+        raw_stop = getattr(analysis, "stop_loss", None)
+        if not raw_stop or raw_stop <= 0:
+            return None
+        raw_stop = float(raw_stop)
+        # Geometry must already hold before any widening is attempted — a
+        # stop on the wrong side of entry is not a candidate for the noise
+        # floor, it is not a stop at all.
+        if is_short:
+            if raw_stop <= entry_price:
+                return None
+        elif raw_stop >= entry_price:
+            return None
+
+        honoured_stop = self._widen_stop_past_noise(
+            analysis.symbol, analysis, entry_price, raw_stop, regime=regime,
+            direction=direction, target_price=derivation.price,
+        )
+        if honoured_stop is None:
+            # Either ungeometric or under `min_reward_risk_after_widening`
+            # against the real target and the stop that would actually
+            # ship — `_widen_stop_past_noise` already fails closed here.
+            return None
+        ratio = self._reward_risk_at(
+            entry_price, honoured_stop, derivation.price, is_short,
+        )
+        return None if ratio is None else round(ratio, 2)
+
     def _widen_stop_past_noise(
         self,
         symbol: str,
