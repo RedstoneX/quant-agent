@@ -721,42 +721,7 @@ detail: `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 drop is attributed to the constructor, never to a Risk Manager veto of
 whatever plan survived it. See `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 
-**13. One number is carrying three different meanings. DEFECT, latent.**
-
-Not from the census — this one is structural, and it was raised in
-conversation, never written down, and then lost to a context compaction. The
-owner asked for it back by name. Recording it here so that cannot happen a
-second time.
-
-A target weight of **0%** currently means three incompatible things and the
-plumbing cannot tell them apart:
-  1. *"Do not open this"* — a refusal. Nothing should happen.
-  2. *"Close what is held"* — a real exit instruction.
-  3. *"Open a short"* — a new position in the other direction.
-
-A zero-weight entry reads to the delta loop as meaning 2. So a rule that
-refuses to BUY something can silently SELL a position nobody asked to sell.
-It does not error; it just liquidates. The signed-dissent rule shipped
-2026-09-02 works around this by DROPPING a refused target rather than sizing
-it at zero — but that is one caller remembering, and every future rule that
-can refuse a target inherits the same trap.
-
-**The fix is borrowed, not invented.** `pysystemtrade` (Rob Carver) solves
-exactly this with an override algebra: an override is not a number, it is a
-value in a small ordered set, and combining two of them is defined by rule
-rather than by arithmetic. Its order is absorbing —
-
-    no_trading  >  close  >  reduce_only  >  (a plain multiplier)
-
-— so combining any two overrides yields the more restrictive one, always, and
-"do not trade" can never be diluted back into "trade a bit" by multiplication.
-Applied here: make the three intents DISTINCT VALUES with defined combination
-rather than three readings of one float, so the mistake stops being
-expressible instead of relying on each caller to remember. That is the whole
-point of the pattern — the guarantee is structural, not procedural.
-
-Sequence it AFTER item 1. It is latent (no measured loss yet), while item 1
-is costing 25% of all proposals now.
+**13. One number was carrying three different meanings — FIXED 2026-09-04, PR #255.** A target weight of 0% used to mean three incompatible things (refuse / close / short) with no way to tell them apart, so a refused BUY could silently liquidate a held position. Fixed with a borrowed, proven pattern (`pysystemtrade`'s override algebra — distinct intents, not one ambiguous float). See `docs/INCIDENT_HISTORY.md`.
 
 **14. Replace the budget guard — SHIPPED on `feat/replace-budget-reservation`.**
 
@@ -1157,51 +1122,54 @@ elsewhere in the same prompt. Also open: three of the four new seats'
 magnitude mappings are reasoned but unmeasured judgment calls, flagged by
 their own authors, not yet independently reviewed.
 
-**32. The ratified 5% per-trade risk envelope is not actually being delivered.**
+**32. The ratified 5% per-trade risk envelope was not actually being delivered — MOSTLY FIXED, one fork still open.**
 
-An old, unratified position-size cap binds before real risk-based sizing
-ever does — confirmed against real trade data, delivered risk collapses to
-~1%, not the owner-approved 5%; PM sizing bands were even tuned DOWNWARD
-to fit under it. (Separate from item 22's fix — see the note there.) The
-drawdown brakes (5-day/-3%, 20-day/-8%, 3% daily circuit breaker) are also
-unmeasured pre-mandate constants sized for that ~1%, and a data reset
-wiped the equity history they read from. Fix: size DERIVED from risk ÷
-stop-distance — either retire the 5% figure and state ~1% as the real
-mandate, or raise the cap to make 5% reachable, and re-derive the
-drawdown brakes as a multiple of the REAL per-trade risk.
+An old, unratified position-size cap bound before real risk-based sizing
+ever did — confirmed against real trade data, delivered risk had
+collapsed to ~1%, not the owner-approved 5%. **Fixed 2026-09-04**: cap
+raised to a value derived from this desk's own real stop distances (PR
+#258), PM sizing bands restored (PR #259) — both open, pending review,
+not pending a decision. A portfolio-level volatility-target overlay was
+investigated and explicitly REJECTED (imports a fund's smoothness goal,
+not this desk's survival goal — see `docs/OUTCOME.md`).
 
-**DECIDE BY 2026-09-11** — affects every trade's size until resolved.
+**Still genuinely open:** the drawdown brakes (5-day/-3%, 20-day/-8%, 3%
+daily circuit breaker) are unmeasured pre-mandate constants sized for the
+OLD ~1% risk unit, now stale relative to the fixed sizing, and a data
+reset wiped the equity history they read from. Needs rescaling to the
+real per-trade risk unit — not done, no PR yet.
 
-**33. The two "is this trade worth the risk" checks disagree with each other.**
+**DECIDE BY 2026-09-11** — narrowed to just the drawdown-brake rescaling.
 
-The PM's eligibility check reads the model's self-reported reward:risk;
-order construction separately derives it from the real structural target
+**33. The two "is this trade worth the risk" checks disagreed with each other — FIXED, pending review.**
+
+The PM's eligibility check read the model's self-reported reward:risk;
+order construction separately derived it from the real structural target
 and shipped stop — each "fixed" in isolation, never checked against the
-other. Confirmed on a real trading day: the names passing
-each check DON'T INTERSECT AT ALL — the earlier "too few trades" fix does
-not reach a real trade end to end. Also: the minimum stop-width floor sits
-ABOVE the analysis prompt's default stop in nearly every case, so its
-tight-stop exception rarely fires. Fix: PM eligibility should read
-the same derived target construction already uses. Changes eligibility,
-not just sizing — simulate against real past days before shipping.
+other. Confirmed on a real trading day: the names passing each check
+DIDN'T INTERSECT AT ALL. **Fixed 2026-09-04, PR #257** — PM eligibility
+now reads the same derived target construction uses, re-measured against
+real data (0/0 overlap on two separate real samples before the fix).
 
-**DECIDE BY 2026-09-11** — sequence with 32; both bear on why real trades
-aren't clearing.
+**Uncovered by the fix, a separate and bigger open question, not resolved
+here:** once both gates agree, real data shows close to ZERO real
+candidates clear at all — the minimum stop-width floor is too tight
+relative to the reward:risk math on this desk's real numbers. This is the
+original item 1 R/R-architecture question, now confirmed rather than
+suspected. No PR — needs either a real backtest of stop-out rates, or
+finishing the level-honouring exemption's wiring. Owner sequencing call.
 
-**34. Exit management barely manages, and ranking is close to alphabetical.**
+**34. Exit management barely managed, and ranking was close to alphabetical — FIXED, pending review.**
 
-The noise buffer that vetoes an early discretionary exit came out about as
-wide as the actual stops on most pre-stop-fix positions, so nearly all real
-exits this month were the broker's stop firing, not a judgment call.
-Separately, the ranking score has few distinct values with only one seat
-wired in, so most days end in large ties broken alphabetically — an
-undisclosed bias toward early-alphabet tickers. Also: "range" trades (the
-majority setup) never protect gains until price fully reaches target. Fix:
-scale the exit buffer to holding time; replace the alphabetical tiebreak
-with a real score; move stops to breakeven at a meaningful fraction of
-target. Owner sequencing call, measured the same way as item 33.
-
-**DECIDE BY 2026-09-18** — lower urgency than 32/33, don't forget it.
+The noise buffer that vetoed an early discretionary exit came out about as
+wide as the actual stops on most pre-stop-fix positions, so nearly all
+real exits this month were the broker's stop firing, not a judgment call.
+Ranking ties broke alphabetically on most real days — an undisclosed bias
+toward early-alphabet tickers. "Range" trades never protected gains until
+price fully reached target. **Fixed 2026-09-04, PR #256** — exit buffer
+now scales with holding time (√days, matching the target model), ties
+break on real reward:risk quality, range trades get a standard +1R
+breakeven ratchet. All three pending review, not pending a decision.
 
 **35. A stop-widening was observed in pre-clean-slate trade history (Visa, Aug 2026) — DEFERRED, not investigated further for now.**
 
@@ -1225,6 +1193,8 @@ source, in-house PDF parsing against official disclosures, or a paid
 commercial feed. New dependency / reliability tradeoff — owner's call.
 
 - [ ] DECIDE BY 2026-09-18 — which path, if any, for congressional data?
+
+**37. Eleven PRs open at once tonight (#249-#262) — merge ORDER matters, see `docs/INCIDENT_HISTORY.md`.** None conflict in logic; several share files (`portfolio_manager.py`/`.md` especially — #257, #259, #261). Full recommended order recorded there so it survives a compaction, not just this session's head.
 
 ---
 

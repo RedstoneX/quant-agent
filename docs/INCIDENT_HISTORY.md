@@ -3411,3 +3411,43 @@ engineering cost, the House side is still scanned/mixed-format PDFs, not
 clean text), or pay for a commercial feed (Quiver Quantitative is the
 most API-native paid option). Owner's call — this is a new-dependency /
 reliability tradeoff, not something to adopt unilaterally.
+
+---
+
+### 2026-09-04 — merge order for tonight's open PRs (they share files, not logic)
+
+Eleven PRs from tonight's session are open at once (#249, #252, #254-#262).
+None conflict in what they DO — each is independently reviewed and correct
+on its own — but several share the same files, so merging them in the
+wrong order (or all at once) will produce ordinary git conflicts, not
+logic bugs. Recorded here so this isn't only in one session's head before
+a compaction erases it.
+
+**Known file-sharing collisions, confirmed by reading the actual diffs:**
+- `src/agents/portfolio_manager.py`: shared by #257 (reward:risk gate
+  unification) and #261 (opportunity-cost rotation).
+- `config/prompts/portfolio_manager.md`: shared by #259 (conviction-band
+  restore) and #261 (opportunity-cost rotation).
+- `docs/WORK.md` / `docs/INCIDENT_HISTORY.md`: shared by nearly all of
+  them, as usual for this project — the established convention (keep
+  both sides, reconcile headers/separators) applies same as always.
+- #261 also branched slightly before the diagram rename landed (#253) —
+  it will try to re-add `docs/verdict_pipeline.html` under its old name;
+  a rebase onto current `main` resolves this automatically, it is not a
+  real content conflict.
+
+**Recommended order, since #258/#259 are already sequential (259 is based
+on 258's branch) and #257/#261 touch the PM directly:**
+1. Merge #249, #252, #254, #255, #260 first — no shared-file overlap with
+   anything else in the list, safe to land independently once reviewed.
+2. Merge #258, then #259 (already built on top of it).
+3. Merge #257 next (PM eligibility fix).
+4. Rebase #261 onto the result, resolve the small PM-file overlap with
+   #257 and the diagram-filename artifact, then merge.
+5. #256 and #262 don't share files with the PM-touching group — safe to
+   land in parallel with steps 2-4 once independently reviewed.
+
+None of this changes what any PR does — it is purely the order to avoid
+avoidable merge conflicts. If a session resumes cold and some of these
+are already merged, this list is stale for whichever ones are done —
+check `gh pr list` for the real current state before following it blindly.
