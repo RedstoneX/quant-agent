@@ -600,7 +600,9 @@ smart_money:
   max_observations: 40
   min_transaction_value_usd: 100000
   external_min_transaction_value_usd: 250000
-  cluster_window_days: 14
+  # Alldredge & Blank (J. Financial Research, 2019): cluster = purchases
+  # within ~2 days of a colleague's trade (docs/RESEARCH_FINDINGS.md:19).
+  cluster_window_days: 2
   min_cluster_owners: 2
   max_external_candidates: 3
   min_external_price_usd: 5

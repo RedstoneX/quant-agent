@@ -43,15 +43,9 @@ settled. Restored:**
   stays until that re-run exists. Re-running is a re-run, not a rebuild — the
   rig reads the prompt from disk.
 
-- [x] RESOLVED 2026-09-03 — Level quality bar for Phase 12.1. A stop is
-  honoured however tight only when the computed level backing it has 5+
-  touches (`risk.min_level_touches_for_stop_honor`), derived from the
-  measured touch-count table in `docs/RESEARCH_FINDINGS.md` §7 (owner
-  pre-approved going with whatever the research supports). Below the bar
-  the stop falls back to the ATR floor, same as an unbacked stop.
-  `find_structural_levels`' own `MIN_TOUCHES = 2` is unchanged — that gates
-  whether a level exists at all, a separate question. Detail:
-  `docs/INCIDENT_HISTORY.md`, 2026-09-03 "a level needs 5 touches, not 2".
+- [x] RESOLVED 2026-09-03 — Level quality bar for Phase 12.1 (5+ touches to
+  honour a tight stop). Full detail: `docs/INCIDENT_HISTORY.md`, 2026-09-03
+  "a level needs 5 touches, not 2".
 
 - [ ] DECIDE BY 2026-09-17 — What should the macro `regime_shift`
   freshness bar be, given real FRED lag (measured `staleness_days=2` on
@@ -1188,6 +1182,15 @@ not the sector-adjusted stance `build_evidence_registry` already computes
 elsewhere in the same prompt. Also open: three of the four new seats'
 magnitude mappings are reasoned but unmeasured judgment calls, flagged by
 their own authors, not yet independently reviewed.
+
+**32. Insider cluster window was 7x the cited research — FIXED 2026-09-04.**
+`smart_money.cluster_window_days` was 14 with no rationale; the cited paper
+(Alldredge & Blank, `docs/RESEARCH_FINDINGS.md`:19) defines a cluster as ~2
+days. Corrected to 2. Verified on a fresh live SEC pull: real multi-owner
+clusters this week never spread past 2 days, so nothing real was lost
+narrowing it. Detail: `docs/INCIDENT_HISTORY.md`. Separate, NOT fixed here:
+the same paper says size should be relative to holdings, not an absolute
+dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 
 ---
 

@@ -904,7 +904,11 @@ class SmartMoneyConfig(BaseModel):
     max_observations: int = Field(default=40, ge=1, le=200)
     min_transaction_value_usd: float = Field(default=100_000, ge=1_000)
     external_min_transaction_value_usd: float = Field(default=250_000, ge=1_000)
-    cluster_window_days: int = Field(default=14, ge=1, le=45)
+    # Alldredge & Blank (J. Financial Research, 2019) define a cluster as
+    # purchases within ~2 days of a colleague's trade (see
+    # docs/RESEARCH_FINDINGS.md:19). Was 14 days with no documented
+    # rationale until the 2026-09-04 audit fix.
+    cluster_window_days: int = Field(default=2, ge=1, le=45)
     min_cluster_owners: int = Field(default=2, ge=2, le=10)
     max_external_candidates: int = Field(default=3, ge=1, le=10)
     min_external_price_usd: float = Field(default=5.0, ge=1.0)
