@@ -118,6 +118,47 @@ def test_congressional_compatibility_remains_conservative():
     assert cluster.support_eligible is True
 
 
+def test_sec_insider_actionable_role_is_downgraded_when_evidence_is_thin():
+    """Mirror of `test_congressional_compatibility_remains_conservative`
+    above, but for the SEC/insider branch of `deterministic_eligibility`.
+
+    Before this fix, only the congressional branch force-downgraded
+    `economic_role` to "historical" when `support_eligible` came back
+    False. The SEC/insider branch computed `support_eligible` but never
+    applied the same downgrade, so a stale, single-observation insider
+    finding could still carry the model's self-reported
+    economic_role="actionable" / stance="bullish" all the way to
+    `to_verdict()` at full magnitude and "high" conviction -- exactly the
+    "everything's good, just plain lying" case this seat must not allow.
+    """
+    stale_obs = SmartMoneyObservation(
+        symbol="NVDA", stream="insider", actor="Owner 1", actor_cik="1",
+        actor_roles=["director"], direction="buy",
+        transaction_date=date.today() - timedelta(days=20),
+        disclosure_date=date.today() - timedelta(days=18),
+        source_url="https://www.sec.gov/0000000001-26-000001.txt",
+        accession_number="0000000001-26-000001", filing_form="4",
+        transaction_code="P", transaction_row=0, security_title="Common Stock",
+        shares=3_000, price_per_share=100, transaction_value_usd=300_000,
+        post_transaction_shares=10_000, ownership_nature="direct",
+        listed_exchange="Nasdaq", lag_days=2, disclosure_age_days=18,
+        freshness="stale", economic_role="confirmatory",
+    )
+
+    finding = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="actionable",
+        summary="a lone stale insider purchase",
+        why_now="an insider bought weeks ago",
+        observations=[stale_obs],
+    )
+
+    assert finding.support_eligible is False
+    assert finding.economic_role == "historical"
+    verdict = finding.to_verdict()
+    assert verdict.conviction == "low"
+    assert verdict.magnitude < 1.0
+
+
 def test_congressional_eligibility_boundary_is_the_stock_act_45_day_deadline():
     """45 days is the actual legal filing deadline (STOCK Act) -- a filer
     right at the deadline is legally on-time, not stale evidence."""
