@@ -22,6 +22,128 @@ what would catch it next time.
 
 ---
 
+### 2026-09-04 — the minimum stop distance was a number nobody derived, and it was closing the funnel
+
+**In plain words:** every trade had to put its stop-loss at least three
+average daily moves away from the entry price. Nobody ever worked out why
+three. It turned out to be so far away that almost no trade could pass the
+desk's own "is the reward worth the risk" test afterwards — for the kind of
+setup this desk trades most, literally none could. It is now 1.5, and that
+number comes from measuring how far the desk's own winning trades actually
+dipped before they worked.
+
+**What the symptom looked like.** Signals kept dying on reward:risk rather
+than on judgement. The 2026-09-01 morning run is the clearest instance: 38
+qualified signals, 30 of them under the 1.5 reward:risk floor before anyone
+assessed the trade, zero trades placed. The floor was the obvious suspect
+and it was the wrong one.
+
+**What the cause actually was.** Reward:risk is `(target - entry) /
+(entry - stop)`. The floor was being judged against a stop the desk had
+FABRICATED — `risk.min_stop_atr_multiple` pushed the analyst's stop out to
+3.0x ATR (scaled 1.15x for a range setup = 3.45x) whenever structure had
+placed it nearer. That inflates the denominator, and the arithmetic is
+unforgiving: a stop `k` ATRs out with a target projected `ATR * sqrt(H)`
+away clears a floor `f` only when `sqrt(H) >= f*k`. At k = 3.45 and f = 1.5
+that is a stated horizon of ~27 sessions. **This desk has never stated a
+27-session horizon.** The gate was not strict; for range setups it was
+arithmetically unsatisfiable.
+
+**Where the 3.0 came from: nowhere.** Traced back through the comments, the
+reasoning jumps from a MEASURED figure (1.25x ATR, "one ordinary day's
+range", which is real and still used by the exit noise band) to a CHOSEN 3.0
+with nothing cited in between. It has never been validated against an
+outcome.
+
+**Ruled out before changing it.** Lowering `min_reward_risk_after_widening`
+was considered and rejected — the floor was never the defect, and lowering
+the bar to fit a bad denominator is how a desk talks itself into worse
+trades. Published trading doctrine was checked directly and does put stops
+in a 2-3x ATR band, which is presumably where 3.0 was absorbed from, but
+that band is for a TRAILING stop that moves up as a trade becomes
+profitable. Combining it with a fixed reward:risk floor measured at ENTRY —
+which is what this desk does — does not appear in the literature at all, and
+is self-defeating on inspection: a 3x stop needs a 4.5x target to clear a
+1.5 floor, which is not a realistic move to claim.
+
+**How 1.5 was derived.** Maximum Adverse Excursion analysis (John Sweeney's
+method) on this desk's own real trade signals. MAE asks the only question
+that sets an entry stop honestly: how far did trades that EVENTUALLY WON dip
+against entry before they worked? A stop belongs outside that distance, and
+no further — every additional ATR of room is paid for twice, once in a
+smaller position for the same dollar risk and once in a worse reward:risk
+ratio.
+
+- Worst adverse excursion among all real winners in the sample: **1.84x ATR**.
+- A **1.5x ATR** floor would have stopped out about **1% of real winners**.
+- Because `shares = risk_usd / |entry - stop|`, halving the stop distance
+  roughly doubles the position for the same risk, which roughly **triples**
+  the reward:risk arithmetic on the same target.
+
+1.5 is also bracketed by the one independently measured number this codebase
+already owned: it sits ABOVE the 1.25x ATR noise band and BELOW the 1.84x
+worst-winner excursion. Both ends are measurements, not preferences.
+
+**A second, separate defect found in the same place: the setup scalers were
+backwards.** Range setups were given the WIDEST floor (x1.15) and breakouts
+the tightest (x0.85). That is inverted on both doctrine and data. A range
+trade is a mean-reversion structure inside a defined band — the
+LOWER-volatility setup, invalidating at the band edge — and it is this
+desk's majority setup and the one the wide floor closed outright. A breakout
+enters on volatility EXPANSION, and its ATR reading is computed over the
+quiet consolidation that preceded the break, so ATR systematically
+understates the range a breakout is about to see. Corrected to **breakout
+x1.00, range x0.90**.
+
+**How confident to be in each half, stated separately because they are not
+equal.** The 1.5 base is well grounded. The scaler magnitudes are a
+secondary, less-verified layer — there is no per-setup-type MAE breakdown to
+size them from. So they were derived from constraints rather than chosen:
+
+- **Breakout 1.00** — no measurement supports a specific widening, so the
+  inversion was corrected by REMOVING the unearned 0.85 discount rather than
+  by inventing a number. Breakouts run at the base.
+- **Range 0.90** — the tightest scaler that keeps the NARROWEST reachable
+  stop outside the measured noise band. Worst case is a range setup on a
+  risk-on tape: `1.5 x 0.90 x 0.95 = 1.2825` ATR, still outside 1.25. The
+  obvious 0.85 was rejected for exactly this reason: `1.5 x 0.85 x 0.95 =
+  1.2113` puts the stop back INSIDE the measured noise band, which is the
+  original defect reintroduced from the other side.
+
+Net: every reachable floor now lies in **1.28-1.80 ATR** — above the
+measured noise band, below the worst real winner's drawdown.
+
+**What did NOT change.** `min_reward_risk_after_widening` is still 1.5 — the
+payoff bar did not move, only the stop the ratio is divided by.
+`absolute_min_stop_atr_multiple` is still 1.0; it is a SEPARATE, tighter
+backstop under the level-backed exemption and was never conflated with this.
+The 1x ATR guard in `config/prompts/tech_analyst.md` still prevents a noise
+stop upstream.
+
+**One real consequence worth knowing about before it gets rediscovered as a
+new bug.** Halving stop distances roughly doubles the notional a full
+5%-risk trade wants: at this desk's median 2.56%-of-price ATR a floored stop
+is now ~3.5% rather than ~5-9%, and `notional = risk / stop` then wants
+~143% of equity. The 100% single-name cap therefore binds again on
+tight-stop names and delivers ~3.5% risk instead of 5%. That is not a
+regression from this change — `allow_margin: false` makes anything past 100%
+of equity in one name physically unreachable whatever any cap says. Whether
+to enable margin is an owner decision and was not taken here.
+
+**Honest limits on the evidence.** The MAE sample is this desk's own short
+history: roughly two weeks, no risk-off regime in it, and no post-fix
+realised stop-out data — the 2026-09-02 clean-slate reset removed the older
+equity curve. 1.5 is far better grounded than the 3.0 it replaces; it is not
+a permanent constant. **Re-measure once real post-fix trade history exists.**
+
+**What would catch this next time.** The failure was not that 3.0 was wrong;
+it was that a number with no derivation sat in the config for months and no
+check ever asked it to justify itself. The specific tell was available the
+whole time and was visible in the comments: a stated chain of reasoning that
+moves from a measured figure to a chosen one without an intervening step.
+Reading config comments for THAT shape — rather than for whether the number
+looks sensible — is what found it.
+
 ### 2026-09-04 — three independent exit-management defects fixed in one PR
 
 **In plain words:** a real-data audit of tonight's exit and ranking

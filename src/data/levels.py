@@ -379,16 +379,25 @@ def format_levels_block(
 # outright, because it is the binding constraint on the measured-move branch.
 # A stop at `k` ATRs and a target at `p * ATR * sqrt(H)` clear a floor `f`
 # only when `sqrt(H) >= f * k / p`. At today's settings (p = 1.0, f = 1.5,
-# and k = 3.0 scaled by setup: 3.45 for a range, 2.55 for a breakout) that
-# is H >= ~21 sessions on the bare base, ~27 for a range setup and ~15 for a
+# and k = 1.5 scaled by setup: 1.35 for a range, 1.5 for a breakout) that
+# is H >= ~6 sessions on the bare base, ~5 for a range setup and ~6 for a
 # breakout. A stated horizon shorter than that cannot clear the floor
 # however the trade is judged — a legitimate refusal about the trade's
 # geometry, reported distinctly from "the model guessed badly".
 #
+# THIS IS THE ARITHMETIC THAT WAS CLOSING THE FUNNEL. Until 2026-09-04 the
+# base `k` was 3.0 (range 3.45, breakout 2.55), which put the same thresholds
+# at H >= ~21 / ~27 / ~15 sessions. This desk has never stated a 27-session
+# horizon, so the range branch — the majority setup — could not clear the
+# floor for ANY real signal, and measured against the record it did not: 0 of
+# 222. The stop floor was re-derived from real Maximum Adverse Excursion data
+# (see `risk.min_stop_atr_multiple` in config/settings.yaml); these session
+# counts fall out of that change, they were not tuned to a target.
+#
 # The structural-level branch is looser, because the level does not have to
 # be a full projection away: it needs `W >= f*k*ATR` to clear the floor and
-# `W <= 1.5*ATR*sqrt(H)` to be reachable, so H >= (f*k/1.5)^2 — about 12
-# sessions for a range setup.
+# `W <= 1.5*ATR*sqrt(H)` to be reachable, so H >= (f*k/1.5)^2 — about 2
+# sessions for a range setup (it was ~12).
 
 #: A target closer than this many ATRs is not a destination. Price is
 #: already there and the "reward" is one ordinary session's noise.

@@ -62,7 +62,10 @@ def _risk_config(**overrides) -> SimpleNamespace:
         max_sector_pct=100.0, require_stop_loss=True,
         max_portfolio_risk_pct=25.0, max_position_risk_pct=5.0,
         min_position_risk_pct=0.5, max_cluster_risk_share_pct=40.0,
-        min_stop_atr_multiple=3.0, min_reward_risk_after_widening=1.5,
+        # Tracks the production default (1.5 since 2026-09-04); a backtest
+        # fixture pinned to a stale floor would silently backtest a rule the
+        # desk no longer runs.
+        min_stop_atr_multiple=1.5, min_reward_risk_after_widening=1.5,
     )
     fields.update(overrides)
     # Spec §9.4 — RiskConfig now validates that `agreement_ceiling_pct`
@@ -106,7 +109,7 @@ def _build_long_win_series() -> list[OHLCV]:
       exit is unambiguously a target hit, one session after entry.
 
     By hand: entry $105.00, stop $95.00 (structural; $10 away vs a padding
-    ATR far too small for `min_stop_atr_multiple=3.0` to push it any
+    ATR far too small for `min_stop_atr_multiple=1.5` to push it any
     further out — see the noise-band arithmetic below), target $125.00.
     At 5% risk on $100,000 equity: shares = floor(100000*0.05/10) = 500.
     pnl = (125.00 - 105.00) * 500 = $10,000.00. r_multiple = 20/10 = 2.0.

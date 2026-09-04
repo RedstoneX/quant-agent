@@ -194,6 +194,14 @@ class ConstructorConfig:
     # nothing past 100% of one name's equity is reachable cash-only anyway.
     # Keep in sync with `risk.max_position_pct` — pipeline.py wires them from
     # the same setting.
+    #
+    # NOTE the "~5-9%" above is the stop distance the OLD 3.0 ATR floor
+    # produced. Since the floor became 1.5 (2026-09-04) real stops are
+    # roughly half that (~3.5% at this desk's median ATR), so this ceiling
+    # binds again on tight-stop names and delivers ~3.5% risk rather than the
+    # full 5%. Cash-only makes anything past 100% unreachable anyway — see
+    # the same note under `risk.max_position_pct` in settings.yaml. Recorded,
+    # deliberately not "fixed": enabling margin is an owner decision.
     max_position_pct: float = 100.0
     # Spec §10.3 "concentration scales size, it does not veto". The sector
     # diversification target and the absolute ceiling behind it. Unlike every
@@ -251,18 +259,57 @@ class ConstructorConfig:
     # more than a single day. Structure still places the stop; this only
     # pushes it out when structure put it inside the noise.
     # This is a BASE, not a constant. `_stop_atr_multiple` adjusts it per
-    # trade — a breakout has a clean invalidation level and does not need the
-    # room a range setup does, and a risk-off tape chops harder than a
+    # trade — a range setup invalidates inside a defined band and does not
+    # need the room a breakout does, and a risk-off tape chops harder than a
     # trending one. ATR itself already adapts the distance to each stock and
     # each session; these adjust how many ATRs that stock's setup deserves.
-    min_stop_atr_multiple: float = 3.0
-    #: Multipliers ON the base, by `TechAnalysisResult.setup_type`. Breakout
-    #: invalidation is a level ("back below the breakout"), so it earns a
-    #: tighter stop than a range trade being shaken out inside its own band.
-    #: Same keying Phase 3's deterministic trailing already uses.
+    #
+    # 3.0 -> 1.5 on 2026-09-04. Sweeney Maximum Adverse Excursion analysis on
+    # this desk's real trade signals: the worst adverse excursion among all
+    # real EVENTUAL WINNERS was 1.84x ATR, so a 1.5x ATR floor would have
+    # stopped out ~1% of real winners while roughly TRIPLING the reward:risk
+    # arithmetic — `_shares_for_risk` derives size from stop distance, so a
+    # tighter stop at the same dollar risk is a larger position on the same
+    # target. The 3.0 it replaces was never derived from anything: measured
+    # against this desk's own record it cleared 0 of 42 real candidates on the
+    # one day with usable level data, and 0 of 222 real signals for range
+    # setups at any horizon this desk states. See `config/settings.yaml`'s
+    # own comment on this key for the full derivation and its caveats.
+    min_stop_atr_multiple: float = 1.5
+    #: Multipliers ON the base, by `TechAnalysisResult.setup_type`.
+    #:
+    #: DIRECTION CORRECTED 2026-09-04 — these used to read breakout 0.85 /
+    #: range 1.15, i.e. the desk's calmest and most common setup was given the
+    #: WIDEST floor. That is backwards on both doctrine and the data. A range
+    #: trade is a mean-reversion structure inside a defined band: it is the
+    #: LOWER-volatility setup, its invalidation is the band edge, and it is
+    #: where the too-wide floor did all its damage (0 of 222 real signals
+    #: cleared). A breakout enters on volatility EXPANSION, and the ATR
+    #: reading at entry is computed over the quiet consolidation that preceded
+    #: it — so ATR systematically UNDERSTATES a breakout's post-entry range.
+    #: A breakout therefore earns at least the base, never a discount.
+    #:
+    #: HOW THESE TWO NUMBERS WERE PICKED, and how far to trust them. The 1.5
+    #: base is the well-grounded part of this change; these magnitudes are a
+    #: secondary, less-verified layer and are labelled as such. There is no
+    #: per-setup-type MAE breakdown in this repo to size them from, so:
+    #:   breakout 1.00 — no measurement supports a specific widening, so the
+    #:     correction is made by REMOVING the unearned 0.85 discount rather
+    #:     than by inventing a number. Breakouts run at the base.
+    #:   range 0.90 — the tightest scaler that keeps the NARROWEST reachable
+    #:     stop outside the one measured noise figure this codebase owns.
+    #:     Worst case is a range setup on a risk-on tape: 1.5 x 0.90 x 0.95 =
+    #:     1.2825 ATR, still outside the measured 1.25 ATR "one ordinary day's
+    #:     range" band (`src/risk/exit_guard.py`, Phase 3 trailing). 0.85 was
+    #:     rejected for exactly this reason: 1.5 x 0.85 x 0.95 = 1.2113, which
+    #:     puts the stop back INSIDE the measured noise band — the original
+    #:     defect, reintroduced from the other side.
+    #: Net effect: every reachable floor now lies in [1.2825, 1.80] ATR —
+    #: above the measured 1.25 noise band, below the 1.84 worst real winner
+    #: excursion. Both ends are real measurements, not chosen numbers.
     stop_atr_setup_scale: tuple[tuple[str, float], ...] = (
-        ("breakout", 0.85),
-        ("range", 1.15),
+        ("breakout", 1.00),
+        ("range", 0.90),
     )
     #: Multipliers ON the base, by macro regime. A risk-off or transitional
     #: tape produces wider ordinary swings for the same ATR reading, so the
@@ -1137,9 +1184,14 @@ class PortfolioConstructor:
         """How many ATRs of room THIS trade deserves, not a global constant.
 
         ATR already scales the distance to the stock and the session. This
-        scales how many of them the setup earns: a breakout invalidates at a
-        level and does not need range-trade room, and a risk-off tape swings
-        wider for the same ATR reading than a trending one does.
+        scales how many of them the setup earns: a range trade reverts inside
+        a defined band and does not need breakout room, and a risk-off tape
+        swings wider for the same ATR reading than a trending one does.
+
+        Reachable output is [1.2825, 1.80] ATR — narrowest is a range setup on
+        a risk-on tape (1.5 x 0.90 x 0.95), widest a breakout on a risk-off
+        one (1.5 x 1.00 x 1.20). Both ends are pinned to real measurements;
+        see `ConstructorConfig.stop_atr_setup_scale` for the derivation.
         """
         multiple = self.cfg.min_stop_atr_multiple
         setup = (getattr(analysis, "setup_type", None) or "").strip().lower()

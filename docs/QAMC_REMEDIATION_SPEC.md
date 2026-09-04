@@ -1156,7 +1156,16 @@ smaller. Same defect as 10.2: a dial wired as a gate.
 are.
 
 The stop is already derived in code from measured volatility
-(`min_stop_atr_multiple: 3.0`). The **target is the model's guess**. R/R is then
+(`min_stop_atr_multiple: 3.0`). The **target is the model's guess**.
+
+> **CORRECTION, 2026-09-04.** "Derived from measured volatility" was true of
+> the ATR unit and false of the multiple. The 3.0 was never derived from
+> anything; it has since been re-derived to **1.5** from a Maximum Adverse
+> Excursion study on this desk's real signals, and the setup scalers were
+> found to be inverted and corrected (breakout x1.00, range x0.90). The
+> paragraph's actual argument — that the floor is not the defect, its inputs
+> are — held up: the target input was fixed by §10.4, and the stop input was
+> the other half. See `docs/INCIDENT_HISTORY.md`, 2026-09-04. R/R is then
 `(target − entry) / (entry − stop)` — arithmetic performed on an opinion. A
 correctly-sized wide stop plus a modestly-guessed target rejects automatically,
 which is precisely how a `strong_buy/high` breakout (SLB, 7.7% stop) became
@@ -1202,6 +1211,13 @@ setup, p=1.0, f=1.5) a measured-move trade needs a stated horizon of **~27
 sessions** and a structural-level trade **~12**. **This is precisely why 12.1
 is required and not optional**: honouring a level-backed stop collapses `k`
 from 3.45 to the measured median 1.7, and the required horizon falls with it.
+**Superseded in part, 2026-09-04:** `k` is no longer 3.45 for a range setup
+but 1.35 (base 1.5 x range 0.90), so the required horizons above fall to ~5
+and ~2 sessions. The reasoning stands; the numbers it produced were driven by
+a `min_stop_atr_multiple` that has since been re-derived. §12.1 remains
+correct and useful, but it is no longer load-bearing for whether a range
+trade can clear the floor at all.
+
 10.4 and 12.1 are one fix in two halves — shipping 10.4 alone leaves most
 trades refused on horizon geometry.
 
@@ -1825,6 +1841,16 @@ yields ~2.3 and clears comfortably.
 
 **Explicitly rejected: tuning 3.0 -> 2.0.** It keeps a floor that cannot
 distinguish a level-backed tight stop from an arbitrary one.
+
+> **2026-09-04 — this rejection was right about the mechanism and wrong to
+> stop there.** §12.1's exemption was necessary and was built; it did not
+> address the fact that the 3.0 itself had no derivation. The floor has now
+> been re-derived to 1.5 from real MAE data — which is a different act from
+> "tuning it to 2.0", because the replacement is measured against real
+> winners rather than chosen. Both fixes were needed. Note the practical
+> effect on this section: at a 1.35-ATR band, the honoured/band gap §12.1
+> arbitrates is a [1.00, 1.35] ATR window rather than [1.00, 3.45], so §12.1
+> now governs far less of the space than it did.
 
 **A level must be VERIFIED to earn this** — it comes from `src/data/levels.py`,
 not from the model asserting one. A stop the analyst simply placed close, with
