@@ -513,7 +513,19 @@ class RiskConfig(BaseModel):
     # 2.56% of price — about 1.7 ATRs, barely more than one ordinary day's
     # range, which is what was firing exits inside noise AND forcing enormous
     # positions to reach any meaningful risk.
-    min_stop_atr_multiple: float = Field(default=3.0, gt=0, le=10)
+    #
+    # 3.0 -> 1.5 on 2026-09-04, from a Sweeney Maximum Adverse Excursion
+    # analysis on this desk's real trade signals: the worst adverse excursion
+    # among real EVENTUAL WINNERS was 1.84x ATR, so a 1.5x floor protects
+    # ~99% of them while roughly tripling the reward:risk arithmetic (size is
+    # derived from stop distance, so a tighter stop at the same dollar risk is
+    # a bigger position on the same target). The 3.0 it replaces was never
+    # derived from any measurement and, measured against this desk's own
+    # record, closed the funnel outright for range setups — 0 of 222 real
+    # signals cleared it at any stated horizon. Full derivation and caveats:
+    # `config/settings.yaml` (this key) and docs/INCIDENT_HISTORY.md
+    # 2026-09-04. Keep the three in sync.
+    min_stop_atr_multiple: float = Field(default=1.5, gt=0, le=10)
     # Widening a stop lowers reward:risk, because the target does not move.
     # Under this the setup only ever qualified on a stop too tight to survive.
     #

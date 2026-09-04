@@ -301,6 +301,18 @@ risk:
   # in one name unreachable in practice, so 100 IS the real ceiling — this
   # only documents it rather than leaving a number that does nothing.
   # Revisit together if `allow_margin` ever flips on.
+  #
+  # KNOWN INTERACTION, RECORDED 2026-09-04, NOT FIXED HERE. The stop floor
+  # above went 3.0 -> 1.5 the same day, which roughly HALVES real stop
+  # distances: at the median 2.56%-of-price ATR this desk trades, a floored
+  # stop is now ~3.5% rather than ~5-9%. `notional = risk / stop` then wants
+  # `5 / 3.5 x 100 = ~143%` of equity to deliver the full 5% envelope, so
+  # this 100 cap binds again on tight-stop names and delivers ~3.5% risk
+  # instead of 5%. That is NOT a regression introduced by the stop fix —
+  # `allow_margin: false` makes >100% of equity in one name physically
+  # unreachable regardless of what any cap says. It is the cash-only rule
+  # showing through. Stated here so nobody re-derives it as a new defect;
+  # whether to enable margin is an owner call, not a config tweak.
   max_position_pct: 100
   # Caps NET exposure (longs minus shorts) as % of equity.
   #
@@ -418,14 +430,50 @@ risk:
   # names consume one bet's budget. Clusters are measured return correlation
   # (src/data/correlation.py), not a hand-maintained sector table.
   max_cluster_risk_share_pct: 40
-  # Minimum stop distance in ATRs (2026-08-27). Structure still places the
-  # stop; this only pushes it out when structure put it inside ordinary
-  # volatility. Measured: stops sat a median 4.3% below entry against a median
-  # ATR of 2.56% of price — about 1.7 ATRs, barely more than one ordinary
-  # day's range. That is what fired exits inside noise, and what forced huge
-  # positions to reach any meaningful risk (a 4.3% stop admits only 0.86% risk
-  # under the 20% single-name cap, so conviction could not change the size).
-  min_stop_atr_multiple: 3.0
+  # Minimum stop distance in ATRs. Structure still places the stop; this only
+  # pushes it out when structure put it inside ordinary volatility.
+  #
+  # ORIGINAL PROBLEM (2026-08-27, still true): stops sat a median 4.3% below
+  # entry against a median ATR of 2.56% of price — about 1.7 ATRs, barely more
+  # than one ordinary day's range. That fired exits inside noise, and forced
+  # huge positions to reach any meaningful risk. A floor is the right fix.
+  #
+  # 3.0 -> 1.5 on 2026-09-04. THE 3.0 WAS NEVER DERIVED. Traced back, the
+  # comment that introduced it jumps from a MEASURED 1.25 ATR ("one ordinary
+  # day's range") to a CHOSEN 3.0 with nothing cited in between. Measured
+  # against this desk's own record (docs/WORK.md item 33): 0 of 42 real
+  # candidates cleared the floor on the one day with usable structural-level
+  # data, and for RANGE setups — this desk's majority setup — 0 of 222 real
+  # signals clear at any horizon this desk has ever stated. Not tight;
+  # categorically closed. The arithmetic says why: a 3.0 ATR stop needs a 4.5
+  # ATR target to clear min_reward_risk_after_widening (1.5) below, and
+  # published doctrine puts 2-3x ATR on a TRAILING stop that moves up as a
+  # trade works — never on a fixed entry stop combined with a reward:risk
+  # floor. That specific combination is self-defeating and does not appear in
+  # the literature.
+  #
+  # WHERE 1.5 COMES FROM — Sweeney Maximum Adverse Excursion analysis on this
+  # desk's real trade signals. MAE asks the only question that sets a stop
+  # honestly: how far did trades that EVENTUALLY WON dip against entry before
+  # they worked? A stop must sit outside that, and no further. Measured: the
+  # worst adverse excursion among all real winners in the sample was 1.84x
+  # ATR. A 1.5x ATR floor would have stopped out ~1% of real winners while
+  # roughly TRIPLING the reward-to-risk arithmetic — because position size is
+  # derived from stop distance (shares = risk_usd / |entry - stop|), a tighter
+  # stop at the same dollar risk buys a larger position and a better payoff on
+  # the same target.
+  #
+  # 1.5 also sits ABOVE the only independently measured number in this
+  # codebase: the 1.0-1.25x ATR noise band (see absolute_min_stop_atr_multiple
+  # below and src/risk/exit_guard.py). So the floor is bracketed on both
+  # sides by real measurement — outside one ordinary day's range (1.25),
+  # inside the worst real winner's drawdown (1.84).
+  #
+  # CAVEAT, stated plainly: the MAE sample is this desk's own short history —
+  # roughly two weeks, no risk-off regime in it. 1.5 is far better grounded
+  # than the 3.0 it replaces, but it is not a permanent constant. Re-measure
+  # once there is post-fix realised stop-out data.
+  min_stop_atr_multiple: 1.5
   # A widened stop lowers reward:risk because the target does not move. Under
   # this, the setup only ever qualified on a stop too tight to survive.
   #
@@ -487,12 +535,19 @@ risk:
   # sqrt(session)-scaled ATRs. 1.0 = the typical excursion over the analyst's
   # stated horizon, and nothing more. This interacts with min_stop_atr_multiple
   # by arithmetic: a stop k ATRs out and a target p*ATR*sqrt(H) clear a floor f
-  # only when sqrt(H) >= f*k/p. With p=1.0, f=1.5 and k=3.0 scaled by setup
-  # (3.45 range, 2.55 breakout), a measured-move trade needs a stated horizon
-  # of ~15 sessions on a breakout and ~27 on a range. A trade whose target is a
-  # real level is looser — about 12 sessions — because the level need not be a
-  # full projection away. Raising this is the lever if the desk decides too
-  # much is being refused. Lowering min_reward_risk_after_widening is NOT.
+  # only when sqrt(H) >= f*k/p. With p=1.0, f=1.5 and k=1.5 scaled by setup
+  # (1.35 range, 1.50 breakout), a measured-move trade needs a stated horizon
+  # of ~6 sessions on a breakout and ~5 on a range. A trade whose target is a
+  # real level is looser — about 2 sessions — because the level need not be a
+  # full projection away.
+  #
+  # These were ~15 / ~27 / ~12 until 2026-09-04, when the k above went 3.0 ->
+  # 1.5. That is the whole reason the range branch was closed: this desk has
+  # never stated a 27-session horizon, so no range trade could clear the floor
+  # by arithmetic, whatever it was worth. Measured: 0 of 222 real signals.
+  #
+  # Raising this is the lever if the desk decides too much is being refused.
+  # Lowering min_reward_risk_after_widening is NOT.
   breakout_projection_atr_multiple: 1.0
   # How far price can plausibly get inside the horizon, same units. Looser than
   # the projection on purpose: a trade that works is an above-typical move, so
