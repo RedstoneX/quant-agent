@@ -967,13 +967,15 @@ stop distances (PR #258). A portfolio-level volatility-target overlay
 was investigated and explicitly REJECTED (imports a fund's smoothness
 goal, not this desk's survival goal — see `docs/OUTCOME.md`).
 
-**PM conviction-band restoration — CLOSED WITHOUT MERGING by the owner,
-2026-09-04, no reason given in the PR.** PR #259 (bands compressed
-2026-08-27 back to their original 2.0-4.0%/1.0-2.5% range, bundled with
-the vol-target-overlay writeup above) was closed, not merged. Do not
-re-propose this as already-decided — the compressed 2026-08-27 bands
-are still live. If the owner wants the bands revisited, that is a fresh
-ask, not a resumption of #259.
+**PM conviction-band restoration — PENDING REVIEW, NOT rejected.**
+Corrected 2026-09-04: the original PR (#259) was mechanically
+auto-closed by GitHub as a side effect of an unrelated branch deletion
+(its base branch was deleted when #258 merged) — the owner never saw or
+judged its content, was asleep at the time, and did not close it. Real
+content restored on a fresh PR from the same commit. Bands proposed to
+widen back to their pre-compression 2.0-4.0%/1.0-2.5% range now that the
+notional-cap bug they were compressed for is fixed. Still needs real
+review and the owner's actual sign-off — treat as open, not decided.
 
 **Drawdown-brake unit conversion — FIXED 2026-09-04 (PR #263), merged
 after #258 was confirmed live.** The 5-day/-3%, 20-day/-8%, and 3% daily
@@ -1015,9 +1017,11 @@ needed to validate it, and the 20-day check cannot evaluate yet for lack
 of 20 trading days since. The fixes above correct *relative* scaling and
 a cross-system contradiction; neither calibrates the anchor.
 
-**DECIDE BY 2026-09-11** — the anchor multiplier, whether the two
-drawdown systems get reconciled properly, and whether the
-conviction-band question gets reopened.
+**Conviction-band question — DECIDED 2026-09-11, owner call:** restore
+the pre-compression bands. See item 32's conviction-band entry below.
+
+**DECIDE BY 2026-09-11** — the drawdown-brake anchor multiplier, and
+whether the two drawdown systems get fully reconciled.
 
 **33. The two "is this trade worth the risk" checks disagreed with each other — FIXED, pending review.**
 
