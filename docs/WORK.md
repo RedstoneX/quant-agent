@@ -62,9 +62,6 @@ settled. Restored:**
   source VIX same-day instead of lagged FRED. Full measurement:
   `docs/INCIDENT_HISTORY.md`. Not decided.
 
-- [ ] DECIDE BY 2026-09-19 — Item 32: widened bands or an ATR/vol-parity
-  overlay? Both defensible, disagree.
-
 **RECONFIRM AFTER A FEW DAYS LIVE — item 14(c)'s call-count cap, owner
 instruction 2026-09-03.** Shipped at `max_calls_per_session: 40`, set from
 real production data (worst COMPLETE session on record made 14 calls,
@@ -900,7 +897,15 @@ one, and do not ship a placeholder.
 
 **24. The drawdown position cap could be skipped after a Risk Manager edit — FIXED 2026-09-03**, same PR as item 23.
 
-**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DONE 2026-09-04.** `risk_manager.md` asked the RM to confirm a sell trigger itself; no Python verified it against real data. Two of the three allowed exits are now checked in Python (`exit_guard.py::holding_discipline_claim_check`): a claimed regime flip vs the recorded macro read, and a claimed high-conviction bearish state_change vs the recorded same-day news row. The third, `thesis_invalid_if`, is deliberately never evaluated here. The flat "<5 days" protection window was REPLACED by `exit_guard.py::check_structural_protection` — data-driven, no day count anywhere, close-only breaks confirmed over two consecutive trading days, noise-band fallback when there is neither a stated condition nor a qualifying level. **Escalation to a real veto, 2026-09-04 (owner-approved): a PROVEN-FALSE claim now BLOCKS the exit — reusing the existing per-symbol Risk Manager refusal mechanism, not a new one — and fires a standalone Telegram alert naming the symbol, the claim and why it was found false, so the frequency gets measured. An UNVERIFIABLE claim (macro seat untrusted, or no same-day news row names the symbol) is still only logged: never blocked, never alerted. That split is the whole design; absence of proof is not proof.** Nothing open on this item. Detail: `INCIDENT_HISTORY.md`, 2026-09-04 "a sell whose stated reason is provably untrue now actually gets stopped", and 2026-09-03 "item 25."
+**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — BUILT AND SHIPPED (PR #249). One real question still open.**
+
+Deterministic check built for the two most common claims (a real price-level break, confirmed over two closing days; a real macro/news-based claim, checked against recorded data). Precondition fixed 2026-09-03: `TradeDecision`'s stated invalidation reason used to reach storage only as text two truncations (500/280 chars) could cut off — now a dedicated, untruncated field + `trades` column. The flat "<5 days" protection window is gone: protection is `exit_guard.py::check_structural_protection`'s data-driven answer, with no day count anywhere in the decision.
+
+**Real asymmetry found in independent review, not yet resolved:** the two-day close confirmation exists specifically to stop a single noisy/whipsaw day from lifting protection (a one-day dip-and-reclaim is a known bullish reversal pattern, not a breakdown). But that confirmation gate only applies to the LEVEL-BACKED path. A momentum/breakout trade using the no-structure noise-band fallback gets ZERO confirmation days — same-day lift, identical magnitude test, no whipsaw protection at all. The trades most likely to need protection from a one-day noise event are the ones currently getting none. **Not yet decided whether this is deliberate (breakout trades genuinely shouldn't get the same grace period) or a real gap — owner has not weighed in on this specific question yet.**
+
+**Escalation — DECIDED 2026-09-04, and now SHIPPED.** When the check catches a PROVEN-FALSE claim (not just an unverifiable one), the trade is blocked, not just logged, and a Telegram alert fires so the false-claim rate can be tracked. Grounded in real doctrine (SEC Rule 15c3-5, the Knight Capital $460M loss from 97 ignored automated warnings) — a check that never blocks decays into decoration. Implementation: `exit_guard.py::holding_discipline_claim_check` returns a three-valued verdict — **false** blocks and alerts, **unverifiable** (macro seat untrusted, or no same-day news row names the symbol either way) is logged only and never blocks or alerts, **ok** does nothing. That split is the whole design; absence of proof is not proof. The veto reuses the existing per-symbol Risk Manager refusal mechanism in `RiskStage`, not a second veto path, and the alert is its own message with severity in plain words, deliberately not deduplicated so the count survives. Detail: `INCIDENT_HISTORY.md`, 2026-09-04 "a sell whose stated reason is provably untrue now actually gets stopped".
+
+**Long-term design — PARKED, owner wants a dedicated conversation, not bundled with other items.** Full design exists (make the release condition itself objective — reuse structured news/state-change data for the "new bearish evidence" claim, use a real index structural-level break as an honest stand-in for "market risk-off" until a properly researched risk-off classifier exists) but is NOT being implemented until that conversation happens. Do not re-raise unprompted.
 
 **26. RM modification matching is case-sensitive — FIXED 2026-09-03.** See `docs/INCIDENT_HISTORY.md`.
 
