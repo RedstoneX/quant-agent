@@ -61,6 +61,9 @@ settled. Restored:**
   source VIX same-day instead of lagged FRED. Full measurement:
   `docs/INCIDENT_HISTORY.md`. Not decided.
 
+- [ ] DECIDE BY 2026-09-19 — Item 32: widened bands or an ATR/vol-parity
+  overlay? Both defensible, disagree.
+
 **RECONFIRM AFTER A FEW DAYS LIVE — item 14(c)'s call-count cap, owner
 instruction 2026-09-03.** Shipped at `max_calls_per_session: 40`, set from
 real production data (worst COMPLETE session on record made 14 calls,
@@ -1188,6 +1191,8 @@ not the sector-adjusted stance `build_evidence_registry` already computes
 elsewhere in the same prompt. Also open: three of the four new seats'
 magnitude mappings are reasoned but unmeasured judgment calls, flagged by
 their own authors, not yet independently reviewed.
+
+**32. The 20% notional cap, not the 5% envelope, was the REAL risk limit — FIXED for the cap; conviction/drawdown follow-up is an open fork above. Detail: `docs/INCIDENT_HISTORY.md`.**
 
 ---
 
