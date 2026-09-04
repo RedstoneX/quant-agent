@@ -845,11 +845,23 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             dd = recent_perf.get("in_drawdown")
             trailing = recent_perf.get("trailing_days") or 0
             dd_marker = " ⚠️ SYSTEM IN DRAWDOWN" if dd else ""
+            # docs/WORK.md item 32: rendered from the actual configured
+            # thresholds (`_compute_recent_performance`), not a hardcoded
+            # "5d < -3% OR 20d < -8%" description — those numbers now
+            # rescale with the real per-trade risk unit, and a hand-typed
+            # copy here would silently go stale again the next time they do.
+            t5 = recent_perf.get("drawdown_5d_threshold_pct")
+            t20 = recent_perf.get("drawdown_20d_threshold_pct")
+            threshold_desc = (
+                f"5d < {t5}% OR 20d < {t20}%"
+                if t5 is not None and t20 is not None
+                else "unavailable"
+            )
             perf_section = (
                 f"## Recent System Performance (drawdown check){dd_marker}\n"
                 f"- Trailing 5-day return: {r5}%\n"
                 f"- Trailing 20-day return: {r20}%\n"
-                f"- Drawdown threshold: 5d < −3% OR 20d < −8% flags in_drawdown\n"
+                f"- Drawdown threshold: {threshold_desc} flags in_drawdown\n"
                 f"- History length: {trailing} days recorded\n"
             )
         else:

@@ -936,8 +936,14 @@ def test_the_engine_hard_blocks_past_90_at_the_production_numbers():
 
 def test_the_75_percent_cost_is_stated_where_a_decision_maker_reads_it():
     """§12.3 requires the cost be stated honestly rather than buried: at 75%
-    in one sector an ordinary 20% sector drawdown costs 15% of equity, five
-    times the 3% daily-loss breaker.
+    in one sector an ordinary 20% sector drawdown costs 15% of equity.
+
+    docs/WORK.md item 32 (2026-09-04): the daily-loss circuit breaker was
+    rescaled from a flat 3% to 15% (= 3x the ratified 5% real per-trade
+    risk unit), so the sector-drawdown cost now sits AT that breaker, not
+    five times under it as it did when the breaker was still 3%. The prompt
+    text was corrected to match rather than left stating a now-false
+    relationship.
 
     Asserted in the PM prompt because that is where the decision is actually
     made — a consequence recorded only in a spec nobody reads at decision
@@ -947,7 +953,7 @@ def test_the_75_percent_cost_is_stated_where_a_decision_maker_reads_it():
     root = Path(__file__).resolve().parent.parent
     prompt = (root / "config" / "prompts" / "portfolio_manager.md").read_text()
     assert "15% of equity" in prompt
-    assert "five\n  times the 3% daily-loss circuit breaker" in prompt
+    assert "15% daily-loss circuit breaker" in prompt
     assert "not a hedge" in prompt, (
         "the PM must also be told long and short sector budgets are separate"
     )

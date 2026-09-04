@@ -1800,12 +1800,16 @@ class RiskRuleEngine:
             )
         else:
             daily_loss_pct = abs(daily_pnl / baseline * 100) if daily_pnl < 0 else 0
-            if daily_loss_pct > self.config.max_daily_loss_pct:
+            # docs/WORK.md item 32: `effective_max_daily_loss_pct` (not the
+            # raw field) so this rescales with the real per-trade risk unit
+            # when no explicit override is configured.
+            limit = self.config.effective_max_daily_loss_pct
+            if daily_loss_pct > limit:
                 violations.append(RiskViolation(
                     rule="max_daily_loss_pct",
-                    message=f"Daily loss {daily_loss_pct:.1f}% exceeds max {self.config.max_daily_loss_pct}%. Trading paused.",
+                    message=f"Daily loss {daily_loss_pct:.1f}% exceeds max {limit}%. Trading paused.",
                     value=daily_loss_pct,
-                    limit=self.config.max_daily_loss_pct,
+                    limit=limit,
                 ))
 
         # 4. Stop loss required
@@ -2071,11 +2075,13 @@ class RiskRuleEngine:
         if baseline <= 0:
             return None
         daily_loss_pct = abs(daily_pnl / baseline * 100) if daily_pnl < 0 else 0
-        if daily_loss_pct > self.config.max_daily_loss_pct:
+        # docs/WORK.md item 32: derived limit, see check() above.
+        limit = self.config.effective_max_daily_loss_pct
+        if daily_loss_pct > limit:
             return RiskViolation(
                 rule="max_daily_loss_pct",
-                message=f"Daily loss {daily_loss_pct:.1f}% exceeds max {self.config.max_daily_loss_pct}%",
+                message=f"Daily loss {daily_loss_pct:.1f}% exceeds max {limit}%",
                 value=daily_loss_pct,
-                limit=self.config.max_daily_loss_pct,
+                limit=limit,
             )
         return None

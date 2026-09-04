@@ -3632,6 +3632,105 @@ to pass against the fix with all four surviving — plus a companion test on
 directly.
 
 See PR merging `fix/risk-budget-partial-heat-failure`.
+
+### 2026-09-04 — drawdown brakes rescaled to the real per-trade risk unit
+
+**In plain words.** docs/WORK.md item 32 found the ratified 5% per-trade
+risk envelope was never actually reachable — an old 20% notional cap
+(`risk.max_position_pct`) bound first and suppressed real delivered risk
+to ~1.0-1.8% (PR #258, open). That same audit flagged, but explicitly did
+not fix, a second consequence: three "drawdown brake" thresholds were
+calibrated against that old ~1% unit and would misfire once #258 makes 5%
+the real one —
+
+- `in_drawdown`'s rolling 5-day return check
+  (`src/pipeline.py::_compute_recent_performance`): flat `< -3.0`.
+- The same function's rolling 20-day check: flat `< -8.0`.
+- The 3% daily-loss circuit breaker (`risk.max_daily_loss_pct`, enforced
+  in `src/risk/rules.py::RiskRuleEngine.check` /
+  `RiskRuleEngine.check_daily_loss`).
+
+All three read, in effect, as "N losing max-size trades in a window" —
+3 in 5 days, 3 in a day, 8 in 20 days — under the OLD ~1% unit. Left as
+flat literals, they would silently become ~5x too loose relative to that
+original intent the moment #258/#259 make 5% the real per-trade risk.
+
+**The fix.** Three new `RiskConfig` fields (`src/config.py`):
+`drawdown_5d_risk_multiple`, `drawdown_20d_risk_multiple`,
+`daily_loss_risk_multiple` — all default to the pre-existing, UNCHANGED
+multipliers (3, 8, 3). Two new derived properties,
+`drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct`, compute
+`-(multiple x max_position_risk_pct)` and are what
+`_compute_recent_performance` now reads instead of the old hardcoded
+`-3.0` / `-8.0`. `max_daily_loss_pct` keeps the exact override pattern
+`max_sector_hard_pct` already uses one field up: an explicit value always
+wins (kept for the ~50 existing tests/fixtures across this repo that set
+it to an arbitrary literal for unrelated reasons); absent one, a new
+`effective_max_daily_loss_pct` property derives
+`daily_loss_risk_multiple x max_position_risk_pct`. `RiskRuleEngine`'s two
+daily-loss checks and the two read-only display paths
+(`src/api/routes_live.py`, `src/pipeline.py`'s notifier payload) now read
+the effective property, not the raw field.
+
+`config/settings.yaml` sets `max_daily_loss_pct: 15` (= 3 x 5, was 3),
+`daily_loss_risk_multiple: 3`, `drawdown_5d_risk_multiple: 3`,
+`drawdown_20d_risk_multiple: 8` — the 5-day/20-day thresholds are no
+longer separately configured percentages at all, only the multipliers
+are, so they cannot drift from the risk unit the way the daily-loss field
+could.
+
+**What is derived versus what is inherited, stated precisely because this
+desk holds "no arbitrary numbers" as a standard (docs/OUTCOME.md).** The
+UNIT conversion is real: old ~1.0-1.8% delivered risk and the new 5%
+`max_position_risk_pct` are both documented, measured/ratified figures
+(see the 2026-09-04 notional-cap entry above), and every threshold here is
+now expressed as a multiple of that unit rather than a flat percent. The
+multiplier N (3 for daily and 5-day, 8 for 20-day) is NOT re-derived —
+it is carried over from the pre-existing, never independently validated
+constant, because there is no measured drawdown/track-record history to
+check it against: the 2026-09-02 clean-slate reset wiped the equity curve
+these checks read, and per the #258 incident entry the 20-day check in
+particular cannot evaluate at all yet for lack of 20 real trading days of
+history since. This is flagged PROVISIONAL in docs/WORK.md item 32,
+explicitly an owner decision once real post-fix drawdown data exists —
+not decided or guessed at here.
+
+**Sequencing dependency, stated plainly.** These settings.yaml values are
+sized for the state PRs #258/#259 create (`max_position_risk_pct`
+actually delivering 5% real risk), not the state main is in today. Merging
+this change ahead of #258/#259 would loosen the brakes roughly 5x while
+real per-trade risk is still the suppressed ~1-1.8% — this PR must land
+after #258 and #259, not before.
+
+**Tests.** New file `tests/test_drawdown_brake_rescale.py` (11 tests, all
+new — no existing test exercised this threshold arithmetic before): the
+two `RiskConfig` derivation properties at two different risk-unit values
+(pins the rescaling behaviour, not just one static number);
+`effective_max_daily_loss_pct`'s explicit-wins and derives-when-unset
+paths; `RiskRuleEngine.check_daily_loss` with a concrete regression case
+(a 10% daily loss that would have tripped the old flat 3% breaker no
+longer trips at the derived 15%, a 16% loss still does) plus the explicit-
+override path; `TradingPipeline._compute_recent_performance` with
+concrete 5-day and 20-day regression cases showing a move that would have
+tripped the old hardcoded -3.0/-8.0 no longer trips at the derived
+-15%/-40%, and a deeper move still does; and a
+`PortfolioManagerAgent.build_user_message` case confirming the prompt now
+renders the actual configured thresholds rather than the old hand-typed
+"5d < -3% OR 20d < -8%" string (also fixed in
+`src/agents/portfolio_manager.py`, the one prompt-facing surface that
+restated the numbers rather than just echoing computed values — threaded
+through via two new `_compute_recent_performance` return keys,
+`drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct`). Full suite:
+4799 passed / 1 skipped / 1 failed before this change, 4810 passed / 1
+skipped / 1 failed after (net +11, all new; the 1 failure is
+`test_rehearsal_reproduces_cost_ceiling.py`, the same pre-existing,
+environment-dependent failure PR #258 also excluded from its counts —
+unrelated to this change, fails identically before and after it).
+
+See PR `fix/drawdown-brake-rescale` (open, not merged — depends on
+#258/#259 landing first, needs independent adversarial review before
+merge, same posture as every other risk-touching change this week).
+
 ### 2026-09-04 — the notional cap, not the 5% envelope, was the real per-trade risk limit
 
 **In plain words.** The owner ratified "risk up to 5% of the book per

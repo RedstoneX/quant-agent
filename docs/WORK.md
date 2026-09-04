@@ -953,7 +953,7 @@ elsewhere in the same prompt. Also open: three of the four new seats'
 magnitude mappings are reasoned but unmeasured judgment calls, flagged by
 their own authors, not yet independently reviewed.
 
-**32. The ratified 5% per-trade risk envelope was not actually being delivered — MOSTLY FIXED, one fork still open.**
+**32. The ratified 5% per-trade risk envelope was not actually being delivered — MOSTLY FIXED, one real judgment call left.**
 
 An old, unratified position-size cap bound before real risk-based sizing
 ever did — confirmed against real trade data, delivered risk had
@@ -971,17 +971,19 @@ re-propose this as already-decided — the compressed 2026-08-27 bands
 are still live. If the owner wants the bands revisited, that is a fresh
 ask, not a resumption of #259.
 
-**Still genuinely open:** the drawdown brakes (5-day/-3%, 20-day/-8%, 3%
-daily circuit breaker) are unmeasured pre-mandate constants sized for the
-OLD ~1% risk unit, now stale relative to the fixed sizing, and a data
-reset wiped the equity history they read from. Rescale drafted on PR
-#263 (real unit conversion done; the multiplier itself honestly flagged
-provisional — equity history needed to validate it was wiped by the
-2026-09-02 reset). **Do not merge #263 until this item's cap fix (#258,
-now merged) is live** — #263 says so itself.
+**Drawdown-brake unit conversion — FIXED 2026-09-04 (PR #263), merged
+after #258 was confirmed live.** The 5-day/-3%, 20-day/-8%, and 3% daily
+circuit breaker were pre-mandate constants sized for the OLD ~1% risk
+unit; all three now scale as `N × max_position_risk_pct` so they track
+the real risk unit automatically instead of going stale again. **The
+multiplier N itself (3× daily/5-day, 8× 20-day) is left UNCHANGED and
+explicitly PROVISIONAL** — the 2026-09-02 clean-slate reset wiped the
+equity history needed to validate it, and the 20-day check literally
+cannot evaluate yet for lack of 20 trading days since. Real owner
+decision, not a guess to make.
 
-**DECIDE BY 2026-09-11** — the drawdown-brake rescaling, and whether the
-conviction-band question gets reopened.
+**DECIDE BY 2026-09-11** — the drawdown-brake multiplier, and whether
+the conviction-band question gets reopened.
 
 **33. The two "is this trade worth the risk" checks disagreed with each other — FIXED, pending review.**
 

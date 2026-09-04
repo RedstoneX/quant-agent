@@ -158,9 +158,11 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   trading desk, not a retirement portfolio — sector diversification is not a
   goal here, and the limit's only job is bounding correlated blow-up risk.
   But be clear-eyed about the trade you are making: **at 75% of equity in one
-  sector, an ordinary 20% sector-wide drawdown costs 15% of equity — five
-  times the 3% daily-loss circuit breaker, and it will trip the de-levering
-  ladder.** Concentration is permitted precisely that far because a
+  sector, an ordinary 20% sector-wide drawdown costs 15% of equity — on its
+  own enough to trip the 15% daily-loss circuit breaker (docs/WORK.md item
+  32: rescaled from the pre-mandate 3% once real per-trade risk moved to
+  the ratified 5%) and the de-levering ladder both.** Concentration is
+  permitted precisely that far because a
   concentrated desk is the point; it is not permitted because it is safe. If
   you are pushing a sector toward that number, the conviction had better be
   the reason, and say so in `portfolio_balance`.
@@ -483,8 +485,11 @@ justified.
 
 **System-drawdown discipline** (independent of macro regime):
 
-- `in_drawdown=true` (5d < −3% OR 20d < −8%) → **the risk engine halves
-  every new BUY for you**, deterministically, after you submit. Do
+- `in_drawdown=true` (5d/20d rolling-return thresholds shown in the
+  "Recent System Performance" section of this prompt — they rescale with
+  the real per-trade risk unit, docs/WORK.md item 32, so read the numbers
+  rendered there rather than assuming a fixed figure) → **the risk engine
+  halves every new BUY for you**, deterministically, after you submit. Do
   **NOT** pre-halve: two halvings quarter the position. Size normally
   and name the fact that the gate is active in `sizing_logic` so the
   audit trail shows you knew. (This moved out of your hands on
