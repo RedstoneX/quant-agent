@@ -1206,6 +1206,17 @@ class SmartMoneyObservation(LLMOutputModel):
     signal_class_detail: str = ""
     signal_weight: float = Field(default=1.0, ge=0.0, le=1.0)
     economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
+    # Populated only for stream="congressional" (src/data/congressional_trading.py).
+    # Two independent free sources (kadoa-org/congress-trading-monitor,
+    # congresswatch.us) are merged there; when both carry a record for what
+    # looks like the same real trade, "agreement" means they matched on
+    # direction and overlapping amount bracket, "discrepancy" means they did
+    # not (the disagreement is never silently resolved — see
+    # `cross_source_note`), and "single_source" means only one source had
+    # the trade. Defaults to "" for every SEC Form 4 row and for any
+    # congressional row cached before this field existed.
+    cross_source_agreement: Literal["", "single_source", "agreement", "discrepancy"] = ""
+    cross_source_note: str = ""
 
     @field_validator("symbol")
     @classmethod

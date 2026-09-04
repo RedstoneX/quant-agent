@@ -33,6 +33,7 @@ from src.agents.macro_analyst import MacroAnalystAgent
 from src.agents.earnings_analyst import EarningsAnalystAgent
 from src.agents.meta_reflector import MetaReflectorAgent
 from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
+from src.data.congressional_trading import CombinedSmartMoneyProvider, CongressionalTradingProvider
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
 from src.risk.constants import REWARD_RISK_FLOOR
@@ -678,7 +679,7 @@ class TradingPipeline:
             provider=config.llm.smart_money_analyst_provider,
             provider_order=config.llm.get_provider_order("smart_money_analyst"),
         )
-        self.smart_money_provider = SECForm4Provider(
+        sec_form4_provider = SECForm4Provider(
             search_url=config.smart_money.search_url,
             archives_url=config.smart_money.archives_url,
             data_dir=config.smart_money.data_dir,
@@ -702,6 +703,36 @@ class TradingPipeline:
             insider_cadence_max_gap_dispersion=config.smart_money.insider_cadence_max_gap_dispersion,
             insider_min_material_sell_fraction=config.smart_money.insider_min_material_sell_fraction,
             insider_history_retention_days=config.smart_money.insider_history_retention_days,
+        )
+        # Congress (House + Senate) trading-disclosure cross-check, off by
+        # default (config.smart_money.congress_enabled). Two independent
+        # free sources fanned into the same SmartMoneySource protocol as SEC
+        # Form 4 via CombinedSmartMoneyProvider — one source (or this whole
+        # sub-provider) failing never blocks the other's evidence or the
+        # rest of the run. See src/data/congressional_trading.py.
+        congress_provider = None
+        if config.smart_money.congress_enabled:
+            congress_provider = CongressionalTradingProvider(
+                kadoa_url=config.smart_money.congress_kadoa_url,
+                congresswatch_url=config.smart_money.congress_congresswatch_url,
+                data_dir=config.smart_money.congress_data_dir,
+                user_agent=config.smart_money.user_agent,
+                request_timeout_s=config.smart_money.congress_request_timeout_s,
+                max_trades_per_source=config.smart_money.congress_max_trades_per_source,
+                assumed_max_disclosure_lag_days=(
+                    config.smart_money.congress_assumed_max_disclosure_lag_days
+                ),
+                lookback_days=config.smart_money.congress_lookback_days,
+                min_transaction_value_usd=config.smart_money.min_transaction_value_usd,
+                external_min_transaction_value_usd=(
+                    config.smart_money.external_min_transaction_value_usd
+                ),
+                cluster_window_days=config.smart_money.cluster_window_days,
+                min_cluster_owners=config.smart_money.min_cluster_owners,
+                max_observations=config.smart_money.max_observations,
+            )
+        self.smart_money_provider = CombinedSmartMoneyProvider(
+            [sec_form4_provider, congress_provider]
         )
         self.meta_reflector = MetaReflectorAgent(
             api_key=_key_for(config.llm.meta_reflector_model, config.llm.meta_reflector_provider),
@@ -10548,7 +10579,7 @@ class TradingPipeline:
         if self.config.smart_money.enabled:
             try:
                 smart_money_refresh = self.smart_money_provider.refresh()
-                logger.info("SEC Form 4 refresh: %s", smart_money_refresh)
+                logger.info("Smart-money refresh (SEC Form 4 + congressional): %s", smart_money_refresh)
             except Exception as exc:
                 logger.warning("SEC Form 4 refresh failed softly: %s", exc)
                 smart_money_refresh = {

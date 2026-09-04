@@ -4217,6 +4217,282 @@ basis. Caveat: this box's proxy credential may differ from production's;
 if a live desk run ever produces degraded earnings verdicts, re-check
 this rather than assume the n=1 result generalizes.
 
+---
+
+### 2026-09-04 — Congress (House + Senate) trading data added to smart-money, dual-sourced and cross-checked
+
+The "both known aggregators are dead" read recorded above (item 36,
+`docs/WORK.md`) was stale. Re-checked live 2026-09-04 and found two
+different free, credentialless, currently-updating sources:
+
+- **Primary**: `kadoa-org/congress-trading-monitor` (GitHub, MIT licensed).
+  Static JSON, no auth, no rate limit.
+  `https://raw.githubusercontent.com/kadoa-org/congress-trading-monitor/main/public/data/trades.json`
+  (capped at a 5,000-row recent slice) and per-ticker files at
+  `.../data/ticker/{SYMBOL}.json`. Verified live: real, current (as of
+  today) House Clerk PTR, Senate eFD and OGE executive-branch rows, with a
+  real `filing_date` per trade.
+- **Secondary/cross-check**: `congresswatch.us` (OpenSourcePatents LLC).
+  `https://congresswatch.us/data/trades.json` (308-redirects to
+  `www.congresswatch.us`; ~8,000 records, House + Senate). Verified live.
+  Two real data-quality issues confirmed by inspecting the live feed
+  directly, not assumed from the spec: (1) its schema carries **no
+  filing/disclosure-date field at all** — only `transaction_date` and the
+  `ptr_link` to the official PDF; (2) it contains at least one record with
+  a transaction dated **2026-12-26**, months in the future relative to
+  today (2026-09-04) — confirmed present in the live pull used to build
+  this feature, not a hypothetical.
+
+**What was built** — `src/data/congressional_trading.py`:
+- `CongressionalTradingProvider` implements the same `SmartMoneySource`
+  protocol (`refresh()`/`fetch()`) as `SECForm4Provider`, with the same
+  fail-open posture: either source being unreachable, timing out, or
+  returning a malformed/unexpected JSON shape degrades to that source's
+  last good on-disk cache (or an empty list on a first-ever run) and is
+  recorded as a `status: "partial"` result — it never raises, never blocks
+  the other source, and never blocks the rest of the smart-money pipeline
+  or the run. Verified with tests that kill each source independently and
+  both at once (`tests/test_congressional_trading.py`).
+- **Dedup**: rows from both sources are grouped by
+  `(ticker, normalized filer name, transaction_date)` — name normalization
+  strips titles ("Rep.", "Sen.", "Hon.", etc.) and casefolds so "Rep. Kevin
+  Hern" and "Kevin Hern" match. Amount is deliberately NOT part of the
+  group key: a genuine disagreement about the dollar bracket is exactly
+  what the cross-check exists to surface, not a reason to treat two feeds'
+  reports of the same trade as two different trades.
+- **Disagreement flagging**: within a matched group, if the two sources
+  disagree on direction (purchase/sale/exchange) or their amount brackets
+  don't overlap, the merged row is marked
+  `cross_source_agreement="discrepancy"` with a human-readable
+  `cross_source_note` naming what disagreed (both new fields on
+  `SmartMoneyObservation`, `src/models.py`, default `""` so every existing
+  SEC Form 4 row and any congressional row cached before this shipped
+  still validates unchanged). The row is kept either way — a disagreement
+  is never a reason to drop a trade, only to flag it. When only one source
+  has the trade, it is marked `"single_source"`; when both agree,
+  `"agreement"`. kadoa is treated as primary on a disagreement (real
+  `filing_date`, more structured feed) but the disagreement itself is
+  never hidden.
+- **Missing disclosure date (congresswatch-only trades)**: since
+  congresswatch carries no filing-date field, a congresswatch-only trade's
+  disclosure date is estimated at `transaction_date + 45 days` (capped at
+  today) — the same statutory ~45-day congressional disclosure ceiling
+  already documented in `src/agents/smart_money_analyst.py`'s module
+  docstring, reused rather than invented. This is a conservative
+  worst-case assumption (never claims a trade was disclosed sooner than
+  the law allows, never mis-states freshness upward) and is called out
+  explicitly in code comments, not silently baked in.
+- **Bad-date handling**: `_sane_transaction_date` rejects (drops the row)
+  any date in the future or more than 20 years old, rather than clamping
+  it to some in-range value — a clamp would fabricate a fake trade date
+  that was never actually reported; dropping is the honest failure mode.
+  Directly exercises the real future-dated congresswatch record described
+  above.
+- **Cluster window reuse**: the SEC Form 4 materiality/2-day cluster-window
+  reduction (Alldredge & Blank, ~2 days — the 2026-09-04 14->2 day audit
+  fix, `docs/RESEARCH_FINDINGS.md:19`) was extracted from
+  `SECForm4Provider.fetch` into `src/data/smart_money_cluster.py`
+  (`cluster_survivors`/`observation_key`) so it is one shared
+  implementation, not two independently-tuned copies. Both providers now
+  call the same function with the same `cluster_window_days`,
+  `min_cluster_owners` and $ thresholds (`config.smart_money.*`) — a
+  future change to the window cannot silently drift between the two
+  streams. `SECForm4Provider`'s existing 86 tests in
+  `tests/test_smart_money.py`/`test_smart_money_verdict.py`/
+  `test_insider_signal.py` all still pass unchanged after this
+  refactor — confirmed by running them, not assumed.
+- **Materiality threshold applied to a bracket, not an exact dollar
+  figure**: congressional disclosures are ranges (e.g. "$15,001 -
+  $50,000"), not exact amounts. The bracket LOW value is used
+  conservatively for `transaction_value_usd` and for materiality
+  comparison — this never overstates a trade's size relative to the
+  threshold. When both sources report a bracket for the same trade, the
+  lower of the two lows is kept (most conservative), separate from
+  whether their brackets actually overlap (which drives the discrepancy
+  flag above).
+- **Congressional data never grows the trading universe**: unlike SEC Form
+  4's external-purchase admission lane, `fetch()` only returns
+  congressional observations whose symbol is already in the caller's
+  configured universe (`admission_eligible`/`transient_admission_eligible`
+  are hard-set `False` for every congressional row). The seat's existing
+  acceptance contract (`src/agents/smart_money_analyst.py` module
+  docstring) ties symbol admission to an exact SEC Form 4 open-market `P`;
+  extending that power to congressional disclosures would be new scope
+  this task did not ask for and the owner has not reviewed. Congressional
+  data stays exactly what the seat's own docstring already called it:
+  "primarily thematic/confirmatory context."
+- **Wiring**: a new `CombinedSmartMoneyProvider` (same file) fans the
+  pipeline's single `smart_money_provider` slot out to both
+  `SECForm4Provider` and (when `config.smart_money.congress_enabled`,
+  default `False`) `CongressionalTradingProvider`, isolating either
+  sub-provider's exception from the other and from the caller — verified
+  with a test where one sub-provider raises on both `refresh()` and
+  `fetch()` and the other's results still come through cleanly.
+
+**What was NOT done**, deliberately out of scope for this task: no change
+to the LLM-facing smart-money prompt or `smart_money_analyst.py` itself —
+the existing "conservative congressional contract" in
+`SmartMoneyFinding.deterministic_eligibility` (`src/models.py`, requires
+>=2 observations, >=2 distinct actors, one direction, all disclosures
+<=7 days old and <=30 days lag before a congressional-only finding can
+support a PM thesis) already existed for a since-removed prior provider
+and needed no changes to accept these new rows; no per-ticker kadoa
+endpoint integration (`.../data/ticker/{SYMBOL}.json`) — the top-level
+capped `trades.json` file was used for both sources' broad discovery pass,
+matching `SECForm4Provider`'s own "broad discovery, cache, then
+lookback-filtered fetch" shape, and is sufficient at this desk's current
+universe size; no attempt to resolve `owner`/joint-filer detail
+(spouse/dependent trades) beyond what each source already reports as a
+single row.
+
+**Exact suite counts** (both runs on this same sandbox, full repo suite,
+excluding files this sandbox cannot even collect — `test_api_*`,
+`test_status_board.py`, all `ModuleNotFoundError: fastapi`, a missing
+dependency here unrelated to this change): unmodified origin/main
+(28b955d, run in a separate disposable worktree) — **1 failed, 4908
+passed, 1 skipped**; this branch — **1 failed, 4922 passed, 1 skipped**
+(the 14 new tests in `tests/test_congressional_trading.py` account for
+the entire delta — 4922 - 4908 = 14 — confirming zero regressions in the
+pre-existing suite). The 1 failure
+(`test_rehearsal_reproduces_cost_ceiling.py::
+test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure`,
+`MissingRecordedResponse` for a replay fixture) reproduces byte-identically
+against unmodified origin/main — pre-existing, unrelated to this change,
+not introduced by it.
+
+---
+
+## 2026-09-04 — Congressional-trading feed was throwing away real trades two different ways (found before merge, PR #271)
+
+**In plain words.** The brand-new "what did members of Congress buy and sell"
+data feed was quietly losing real trades before anyone could look at them, for
+two unrelated reasons. Neither was a crash and neither showed up as an error —
+the feed just returned less than it should have, and looked healthy doing it.
+Both were caught while the pull request was still open, so nothing broken ever
+ran.
+
+**Where the two findings actually came from — not from us.** Someone had
+already built a free congressional-trading workflow (an n8n template) and
+published his own list of things that bit him. Reading that list is what
+surfaced both of these. This matters for the record: these are field reports
+from a person who had already run this exact kind of data against the real
+disclosure systems, not defects we deduced from first principles or guessed
+at. Where a claim of his was load-bearing here, it was checked independently
+against the primary source before being acted on (see below).
+
+### Finding 1 — the freshness window was shorter than the law's own deadline
+
+The provider only kept disclosures filed in the last **30 days**.
+
+The STOCK Act gives a member up to **45 days** after a trade to file the
+disclosure. So a 30-day window could not cover even the *legal* lag, never
+mind real behaviour — and in practice filings cluster at or past the deadline
+rather than early. The effect: a genuine, recent, perfectly legitimate trade
+that happened to be filed on day 38 was dropped on the floor. Silently. No
+error, no counter, no log line — the feed simply returned fewer rows.
+
+Verified independently rather than taken on the workflow author's word: the
+45-day statutory ceiling was re-confirmed 2026-09-04 against the House
+Committee on Ethics' own PTR instructions and the Senate Select Committee on
+Ethics' PTR instructions, both of which state the "no later than 45 days after
+the transaction" rule directly. The 45-day number was already in this repo
+(`smart_money_analyst.py`'s module docstring, and the provider's own
+`assumed_max_disclosure_lag_days`) — the bug was that the *retention* window
+had been set below a number the same codebase already knew.
+
+**Now 180 days.** Not an invented figure: it is the default that comparable
+free tool's author settled on, for exactly this reason, after a short window
+returned almost nothing for him. It is generous on purpose — this is a
+*coverage* window, deciding what the analyst is allowed to see at all, not a
+*strength* window deciding what counts as evidence.
+
+**What was deliberately NOT changed, and why it matters:**
+
+* **SEC Form 4's own window stays tight (7 days config / 14 days provider).**
+  Form 4 has a ~2-business-day filing deadline — a completely different
+  statute with a completely different lag profile. Widening it to match the
+  congressional one would be exactly the wrong lesson to draw. There is now a
+  test that asserts the two windows are different and that the Form 4 one is
+  the smaller, so a future "tidy-up" cannot quietly harmonise them.
+* **The eligibility contract stays at 7 days.**
+  `SmartMoneyFinding.deterministic_eligibility` still requires congressional-
+  only evidence to be >=2 observations, >=2 distinct members, one direction,
+  and every disclosure <=7 days old. A 180-day coverage window therefore
+  cannot make stale data load-bearing — it only stops fresh data being binned
+  before it is ever assessed. There is a test asserting exactly that.
+
+**Related tension noted, NOT fixed here** (flagging, not self-authorising):
+that same contract also requires `lag_days <= 30`, i.e. the gap between the
+trade and its disclosure must be under 30 days. Since the statute permits 45,
+a trade disclosed legally at day 40 can never support a thesis under the
+current contract no matter how fresh the disclosure is. That may well be
+intentional conservatism, but it is an owner-level judgment about what counts
+as evidence, not a bug to be quietly widened by whoever happens to be in the
+file. Left exactly as it was.
+
+### Finding 2 — direction parsing did not understand the disclosure form's own codes
+
+The function turning a raw transaction-type value into buy/sell/exchange only
+matched full words: anything starting "purchase", "sale" or "exchange".
+Everything else became `"unknown"`.
+
+But the House Periodic Transaction Report form does not use full words. It
+uses **short codes**:
+
+| Code | Meaning |
+| --- | --- |
+| `P` | Purchase |
+| `S` | Sale (full) |
+| `S (partial)` | Partial sale — only part of a holding sold |
+| `E` | Exchange (rare; e.g. a share swap in a merger) |
+
+Every row carrying a short code was read as direction-unknown. For a data
+source whose entire reason to exist is knowing *which way* a member traded,
+that is not a cosmetic gap — it is the signal being deleted. It also polluted
+the cross-source check: one feed rendering "Sale" and the other rendering "S"
+for the same real trade would have been flagged as the two sources
+*disagreeing about direction*, which is a false alarm on the one signal the
+cross-check exists to raise honestly.
+
+**Source for the code set, since it is now load-bearing.** Confirmed
+2026-09-04 against the House Committee on Ethics' financial-disclosure
+instruction guide and the House Clerk's published PTR forms, plus the Senate
+Select Committee on Ethics' PTR instructions — which between them define
+exactly three reportable transaction kinds (purchase, sale, exchange), the
+partial-sale qualifier, and the single-letter codes above. The full-word and
+`sale_full`/`sale_partial` snake_case renderings are the forms the two live
+feeds and the widely-mirrored House-Clerk-derived JSON schema actually emit.
+
+**Now an explicit allowlist, not a loose match.** The obvious cheap fix — "if
+it starts with `s`, call it a sale" — is worse than the bug: it would read
+"Stock Split" and "Stock Dividend" as sales, i.e. invent a sell signal out of
+a corporate action. Short codes are therefore matched only as an exact whole
+token; full-word prefix matching is kept as a fallback for qualifiers we have
+not enumerated. There are tests for both, including one asserting "Stock
+Split" stays unknown.
+
+**And the class of bug is now visible instead of silent.** Anything that still
+matches nothing is recorded in a module-level set and logged once per distinct
+value, with the offending raw string and where to add it. The original
+failure mode was not really "short codes were missing" — it was that an
+unrecognized value produced no trace at all, so a future upstream format
+change would have degraded the feed exactly as invisibly. That is the part
+that is actually fixed.
+
+**Exact suite counts** (both runs on this sandbox, full repo suite,
+same collection exclusions as the entry above): PR #271 head before these
+fixes (`7c9d0fd`, run in a separate disposable worktree) — **1 failed, 4922
+passed, 1 skipped**; this branch after the fixes — **1 failed, 4953 passed,
+1 skipped**. `tests/test_congressional_trading.py` goes from **14 to 45
+tests** (+31), which accounts for the entire delta (4953 - 4922 = 31),
+confirming zero regressions in the pre-existing suite. The subsequent
+`origin/main` merge on this branch touched `docs/WORK.md` only — no code —
+so those counts stand. The 1 failure
+is `test_rehearsal_reproduces_cost_ceiling.py::
+test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure`, reproduced
+byte-identically against the unmodified PR head in a separate worktree —
+pre-existing, unrelated, not introduced here.
+
 ### 2026-09-04 — six real alternatives to the shipped congressional-data sources, checked and rejected
 
 **In plain words.** After PR #271 wired in two free sources (kadoa-org/
