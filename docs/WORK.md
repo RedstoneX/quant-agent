@@ -1196,21 +1196,18 @@ target. Owner sequencing call, measured the same way as item 33.
 
 **DECIDE BY 2026-09-18** — lower urgency than 32/33, don't forget it.
 
-**35. A protective stop was loosened, not tightened, with no record explaining it. DEFECT, CONFIRMED against real broker order history.**
+**35. A stop-widening was observed in pre-clean-slate trade history (Visa, Aug 2026) — DEFERRED, not investigated further for now.**
 
-Real broker order history, a real held position (V, bought 2026-08-27 at
-$381.18): the original stop at $374.27 was CANCELLED and REPLACED with a
-wider stop at $362.58 on 2026-08-31 — a real, deliberate order action, not
-a display bug. Closed later by a plain market sell, not either stop. Every
-stop rule here guarantees a stop only tightens once set — live violation,
-nothing in the logs explains why. Trace which code path issued the
-replacement — the Risk Manager's trade-edit path (hardened this week by
-items 23/24 for a similar trust-the-edit failure, zeroing allocation) is
-the likely first place to check — and extend those safeguards to reject
-any edit that WIDENS a stop, not just one that zeros an exit or breaches
-the R/R/noise-band floor.
+Real broker order history found a protective stop (V, bought 2026-08-27)
+CANCELLED and REPLACED with a wider one on 2026-08-31 — real, not a display
+bug. Owner's call: this data predates this week's systemic fixes, was
+recorded during active development/merging, and the whole book was later
+manually liquidated on purpose to start clean. Pre-clean-slate trade
+history should not be treated as reliable evidence of current behavior.
+Watch for a recurrence once the desk resumes on a stable beta rather than
+dig into this specific historical instance now.
 
-No DECIDE BY — a defect needing investigation, not a design decision.
+No DECIDE BY — revisit only if it recurs.
 
 ---
 
