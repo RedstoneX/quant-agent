@@ -22,6 +22,80 @@ what would catch it next time.
 
 ---
 
+### 2026-09-04 — a refusal to open a position and a real order to close it were the same number
+
+**In plain words:** the desk's sizing math used the number **0%** to mean
+three different things: "don't open this," "close what's already held," and
+"open the opposite position." A refusal to buy something and a decision to
+sell an existing position looked identical to the code that turns targets
+into orders. That code defaulted to reading a zero as "close" — so a rule
+that said "no" to a new trade could, in principle, have silently sold a real
+position nobody asked to sell. It never actually happened (no trade log shows
+it), but the trap was real and structural, not a one-off bug. This closes
+item 13 in `docs/WORK.md`.
+
+**How it was caught:** raised verbally by the owner, lost once to a context
+compaction, then written down permanently in `docs/WORK.md` item 13 so it
+could not be lost again. A partial workaround already existed: the
+2026-09-02 "signed-dissent" change, when it decided a name's evidence didn't
+support opening a position, deleted that name from its internal list rather
+than sizing it at a literal zero — which avoided the trap for that one code
+path, but only because that one path remembered to special-case it. Nothing
+stopped a different rule, written later, from forgetting.
+
+**The fix.** Borrowed, not invented: `pysystemtrade` (Rob Carver's
+open-source systematic trading framework) solves exactly this with what it
+calls an override algebra. Instead of a plain number, a sizing decision is
+one of four distinct kinds — "don't trade," "close it," "only allow
+shrinking," or "trade this amount" — and there is a fixed rule for combining
+two of them: the more cautious one always wins. "Don't trade" can never be
+watered back down into "trade a little" by combining it with something else,
+the way `min(0, 5)` is still just the number zero with no memory of where it
+came from.
+
+`src/risk/size_override.py` implements this as a small type,
+`SizeOverride`, with that same ordering (`no_trading > close > reduce_only >
+multiplier`) and a `combine()` method enforcing it. The important design
+choice: asking a "don't trade" value for its size is now a hard error, not a
+0.0 you can accidentally treat as a real number. That is what makes the old
+bug impossible to write by accident rather than merely unlikely.
+
+**What was migrated.** The one real caller that had the bug and worked
+around it — `PortfolioConstructor._plan_risk_targets`, the place that
+combines the PM's risk envelope with the agreement-ceiling check from the
+2026-09-02 dissent rule — now builds `SizeOverride` values for both caps and
+combines them instead of taking a raw `min()` of two floats and checking
+`<= 0.0`. When the result is a refusal, the target is still dropped from the
+order-construction list exactly as before (so a refused BUY still leaves any
+held position untouched) — but now because the type says so, not because
+this one function remembered to check for it.
+
+**What was deliberately not touched.** `TargetPosition.risk_allocation_pct
+== 0.0` (the PM's own explicit "close this" instruction) was left as a plain
+float. That zero is not ambiguous — it is the one legitimate, sourced case
+where 0% really does mean "close," authored directly by the Portfolio
+Manager, and it already routes through its own code path
+(`PortfolioConstructor._plan_risk_targets`'s `closes` set) before the
+envelope/agreement-ceiling logic ever runs. Converting it to `SizeOverride`
+as well would have been a larger, purely stylistic change with no bug behind
+it, so it was left alone. Every other place a target's weight is combined
+with a real refusal — the code in `_plan_risk_targets` this incident is
+about — was migrated; no ambiguous-zero call site was knowingly left
+half-fixed.
+
+**Verification:** `tests/test_size_override.py` (new) proves the combination
+rule for every pairwise combination of the four kinds, proves "don't trade"
+wins no matter what it's combined with (including an arbitrarily large
+trade size), and proves the old bug can no longer be expressed — reading a
+size off a "don't trade" or "close" value raises instead of returning a
+number. The existing agreement-ceiling tests
+(`tests/test_agreement_sizing.py`, `tests/test_signed_dissent.py`,
+`tests/test_portfolio_constructor.py`) all pass unchanged, confirming the
+migration is a pure refactor of the 2026-09-02 workaround with no behaviour
+change for real sessions.
+
+---
+
 ### 2026-09-04 — insider cluster window was 7x wider than the research it was supposedly built on
 
 **In plain words:** the code that decides whether several insiders buying or
