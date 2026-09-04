@@ -1894,6 +1894,27 @@ def test_bad_data_status_fires_a_standalone_alert():
     assert "morning" in body
 
 
+def test_news_low_confidence_status_fires_a_standalone_alert():
+    """`low_confidence` (news's self-reported-confidence override, see
+    pipeline_stages.py) is a status value like any other non-ok/empty
+    value — this alert is value-agnostic by design, so a new status
+    should reach it with no changes here. Asserted explicitly so a
+    future refactor of the `not in ("ok", "empty")` check can't silently
+    special-case it back out."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {
+        "run_id": "run-lowconf",
+        "data_status": {"tech": "ok", "news": "low_confidence", "macro": "ok"},
+    }
+    with patch("src.notifier.send_owner_alert", return_value=True) as alert:
+        fired = maybe_alert_data_quality(result, mode="morning")
+
+    assert fired is True
+    body = alert.call_args.args[0]
+    assert "news=low_confidence" in body
+
+
 def test_clean_data_status_does_not_alert():
     from src.notifier import maybe_alert_data_quality
 

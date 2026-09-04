@@ -1521,7 +1521,7 @@ def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_com
     tech_store.update.assert_called_once_with([resolved])
 
 
-def _minimal_news_report():
+def _minimal_news_report(confidence="medium"):
     from src.models import MacroNarrative, NewsIntelligenceReport
     return NewsIntelligenceReport(
         macro_narrative=MacroNarrative(
@@ -1529,7 +1529,7 @@ def _minimal_news_report():
             current_regime="risk-on",
         ),
         pm_briefing="Quiet tape.",
-        market_sentiment="neutral", confidence="medium",
+        market_sentiment="neutral", confidence=confidence,
     )
 
 
@@ -1878,6 +1878,43 @@ def test_earnings_data_quality_flags_problem_matches_real_failure_phrases():
     ) is False
     assert _earnings_data_quality_flags_problem("not disclosed") is False
     assert _earnings_data_quality_flags_problem("") is False
+
+
+def test_morning_research_stage_news_low_self_reported_confidence_marks_status_low_confidence():
+    """The confidence half of the honesty fix: full coverage AND a clean
+    parse (the one case the coverage fix alone reads as 'ok'), but the
+    model's own `confidence` field says 'low' — a thin or contradictory
+    read on headlines it did actually receive. Coverage can't catch this;
+    it only counts whether feeds returned data, not whether the model made
+    sense of what they returned. Before this, that combination was
+    indistinguishable from a clean, trustworthy 'ok' run anywhere
+    data_status['news'] is read (Telegram data-quality alert, status
+    board). This must read as its own distinct status, not 'ok'."""
+    report = _minimal_news_report(confidence="low")
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "low_confidence"
+    assert result_ctx.data_status["news"] != "ok"
+
+
+def test_morning_research_stage_news_high_confidence_full_coverage_stays_ok():
+    """Control case for the confidence check: high self-reported confidence
+    on full coverage must NOT be touched by the new override — only 'low'
+    downgrades an otherwise-'ok' status."""
+    report = _minimal_news_report(confidence="high")
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "ok"
 
 
 @patch("src.pipeline_stages.compute_indicators")
