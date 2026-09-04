@@ -3414,3 +3414,248 @@ to pass against the fix with all four surviving — plus a companion test on
 directly.
 
 See PR merging `fix/risk-budget-partial-heat-failure`.
+
+---
+
+### 2026-09-04 — full technical inventory from the night's three parallel audits
+
+`docs/WORK.md` items 32-35 carry the headline findings from three parallel
+audits (entry/eligibility, position sizing/risk budget, exit management/
+ranking) run the same night the "no arbitrary numbers" principle was
+written down (see `docs/OUTCOME.md`). Those items are deliberately short,
+per this file's own size discipline — this entry is the full, unabridged
+catalog underneath them: every individual constant found, its
+classification (MEASURED / REASONED-DEFAULT-DISCLOSED /
+ARBITRARY-UNDISCLOSED), and its real-data doctrine check, so a future
+session or agent can find the exact file:line for any one of them without
+re-running the audits from scratch.
+
+**Full detail preserved verbatim in this session's own memory** at
+`qamc-full-audit-inventory-2026-09-04.md` — three ranked tables (one per
+audit) plus the "passes review, wrong in practice" findings from each.
+Key items already resolved same night, for quick reference:
+
+- Entry: two disjoint reward:risk gates unified (PR #257); smart-money
+  cluster window 14→2 days to match cited research (PR #260); PM
+  conviction bands restored after being compressed to fit an unrelated,
+  since-fixed cap (PR #259).
+- Sizing: single-name notional cap raised from an unratified 20% to a
+  value derived from this desk's own real stop distances (PR #258);
+  portfolio-level volatility-targeting was investigated and explicitly
+  REJECTED as importing the wrong mandate (a fund's smoothness goal, not
+  a trader's survival goal) — see `qamc-no-fund-style-sizing.md`.
+- Exit/ranking: noise-veto band now scales with √(days held) instead of a
+  flat multiplier; ranking ties now break on real reward:risk quality
+  instead of alphabetically; range-setup positions now get a standard
+  +1R breakeven ratchet instead of zero protection until full target (all
+  three: PR #256).
+
+**Not yet fixed, real and open** (ranked, full detail in the memory file):
+undisclosed drift-detection thresholds and a fixed-50%-reduce rule in
+exit management; decorative/duplicate day-count tiers in the Risk
+Manager's own maturity labels; short-selling limits that need
+re-deriving now the notional cap changed; whether the drawdown brakes
+need rescaling to the new real per-trade risk unit (a genuine open fork,
+not decided); the smart-money minimum-dollar filter, which needs insider
+holdings-size data this desk doesn't fetch yet; and a long tail of
+individually-cheap prompt-level folklore (extension guards, PE
+thresholds, stale-day counts) in the technical analyst's own prompt.
+
+**Also from the same stretch:** the two "real-looking" API keys in
+production `.env` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) were found to be
+the literal, unmodified placeholder text from this project's own
+`.env.example` (added by the original developer 2026-05-08 when
+open-sourcing the repo) — never real credentials, never exposed. Fixed
+on the box with an explanatory comment so this doesn't get re-investigated
+as a false alarm again. Separately, GitHub Pages was enabled for this repo
+(public, `main`/`docs`), so anything added to `docs/` renders at
+`https://redstonex.github.io/quant-agent/<filename>` automatically.
+
+**Real, still-open decision, not resolved here:** whether to add a live
+congressional (US House/Senate) trading data stream to the smart-money
+seat. Investigated 2026-09-04: no free, currently-reliable option exists.
+The two well-known free aggregator projects (house-stock-watcher,
+senate-stock-watcher) are both dead — one's domain no longer resolves, the
+other's last real data commit was 2021 despite its own page still
+claiming to be live. One brand-new free alternative surfaced the same
+week but is unverified, single-maintainer, no track record. Real options
+are: adopt the unproven free source and accept the risk, build in-house
+PDF parsing against the official House/Senate disclosures (real
+engineering cost, the House side is still scanned/mixed-format PDFs, not
+clean text), or pay for a commercial feed (Quiver Quantitative is the
+most API-native paid option). Owner's call — this is a new-dependency /
+reliability tradeoff, not something to adopt unilaterally.
+
+---
+
+### 2026-09-04 — merge order for tonight's open PRs (they share files, not logic)
+
+Eleven PRs from tonight's session are open at once (#249, #252, #254-#262).
+None conflict in what they DO — each is independently reviewed and correct
+on its own — but several share the same files, so merging them in the
+wrong order (or all at once) will produce ordinary git conflicts, not
+logic bugs. Recorded here so this isn't only in one session's head before
+a compaction erases it.
+
+**Known file-sharing collisions, confirmed by reading the actual diffs:**
+- `src/agents/portfolio_manager.py`: shared by #257 (reward:risk gate
+  unification) and #261 (opportunity-cost rotation).
+- `config/prompts/portfolio_manager.md`: shared by #259 (conviction-band
+  restore) and #261 (opportunity-cost rotation).
+- `docs/WORK.md` / `docs/INCIDENT_HISTORY.md`: shared by nearly all of
+  them, as usual for this project — the established convention (keep
+  both sides, reconcile headers/separators) applies same as always.
+- #261 also branched slightly before the diagram rename landed (#253) —
+  it will try to re-add `docs/verdict_pipeline.html` under its old name;
+  a rebase onto current `main` resolves this automatically, it is not a
+  real content conflict.
+
+**Recommended order, since #258/#259 are already sequential (259 is based
+on 258's branch) and #257/#261 touch the PM directly:**
+1. Merge #249, #252, #254, #255, #260 first — no shared-file overlap with
+   anything else in the list, safe to land independently once reviewed.
+2. Merge #258, then #259 (already built on top of it).
+3. Merge #257 next (PM eligibility fix).
+4. Rebase #261 onto the result, resolve the small PM-file overlap with
+   #257 and the diagram-filename artifact, then merge.
+5. #256 and #262 don't share files with the PM-touching group — safe to
+   land in parallel with steps 2-4 once independently reviewed.
+
+None of this changes what any PR does — it is purely the order to avoid
+avoidable merge conflicts. If a session resumes cold and some of these
+are already merged, this list is stale for whichever ones are done —
+check `gh pr list` for the real current state before following it blindly.
+
+---
+
+### 2026-09-04 — earnings stopped transcribing and started concluding (item 18c)
+
+**In plain words:** the earnings seat used to hand the Portfolio Manager a
+complete extraction form for every filing — revenue, margins, guidance,
+strategy, competitive positioning, strategic risks, operational risks, data
+quality — ending in one line of actual judgement. That form was ~1,400
+characters per filing, and across the ~35 companies it covers on a normal
+day it was 70% of PM's entire 200,000-character prompt (item 18, measured
+2026-09-02) and a large share of why that one seat was 93% of the LLM bill
+(item 14). PM was doing the analyst's own summarizing work, at PM's LLM
+price, on every call. Every other analyst seat already hands PM a
+conclusion, not raw extraction — earnings was the outlier. Owner-ratified
+fix, not a design question: return a call and a short thesis, keep the full
+extraction on disk for audit.
+
+**What changed.**
+
+- `config/prompts/earnings_analyst.md`: `key_thesis` is now specified as
+  the field PM actually reads — 2-3 sentences stating the call, the single
+  strongest reason from the reasoning chain, and the condition that would
+  break it (pulled from whichever of `bull_case`/`bear_case` falsifies the
+  stated `sentiment`). The eight extraction fields are unchanged in shape
+  and are still required in full — they no longer reach PM, but
+  `position_reviewer`, `evening_analyst`, `meta_reflector`, and a human
+  pulling the record for audit still read them straight off disk.
+- `src/agents/earnings_analyst.py`: the per-filing result dict
+  (`_analyze_one`, both the fresh-analysis and cached-analysis branches) now
+  carries `analysis_path` — the pointer PM's short verdict needs to name
+  where the full extraction lives. This didn't exist on the wrapper before;
+  `EarningsReport.analysis_path` existed but nothing threaded it through to
+  the pipeline's `earnings_results` list PM actually receives.
+- `src/agents/portfolio_manager.py`: the earnings section of
+  `build_user_message` (previously ~70 lines rendering all eight fields
+  per filing) now renders four lines — `Call: <sentiment> (<conviction>)`,
+  `Thesis: <key_thesis>`, `Invalidated if: <falsifier>`, and a pointer to
+  the full extraction. It reuses `EarningsAnalysis.to_verdict()` — the same
+  Phase 13 / item 31 shape already used to rank candidates — rather than
+  building a second, different short-form representation of the same
+  report. `to_verdict()`'s own validator (`AnalystVerdict`) refuses to
+  construct a directional call with no stated invalidation, which is
+  correct for a ranking score (an unfalsifiable call should not win a
+  ranking slot) but wrong for a PROMPT (PM should see the seat's read even
+  when the analyst left `bull_case`/`bear_case` at "not disclosed" — a
+  degraded citation, not a missing one). `_render_earnings_verdict` falls
+  back to the raw `investment_implications` fields and an explicit
+  "not disclosed by the analyst" note in that case, rather than dropping
+  the filing from PM's prompt.
+
+**Measured, same method as the original 199,646-char figure**: render
+`PortfolioManagerAgent.build_user_message` over the real run-64290730 pull
+(`ops/model_policy/fixtures/run_64290730_pm_input.json`) and isolate the
+`## Earnings Analysis` section. **Before: 205,607 chars total, 140,106
+earnings (68.1%). After: 98,351 chars total, 32,850 earnings (33.4%).** The
+205,607/140,106 figures track the originally-reported 199,646/140,107
+production numbers closely (this is a rendered-fixture reconstruction, not
+the live production prompt itself — see `ops/model_policy/README.md`'s
+documented ~91% fidelity gap) but are not identical, which is expected and
+not a new discrepancy. Earnings analysis is still the single largest
+section of the prompt after this change — the volume is real (~35
+filings/day), only the per-filing verbosity was fixed here.
+
+**Tests.** `tests/test_earnings_analyst.py`:
+`test_analyze_reports_wrapper_carries_analysis_path_to_full_extraction` and
+`test_existing_analysis_wrapper_also_carries_analysis_path` prove the full
+eight-field extraction is still computed, still saved to disk, and still
+locatable from the wrapper dict for both the fresh and cached branches.
+`tests/test_portfolio_manager.py`:
+`test_earnings_section_renders_short_verdict_not_the_eight_field_form`
+proves the rendered PM prompt carries the short verdict and none of the
+old form labels (`Filing metrics:`, `Competitive positioning:`, etc.), and
+that the section is under 700 characters instead of ~1,400+;
+`test_earnings_section_falls_back_when_falsifier_undisclosed` proves the
+fallback path when `to_verdict()` refuses construction.
+
+**Exact suite counts** (branch merged onto main at item 28's fix, so the
+comparison is apples-to-apples): the earnings/PM-focused slice —
+`tests/test_earnings_analyst.py`, `test_portfolio_manager.py`,
+`test_earnings_deep_dive.py`, `test_earnings_preprocess.py`,
+`test_analyst_verdict.py` — went from **130 passed** (pre-change) to
+**134 passed** (post-change, the 4 new tests above, zero regressions).
+Full repo suite (excluding files this sandbox cannot even collect —
+`test_api_*`, `test_status_board.py` — all `ModuleNotFoundError:
+fastapi`, a missing dependency in this sandbox unrelated to this change):
+**4,438 passed, 1 skipped, 1 failed** — the 1 failure
+(`test_rehearsal_reproduces_cost_ceiling.py::
+test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure`,
+`MissingRecordedResponse` for a replay fixture) reproduces identically
+against unmodified current main, confirmed by running it there directly —
+pre-existing and unrelated to earnings or PM prompt assembly, not
+introduced by this change.
+
+**Known gap, not resolved here:** earnings runs `gemini-3.5-flash-lite`
+(Google-direct), chosen and verified for the transcription task this item
+is replacing — this item's own "the cheap-model verdict is now invalid"
+finding above applies directly: concluding is a harder task than
+extracting, and this environment has no `GOOGLE_API_KEY` to run the
+redesigned prompt against the real production model before opening the PR.
+Needs a live check on real recent filings before merge.
+
+See PR opened from `feat/earnings-analyst-concludes` (not merged — needs
+independent adversarial review, same posture as items 18a/18b/28).
+
+**2026-09-04 follow-up — the live check was attempted and is still blocked,
+plus a real finding about how credentials work on this box.** A later pass
+fetched three real, current filings straight from SEC EDGAR (AAPL, MU, UNH
+10-Qs) and ran the actual redesigned earnings agent against them — but the
+call failed before reaching the model. `GOOGLE_API_KEY` in production
+`.env` is not a real key by design: it is a placeholder, and the real
+credential is injected transparently by the OneCLI gateway proxy at call
+time (same pattern as Alpaca's keys). Reading `.env` directly and calling
+Google's API without going through that proxy will always fail, regardless
+of environment. The model-quality check therefore still needs to run
+through the real OneCLI-proxied path (as the production desk itself does),
+not a direct `.env` read — this is still open, not a pass or a fail.
+
+**2026-09-04 second follow-up — the live check actually succeeded, this
+note above is now stale.** An independent adversarial reviewer confirmed
+the OneCLI proxy at `127.0.0.1:10255` is reachable from this box right
+now, authenticated through it using the real production call path, and
+ran a real, current AAPL 10-Q from SEC EDGAR through the redesigned
+prompt against the live `gemini-3.5-flash-lite` model. Output was
+coherent: correct real numbers pulled from the filing, a sensible
+`sentiment`/`conviction`, and a `key_thesis` that reads as an actual
+analytical call. This is n=1, not a validated sample across the ~35
+filings/day this seat actually covers — do not treat it as a full
+model-quality sign-off — but it does answer the specific open question
+above: the redesigned prompt produces usable output on the production
+model when the proxy is reachable. PR #252 merged 2026-09-04 on this
+basis. Caveat: this box's proxy credential may differ from production's;
+if a live desk run ever produces degraded earnings verdicts, re-check
+this rather than assume the n=1 result generalizes.
