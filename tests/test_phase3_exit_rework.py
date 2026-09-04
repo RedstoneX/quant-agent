@@ -615,6 +615,128 @@ def test_executor_drops_a_symbol_vetoed_by_ai_risk():
 # ===========================================================================
 # 3.6 — an adverse move inside one ATR of entry is noise, not thesis failure
 # ===========================================================================
+#
+# 2026-09-04 audit fix #1: the band used to be a FLAT 1.0x ATR regardless of
+# how long the position had been held. It now widens with sqrt(days_held),
+# the exact convention `src/data/levels.py::derive_structural_target` already
+# uses for target projection (`ATR * sqrt(sessions)`), on the same
+# random-walk basis — expected dispersion grows with sqrt(time), not
+# linearly. `days_held` floors at 1 session, so day-zero/day-one behaviour
+# above is UNCHANGED.
+
+def test_noise_band_widens_with_sqrt_days_held():
+    from src.risk.exit_guard import noise_band_atr
+
+    assert noise_band_atr(None) == 1.0     # missing -> floors at 1 session
+    assert noise_band_atr(0) == 1.0        # day zero -> floors at 1 session
+    assert noise_band_atr(1) == 1.0
+    assert noise_band_atr(4) == pytest.approx(2.0)    # 1.0 * sqrt(4)
+    assert noise_band_atr(10) == pytest.approx(3.1623, abs=1e-4)  # 1.0*sqrt(10)
+
+
+def test_same_raw_adverse_move_treated_differently_by_days_held():
+    """A position held 1 day and one held 10 days, hit by the SAME raw
+    1.2xATR adverse move, must now be judged differently: on day 1 that move
+    is a real break (bigger than the day-one 1.0xATR band); by day 10 the
+    same absolute move is within the position's own, much wider, still-
+    plausible noise band (1.0xATR * sqrt(10) = 3.16xATR)."""
+    from src.risk.exit_guard import adverse_move_is_noise
+
+    entry, atr = 100.0, 2.0
+    adverse_move = 1.2 * atr  # 2.4 -> 1.2xATR adverse, same for both cases
+    current = entry - adverse_move
+
+    day_1_result = adverse_move_is_noise(entry, current, atr, days_held=1)
+    day_10_result = adverse_move_is_noise(entry, current, atr, days_held=10)
+
+    assert day_1_result is False   # 1.2xATR clears the day-one 1.0xATR band
+    assert day_10_result is True   # but sits well inside the day-ten band
+    assert day_1_result != day_10_result
+
+
+def test_no_days_held_argument_reproduces_the_old_flat_band_exactly():
+    """Backward compatibility: every pre-existing call site that doesn't pass
+    `days_held` (or passes it as None) must see EXACTLY the old flat 1.0xATR
+    behaviour — sqrt(1) == 1 — so this fix changes nothing for a day-zero
+    position like the OKLO case it was already tuned against."""
+    from src.risk.exit_guard import adverse_move_is_noise
+
+    assert adverse_move_is_noise(42.59, 41.51, atr=1.6) is True
+    assert adverse_move_is_noise(42.59, 41.51, atr=1.6, days_held=None) is True
+    assert adverse_move_is_noise(42.59, 41.51, atr=1.6, days_held=1) is True
+
+
+
+def test_noise_band_uses_trading_sessions_not_calendar_days_over_a_weekend():
+    """2026-09-04 audit follow-up: a position bought Friday 2026-08-28 and
+    reviewed Monday 2026-08-31 has 3 CALENDAR days_held but only 1 real
+    TRADING SESSION behind it — the market was closed all weekend, so no
+    price action happened on days 2-3. Under the bug, `_build_position_facts`
+    fed the raw calendar count into the sqrt() scaling, giving a band of
+    1.0xATR * sqrt(3) =~ 1.73xATR — nearly double what the position's actual
+    one session of price history justifies (1.0xATR * sqrt(1) = 1.0xATR).
+
+    A 1.2xATR adverse move sits INSIDE the buggy 1.73xATR band (wrongly
+    treated as noise, blocking a legitimate exit) but OUTSIDE the correct
+    1.0xATR session-based band (correctly treated as a real break). This
+    test pins the correct, session-based answer — it fails under the old
+    calendar-day scaling and passes once `sessions_held` (weekend-aware,
+    see `trading_calendar.trading_sessions_held`) is what feeds the sqrt().
+    """
+    from datetime import date as _date
+    from src.risk.exit_guard import adverse_move_is_noise
+
+    pipeline = _pipeline()
+    monday = _date(2026, 8, 31)
+    friday = _date(2026, 8, 28)
+    buy_row = {
+        "stop_loss": 90.0, "take_profit": 140.0,
+        "timestamp": f"{friday.isoformat()} 14:00:00",
+        "expected_horizon_sessions": 15, "setup_type": "range",
+    }
+    pipeline.db.get_symbol_last_buy.return_value = buy_row
+    position = _position("AAA", avg_entry=100.0, current_price=97.6)  # 1.2xATR adverse (ATR=2.0)
+
+    with patch("src.pipeline.et_today", return_value=monday):
+        facts = pipeline._build_position_facts(
+            positions=[position], morning_trades=[], total_value=100_000.0,
+        )["AAA"]
+
+    # Sanity: calendar days_held really is 3 (Fri->Mon), the trap the old
+    # code fell into — but sessions_held (what the noise band must use) is 1.
+    assert facts["days_held"] == 3
+    assert facts["sessions_held"] == 1
+
+    # The band computed from the CORRECT (session) count must NOT treat a
+    # 1.2xATR move as noise...
+    pipeline._atr_for_symbol = MagicMock(return_value=2.0)
+    correct_result = adverse_move_is_noise(
+        100.0, 97.6, 2.0, days_held=facts["sessions_held"],
+    )
+    assert correct_result is False
+
+    # ...whereas the OLD, buggy calendar-day count would have wrongly called
+    # it noise — pinning exactly what regressed.
+    buggy_result = adverse_move_is_noise(
+        100.0, 97.6, 2.0, days_held=facts["days_held"],
+    )
+    assert buggy_result is True
+    assert correct_result != buggy_result
+
+    # End-to-end: the executor, wired through position_facts, must let this
+    # exit proceed rather than block it as noise.
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[position],
+        review=_review_with(
+            symbol="AAA", reason="thesis_invalid triggered — lost the level",
+        ),
+        run_id="r1",
+        position_facts={"AAA": facts},
+    )
+    status = pipeline.db.record_intraday_evaluation.call_args.kwargs.get("status") \
+        if pipeline.db.record_intraday_evaluation.call_args else None
+    assert status != "exit_blocked_inside_atr_noise_band"
+
 
 def test_the_oklo_case_is_blocked():
     """OKLO was bought at 42.59 and sold at 41.51 on 2026-08-26 — a 2.5% loss,
@@ -680,6 +802,31 @@ def test_executor_blocks_a_price_derived_exit_inside_the_noise_band():
             symbol="OKLO", reason="thesis_invalid triggered — lost the level",
         ),
         run_id="r1",
+    )
+    assert orders == []
+    status = pipeline.db.record_intraday_evaluation.call_args.kwargs["status"]
+    assert status == "exit_blocked_inside_atr_noise_band"
+
+
+def test_executor_widens_the_noise_band_for_an_aged_position():
+    """End-to-end version of `test_same_raw_adverse_move_treated_differently_by_days_held`
+    through `_midday_execute_llm_actions`: a position held 10 sessions, hit by
+    a 1.2xATR adverse move, now gets BLOCKED as noise (band = 1.0xATR *
+    sqrt(10) = 3.16xATR) — under the old flat 1.0xATR band this same move
+    would have cleared it and gone through untouched."""
+    pipeline = _pipeline()
+    pipeline._atr_for_symbol = MagicMock(return_value=2.0)
+    position = _position("AAA", avg_entry=100.0, current_price=97.6)  # 1.2xATR adverse
+    facts = _facts(pipeline, position, _buy_row(days_ago=10))
+    assert facts["days_held"] == 10
+
+    orders = pipeline._midday_execute_llm_actions(
+        positions=[position],
+        review=_review_with(
+            symbol="AAA", reason="thesis_invalid triggered — lost the level",
+        ),
+        run_id="r1",
+        position_facts={"AAA": facts},
     )
     assert orders == []
     status = pipeline.db.record_intraday_evaluation.call_args.kwargs["status"]

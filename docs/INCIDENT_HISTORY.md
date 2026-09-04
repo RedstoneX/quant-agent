@@ -22,6 +22,83 @@ what would catch it next time.
 
 ---
 
+### 2026-09-04 — three independent exit-management defects fixed in one PR
+
+**In plain words:** a real-data audit of tonight's exit and ranking
+behaviour found three separate problems. They live in related files and
+shipped together, but each is its own bug with its own cause and its own
+standard fix — none of them is a personal risk-preference question, so each
+was fixed against established professional practice rather than invented or
+held for individual sign-off, per explicit owner instruction. Read as three
+fixes, not one change.
+
+**Fix 1 — the "is this move noise" exit veto was flat, so it choked off
+exits on older positions.** The Position Reviewer's guard against exiting on
+an ordinary day's price wobble (`src/risk/exit_guard.py::adverse_move_is_
+noise`) compared the adverse move to a FLAT 1.0xATR band no matter how long
+the position had been held. Measured against 12 real positions opened
+before item 22's stop-floor fix: on 8 of those 12, that flat band came out
+about the same width as the entry stop itself (0.89-1.12 ATR), so almost
+every attempted early, deliberate exit was blocked — 5 of 9 real exits ended
+up as plain broker stop-outs instead. This codebase already trusts
+sqrt(time) scaling for the mirror-image question (how far a target should
+be projected, in `src/data/levels.py`), on the standard statistical basis
+that expected price dispersion grows with the square root of elapsed time,
+not linearly. The noise band now uses the same scaling and the same
+constant convention: `1.0xATR * sqrt(days_held)`, floored at one session so
+a brand-new position sees no change at all. `src/pipeline.py`'s executor was
+updated to pass the position's actual `days_held` through; before, the
+noise-band call site did not have (and did not need) that number at all.
+
+**Fix 2 — ranking ties broke alphabetically, a real and undisclosed bias.**
+Item 18's own audit (see "2026-09-03 — Phase 13, first increment" below)
+already named this as a stated but meaningless rule; this pass measured how
+often it actually fires on real days (9 of 12 eligible names tied one day,
+23 of 33 another) — common enough that "tied, so alphabetical" was
+effectively deciding which stock got picked on most trading days. Every
+early-alphabet ticker was getting a permanent, free edge that had nothing to
+do with the quality of the call. Fixed in `src/verdicts.py::rank_verdicts`:
+before falling back to the ticker symbol, ties now break on `risk_reward` —
+the reward-to-risk ratio each seat already computes and attaches as
+evidence for its own call (`VerdictEvidence(label="risk_reward", ...)`).
+That is real, already-available information about which candidate is
+actually better supported, at no new cost. Symbol is still the very last
+tiebreaker, reached only once two candidates are equal on every real signal
+this module has — at that point nothing distinguishes them anyway, so a
+fixed, reproducible order is a housekeeping need, not a bias.
+
+**Fix 3 — a "range"-type trade got zero profit protection until it hit
+100% of its target.** `src/risk/trailing.py`'s Type A (range) management —
+this desk's most common setup by real observed frequency — never moved the
+stop at all until price exceeded the full target. A trade could travel 90%
+or more of the way to its goal and give back every cent of it, with nothing
+in place the whole time; the audit flagged this as the single largest
+un-backtested, asymmetric-downside rule found in the whole exit-management
+review. Standard practice, cited across professional trading literature
+(Van Tharp's R-multiple framework, Elder's Triple Screen), is to move the
+stop to breakeven once a trade has locked in a defensible fraction of its
+planned move — conventionally +1R, one initial-risk-unit of profit. That is
+now implemented as an additive ratchet: once a range position reaches its
+entry stop's original risk distance in profit, and the stop has not already
+reached breakeven or better, the stop moves to breakeven. The existing rule
+— no *structural* trailing (following swing lows/highs) until the target is
+actually exceeded — is unchanged, and Type B (breakout) trailing, which
+already rides the position from entry, was not touched.
+
+**What would catch a regression.** `tests/test_phase3_exit_rework.py`
+(noise-band sqrt-time scaling, including a same-move/different-days-held
+comparison and an executor-level end-to-end case); `tests/test_analyst_
+verdict.py` (a real tied-score pair resolved by risk_reward instead of the
+alphabet, a no-evidence case that never crashes or wins undeservedly, and
+the real production fixture's order re-pinned to the new, non-alphabetical
+result); `tests/test_trailing_stops.py` (a range position ratcheting to
+breakeven at +1R, staying there through a hard retrace that would have given
+back the full original risk under the old logic, the short-side mirror, and
+backward compatibility for every call site that does not yet pass the new
+`initial_stop` argument).
+
+---
+
 ### 2026-09-04 — a refusal to open a position and a real order to close it were the same number
 
 **In plain words:** the desk's sizing math used the number **0%** to mean
