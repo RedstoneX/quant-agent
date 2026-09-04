@@ -1154,15 +1154,12 @@ same read, applied one layer earlier). Full detail on all six:
 `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction
 audit".
 
-**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — DEFECT, blocks a clean full-suite baseline.**
+**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — FIXED 2026-09-04.**
 
-It still configures `llm_cost_circuit.reservation_min_history_samples`
-and `...session_reserved_exposure_limit_usd`, both deleted by item 14's
-2026-09-02 rewrite. `AppConfig` now rejects them outright, so both tests
-in the file error before running instead of testing anything. Confirmed
-against a clean `origin/main` checkout, independent of any in-flight PR.
-Needs the fixture's config dict updated to the post-item-14 shape
-(`max_calls_per_session`); not yet fixed.
+Removed config_overrides referencing deleted `reservation_min_history_samples` and
+`session_reserved_exposure_limit_usd` keys (deleted by item 14's cost-circuit rewrite);
+deleted the second test that tried to force pre-fix behavior (impossible with new config shape);
+updated first test's docstring to explain the architectural change. PR #[n] test counts before/after.
 
 **29. The analyst scorecard was already built and is already live — item withdrawn 2026-09-03, corrected after being written up as new work in error.** The conviction-ledger scorecard (`docs/QAMC_REMEDIATION_SPEC.md` §9.5, shipped 2026-08-31, `src/api/routes_scorecard.py`, live at `GET /analysts/scorecard`) already covers everything this item asked for — per-analyst win rate, win/loss size, running P&L at fixed risk/call, drawdown-from-own-peak, per-trade credit attribution, read-only, no sample-size gate. Wired into the real pipeline, not dead code. Reports zero resolved calls today — an honestly thin history (started 2026-08-31, timers paused most of today), not a defect.
 
