@@ -1154,14 +1154,9 @@ same read, applied one layer earlier). Full detail on all six:
 `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction
 audit".
 
-**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — FIXED 2026-09-04.**
+**28. `test_rehearsal_reproduces_cost_ceiling.py` broken on main — FIXED 2026-09-04.** See `docs/INCIDENT_HISTORY.md`, "acceptance test broken on main by deleted cost-circuit config keys".
 
-Removed config_overrides referencing deleted `reservation_min_history_samples` and
-`session_reserved_exposure_limit_usd` keys (deleted by item 14's cost-circuit rewrite);
-deleted the second test that tried to force pre-fix behavior (impossible with new config shape);
-updated first test's docstring to explain the architectural change. PR #[n] test counts before/after.
-
-**29. The analyst scorecard was already built and is already live — item withdrawn 2026-09-03, corrected after being written up as new work in error.** The conviction-ledger scorecard (`docs/QAMC_REMEDIATION_SPEC.md` §9.5, shipped 2026-08-31, `src/api/routes_scorecard.py`, live at `GET /analysts/scorecard`) already covers everything this item asked for — per-analyst win rate, win/loss size, running P&L at fixed risk/call, drawdown-from-own-peak, per-trade credit attribution, read-only, no sample-size gate. Wired into the real pipeline, not dead code. Reports zero resolved calls today — an honestly thin history (started 2026-08-31, timers paused most of today), not a defect.
+**29. Item withdrawn 2026-09-03 — the analyst scorecard asked for as new work already existed and was already live.** See `docs/INCIDENT_HISTORY.md`, "the analyst scorecard got written up as missing work; it already existed" for full detail (`src/api/routes_scorecard.py`, `GET /analysts/scorecard`, shipped 2026-08-31).
 
 **30. The sizing path still owes the same amendment the ranking path just
 got — deliberately NOT done yet, owner should decide scope first.**
@@ -1188,6 +1183,21 @@ not the sector-adjusted stance `build_evidence_registry` already computes
 elsewhere in the same prompt. Also open: three of the four new seats'
 magnitude mappings are reasoned but unmeasured judgment calls, flagged by
 their own authors, not yet independently reviewed.
+
+**32. Tonight's exit-management audit (2026-09-04): THREE independent
+defects, all FIXED in one PR (shipped together, logically unrelated).**
+Established-practice fixes per owner instruction, not sign-off-per-item.
+Detail: `docs/INCIDENT_HISTORY.md`, "2026-09-04 — three independent
+exit-management defects fixed in one PR".
+  a. Noise-band exit veto was flat 1.0xATR regardless of holding time,
+     blocking most early exits on aging positions. Now `* sqrt(days_held)`,
+     matching `src/data/levels.py`'s target-projection convention.
+  b. Ranking ties broke alphabetically (item 18's own finding, left open;
+     measured 9/12 and 23/33 real ties). Now breaks on `risk_reward`
+     (already-computed evidence) before symbol.
+  c. Range-setup trades had zero profit protection until the full target
+     hit. Now ratchets to breakeven at +1R (Van Tharp/Elder), additive to
+     the existing target-exceeded structural trail.
 
 ---
 
