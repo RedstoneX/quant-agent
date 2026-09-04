@@ -4216,3 +4216,88 @@ model when the proxy is reachable. PR #252 merged 2026-09-04 on this
 basis. Caveat: this box's proxy credential may differ from production's;
 if a live desk run ever produces degraded earnings verdicts, re-check
 this rather than assume the n=1 result generalizes.
+
+### 2026-09-04 — six real alternatives to the shipped congressional-data sources, checked and rejected
+
+**In plain words.** After PR #271 wired in two free sources (kadoa-org/
+congress-trading-monitor as primary, congresswatch.us as cross-check),
+the owner found several other candidates via real Reddit search and
+asked for each to be checked properly rather than assumed. All six were
+tested directly, not just read about. None beat what's already shipped.
+Recorded here so a future session doesn't re-spend time re-checking the
+same six.
+
+**1. A solo developer's "Politician Trades API" on RapidAPI** (real
+Reddit thread, r/SideProject, confirmed legitimate by genuine community
+comments). Live, real backend confirmed via RapidAPI gateway responses.
+**Rejected: House-only by design** — the author deliberately excluded
+the Senate over its stricter data-usage notice. A source missing half
+of Congress is worse than no source. Free-tier quota unverified (would
+need a RapidAPI account to confirm), moot given the disqualifier.
+
+**2. "Congressional Intel" (congress.osi-cyber.com).** Real, live site;
+its real backend API was found and tested directly (`/api/v1/public/*`
+endpoints). **Rejected on multiple independent grounds:**
+- Its headline claim — filings detected within 2-3 days vs. a 45-day
+  industry standard — is contradicted by **its own API**:
+  `/public/stats` reports a real average detection time of 38 days.
+- Its actual differentiator (conflict-of-interest scoring) is entirely
+  paywalled — every scoring field returns the literal string
+  `"*** Upgrade to Premium ***"` on the free tier.
+- The free `/public/trades` endpoint is capped at 3 rows, ignores its
+  own ticker filter (`?ticker=NVDA` returned an unrelated P&G trade),
+  and has no pagination.
+- Real data-quality defects found: 91 of 238 politician names use a
+  different name-order convention than the other 147 (no
+  normalization), 33 have a null party, and at least one real person
+  (Sen. John Curtis) is split into two disconnected records with
+  divided trade histories.
+- One genuinely useful free thing, noted for future use, NOT as a data
+  source: `/api/v1/transparency/freshness` — a free, independent
+  cross-check of whether a congressional-data pipeline (any pipeline,
+  including ours) has gone stale, since it reports its own last-seen
+  disclosure dates per chamber.
+
+**3. Stocknest (stocknest.app).** **Rejected — not a User-Agent
+problem.** Every path returns a genuine Cloudflare interactive
+JS-challenge response (`cf-mitigated: challenge`), and its own
+`robots.txt` explicitly declares `ai-train=no, use=reference`. Not
+machine-accessible, and it asks not to be scraped — respected.
+
+**4. A free n8n workflow template** (r/n8n, "log US Congress stock
+trades ... to Google Sheets"). **Not a new source** — its real
+underlying data comes from a paid Apify actor (~$0.002/row), just
+repackaged into a free automation template. Real value extracted from
+it anyway: two ingestion lessons applied as bug fixes to PR #271 (see
+below) — the "P" vs "Purchase" transaction-type parsing gap, and the
+45-day legal disclosure window meaning a 30-day lookback misses real,
+late-but-legitimate filings.
+
+**5. EODHD's Congressional Trades API** (`eodhd.com/financial-apis/
+congressional-trades-api`). **Rejected.** The general free tier is
+20 API calls/day total across every EODHD product, and congressional
+trades specifically returns its own dedicated `403 — plan does not
+include Congressional Trades` error code, strongly indicating the
+dataset is gated behind a paid tier even before the 20-call ceiling
+applies. Each congress-trades call is also billed at 10x the normal
+call weight in EODHD's own documented cost table. Could not fully
+confirm the exact paid tier required without creating an account.
+
+**6. Equibles (github.com/daniel3303/Equibles), hosted free-tier
+angle.** Real, verified free tier on its hosted API: $0/month, 100
+requests/day, no card required — the only one of the six with a
+genuinely confirmed, uncapped-by-paywall free tier. **Not adopted as a
+replacement** (kadoa + congresswatch have no daily cap at all), but
+flagged as the strongest candidate for a FUTURE third cross-check.
+**Separately, the same project's self-hostable open-source angle
+surfaced via a different real Reddit thread (r/datasets, post
+`1te2a5z`) and is under active, deeper evaluation as of this entry —
+see the dedicated entry below once it lands, or `docs/WORK.md` for its
+current status if this entry hasn't been added yet.**
+
+**Also applied to PR #271 from lead #4's real lessons, not invented:**
+the transaction-type parser was fixed to recognize STOCK Act short
+codes ("P"/"S"/"E") alongside the full words it already handled, and
+the default lookback window was widened past the old 30 days to
+actually cover the real 45-day legal disclosure lag. Detail in PR
+#271's own commits.
