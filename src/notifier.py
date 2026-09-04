@@ -637,23 +637,39 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
 # correct, not noise — silence is what let this go unnoticed before.
 #
 # `"low_confidence"` (tech, 2026-09-04) is deliberately excluded from this
-# page even though it is not "ok" — a batch that resolved every symbol but
-# had the model itself flag one read as low-conviction is a real, different
-# thing from a seat that failed or went silent, and paging the owner
-# identically for both would train him to ignore this alert. It still
-# reaches `_append_trade_session_body`'s bundled "degraded:" line below and
-# still counts toward `RiskStage`'s ">= 2 degraded sources" `data_degraded`
-# advisory (`src/pipeline_stages.py`, class `RiskStage`) — both softer,
-# non-paging responses that fit a low-confidence-but-present read better
-# than a standalone alert does.
+# page for TECH SPECIFICALLY, even though it is not "ok" — a tech batch
+# that resolved every symbol but had the model itself flag one read as
+# low-conviction is a real, different thing from a seat that failed or went
+# silent, and paging the owner identically for both would train him to
+# ignore this alert. It still reaches `_append_trade_session_body`'s
+# bundled "degraded:" line below and still counts toward `RiskStage`'s
+# ">= 2 degraded sources" `data_degraded` advisory (`src/pipeline_stages.py`,
+# class `RiskStage`) — both softer, non-paging responses that fit a
+# low-confidence-but-present read better than a standalone alert does.
+#
+# This exclusion is PER-SEAT, not a bare string match, on purpose: news
+# and macro also use the literal value `"low_confidence"` (same day, same
+# convention), but for those two seats it means the WHOLE report/analysis
+# is low-confidence, not one symbol out of many resolved — a materially
+# worse situation than tech's per-symbol case, and one that SHOULD still
+# page. A flat `"low_confidence" not in (...)` check would have silently
+# suppressed those two seats' real alerts as a side effect of tech's own,
+# narrower exception — caught before merge, not after.
+_ALERT_EXEMPT_PER_SEAT: dict[str, set[str]] = {
+    "tech": {"low_confidence"},
+}
+
+
 def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
     """Fire a standalone alert when any agent's data this session was not
     clean, so a bad analyst seat can never hide inside an otherwise-normal
     run summary. Returns whether an alert was sent.
 
-    `low_confidence` is excluded on purpose — see the module comment above
-    this function for why a single self-reported low-conviction read
+    Tech's `low_confidence` is excluded on purpose — see the module comment
+    above for why a single self-reported low-conviction read on ONE symbol
     shouldn't page the owner the same way a failed or silent seat does.
+    Other seats' `low_confidence` (a whole-report signal, not per-symbol)
+    is NOT exempt and pages normally.
     """
     if not isinstance(result, dict):
         return False
@@ -662,7 +678,8 @@ def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
         return False
     bad = {
         k: v for k, v in data_status.items()
-        if v not in ("ok", "empty", "low_confidence")
+        if v not in ("ok", "empty")
+        and v not in _ALERT_EXEMPT_PER_SEAT.get(k, ())
     }
     if not bad:
         return False

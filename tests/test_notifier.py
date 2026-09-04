@@ -1968,6 +1968,26 @@ def test_low_confidence_tech_does_not_mask_a_real_failure_alert():
     assert "tech=low_confidence" not in body
 
 
+def test_low_confidence_pages_normally_for_seats_other_than_tech():
+    """The exemption is per-seat, not a bare string match: news/macro's
+    `low_confidence` means the WHOLE report is low-confidence (not one
+    symbol out of many resolved, tech's case) and must still page — proves
+    the seat-specific exemption dict, not a global `"low_confidence"`
+    exclusion, is what's actually in effect."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {
+        "run_id": "run-news-lowconf",
+        "data_status": {"tech": "ok", "news": "low_confidence", "macro": "ok"},
+    }
+    with patch("src.notifier.send_owner_alert", return_value=True) as alert:
+        fired = maybe_alert_data_quality(result, mode="morning")
+
+    assert fired is True
+    body = alert.call_args.args[0]
+    assert "news=low_confidence" in body
+
+
 def test_multiple_bad_seats_are_all_named_in_one_alert():
     from src.notifier import maybe_alert_data_quality
 
