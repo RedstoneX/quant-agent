@@ -206,19 +206,23 @@ class RiskManagerAgent(BaseAgent):
                     f" | Value: ${p.market_value:,.0f} "
                     f"({p.market_value / denom * 100:.1f}% of book)"
                 )
-            # days_held drives PM's tiered holding discipline (<5d protection
-            # period, 5-15d maturity, >15d). RM has to see the tier to tell a
-            # disciplined exit from a day-3 panic sell.
+            # days_held is informational only (spec item 25, 2026-09-03/04):
+            # holding-discipline protection is NO LONGER a function of age.
+            # It replaced a flat <5d/5-15d/>15d day-count tier (no backtest
+            # behind it, owner-rejected as arbitrary) with a deterministic,
+            # data-driven check (`check_structural_protection` /
+            # `holding_discipline_false_claim`) run in Python against each
+            # SELL/REDUCE/COVER PM actually proposes — a young position with
+            # a broken, confirmed thesis is NOT protected, and an old one
+            # with an intact thesis IS. RM cannot see that verdict before
+            # it speaks (the deterministic check runs on PM's decisions
+            # after RM's own review), so `held: Nd` here is just context,
+            # not a claim about whether an exit needs a named trigger —
+            # see config/prompts/risk_manager.md item 8 for what to actually
+            # apply.
             hist = position_history.get(p.symbol) or {}
             days = hist.get("days_held")
-            if days is None:
-                age_bit = " | held: unknown"
-            elif days < 5:
-                age_bit = f" | held: {days}d (<5d PROTECTED — SELL needs a named trigger)"
-            elif days <= 15:
-                age_bit = f" | held: {days}d (5-15d maturity)"
-            else:
-                age_bit = f" | held: {days}d (>15d)"
+            age_bit = " | held: unknown" if days is None else f" | held: {days}d"
             return (
                 f"- {p.symbol}: {p.qty} shares @ ${p.avg_entry:.2f} | "
                 f"Current: ${p.current_price:.2f} | P&L: ${p.unrealized_pnl:.2f}"
