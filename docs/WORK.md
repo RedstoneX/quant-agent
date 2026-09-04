@@ -1059,6 +1059,8 @@ narrowing it. Detail: `docs/INCIDENT_HISTORY.md`. Separate, NOT fixed here:
 the same paper says size should be relative to holdings, not an absolute
 dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 
+**39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs

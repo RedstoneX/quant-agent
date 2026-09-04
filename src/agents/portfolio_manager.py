@@ -16,6 +16,7 @@ from src.models import (
 from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
 from src.quantities import collapse_stances
 from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
+from src.risk.budget import allocate_risk_budget
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     EARNINGS_STANCE_MAX_AGE_DAYS,
@@ -28,6 +29,7 @@ from src.risk.rules import (
     stance_is_aligned,
     weight_pct_of,
 )
+from src.rotation import RotationOpportunity, evaluate_rotation_opportunity
 from src.trading_calendar import et_today
 from src.verdicts import RankedCandidate, rank_verdicts
 
@@ -522,6 +524,29 @@ class PortfolioManagerAgent(BaseAgent):
             real_reward_risk_by_symbol=kwargs.get("real_reward_risk_by_symbol"),
         )
         ranking_section = self._render_candidate_ranking(ranked, blocked)
+
+        # Phase 14 — opportunity-cost rotation. The ranking above orders
+        # eligible names; it never asks whether capital tied up in a weak
+        # holding is the actual reason a stronger new idea has no room.
+        # Silent unless the book's EXISTING risk (before anything this
+        # session proposes) already leaves less headroom than the desk's
+        # own minimum tradeable size — see `src/rotation.py` for the
+        # citations behind the margin and why the check is silent
+        # otherwise. `existing_risk_pct` is None when the book's risk is
+        # not visible this session (facts unavailable) — same fail-open
+        # posture as every other consumer of it, never a fabricated view.
+        existing_risk_pct: dict[str, float] | None = kwargs.get("existing_risk_pct")
+        max_portfolio_risk_pct = float(
+            kwargs.get("max_portfolio_risk_pct", 25.0) or 25.0
+        )
+        held_symbols = {
+            p.symbol.upper() for p in positions if getattr(p, "qty", 0)
+        }
+        rotation_section = self._render_rotation_section(
+            ranked=ranked, blocked=blocked, held_symbols=held_symbols,
+            existing_risk_pct=existing_risk_pct,
+            ceiling_pct=max_portfolio_risk_pct,
+        )
 
         # L2 memory: each position line also gets entry context + Tech rating trajectory
         # so PM can anchor "when bought / for what reason / how signal has evolved".
@@ -1098,6 +1123,8 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
 
 {ranking_section}
 
+{rotation_section}
+
 ## Canonical Current Evidence Registry (authoritative for provenance)
 {evidence_registry_text}
 
@@ -1476,6 +1503,98 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         return "\n".join(lines)
 
     @staticmethod
+    def _render_rotation_section(
+        *,
+        ranked: list[RankedCandidate],
+        blocked: dict[str, list[str]],
+        held_symbols: set[str],
+        existing_risk_pct: dict[str, float] | None,
+        ceiling_pct: float,
+    ) -> str:
+        """Phase 14 — the opportunity-cost comparison, surfaced as
+        information, never as an instruction. See `src/rotation.py` for the
+        rule, the margin and the citations behind it.
+
+        `existing_risk_pct` is the book's risk BEFORE anything this session
+        proposes — the same map `PortfolioConstructor` rations against
+        (`src/pipeline_stages.py::_book_risk_inputs`). `None` means the
+        book's risk is not visible this session (facts unavailable); the
+        check is skipped rather than run against a fabricated "book is
+        empty" view, the same fail-open posture `allocate_risk_budget`
+        itself already requires of every caller.
+        """
+        header = "## Opportunity Rotation (deterministic pre-check, Phase 14)"
+        if existing_risk_pct is None:
+            return (
+                f"{header}\n"
+                "(book risk telemetry unavailable this session — rotation "
+                "check skipped, same as every other consumer of this data)"
+            )
+        headroom_pct = allocate_risk_budget(
+            [], existing_pct=existing_risk_pct, clusters=None,
+            ceiling_pct=ceiling_pct, floor_pct=STARTER_POSITION_RISK_PCT,
+        ).headroom_pct
+        opportunity: RotationOpportunity | None = evaluate_rotation_opportunity(
+            ranked=ranked, blocked=blocked, held_symbols=held_symbols,
+            headroom_pct=headroom_pct, floor_pct=STARTER_POSITION_RISK_PCT,
+        )
+        if opportunity is None:
+            if headroom_pct < STARTER_POSITION_RISK_PCT:
+                return (
+                    f"{header}\n"
+                    f"Capital is constrained — {headroom_pct:.2f}% risk "
+                    f"headroom left against the {ceiling_pct:.2f}% ceiling "
+                    "(existing book only, before anything you propose "
+                    f"today), under the {STARTER_POSITION_RISK_PCT:.2f}% "
+                    "minimum tradeable size — but no eligible new "
+                    "candidate outranks a held position by enough to "
+                    "recommend trimming one for the other. Nothing to "
+                    "surface."
+                )
+            return (
+                f"{header}\n"
+                f"{headroom_pct:.2f}% risk headroom left against the "
+                f"{ceiling_pct:.2f}% ceiling — real room exists, so there "
+                "is nothing to rotate for."
+            )
+        lines = [
+            header,
+            f"Capital is constrained — {headroom_pct:.2f}% risk headroom "
+            f"left against the {ceiling_pct:.2f}% ceiling (existing book "
+            "only, before anything you propose today), under the "
+            f"{STARTER_POSITION_RISK_PCT:.2f}% minimum tradeable size.",
+        ]
+        if opportunity.tier == "ineligible_hold":
+            reasons = "; ".join(opportunity.reasons)
+            lines.append(
+                f"{opportunity.held_symbol} is currently held but would "
+                f"NOT be bought today — it fails this desk's own entry "
+                f"rules ({reasons}). {opportunity.new_symbol} ranks "
+                f"{opportunity.new_score:.2f} and clears every rule, but "
+                "there is no room to buy it without freeing capital first."
+            )
+        else:
+            lines.append(
+                f"{opportunity.held_symbol} is the weakest still-eligible "
+                f"held position (score {opportunity.held_score:.2f}). "
+                f"{opportunity.new_symbol} ranks {opportunity.new_score:.2f}, "
+                f"at least {opportunity.margin_pct:.0%} higher — a real "
+                "margin, not a noise-level difference (cross-sectional "
+                "replacement-rule convention; see src/rotation.py) — but "
+                "there is no room to buy it without freeing capital first."
+            )
+        lines.append(
+            "This is a comparison, not an instruction: it names the "
+            "weakest thing currently using the room and the strongest "
+            "thing there is no room for. Trimming or exiting "
+            f"{opportunity.held_symbol} to fund {opportunity.new_symbol} is "
+            "one reasonable call; doing nothing is another. Either way, an "
+            "edit to a held position needs the same substantive "
+            "justification any other exit does — this note is not one."
+        )
+        return "\n".join(lines)
+
+    @staticmethod
     def _semantic_failure(result, status: str, error: object):
         result.semantic_status = status
         result.semantic_error = str(error)
@@ -1515,6 +1634,16 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # numbers rather than on a second opinion about them.
                rr_floor: float = REWARD_RISK_FLOOR,
                starter_risk_pct: float = STARTER_POSITION_RISK_PCT,
+               # Phase 14 (opportunity-cost rotation): the EXISTING book's
+               # per-symbol risk (before anything this session proposes) and
+               # the total-risk ceiling it is rationed against — the same
+               # inputs `PortfolioConstructor` rations orders against
+               # (`src/pipeline_stages.py::_book_risk_inputs`). `None` for
+               # `existing_risk_pct` disables the rotation check for this
+               # session rather than running it against a fabricated
+               # "book is empty" view — see `_render_rotation_section`.
+               existing_risk_pct: dict[str, float] | None = None,
+               max_portfolio_risk_pct: float = 25.0,
                # 2026-09-04 fix: the SAME real derived reward:risk
                # `PortfolioConstructor.construct_orders` gates on,
                # keyed by upper-case symbol — see `candidate_eligibility`
@@ -1558,6 +1687,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # the same floor `_apply_subfloor_catalyst_rule` enforces after
             # submission, so the PM is ranked on the rule it is held to.
             rr_floor=rr_floor,
+            # Phase 14: opportunity-cost rotation pre-check inputs.
+            existing_risk_pct=existing_risk_pct,
+            max_portfolio_risk_pct=max_portfolio_risk_pct,
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
         )
         parsed = result.parse_json()

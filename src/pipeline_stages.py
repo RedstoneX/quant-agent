@@ -2631,6 +2631,16 @@ class DecisionStage:
         trading_config = getattr(pipeline.config, "trading", None)
         configured_universe = getattr(trading_config, "universe", []) or []
 
+        # Spec §2.2 — the book's EXISTING risk, before anything this session
+        # proposes. Computed here (moved up from just before the constructor
+        # call below, which still reuses this same pair) so the Phase 14
+        # opportunity-rotation pre-check can see the same numbers the
+        # constructor will later ration against, rather than a fabricated
+        # "book is empty" view. Pure function of `ctx.facts` — safe to
+        # compute this early since nothing between here and the constructor
+        # call mutates it.
+        existing_risk_pct, risk_clusters = _book_risk_inputs(ctx, total_value)
+
         # 2026-09-04 fix (audit finding): the PM's own eligibility gate
         # (`candidate_eligibility` / `_apply_subfloor_catalyst_rule`) used
         # to read `TechAnalysisResult.risk_reward` — real arithmetic, but
@@ -2704,6 +2714,13 @@ class DecisionStage:
             starter_risk_pct=float(getattr(
                 pipeline.config.risk, "min_position_risk_pct",
                 STARTER_POSITION_RISK_PCT,
+            )),
+            # Phase 14 (opportunity-cost rotation) — same book-risk snapshot
+            # and ceiling the constructor rations against below, computed
+            # once above so both stages judge the identical numbers.
+            existing_risk_pct=existing_risk_pct,
+            max_portfolio_risk_pct=float(getattr(
+                pipeline.config.risk, "max_portfolio_risk_pct", 25.0,
             )),
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
         )
@@ -2823,13 +2840,12 @@ class DecisionStage:
                 continue
             if live and live > 0:
                 price_map[sym] = live
-        # Spec §2.2 — the book's risk as the constructor must ration it. Both
-        # come from `ctx.facts`, which is exactly what the PM was shown before
-        # it decided, so the gate judges the plan against the same numbers the
-        # plan was made against. Absent facts (a stage built without them)
-        # leave both None and the portfolio ceilings unenforced rather than
+        # Spec §2.2 — the book's risk as the constructor must ration it, both
+        # already computed above (before `decide()`) so the Phase 14
+        # rotation pre-check and the constructor ration against the exact
+        # same numbers. Absent facts (a stage built without them) leaves
+        # both None and the portfolio ceilings unenforced rather than
         # enforced against a fabricated view of the book.
-        existing_risk_pct, risk_clusters = _book_risk_inputs(ctx, total_value)
         # Spec §9.4 — the SAME canonical evidence registry the PM's own
         # prompt was built from (`build_evidence_registry` is a pure
         # function of these exact inputs, so recomputing it here from the
