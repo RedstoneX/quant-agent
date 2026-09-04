@@ -1063,6 +1063,25 @@ dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 
 **39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
 
+**40. A calendar-stale smart-money trade can now be rescued by a real
+subsequent earnings report — RESTORED, PENDING REVIEW (not rejected).**
+`smart_money.py::fetch` wrote off an insider trade past `lookback_days`
+on elapsed days alone, but a slow/policy thesis is often only tested by
+the NEXT earnings report. Now checks — read-only, no LLM call — whether
+a 10-Q/10-K filed since the trade exists in the earnings analyst's own
+cache, reusing its concluded `sentiment` (`EarningsAnalysis.to_verdict`).
+Agreement rescues and outranks plain freshness; disagreement stays
+dropped as today; no filing yet unchanged. Original PR (#262) was
+mechanically auto-closed by GitHub — same cascade as item 32's PR #259,
+never judged by the owner. Restored on a fresh PR. **Real gap, disclosed
+by the design itself, not fixed:** the cache this reads survives only
+~`lookback_days`+`cluster_window_days` (9-16 days), short of the 60-90+
+days real earnings actually land apart — only catches a lucky narrow
+overlap. **Also unresolved from the original review: this PR's CI never
+actually ran** (a repo workflow gap — it only triggers against `main` as
+base, and this was previously stacked on another PR's branch) — now
+fixed by basing directly on `main`. Detail: `docs/INCIDENT_HISTORY.md`.
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs
@@ -1416,14 +1435,12 @@ Two facts worth acting on:
 Moved to `docs/INCIDENT_HISTORY.md` (2026-08-28 four-candidate reward:risk
 rejection; answer was that the targets were never real measurements).
 
-#### RECURSION FAULT IN THE BAR FETCH
-`broker.get_bars failed for DSPC: maximum recursion depth exceeded` — 14 times on 2026-08-28, all for the same symbol. Contained (the call returns an empty list rather than crashing the session) but it is a real fault, not noise. DSPC is a delisted warrant, so the trigger appears to be the fallback path handling a symbol with no data.
-
-#### DELISTED WARRANTS REACHING THE DATA LAYER
-Five symbols returned "possibly delisted; no price data found" on 2026-08-28: DSPC, SXTPW, NRSNW, LIMNW, ERNAW. All are warrants. They should not be reaching a bar fetch at all — this is universe/admission hygiene, and it is also what triggers the recursion fault above.
-
-#### EARNINGS CACHE ASSERTS PRICE-DERIVED VALUATION
-Repeated on 2026-08-28 for MTZ and KO: the cached earnings analysis asserts price-derived valuation (P/E, market cap) in `valuation_context`, but the agent was given filing text only. Pre-existing; logged as a warning and otherwise ignored.
+#### THREE SMALLER 2026-08-28 OPERATIONAL FAULTS — moved to the incident history
+Bar-fetch recursion fault on delisted warrants, delisted warrants reaching
+the data layer at all, and the earnings cache asserting a price-derived
+valuation from filing text alone. Still open. Full detail:
+`docs/INCIDENT_HISTORY.md`, 2026-08-28, "three small operational faults
+recorded together."
 
 **Set aside — small, easily forgotten**
 

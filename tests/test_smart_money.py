@@ -290,6 +290,164 @@ def test_old_14_day_window_would_have_wrongly_clustered_these(tmp_path):
     assert rows == []
 
 
+def _write_earnings_analysis(
+    earnings_dir: Path, *, symbol: str, form_type: str, filing_date: str,
+    sentiment: str, conviction: str = "high",
+) -> None:
+    """Write exactly what `EarningsAnalystAgent._save_analysis` writes: a
+    markdown file with the JSON analysis in a fenced ```json block. Used to
+    prove the smart-money freshness override reads the earnings seat's own
+    cache rather than needing a live agent/LLM call."""
+    analysis = {
+        "symbol": symbol,
+        "form_type": form_type,
+        "filing_date": filing_date,
+        "revenue": {"total": "$1.0 billion", "yoy_growth": "+5%", "segments": []},
+        "profitability": {
+            "gross_margin": "40%", "operating_margin": "15%",
+            "net_income": "$100 million", "eps": "$1.00 diluted",
+        },
+        "cash_flow": {
+            "operating_cf": "$150 million", "free_cf": "$100 million",
+            "capex": "$50 million",
+        },
+        "balance_sheet": {
+            "cash_and_equivalents": "$500 million", "total_debt": "$200 million",
+            "assessment": "Healthy",
+        },
+        "management_highlights": [],
+        "guidance": "No numeric guidance provided",
+        "investment_implications": {
+            "sentiment": sentiment,
+            "conviction": conviction,
+            "reasoning_chain": {
+                "fundamental_quality": "test",
+                "growth_trajectory": "test",
+                "strategic_risks": "test",
+                "management_execution": "test",
+                "valuation_context": "test",
+            },
+            "key_thesis": "test thesis",
+            "bull_case": "not disclosed",
+            "bear_case": "not disclosed",
+        },
+        "data_quality": "not disclosed",
+    }
+    symbol_dir = earnings_dir / symbol.upper()
+    symbol_dir.mkdir(parents=True, exist_ok=True)
+    path = symbol_dir / f"analysis_{form_type}_{filing_date}.md"
+    path.write_text(f"# {symbol} {form_type} Analysis ({filing_date})\n\n"
+                     f"```json\n{json.dumps(analysis)}\n```\n")
+
+
+def test_stale_trade_confirmed_by_later_earnings_report_is_not_discounted(tmp_path):
+    """(a) An old, calendar-stale insider BUY whose thesis a SUBSEQUENT 10-Q
+    (filed after the trade) actually confirms (bullish) must survive —
+    the real event outranks the flat calendar clock."""
+    earnings_dir = tmp_path / "earnings"
+    provider = SECForm4Provider(
+        data_dir=str(tmp_path / "sm"), earnings_data_dir=str(earnings_dir),
+    )
+    # disclosure_age_days is frozen at ingestion time in the real cache
+    # (refresh() never rewrites an existing row as it ages) — it is NOT
+    # recomputed from disclosure_date until fetch() runs, so a genuinely
+    # old cached row still carries a small stored value here, same as in
+    # production.
+    old_buy = _insider(
+        symbol="NVDA", direction="buy", value=300_000, age=40,
+    ).model_copy(update={"disclosure_age_days": 0})
+    # transaction_date = disclosure_date(today-40) - 2 days = today-42.
+    _write_earnings_analysis(
+        earnings_dir, symbol="NVDA", form_type="10-Q",
+        filing_date=(date.today() - timedelta(days=20)).isoformat(),
+        sentiment="bullish",
+    )
+    _write_rows(provider, [old_buy])
+
+    rows, error = provider.fetch(["NVDA"])
+
+    assert error is None
+    assert len(rows) == 1
+    assert rows[0].freshness == "stale"
+    assert rows[0].earnings_confirmation == "confirmed"
+    assert "10-Q" in rows[0].earnings_confirmation_reason
+
+
+def test_stale_trade_contradicted_by_later_earnings_report_stays_dropped(tmp_path):
+    """(b) Same old BUY, but the subsequent 10-Q reads bearish — the
+    original thesis was wrong. Must NOT be rescued (kept as if confirmed);
+    it stays dropped exactly like any other unconfirmed stale row."""
+    earnings_dir = tmp_path / "earnings"
+    provider = SECForm4Provider(
+        data_dir=str(tmp_path / "sm"), earnings_data_dir=str(earnings_dir),
+    )
+    # disclosure_age_days is frozen at ingestion time in the real cache
+    # (refresh() never rewrites an existing row as it ages) — it is NOT
+    # recomputed from disclosure_date until fetch() runs, so a genuinely
+    # old cached row still carries a small stored value here, same as in
+    # production.
+    old_buy = _insider(
+        symbol="NVDA", direction="buy", value=300_000, age=40,
+    ).model_copy(update={"disclosure_age_days": 0})
+    _write_earnings_analysis(
+        earnings_dir, symbol="NVDA", form_type="10-Q",
+        filing_date=(date.today() - timedelta(days=20)).isoformat(),
+        sentiment="bearish",
+    )
+    _write_rows(provider, [old_buy])
+
+    rows, error = provider.fetch(["NVDA"])
+
+    assert error is None
+    assert rows == []
+
+
+def test_stale_trade_with_no_subsequent_earnings_report_falls_back_unchanged(tmp_path):
+    """(c) Same old BUY, but no earnings filing exists at all for this
+    symbol since the trade — nothing to confirm it with yet, so today's
+    plain calendar-stale behavior (dropped) is unchanged."""
+    provider = SECForm4Provider(
+        data_dir=str(tmp_path / "sm"), earnings_data_dir=str(tmp_path / "earnings"),
+    )
+    # disclosure_age_days is frozen at ingestion time in the real cache
+    # (refresh() never rewrites an existing row as it ages) — it is NOT
+    # recomputed from disclosure_date until fetch() runs, so a genuinely
+    # old cached row still carries a small stored value here, same as in
+    # production.
+    old_buy = _insider(
+        symbol="NVDA", direction="buy", value=300_000, age=40,
+    ).model_copy(update={"disclosure_age_days": 0})
+    _write_rows(provider, [old_buy])
+
+    rows, error = provider.fetch(["NVDA"])
+
+    assert error is None
+    assert rows == []
+
+
+def test_fresh_trade_is_unaffected_by_earnings_confirmation_logic(tmp_path):
+    """(d) A genuinely fresh trade must behave exactly as it does today,
+    even when a (necessarily irrelevant) earnings analysis file exists."""
+    earnings_dir = tmp_path / "earnings"
+    provider = SECForm4Provider(
+        data_dir=str(tmp_path / "sm"), earnings_data_dir=str(earnings_dir),
+    )
+    fresh_buy = _insider(symbol="NVDA", direction="buy", value=300_000, age=2)
+    _write_earnings_analysis(
+        earnings_dir, symbol="NVDA", form_type="10-Q",
+        filing_date=(date.today() - timedelta(days=1)).isoformat(),
+        sentiment="bullish",
+    )
+    _write_rows(provider, [fresh_buy])
+
+    rows, error = provider.fetch(["NVDA"])
+
+    assert error is None
+    assert len(rows) == 1
+    assert rows[0].freshness == "fresh"
+    assert rows[0].earnings_confirmation == ""
+
+
 def test_refresh_deduplicates_accession_and_uses_descriptive_header(tmp_path, monkeypatch):
     provider = SECForm4Provider(data_dir=str(tmp_path), max_filings_per_refresh=5)
     listed = {"1045810": {"NVDA": "Nasdaq"}}
