@@ -102,6 +102,15 @@ _ROLE_RANK = {
     "historical": 0,
 }
 _FRESHNESS_RANK = {"fresh": 2, "delayed": 1, "stale": 0}
+# A calendar-stale row a subsequent earnings report actually confirmed is
+# real, current evidence the clock alone can't see — it must outrank plain
+# freshness, not just avoid being dropped. See
+# `SECForm4Provider._earnings_confirmation` / `SmartMoneyObservation.
+# earnings_confirmation`. "" covers both "never went stale" and "still
+# stale, nothing to check it against yet" — same as today. A contradicted
+# row never reaches this seat: the provider drops it like any other
+# unconfirmed stale row.
+_EARNINGS_CONFIRMATION_RANK = {"confirmed": 2, "": 1, "contradicted": 0}
 # Routine transactions carry no predictive power (docs/RESEARCH_FINDINGS.md
 # section 1). They are still presented — the operator must be able to see what
 # was discounted and why — but they lose every ranking contest.
@@ -147,6 +156,7 @@ class SmartMoneyAnalystAgent(BaseAgent):
             -int(any(row.admission_eligible for row in observations)),
             -max(_ROLE_RANK[row.economic_role] for row in observations),
             -max(_SIGNAL_CLASS_RANK[row.signal_class] for row in observations),
+            -max(_EARNINGS_CONFIRMATION_RANK[row.earnings_confirmation] for row in observations),
             -max(_FRESHNESS_RANK[row.freshness] for row in observations),
             # Value is weighted by class, so a symbol whose only large trades
             # are routine cannot outrank a smaller genuinely opportunistic one.
@@ -164,6 +174,7 @@ class SmartMoneyAnalystAgent(BaseAgent):
             -int(observation.admission_eligible),
             -_ROLE_RANK[observation.economic_role],
             -_SIGNAL_CLASS_RANK[observation.signal_class],
+            -_EARNINGS_CONFIRMATION_RANK[observation.earnings_confirmation],
             -_FRESHNESS_RANK[observation.freshness],
             -(observation.transaction_value_usd or 0) * observation.signal_weight,
             observation.disclosure_age_days,
@@ -240,6 +251,11 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 for freshness in ("fresh", "delayed", "stale")
                 if any(row.freshness == freshness for row in observations)
             },
+            # A calendar-stale row a subsequent earnings filing actually
+            # confirmed — real evidence the clock alone would have discarded.
+            "earnings_confirmed_count": sum(
+                row.earnings_confirmation == "confirmed" for row in observations
+            ),
             "latest_transaction_date": max(
                 row.transaction_date for row in observations
             ).isoformat(),
@@ -315,6 +331,10 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 "late_filing": row.late_filing,
                 "accession_number": row.accession_number,
                 "transaction_row": row.transaction_row,
+                "earnings_confirmation": row.earnings_confirmation,
+                "earnings_confirmation_reason": cls._bounded_context(
+                    row.earnings_confirmation_reason, _MAX_REASON_TEXT_CHARS,
+                ),
             } for row in representatives],
         }
 
@@ -393,6 +413,12 @@ class SmartMoneyAnalystAgent(BaseAgent):
             # is being asked to weigh — a reclassification must not replay a
             # synthesis produced before the trade was known to be routine.
             "signal_class", "signal_class_reason",
+            # Deterministic from source facts plus the earnings seat's own
+            # already-concluded verdict (`SECForm4Provider.
+            # _earnings_confirmation`) — a row moving from "" to "confirmed"
+            # changes what the model is being asked to weigh, same reasoning
+            # as `signal_class` above.
+            "earnings_confirmation", "earnings_confirmation_reason",
         )
         rows = []
         for observation in observations:
