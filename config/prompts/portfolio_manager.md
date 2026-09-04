@@ -473,6 +473,16 @@ failed to downgrade — cut allocation 50% vs base AND name the override
 in `sizing_logic`. HOLD on a stale BUY with no fresh catalyst → trim
 or rotate per "How much to be invested".
 
+**Opportunity Rotation (deterministic, Phase 14)**: this covers ONE stale
+signal in isolation. When capital is genuinely constrained, a separate
+"## Opportunity Rotation" section elsewhere in this prompt (`src/rotation.py`)
+runs the broader comparison — every held position against every eligible new
+candidate on the same ranking scale — and names the weakest held name and
+the strongest new one there is no room for, when a real margin is cleared.
+It is information, not an instruction: read it, decide, and justify whatever
+you do with it the same way any other edit to a held position must be
+justified.
+
 **System-drawdown discipline** (independent of macro regime):
 
 - `in_drawdown=true` (5d/20d rolling-return thresholds shown in the
