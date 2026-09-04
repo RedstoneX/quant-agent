@@ -3341,6 +3341,119 @@ directly.
 
 See PR merging `fix/risk-budget-partial-heat-failure`.
 
+---
+
+### 2026-09-04 — full technical inventory from the night's three parallel audits
+
+`docs/WORK.md` items 32-35 carry the headline findings from three parallel
+audits (entry/eligibility, position sizing/risk budget, exit management/
+ranking) run the same night the "no arbitrary numbers" principle was
+written down (see `docs/OUTCOME.md`). Those items are deliberately short,
+per this file's own size discipline — this entry is the full, unabridged
+catalog underneath them: every individual constant found, its
+classification (MEASURED / REASONED-DEFAULT-DISCLOSED /
+ARBITRARY-UNDISCLOSED), and its real-data doctrine check, so a future
+session or agent can find the exact file:line for any one of them without
+re-running the audits from scratch.
+
+**Full detail preserved verbatim in this session's own memory** at
+`qamc-full-audit-inventory-2026-09-04.md` — three ranked tables (one per
+audit) plus the "passes review, wrong in practice" findings from each.
+Key items already resolved same night, for quick reference:
+
+- Entry: two disjoint reward:risk gates unified (PR #257); smart-money
+  cluster window 14→2 days to match cited research (PR #260); PM
+  conviction bands restored after being compressed to fit an unrelated,
+  since-fixed cap (PR #259).
+- Sizing: single-name notional cap raised from an unratified 20% to a
+  value derived from this desk's own real stop distances (PR #258);
+  portfolio-level volatility-targeting was investigated and explicitly
+  REJECTED as importing the wrong mandate (a fund's smoothness goal, not
+  a trader's survival goal) — see `qamc-no-fund-style-sizing.md`.
+- Exit/ranking: noise-veto band now scales with √(days held) instead of a
+  flat multiplier; ranking ties now break on real reward:risk quality
+  instead of alphabetically; range-setup positions now get a standard
+  +1R breakeven ratchet instead of zero protection until full target (all
+  three: PR #256).
+
+**Not yet fixed, real and open** (ranked, full detail in the memory file):
+undisclosed drift-detection thresholds and a fixed-50%-reduce rule in
+exit management; decorative/duplicate day-count tiers in the Risk
+Manager's own maturity labels; short-selling limits that need
+re-deriving now the notional cap changed; whether the drawdown brakes
+need rescaling to the new real per-trade risk unit (a genuine open fork,
+not decided); the smart-money minimum-dollar filter, which needs insider
+holdings-size data this desk doesn't fetch yet; and a long tail of
+individually-cheap prompt-level folklore (extension guards, PE
+thresholds, stale-day counts) in the technical analyst's own prompt.
+
+**Also from the same stretch:** the two "real-looking" API keys in
+production `.env` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) were found to be
+the literal, unmodified placeholder text from this project's own
+`.env.example` (added by the original developer 2026-05-08 when
+open-sourcing the repo) — never real credentials, never exposed. Fixed
+on the box with an explanatory comment so this doesn't get re-investigated
+as a false alarm again. Separately, GitHub Pages was enabled for this repo
+(public, `main`/`docs`), so anything added to `docs/` renders at
+`https://redstonex.github.io/quant-agent/<filename>` automatically.
+
+**Real, still-open decision, not resolved here:** whether to add a live
+congressional (US House/Senate) trading data stream to the smart-money
+seat. Investigated 2026-09-04: no free, currently-reliable option exists.
+The two well-known free aggregator projects (house-stock-watcher,
+senate-stock-watcher) are both dead — one's domain no longer resolves, the
+other's last real data commit was 2021 despite its own page still
+claiming to be live. One brand-new free alternative surfaced the same
+week but is unverified, single-maintainer, no track record. Real options
+are: adopt the unproven free source and accept the risk, build in-house
+PDF parsing against the official House/Senate disclosures (real
+engineering cost, the House side is still scanned/mixed-format PDFs, not
+clean text), or pay for a commercial feed (Quiver Quantitative is the
+most API-native paid option). Owner's call — this is a new-dependency /
+reliability tradeoff, not something to adopt unilaterally.
+
+---
+
+### 2026-09-04 — merge order for tonight's open PRs (they share files, not logic)
+
+Eleven PRs from tonight's session are open at once (#249, #252, #254-#262).
+None conflict in what they DO — each is independently reviewed and correct
+on its own — but several share the same files, so merging them in the
+wrong order (or all at once) will produce ordinary git conflicts, not
+logic bugs. Recorded here so this isn't only in one session's head before
+a compaction erases it.
+
+**Known file-sharing collisions, confirmed by reading the actual diffs:**
+- `src/agents/portfolio_manager.py`: shared by #257 (reward:risk gate
+  unification) and #261 (opportunity-cost rotation).
+- `config/prompts/portfolio_manager.md`: shared by #259 (conviction-band
+  restore) and #261 (opportunity-cost rotation).
+- `docs/WORK.md` / `docs/INCIDENT_HISTORY.md`: shared by nearly all of
+  them, as usual for this project — the established convention (keep
+  both sides, reconcile headers/separators) applies same as always.
+- #261 also branched slightly before the diagram rename landed (#253) —
+  it will try to re-add `docs/verdict_pipeline.html` under its old name;
+  a rebase onto current `main` resolves this automatically, it is not a
+  real content conflict.
+
+**Recommended order, since #258/#259 are already sequential (259 is based
+on 258's branch) and #257/#261 touch the PM directly:**
+1. Merge #249, #252, #254, #255, #260 first — no shared-file overlap with
+   anything else in the list, safe to land independently once reviewed.
+2. Merge #258, then #259 (already built on top of it).
+3. Merge #257 next (PM eligibility fix).
+4. Rebase #261 onto the result, resolve the small PM-file overlap with
+   #257 and the diagram-filename artifact, then merge.
+5. #256 and #262 don't share files with the PM-touching group — safe to
+   land in parallel with steps 2-4 once independently reviewed.
+
+None of this changes what any PR does — it is purely the order to avoid
+avoidable merge conflicts. If a session resumes cold and some of these
+are already merged, this list is stale for whichever ones are done —
+check `gh pr list` for the real current state before following it blindly.
+
+---
+
 ### 2026-09-04 — earnings stopped transcribing and started concluding (item 18c)
 
 **In plain words:** the earnings seat used to hand the Portfolio Manager a
@@ -3455,3 +3568,20 @@ Google's API without going through that proxy will always fail, regardless
 of environment. The model-quality check therefore still needs to run
 through the real OneCLI-proxied path (as the production desk itself does),
 not a direct `.env` read — this is still open, not a pass or a fail.
+
+**2026-09-04 second follow-up — the live check actually succeeded, this
+note above is now stale.** An independent adversarial reviewer confirmed
+the OneCLI proxy at `127.0.0.1:10255` is reachable from this box right
+now, authenticated through it using the real production call path, and
+ran a real, current AAPL 10-Q from SEC EDGAR through the redesigned
+prompt against the live `gemini-3.5-flash-lite` model. Output was
+coherent: correct real numbers pulled from the filing, a sensible
+`sentiment`/`conviction`, and a `key_thesis` that reads as an actual
+analytical call. This is n=1, not a validated sample across the ~35
+filings/day this seat actually covers — do not treat it as a full
+model-quality sign-off — but it does answer the specific open question
+above: the redesigned prompt produces usable output on the production
+model when the proxy is reachable. PR #252 merged 2026-09-04 on this
+basis. Caveat: this box's proxy credential may differ from production's;
+if a live desk run ever produces degraded earnings verdicts, re-check
+this rather than assume the n=1 result generalizes.
