@@ -3340,3 +3340,118 @@ to pass against the fix with all four surviving — plus a companion test on
 directly.
 
 See PR merging `fix/risk-budget-partial-heat-failure`.
+
+### 2026-09-04 — earnings stopped transcribing and started concluding (item 18c)
+
+**In plain words:** the earnings seat used to hand the Portfolio Manager a
+complete extraction form for every filing — revenue, margins, guidance,
+strategy, competitive positioning, strategic risks, operational risks, data
+quality — ending in one line of actual judgement. That form was ~1,400
+characters per filing, and across the ~35 companies it covers on a normal
+day it was 70% of PM's entire 200,000-character prompt (item 18, measured
+2026-09-02) and a large share of why that one seat was 93% of the LLM bill
+(item 14). PM was doing the analyst's own summarizing work, at PM's LLM
+price, on every call. Every other analyst seat already hands PM a
+conclusion, not raw extraction — earnings was the outlier. Owner-ratified
+fix, not a design question: return a call and a short thesis, keep the full
+extraction on disk for audit.
+
+**What changed.**
+
+- `config/prompts/earnings_analyst.md`: `key_thesis` is now specified as
+  the field PM actually reads — 2-3 sentences stating the call, the single
+  strongest reason from the reasoning chain, and the condition that would
+  break it (pulled from whichever of `bull_case`/`bear_case` falsifies the
+  stated `sentiment`). The eight extraction fields are unchanged in shape
+  and are still required in full — they no longer reach PM, but
+  `position_reviewer`, `evening_analyst`, `meta_reflector`, and a human
+  pulling the record for audit still read them straight off disk.
+- `src/agents/earnings_analyst.py`: the per-filing result dict
+  (`_analyze_one`, both the fresh-analysis and cached-analysis branches) now
+  carries `analysis_path` — the pointer PM's short verdict needs to name
+  where the full extraction lives. This didn't exist on the wrapper before;
+  `EarningsReport.analysis_path` existed but nothing threaded it through to
+  the pipeline's `earnings_results` list PM actually receives.
+- `src/agents/portfolio_manager.py`: the earnings section of
+  `build_user_message` (previously ~70 lines rendering all eight fields
+  per filing) now renders four lines — `Call: <sentiment> (<conviction>)`,
+  `Thesis: <key_thesis>`, `Invalidated if: <falsifier>`, and a pointer to
+  the full extraction. It reuses `EarningsAnalysis.to_verdict()` — the same
+  Phase 13 / item 31 shape already used to rank candidates — rather than
+  building a second, different short-form representation of the same
+  report. `to_verdict()`'s own validator (`AnalystVerdict`) refuses to
+  construct a directional call with no stated invalidation, which is
+  correct for a ranking score (an unfalsifiable call should not win a
+  ranking slot) but wrong for a PROMPT (PM should see the seat's read even
+  when the analyst left `bull_case`/`bear_case` at "not disclosed" — a
+  degraded citation, not a missing one). `_render_earnings_verdict` falls
+  back to the raw `investment_implications` fields and an explicit
+  "not disclosed by the analyst" note in that case, rather than dropping
+  the filing from PM's prompt.
+
+**Measured, same method as the original 199,646-char figure**: render
+`PortfolioManagerAgent.build_user_message` over the real run-64290730 pull
+(`ops/model_policy/fixtures/run_64290730_pm_input.json`) and isolate the
+`## Earnings Analysis` section. **Before: 205,607 chars total, 140,106
+earnings (68.1%). After: 98,351 chars total, 32,850 earnings (33.4%).** The
+205,607/140,106 figures track the originally-reported 199,646/140,107
+production numbers closely (this is a rendered-fixture reconstruction, not
+the live production prompt itself — see `ops/model_policy/README.md`'s
+documented ~91% fidelity gap) but are not identical, which is expected and
+not a new discrepancy. Earnings analysis is still the single largest
+section of the prompt after this change — the volume is real (~35
+filings/day), only the per-filing verbosity was fixed here.
+
+**Tests.** `tests/test_earnings_analyst.py`:
+`test_analyze_reports_wrapper_carries_analysis_path_to_full_extraction` and
+`test_existing_analysis_wrapper_also_carries_analysis_path` prove the full
+eight-field extraction is still computed, still saved to disk, and still
+locatable from the wrapper dict for both the fresh and cached branches.
+`tests/test_portfolio_manager.py`:
+`test_earnings_section_renders_short_verdict_not_the_eight_field_form`
+proves the rendered PM prompt carries the short verdict and none of the
+old form labels (`Filing metrics:`, `Competitive positioning:`, etc.), and
+that the section is under 700 characters instead of ~1,400+;
+`test_earnings_section_falls_back_when_falsifier_undisclosed` proves the
+fallback path when `to_verdict()` refuses construction.
+
+**Exact suite counts** (branch merged onto main at item 28's fix, so the
+comparison is apples-to-apples): the earnings/PM-focused slice —
+`tests/test_earnings_analyst.py`, `test_portfolio_manager.py`,
+`test_earnings_deep_dive.py`, `test_earnings_preprocess.py`,
+`test_analyst_verdict.py` — went from **130 passed** (pre-change) to
+**134 passed** (post-change, the 4 new tests above, zero regressions).
+Full repo suite (excluding files this sandbox cannot even collect —
+`test_api_*`, `test_status_board.py` — all `ModuleNotFoundError:
+fastapi`, a missing dependency in this sandbox unrelated to this change):
+**4,438 passed, 1 skipped, 1 failed** — the 1 failure
+(`test_rehearsal_reproduces_cost_ceiling.py::
+test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure`,
+`MissingRecordedResponse` for a replay fixture) reproduces identically
+against unmodified current main, confirmed by running it there directly —
+pre-existing and unrelated to earnings or PM prompt assembly, not
+introduced by this change.
+
+**Known gap, not resolved here:** earnings runs `gemini-3.5-flash-lite`
+(Google-direct), chosen and verified for the transcription task this item
+is replacing — this item's own "the cheap-model verdict is now invalid"
+finding above applies directly: concluding is a harder task than
+extracting, and this environment has no `GOOGLE_API_KEY` to run the
+redesigned prompt against the real production model before opening the PR.
+Needs a live check on real recent filings before merge.
+
+See PR opened from `feat/earnings-analyst-concludes` (not merged — needs
+independent adversarial review, same posture as items 18a/18b/28).
+
+**2026-09-04 follow-up — the live check was attempted and is still blocked,
+plus a real finding about how credentials work on this box.** A later pass
+fetched three real, current filings straight from SEC EDGAR (AAPL, MU, UNH
+10-Qs) and ran the actual redesigned earnings agent against them — but the
+call failed before reaching the model. `GOOGLE_API_KEY` in production
+`.env` is not a real key by design: it is a placeholder, and the real
+credential is injected transparently by the OneCLI gateway proxy at call
+time (same pattern as Alpaca's keys). Reading `.env` directly and calling
+Google's API without going through that proxy will always fail, regardless
+of environment. The model-quality check therefore still needs to run
+through the real OneCLI-proxied path (as the production desk itself does),
+not a direct `.env` read — this is still open, not a pass or a fail.

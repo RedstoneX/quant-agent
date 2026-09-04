@@ -43,14 +43,8 @@ settled. Restored:**
   stays until that re-run exists. Re-running is a re-run, not a rebuild — the
   rig reads the prompt from disk.
 
-- [x] RESOLVED 2026-09-03 — Level quality bar for Phase 12.1. A stop is
-  honoured however tight only when the computed level backing it has 5+
-  touches (`risk.min_level_touches_for_stop_honor`), derived from the
-  measured touch-count table in `docs/RESEARCH_FINDINGS.md` §7 (owner
-  pre-approved going with whatever the research supports). Below the bar
-  the stop falls back to the ATR floor, same as an unbacked stop.
-  `find_structural_levels`' own `MIN_TOUCHES = 2` is unchanged — that gates
-  whether a level exists at all, a separate question. Detail:
+- [x] RESOLVED 2026-09-03 — Level quality bar for Phase 12.1 (a stop is
+  honoured however tight only when its level has 5+ touches). Detail:
   `docs/INCIDENT_HISTORY.md`, 2026-09-03 "a level needs 5 touches, not 2".
 
 - [ ] DECIDE BY 2026-09-17 — What should the macro `regime_shift`
@@ -72,12 +66,10 @@ confirm 40 still sits comfortably above the real ceiling — raise it if a
 legitimate session ever gets close, do not lower it on a hunch. Not a
 blocking decision; the mechanism is live either way.
 
-**RATIFIED 2026-09-03 — the silence-watchdog threshold (item 17c).** Owner
-rejected the 6-window (one full day) placeholder as too slow: every silent
-hour is open positions going unwatched, real opportunity cost, not an
-abstract risk. Set to **2** (roughly one hour of total desk-wide silence)
-instead — see `src/silence_watchdog.py` (`DEFAULT_SILENT_WINDOW_THRESHOLD`)
-for the reasoning on why 2 is still a strong signal despite being short.
+**RATIFIED 2026-09-03 — the silence-watchdog threshold (item 17c) set to 2
+windows (~1hr of total desk-wide silence), not the 6-window placeholder.**
+See `src/silence_watchdog.py` (`DEFAULT_SILENT_WINDOW_THRESHOLD`) and
+`docs/INCIDENT_HISTORY.md`.
 
 **DEFERRED 2026-09-03 — a second, independent alert channel beyond
 Telegram.** Owner decision: not now, bigger problems to solve first;
@@ -93,39 +85,22 @@ macro, earnings, smart_money, evening) has data-quality issues — empty
 fields, silent death, or empty data passed to the PM as if it were real.
 Audited from real production logs, not assumed. Ranked by measured severity:
 
-1. **Earnings — worst, fixed.** Text-regex section matching was unreliable
-   across filers — 12 of 67 filings (incl. MSFT/AAPL/GOOGL/BAC/CVX/NFLX)
-   extracted ZERO figures. Fixed via SEC's structured XBRL API instead. A
-   fabricated valuation claim (re-served from cache for days on KO/MTZ) is
-   now redacted with a self-healing cache. See PR merging
-   `fix/earnings-data-quality`; full detail in `docs/INCIDENT_HISTORY.md`.
+1. **Earnings — worst, fixed.** 12 of 67 filings extracted ZERO figures
+   (bad section-matching); fixed via SEC's structured XBRL API. See
+   `docs/INCIDENT_HISTORY.md`.
 2. **Smart money — fixed.** Token ceiling was 13x smaller than every
    other seat with no measured justification, truncating a real call in
-   production; resized from measured usage, truncation now gets its own
-   `data_status` value. See PR merging `fix/smart-money-tokens`; full
-   detail in `docs/INCIDENT_HISTORY.md`.
+   production. See `docs/INCIDENT_HISTORY.md`.
 3. **Tech analyst — already fixed by an earlier 2026-09-02 session**
    (`thesis_invalid_if` null crash); confirmed no recurrence post-deploy.
 4. **News analyst — root cause found and fixed: one dropped opening quote
-   broke whole-document JSON parsing, not a real 4-field gap.** Also found
-   stale: PR #217's capture built to diagnose this was never deployed (box
-   was 40 commits behind). A second, different failure (a dropped symbol
-   key) was found and left unfixed — can't be auto-repaired without
-   inventing data. Full trail: `docs/INCIDENT_HISTORY.md`, 2026-09-03.
+   broke whole-document JSON parsing, not a real 4-field gap.** See
+   `docs/INCIDENT_HISTORY.md`. **Still open:** a second, different
+   failure (a dropped symbol key) — left unfixed, can't be auto-repaired
+   without inventing data.
 5. **Evening analyst — audited. One real bug fixed, one already-fixed
-   regression confirmed closed, one is by design.** Retained logs hold 61
-   dropped-entry warnings (the "17" was stale), all isolated per-entry so
-   none tanked a whole report. Real bug: the LLM emits `""` instead of
-   `null` for optional Literal fields (`theme_durability`); the existing
-   null-coercion guard matched `None` only, so `""` fell through to
-   Literal validation and the entry got dropped (e.g. BIAF/GPRO,
-   2026-09-03). Fixed in `LLMOutputModel._explicit_null_means_absent` to
-   also treat `""` as absent. Separately confirmed: the `buy_grades`/
-   `sell_grades` scope-confusion drops (RSG etc., Aug29-Sep2) exactly
-   match tonight's already-merged scope-guard fix (#216) and stop
-   recurring after it. The `theme_if_any` rejection for real miss
-   categories (e.g. AGX) is the intended business rule, not a bug. See PR
-   merging `fix/evening-analyst-audit` and `docs/INCIDENT_HISTORY.md`.
+   regression confirmed closed, one is by design.** See
+   `docs/INCIDENT_HISTORY.md`.
 6. **Macro analyst — CORRECTED 2026-09-03, prior "no defect" claim was
    wrong.** Fires on 52% of runs, not rare. NOT a fetch/pipeline defect —
    FRED's real publication lag is 2 days, but the gate's freshness bar
@@ -555,9 +530,7 @@ deleted here to make room, which is how this file stays under its
 A risk-manager "modification" could silently cancel a SELL/COVER exit or
 ship a stop/target edit that broke the R/R or noise-band floor a fresh
 decision would have to clear. Both guards now live in
-`_apply_risk_modifications`. Full detail and tests: `docs/INCIDENT_HISTORY.md`,
-2026-09-03, "a risk-manager 'modification' could silently cancel an exit or
-ship a trade a fresh one would have been refused."
+`_apply_risk_modifications`. Full detail and tests: `docs/INCIDENT_HISTORY.md`.
 
 ### Ordered backlog — RESUME POINT
 
@@ -657,10 +630,9 @@ stuck loops" — read it as "no data yet".
 
 **2. Thirteen proposals died with no explanation anywhere — 13 of 68 (19%). PARTIALLY FIXED.**
 
-The constructor-dropped share of this bucket is fixed — full reasoning in
-`docs/INCIDENT_HISTORY.md` ("funnel item 2"). The constructor's own drop
-reason always existed as a log line but was never persisted; it now is,
-going forward only (does not retroactively explain history).
+The constructor-dropped share of this bucket is FIXED (the reason always
+existed as a log line, now persisted — going forward only). Full reasoning:
+`docs/INCIDENT_HISTORY.md` ("funnel item 2").
 
 **Still open:** the separate 9-item `order_not_placed` shape (an order was
 built and then nothing else appears in any record) — structurally different,
@@ -681,8 +653,8 @@ resolve it separately.
 
 **5. Allocation rounds to zero shares — 3 of 68 (4%). CHECKED, NOT A LIVE DEFECT.**
 
-Full reasoning + regression test: `docs/INCIDENT_HISTORY.md` ("funnel item
-5"). Fractional sizing already prevents this; the 3 hits predate it.
+Full reasoning + regression test: `docs/INCIDENT_HISTORY.md`. Fractional
+sizing already prevents this; the 3 hits predate it.
 
 **6. No structural level from which to derive a target — 3 of 68 (4%). TOO NEW TO CLASSIFY.**
 
@@ -696,7 +668,7 @@ One veto discards every trade in the plan, so its cost is superlinear.
 
 **8. Stop placed on the wrong side of entry — 2 of 68 (3%). CHECKED, NOT A DEFECT.**
 
-Full reasoning + test: `docs/INCIDENT_HISTORY.md` ("funnel item 8"). Stop is
+Full reasoning + test: `docs/INCIDENT_HISTORY.md`. Stop is
 sided correctly at ingestion; the quote moves before construction —
 refusal stands.
 
@@ -794,15 +766,14 @@ above.** Everything else in this item is implemented and tested.
 
 **15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
 
-Full reasoning: `docs/INCIDENT_HISTORY.md` ("item 15"). Held positions now
-carry real provenance (`position_mark`: kind, provider, feed, market-as-of,
-retrieved-at, freshness) — a broker mark, correctly tagged `freshness:
-"unknown"` since Alpaca supplies no mark timestamp, never fabricated as
-fresh. The bigger half — tagging live quotes and historical bars the same
-way, which is what items 5/9/11 actually need — is still open: it needs an
-owner decision on which of two competing `read_price_bars` implementations
-wins (see the rescued `rescue/price-provenance` branch's `.rej` files), which
-is a real architecture choice, not a mechanical merge.
+Full reasoning: `docs/INCIDENT_HISTORY.md` ("item 15"). Shipped: held
+positions now carry real provenance, never fabricated as fresh (Alpaca
+supplies no mark timestamp, so `freshness` is correctly tagged
+`"unknown"`). Still open, the bigger half — tagging live quotes and
+historical bars the same way, which is what items 5/9/11 actually need:
+needs an owner decision between two competing `read_price_bars`
+implementations (`rescue/price-provenance` branch), a real architecture
+choice, not a mechanical merge.
 
 **16. The afternoon spending reserve — MOOT, deleted with item 14.**
 
@@ -824,24 +795,21 @@ stopped until a person happens to look. On an unattended desk that is a day
 
 **Three distinct defects, and they compound:**
 
-  a. **SHIPPED 2026-09-03 — `LLMCostCircuitBreaker._run_with_infra_retry`.**
-     "I cannot read the budget" (transient) and "I am over budget" (real,
-     measured) no longer share an outcome: the transient path now retries
-     with backoff before latching; a real breach still latches immediately,
-     unchanged. Full detail: `docs/INCIDENT_HISTORY.md` ("item 17(a)/(b)").
-  b. **SHIPPED 2026-09-03.** A failed latch alert is now persisted (in the
-     same durable file the latch itself lives in) and retried on any later
-     boundary/process, instead of vanishing after one failed send. A real
-     second notification channel (beyond Telegram) was NOT built — that is
-     a new dependency/design tradeoff, not a retry-count choice. **DECIDE
-     BY 2026-09-17 — does the desk need a second, independent alert channel
-     beyond Telegram, and if so which one?**
+  a. **SHIPPED 2026-09-03 — `LLMCostCircuitBreaker._run_with_infra_retry`**
+     separates a transient budget-read failure (retries with backoff) from
+     a real, measured breach (latches immediately, unchanged). Full
+     detail: `docs/INCIDENT_HISTORY.md` ("item 17(a)/(b)").
+  b. **SHIPPED 2026-09-03.** A failed latch alert is now persisted and
+     retried on any later boundary/process, instead of vanishing after one
+     failed send. A real second notification channel (beyond Telegram) was
+     NOT built — a new dependency/design tradeoff, not a retry-count
+     choice. **DECIDE BY 2026-09-17 — does the desk need a second,
+     independent alert channel beyond Telegram, and if so which one?**
   c. **SHIPPED 2026-09-03 — `src/silence_watchdog.py` +
-     `scripts/silence_heartbeat.py`.** Alerts on "no completed session in N
-     scheduled windows", desk-wide, reusing the proven Telegram path. Full
-     detail: `docs/INCIDENT_HISTORY.md` ("item 17c"). **The window-count
-     threshold (6) is a placeholder, not ratified** — see the DECIDE BY
-     line above.
+     `scripts/silence_heartbeat.py`**, alerting on "no completed session in
+     N scheduled windows", desk-wide. **The window-count threshold (6) is a
+     placeholder, not ratified** — see the DECIDE BY line above. Full
+     detail: `docs/INCIDENT_HISTORY.md` ("item 17c").
 
 All three parts of item 17 are now shipped; the remaining open point is the
 second-channel decision under (b) above.
@@ -977,6 +945,50 @@ on run-64290730, the desk's six stated gates take 59 analysed names down to
 so all twelve fit at once and no cap forces a choice. **There is no ranking
 rule anywhere in the rulebook.** We have been blaming the model for a
 decision we never specified. Specify it; do not instruct harder.
+
+**THE STRUCTURAL FIX SHIPPED — 2026-09-04, PR #252, NOT MERGED (needs a
+second, independent adversarial review — same posture as item 18a/18b/28
+before it). Full detail: `docs/INCIDENT_HISTORY.md` ("item 18c").**
+
+`config/prompts/earnings_analyst.md` now tells the seat `key_thesis` is the
+ONLY thing PM sees and must be 2-3 sentences that state the call, cite the
+one strongest reason, and name the falsifier — not a one-line label.
+`src/agents/portfolio_manager.py`'s earnings-section rendering (previously
+the ~1,400-char/filing eight-field form) now emits four lines per filing:
+call, thesis, invalidation, and a pointer to the full extraction on disk
+(reuses `EarningsAnalysis.to_verdict()`, the same Phase 13/item 31 ranking
+shape, rather than a second short-form representation — falls back to the
+raw `investment_implications` fields when `to_verdict()`'s own validator
+refuses a call with no stated falsifier, so a filing is degraded in the
+prompt rather than dropped from it, which is the right trade for a PROMPT
+even though the ranking machinery is right to refuse it for a SCORE).
+**The full 8-field extraction is untouched** — still computed, still
+written to `data/earnings/{SYMBOL}/analysis_{form}_{date}.md`, still what
+`position_reviewer` / `evening_analyst` / `meta_reflector` / `tech_analyst`
+read; only what reaches PM's prompt text changed.
+
+**Measured, same method as the original 199,646-char figure** (render
+`PortfolioManagerAgent.build_user_message` over
+`ops/model_policy/fixtures/run_64290730_pm_input.json`, the real
+run-64290730 pull, and isolate the `## Earnings Analysis` section):
+**before 205,607 chars total / 140,106 earnings (68.1%) → after 98,351
+chars total / 32,850 earnings (33.4%)**. (The 205,607/140,106 rendered-fixture
+figures track the originally-reported 199,646/140,107 production figures
+closely but are not identical — same known ~9% fixture/production fidelity
+gap the harness itself documents, not a new discrepancy.) Earnings dropped
+from 70% to a third of the prompt and the prompt itself is roughly
+halved — but earnings is still the single largest section; the ~35
+filings/day couriering even a 4-line verdict each is real volume, tracked
+as a possible follow-up, not solved here.
+
+**Model-quality gap, flagged rather than shipped quietly:** earnings runs
+`gemini-3.5-flash-lite` (Google-direct, chosen for the EASIER transcription
+task per this item's own "invalid verdict" warning above). This sandbox has
+no `GOOGLE_API_KEY`, so the redesigned prompt could not be run against the
+actual production model before this PR opened. Reviewer: run a handful of
+real recent filings through the live earnings seat and manually check the
+`key_thesis` reads as a coherent 2-3 sentence call, not a degraded label,
+before merging.
 
 **Two deterministic mechanisms, neither about the model** (working in
 INCIDENT_HISTORY): the sub-floor catalyst door was famous-names-only — our own
@@ -1133,11 +1145,11 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE.** Failure-as-own-message shipped earlier (`maybe_alert_data_quality`); colour-only severity fixed 2026-09-03 across notifier/pipeline_stages/trader_feed/alert scripts (🛑/🛑🛑🛑/⚠️ + leading plain-text word). `cost_circuit.py`/`pipeline.py` still carry 🔴/🟠 — parallel work in progress. Detail: `docs/INCIDENT_HISTORY.md`, "2026-09-03 — alerts stop relying on colour".
+**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE.** Failure-as-own-message shipped earlier (`maybe_alert_data_quality`); colour-only severity fixed 2026-09-03 across notifier/pipeline_stages/trader_feed/alert scripts (🛑/🛑🛑🛑/⚠️ + leading plain-text word). `cost_circuit.py`/`pipeline.py` still carry 🔴/🟠 — parallel work in progress. Detail: `docs/INCIDENT_HISTORY.md`.
 
-**22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** Now reads `config.risk.max_position_risk_pct` instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. Detail: `docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction audit".
+**22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** Now reads `config.risk.max_position_risk_pct` instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. Detail: `docs/INCIDENT_HISTORY.md`.
 
-**23. Risk Manager edits to a trade were trusted for shape, never for substance — FIXED 2026-09-03.** Now rejects an edit that zeros an exit's allocation or breaches the R/R or noise-band floor. See `docs/INCIDENT_HISTORY.md`, "a risk-manager 'modification' could silently cancel an exit or ship a trade a fresh one would have been refused."
+**23. Risk Manager edits to a trade were trusted for shape, never for substance — FIXED 2026-09-03.** Now rejects an edit that zeros an exit's allocation or breaches the R/R or noise-band floor. See `docs/INCIDENT_HISTORY.md`.
 
 **24. The drawdown position cap could be skipped after a Risk Manager edit — FIXED 2026-09-03**, same PR as item 23.
 
@@ -1145,14 +1157,13 @@ one, and do not ship a placeholder.
 
 **26. RM modification matching is case-sensitive — FIXED 2026-09-03.** See `docs/INCIDENT_HISTORY.md`.
 
-**27. Risk budget can undercount held-book risk when heat data is partially unavailable — FIXED 2026-09-03.** Gate now requires `existing_risk_pct` before the allocator runs at all; see `docs/INCIDENT_HISTORY.md`, "a held position's risk could vanish from the portfolio ceiling if only heat data failed".
+**27. Risk budget can undercount held-book risk when heat data is partially unavailable — FIXED 2026-09-03.** Gate now requires `existing_risk_pct` before the allocator runs at all; see `docs/INCIDENT_HISTORY.md`.
 
 All six found in the same 2026-09-03 pass that read the Portfolio Manager,
 order-construction and Risk Manager code end to end for the first time
 (item 18's catalyst-door and missing-tiebreaker findings came from the
 same read, applied one layer earlier). Full detail on all six:
-`docs/INCIDENT_HISTORY.md`, "the risk manager and order-construction
-audit".
+`docs/INCIDENT_HISTORY.md`.
 
 **28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — FIXED 2026-09-04.**
 
