@@ -715,7 +715,7 @@ no bars at all, persists it, and pages the owner directly when the share
 crosses a threshold too high to be a coincidental quiet market. Full
 detail: `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 
-**12. The desk's own funnel reporting misattributes vetoes. FIXED 2026-09-03.**
+**~~12. The desk's own funnel reporting misattributes vetoes. FIXED 2026-09-03.~~**
 
 `_outcome` in `src/pipeline.py` now matches the census script: a constructor
 drop is attributed to the constructor, never to a Risk Manager veto of
@@ -789,7 +789,7 @@ Related: `qamc-openrouter-pricing-spof` records the same latch reachable via
 a stale price list. That path was fixed 2026-09-02; **this one was not** —
 the latch itself is the shared hazard, not any single route into it.
 
-**18. 70% of the PM's prompt was earnings-filing prose, not a conclusion — MEASURED 2026-09-02, FIXED AND MERGED 2026-09-04 (PR #252).**
+**18. 70% of the PM's prompt was earnings-filing prose, not a conclusion — MEASURED 2026-09-02, PARTIALLY FIXED, core cause MERGED 2026-09-04 (PR #252), real follow-ons below.**
 
 Rendered the real PM prompt for the first time (nobody ever had): 199,646
 chars, 70% raw SEC-filing extraction from one seat, the actual BUY-eligible
@@ -1094,7 +1094,7 @@ is visible instead of silent.
 
 **37. Eleven PRs open at once tonight (#249-#262) — merge ORDER matters, see `docs/INCIDENT_HISTORY.md`.** None conflict in logic; several share files (`portfolio_manager.py`/`.md` especially — #257, #259, #261). Full recommended order recorded there so it survives a compaction, not just this session's head.
 
-**38. Insider cluster window was 7x the cited research — FIXED 2026-09-04.**
+**~~38. Insider cluster window was 7x the cited research — FIXED 2026-09-04.~~**
 `smart_money.cluster_window_days` was 14 with no rationale; the cited paper
 (Alldredge & Blank, `docs/RESEARCH_FINDINGS.md`:19) defines a cluster as ~2
 days. Corrected to 2. Verified on a fresh live SEC pull: real multi-owner
