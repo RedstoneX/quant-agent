@@ -186,6 +186,69 @@ way free text can be misread — just this demonstrated one — which is
 exactly why this still only ever writes to the record rather than blocking
 a trade.
 
+**Update, same day: the flat "<5 days" protection window itself is gone.**
+The owner rejected the day-count as arbitrary — it traced to an April 2026
+commit with a stated philosophy and no backtest behind it. Protection is
+now decided by data, not a clock: a position keeps protection from a plain
+sell-with-no-real-trigger UNLESS the level actually backing its thesis has
+been broken by price. If the trade recorded its own "what proves this
+wrong" condition (`thesis_invalid_if`), that condition is checked for real
+using the price/moving-average checker built the same day
+(`check_thesis_invalid_if`, see the entry above). If none was recorded, or
+the checker can't parse it, the desk falls back to the same structural
+support/resistance level — using the same already-agreed "at least 5 real
+touches" bar that already decides whether a stop-loss is allowed to be
+honoured (`portfolio_constructor.py::_level_backing_stop`) to pick WHICH
+level backs the stop. No new number was invented anywhere in this change.
+`days_held` no longer plays any part in the decision.
+
+**Two corrections made the same day, after real technical-analysis
+practice was checked rather than assumed.** First draft: any position with
+neither a stated condition nor a qualifying structural level got no
+automatic protection at all. The owner correctly flagged this as
+systematically stripping protection from breakout/momentum trades, which
+by design don't have classic multi-touch support/resistance under them —
+that is not the same thing as "nothing backing the thesis." Fixed: that
+case now falls back to the desk's EXISTING volatility noise band (the same
+"is this adverse move real or just noise" check already used elsewhere in
+this file) rather than an automatic unprotect — no second noise-band number
+was invented for it.
+
+Second, and more important: the first design lifted protection the moment
+a break was seen on ANY single check, including mid-session. Checked
+against real trading practice, that is wrong in two ways at once — an
+intraday wick through a level that closes back inside is textbook noise,
+not a break; and even a genuine CLOSE beyond a level can be a "spring" (a
+well-documented false-breakdown pattern that often reverses bullish the
+very next day), which can take a day or two to resolve, not one same-day
+recheck. Fixed: a break is now judged ONLY on the completed DAILY CLOSE,
+by a decisive margin (the existing noise-band multiple, not the tighter
+number used only to identify which level a stop sits on), and must hold on
+TWO CONSECUTIVE TRADING DAYS' closes before protection actually lifts — a
+break-then-reclaim the next day resets to fully protected rather than
+half-confirming toward a future break. The state needed to compare against
+"yesterday's close" is a new small memory row (which trading day's close
+came back broken, per position) added alongside the desk's existing
+review-memory pattern, not a new architecture.
+
+Real, hand-computed tests (not mocked) prove all of this, including the
+most important case: a position whose close breaks a level on day one and
+reclaims it on day two never loses protection (the spring case); the same
+break confirmed on two consecutive days' closes does lift it; a close that
+dips only slightly below a level (inside the noise-band margin) is never
+read as broken at all — the same thing an intraday wick-and-recover would
+look like, since the function only ever sees a close; a position with
+neither a stated condition nor a qualifying level stays protected inside
+the noise band and loses protection only once a real adverse move exceeds
+it; and an intact thesis or level protects a position with no time limit
+at all (30 "days held" makes no difference — there is no such input any
+more). The two independent lift-protection triggers already shipped
+(regime flip, bearish state change) are unchanged, are NOT subject to this
+two-day confirmation gate (they still act same-day), and their existing
+tests still pass. Still open, unrelated to this piece: the
+`thesis_invalid_if` verification scope note above, and whether a
+proven-false claim should ever escalate beyond logging.
+
 ---
 
 ### 2026-09-03 — the other four analysts finally reach the ranking, and one real bug caught on the way in

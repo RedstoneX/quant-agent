@@ -49,6 +49,9 @@ __all__ = [
     "claims_regime_flip",
     "claims_bearish_state_change",
     "holding_discipline_false_claim",
+    "StructuralProtectionCheck",
+    "check_structural_protection",
+    "structural_protection_broken",
 ]
 
 
@@ -552,6 +555,20 @@ def check_thesis_invalid_if(
 # catalyst gate (`PortfolioManagerAgent._catalyst_cites_state_change`) fixed
 # the same day.
 #
+# UPDATE, 2026-09-03/04 — the flat "held under 5 days" window described
+# above is GONE from the code (it never had a backtest behind it, and the
+# owner rejected it as arbitrary). What counts as "protected" is now
+# `check_structural_protection`'s data-driven answer, defined further down
+# this file: intact unless the trade's own `thesis_invalid_if` or the
+# structural level backing its stop has broken on the CLOSE of a second
+# consecutive trading day (a same-day close is not enough — see
+# `check_structural_protection`'s docstring on why: a "spring" false
+# breakdown is a real, well-documented pattern), with a noise-band fallback
+# (not an automatic unprotect) when neither exists. `holding_discipline_false_claim`
+# below takes that answer as a plain `protected: bool` — everything in this
+# comment block about (a)/(b)/(c) and what gets checked is otherwise
+# unchanged.
+#
 # SCOPE — (b) and (c) ONLY. (a) is explicitly NOT verified here: evaluating
 # an arbitrary free-text `thesis_invalid_if` condition against live price
 # data is a real, separate feature (parsing "closes below the 50-day" or
@@ -685,14 +702,22 @@ def holding_discipline_false_claim(
     action: str,
     reason: str,
     symbol: str,
-    days_held: int | None,
+    protected: bool,
     macro_regime_today: str | None,
     macro_status: str | None,
     active_state_changes: str = "",
     asof: date | None = None,
 ) -> str | None:
     """Return a finding string when `reason` makes a PROVABLY FALSE holding-
-    discipline claim about a `<5d` position's exit, else None.
+    discipline claim about a PROTECTED position's exit, else None.
+
+    `protected` replaces the old flat `days_held < 5` gate (owner decision,
+    2026-09-03/04 — see `check_structural_protection`'s module note for the
+    full replacement rationale). The caller computes it once via
+    `check_structural_protection(...).protected` — data-driven and no
+    longer time-bound at all — and passes the single bool in here; this
+    function itself only decides whether the STATED (b)/(c) trigger is
+    provably real, exactly as before.
 
     Checks ONLY:
       (b) a claimed regime flip to risk-off, contradicted when today's macro
@@ -707,8 +732,10 @@ def holding_discipline_false_claim(
 
     Never flags:
       - an action other than SELL/REDUCE/COVER;
-      - a position with `days_held` unknown or >= 5 (outside the protection
-        period this checklist item governs);
+      - a position that is not currently `protected` (its thesis-backing
+        level has broken and been confirmed, or it has no basis and is
+        outside the noise band) — a plain SELL there needs no special
+        justification, so nothing here is worth checking;
       - a reason that makes neither claim;
       - a claim that cannot be checked at all (macro status not trusted, or
         no same-day row names the symbol) — absence of proof is not proof of
@@ -717,9 +744,9 @@ def holding_discipline_false_claim(
         pipeline can simply not have logged a real catalyst as a formal
         `state_change` row yet, so treating "not found" as "false" here
         would manufacture false positives on legitimate exits;
-      - (a) `thesis_invalid_if` — not evaluated at all, by design (see the
-        module-level note above), so a SELL resting entirely on (a) is never
-        flagged just because (b) and (c) are absent or unverifiable.
+      - (a) `thesis_invalid_if` — not itself re-evaluated here (it already
+        fed into `protected` upstream), so a SELL resting entirely on it is
+        never flagged just because (b) and (c) are absent or unverifiable.
 
     This is a FINDING for the audit trail, not a veto: see the module-level
     note above for why a provable false claim still is not, by itself, made
@@ -727,7 +754,7 @@ def holding_discipline_false_claim(
     """
     if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
         return None
-    if days_held is None or days_held >= 5:
+    if not protected:
         return None
     reason = reason or ""
     symbol_u = symbol.strip().upper()
@@ -770,9 +797,435 @@ def holding_discipline_false_claim(
     if not findings:
         return None
     return (
-        f"{symbol_u}: {action} on a position held {days_held}d (<5d "
-        f"protection period) — reasoning " + "; and ".join(findings) +
+        f"{symbol_u}: {action} on a structurally-protected position — "
+        f"reasoning " + "; and ".join(findings) +
         f". This is a provable contradiction of a checkable claim, not a "
         f"veto — thesis_invalid_if (which this module cannot verify either "
         f"way) may independently justify this exit. Recorded for review."
     )
+
+
+# ---------------------------------------------------------------------------
+# Structural (data-driven) holding protection — spec item 25, 2026-09-03
+# ---------------------------------------------------------------------------
+#
+# WHAT THIS REPLACES. `holding_discipline_false_claim` used to treat every
+# position with `days_held < 5` as "protected" from a plain SELL/REDUCE/COVER,
+# full stop — a flat day-count with no backtest behind it, traced to an April
+# 2026 commit that stated a philosophy ("give a thesis room to work") and
+# never measured one. The owner rejected the day count as arbitrary and
+# approved this replacement: a position is protected from a plain
+# no-real-trigger exit UNLESS the structural level actually backing its
+# thesis has been broken by price. Nothing here is time-bound; a position
+# held 30 days with an intact level is exactly as protected as one held
+# zero days with the same level intact, and a position whose level breaks
+# on day zero has no protection at all.
+#
+# WHAT "backing its thesis" MEANS, in priority order:
+#   1. The trade's own `thesis_invalid_if` (the analyst's stated falsifier,
+#      `TradeDecision.thesis_invalid_if` — PR #250), checked for real against
+#      today's price/MA data via `check_thesis_invalid_if` above. TRIGGERED
+#      means broken; NOT_TRIGGERED means intact; UNPARSEABLE falls through
+#      to (2) rather than being treated as either — an unparseable condition
+#      is not evidence either way, and a fallback the desk already trusts
+#      elsewhere is a better answer than a coin flip.
+#   2. Absent a stated condition (or given one `check_thesis_invalid_if`
+#      cannot read), the nearest VERIFIED structural level backing the
+#      position's actual stop — the exact machinery
+#      `PortfolioConstructor._level_backing_stop` already uses to decide
+#      whether a stop earns an exemption from the ATR noise floor:
+#      `computed_levels` / `computed_level_touches` (real levels, attached
+#      to the analysis in Python by `TechAnalystAgent`, never asserted by
+#      the model — see that method's docstring), gated on
+#      `min_level_touches` prior touches (the already-ratified
+#      `min_level_touches_for_stop_honor` bar, docs/RESEARCH_FINDINGS.md
+#      §7), matched to the stop within `level_match_atr_tolerance * atr`.
+#      No new constant is introduced here — both bars are the ones
+#      `_level_backing_stop` already uses, reused rather than duplicated.
+#      A long's level is "broken" when price is at or through it, i.e. no
+#      longer holding above the level by more than the same ATR tolerance;
+#      the mirror for a short is price at or through a resistance level
+#      from above.
+#   3. Neither (1) nor (2) resolves — no stated condition (or an
+#      unparseable one) AND no qualifying structural level under the stop.
+#      This is an INTENTIONAL, owner-flagged behaviour change: a thesis
+#      with nothing concrete backing it is not entitled to an automatic
+#      pass just because it is young. The caller must log this case
+#      visibly (see `holding_discipline_false_claim` below) rather than
+#      silently letting the position fall through as either protected or
+#      not.
+#
+# This module never fetches data itself — every value is a plain number,
+# string or mapping the caller already has lying around from the same
+# machinery `PortfolioConstructor` uses (bars → `compute_indicators` →
+# atr/MAs, `find_structural_levels` → computed_levels/touches). No LLM call
+# anywhere in this path.
+
+
+@dataclass(frozen=True)
+class StructuralProtectionCheck:
+    """Whether a position's thesis-backing level is still intact.
+
+    `protected` is the one field callers gate on. `basis` names which of
+    the three cases above decided it, and `detail` is a human-readable
+    reason for the audit trail / log line — see the module note above for
+    why the no-basis case in particular must never be silent.
+    """
+
+    protected: bool
+    basis: Literal[
+        "thesis_invalid_if_triggered",
+        "thesis_invalid_if_pending_confirmation",
+        "thesis_invalid_if_intact",
+        "structural_level_broken",
+        "structural_level_pending_confirmation",
+        "structural_level_intact",
+        "noise_band_intact",
+        "noise_band_broken",
+    ]
+    detail: str
+    #: True when TODAY's close (independent of the confirmation gate below)
+    #: found the thesis/level basis broken. Callers must persist this value
+    #: keyed by symbol AND today's close date, so it can be fed back in as
+    #: `break_seen_prior_close` on the NEXT TRADING DAY's read — that is the
+    #: only state this module needs to implement confirmation, and it holds
+    #: none of it itself (pure function in, pure value out).
+    raw_broken: bool = False
+
+
+def _structural_level_backing_stop(
+    *,
+    entry_price: float,
+    stop_loss: float,
+    atr: float,
+    is_short: bool,
+    computed_levels: list | None,
+    computed_level_touches: dict | None,
+    min_level_touches: int,
+    level_match_atr_tolerance: float,
+) -> float | None:
+    """The verified structural level nearest `stop_loss`, or None.
+
+    Exact same matching rule as
+    `PortfolioConstructor._level_backing_stop` (side-correctness relative
+    to entry, `min_level_touches` prior touches, closest level within
+    `level_match_atr_tolerance * atr` of the stop) — reimplemented here as
+    a free function, over the same plain data, because that method lives on
+    a class this module must not import (it would be a risk module
+    depending on the constructor, backwards from every other dependency in
+    this codebase) and because the two ATR/touch bars it reads off
+    `self.cfg` are passed in here directly by the caller instead. Any
+    behavioural drift between the two would be a bug; there is deliberately
+    only one set of numbers (the caller's config), never a second one
+    invented here.
+    """
+    tolerance = level_match_atr_tolerance * atr if atr else 0.0
+    if tolerance <= 0:
+        return None
+    touches_by_price = computed_level_touches or {}
+    best: float | None = None
+    best_gap = float("inf")
+    for raw in computed_levels or []:
+        try:
+            price = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(price) or price <= 0:
+            continue
+        if is_short and price < entry_price:
+            continue
+        if not is_short and price > entry_price:
+            continue
+        touches = touches_by_price.get(price)
+        if touches is None or touches < min_level_touches:
+            continue
+        gap = abs(stop_loss - price)
+        if gap <= tolerance and gap < best_gap:
+            best, best_gap = price, gap
+    return best
+
+
+def check_structural_protection(
+    *,
+    thesis_invalid_if: str | None,
+    current_price: float | None,
+    entry_price: float | None,
+    stop_loss: float | None,
+    atr: float | None,
+    is_short: bool = False,
+    computed_levels: list | None = None,
+    computed_level_touches: dict | None = None,
+    min_level_touches: int,
+    level_match_atr_tolerance: float,
+    ma_20: float | None = None,
+    ma_50: float | None = None,
+    ma_200: float | None = None,
+    break_seen_prior_close: bool = False,
+) -> StructuralProtectionCheck:
+    """Decide whether a position's thesis-backing level is still intact.
+
+    Pure function — every input is a plain value or mapping the caller
+    already has; nothing here calls an LLM, a broker, or a market-data
+    endpoint. See the module note above for the three-case priority order.
+
+    `current_price` MUST be the latest completed DAILY CLOSE for the
+    thesis/level basis below — never a live/intraday quote. Real trading
+    practice (and this codebase's own noise-band reasoning elsewhere) is
+    explicit that a level "breaks" on a decisive close beyond it, not on a
+    wick that pierces it and closes back inside; a same-day intrabar dip
+    through a level must never register as a break at all, closed or not.
+    `ma_20`/`ma_50`/`ma_200` must be computed off the same close.
+
+    CONFIRMATION GATE (owner refinement, 2026-09-04, corrected same day
+    after review against real technical-analysis practice). A thesis-break
+    or a structural-level break must not lift protection off a single
+    day's close — a "spring" (a level briefly breaking then reclaiming,
+    often itself a BULLISH signal) is a well-documented pattern, not a
+    real breakdown, and can take a day or two to resolve. A break lifts
+    protection only once the SAME break condition holds on the close of
+    TWO CONSECUTIVE TRADING DAYS. `break_seen_prior_close` carries that
+    state IN — true when the immediately preceding TRADING DAY's close
+    (not merely the last time this ran — several same-day pipeline cycles
+    must not double-count one close), for this same position, already
+    came back `raw_broken=True`. This read only lifts protection
+    (`protected=False`) when it is ALSO broken today, i.e. two consecutive
+    confirming closes; a single broken close returns `protected=True` with
+    a `*_pending_confirmation` basis, and a reclaim the next day resets —
+    it does NOT carry forward toward a future confirmation. The caller is
+    responsible for persisting `raw_broken` keyed by symbol AND the close's
+    own date, and feeding the prior TRADING DAY's value back in as
+    `break_seen_prior_close`; this module holds no state of its own and
+    does not know what a "day" or a "cycle" is. This gate applies ONLY to
+    the thesis/level basis below — the no-level noise-band fallback, and
+    the two independent regime-flip / bearish-state-change triggers in
+    `holding_discipline_false_claim`, all lift protection immediately,
+    unaffected by this gate.
+
+    The margin for "beyond the level" reuses `NOISE_BAND_ATR_MULTIPLE`
+    (already 1.0, already ratified for "is an adverse move real") rather
+    than the tighter `level_match_atr_tolerance` (0.25, meant only for
+    matching a level to a stop's placement, too tight to mean "decisively
+    broken") — no third constant is introduced for this.
+    """
+    text = (thesis_invalid_if or "").strip()
+    if text:
+        check = check_thesis_invalid_if(
+            text, current_price, ma_20=ma_20, ma_50=ma_50, ma_200=ma_200,
+        )
+        if check.status == "TRIGGERED":
+            if break_seen_prior_close:
+                return StructuralProtectionCheck(
+                    protected=False, basis="thesis_invalid_if_triggered",
+                    detail=(
+                        f"thesis_invalid_if triggered on two consecutive "
+                        f"trading-day closes: {check.detail}"
+                    ),
+                    raw_broken=True,
+                )
+            return StructuralProtectionCheck(
+                protected=True, basis="thesis_invalid_if_pending_confirmation",
+                detail=(
+                    f"thesis_invalid_if triggered on today's close but not "
+                    f"yet confirmed on the prior trading day's close — "
+                    f"still protected pending confirmation (guards against "
+                    f"a one-day spring/false-breakdown): {check.detail}"
+                ),
+                raw_broken=True,
+            )
+        if check.status == "NOT_TRIGGERED":
+            return StructuralProtectionCheck(
+                protected=True, basis="thesis_invalid_if_intact",
+                detail=f"thesis_invalid_if not triggered: {check.detail}",
+                raw_broken=False,
+            )
+        # UNPARSEABLE — falls through to the structural-level check below
+        # rather than being treated as protected or broken by default.
+
+    ent = _finite(entry_price)
+    stop = _finite(stop_loss)
+    atr_f = _finite(atr)
+    if ent is not None and stop is not None and atr_f is not None and atr_f > 0:
+        level = _structural_level_backing_stop(
+            entry_price=ent, stop_loss=stop, atr=atr_f, is_short=is_short,
+            computed_levels=computed_levels,
+            computed_level_touches=computed_level_touches,
+            min_level_touches=min_level_touches,
+            level_match_atr_tolerance=level_match_atr_tolerance,
+        )
+        if level is not None:
+            cur = _finite(current_price)
+            # NOTE: matching WHICH level backs the stop (above, via
+            # `_structural_level_backing_stop`) uses the tight
+            # `level_match_atr_tolerance` — "is the stop placed at this
+            # level". Deciding whether that level has since BROKEN is a
+            # different question needing a wider, decisive margin, so it
+            # reuses `NOISE_BAND_ATR_MULTIPLE` instead (see this function's
+            # docstring) — not the same number for two different purposes.
+            break_margin = NOISE_BAND_ATR_MULTIPLE * atr_f
+            # A long's support is broken when the CLOSE has fallen to/through
+            # it by at least one noise-band's worth; a short's resistance is
+            # broken when the close has risen to/through it by the same
+            # margin from below.
+            if cur is None:
+                # No close to judge against — cannot say the level has
+                # broken, so the level stays trusted (fail toward
+                # protection, same "fail closed on the side that does not
+                # ship a false 'safe to sell'" posture as
+                # `_level_backing_stop` itself uses for touch counts).
+                return StructuralProtectionCheck(
+                    protected=True, basis="structural_level_intact",
+                    detail=(
+                        f"structural level {level} backs the stop but no "
+                        f"current_price (closing price) supplied — treated "
+                        f"as intact"
+                    ),
+                    raw_broken=False,
+                )
+            if is_short:
+                broken = cur >= level + break_margin
+            else:
+                broken = cur <= level - break_margin
+            if broken:
+                if break_seen_prior_close:
+                    return StructuralProtectionCheck(
+                        protected=False, basis="structural_level_broken",
+                        detail=(
+                            f"structural level {level} backing the stop has "
+                            f"closed beyond it on two consecutive trading "
+                            f"days: close {cur} vs level {level} (break "
+                            f"margin {break_margin:.4g})"
+                        ),
+                        raw_broken=True,
+                    )
+                return StructuralProtectionCheck(
+                    protected=True,
+                    basis="structural_level_pending_confirmation",
+                    detail=(
+                        f"structural level {level} backing the stop closed "
+                        f"beyond it today but is not yet confirmed on the "
+                        f"prior trading day's close — still protected "
+                        f"pending confirmation (guards against a one-day "
+                        f"spring/false-breakdown): close {cur} vs level "
+                        f"{level} (break margin {break_margin:.4g})"
+                    ),
+                    raw_broken=True,
+                )
+            return StructuralProtectionCheck(
+                protected=True, basis="structural_level_intact",
+                detail=(
+                    f"structural level {level} backing the stop is intact: "
+                    f"close {cur} vs level {level} (break margin "
+                    f"{break_margin:.4g})"
+                ),
+                raw_broken=False,
+            )
+
+    # Neither a checkable thesis_invalid_if nor a qualifying structural
+    # level under the stop. Owner refinement 2026-09-04: this must NOT
+    # default to zero protection — that would systematically strip
+    # protection from breakout/momentum trades that don't have classic
+    # multi-touch support/resistance by design. Fall back instead to the
+    # noise band already used elsewhere in this module
+    # (`adverse_move_is_noise` / `NOISE_BAND_ATR_MULTIPLE`) — no second
+    # noise-band constant. A position with nothing concrete backing its
+    # thesis stays protected unless the adverse move against it exceeds
+    # that already-ratified band. This fallback lifts protection
+    # immediately — it is not gated by the confirmation rule above, which
+    # applies only to the thesis/level basis.
+    cur = _finite(current_price)
+    if ent is not None and atr_f is not None and atr_f > 0 and cur is not None:
+        adverse = (cur - ent) if is_short else (ent - cur)
+        if adverse <= 0:
+            # Flat or in profit — never this fallback's business.
+            return StructuralProtectionCheck(
+                protected=True, basis="noise_band_intact",
+                detail=(
+                    "no thesis_invalid_if and no verified structural level "
+                    "under the stop, but price is flat/favourable versus "
+                    "entry — protected"
+                ),
+                raw_broken=False,
+            )
+        is_noise = adverse_move_is_noise(
+            ent, cur, atr_f, side=("buy" if is_short else "sell"),
+        )
+        if is_noise:
+            return StructuralProtectionCheck(
+                protected=True, basis="noise_band_intact",
+                detail=(
+                    f"no thesis_invalid_if and no verified structural level "
+                    f"under the stop; adverse move ({adverse:.4g}) is within "
+                    f"the {NOISE_BAND_ATR_MULTIPLE}x ATR noise band — "
+                    f"protected"
+                ),
+                raw_broken=False,
+            )
+        return StructuralProtectionCheck(
+            protected=False, basis="noise_band_broken",
+            detail=(
+                f"no thesis_invalid_if and no verified structural level "
+                f"under the stop; adverse move ({adverse:.4g}) exceeds the "
+                f"{NOISE_BAND_ATR_MULTIPLE}x ATR noise band — not protected"
+            ),
+            raw_broken=False,
+        )
+
+    # No basis AND no usable price/ATR to even judge the noise band —
+    # cannot say the position has moved against it at all. Fail toward
+    # protection rather than manufacture a block out of missing data (same
+    # posture `adverse_move_is_noise` itself takes).
+    return StructuralProtectionCheck(
+        protected=True, basis="noise_band_intact",
+        detail=(
+            "no thesis_invalid_if, no verified structural level under the "
+            "stop, and insufficient price/ATR data to evaluate the noise "
+            "band — treated as protected"
+        ),
+        raw_broken=False,
+    )
+
+
+def structural_protection_broken(
+    *,
+    thesis_invalid_if: str | None,
+    current_price: float | None,
+    entry_price: float | None,
+    stop_loss: float | None,
+    atr: float | None,
+    is_short: bool = False,
+    computed_levels: list | None = None,
+    computed_level_touches: dict | None = None,
+    min_level_touches: int,
+    level_match_atr_tolerance: float,
+    ma_20: float | None = None,
+    ma_50: float | None = None,
+    ma_200: float | None = None,
+    break_seen_prior_close: bool = False,
+) -> bool:
+    """True when the position's thesis-backing level has broken and that
+    break is CONFIRMED (no protection); False when it is still intact or
+    the break is only pending confirmation (protected).
+
+    Thin bool wrapper over `check_structural_protection` — see that
+    function and the module note above for the full priority order and the
+    confirmation gate. Kept as a separate function because most callers
+    only need the yes/no answer; the caller that needs to log WHY, or that
+    needs `raw_broken` to persist for the next cycle's
+    `break_seen_prior_close` (see `holding_discipline_false_claim`), should
+    call `check_structural_protection` directly.
+    """
+    return not check_structural_protection(
+        thesis_invalid_if=thesis_invalid_if,
+        current_price=current_price,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        atr=atr,
+        is_short=is_short,
+        computed_levels=computed_levels,
+        computed_level_touches=computed_level_touches,
+        min_level_touches=min_level_touches,
+        level_match_atr_tolerance=level_match_atr_tolerance,
+        ma_20=ma_20, ma_50=ma_50, ma_200=ma_200,
+        break_seen_prior_close=break_seen_prior_close,
+    ).protected
+

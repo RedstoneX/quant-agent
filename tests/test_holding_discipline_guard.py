@@ -2,7 +2,7 @@
 compliance" checklist item (config/prompts/risk_manager.md).
 
 The checklist item was 100% prompt-only: it asked the RM to verify, for a
-SELL/REDUCE/COVER on a position held <5 days, that the reasoning names one of
+SELL/REDUCE/COVER on a PROTECTED position, that the reasoning names one of
 three allowed triggers — (a) thesis_invalid_if, (b) a regime flip to
 risk-off TODAY, or (c) a same-day HIGH-conviction bearish state_change — and
 nothing in Python checked the RM actually did that, or that the trigger
@@ -10,6 +10,14 @@ claimed is real. `holding_discipline_false_claim` covers ONLY (b) and (c):
 it flags a claim that is POSITIVELY CONTRADICTED by real data, and never
 flags anything just because it cannot be verified (which is the honest
 posture for (a), never evaluated here at all).
+
+"Protected" used to mean a flat `days_held < 5` window (no backtest behind
+it, owner-rejected as arbitrary). It is now a plain `protected: bool` the
+caller computes via `check_structural_protection` — this file tests
+`holding_discipline_false_claim` in isolation with `protected` passed
+directly; `test_structural_protection.py` covers the data-driven decision
+itself (thesis_invalid_if, structural levels, the two-cycle confirmation
+gate, and the noise-band fallback).
 
 Each test names the exact hand-computed scenario it proves.
 """
@@ -44,7 +52,7 @@ def test_false_regime_flip_claim_is_caught():
         reason="Selling ACME — macro regime flipped to risk-off today, "
                "de-risking ahead of the weekend.",
         symbol="ACME",
-        days_held=2,
+        protected=True,
         macro_regime_today="risk-on",   # real, trusted reading: NOT risk-off
         macro_status="ok",
         active_state_changes="",
@@ -67,7 +75,7 @@ def test_false_bearish_state_change_claim_is_caught():
         reason="Selling ACME on a high-conviction bearish state change "
                "reversing the entry thesis.",
         symbol="ACME",
-        days_held=1,
+        protected=True,
         macro_regime_today="risk-on",
         macro_status="ok",
         active_state_changes=active,
@@ -88,7 +96,7 @@ def test_true_regime_flip_claim_is_not_flagged():
         action="SELL",
         reason="Regime flipped to risk-off today per Macro; cutting risk.",
         symbol="ACME",
-        days_held=2,
+        protected=True,
         macro_regime_today="risk-off",   # matches the claim
         macro_status="ok",
         active_state_changes="",
@@ -104,7 +112,7 @@ def test_true_bearish_state_change_claim_is_not_flagged():
         reason="High-conviction bearish state change on ACME today directly "
                "reverses the entry thesis — exiting.",
         symbol="ACME",
-        days_held=3,
+        protected=True,
         macro_regime_today="risk-on",
         macro_status="ok",
         active_state_changes=active,
@@ -124,7 +132,7 @@ def test_thesis_invalid_if_reliance_is_never_flagged():
         reason="thesis_invalid_if triggered: ACME closed below the $142 "
                "support level named at entry.",
         symbol="ACME",
-        days_held=1,
+        protected=True,
         macro_regime_today="risk-on",   # no regime-flip claim made
         macro_status="ok",
         active_state_changes="",        # no state-change claim made
@@ -139,7 +147,7 @@ def test_unverifiable_regime_claim_is_not_flagged():
         action="SELL",
         reason="Regime flipped to risk-off today; cutting risk.",
         symbol="ACME",
-        days_held=2,
+        protected=True,
         macro_regime_today=None,
         macro_status="failed",
         active_state_changes="",
@@ -154,7 +162,7 @@ def test_unverifiable_state_change_claim_is_not_flagged():
         action="SELL",
         reason="High-conviction bearish state change on ACME today.",
         symbol="ACME",
-        days_held=2,
+        protected=True,
         macro_regime_today="risk-on",
         macro_status="ok",
         active_state_changes="",   # nothing recorded at all
@@ -166,25 +174,16 @@ def test_unverifiable_state_change_claim_is_not_flagged():
 # Scope guards
 # ---------------------------------------------------------------------------
 
-def test_position_held_5d_or_more_is_out_of_scope():
+def test_unprotected_position_is_out_of_scope():
+    """Owner replacement for the old flat day-count boundary test: a
+    position that is NOT (structurally) protected needs no special
+    justification for a plain exit, so nothing here is worth checking even
+    though the reasoning names a checkable-and-false trigger."""
     finding = holding_discipline_false_claim(
         action="SELL",
         reason="Regime flipped to risk-off today.",
         symbol="ACME",
-        days_held=5,   # exactly at the boundary — protection period is <5d
-        macro_regime_today="risk-on",
-        macro_status="ok",
-        active_state_changes="",
-    )
-    assert finding is None
-
-
-def test_unknown_days_held_is_out_of_scope():
-    finding = holding_discipline_false_claim(
-        action="SELL",
-        reason="Regime flipped to risk-off today.",
-        symbol="ACME",
-        days_held=None,
+        protected=False,
         macro_regime_today="risk-on",
         macro_status="ok",
         active_state_changes="",
@@ -197,7 +196,7 @@ def test_non_exit_action_is_out_of_scope():
         action="HOLD",
         reason="Regime flipped to risk-off today.",
         symbol="ACME",
-        days_held=1,
+        protected=True,
         macro_regime_today="risk-on",
         macro_status="ok",
         active_state_changes="",
@@ -211,7 +210,7 @@ def test_reason_naming_no_recognized_trigger_is_not_flagged():
         action="SELL",
         reason="Taking profits, thesis played out.",
         symbol="ACME",
-        days_held=1,
+        protected=True,
         macro_regime_today="risk-on",
         macro_status="ok",
         active_state_changes="",
@@ -258,7 +257,7 @@ def test_holding_discipline_false_claim_does_not_fire_on_a_denied_claim():
         action="SELL",
         reason="No regime shift to risk-off has occurred; exiting purely on thesis_invalid_if.",
         symbol="AAPL",
-        days_held=2,
+        protected=True,
         macro_regime_today="risk-on",
         macro_status="ok",
     )

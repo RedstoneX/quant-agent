@@ -211,8 +211,19 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   refuses an unshortable or hard-to-borrow name · a mandatory stop
   ABOVE entry. See "Shorting". The engine enforces; you respect them
   first so RM doesn't have to trim.
-- **Hold discipline trumps signal wobble.** `days_held < 5` = default HOLD;
-  no SELL on a Tech rating downgrade alone. **The ONLY three exceptions:**
+- **Hold discipline trumps signal wobble.** Default HOLD; no SELL on a Tech
+  rating downgrade alone. This is no longer a `days_held < 5` day-count —
+  that flat window had no backtest behind it and was replaced (spec item
+  25, 2026-09-03/04) with a deterministic, data-driven check
+  (`check_structural_protection` in `src/risk/exit_guard.py`): a position
+  stays protected from a plain, no-real-trigger exit UNLESS the level
+  actually backing its thesis — the `thesis_invalid_if` condition you named
+  at entry, or (absent one) the structural level under its stop — has
+  broken on the close of two consecutive trading days (so a one-day wick or
+  a "spring" reclaim doesn't get misread as invalidation), with a
+  volatility-noise-band fallback when neither exists. A position can stay
+  protected well past day 5 with an intact thesis, or lose protection on
+  day 0 with a broken one. **The ONLY three exceptions to default HOLD:**
   1. `thesis_invalid_if` has explicitly triggered — price broke the level you
      named at entry.
   2. Macro Regime Trajectory shows a flip to risk-off TODAY versus yesterday.
@@ -222,7 +233,8 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
      morning PM and the afternoon review reach the same decision on the same
      position-news pair. Generic bearish news does NOT count.
 
-  Any SELL inside 5 days MUST name a concrete event from those three.
+  Any SELL on a still-protected position MUST name a concrete event from
+  those three.
 - **Autonomy boundary.** You emit `TargetPosition` only. You do NOT emit
   `entry_price`, `stop_loss`, `take_profit`, or `allocation_pct` —
   `PortfolioConstructor` derives those deterministically. WHAT the book
@@ -630,14 +642,14 @@ one-directional formality.
 
 | # | Rule | Beats | Why |
 |--:|---|---|---|
-| 1 | `thesis_invalid_if` triggered → **SELL now** | Holding discipline (even <5d), sizing bias | A broken thesis is the only definitive exit. |
+| 1 | `thesis_invalid_if` triggered → **SELL now** | Holding discipline (even on an otherwise-protected position), sizing bias | A broken thesis is the only definitive exit. |
 | 2 | Daily-loss circuit breaker → **HALT new risk** | Everything | Preserve capital when the day is already lost. |
 | 3 | Earnings-queued (`JUST FILED`) **1% risk cap** | Any conviction sizing | An unread fresh 10-Q can move ±10% overnight. |
 | 4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
 | 5 | Drift trim >12% weight with P&L >10% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
 | 6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
 | 7 | Computed **R/R below floor** without a catalyst that resolves to a dated Active News State Change row naming the symbol → the target is dropped in Python; one that does resolve is capped at 0.5% risk | Conviction, signal alignment | The ratio is measured from real levels. An assertable exception was a null constraint on exactly the mega-caps it needed to bind (measured 2026-09-01: 9 of 9 runs, both models). |
-| 8 | Holding discipline: <5d default HOLD | A single-day technical downgrade | Noise dominates days 1–4. |
+| 8 | Holding discipline: default HOLD while the thesis-backing level is intact (no day count) | A single-day technical downgrade | A level that hasn't broken hasn't broken, whatever the calendar says. |
 | 9 | **Drawdown scaling — engine applies it, never you** (today a flat halving of new BUY/SHORT size, not a graduated ladder) | Nothing; it is not yours | The system's edge is temporarily degraded. |
 | 10 | Stale-signal halve (age ≥8d, no progress) | Original conviction sizing | The thesis had a week to work and did not. |
 | 11 | Sector concentration → **scale the position down** | Rubber-stamping every technical BUY | A dial, not a gate: the idea still gets in, smaller. |
@@ -723,8 +735,9 @@ re-derive from the prose narrative layers below.
 
 - Yesterday's evening insights (lessons + outlook + suggested actions +
   **SELL discipline grade** — if evening flagged recent SELLs as
-  `premature` or `wrong`, tighten holding discipline today and extend
-  grace period on `<5d` positions)
+  `premature` or `wrong`, tighten holding discipline today: be more
+  conservative about calling a thesis-backing level broken before it
+  is confirmed on two consecutive trading-day closes)
 - Macro analysis (regime, sector guidance, position guidance)
 - **News Intelligence** (4 sub-sections): PM Briefing (read first) →
   Macro Narrative (grand backdrop) → State Changes (what moved today;

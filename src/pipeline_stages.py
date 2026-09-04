@@ -3544,17 +3544,30 @@ class RiskStage:
                 )
                 return {"status": "rejected", "orders": [], "reason": reasons}
 
-        # Holding-discipline compliance — spec item 25 (2026-09-03). RM's own
-        # checklist (config/prompts/risk_manager.md, "Holding-discipline
-        # compliance") asks it to itself verify that a SELL/REDUCE/COVER on a
-        # <5d position names a real trigger; nothing in Python checked that
-        # the trigger claimed is real. `holding_discipline_false_claim` is
+        # Holding-discipline compliance — spec item 25 (2026-09-03, data-
+        # driven replacement 2026-09-03/04). RM's own checklist
+        # (config/prompts/risk_manager.md, "Holding-discipline compliance")
+        # asks it to itself verify that a SELL/REDUCE/COVER on a PROTECTED
+        # position names a real trigger; nothing in Python checked that the
+        # trigger claimed is real. `holding_discipline_false_claim` is
         # deliberately narrow — it can only ever catch a PROVABLY FALSE claim
         # about (b) a regime flip or (c) a same-day HIGH-conviction bearish
         # state_change, never (a) thesis_invalid_if, which it does not (and
         # cannot reliably) check — see that function's module docstring for
         # why, and why even a caught false claim is only ever logged/recorded
         # here, never used to veto or drop the decision.
+        #
+        # "Protected" no longer means "held under 5 days" (that flat window
+        # had no backtest behind it and the owner rejected it as arbitrary).
+        # It is now `check_structural_protection`'s data-driven answer —
+        # intact unless the trade's `thesis_invalid_if` or the structural
+        # level backing its stop has broken on the CLOSE of two consecutive
+        # trading days (`_structural_protection_for_holding` recomputes
+        # ATR/MAs/levels fresh from bars, does the cross-day confirmation
+        # lookup, and persists today's read for the next trading day to
+        # confirm against — all in one call), with a noise-band fallback —
+        # not an automatic unprotect — when neither a stated condition nor
+        # a qualifying level exists.
         if portfolio_decision.decisions:
             from src.risk.exit_guard import holding_discipline_false_claim
             macro_regime_today = _macro_regime(macro_analysis)
@@ -3571,12 +3584,30 @@ class RiskStage:
             for decision in portfolio_decision.decisions:
                 if decision.action not in ("SELL", "REDUCE", "COVER"):
                     continue
+                symbol_u = decision.symbol.strip().upper()
                 hist = rm_position_history.get(decision.symbol) or {}
+                pos = next(
+                    (p for p in rm_positions if p.symbol.upper() == symbol_u), None,
+                )
+                protection = pipeline._structural_protection_for_holding(
+                    symbol=symbol_u,
+                    thesis_invalid_if=hist.get("thesis_invalid_if"),
+                    entry_price=hist.get("entry_price"),
+                    stop_loss=hist.get("stop_loss"),
+                    is_short=bool(pos and pos.qty < 0),
+                    run_id=run_id,
+                )
+                logger.info(
+                    "Holding-discipline structural protection for %s: "
+                    "protected=%s basis=%s — %s",
+                    symbol_u, protection.protected, protection.basis,
+                    protection.detail,
+                )
                 finding = holding_discipline_false_claim(
                     action=decision.action,
                     reason=decision.reasoning,
                     symbol=decision.symbol,
-                    days_held=hist.get("days_held"),
+                    protected=protection.protected,
                     macro_regime_today=macro_regime_today,
                     macro_status=macro_status,
                     active_state_changes=hd_active_state_changes,
