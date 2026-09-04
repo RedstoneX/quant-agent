@@ -62,6 +62,9 @@ settled. Restored:**
   source VIX same-day instead of lagged FRED. Full measurement:
   `docs/INCIDENT_HISTORY.md`. Not decided.
 
+- [ ] DECIDE BY 2026-09-19 — Item 32: widened bands or an ATR/vol-parity
+  overlay? Both defensible, disagree.
+
 **RECONFIRM AFTER A FEW DAYS LIVE — item 14(c)'s call-count cap, owner
 instruction 2026-09-03.** Shipped at `max_calls_per_session: 40`, set from
 real production data (worst COMPLETE session on record made 14 calls,

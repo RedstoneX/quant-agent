@@ -223,8 +223,18 @@ def test_a_single_theme_cannot_take_the_whole_risk_budget():
 def test_the_budget_gate_is_inert_when_the_caller_supplies_no_book_risk():
     """Without `existing_risk_pct`/`clusters` the constructor has no view of
     the book's risk and must not invent one. Per-position sizing still
-    applies; the portfolio ceilings do not."""
-    constructor = PortfolioConstructor()
+    applies; the portfolio ceilings do not.
+
+    Sector concentration is a SEPARATE, unrelated ceiling that also applies
+    to these four same-sector names — since the 2026-09-04 single-name cap
+    raise (20 -> 100) each now asks for its full 50% notional rather than
+    being pre-clamped to 20%, which is enough for real, same-sector names to
+    hit the (also real, unchanged) sector hard cap. That is correct
+    behaviour, not this test's concern, so the sector dial is loosened here
+    to isolate the risk-budget gate this test is actually about."""
+    constructor = PortfolioConstructor(ConstructorConfig(
+        max_sector_pct=400.0, max_sector_hard_pct=400.0,
+    ))
     targets, analyses, prices = _nuclear_setup(*NUCLEAR)
     decisions = constructor.construct_orders(
         targets=targets, positions=[], analyses=analyses,
@@ -271,6 +281,50 @@ def test_a_full_budget_denies_a_new_name_outright():
         existing_risk_pct={"HELD": 25.0}, clusters=[],
     )
     assert decisions == []
+
+
+def test_raising_the_single_name_notional_cap_does_not_raise_the_total_risk_ceiling():
+    """2026-09-04: step 2 of the notional-cap fix, pinned as a test.
+
+    `max_position_pct` moved 20 -> 100 so a tight-but-realistic stop no
+    longer silently caps delivered risk. That is a NOTIONAL ceiling; the
+    25% `max_portfolio_risk_pct` book-wide ceiling is a separate, RISK
+    ceiling enforced earlier in the same pipeline (`allocate_risk_budget`,
+    applied before the single-name notional clamp ever runs — see
+    `_build_buy` in src/portfolio_constructor.py). Freeing the notional
+    clamp must not free the risk one: a target that would now be large
+    enough in notional terms to want more of the book still gets cut to
+    whatever total risk is actually left, exactly as it did before this
+    fix, at the SAME numbers.
+    """
+    constructor = PortfolioConstructor()
+    # A tight, realistic stop (5%) and full 5% conviction ask for 100%
+    # notional — reachable now, unlike before this fix — but the book
+    # already carries 23% of the ratified 25% ceiling, leaving only 2%.
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
+        total_value=EQUITY, price_map={"NVDA": 100.0},
+        existing_risk_pct={"HELD": 23.0}, clusters=[],
+    )
+    assert len(decisions) == 1
+    # 2% of the risk budget left, at a 5% stop: $2,000 risk / $5 per share
+    # -> 400 shares -> $40,000 -> 40% notional. Far under the new 100% (and
+    # the sector's 90%) notional ceilings — the risk ceiling is what binds,
+    # unmoved by the notional-cap change.
+    assert abs(decisions[0].allocation_pct - 40.0) < 0.05
+    assert abs(decisions[0].allocated_risk_pct - 2.0) < 0.05
+
+    # And a fully-spent 25% budget still denies the trade outright, same as
+    # test_a_full_budget_denies_a_new_name_outright above — unaffected by
+    # the single-name notional cap now being 5x looser.
+    denied = constructor.construct_orders(
+        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
+        total_value=EQUITY, price_map={"NVDA": 100.0},
+        existing_risk_pct={"HELD": 25.0}, clusters=[],
+    )
+    assert denied == []
 
 
 def test_released_risk_frees_budget_for_a_new_position():
@@ -360,8 +414,13 @@ def test_a_heat_failure_leaves_the_budget_unenforced_even_with_clusters():
     against a held book the constructor could not actually see. The fix
     requires `existing_risk_pct` before the allocator runs at all; clusters
     alone must leave the ceilings unenforced, exactly like the both-missing
-    case in `test_the_budget_gate_is_inert_when_the_caller_supplies_no_book_risk`."""
-    constructor = PortfolioConstructor()
+    case in `test_the_budget_gate_is_inert_when_the_caller_supplies_no_book_risk`.
+
+    Sector dial loosened here for the same reason as that sibling test —
+    it is a separate, unrelated ceiling this test is not about."""
+    constructor = PortfolioConstructor(ConstructorConfig(
+        max_sector_pct=400.0, max_sector_hard_pct=400.0,
+    ))
     targets, analyses, prices = _nuclear_setup(*NUCLEAR)
     decisions = constructor.construct_orders(
         targets=targets, positions=[], analyses=analyses,
@@ -467,15 +526,19 @@ def test_size_is_clamped_to_the_single_name_ceiling_not_left_to_be_blocked():
     """`max_position_pct` is a HARD BLOCK, not a trim.
 
     Risk-based sizing asks for `risk_pct x entry / (entry - stop)` of equity.
-    At a 5% stop, 2% risk asks for 40% of the book in one name — over the 20%
-    single-name ceiling. `max_position_pct` sits in `HARD_BLOCK_RULES`, so the
-    risk engine does not shrink that order, it drops it, and the trade never
-    happens. The constructor therefore has to size UNDER the ceiling itself.
+    A tight enough stop can still ask for more than the single-name ceiling
+    (100% since 2026-09-04 — see settings.yaml's `risk.max_position_pct` for
+    the full derivation) in one name. `max_position_pct` sits in
+    `HARD_BLOCK_RULES`, so the risk engine does not shrink that order, it
+    drops it, and the trade never happens. The constructor therefore has to
+    size UNDER the ceiling itself. Mechanism test — an explicit tighter
+    config is used so a realistic stop still exercises the clamp; the real
+    deployed number is covered separately below.
     """
     from src.risk.rules import RiskRuleEngine
     from src.config import RiskConfig
 
-    constructor = PortfolioConstructor()
+    constructor = PortfolioConstructor(ConstructorConfig(max_position_pct=20.0))
     decisions = constructor.construct_orders(
         targets=[_risk_target("NVDA", 2.0)], positions=[],
         analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
@@ -529,12 +592,16 @@ def test_a_tight_stop_never_produces_an_unrepresentable_allocation():
         total_value=EQUITY, price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
-    assert 0 < decisions[0].allocation_pct <= 20.0
+    assert 0 < decisions[0].allocation_pct <= 100.0
 
 
 def test_the_ceiling_accounts_for_what_is_already_held():
-    """The engine caps the POSITION, not the order, so the clamp must too."""
-    constructor = PortfolioConstructor()
+    """The engine caps the POSITION, not the order, so the clamp must too.
+
+    Mechanism test: an explicit tighter config exercises the clamp at a
+    realistic held-position size (the real 100% deployed ceiling would need
+    an implausibly large existing position to bind here at all)."""
+    constructor = PortfolioConstructor(ConstructorConfig(max_position_pct=20.0))
     decisions = constructor.construct_orders(
         targets=[_risk_target("NVDA", 5.0)],
         positions=[_pos("NVDA", qty=150, avg_entry=100, current_price=100)],  # 15%
@@ -547,7 +614,7 @@ def test_the_ceiling_accounts_for_what_is_already_held():
 
 
 def test_a_fully_sized_name_produces_no_order_rather_than_a_zero_one():
-    constructor = PortfolioConstructor()
+    constructor = PortfolioConstructor(ConstructorConfig(max_position_pct=20.0))
     decisions = constructor.construct_orders(
         targets=[_risk_target("NVDA", 5.0)],
         positions=[_pos("NVDA", qty=200, avg_entry=100, current_price=100)],  # 20%
@@ -557,36 +624,71 @@ def test_a_fully_sized_name_produces_no_order_rather_than_a_zero_one():
     assert decisions == []
 
 
-def test_the_ceiling_flattens_conviction_at_realistic_stop_distances():
-    """The consequence that needs an owner decision, pinned as a test.
+def test_the_ceiling_no_longer_flattens_conviction_at_realistic_stop_distances():
+    """2026-09-04 real-data audit, and the fix pinned as a test.
 
-    The book's 17 most recent BUYs carried stops a median 4.3% below entry
-    (min 1.8%, max 7.7%). At those distances `risk_pct x entry/(entry - stop)`
-    exceeds the 20% single-name ceiling for any conviction above ~0.9% risk,
-    so every target from moderate conviction upward is clamped to the SAME
-    20% position. Conviction stops changing the size, which is the entire
-    premise of §2.1, and the risk actually carried is `20% x stop_distance`
-    — about 0.86% at the median — not what the PM allocated.
-
-    This test does not assert that the behaviour is correct. It asserts what
-    it currently IS, so that changing any of the three ratified numbers (the
-    5%/0.5% risk envelope, the 20% single-name ceiling, or the analyst's stop
-    placement) shows up here rather than silently.
+    The book's real stops, post the 2026-08-27 ATR-floor fix, run roughly
+    5-9% below entry (`risk.min_stop_atr_multiple`'s own measurement; the
+    17-BUY 4.3%-median/1.8-7.7%-range sample below predates that floor and
+    is why it was introduced). At a 20% single-name ceiling,
+    `risk_pct x entry/(entry - stop)` exceeded it for any conviction above
+    ~1% risk at those distances, so low/moderate/high conviction all landed
+    on the SAME 20% position — conviction stopped changing the size, which
+    is the entire premise of §2.1. At the now-corrected 100% single-name
+    ceiling (settings.yaml's `risk.max_position_pct`) the same stops let
+    conviction through instead of flattening it — NVDA here is an isolated,
+    uncrowded position, so the SEPARATE sector hard cap (90%, unchanged,
+    §12.3) is what actually catches the 5%-risk/5%-stop edge case rather
+    than the single-name cap itself; that is a real, already-ratified
+    ceiling doing its own job, not this fix leaking room elsewhere.
     """
     constructor = PortfolioConstructor()
 
-    def alloc(risk_pct):
+    def alloc(risk_pct, stop):
         d = constructor.construct_orders(
             targets=[_risk_target("NVDA", risk_pct)], positions=[],
-            analyses=[_analysis("NVDA", entry=100, stop=95.7, target=140)],
+            analyses=[_analysis("NVDA", entry=100, stop=stop, target=140)],
             total_value=EQUITY, price_map={"NVDA": 100.0},
         )
         return d[0].allocation_pct
 
-    # Low, moderate and high conviction all produce an identical position.
-    assert alloc(1.0) == alloc(2.5) == alloc(5.0) == 20.0
-    # And each risks ~0.86% of equity, not the 1.0/2.5/5.0 the PM allocated.
-    assert abs(20.0 * 0.043 - 0.86) < 0.01
+    # A 5% stop (the tight end of the desk's documented real, post-floor
+    # range) and full high-conviction risk (5%) asks for exactly 100%
+    # notional — no longer clamped by the single-name cap at all — but
+    # lands on the sector's own 90% absolute ceiling (unrelated, unchanged).
+    # Delivered risk is still 4.5% (90% x 5%), against the ~1% the old 20%
+    # ceiling would have delivered here.
+    assert alloc(5.0, stop=95.0) == 90.0
+    # Low, moderate and high conviction now produce DIFFERENT positions at a
+    # realistic stop distance (7.7%, the old sample's own measured max),
+    # rather than all three flattening to one number.
+    low, moderate, high = alloc(0.5, 92.3), alloc(2.0, 92.3), alloc(5.0, 92.3)
+    assert low < moderate < high
+    assert abs(high - 5.0 / 7.7 * 100) < 0.5
+
+
+def test_the_ceiling_still_binds_a_genuinely_too_tight_stop():
+    """The backstop still does its job — it just no longer does the risk
+    engine's job too. A stop tighter than the desk's real ATR-floor-governed
+    range (only reachable via the level-backed exception down to
+    `absolute_min_stop_atr_multiple`) still gets clamped well below what
+    conviction asked for, same as before — just by a different, still-real
+    ceiling (the sector's 90% absolute cap binds ahead of the single-name
+    cap's own 100% here, exactly as it does in the realistic-stop test
+    above; either way the position is capped far short of the 200%
+    conviction asked for)."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=97.5, target=140)],  # 2.5% stop
+        total_value=EQUITY, price_map={"NVDA": 100.0},
+    )
+    assert len(decisions) == 1
+    # 5% risk / 2.5% stop asks for 200% — clamped to 90% (the sector's
+    # absolute ceiling binding ahead of the 100% single-name cap here), so
+    # delivered risk is 2.25% (90% x 2.5%), under the 5% requested but well
+    # above the ~0.5% the old 20% ceiling would have delivered here.
+    assert decisions[0].allocation_pct == 90.0
 
 
 # --------------------------------------------------------------------------

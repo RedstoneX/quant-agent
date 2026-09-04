@@ -3509,6 +3509,147 @@ to pass against the fix with all four surviving — plus a companion test on
 directly.
 
 See PR merging `fix/risk-budget-partial-heat-failure`.
+### 2026-09-04 — the notional cap, not the 5% envelope, was the real per-trade risk limit
+
+**In plain words.** The owner ratified "risk up to 5% of the book per
+trade" on 2026-08-27. A much older, unrelated rule — "never put more than
+20% of the book's notional value in one name" — sat in front of it in the
+order the constructor applies clamps, and bound first almost every time.
+`notional = risk_pct x entry / (entry - stop)`, so a 20% notional ceiling
+caps DELIVERED risk to `20% x stop_distance` regardless of what conviction
+asked for. At this desk's real stop distances (roughly 5-9%, after the
+2026-08-27 ATR-floor fix), that ceiling delivered ~1.0-1.8% risk no matter
+whether the PM asked for 1% or 5%. Real-data audit tonight: 6 of 13 real
+proposed orders pinned at exactly 20% notional; a 2.8%-risk request and a
+1.0%-risk request both delivered ~1% risk either way. The 5% figure was
+ratified but never actually reachable — closing this gap is catch-up on an
+already-made decision, not a new one.
+
+Compounding it: the PM prompt's conviction-to-risk-% bands
+(`config/prompts/portfolio_manager.md`, Step 5) were tuned DOWN on
+2026-08-27 (high 2.0-4.0% -> 1.5-3.0%, moderate 1.0-2.5% -> 1.0-2.0%,
+commit `19641f5`) specifically to fit under this wrongly-binding 20%
+ceiling, rather than the cap being sized to the mandate. And the
+drawdown-response rules (`in_drawdown` in `src/pipeline.py`: 5-day <-3% or
+20-day <-8% halves size; the 3% daily-loss circuit breaker in
+`src/risk/rules.py`/`settings.yaml`) are April-2026-era constants
+calibrated to a desk risking a fraction of a percent per trade — under the
+real ~1% delivered risk they were already too easy to trip relative to
+normal trade variance, and would be more so once real risk moves toward 5%.
+
+**The fix shipped tonight.** `risk.max_position_pct` (settings.yaml) moved
+20 -> 100, mirrored in `ConstructorConfig.max_position_pct`
+(`src/portfolio_constructor.py`) and the pipeline's fallback default. 100
+is derived from this desk's own real numbers, not picked: at the tight end
+of the documented real range (5%), 5% risk needs `5 / 5 x 100 = 100%`
+notional — and since `allow_margin` is false, 100% of one name's equity is
+already the real reachable ceiling regardless of the number configured
+here, so 100 covers the real range without inventing headroom that was
+never usable. A stop tighter than 5% — reachable today only via the
+level-backed exception down to `absolute_min_stop_atr_multiple` — still
+gets clamped, which is exactly the "genuinely too tight" case this ceiling
+exists for rather than the ordinary one. Full derivation in the
+settings.yaml and portfolio_constructor.py comments at that setting.
+
+**Interaction with the other ceilings, checked before shipping.**
+`max_portfolio_risk_pct` (25%, the book-wide risk ceiling) is enforced by
+`allocate_risk_budget` BEFORE the single-name notional clamp ever runs in
+`_build_buy`/`_build_short`, and does not read `max_position_pct` at all —
+raising the notional cap cannot raise total book risk past 25%. Pinned as
+a test:
+`test_raising_the_single_name_notional_cap_does_not_raise_the_total_risk_ceiling`
+in `tests/test_risk_based_sizing.py`. One real interaction the fix
+surfaced (not caused): `max_sector_hard_pct` (90%, spec §12.3, unchanged)
+is an ABSOLUTE per-sector ceiling that applies even to a single, uncrowded
+name — since 90 sits below the new 100, it now binds ahead of the
+single-name cap whenever an isolated position in a real sector asks for
+more than 90% notional. A 5%-risk/5%-stop request, for example, lands on
+90% notional (4.5% delivered risk) rather than the full 100%/5%. That is a
+different, already-ratified, unchanged ceiling doing its own job — not a
+gap this fix opened, and not touched, per instruction not to move sector
+caps without their own independent review. `max_single_short_pct` (10%)
+was historically "half of max_position_pct" when both were chosen at
+20/10; that relationship is now stale (shorts were out of scope for this
+fix and were not scaled with it) — the comments at that setting
+(settings.yaml, src/config.py) now say so explicitly rather than leaving
+the old, now-inaccurate "deliberately half" framing in place.
+
+**NOT shipped tonight — a genuine design fork, not decided here.** The
+conviction bands and the drawdown brakes both need re-deriving now the
+notional cap is fixed, but two materially different, both-defensible
+designs disagree on how:
+
+- **(a) Widen the bands back** toward their original 2.0-4.0% / 1.0-2.5%
+  numbers, and re-scale the drawdown brakes as multiples of the real
+  per-trade risk unit (the standard "N consecutive losing R's cuts size"
+  convention) — restoring what 2026-08-27 compressed, now that the thing
+  it was compressed for no longer applies.
+- **(b) An explicit volatility-parity overlay.** Size each trade to a
+  similar risk-CONTRIBUTION via its own ATR — standard CTA/managed-futures
+  practice — on top of what `notional = risk_pct x entry/(entry-stop)`
+  already does. Note for whoever picks this apart next: the stop is
+  already ATR-derived (`risk.min_stop_atr_multiple`), so (a) already
+  carries a form of volatility scaling through the stop-distance
+  denominator; (b) would be a SEPARATE overlay on top of that, and risks
+  double-counting volatility unless deliberately unified with (a) rather
+  than simply added alongside it.
+
+The real long-term answer — sizing risk-per-trade off this desk's own
+measured track record via fractional Kelly, using the analyst scorecard
+(`src/api/routes_scorecard.py`, `docs/WORK.md` item 29) — is not buildable
+honestly yet: that scorecard reports zero resolved calls as of tonight
+(started 2026-08-31, timers paused most of that day), and a Kelly figure
+derived from too few resolved trades would not be honest either. This is
+the correct next step once enough resolved-trade history exists, flagged
+here rather than built now.
+
+This is escalated as a genuine fork rather than resolved by picking one,
+per this task's own instruction to only escalate a real disagreement in
+established practice, not a preference question — (a) and (b) are both
+standard and materially disagree on where volatility should enter the
+sizing formula. See the pending decision in `docs/WORK.md`. The conviction
+bands and drawdown brakes are UNCHANGED pending that call.
+
+**Also noted, not a new defect.** The 20-day drawdown rule
+(`rolling_20d_pct`) cannot evaluate yet regardless of which design wins —
+the equity-curve history it reads was wiped by the deliberate 2026-09-02
+clean-slate reset, and there has not been 20 trading days of real
+evening-close rows since. Expected; it starts evaluating once that history
+accumulates.
+
+Tests: `tests/test_risk_based_sizing.py` — the single-name-ceiling section
+rewritten to use the real 100 default (mechanism tests that need a tight
+cap for isolation now pass one explicitly), plus three new tests: the
+realistic-stop-distance case no longer flattening conviction, a genuinely
+too-tight stop still binding (via the sector ceiling in practice), and the
+total-risk ceiling holding regardless of the raised notional cap. Also
+fixed two unrelated existing tests (`test_the_budget_gate_is_inert_when_
+the_caller_supplies_no_book_risk`,
+`test_a_heat_failure_leaves_the_budget_unenforced_even_with_clusters`)
+whose fixture happened to put four same-sector names at a size large
+enough, post-fix, to hit the (real, unrelated) sector hard cap — loosened
+the sector config in those two tests to keep them isolated to what they
+actually test. `tests/test_prompts_anchors.py` anchor updated to the new
+100% wording. Full suite: `tests/test_config.py`,
+`tests/test_correlation_risk.py`, `tests/test_event_risk_calendar.py`,
+`tests/test_phase2_risk_wiring.py`, `tests/test_pipeline.py`,
+`tests/test_pipeline_context.py`, `tests/test_pipeline_stages.py`,
+`tests/test_portfolio_constructor.py`, `tests/test_risk_based_sizing.py`,
+`tests/test_risk_budget.py`, `tests/test_risk_manager.py`,
+`tests/test_risk_metrics.py`, `tests/test_risk_outcome_logging.py`,
+`tests/test_risk_rules.py`, `tests/test_risk_verdict_per_symbol.py`: 520
+passed before this change, 522 after (net +2: one test renamed in place,
+two added). Risk/sector/exposure suite
+(`tests/test_risk_rules.py`, `tests/test_sector_dial.py`,
+`tests/test_gross_exposure_ladder.py`, `tests/test_gross_bearish_exposure.py`,
+`tests/test_shorts_stage3.py`, `tests/test_correlation_risk.py`,
+`tests/test_single_definition_quantities.py`, `tests/test_invariants.py`,
+`tests/test_bugfixes.py`, `tests/test_prompts_anchors.py`): 498 passed,
+unaffected.
+
+See PR `fix/single-name-notional-cap` (open, not merged — needs
+independent adversarial review before merge, same posture as every other
+risk-touching change tonight).
 
 ---
 
