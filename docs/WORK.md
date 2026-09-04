@@ -97,6 +97,7 @@ Index into the audit below, for the board — struck-through = cleared.
 **~~5. Evening analyst seat data quality — FIXED.~~**
 **6. Macro analyst seat data quality — OPEN, owner risk-threshold call needed.**
 **7. PM-input shape/volume redesign (bounded recommendation, not raw reasoning) — NOT STARTED.**
+**8. Every past model-comparison benchmark may be contaminated by bad seat data — OPEN, no re-run yet.** Same shape as the already-known spend-baseline contamination: a benchmark run before tonight's data-honesty fixes could have scored a model on how well it coped with (or quietly hid) empty/wrong input, not on real analytical quality. Combine with the PM model test itself — same re-run, same gate, not two separate jobs.
 
 Detail below, under "DATA QUALITY AUDIT" and "PM-INPUT ARCHITECTURE".
 
