@@ -3386,3 +3386,97 @@ to pass against the fix with all four surviving — plus a companion test on
 directly.
 
 See PR merging `fix/risk-budget-partial-heat-failure`.
+
+### 2026-08-28 — three small operational faults recorded together (moved from docs/WORK.md's "SMALLER, RECORDED" to make room under its byte cap)
+
+**Recursion fault in the bar fetch.** `broker.get_bars failed for DSPC:
+maximum recursion depth exceeded` — 14 times on 2026-08-28, all for the same
+symbol. Contained (the call returns an empty list rather than crashing the
+session) but it is a real fault, not noise. DSPC is a delisted warrant, so
+the trigger appears to be the fallback path handling a symbol with no data.
+
+**Delisted warrants reaching the data layer.** Five symbols returned
+"possibly delisted; no price data found" on 2026-08-28: DSPC, SXTPW, NRSNW,
+LIMNW, ERNAW. All are warrants. They should not be reaching a bar fetch at
+all — this is universe/admission hygiene, and it is also what triggers the
+recursion fault above.
+
+**Earnings cache asserts price-derived valuation.** Repeated on 2026-08-28
+for MTZ and KO: the cached earnings analysis asserts price-derived
+valuation (P/E, market cap) in `valuation_context`, but the agent was given
+filing text only. Pre-existing; logged as a warning and otherwise ignored.
+
+None of the three had a fix landed as of this record; still open, tracked
+here rather than in `docs/WORK.md` going forward.
+
+### 2026-09-04 — a calendar-stale insider trade is not necessarily a dead thesis; a subsequent earnings report can now say so
+
+**The plain-language version.** When an insider or a member of Congress
+trades a stock, the desk used to judge whether that trade still mattered
+purely by counting days: fresh for a week, "delayed" for a bit longer, then
+"stale" and effectively worthless. But a policy or slow-moving bet often
+isn't really about the next week — it's about what the company reports at
+its NEXT earnings release, which routinely lands well after that clock ran
+out. Discounting the trade on the calendar alone, with no check on whether
+that confirming event ever happened, was the same shape of mistake as the
+flat 5-day holding-protection rule fixed elsewhere this same evening (see
+item 32 above and the flat-rule entries around it): a fixed number standing
+in for a real, checkable event.
+
+**The fix.** `SECForm4Provider._earnings_confirmation`
+(`src/data/smart_money.py`) is called only once a trade has already gone
+calendar-stale in `fetch()`. It looks in the earnings analyst's own
+already-written cache (`data/earnings/<symbol>/analysis_<form>_<date>.md`,
+the exact file `EarningsAnalystAgent._save_analysis` writes) for the
+earliest 10-Q/10-K filed strictly after the trade's transaction date, and
+reads that filing's own concluded sentiment via
+`EarningsAnalysis.to_verdict()` — no new earnings-date lookup was built,
+and no LLM call of any kind runs here; this is a plain read of a verdict
+the earnings seat already committed to disk for its own reasons.
+
+Three real outcomes, all deterministic:
+- **Confirmed** — the filing's sentiment agrees with the trade's direction
+  (buy→bullish, sell→bearish). The observation survives the calendar-stale
+  drop it would otherwise hit, keeps its honest `freshness="stale"` label
+  (this is not overloaded to mean something it no longer measures), and
+  gets a new `earnings_confirmation="confirmed"` field that outranks plain
+  freshness in `smart_money_analyst.py`'s ranking (`_EARNINGS_CONFIRMATION_
+  RANK`) and clears `SmartMoneyFinding.support_eligible` despite the stale
+  label (`src/models.py`).
+- **Contradicted** — the filing disagrees. The observation is NOT rescued;
+  it is dropped exactly like any other unconfirmed stale row today. It is
+  never presented as if it were confirmed.
+- **Nothing to check yet** — no qualifying filing exists. Falls back to
+  exactly today's calendar-only behavior (dropped once past
+  `lookback_days`). This is the honest answer when there is genuinely
+  nothing to confirm the thesis with.
+
+A genuinely fresh trade is untouched — the check only ever runs once a
+trade is already calendar-stale, so it can never manufacture confidence a
+fresh trade doesn't already have.
+
+**Known, flagged limitation — NOT fixed here, reported as a structural
+question rather than silently built around.** `observations.json` itself
+is pruned during `refresh()` to `lookback_days + cluster_window_days` old
+(production config: 7 + 2 = 9 days; the class default is 14 + 2 = 16).
+Real earnings reports arrive roughly quarterly (60-90+ days apart), so in
+practice this check can only ever catch a confirming filing that happens
+to land within that same narrow post-trade window — a coincidence, not the
+common case the task described (the next scheduled earnings report,
+however far out). Making this catch the general case would mean keeping a
+calendar-stale, not-yet-resolved observation around for much longer than
+today's cache lifetime — a real design and cost tradeoff (a new persistent
+watch-list, bounded by something like the already-established
+`EARNINGS_STANCE_MAX_AGE_DAYS` (90, `src/risk/rules.py`) rather than an
+invented number, plus decisions about how a long-pending row interacts with
+materiality/clustering) that was deliberately not made unilaterally. Owner
+call.
+
+Tests: `tests/test_smart_money.py` — one scenario per real outcome
+(confirmed, contradicted, no filing yet, fresh-and-unaffected), each with a
+hand-built earnings analysis file written to a temp cache directory rather
+than any mocked LLM call. Full relevant suite (`smart_money`, `earnings`,
+`pipeline`): 391 passed before, 395 passed after (4 new tests, zero
+regressions).
+
+See PR opened against `fix/smart-money-cluster-window` (PR #260).

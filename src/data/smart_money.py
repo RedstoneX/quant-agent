@@ -21,6 +21,7 @@ from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 
 import requests
+from pydantic import ValidationError
 
 from src.data.insider_signal import (
     InsiderHistory,
@@ -28,7 +29,7 @@ from src.data.insider_signal import (
     InsiderSignalThresholds,
     classify_transaction,
 )
-from src.models import SmartMoneyObservation
+from src.models import EarningsAnalysis, SmartMoneyObservation
 from src.util.time import et_today
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,14 @@ class SECForm4Provider:
         search_url: str = EFTS_SEARCH,
         archives_url: str = SEC_ARCHIVES,
         data_dir: str = "data/smart_money",
+        # Same on-disk layout the earnings analyst already writes
+        # (`data/earnings/<SYMBOL>/analysis_<form>_<date>.md`,
+        # `src/agents/earnings_analyst.py::_save_analysis` /
+        # `src/data/earnings.py::EarningsDataProvider`). Reused read-only, so
+        # this must track that provider's own hardcoded default — there is
+        # no shared config field for it (`EarningsDataProvider()` itself
+        # takes none in `src/pipeline.py`).
+        earnings_data_dir: str = "data/earnings",
         user_agent: str = DEFAULT_USER_AGENT,
         timeout_s: float | None = None,
         request_timeout_s: float = 15.0,
@@ -156,6 +165,7 @@ class SECForm4Provider:
         insider_history_retention_days: int = _DEFAULT_HISTORY_RETENTION_DAYS,
     ):
         self.data_dir = Path(data_dir)
+        self.earnings_dir = Path(earnings_data_dir)
         self.raw_dir = self.data_dir / "filings"
         self.observations_path = self.data_dir / "observations.json"
         self.manifest_path = self.data_dir / "manifest.json"
@@ -690,6 +700,73 @@ class SECForm4Provider:
             item.transaction_code,
         )
 
+    def _earnings_confirmation(
+        self, symbol: str, since: date, direction: str,
+    ) -> tuple[str, str]:
+        """Has a real, subsequent event actually settled this thesis?
+
+        A calendar-stale insider trade is not necessarily a dead signal —
+        the trade's real confirmation often only shows up at the company's
+        NEXT earnings report, which routinely lands well past a flat 7/14-day
+        clock. This reads the earnings analyst's OWN already-concluded
+        verdict (`EarningsAnalysis.to_verdict`) off the exact cache file it
+        already writes (`data/earnings/<symbol>/analysis_<form>_<date>.md`,
+        see `EarningsAnalystAgent._save_analysis` /
+        `EarningsDataProvider._get_analysis_path`) — no new earnings-date
+        lookup, and no LLM call of our own: the comparison below is a plain
+        string match against a verdict the earnings seat already committed
+        to disk for its own reasons.
+
+        Returns ("", "") when no qualifying filing exists yet (the honest
+        calendar-based classification stands unchanged), ("confirmed", why)
+        when the earliest filing SINCE `since` agrees with `direction`, or
+        ("contradicted", why) when it disagrees. A neutral earnings read
+        settles nothing either way and is treated the same as no filing.
+        """
+        symbol_dir = self.earnings_dir / symbol.upper()
+        if not symbol_dir.is_dir():
+            return "", ""
+        thesis = "bullish" if direction == "buy" else "bearish" if direction == "sell" else ""
+        if not thesis:
+            return "", ""
+        candidates: list[tuple[date, Path]] = []
+        for path in symbol_dir.glob("analysis_*.md"):
+            # Filenames are analysis_{form_type}_{filing_date}.md
+            # (`EarningsDataProvider._get_analysis_path`); form_type itself
+            # may contain "-" (10-Q, 10-K), so only the LAST "_"-separated
+            # part is trustworthy as the date.
+            filing_date_str = path.stem.rsplit("_", 1)[-1]
+            try:
+                filing_date = date.fromisoformat(filing_date_str)
+            except ValueError:
+                continue
+            if filing_date > since:
+                candidates.append((filing_date, path))
+        if not candidates:
+            return "", ""
+        # The EARLIEST qualifying filing is what actually settled the thesis
+        # first; a later one cannot retroactively un-fire this check.
+        filing_date, path = min(candidates, key=lambda item: item[0])
+        try:
+            text = path.read_text()
+        except OSError:
+            return "", ""
+        match = re.search(r"```json\s*\n(.*?)\n```", text, re.DOTALL)
+        if not match:
+            return "", ""
+        try:
+            analysis = EarningsAnalysis(**json.loads(match.group(1)))
+        except (json.JSONDecodeError, ValidationError, TypeError):
+            return "", ""
+        verdict = analysis.investment_implications.sentiment
+        if verdict not in {"bullish", "bearish"}:
+            return "", ""
+        reason = (
+            f"{analysis.form_type} filed {filing_date.isoformat()} read "
+            f"{verdict} (conviction={analysis.investment_implications.conviction})"
+        )
+        return ("confirmed" if verdict == thesis else "contradicted"), reason
+
     def fetch(self, symbols: list[str]) -> tuple[list[SmartMoneyObservation], str | None]:
         """Cache-only broad fetch; ``symbols`` marks core but does not filter."""
         core = {_symbol(s) for s in symbols if str(s).strip()}
@@ -719,7 +796,28 @@ class SECForm4Provider:
             freshness = "fresh" if age_days <= 7 else (
                 "delayed" if age_days <= self.lookback_days else "stale"
             )
-            if age_days > self.lookback_days:
+            earnings_confirmation, earnings_confirmation_reason = "", ""
+            if freshness == "stale":
+                # A pure calendar clock is not the real question for a
+                # policy/insider thesis: the real test is whether the
+                # company's NEXT earnings report, since the trade, actually
+                # confirmed or contradicted it. Only checked once the trade
+                # is already calendar-stale — a fresh/delayed trade has
+                # nothing to override and this must never manufacture
+                # confidence a fresh trade doesn't already have.
+                earnings_confirmation, earnings_confirmation_reason = (
+                    self._earnings_confirmation(
+                        item.symbol, item.transaction_date, item.direction,
+                    )
+                )
+            item = item.model_copy(update={
+                "earnings_confirmation": earnings_confirmation,
+                "earnings_confirmation_reason": earnings_confirmation_reason,
+            })
+            if age_days > self.lookback_days and earnings_confirmation != "confirmed":
+                # Genuinely nothing to confirm it with yet (or the one filing
+                # that exists disagreed): the honest answer stays "stale",
+                # exactly as before this change.
                 continue
             threshold = (
                 self.min_transaction_value_usd

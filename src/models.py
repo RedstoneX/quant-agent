@@ -1205,6 +1205,19 @@ class SmartMoneyObservation(LLMOutputModel):
     signal_class_reason: str = ""
     signal_class_detail: str = ""
     signal_weight: float = Field(default=1.0, ge=0.0, le=1.0)
+    # Set only when calendar staleness (`freshness == "stale"`) was checked
+    # against a subsequent earnings filing for this symbol
+    # (`SECForm4Provider._earnings_confirmation`, reusing the earnings
+    # analyst's own on-disk `EarningsAnalysis.to_verdict()` read — no new
+    # earnings-date lookup, no LLM call). "" means either the observation
+    # was never calendar-stale, or it was and no qualifying filing has
+    # happened yet — both cases fall back to `freshness` unchanged.
+    # "confirmed" means a filing since the trade agreed with its direction;
+    # `freshness` is deliberately left as the honest calendar label ("stale")
+    # rather than overloaded to mean something it no longer measures — this
+    # field is the real-event override callers must consult alongside it.
+    earnings_confirmation: Literal["", "confirmed", "contradicted"] = ""
+    earnings_confirmation_reason: str = ""
     economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
 
     @field_validator("symbol")
@@ -1315,7 +1328,16 @@ class SmartMoneyFinding(LLMOutputModel):
         self.support_eligible = (
             bool(directional)
             and len(directional) == 1
-            and all(o.freshness != "stale" for o in self.observations)
+            # A calendar-stale row still clears this if a subsequent earnings
+            # filing has confirmed the same direction — real, source-backed
+            # confirmation outranks the clock (`earnings_confirmation`,
+            # `SECForm4Provider._earnings_confirmation`). A merely-pending
+            # (no filing yet) or contradicted stale row still fails, same as
+            # before.
+            and all(
+                o.freshness != "stale" or o.earnings_confirmation == "confirmed"
+                for o in self.observations
+            )
         )
         self.transient_admission_eligible = any(
             o.transient_admission_eligible

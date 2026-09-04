@@ -689,6 +689,13 @@ class TradingPipeline:
             insider_cadence_max_gap_dispersion=config.smart_money.insider_cadence_max_gap_dispersion,
             insider_min_material_sell_fraction=config.smart_money.insider_min_material_sell_fraction,
             insider_history_retention_days=config.smart_money.insider_history_retention_days,
+            # Reuses the earnings analyst's own cache directory (see
+            # `EarningsDataProvider()` a few lines below, same hardcoded
+            # default — no config field exists for it there either) so a
+            # calendar-stale insider trade can be checked against a real,
+            # already-concluded subsequent earnings verdict instead of just
+            # aging out. Read-only from here.
+            earnings_data_dir="data/earnings",
         )
         self.meta_reflector = MetaReflectorAgent(
             api_key=_key_for(config.llm.meta_reflector_model, config.llm.meta_reflector_provider),
