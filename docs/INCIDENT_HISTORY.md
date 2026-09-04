@@ -3413,16 +3413,24 @@ proves the rendered PM prompt carries the short verdict and none of the
 old form labels (`Filing metrics:`, `Competitive positioning:`, etc.), and
 that the section is under 700 characters instead of ~1,400+;
 `test_earnings_section_falls_back_when_falsifier_undisclosed` proves the
-fallback path when `to_verdict()` refuses construction. Full suite:
-4,592 passed before this change is not comparable directly since a
-pre-existing rehearsal test (item 28) was still broken on main at that
-point — after merging in the item 28 fix, the full existing suite passes
-unchanged plus the 4 new tests above, with no failures attributable to
-this change (a handful of failures/errors — `test_alert_watchdog`,
-`test_api_isolation`, `test_api_safety`, `test_cross_consistency`,
-`test_ops_scripts_importable`, `test_single_definition_quantities` — are
-pre-existing on main, unrelated to earnings or PM prompt assembly, mostly a
-missing `fastapi` dependency in this sandbox).
+fallback path when `to_verdict()` refuses construction.
+
+**Exact suite counts** (branch merged onto main at item 28's fix, so the
+comparison is apples-to-apples): the earnings/PM-focused slice —
+`tests/test_earnings_analyst.py`, `test_portfolio_manager.py`,
+`test_earnings_deep_dive.py`, `test_earnings_preprocess.py`,
+`test_analyst_verdict.py` — went from **130 passed** (pre-change) to
+**134 passed** (post-change, the 4 new tests above, zero regressions).
+Full repo suite (excluding files this sandbox cannot even collect —
+`test_api_*`, `test_status_board.py` — all `ModuleNotFoundError:
+fastapi`, a missing dependency in this sandbox unrelated to this change):
+**4,438 passed, 1 skipped, 1 failed** — the 1 failure
+(`test_rehearsal_reproduces_cost_ceiling.py::
+test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure`,
+`MissingRecordedResponse` for a replay fixture) reproduces identically
+against unmodified current main, confirmed by running it there directly —
+pre-existing and unrelated to earnings or PM prompt assembly, not
+introduced by this change.
 
 **Known gap, not resolved here:** earnings runs `gemini-3.5-flash-lite`
 (Google-direct), chosen and verified for the transcription task this item
