@@ -842,7 +842,7 @@ class TradingPipeline:
             # Same setting the risk engine enforces (line ~326), so the
             # constructor sizes under the ceiling rather than proposing orders
             # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
-            max_position_pct=_risk_setting("max_position_pct", 20.0),
+            max_position_pct=_risk_setting("max_position_pct", 100.0),
             # Spec §10.3 "concentration scales size". Read back off the risk
             # ENGINE's own resolved config rather than re-derived from
             # settings, so the number the constructor shrinks against is
