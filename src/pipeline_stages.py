@@ -2286,7 +2286,30 @@ class MorningResearchStage:
             if not analyses_map:
                 data_status["tech"] = "empty"
             elif failed_count == 0:
-                data_status["tech"] = "ok"
+                # Every submitted symbol resolved, but "resolved" only means
+                # the model returned parseable content — it says nothing
+                # about whether the model itself trusted that content. A
+                # batch can be 100% parsed and still carry a self-reported
+                # `conviction="low"` on one or more reads (thin history,
+                # ambiguous setup, stale indicators the model flagged on its
+                # own). Silently reporting "ok" in that case is the same
+                # failure mode this whole data_status design exists to
+                # close for earnings/news/macro — a seat claiming "ok" while
+                # its own confidence says otherwise. This does not touch
+                # ranking/sizing (conviction_ledger.py's "confidence is
+                # reported, not applied" stands, 2026-08-31 owner decision);
+                # it only makes the distinction visible where data_status
+                # already is.
+                low_conviction = [a.symbol for a in analyses if a.conviction == "low"]
+                if low_conviction:
+                    data_status["tech"] = "low_confidence"
+                    logger.warning(
+                        "Tech batch fully resolved but %d/%d read(s) carry the "
+                        "model's own low conviction: %s",
+                        len(low_conviction), len(analyses), ", ".join(low_conviction),
+                    )
+                else:
+                    data_status["tech"] = "ok"
             elif analyses:
                 data_status["tech"] = "partial"
                 logger.warning(

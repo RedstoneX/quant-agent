@@ -635,17 +635,35 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
 # Deliberately NOT deduplicated: if the same seat is still broken next run,
 # it alerts again. A repeated alert on a genuinely unresolved problem is
 # correct, not noise — silence is what let this go unnoticed before.
+#
+# `"low_confidence"` (tech, 2026-09-04) is deliberately excluded from this
+# page even though it is not "ok" — a batch that resolved every symbol but
+# had the model itself flag one read as low-conviction is a real, different
+# thing from a seat that failed or went silent, and paging the owner
+# identically for both would train him to ignore this alert. It still
+# reaches `_append_trade_session_body`'s bundled "degraded:" line below and
+# still counts toward `RiskStage`'s ">= 2 degraded sources" `data_degraded`
+# advisory (`src/pipeline_stages.py`, class `RiskStage`) — both softer,
+# non-paging responses that fit a low-confidence-but-present read better
+# than a standalone alert does.
 def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
     """Fire a standalone alert when any agent's data this session was not
     clean, so a bad analyst seat can never hide inside an otherwise-normal
     run summary. Returns whether an alert was sent.
+
+    `low_confidence` is excluded on purpose — see the module comment above
+    this function for why a single self-reported low-conviction read
+    shouldn't page the owner the same way a failed or silent seat does.
     """
     if not isinstance(result, dict):
         return False
     data_status = result.get("data_status") or {}
     if not isinstance(data_status, dict):
         return False
-    bad = {k: v for k, v in data_status.items() if v not in ("ok", "empty")}
+    bad = {
+        k: v for k, v in data_status.items()
+        if v not in ("ok", "empty", "low_confidence")
+    }
     if not bad:
         return False
     detail = ", ".join(f"{k}={v}" for k, v in sorted(bad.items()))

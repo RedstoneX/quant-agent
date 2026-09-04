@@ -1930,6 +1930,44 @@ def test_clean_data_status_does_not_alert():
     alert.assert_not_called()
 
 
+def test_low_confidence_tech_does_not_fire_standalone_alert():
+    """2026-09-04: a fully-resolved tech batch with a self-reported
+    low-conviction read is a real, distinct signal (see pipeline_stages.py's
+    'ok' -> 'low_confidence' downgrade) but deliberately does NOT page the
+    owner the same way a failed/silent seat does — it still reaches the
+    bundled session-summary 'degraded:' line and the RiskStage data_degraded
+    advisory, just not this standalone alert."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {
+        "run_id": "run-lowconf",
+        "data_status": {"tech": "low_confidence", "news": "ok", "macro": "ok"},
+    }
+    with patch("src.notifier.send_owner_alert") as alert:
+        fired = maybe_alert_data_quality(result, mode="morning")
+
+    assert fired is False
+    alert.assert_not_called()
+
+
+def test_low_confidence_tech_does_not_mask_a_real_failure_alert():
+    """low_confidence is excluded specifically, not the whole 'bad' set —
+    a genuinely failed seat alongside a low-confidence one still pages."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {
+        "run_id": "run-mixed",
+        "data_status": {"tech": "low_confidence", "news": "failed"},
+    }
+    with patch("src.notifier.send_owner_alert", return_value=True) as alert:
+        fired = maybe_alert_data_quality(result, mode="morning")
+
+    assert fired is True
+    body = alert.call_args.args[0]
+    assert "news=failed" in body
+    assert "tech=low_confidence" not in body
+
+
 def test_multiple_bad_seats_are_all_named_in_one_alert():
     from src.notifier import maybe_alert_data_quality
 
