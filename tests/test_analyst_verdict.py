@@ -501,6 +501,61 @@ def test_pm_ranks_equally_eligible_candidates_deterministically():
     assert [c.score for c in ranked] == [2.0, 1.5, 1.0, 0.5]
 
 
+def test_eligibility_agrees_with_the_constructors_real_gate_once_wired():
+    """2026-09-04 fix, case (a). Without `real_reward_risk_by_symbol`, the
+    PM's eligibility gate and `PortfolioConstructor`'s real gate can pass
+    DISJOINT sets on the same candidates — that was the audit finding.
+    With it wired, `candidate_eligibility`'s admitted set matches the
+    constructor's real one on the SAME candidate data: NVDA overstates
+    (self-reported R/R 10.0, real 0.60 — the constructor would refuse it)
+    and GEV understates (self-reported 0.8, real 1.60 — the constructor
+    would take it). Both directions of the disagreement are covered in one
+    place, on real production geometry, not a hand-picked ratio."""
+    from src.portfolio_constructor import PortfolioConstructor
+
+    def _structured(symbol, *, model_target, computed_levels):
+        return TechAnalysisResult(
+            symbol=symbol, rating="buy", conviction="medium",
+            entry_price=100.0, stop_loss=95.0, reference_target=model_target,
+            support_levels=[95.0], resistance_levels=[model_target],
+            computed_levels=computed_levels, atr_14=(100.0 - 95.0) / 3.5,
+            setup_type="range", expected_horizon_sessions=60,
+            reasoning="test", reasoning_chain=_chain(),
+        )
+
+    overstated = _structured("NVDA", model_target=150.0, computed_levels=[95.0, 103.0])
+    understated = _structured("GEV", model_target=104.0, computed_levels=[95.0, 108.0])
+    analyses = [overstated, understated]
+    allowed = {"NVDA", "GEV"}
+
+    constructor = PortfolioConstructor()
+    real_map = {
+        a.symbol: constructor.real_reward_risk_preview(a, "long")
+        for a in analyses
+    }
+    real_eligible = {sym for sym, rr in real_map.items() if (rr or 0.0) >= REWARD_RISK_FLOOR}
+    assert real_eligible == {"GEV"}  # the constructor's own real answer
+
+    # OLD path (no real map): eligibility keys off the self-reported ratio
+    # and DISAGREES with the constructor on BOTH names.
+    old = PortfolioManagerAgent.candidate_eligibility(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols=allowed, active_state_changes="", asof=SESSION,
+    )
+    old_eligible = {sym for sym, why in old.items() if not why}
+    assert old_eligible == {"NVDA"}
+    assert old_eligible != real_eligible
+
+    # NEW path: eligibility matches the constructor's real gate exactly.
+    new = PortfolioManagerAgent.candidate_eligibility(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols=allowed, active_state_changes="", asof=SESSION,
+        real_reward_risk_by_symbol=real_map,
+    )
+    new_eligible = {sym for sym, why in new.items() if not why}
+    assert new_eligible == real_eligible == {"GEV"}
+
+
 # ==========================================================================
 # 2c. All five seats through the real integration path (2026-09-03)
 # ==========================================================================
