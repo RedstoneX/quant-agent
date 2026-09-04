@@ -4301,3 +4301,91 @@ codes ("P"/"S"/"E") alongside the full words it already handled, and
 the default lookback window was widened past the old 30 days to
 actually cover the real 45-day legal disclosure lag. Detail in PR
 #271's own commits.
+
+### 2026-09-04 — Equibles evaluated as a possible data-infrastructure consolidation; not adopted
+
+**In plain words.** A real Reddit thread (r/datasets, post `1te2a5z`)
+surfaced `github.com/daniel3303/Equibles` — an open-source,
+self-hostable data server covering SEC filings, insider trades,
+congressional trades, 13F holdings, short interest, FRED, and CFTC/CBOE
+data in one tool. Since QAMC already runs several SEPARATE pipelines for
+overlapping data (SEC Form 4 insider trades, the two congressional
+sources in PR #271, FRED macro data), this was evaluated as a possible
+consolidation, not just another congress-data option. Verdict: **real,
+well-built, genuinely free — and not worth adopting right now.**
+
+**What's real, verified by reading the actual source and license (not
+the README):**
+- Substantial, serious project: 3,667 C# files, 93 projects, 2,341
+  tests, real CI (a live smoke-test suite that hit the real government
+  endpoints and passed the same day this was evaluated).
+- All data sources are genuine primaries (SEC EDGAR, House Clerk, Senate
+  eFD, FINRA, FRED, CFTC, CBOE) — no third-party reseller in the chain,
+  unlike every other option checked this session.
+- **It has already solved the exact data-quality defects found in this
+  session's own work**, with the actual root causes cited in code
+  comments: the same honorific/name-fragmentation bug, the same
+  doubled-token merge bug (with a real guard against over-merging
+  distinct people who share initials), and the same "P"/"Purchase"
+  transaction-type inconsistency — all fixed at the type level, keyed
+  on official government BioGuide IDs rather than fuzzy name matching.
+  It also covers the Senate, which PR #271 does not.
+- **AGPL-3.0 licensing does not block internal use.** The disclosure
+  obligation (§13) only triggers on a MODIFIED version exposed to
+  external users over a network — running it unmodified, internally,
+  triggers nothing, and querying it from QAMC's own Python code over
+  MCP/HTTP does not make QAMC's own codebase AGPL (arm's-length
+  inter-process communication, not linking). Real, if distant, risk
+  noted: the author's contributor agreement lets them relicense future
+  versions away from AGPL, a real single-author/commercial-cloud fork
+  risk, though not an immediate one.
+- **The free self-hosted tier is not artificially crippled** — grepped
+  the entire source for premium/license-gating markers and found none;
+  the paid "Equibles Cloud" adds genuinely different data (live quotes,
+  options Greeks, earnings transcripts), not throttled versions of the
+  free features.
+
+**Why it's not being adopted now, real tradeoffs:**
+- **No way to run just the congress scraper.** All 35 of its background
+  services start unconditionally — adopting it for congressional data
+  alone means also running its full SEC EDGAR sync, 13F bulk import,
+  and Yahoo price history, whether wanted or not.
+- **Real operational cost**: four containers (a search-extended Postgres
+  fork, a web service, an MCP service, a worker), a Playwright browser
+  runtime, 5-10GB+ of growing storage — versus PR #271's two plain JSON
+  fetches with zero infrastructure.
+- **The Senate scraper is the highest-risk component in the whole
+  project**: its own code comments state it deliberately bypasses a bot
+  detection vendor (Akamai) by reusing browser TLS fingerprints — an
+  adversarial scraping arrangement against a service that actively
+  updates its defenses, and the single most likely thing to silently
+  break.
+- **This would be importing real, standing machinery to improve a
+  signal that this desk has deliberately made confirmatory-only and
+  incapable of driving a trade decision on its own** — exactly the
+  pattern this project has a standing principle against (see "No
+  arbitrary numbers" and the earlier rejection of a CTA-style
+  volatility-target sizing overlay for the same underlying reason:
+  check a technique's real cost against what it actually buys before
+  importing it).
+
+**What to actually do instead, in order:**
+1. Reimplement the honorific/doubled-token name-normalization APPROACH
+   in QAMC's own Python (from the documented rules, not by copying the
+   AGPL source — porting an approach is fine, transcribing the code
+   would make that file AGPL) — this is the one clearly valuable,
+   cheaply-portable piece.
+2. Record the Senate-coverage gap in PR #271 as a known, accepted
+   limitation — Equibles proves it's achievable, but only at a real,
+   ongoing maintenance cost this desk doesn't need to take on for a
+   confirmatory-only signal.
+3. Keep Equibles in mind ONLY if a genuinely new, currently-unserved
+   need shows up — specifically FINRA short interest/days-to-cover or
+   CFTC positioning data, which QAMC has no source for at all today.
+   If that need becomes real and measured, trial Equibles on a scratch
+   box with a narrowed ticker list for a bounded period before deciding
+   — do not adopt on the strength of this evaluation alone.
+4. Do not touch the existing SEC Form 4 or FRED pipelines — both
+   already work, both are small, and replacing working code with a
+   four-container dependency for the same data would be a straight
+   downgrade in operational risk for no gain.
