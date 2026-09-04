@@ -164,12 +164,16 @@ def _target(
     return row
 
 
-def _apply(decision, analyses, *, positions=None, asc=ACTIVE_STATE_CHANGES):
+def _apply(
+    decision, analyses, *, positions=None, asc=ACTIVE_STATE_CHANGES,
+    real_reward_risk_by_symbol=None,
+):
     return PortfolioManagerAgent._apply_subfloor_catalyst_rule(
         decision, analyses=analyses, positions=positions or [],
         total_value=100_000, active_state_changes=asc,
         rr_floor=REWARD_RISK_FLOOR,
         starter_risk_pct=STARTER_POSITION_RISK_PCT,
+        real_reward_risk_by_symbol=real_reward_risk_by_symbol,
     )
 
 
@@ -463,6 +467,112 @@ def test_missing_reward_risk_counts_as_subfloor():
     kept = _apply(cited, [neutral]).targets
     assert [t.symbol for t in kept] == ["NVDA"]
     assert kept[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+
+
+def test_real_reward_risk_by_symbol_overrides_the_self_reported_figure():
+    """2026-09-04 fix. Without a real map this gate reads
+    `TechAnalysisResult.risk_reward` — the analyst's own guessed-target
+    arithmetic. NVDA here self-reports R/R 10.0 (target $150, off a $5
+    stop) and would clear the floor unconditionally on the OLD path. With
+    `real_reward_risk_by_symbol` supplied, the gate uses THAT number
+    instead — 0.4 here, chosen to be under the floor — and NVDA is dropped
+    exactly as an honestly sub-floor, uncatalysed pick would be."""
+    analysis = _analysis("NVDA", target=150.0)
+    assert analysis.risk_reward == 10.0
+
+    # `_apply_subfloor_catalyst_rule` mutates `decision.targets` in place,
+    # so each call needs its own fresh decision object.
+    # OLD behaviour (no real map): self-reported 10.0 clears the floor.
+    old = _apply(
+        _decision([_target("NVDA", risk=4.0, catalyst="")]), [analysis],
+    )
+    assert [t.symbol for t in old.targets] == ["NVDA"]
+    assert old.targets[0].risk_allocation_pct == 4.0
+
+    # NEW behaviour: the real map says 0.4 — under floor, no catalyst.
+    new = _apply(
+        _decision([_target("NVDA", risk=4.0, catalyst="")]), [analysis],
+        real_reward_risk_by_symbol={"NVDA": 0.4},
+    )
+    assert new.targets == []
+
+
+def test_real_reward_risk_by_symbol_rescues_an_understated_candidate():
+    """The mirror case: GEV self-reports R/R 0.8 (sub-floor) and would be
+    dropped on the OLD path with no catalyst. The real map says 1.6 —
+    clears the floor — so the fixed gate must keep it at FULL size, not
+    the sub-floor starter cap."""
+    analysis = _analysis("GEV", target=104.0)
+    assert analysis.risk_reward == 0.8
+
+    # `_apply_subfloor_catalyst_rule` mutates `decision.targets` in place,
+    # so each call needs its own fresh decision object.
+    old = _apply(
+        _decision([_target("GEV", risk=4.0, catalyst="")]), [analysis],
+    )
+    assert old.targets == []
+
+    new = _apply(
+        _decision([_target("GEV", risk=4.0, catalyst="")]), [analysis],
+        real_reward_risk_by_symbol={"GEV": 1.6},
+    )
+    assert [t.symbol for t in new.targets] == ["GEV"]
+    assert new.targets[0].risk_allocation_pct == 4.0  # full size, not capped
+
+
+def test_a_symbol_missing_from_a_supplied_real_map_fails_closed():
+    """A supplied map that omits a symbol is NOT the same as no map at
+    all — it means the real number could not be computed (e.g. no
+    `computed_levels`), and that must be treated as sub-floor, never as
+    "fall back to the self-reported figure"."""
+    analysis = _analysis("NVDA", target=150.0)
+    assert analysis.risk_reward == 10.0
+    decision = _decision([_target("NVDA", risk=4.0, catalyst="")])
+    result = _apply(decision, [analysis], real_reward_risk_by_symbol={})
+    assert result.targets == []
+
+
+def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
+    """Not a hand-picked map — the SAME `PortfolioConstructor.
+    real_reward_risk_preview` production wires in. NVDA overstates (real
+    R/R 0.60, computed from a $103 real level vs. its $150 guess); GEV
+    understates (real R/R 1.60, computed from a $108 real level vs. its
+    $104 guess). One test, both directions of the fix, no arithmetic
+    duplicated from `test_portfolio_constructor.py`."""
+    from src.portfolio_constructor import PortfolioConstructor
+
+    def _structured(symbol, *, model_target, computed_levels):
+        return TechAnalysisResult(
+            symbol=symbol, rating="buy", conviction="medium",
+            entry_price=100.0, stop_loss=95.0, reference_target=model_target,
+            support_levels=[95.0], resistance_levels=[model_target],
+            computed_levels=computed_levels, atr_14=(100.0 - 95.0) / 3.5,
+            setup_type="range", expected_horizon_sessions=60,
+            reasoning="test", reasoning_chain=_tech_rc(),
+        )
+
+    overstated = _structured("NVDA", model_target=150.0, computed_levels=[95.0, 103.0])
+    understated = _structured("GEV", model_target=104.0, computed_levels=[95.0, 108.0])
+    assert overstated.risk_reward == 10.0
+    assert understated.risk_reward == 0.8
+
+    constructor = PortfolioConstructor()
+    real_map = {
+        "NVDA": constructor.real_reward_risk_preview(overstated, "long"),
+        "GEV": constructor.real_reward_risk_preview(understated, "long"),
+    }
+    assert real_map == {"NVDA": None, "GEV": 1.6}
+
+    decision = _decision([
+        _target("NVDA", risk=4.0, catalyst=""),
+        _target("GEV", risk=4.0, catalyst=""),
+    ])
+    result = _apply(
+        decision, [overstated, understated],
+        real_reward_risk_by_symbol=real_map,
+    )
+    assert {t.symbol for t in result.targets} == {"GEV"}
+    assert result.targets[0].risk_allocation_pct == 4.0
 
 
 def test_shorts_are_gated_on_the_same_terms_as_longs():

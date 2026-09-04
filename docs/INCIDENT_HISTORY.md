@@ -68,6 +68,101 @@ bigger design question than this fix's scope. Left for an owner decision.
 
 ---
 
+### 2026-09-04 — the desk's own eligibility check and its own order-builder disagreed on which trades were even worth considering
+
+**In plain words:** on 2026-09-01 the desk decided that its real reward-to-
+risk number — the one that decides whether a trade is worth the risk — must
+be computed from the real chart, not taken from whatever number the AI
+analyst claims. That fix landed in the step that BUILDS the order, but never
+in the EARLIER step that decides which candidates are even allowed to reach
+the order-builder. So the desk had two different opinions about the same
+number, at two different points in the same pipeline, and the earlier,
+wrong one decided what the later, correct one ever got to see. Measured on a
+real day: the early gate let through 8 names, the order-builder's real gate
+would have let through 2 different names — none of them the same 8.
+
+**What was broken:** `PortfolioManagerAgent.candidate_eligibility` and
+`_apply_subfloor_catalyst_rule` (`src/agents/portfolio_manager.py`) read
+`TechAnalysisResult.risk_reward` — real Python arithmetic, but computed
+over the AI analyst's own entry price and its own GUESSED target, never
+checked against the chart. `PortfolioConstructor` (the step that turns a
+decision into an actual order) had already stopped trusting that number on
+2026-09-01: it derives the take-profit from real support/resistance levels
+and widens a too-tight stop to a real noise floor, then computes
+reward:risk from THAT. The PM's gate runs first and decides which names the
+model even gets to consider; the constructor's real answer runs later and
+never gets a say over a name the PM already screened out — or a chance to
+correctly admit a name the PM already screened out for looking bad on paper
+when the real chart said otherwise.
+
+**What was ruled out.** Not a new bug in the constructor's arithmetic — that
+was already fixed and correct on its own terms. Not a config or a threshold
+disagreement — both gates use the identical 1.5 floor
+(`risk.min_reward_risk_after_widening`), confirmed by reading the value each
+one is threaded. The only disagreement was WHICH input feeds that same
+arithmetic.
+
+**The fix.** `PortfolioConstructor.real_reward_risk_preview` (new method)
+runs the constructor's own `_derive_target` / `_widen_stop_past_noise`
+logic — not a second copy of it — against the analyst's snapshot entry and
+stated stop (the live price and any PM-suggested stop do not exist yet this
+early). `src/pipeline_stages.py` computes one of these per analysed
+candidate, using the pipeline's already-configured `PortfolioConstructor`,
+and passes the resulting map into `PortfolioManagerAgent.decide()` as
+`real_reward_risk_by_symbol`; both eligibility gates now key off that map
+instead of the self-reported field. A symbol the map cannot resolve a
+number for is treated as sub-floor — fail closed, the same posture this
+gate has always taken for an unmeasurable ratio.
+
+**Re-measured, not just asserted fixed.** `ops/model_policy/
+deterministic_selection.py`'s `evaluate()` gained the same real number as an
+informational `rr_real` column, but its own gate was deliberately left
+reading the self-reported figure: its one frozen fixture
+(`run_64290730_pm_input.json`, 2026-09-01) predates
+`TechAnalysisResult.computed_levels` being populated at all — every row's
+list is empty — so the real derivation refuses every single name on that
+fixture for lack of chart structure to derive from, which is a fact about
+the fixture's age, not a finding about the rule. Switching that script's
+gate would have silently replaced "the desk's own stated rules" with "no
+data," corrupting the item-18 numbers this file and `docs/WORK.md` already
+record, rather than correcting them.
+
+The only real production data on hand with `computed_levels` populated
+(the field this fix depends on) is 2026-09-02 — every earlier day in the
+read-only snapshot available for this work predates that field being
+emitted. Replayed both ways, hand-verified: one full morning session (34
+actionable names: 8 eligible on the old self-reported gate, 0 on the new
+real gate) and fourteen intraday re-checks that same day (49 more
+actionable name-instances: 22 eligible old, 0 new). Zero overlap both
+times — the audit's finding reproduces on a second, independent day, not
+just the one fixture that first surfaced it.
+
+**A second, more important finding fell out of the same measurement.** Real
+eligibility came back at ZERO on the only day this could be checked against
+real data — not "different names," genuinely none. Every candidate's own
+stated stop was tighter than `min_stop_atr_multiple`'s required noise band,
+so every stop gets widened before the reward:risk check runs; after
+widening, the ratio essentially never clears 1.5. The tight-stop exemption
+(a stop resting on a real, verified chart level is honoured however tight)
+never fired for any of them — not because it is broken, but because the
+touch-count field it checks (`computed_level_touches`, shipped 2026-09-03)
+postdates every real record available to check it against. **This closes
+the two-gates mismatch; it does not touch the width of the floor itself,**
+which is a separate, real risk-tolerance question already tracked as item 1
+in `docs/WORK.md` and explicitly left to the owner there. Fresh data dated
+after 2026-09-03 (so the touch-count field has a chance to actually
+populate) would give the floor question a fairer second read.
+
+**What would catch this next time.** New tests in `tests/
+test_portfolio_constructor.py`, `tests/test_subfloor_catalyst_gate.py` and
+`tests/test_analyst_verdict.py` pin both directions of the disagreement by
+hand-computed example — a candidate the model overstates (high self-
+reported ratio, poor real one) and one it understates (low self-reported
+ratio, good real one) — and assert the fixed gate lands on the real answer
+either way, not just the direction that happened to fail first.
+
+---
+
 ### 2026-09-04 — acceptance test broken on main by deleted cost-circuit config keys
 
 **In plain words:** a test that validates the rehearsal harness (offline

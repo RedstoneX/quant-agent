@@ -34,6 +34,7 @@ if str(_REPO) not in sys.path:  # pragma: no cover - import convenience
     sys.path.insert(0, str(_REPO))
 
 from src.agents.portfolio_manager import PortfolioManagerAgent  # noqa: E402
+from src.portfolio_constructor import PortfolioConstructor  # noqa: E402
 from src.risk.rules import (  # noqa: E402
     agreement_ceiling_for_score,
     count_aligned_sources,
@@ -88,6 +89,26 @@ def evaluate(selection: dict, analyses, positions, news_intel) -> list[dict]:
     }
     catalysts = catalyst_symbols(selection["memory"]["active_state_changes"])
     held = {p.symbol for p in positions}
+    # 2026-09-04: `rr_real` is `PortfolioConstructor.real_reward_risk_
+    # preview`'s output — the SAME real derived-target, noise-floor-widened
+    # reward:risk `construct_orders` gates on, and, since the same date,
+    # `PortfolioManagerAgent.candidate_eligibility` (production). R4 below
+    # is deliberately left gating on `rr` (the analyst's own guessed-target
+    # arithmetic), NOT switched to `rr_real`: this file's frozen fixture
+    # (`run_64290730_pm_input.json`, 2026-09-01) predates
+    # `TechAnalysisResult.computed_levels` being populated — every row's
+    # `computed_levels` is `[]` — so `derive_structural_target` refuses
+    # EVERY name for lack of structure and `rr_real` is `None` across the
+    # board on this fixture. Gating R4 on it here would not replay "the
+    # desk's own rules more accurately"; it would replay "no fixture data",
+    # and silently invalidate every number `docs/INCIDENT_HISTORY.md`
+    # records for this fixture. `rr_real` is exposed per-row anyway so a
+    # caller with a fixture that DOES carry `computed_levels` can see it
+    # and, if desired, gate on it — see `tests/test_deterministic_
+    # selection.py` and the PR that added this field for how newer
+    # production runs (which do carry `computed_levels`) were used to
+    # validate the real gate end to end.
+    constructor = PortfolioConstructor()
 
     rows: list[dict] = []
     for a in analyses:
@@ -95,6 +116,7 @@ def evaluate(selection: dict, analyses, positions, news_intel) -> list[dict]:
         rr = a.risk_reward
         blocked: list[str] = []
         direction = "short" if a.rating in ("sell", "strong_sell") else "long"
+        rr_real = constructor.real_reward_risk_preview(a, direction)
 
         if a.rating == "neutral":  # R2
             blocked.append("R2 neutral rating")
@@ -133,6 +155,7 @@ def evaluate(selection: dict, analyses, positions, news_intel) -> list[dict]:
             "rating": a.rating,
             "conviction": a.conviction,
             "rr": rr,
+            "rr_real": rr_real,
             "aligned": aligned,
             "opposed": opposed,
             "net_sources": net,
