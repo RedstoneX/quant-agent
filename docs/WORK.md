@@ -1107,7 +1107,7 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE.** Failure-as-own-message shipped earlier (`maybe_alert_data_quality`); colour-only severity fixed 2026-09-03 across notifier/pipeline_stages/trader_feed/alert scripts (🛑/🛑🛑🛑/⚠️ + leading plain-text word). `cost_circuit.py`/`pipeline.py` still carry 🔴/🟠 — parallel work in progress. Detail: `docs/INCIDENT_HISTORY.md`.
+**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE.** See `docs/INCIDENT_HISTORY.md`, "alerts stop relying on colour".
 
 **22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** Now reads `config.risk.max_position_risk_pct` instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. Detail: `docs/INCIDENT_HISTORY.md`. (Note: item 32 below found a SEPARATE, still-live cap that reintroduces the same failure mode by a different path.)
 
@@ -1215,6 +1215,16 @@ Watch for a recurrence once the desk resumes on a stable beta rather than
 dig into this specific historical instance now.
 
 No DECIDE BY — revisit only if it recurs.
+
+**36. Add a live congressional trading data stream to smart-money? No free option is currently reliable.**
+
+Investigated 2026-09-04 (`docs/INCIDENT_HISTORY.md` has the full detail).
+The two well-known free aggregators are both dead in practice despite
+still claiming to be live. Real choices: an unproven brand-new free
+source, in-house PDF parsing against official disclosures, or a paid
+commercial feed. New dependency / reliability tradeoff — owner's call.
+
+- [ ] DECIDE BY 2026-09-18 — which path, if any, for congressional data?
 
 ---
 

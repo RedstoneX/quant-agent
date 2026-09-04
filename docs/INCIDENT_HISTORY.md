@@ -3340,3 +3340,74 @@ to pass against the fix with all four surviving — plus a companion test on
 directly.
 
 See PR merging `fix/risk-budget-partial-heat-failure`.
+
+---
+
+### 2026-09-04 — full technical inventory from the night's three parallel audits
+
+`docs/WORK.md` items 32-35 carry the headline findings from three parallel
+audits (entry/eligibility, position sizing/risk budget, exit management/
+ranking) run the same night the "no arbitrary numbers" principle was
+written down (see `docs/OUTCOME.md`). Those items are deliberately short,
+per this file's own size discipline — this entry is the full, unabridged
+catalog underneath them: every individual constant found, its
+classification (MEASURED / REASONED-DEFAULT-DISCLOSED /
+ARBITRARY-UNDISCLOSED), and its real-data doctrine check, so a future
+session or agent can find the exact file:line for any one of them without
+re-running the audits from scratch.
+
+**Full detail preserved verbatim in this session's own memory** at
+`qamc-full-audit-inventory-2026-09-04.md` — three ranked tables (one per
+audit) plus the "passes review, wrong in practice" findings from each.
+Key items already resolved same night, for quick reference:
+
+- Entry: two disjoint reward:risk gates unified (PR #257); smart-money
+  cluster window 14→2 days to match cited research (PR #260); PM
+  conviction bands restored after being compressed to fit an unrelated,
+  since-fixed cap (PR #259).
+- Sizing: single-name notional cap raised from an unratified 20% to a
+  value derived from this desk's own real stop distances (PR #258);
+  portfolio-level volatility-targeting was investigated and explicitly
+  REJECTED as importing the wrong mandate (a fund's smoothness goal, not
+  a trader's survival goal) — see `qamc-no-fund-style-sizing.md`.
+- Exit/ranking: noise-veto band now scales with √(days held) instead of a
+  flat multiplier; ranking ties now break on real reward:risk quality
+  instead of alphabetically; range-setup positions now get a standard
+  +1R breakeven ratchet instead of zero protection until full target (all
+  three: PR #256).
+
+**Not yet fixed, real and open** (ranked, full detail in the memory file):
+undisclosed drift-detection thresholds and a fixed-50%-reduce rule in
+exit management; decorative/duplicate day-count tiers in the Risk
+Manager's own maturity labels; short-selling limits that need
+re-deriving now the notional cap changed; whether the drawdown brakes
+need rescaling to the new real per-trade risk unit (a genuine open fork,
+not decided); the smart-money minimum-dollar filter, which needs insider
+holdings-size data this desk doesn't fetch yet; and a long tail of
+individually-cheap prompt-level folklore (extension guards, PE
+thresholds, stale-day counts) in the technical analyst's own prompt.
+
+**Also from the same stretch:** the two "real-looking" API keys in
+production `.env` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) were found to be
+the literal, unmodified placeholder text from this project's own
+`.env.example` (added by the original developer 2026-05-08 when
+open-sourcing the repo) — never real credentials, never exposed. Fixed
+on the box with an explanatory comment so this doesn't get re-investigated
+as a false alarm again. Separately, GitHub Pages was enabled for this repo
+(public, `main`/`docs`), so anything added to `docs/` renders at
+`https://redstonex.github.io/quant-agent/<filename>` automatically.
+
+**Real, still-open decision, not resolved here:** whether to add a live
+congressional (US House/Senate) trading data stream to the smart-money
+seat. Investigated 2026-09-04: no free, currently-reliable option exists.
+The two well-known free aggregator projects (house-stock-watcher,
+senate-stock-watcher) are both dead — one's domain no longer resolves, the
+other's last real data commit was 2021 despite its own page still
+claiming to be live. One brand-new free alternative surfaced the same
+week but is unverified, single-maintainer, no track record. Real options
+are: adopt the unproven free source and accept the risk, build in-house
+PDF parsing against the official House/Senate disclosures (real
+engineering cost, the House side is still scanned/mixed-format PDFs, not
+clean text), or pay for a commercial feed (Quiver Quantitative is the
+most API-native paid option). Owner's call — this is a new-dependency /
+reliability tradeoff, not something to adopt unilaterally.
