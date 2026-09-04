@@ -3442,3 +3442,16 @@ Needs a live check on real recent filings before merge.
 
 See PR opened from `feat/earnings-analyst-concludes` (not merged — needs
 independent adversarial review, same posture as items 18a/18b/28).
+
+**2026-09-04 follow-up — the live check was attempted and is still blocked,
+plus a real finding about how credentials work on this box.** A later pass
+fetched three real, current filings straight from SEC EDGAR (AAPL, MU, UNH
+10-Qs) and ran the actual redesigned earnings agent against them — but the
+call failed before reaching the model. `GOOGLE_API_KEY` in production
+`.env` is not a real key by design: it is a placeholder, and the real
+credential is injected transparently by the OneCLI gateway proxy at call
+time (same pattern as Alpaca's keys). Reading `.env` directly and calling
+Google's API without going through that proxy will always fail, regardless
+of environment. The model-quality check therefore still needs to run
+through the real OneCLI-proxied path (as the production desk itself does),
+not a direct `.env` read — this is still open, not a pass or a fail.
