@@ -417,7 +417,27 @@ class ExecutionConfig(BaseModel):
 class RiskConfig(BaseModel):
     max_position_pct: float = Field(gt=0, le=100)
     max_total_position_pct: float = Field(gt=0)
-    max_daily_loss_pct: float = Field(gt=0, le=100)
+    # docs/WORK.md item 32. Optional, same override pattern as
+    # `max_sector_hard_pct` below: an explicit value here always wins (kept
+    # for the ~50 existing tests/fixtures across this repo that set it to an
+    # arbitrary literal for unrelated reasons); when absent, it is DERIVED
+    # from the real per-trade risk unit via `effective_max_daily_loss_pct`
+    # rather than defaulting to another flat, independently-chosen number.
+    # See `daily_loss_risk_multiple` immediately below for the derivation.
+    max_daily_loss_pct: float | None = Field(default=None, gt=0, le=100)
+    # Spec/convention predates this repo's ratified mandate ("April-2026-era
+    # constant", docs/INCIDENT_HISTORY.md 2026-09-04). Expressed as "N times
+    # the real per-trade risk unit" (the standard "N losing R's" circuit-
+    # breaker convention referenced in the same entry) rather than a flat
+    # percent, so a future change to `max_position_risk_pct` moves this with
+    # it instead of silently going stale again — the exact failure mode item
+    # 32 found. The multiplier N=3 itself is INHERITED, not re-derived: there
+    # is no measured drawdown/track record to validate N against (the
+    # 2026-09-02 clean-slate reset wiped the equity history that would let
+    # anyone check it), so only the UNIT (R = max_position_risk_pct) is
+    # fixed here — N is carried over unchanged and is flagged provisional in
+    # docs/WORK.md pending real post-fix trade history.
+    daily_loss_risk_multiple: float = Field(default=3.0, gt=0)
     max_sector_pct: float = Field(gt=0, le=100)
     # Spec §10.3 (owner-ratified 2026-09-01). `max_sector_pct` above is no
     # longer a veto — it is the diversification TARGET, past which further
@@ -452,6 +472,29 @@ class RiskConfig(BaseModel):
     # trade, which is what removes the incentive to squeeze stops. The prior
     # 0.5% ceiling lived in a constructor dataclass default nobody chose.
     max_position_risk_pct: float = Field(default=5.0, gt=0, le=100)
+    # docs/WORK.md item 32 / docs/INCIDENT_HISTORY.md 2026-09-04. The two
+    # rolling-return "drawdown brake" windows (`in_drawdown` in
+    # `src/pipeline.py::_compute_recent_performance`) that halve new BUY
+    # sizing when recent performance looks like the desk's edge degraded.
+    # Both used to be flat, hardcoded percentages (-3.0 / -8.0) chosen when
+    # this desk's real delivered per-trade risk was suppressed to ~1% by an
+    # unrelated, now-fixed notional cap bug (PRs #258/#259) — i.e. sized for
+    # roughly "3 losing max-size trades in 5 days" / "8 in 20 days" under
+    # the OLD ~1% unit. Re-expressed here as that same "N losing R's"
+    # multiple of the REAL per-trade risk unit (`max_position_risk_pct`)
+    # instead, via `drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct`
+    # below, so the brake auto-rescales if the risk unit ever changes again
+    # rather than silently going stale a second time.
+    #
+    # The multiples (3 and 8) are UNCHANGED from the pre-existing, never
+    # independently validated constants — there is no measured drawdown
+    # history to check them against (the 2026-09-02 clean-slate reset wiped
+    # the equity curve they'd need; the 20-day one in particular cannot even
+    # evaluate yet for lack of 20 real trading days since). Only the UNIT is
+    # fixed here. Flagged PROVISIONAL in docs/WORK.md pending real post-fix
+    # drawdown data — an owner call, not decided by this change.
+    drawdown_5d_risk_multiple: float = Field(default=3.0, gt=0)
+    drawdown_20d_risk_multiple: float = Field(default=8.0, gt=0)
     # Below this an idea is not worth trading: a token position pays full
     # commission and full attention for an immaterial payoff. A request
     # rationed under the floor is denied outright rather than shrunk.
@@ -738,6 +781,42 @@ class RiskConfig(BaseModel):
             self.max_sector_pct * self.SECTOR_HARD_MULTIPLE,
         )
         return min(100.0, max(self.max_sector_pct, derived))
+
+    @property
+    def drawdown_5d_threshold_pct(self) -> float:
+        """Rolling 5-day return below which `in_drawdown` fires (negative).
+
+        `-(drawdown_5d_risk_multiple x max_position_risk_pct)` — see the
+        field comment above `drawdown_5d_risk_multiple` for the derivation
+        and its provisional multiplier.
+        """
+        return -(self.drawdown_5d_risk_multiple * self.max_position_risk_pct)
+
+    @property
+    def drawdown_20d_threshold_pct(self) -> float:
+        """Rolling 20-day return below which `in_drawdown` fires (negative).
+
+        `-(drawdown_20d_risk_multiple x max_position_risk_pct)` — see the
+        field comment above `drawdown_20d_risk_multiple` for the derivation
+        and its provisional multiplier.
+        """
+        return -(self.drawdown_20d_risk_multiple * self.max_position_risk_pct)
+
+    @property
+    def effective_max_daily_loss_pct(self) -> float:
+        """The daily-loss circuit-breaker threshold, explicit or derived.
+
+        Every consumer (`src/risk/rules.py`) reads this rather than
+        `max_daily_loss_pct` directly, matching `sector_hard_ceiling_pct`'s
+        pattern immediately below: an explicit `max_daily_loss_pct` always
+        wins; absent one, it derives as `daily_loss_risk_multiple x
+        max_position_risk_pct` so the breaker tracks the real per-trade risk
+        unit instead of sitting as an independently-chosen flat percent —
+        see the field comments above and docs/WORK.md item 32.
+        """
+        if self.max_daily_loss_pct is not None:
+            return self.max_daily_loss_pct
+        return self.daily_loss_risk_multiple * self.max_position_risk_pct
 
     @model_validator(mode="after")
     def _sector_hard_ceiling_is_above_the_target(self):

@@ -293,7 +293,40 @@ risk:
   # backstop against a ladder that fails open, not a ceiling in its own
   # right. Raise `max_gross_exposure_x` above 2.0 and this must move with it.
   max_total_position_pct: 200
-  max_daily_loss_pct: 3
+  # docs/WORK.md item 32 / docs/INCIDENT_HISTORY.md 2026-09-04. Was a flat 3
+  # (an "April-2026-era constant" sized for this desk's real per-trade risk
+  # when a since-fixed notional-cap bug, PRs #258/#259, suppressed it to
+  # ~1% regardless of stated conviction). Re-derived as
+  # `daily_loss_risk_multiple x max_position_risk_pct` = 3 x 5 = 15 so it
+  # tracks the REAL per-trade risk unit those PRs restore, enforced by the
+  # `_daily_loss_matches_risk_unit` validator in src/config.py (config
+  # fails to load if these two drift apart again).
+  #
+  # DEPENDS ON PRs #258/#259 LANDING FIRST: `max_position_risk_pct` (5,
+  # below) has said 5 since 2026-08-27, but PR #258's notional-cap fix is
+  # what actually makes 5% deliverable — until that merges, real per-trade
+  # risk on this desk is still the suppressed ~1%, so this 15 is sized for
+  # a state that does not exist on main yet. Do not merge this ahead of
+  # #258/#259; see this PR's description.
+  #
+  # The multiplier (3) is UNCHANGED from the pre-existing, never
+  # independently validated constant — there is no measured drawdown
+  # history to check it against (the 2026-09-02 clean-slate reset wiped the
+  # equity curve). Only the UNIT is fixed here; the multiplier is flagged
+  # PROVISIONAL in docs/WORK.md pending real post-fix trade data — an owner
+  # call, not decided by this change.
+  max_daily_loss_pct: 15
+  daily_loss_risk_multiple: 3
+  # docs/WORK.md item 32. Same derivation and same #258/#259 dependency as
+  # `max_daily_loss_pct` above, for the two rolling-return "drawdown brake"
+  # windows in src/pipeline.py::_compute_recent_performance
+  # (`RiskConfig.drawdown_5d_threshold_pct` /
+  # `drawdown_20d_threshold_pct`): was flat -3.0 / -8.0, now
+  # `-(multiple x max_position_risk_pct)` = -(3 x 5) = -15 / -(8 x 5) = -40.
+  # Multipliers (3, 8) UNCHANGED and PROVISIONAL for the same reason —
+  # see src/config.py field comments.
+  drawdown_5d_risk_multiple: 3
+  drawdown_20d_risk_multiple: 8
   # Spec §10.3 (owner-ratified 2026-09-01) — this is the concentration
   # TARGET, not a veto. A sector at or over it no longer refuses the next
   # trade in it; the constructor SHRINKS that trade instead, progressively,

@@ -569,6 +569,19 @@ class TradingPipeline:
             max_position_pct=config.risk.max_position_pct,
             max_total_position_pct=config.risk.max_total_position_pct,
             max_daily_loss_pct=config.risk.max_daily_loss_pct,
+            # docs/WORK.md item 32: `effective_max_daily_loss_pct` derives
+            # from these two when `max_daily_loss_pct` above is left unset,
+            # so both must be threaded through here too or a future config
+            # with an unset max_daily_loss_pct would silently derive against
+            # this dataclass's bare defaults instead of the real settings.
+            # `_risk_number` guards against the MagicMock-coerces-to-1.0
+            # posture the comment above `max_sector_hard_pct` describes.
+            max_position_risk_pct=_risk_number(
+                getattr(config.risk, "max_position_risk_pct", None), 5.0,
+            ),
+            daily_loss_risk_multiple=_risk_number(
+                getattr(config.risk, "daily_loss_risk_multiple", None), 3.0,
+            ),
             max_sector_pct=config.risk.max_sector_pct,
             # Spec §10.3 — the absolute ceiling behind the sector dial.
             # Read through the same MagicMock guard `_risk_setting` applies
@@ -7380,7 +7393,9 @@ class TradingPipeline:
         is doing. Independent of VIX / macro regime (which reflect market, not us).
 
         Returns e.g. {'rolling_5d_pct': -2.3, 'rolling_20d_pct': -6.1,
-                      'in_drawdown': True, 'trailing_days': 18}
+                      'in_drawdown': True, 'trailing_days': 18,
+                      'drawdown_5d_threshold_pct': -15.0,
+                      'drawdown_20d_threshold_pct': -40.0}
         """
         try:
             rows = self.db.get_daily_pnl(limit=25)
@@ -7388,9 +7403,13 @@ class TradingPipeline:
             logger.warning("Failed to read daily_pnl for drawdown context: %s", e)
             return {}
         if not rows:
-            return {"rolling_5d_pct": None, "rolling_20d_pct": None,
-                    "in_drawdown": False, "trailing_days": 0,
-                    "peak_to_trough_pct": None}
+            return {
+                "rolling_5d_pct": None, "rolling_20d_pct": None,
+                "in_drawdown": False, "trailing_days": 0,
+                "peak_to_trough_pct": None,
+                "drawdown_5d_threshold_pct": self.config.risk.drawdown_5d_threshold_pct,
+                "drawdown_20d_threshold_pct": self.config.risk.drawdown_20d_threshold_pct,
+            }
 
         def _pct_change(start_idx: int) -> float | None:
             if start_idx >= len(rows):
@@ -7405,10 +7424,19 @@ class TradingPipeline:
         rolling_5d = _pct_change(5)
         rolling_20d = _pct_change(20)
 
+        # docs/WORK.md item 32: these two thresholds are derived from the
+        # real per-trade risk unit (`RiskConfig.max_position_risk_pct`)
+        # rather than hardcoded, so they rescale automatically instead of
+        # going stale the way the old flat -3.0 / -8.0 literals did. See
+        # `RiskConfig.drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct`
+        # for the derivation and its provisional multiplier.
+        threshold_5d = self.config.risk.drawdown_5d_threshold_pct
+        threshold_20d = self.config.risk.drawdown_20d_threshold_pct
+
         in_drawdown = False
-        if rolling_5d is not None and rolling_5d < -3.0:
+        if rolling_5d is not None and rolling_5d < threshold_5d:
             in_drawdown = True
-        if rolling_20d is not None and rolling_20d < -8.0:
+        if rolling_20d is not None and rolling_20d < threshold_20d:
             in_drawdown = True
 
         # Spec §11.2: peak-to-trough drawdown, which drives the de-levering
@@ -7434,6 +7462,12 @@ class TradingPipeline:
             "rolling_5d_pct": rolling_5d,
             "rolling_20d_pct": rolling_20d,
             "in_drawdown": in_drawdown,
+            # docs/WORK.md item 32: carried through so prompt-facing text
+            # (e.g. PortfolioManagerAgent) can render the REAL, currently
+            # configured thresholds instead of a hardcoded description that
+            # would go stale the moment these are rescaled again.
+            "drawdown_5d_threshold_pct": threshold_5d,
+            "drawdown_20d_threshold_pct": threshold_20d,
             "trailing_days": len(rows),
             "peak_to_trough_pct": peak_to_trough,
         }
@@ -11968,8 +12002,12 @@ class TradingPipeline:
             # Observability: surface a silently-missing session + the loss cap
             # so the notifier can raise deterministic escalation (not just LLM).
             "missing_sessions": missing_sessions,
+            # docs/WORK.md item 32: the effective (possibly derived) limit,
+            # not the raw field, so this reads correctly whether or not an
+            # explicit max_daily_loss_pct override is configured.
             "max_daily_loss_pct": getattr(
-                getattr(self.config, "risk", None), "max_daily_loss_pct", None,
+                getattr(self.config, "risk", None),
+                "effective_max_daily_loss_pct", None,
             ),
             "stop_coverage_gaps": coverage_gaps,
             # True 4pm-to-4pm headline P&L (None → notifier falls back to the

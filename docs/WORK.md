@@ -1189,6 +1189,12 @@ elsewhere in the same prompt. Also open: three of the four new seats'
 magnitude mappings are reasoned but unmeasured judgment calls, flagged by
 their own authors, not yet independently reviewed.
 
+**32. Ratified 5% risk not delivered — drawdown-brake piece FIXED
+2026-09-04 (`fix/drawdown-brake-rescale`); sizing (#258)/bands (#259)
+open. Brakes scale with the real risk unit; multiplier PROVISIONAL.
+Depends on #258/#259 first. Detail: `docs/INCIDENT_HISTORY.md` "drawdown
+brakes rescaled".**
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs
