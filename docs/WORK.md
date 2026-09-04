@@ -978,6 +978,50 @@ so all twelve fit at once and no cap forces a choice. **There is no ranking
 rule anywhere in the rulebook.** We have been blaming the model for a
 decision we never specified. Specify it; do not instruct harder.
 
+**THE STRUCTURAL FIX SHIPPED — 2026-09-04, PR #252, NOT MERGED (needs a
+second, independent adversarial review — same posture as item 18a/18b/28
+before it). Full detail: `docs/INCIDENT_HISTORY.md` ("item 18c").**
+
+`config/prompts/earnings_analyst.md` now tells the seat `key_thesis` is the
+ONLY thing PM sees and must be 2-3 sentences that state the call, cite the
+one strongest reason, and name the falsifier — not a one-line label.
+`src/agents/portfolio_manager.py`'s earnings-section rendering (previously
+the ~1,400-char/filing eight-field form) now emits four lines per filing:
+call, thesis, invalidation, and a pointer to the full extraction on disk
+(reuses `EarningsAnalysis.to_verdict()`, the same Phase 13/item 31 ranking
+shape, rather than a second short-form representation — falls back to the
+raw `investment_implications` fields when `to_verdict()`'s own validator
+refuses a call with no stated falsifier, so a filing is degraded in the
+prompt rather than dropped from it, which is the right trade for a PROMPT
+even though the ranking machinery is right to refuse it for a SCORE).
+**The full 8-field extraction is untouched** — still computed, still
+written to `data/earnings/{SYMBOL}/analysis_{form}_{date}.md`, still what
+`position_reviewer` / `evening_analyst` / `meta_reflector` / `tech_analyst`
+read; only what reaches PM's prompt text changed.
+
+**Measured, same method as the original 199,646-char figure** (render
+`PortfolioManagerAgent.build_user_message` over
+`ops/model_policy/fixtures/run_64290730_pm_input.json`, the real
+run-64290730 pull, and isolate the `## Earnings Analysis` section):
+**before 205,607 chars total / 140,106 earnings (68.1%) → after 98,351
+chars total / 32,850 earnings (33.4%)**. (The 205,607/140,106 rendered-fixture
+figures track the originally-reported 199,646/140,107 production figures
+closely but are not identical — same known ~9% fixture/production fidelity
+gap the harness itself documents, not a new discrepancy.) Earnings dropped
+from 70% to a third of the prompt and the prompt itself is roughly
+halved — but earnings is still the single largest section; the ~35
+filings/day couriering even a 4-line verdict each is real volume, tracked
+as a possible follow-up, not solved here.
+
+**Model-quality gap, flagged rather than shipped quietly:** earnings runs
+`gemini-3.5-flash-lite` (Google-direct, chosen for the EASIER transcription
+task per this item's own "invalid verdict" warning above). This sandbox has
+no `GOOGLE_API_KEY`, so the redesigned prompt could not be run against the
+actual production model before this PR opened. Reviewer: run a handful of
+real recent filings through the live earnings seat and manually check the
+`key_thesis` reads as a coherent 2-3 sentence call, not a degraded label,
+before merging.
+
 **Two deterministic mechanisms, neither about the model** (working in
 INCIDENT_HISTORY): the sub-floor catalyst door was famous-names-only — our own
 rules ADMITTED the famous-and-weak names at 0.5% risk regardless of whether

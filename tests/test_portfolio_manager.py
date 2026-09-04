@@ -282,3 +282,133 @@ def test_pm_decide_survives_one_malformed_target(mock_cls, sample_analyses, samp
     assert decision.portfolio_view == "Moderately bullish."
     assert len(decision.targets) == 1
     assert decision.targets[0].symbol == "SPY"
+
+
+# ===========================================================================
+# Item 18 (2026-09-04) — "THE ANALYSTS DO NOT CONCLUDE, THEY TRANSCRIBE".
+# The earnings seat used to courier its whole eight-field extraction form
+# into PM's prompt (~1,400 chars/filing, 70% of a 200k-char prompt across
+# ~35 filings/day). PM's rendered prompt text must now carry only a short
+# verdict — call, conviction, thesis, and a pointer to the full record —
+# while the full extraction stays computed/stored for audit elsewhere
+# (proven in tests/test_earnings_analyst.py, not here).
+# ===========================================================================
+
+def _full_earnings_analysis(
+    symbol="AAPL", sentiment="bullish", conviction="medium",
+    bull_case="not disclosed", bear_case="Competition erodes margins.",
+):
+    return {
+        "symbol": symbol, "form_type": "10-Q", "filing_date": "2026-08-01",
+        "revenue": {"total": "$10.0 billion", "yoy_growth": "+5%"},
+        "profitability": {"gross_margin": "45%", "operating_margin": "20%", "eps": "$1.00"},
+        "cash_flow": {"operating_cf": "$3.0 billion"},
+        "balance_sheet": {"cash_and_equivalents": "$4.0 billion"},
+        "guidance": "Management did not provide numeric guidance",
+        "strategic_direction": {
+            "key_initiatives": ["Expanding into cloud services"],
+            "competitive_positioning": "Market leader with 35% share",
+        },
+        "risk_flags": {
+            "strategic_risks": ["Cloud expansion faces entrenched competitors"],
+            "operational_risks": ["FX volatility remains a headwind"],
+        },
+        "strategy_consistency": "Consistent with prior quarter",
+        "investment_implications": {
+            "sentiment": sentiment, "conviction": conviction,
+            "reasoning_chain": {
+                "fundamental_quality": "Revenue +5% with margin expansion",
+                "growth_trajectory": "Operating leverage building QoQ",
+                "strategic_risks": "Cloud competition is real but execution on track",
+                "management_execution": "Guidance hit, capex on plan",
+                "valuation_context": "Trades at a reasonable forward multiple",
+            },
+            "key_thesis": (
+                "Margins expanded to 45% while demand stayed resilient across "
+                "core products. This holds as long as cloud investment keeps "
+                "paying back in gross margin, not just top-line growth."
+            ),
+            "bull_case": bull_case, "bear_case": bear_case,
+        },
+        "data_quality": "Filing text complete through MD&A.",
+    }
+
+
+@patch("anthropic.Anthropic")
+def test_earnings_section_renders_short_verdict_not_the_eight_field_form(mock_cls):
+    """The PM prompt's earnings section must show the short verdict shape
+    (call / thesis / invalidation / pointer) and must NOT reproduce the old
+    form-filling labels (`Filing metrics:`, `Competitive positioning:`,
+    `Strategy consistency:`, `Analyst synthesis:`) that used to make this
+    section ~1,400 chars per filing regardless of how much judgement it
+    actually contained.
+    """
+    agent = PortfolioManagerAgent(api_key="test", model="test-model")
+    ea = {
+        "symbol": "AAPL", "analysis": _full_earnings_analysis(),
+        "is_new": True, "form_type": "10-Q", "filing_date": "2026-08-01",
+        "analysis_path": "/data/earnings/AAPL/analysis_10-Q_2026-08-01.md",
+    }
+
+    msg = agent.build_user_message(
+        analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
+        earnings_analyses=[ea],
+    )
+
+    start = msg.find("## Earnings Analysis")
+    end = msg.find("\n## ", start + 3)
+    section = msg[start: end if end != -1 else len(msg)]
+
+    # The short verdict IS there.
+    assert "Call: bullish (medium)" in section
+    assert "Margins expanded to 45%" in section
+    assert "Invalidated if: Competition erodes margins." in section
+    assert "/data/earnings/AAPL/analysis_10-Q_2026-08-01.md" in section
+
+    # The old eight-field form is NOT there.
+    for old_label in (
+        "Filing metrics:", "Filing guidance:", "Competitive positioning:",
+        "Strategy consistency:", "Analyst synthesis:", "Data quality:",
+        "Strategic risks:", "Operational risks:",
+    ):
+        assert old_label not in section, f"old form label {old_label!r} leaked into PM prompt"
+
+    # And the section is a small fraction of its old ~1,400 chars/filing.
+    assert len(section) < 700
+
+
+@patch("anthropic.Anthropic")
+def test_earnings_section_falls_back_when_falsifier_undisclosed(mock_cls):
+    """`AnalystVerdict` (Phase 13 ranking shape) REFUSES to construct a
+    directional call with no stated invalidation — correct for ranking,
+    where an unfalsifiable call should never win a slot. But dropping the
+    seat's view from PM's prompt entirely over the same gap would leave PM
+    blind on that name rather than just under-informed, which is a worse
+    outcome for a PROMPT than for a ranking score. `_render_earnings_verdict`
+    must fall back to the raw sentiment/conviction/key_thesis fields instead
+    of vanishing the filing from the prompt.
+    """
+    agent = PortfolioManagerAgent(api_key="test", model="test-model")
+    ea = {
+        "symbol": "ORCL",
+        "analysis": _full_earnings_analysis(
+            symbol="ORCL", sentiment="bullish",
+            bull_case="not disclosed", bear_case="not disclosed",
+        ),
+        "is_new": False, "form_type": "10-Q", "filing_date": "2026-08-01",
+    }
+
+    msg = agent.build_user_message(
+        analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
+        earnings_analyses=[ea],
+    )
+
+    start = msg.find("## Earnings Analysis")
+    end = msg.find("\n## ", start + 3)
+    section = msg[start: end if end != -1 else len(msg)]
+
+    assert "Call: bullish (medium)" in section
+    assert "Invalidated if: not disclosed by the analyst" in section
+    # No pointer was supplied on the wrapper — a locatable reference is
+    # still shown rather than nothing at all.
+    assert "ORCL" in section
