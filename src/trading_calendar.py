@@ -92,6 +92,47 @@ def is_weekday(d: date | None = None) -> bool:
     return target.weekday() < 5  # Mon=0 .. Sun=6
 
 
+def trading_sessions_held(start: date, end: date) -> int:
+    """Weekend-aware count of trading sessions between two calendar dates.
+
+    Counts weekdays (Mon-Fri) strictly AFTER `start` up to and including
+    `end` — i.e. how many new sessions' worth of price action have occurred
+    since `start`. A same-day round trip is 0; consecutive weekdays give the
+    same answer as a plain calendar-day count; a Friday-to-Monday hold gives
+    1, not the 2-3 calendar days that elapsed, because only one session's
+    worth of real price action happened in between.
+
+    2026-09-04 audit follow-up: `exit_guard.noise_band_atr` scales its band
+    by `sqrt(sessions)`, citing `levels.py::derive_structural_target`'s
+    `sqrt(expected_horizon_sessions)` as precedent — but that precedent
+    counts TRADING SESSIONS, and the caller in `pipeline.py` was passing
+    calendar days (`(today - entry_date).days`), which include weekends.
+    A Friday-to-Monday hold was getting `sqrt(3)` instead of `sqrt(1)`,
+    over-widening the band after every weekend/holiday. This function is
+    the fix: callers that want the levels.py-style scaling should count
+    SESSIONS with this, not calendar days.
+
+    This is a CHEAP approximation — Mon-Fri only, no US market-holiday
+    calendar (per the module docstring, holiday detection needs a live
+    broker connection via `AlpacaBroker.is_trading_day`). A market holiday
+    inside the range is silently counted as a session, so this can still
+    overstate the true session count by one per holiday crossed — a small
+    residual gap versus the pure weekend case, which it fixes exactly.
+
+    Returns 0 if `end` is not after `start`.
+    """
+    from datetime import timedelta
+    if end <= start:
+        return 0
+    count = 0
+    d = start + timedelta(days=1)
+    while d <= end:
+        if d.weekday() < 5:
+            count += 1
+        d += timedelta(days=1)
+    return count
+
+
 _QUARTER_END_MONTHS = (3, 6, 9, 12)
 
 

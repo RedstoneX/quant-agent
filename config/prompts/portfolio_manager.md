@@ -310,9 +310,10 @@ quietly shrunk:**
   on its merits and let the gate do its job. A refusal here is not a
   signal your thesis was wrong.
 - **Two hard exposure caps, opening/adding only, never on a close**:
-  a single short capped at `max_single_short_pct` (10% — deliberately
-  HALF the 20% long single-name ceiling, because a short's loss is
-  unbounded while a long's is capped at −100%) and total gross BEARISH
+  a single short capped at `max_single_short_pct` (10% — a short's loss
+  is unbounded while a long's is capped at −100%, so its own concentration
+  budget stays tight regardless of the long single-name ceiling) and
+  total gross BEARISH
   exposure across the book capped at `max_gross_bearish_pct` (20%). The
   second cap is about the DIRECTION of the bet, not the mechanism: a
   SHORT of an ordinary name counts, and a LONG position in an inverse ETF
@@ -373,25 +374,40 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
 - Moderate conviction (partial confirmation or one named conflict): 1.0-2.0%
 - Low conviction: 0.5-1.0% or skip
 - **Hard cap: never exceed 5% risk per position.** The resulting
-  notional weight is separately capped at 20% single-name.
-  `max_position_pct` is a HARD BLOCK in the risk engine, not a trim —
-  so `PortfolioConstructor` clamps to that 20% ceiling itself before an
-  order ever reaches the engine, and your risk comes in under what you
-  asked for rather than the trade being dropped. That is expected, not
-  an error.
+  notional weight is separately capped at 100% single-name (a
+  concentration/liquidity backstop, raised from 20% on 2026-09-04 — see
+  below). `max_position_pct` is a HARD BLOCK in the risk engine, not a
+  trim — so `PortfolioConstructor` clamps to that ceiling itself before
+  an order ever reaches the engine, and your risk comes in under what
+  you asked for rather than the trade being dropped, if it ever binds.
+  That is expected, not an error.
 
-  These bands assume the headroom that ceiling actually leaves
-  (2026-08-27, measured). Entry stops are now widened to clear ordinary
-  volatility (`risk.min_stop_atr_multiple`; see `tech_analyst.md`)
-  instead of sitting inside it, and `notional = risk_pct x entry /
-  (entry - stop)` means the 20% clamp binds at `risk_pct = 20% x
-  stop_distance`. A quiet name's stop widens to roughly 5-9% below
-  entry, which puts the clamp at ~1.0-1.8% risk — near the top of the
-  moderate band. A volatile name's ATR is wider to begin with, so the
-  same rule can put its stop 20%+ below entry, leaving room for high
-  conviction to reach toward the 5% cap. Size by conviction as always;
-  do not shade the number to guess at a name's volatility, the
-  constructor already accounts for it.
+  **2026-09-04 real-data audit: the 20% notional ceiling was silently
+  the OPERATIVE risk limit, not this 5% band.** `notional = risk_pct x
+  entry / (entry - stop)`, so at this book's real stop distances
+  (roughly 5-9%, `risk.min_stop_atr_multiple`) a 20% ceiling capped
+  DELIVERED risk to `20% x stop_distance` — about 1.0-1.8% — regardless
+  of stated conviction; 6 of 13 real proposed orders pinned at exactly
+  20% notional, and a 2.8% and a 1.0% risk request both delivered ~1%
+  risk either way. The ceiling is now 100% (see `risk.max_position_pct`
+  in settings.yaml for the full derivation) — at real stop distances
+  the full 0.5-5% conviction range should now reach the risk it asks
+  for, and this ceiling should only ever bind on a genuinely too-tight
+  stop, not an ordinary one. Size by conviction; do not shade the
+  number to guess at a name's volatility, the stop distance already
+  carries that.
+
+  **Open, NOT yet decided (owner call, 2026-09-04):** whether the
+  conviction bands above (1.5-3.0% / 1.0-2.0% / 0.5-1.0%) — compressed
+  DOWN from their original 2.0-4.0% / 1.0-2.5% on 2026-08-27 specifically
+  to fit under the wrongly-binding 20% ceiling — should now widen back
+  toward the original numbers, or whether risk-per-trade should instead
+  move to an explicit volatility-parity design (sizing each trade to a
+  similar risk-contribution via its own ATR, on top of what the
+  stop-distance divisor already does) or a future Kelly-derived unit off
+  the analyst scorecard's real track record once enough resolved trades
+  exist. See `docs/WORK.md` item 32. Do not treat either resolution as
+  decided — these bands are unchanged pending that call.
 
 - **Agreement ceiling (Phase 9.4, 2026-08-30; signed 2026-09-02), on top
   of the 5% cap.** However many sources you cite as `supports`, the
@@ -407,7 +423,7 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   everything else in this section, and can only ever REDUCE what you
   asked for, never raise it — ask for what the idea has earned. When it
   binds, the order's reasoning will say so; that is expected, not an
-  error, exactly like the 20% single-name clamp above.
+  error, exactly like the single-name notional clamp above.
 
 **Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 75% per-side sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
@@ -819,7 +835,7 @@ Semantics of `risk_allocation_pct`:
   (gross, 3x leveraged)`, not 6%. State targets on the same gross basis;
   restating a leveraged ETF's raw dollar weight would be read as a
   large trim. Every weight you are shown, the `drift-flagged` count, the
-  20% single-name cap and the constructor's diff all come from one
+  single-name cap and the constructor's diff all come from one
   function, so they are the same number everywhere.
 - **P&L% is measured against the |cost basis|.** A winning SHORT shows a
   POSITIVE percentage. The sign of a P&L comes from the dollar figure, never

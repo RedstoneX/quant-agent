@@ -166,6 +166,70 @@ class PortfolioManagerAgent(BaseAgent):
             rows.append((symbol, stance, filing_date))
         return rows
 
+    @staticmethod
+    def _render_earnings_verdict(
+        *, sym: str, analysis: dict, filing_label: str, source_note: str,
+        analysis_path: str | None,
+    ) -> str:
+        """Item 18 (2026-09-04): earnings used to courier its whole eight-
+        field extraction form into this prompt (~1,400 chars/filing, 70% of
+        a 200k-char PM prompt across dozens of filings/day) for one line of
+        actual judgement. This renders the SHORT verdict instead — call,
+        conviction, a 2-3 sentence thesis, and a pointer to the full record.
+
+        Reuses `EarningsAnalysis.to_verdict()` (Phase 13, `src/verdicts.py`
+        ranking shape) rather than inventing a second short-form
+        representation — see that method for why direction/conviction are
+        verbatim and why the falsifier comes from bear_case/bull_case.
+
+        `to_verdict()` (via `AnalystVerdict`'s own validator) REFUSES to
+        construct a directional call with no stated invalidation — a real
+        gap surfaced during item 18: PM's evidence needs are lower-stakes
+        than the ranking machinery's, so a directional read with no
+        disclosed falsifier still belongs in the PM prompt (marked as
+        such) rather than being dropped from PM's picture entirely, which
+        is what happened to a *ranking* candidate in this situation. Fall
+        back to the raw `investment_implications` fields when that happens.
+        """
+        impl = (analysis or {}).get("investment_implications") or {}
+        sentiment = impl.get("sentiment", "neutral")
+        conviction = impl.get("conviction", "N/A")
+        thesis = (impl.get("key_thesis") or "").strip() or "not disclosed"
+
+        pointer = (
+            f"data/earnings/{sym}/... ({filing_label})" if not analysis_path
+            else analysis_path
+        )
+
+        verdict = None
+        try:
+            verdict = EarningsAnalysis.model_validate(analysis).to_verdict()
+        except Exception:  # noqa: BLE001 — see docstring: fall back to the
+            # raw fields rather than dropping this filing from PM's prompt.
+            verdict = None
+
+        if verdict is not None:
+            falsifier_line = (
+                f"- Invalidated if: {verdict.invalidation}" if verdict.invalidation
+                else "- Invalidated if: not disclosed by the analyst"
+            )
+        else:
+            falsifier = impl.get("bear_case") if sentiment == "bullish" else impl.get("bull_case")
+            falsifier = (falsifier or "").strip()
+            falsifier_line = (
+                f"- Invalidated if: {falsifier}" if falsifier and falsifier.lower() != "not disclosed"
+                else "- Invalidated if: not disclosed by the analyst"
+            )
+
+        return (
+            f"### {sym} — {filing_label}{source_note}\n"
+            f"- Call: {sentiment} ({conviction})\n"
+            f"- Thesis: {thesis}\n"
+            f"{falsifier_line}\n"
+            f"- Full 8-field extraction (metrics, guidance, strategy, risks, "
+            f"data quality): {pointer}"
+        )
+
     @classmethod
     def stale_evidence_sources(
         cls,
@@ -455,6 +519,7 @@ class PortfolioManagerAgent(BaseAgent):
             macro_analysis=macro_analysis,
             earnings_analyses=earnings_analyses,
             smart_money_findings=smart_money_findings,
+            real_reward_risk_by_symbol=kwargs.get("real_reward_risk_by_symbol"),
         )
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
@@ -679,10 +744,6 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                 analysis = ea.get("analysis")
                 if not analysis:
                     continue
-                impl = analysis.get("investment_implications", {})
-                rev = analysis.get("revenue", {})
-                prof = analysis.get("profitability", {})
-                guidance = analysis.get("guidance", "N/A")
                 filing_label = f"{ea.get('form_type', '?')} ({ea.get('filing_date', '?')})"
                 source_note = " [from cache]" if not ea.get("is_new") else " [new filing]"
                 # §9.4 freshness: `[from cache]` and a filing date were
@@ -697,37 +758,11 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                         "does NOT count toward the agreement ceiling]"
                     )
 
-                # Strategic direction
-                strat = analysis.get("strategic_direction", {})
-                initiatives = strat.get("key_initiatives", [])
-                initiatives_text = "; ".join(initiatives[:3]) if initiatives else "not disclosed"
-                competitive = strat.get("competitive_positioning", "not disclosed")
-
-                # Risk flags (structured or legacy list)
-                risks = analysis.get("risk_flags", {})
-                if isinstance(risks, dict):
-                    strat_risks = risks.get("strategic_risks", [])
-                    ops_risks = risks.get("operational_risks", [])
-                    strat_risks_text = "; ".join(strat_risks[:2]) if strat_risks else "none flagged"
-                    ops_risks_text = "; ".join(ops_risks[:2]) if ops_risks else "none flagged"
-                    risk_line = f"- Strategic risks: {strat_risks_text}\n- Operational risks: {ops_risks_text}"
-                else:
-                    risk_line = f"- Risk flags: {'; '.join(risks[:3]) if risks else 'none flagged'}"
-
-                consistency = analysis.get("strategy_consistency", "")
-                consistency_line = f"\n- Strategy consistency: {consistency}" if consistency else ""
-
                 earnings_items.append(
-                    f"### {sym} — {filing_label}{source_note}\n"
-                    f"- Filing metrics: Revenue {rev.get('total', 'N/A')} (YoY: {rev.get('yoy_growth', 'N/A')}), "
-                    f"Gross margin {prof.get('gross_margin', 'N/A')}, Operating margin {prof.get('operating_margin', 'N/A')}, "
-                    f"EPS {prof.get('eps', 'N/A')}\n"
-                    f"- Filing guidance: {guidance}\n"
-                    f"- Strategy: {initiatives_text}\n"
-                    f"- Competitive positioning: {competitive}\n"
-                    f"{risk_line}{consistency_line}\n"
-                    f"- Analyst synthesis: {impl.get('sentiment', 'N/A')} ({impl.get('conviction', 'N/A')}) — {impl.get('key_thesis', 'N/A')}\n"
-                    f"- Data quality: {analysis.get('data_quality', 'N/A')}"
+                    self._render_earnings_verdict(
+                        sym=sym, analysis=analysis, filing_label=filing_label,
+                        source_note=source_note, analysis_path=ea.get("analysis_path"),
+                    )
                 )
             earnings_section = "## Earnings Analysis (from SEC Filings)\n\n" + "\n\n".join(earnings_items)
         else:
@@ -1123,6 +1158,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         active_state_changes: str,
         rr_floor: float = REWARD_RISK_FLOOR,
         asof: date | None = None,
+        real_reward_risk_by_symbol: dict[str, float | None] | None = None,
     ) -> dict[str, list[str]]:
         """Which analysed names the desk's own rules ADMIT, before the PM
         decides — `{SYMBOL: [reasons it is blocked]}`, empty list = eligible.
@@ -1149,6 +1185,24 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         analysis in `analyses` are considered at all. Nothing here removes or
         weakens a gate — a name this admits can still be dropped after
         submission by the stricter post-decision checks.
+
+        **R4's number, 2026-09-04 fix.** `real_reward_risk_by_symbol` — when
+        supplied, keyed by upper-case symbol — is
+        `PortfolioConstructor.real_reward_risk_preview`'s output: the SAME
+        derived-target, noise-floor-widened reward:risk `construct_orders`
+        gates on, not `TechAnalysisResult.risk_reward` (the analyst's own
+        guessed target, real arithmetic but never checked against
+        structure). A 2026-09-04 audit found this gate and the
+        constructor's real one passing DISJOINT sets on a real day — zero
+        overlap — because this gate ran first and screened candidates on a
+        different number than the one that would decide them one stage
+        later. A symbol absent from the map is treated as `None` (fail
+        closed, same as an unmeasurable ratio always has been here).
+        Omitted entirely (`None`), this falls back to `analysis.risk_reward`
+        for callers that have not wired a constructor preview through
+        (rare — pre-existing tests, and any harness with no
+        `PortfolioConstructor` instance to hand); production always
+        supplies it.
         """
         allowed = {
             str(s).strip().upper() for s in (allowed_buy_symbols or set())
@@ -1171,7 +1225,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             direction = "short" if analysis.rating in ("sell", "strong_sell") else "long"
             if direction == "long" and symbol not in allowed:
                 blocked.append("R3 not BUY-eligible")
-            reward_risk = analysis.risk_reward
+            if real_reward_risk_by_symbol is not None:
+                reward_risk = real_reward_risk_by_symbol.get(symbol)
+            else:
+                reward_risk = analysis.risk_reward
             if reward_risk is None or reward_risk < rr_floor:
                 if symbol not in catalyst_symbols:
                     shown = "n/a" if reward_risk is None else f"{reward_risk:.2f}"
@@ -1339,6 +1396,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         macro_analysis: dict | None = None,
         earnings_analyses: list[dict] | None = None,
         smart_money_findings: list[SmartMoneyFinding] | None = None,
+        real_reward_risk_by_symbol: dict[str, float | None] | None = None,
     ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
         """The eligible names in ranked order, plus the blocked names with
         their reasons. Ordering is `src/verdicts.py::rank_verdicts` over
@@ -1354,6 +1412,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         Technical already cleared. A symbol only news/macro/earnings/
         smart_money covered, with no Technical read, can never appear here;
         it was never eligible in the first place.
+
+        `real_reward_risk_by_symbol` is passed straight through to
+        `candidate_eligibility` — see that method's docstring.
         """
         eligibility = cls.candidate_eligibility(
             analyses=analyses,
@@ -1362,6 +1423,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             allowed_buy_symbols=allowed_buy_symbols,
             active_state_changes=active_state_changes,
             rr_floor=rr_floor,
+            real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             asof=asof,
         )
         all_verdicts = cls._collect_seat_verdicts(
@@ -1465,6 +1527,14 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # numbers rather than on a second opinion about them.
                rr_floor: float = REWARD_RISK_FLOOR,
                starter_risk_pct: float = STARTER_POSITION_RISK_PCT,
+               # 2026-09-04 fix: the SAME real derived reward:risk
+               # `PortfolioConstructor.construct_orders` gates on,
+               # keyed by upper-case symbol — see `candidate_eligibility`
+               # and `_apply_subfloor_catalyst_rule` for why this replaces
+               # `TechAnalysisResult.risk_reward` at both eligibility gates.
+               # `None` (the default) falls back to that field, for the rare
+               # caller with no `PortfolioConstructor` to preview from.
+               real_reward_risk_by_symbol: dict[str, float | None] | None = None,
                ) -> tuple[PortfolioDecision | None, "AgentResult"]:
         result = self.run(
             analyses=analyses,
@@ -1500,6 +1570,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # the same floor `_apply_subfloor_catalyst_rule` enforces after
             # submission, so the PM is ranked on the rule it is held to.
             rr_floor=rr_floor,
+            real_reward_risk_by_symbol=real_reward_risk_by_symbol,
         )
         parsed = result.parse_json()
         if parsed is None:
@@ -1569,6 +1640,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 total_value=total_value,
                 active_state_changes=active_state_changes,
                 rr_floor=rr_floor, starter_risk_pct=starter_risk_pct,
+                real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             )
             errors = self.validate_grounding(
                 decision, analyses=analyses, positions=positions,
@@ -1655,6 +1727,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         total_value=total_value,
                         active_state_changes=active_state_changes,
                         rr_floor=rr_floor, starter_risk_pct=starter_risk_pct,
+                        real_reward_risk_by_symbol=real_reward_risk_by_symbol,
                     )
                     errors = self.validate_grounding(
                         decision, analyses=analyses, positions=positions,
@@ -2187,6 +2260,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         rr_floor: float,
         starter_risk_pct: float,
         asof: date | None = None,
+        real_reward_risk_by_symbol: dict[str, float | None] | None = None,
     ) -> PortfolioDecision:
         """Gate and cap every target whose Technical read is below the
         reward:risk floor.
@@ -2207,14 +2281,29 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         — are gated. Exits and reductions are exempt; this desk must never
         find it harder to cut risk than to add it.
 
-        WHICH RATIO. `TechAnalysisResult.risk_reward` — Python's arithmetic
-        over the analyst's own entry/stop/target, computed in `src/models.py`
-        and never trusted to a model's claim about its own ratio. It is also
-        the exact number rendered into the prompt as `R/R x.xx:1`, so the PM
-        is held to the figure it was shown. `None` (neutral rating, or
-        malformed geometry) counts as sub-floor: the prompt already says
-        "R/R n/a — treat as low-R/R", and a target with no computable payoff
-        is precisely the case a checkable catalyst has to justify.
+        WHICH RATIO. As of 2026-09-04, `real_reward_risk_by_symbol` (when
+        supplied) — `PortfolioConstructor.real_reward_risk_preview`'s
+        output, the same derived-target, noise-floor-widened reward:risk
+        `construct_orders` gates on. Before this fix it was
+        `TechAnalysisResult.risk_reward`: real Python arithmetic, but over
+        the analyst's own GUESSED target, never checked against structure —
+        a 2026-09-04 audit found this gate and the constructor's real one
+        passing disjoint sets on a real day because of exactly that gap. A
+        symbol absent from the map is `None` (fail closed, same as an
+        unmeasurable ratio always has been here). If the map is not
+        supplied at all (`None`, not merely missing an entry),
+        `TechAnalysisResult.risk_reward` is used as a last-resort fallback
+        for callers with no `PortfolioConstructor` to preview from —
+        production always supplies it. It is `TechAnalysisResult.
+        risk_reward` that is still rendered into the prompt as `R/R
+        x.xx:1` (that number is the analyst's own stated geometry, shown
+        as context — see `_fmt_tech` — not the number this gate now uses),
+        so the PM sees both: what the analyst claimed and, in the ranking
+        section, which names the desk's real gate actually admits. `None`
+        (neutral rating, unmeasurable geometry, or a target this desk's own
+        structure derivation refuses) counts as sub-floor: a target with no
+        computable REAL payoff is precisely the case a checkable catalyst
+        has to justify.
 
         WHY THE CAP EXISTS EVEN WHEN THE CATALYST IS REAL. A verified
         catalyst makes the trade permissible, not good — the payoff geometry
@@ -2225,7 +2314,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         desk can express rather than removing it.
         """
         by_date = cls._state_change_symbols_by_date(active_state_changes, asof)
-        rr_by_symbol = {a.symbol.upper(): a.risk_reward for a in analyses}
+        if real_reward_risk_by_symbol is not None:
+            rr_by_symbol = {
+                a.symbol.upper(): real_reward_risk_by_symbol.get(a.symbol.upper())
+                for a in analyses
+            }
+        else:
+            rr_by_symbol = {a.symbol.upper(): a.risk_reward for a in analyses}
         held = {p.symbol.upper(): p for p in positions}
         kept: list[TargetPosition] = []
         for target in decision.targets:

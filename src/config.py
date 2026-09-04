@@ -661,12 +661,21 @@ class RiskConfig(BaseModel):
     # ~55% at 1.5x.
     maintenance_margin_pct: float = Field(default=25.0, gt=0, lt=100)
     # --- Stage 3 (shorts) -----------------------------------------------
-    # The single-short ceiling is deliberately HALF of `max_position_pct`:
+    # Set to HALF of `max_position_pct` when both were chosen (20 -> 10):
     # a long's loss is bounded at -100% of the position, a short's is not,
-    # so the per-name concentration budget for one short is tighter than
-    # for one long. Both caps below are HARD BLOCKS in the deterministic
-    # risk engine (src/risk/rules.py) on opening/adding a short — never on
-    # a COVER, which mirrors the existing exits-fail-open asymmetry.
+    # so the per-name concentration budget for one short was made tighter
+    # than for one long. That "half" relationship is now HISTORICAL, not
+    # live — `max_position_pct` moved to 100 on 2026-09-04 once it stopped
+    # working as a concentration lever (cash-only makes 100% the real
+    # reachable ceiling regardless of the number here), and this was NOT
+    # scaled with it: shorts were never in scope for that fix, and blindly
+    # 5x-ing short concentration risk without its own review would be
+    # exactly the kind of unreviewed change this desk's process forbids.
+    # 10 stands on its own justification (unbounded short loss) until a
+    # separate pass re-examines it. Both caps below are HARD BLOCKS in the
+    # deterministic risk engine (src/risk/rules.py) on opening/adding a
+    # short — never on a COVER, which mirrors the existing exits-fail-open
+    # asymmetry.
     max_single_short_pct: float = Field(default=10.0, gt=0, le=100)
     # The largest total gross BEARISH exposure across the whole book, as a
     # percent of equity — true shorts (qty < 0) plus LONG positions in an
@@ -983,7 +992,11 @@ class SmartMoneyConfig(BaseModel):
     max_observations: int = Field(default=40, ge=1, le=200)
     min_transaction_value_usd: float = Field(default=100_000, ge=1_000)
     external_min_transaction_value_usd: float = Field(default=250_000, ge=1_000)
-    cluster_window_days: int = Field(default=14, ge=1, le=45)
+    # Alldredge & Blank (J. Financial Research, 2019) define a cluster as
+    # purchases within ~2 days of a colleague's trade (see
+    # docs/RESEARCH_FINDINGS.md:19). Was 14 days with no documented
+    # rationale until the 2026-09-04 audit fix.
+    cluster_window_days: int = Field(default=2, ge=1, le=45)
     min_cluster_owners: int = Field(default=2, ge=2, le=10)
     max_external_candidates: int = Field(default=3, ge=1, le=10)
     min_external_price_usd: float = Field(default=5.0, ge=1.0)
