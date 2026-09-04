@@ -176,3 +176,104 @@ def test_a_held_name_that_is_itself_the_best_ranked_candidate_is_not_compared_ag
     )
     # NEW (1.0) vs HELD (5.0): 5.0 * 1.25 = 6.25 > 1.0, well under margin.
     assert opp is None
+
+
+# --- (b) information-only regression guard ---------------------------------
+#
+# `RotationOpportunity` is currently wired into exactly one place:
+# `PortfolioManagerAgent._render_rotation_section`, which folds it into
+# plain prompt TEXT for the LLM to read — never into `PortfolioDecision`,
+# never into `TradeDecision`/order construction, and `PortfolioConstructor`
+# (the actual execution path, `src/portfolio_constructor.py`) never imports
+# this module at all. That is the whole "information only, never automatic"
+# property this feature is supposed to have. The tests above only exercise
+# `evaluate_rotation_opportunity()` in isolation and would keep passing even
+# if someone later wired `RotationOpportunity` into an order-construction
+# path — these guard against exactly that regression.
+
+import ast
+import inspect
+import pathlib
+
+import src.portfolio_constructor as portfolio_constructor_module
+from src.models import PortfolioDecision, TradeDecision
+
+
+def _module_source_path(module) -> pathlib.Path:
+    return pathlib.Path(inspect.getsourcefile(module))
+
+
+def _imports_rotation(source: str) -> bool:
+    """True if `source` imports anything from/as `src.rotation` or
+    `rotation`, via any `import`/`from ... import` form (not just a
+    textual grep, so a rename or an aliased import is still caught)."""
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(alias.name.split(".")[-1] == "rotation" for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module.split(".")[-1] == "rotation":
+                return True
+    return False
+
+
+def test_portfolio_constructor_module_never_imports_rotation():
+    """The execution path must never even import `src.rotation` — a future
+    PR wiring rotation into order construction would start here, and this
+    fails the moment it does, independent of what it does with the import."""
+    source = _module_source_path(portfolio_constructor_module).read_text()
+    assert not _imports_rotation(source), (
+        "src/portfolio_constructor.py must not import src.rotation — "
+        "RotationOpportunity is information for the PM's prompt only and "
+        "must never reach the order-construction path"
+    )
+
+
+def test_portfolio_constructor_construct_orders_never_references_rotation_by_name():
+    """Belt-and-suspenders on top of the import check: even a local import
+    inside a function body, or a same-module symbol literally named after
+    rotation, would show up in the source text of the constructor's own
+    module — catches the failure mode without depending on import style."""
+    source = _module_source_path(portfolio_constructor_module).read_text()
+    assert "rotation" not in source.lower(), (
+        "src/portfolio_constructor.py source must not mention rotation at "
+        "all — the constructor is the real order-execution path, and this "
+        "feature is documented as information-only, never automatic"
+    )
+
+
+def test_portfolio_decision_and_trade_decision_carry_no_rotation_field():
+    """The two data structures that actually reach execution/RM review must
+    never carry a `RotationOpportunity` (or any rotation-named) field. If
+    someone ever adds one to make rotation "automatic", this fails instead
+    of silently starting to flow through the decision pipeline."""
+    for model in (PortfolioDecision, TradeDecision):
+        field_names = set(model.model_fields.keys())
+        rotation_fields = {f for f in field_names if "rotation" in f.lower()}
+        assert not rotation_fields, (
+            f"{model.__name__} must not carry a rotation field, found "
+            f"{rotation_fields} — RotationOpportunity is prompt-text only"
+        )
+
+
+def test_render_rotation_section_returns_plain_text_not_structured_data():
+    """`_render_rotation_section` is the ONE place `RotationOpportunity`
+    is consumed. Its contract must stay "renders to a prompt string" — not
+    "returns something that could be attached to a decision object". If it
+    is ever changed to return the `RotationOpportunity`/a dict/anything
+    structured (the shape a future "wire it into the decision" change would
+    need), this fails immediately."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    result = PortfolioManagerAgent._render_rotation_section(
+        ranked=[_rc("NEW", 1.8)],
+        blocked={"OLD": ["R4 R/R 0.80 under the 1.50 floor"]},
+        held_symbols={"OLD"},
+        existing_risk_pct=None,
+        ceiling_pct=25.0,
+    )
+    assert isinstance(result, str)
+    # `None` book-risk telemetry is the fail-open/skip path — still a str.
+    assert "Opportunity Rotation" in result
