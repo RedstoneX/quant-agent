@@ -174,14 +174,27 @@ class ConstructorConfig:
     max_cluster_risk_share_pct: float = 40.0
     # The risk engine's single-name GROSS notional ceiling, mirrored here so
     # the constructor sizes UNDER it instead of proposing an order the engine
-    # will hard-block. Risk-based sizing (§2.1) makes this binding in the
-    # ordinary case, not the exotic one: notional = risk_pct x entry/(entry -
-    # stop), so at this book's median 4.3% stop distance even 1.5% risk asks
-    # for 35% of equity in one name. `max_position_pct` is in
-    # HARD_BLOCK_RULES, so without this clamp those BUYs are dropped entirely
-    # and the session trades nothing. Keep in sync with
-    # `risk.max_position_pct` — pipeline.py wires them from the same setting.
-    max_position_pct: float = 20.0
+    # will hard-block. `max_position_pct` is in HARD_BLOCK_RULES, so without
+    # this clamp a BUY over the ceiling is dropped entirely rather than
+    # trimmed.
+    #
+    # 20 -> 100 on 2026-09-04 (real-data audit): a concentration/liquidity
+    # BACKSTOP is supposed to only bind on a genuinely too-tight stop, not
+    # the ordinary case. At 20 it bound on nearly every trade — notional =
+    # risk_pct x entry/(entry - stop), so at this book's real ~5-9% stop
+    # distances (see `risk.min_stop_atr_multiple`'s own comment in
+    # settings.yaml) even the full 5% envelope needed 55-100% notional,
+    # 6 of 13 real proposed orders pinned at exactly 20%, and delivered risk
+    # collapsed to ~1% regardless of stated conviction. 100 is where that
+    # real 5-9% range stops being clipped (5% risk / 5% stop = 100%
+    # notional), while a stop tighter than 5% — reachable today only via the
+    # level-backed exception down to `absolute_min_stop_atr_multiple` — still
+    # gets clamped, which is the genuinely-too-tight case this ceiling
+    # exists for. `allow_margin` is false, so 100 is also the real ceiling:
+    # nothing past 100% of one name's equity is reachable cash-only anyway.
+    # Keep in sync with `risk.max_position_pct` — pipeline.py wires them from
+    # the same setting.
+    max_position_pct: float = 100.0
     # Spec §10.3 "concentration scales size, it does not veto". The sector
     # diversification target and the absolute ceiling behind it. Unlike every
     # other ceiling in this dataclass these do not merely make the constructor

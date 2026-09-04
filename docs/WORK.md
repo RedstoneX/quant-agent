@@ -62,6 +62,9 @@ settled. Restored:**
   source VIX same-day instead of lagged FRED. Full measurement:
   `docs/INCIDENT_HISTORY.md`. Not decided.
 
+- [ ] DECIDE BY 2026-09-19 — Item 32: widened bands or an ATR/vol-parity
+  overlay? Both defensible, disagree.
+
 **RECONFIRM AFTER A FEW DAYS LIVE — item 14(c)'s call-count cap, owner
 instruction 2026-09-03.** Shipped at `max_calls_per_session: 40`, set from
 real production data (worst COMPLETE session on record made 14 calls,
@@ -954,20 +957,31 @@ their own authors, not yet independently reviewed.
 
 An old, unratified position-size cap bound before real risk-based sizing
 ever did — confirmed against real trade data, delivered risk had
-collapsed to ~1%, not the owner-approved 5%. **Fixed 2026-09-04**: cap
-raised to a value derived from this desk's own real stop distances (PR
-#258), PM sizing bands restored (PR #259) — both open, pending review,
-not pending a decision. A portfolio-level volatility-target overlay was
-investigated and explicitly REJECTED (imports a fund's smoothness goal,
-not this desk's survival goal — see `docs/OUTCOME.md`).
+collapsed to ~1%, not the owner-approved 5%. **Fixed and merged
+2026-09-04**: cap raised to a value derived from this desk's own real
+stop distances (PR #258). A portfolio-level volatility-target overlay
+was investigated and explicitly REJECTED (imports a fund's smoothness
+goal, not this desk's survival goal — see `docs/OUTCOME.md`).
+
+**PM conviction-band restoration — CLOSED WITHOUT MERGING by the owner,
+2026-09-04, no reason given in the PR.** PR #259 (bands compressed
+2026-08-27 back to their original 2.0-4.0%/1.0-2.5% range, bundled with
+the vol-target-overlay writeup above) was closed, not merged. Do not
+re-propose this as already-decided — the compressed 2026-08-27 bands
+are still live. If the owner wants the bands revisited, that is a fresh
+ask, not a resumption of #259.
 
 **Still genuinely open:** the drawdown brakes (5-day/-3%, 20-day/-8%, 3%
 daily circuit breaker) are unmeasured pre-mandate constants sized for the
 OLD ~1% risk unit, now stale relative to the fixed sizing, and a data
-reset wiped the equity history they read from. Needs rescaling to the
-real per-trade risk unit — not done, no PR yet.
+reset wiped the equity history they read from. Rescale drafted on PR
+#263 (real unit conversion done; the multiplier itself honestly flagged
+provisional — equity history needed to validate it was wiped by the
+2026-09-02 reset). **Do not merge #263 until this item's cap fix (#258,
+now merged) is live** — #263 says so itself.
 
-**DECIDE BY 2026-09-11** — narrowed to just the drawdown-brake rescaling.
+**DECIDE BY 2026-09-11** — the drawdown-brake rescaling, and whether the
+conviction-band question gets reopened.
 
 **33. The two "is this trade worth the risk" checks disagreed with each other — FIXED, pending review.**
 

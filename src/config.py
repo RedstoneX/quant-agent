@@ -618,12 +618,21 @@ class RiskConfig(BaseModel):
     # ~55% at 1.5x.
     maintenance_margin_pct: float = Field(default=25.0, gt=0, lt=100)
     # --- Stage 3 (shorts) -----------------------------------------------
-    # The single-short ceiling is deliberately HALF of `max_position_pct`:
+    # Set to HALF of `max_position_pct` when both were chosen (20 -> 10):
     # a long's loss is bounded at -100% of the position, a short's is not,
-    # so the per-name concentration budget for one short is tighter than
-    # for one long. Both caps below are HARD BLOCKS in the deterministic
-    # risk engine (src/risk/rules.py) on opening/adding a short — never on
-    # a COVER, which mirrors the existing exits-fail-open asymmetry.
+    # so the per-name concentration budget for one short was made tighter
+    # than for one long. That "half" relationship is now HISTORICAL, not
+    # live — `max_position_pct` moved to 100 on 2026-09-04 once it stopped
+    # working as a concentration lever (cash-only makes 100% the real
+    # reachable ceiling regardless of the number here), and this was NOT
+    # scaled with it: shorts were never in scope for that fix, and blindly
+    # 5x-ing short concentration risk without its own review would be
+    # exactly the kind of unreviewed change this desk's process forbids.
+    # 10 stands on its own justification (unbounded short loss) until a
+    # separate pass re-examines it. Both caps below are HARD BLOCKS in the
+    # deterministic risk engine (src/risk/rules.py) on opening/adding a
+    # short — never on a COVER, which mirrors the existing exits-fail-open
+    # asymmetry.
     max_single_short_pct: float = Field(default=10.0, gt=0, le=100)
     # The largest total gross BEARISH exposure across the whole book, as a
     # percent of equity — true shorts (qty < 0) plus LONG positions in an
