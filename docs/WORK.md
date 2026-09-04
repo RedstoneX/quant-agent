@@ -1046,6 +1046,15 @@ commercial feed. New dependency / reliability tradeoff — owner's call.
 
 **37. Eleven PRs open at once tonight (#249-#262) — merge ORDER matters, see `docs/INCIDENT_HISTORY.md`.** None conflict in logic; several share files (`portfolio_manager.py`/`.md` especially — #257, #259, #261). Full recommended order recorded there so it survives a compaction, not just this session's head.
 
+**38. Insider cluster window was 7x the cited research — FIXED 2026-09-04.**
+`smart_money.cluster_window_days` was 14 with no rationale; the cited paper
+(Alldredge & Blank, `docs/RESEARCH_FINDINGS.md`:19) defines a cluster as ~2
+days. Corrected to 2. Verified on a fresh live SEC pull: real multi-owner
+clusters this week never spread past 2 days, so nothing real was lost
+narrowing it. Detail: `docs/INCIDENT_HISTORY.md`. Separate, NOT fixed here:
+the same paper says size should be relative to holdings, not an absolute
+dollar filter — needs holdings-size data QAMC doesn't have; owner call.
+
 **39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
 
 ---

@@ -131,7 +131,11 @@ class SECForm4Provider:
         lookback_days: int = 14,
         min_transaction_value_usd: float = 100_000,
         external_min_transaction_value_usd: float = 250_000,
-        cluster_window_days: int = 14,
+        # Alldredge & Blank (J. Financial Research, 2019): purchases within
+        # ~2 days of a colleague's trade define a "cluster" (see
+        # docs/RESEARCH_FINDINGS.md:19). Was 14 days with no documented
+        # rationale until the 2026-09-04 audit fix.
+        cluster_window_days: int = 2,
         min_cluster_owners: int = 2,
         max_observations: int = 40,
         refresh_deadline_s: float = 180,
