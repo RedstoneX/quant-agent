@@ -846,10 +846,6 @@ stopped until a person happens to look. On an unattended desk that is a day
 All three parts of item 17 are now shipped; the remaining open point is the
 second-channel decision under (b) above.
 
-Related: `qamc-openrouter-pricing-spof` records the same latch reachable via
-a stale price list. That path was fixed 2026-09-02; **this one was not** —
-the latch itself is the shared hazard, not any single route into it.
-
 **18. 70% OF WHAT THE MODEL READS IS EARNINGS PROSE — MEASURED 2026-09-02. Owner made the audit priority one; this is its first result.**
 
 **Numbered 18, ranked first in practice.** 18 was the free slot in the
@@ -1188,6 +1184,15 @@ not the sector-adjusted stance `build_evidence_registry` already computes
 elsewhere in the same prompt. Also open: three of the four new seats'
 magnitude mappings are reasoned but unmeasured judgment calls, flagged by
 their own authors, not yet independently reviewed.
+
+**36. Opportunity-cost rotation — owner-requested. `src/rotation.py`.**
+(36, not 32: 32-35 claimed elsewhere; renumber at merge.) The risk ceiling
+blocks a candidate but never asks if it beats what is held. PM's
+prompt surfaces one comparison — weakest held vs. strongest new-with-no-
+room — when existing book risk is past the tradeable floor. 25% score
+margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an
+ineligible holding needs no margin. Surfaces only, never edits. Design in
+`docs/INCIDENT_HISTORY.md`.
 
 ---
 

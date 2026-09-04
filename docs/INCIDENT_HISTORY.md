@@ -3340,3 +3340,102 @@ to pass against the fix with all four surviving — plus a companion test on
 directly.
 
 See PR merging `fix/risk-budget-partial-heat-failure`.
+
+### 2026-09-04 — opportunity-cost rotation: capital could sit in a weak holding while a stronger idea got refused for "no room" (item 36)
+
+**In plain words.** The desk has a hard rule that total risk across the book
+can't exceed 25% of equity, and a related rule capping how much correlated
+names can carry together. Both rules are working as designed — they correctly
+say no to a new trade once the book is full. But neither one, nor anything
+else, ever asked the follow-up question: is the new idea actually BETTER than
+something the book is already holding? A desk that is fully committed to
+weak, stale, or barely-justified positions could refuse a genuinely stronger
+new idea for no reason other than "no room", with nothing anywhere comparing
+the two. This was a real, owner-identified gap, not a bug in existing code —
+nothing was broken; a capability the owner wanted simply did not exist yet.
+
+**What was built.** A new module, `src/rotation.py`, and a new prompt section
+in the Portfolio Manager's own briefing (`PortfolioManagerAgent
+._render_rotation_section`, wired into `build_user_message`). Every session,
+Technical already re-reads the whole configured universe — held positions
+included — so the existing candidate ranking (`src/verdicts.py::rank_verdicts`,
+item 31) already places held names and new candidates on one shared scale
+without any change needed there. The new logic asks two questions, in order:
+
+1. **Is capital actually constrained right now?** Computed from the book's
+   EXISTING risk alone (before anything this session proposes), using the
+   same `allocate_risk_budget` function the risk ceiling itself already runs
+   on (`src/risk/budget.py`). If real headroom is left — enough for at least
+   one more minimum-sized position — nothing is surfaced at all. This was a
+   deliberate design choice: the feature must never activate as a "could we
+   do better" nudge on an otherwise fine book, only when refusal is actually
+   the reason nothing new can be added.
+2. **If constrained, is there a real opportunity being missed?** Two tiers:
+   - **Categorical.** A held position that no longer clears the desk's OWN
+     entry rules (`PortfolioManagerAgent.candidate_eligibility` — the same
+     R/R floor, BUY-eligibility, and evidence checks a brand-new buy must
+     pass) needs no ranking margin to flag: it would not be bought today, by
+     the identical rule a new buy is held to. This is not a ranking
+     judgement, it is a fact about whether today's own rules would open the
+     position now.
+   - **Ranked margin.** Among held positions that ARE still eligible, a new
+     candidate must outrank the weakest held one by a real margin before a
+     rotation is surfaced — otherwise the system would churn on marginal,
+     noise-level differences in the ranking score every session.
+
+**Why 25%, and why it is marked PROVISIONAL.** This is a well-studied pattern
+in systematic and cross-sectional portfolio construction — rank everything on
+one scale, replace the weakest holding with a stronger candidate only past a
+real margin, specifically to prevent turnover driven by noise rather than a
+real edge. Grinold & Kahn's *Active Portfolio Management* formalises this as
+a "no-trade region": a rebalance is only worth making once the expected
+improvement clears a real breakeven against transaction costs, not at every
+marginal rank change. FTSE Russell's own published index-reconstitution
+methodology applies the identical shape in live production — a "banding" /
+buffer rule that requires a candidate to clear a materially different bar
+than an incumbent before a membership swap happens, precisely to damp
+turnover from marginal, boundary-level rank changes (FTSE Russell, "Russell
+US Indexes Construction and Methodology"; summarised at
+https://www.lseg.com/en/insights/ftse-russell — "percentile banding...
+allows previous membership to be considered in order to limit unnecessary
+index turnover"). Neither source, nor any other found, hands over one
+universal number: practitioner discussion of rebalancing tolerance bands
+clusters loosely in a 5%-25% relative range depending on the asset and cost
+profile (see e.g. Alpha Architect's writing on rebalancing tolerance bands).
+This module took the CONSERVATIVE end of that range — 25%, the hardest to
+trigger — and marks it PROVISIONAL, the same posture `src/verdicts.py
+::SEAT_WEIGHT` (item 31) already uses for its own literature-grounded but
+unmeasured numbers: a considered starting point, not a measured fact,
+revisable the moment this desk has its own rotation-outcome data to spend.
+
+**What this deliberately does NOT do.** It never edits a position, never
+submits an exit, and never changes sizing or eligibility — it is purely a new
+paragraph in the Portfolio Manager's own prompt, read by the same AI that
+already decides trade choice today. This was a deliberate architecture
+choice, not a shortcut: the codebase's existing division of labor is
+deterministic Python for eligibility/sizing/ceilings, and the PM's own
+judgement for which trade to take. Whether to trim a name is a trade-choice
+question, not an eligibility question, so it stays with the PM — the same
+reasoning already applied to the Phase 13 candidate ranking (item 31), which
+orders candidates but never picks for the PM. If the PM acts on the surfaced
+comparison, that action is still an ordinary edit to a held position and
+still owes the same substantive justification any other exit does (items
+22-24) — the rotation note is information, never a reason on its own.
+
+**Known simplification, flagged rather than solved here.** The check looks
+only at the TOTAL portfolio risk ceiling's headroom, not the per-cluster
+ceiling or the gross-exposure ladder (`docs/WORK.md` background, spec
+§11.2) — both are real, separate ways capital can be constrained, and are
+left for a follow-up rather than bundled into this first increment.
+
+**Tests.** `tests/test_rotation.py` — hand-computed scenarios: a
+clearly-stronger candidate rotating out a categorically-ineligible holding
+(no margin needed) and out of a weak-but-still-eligible one (margin
+cleared); a marginal edge that does NOT trigger (and the exact margin
+boundary, which does); real headroom suppressing the check entirely, at and
+above the floor; and edge cases (nothing held to compare against, an empty
+`blocked` reasons list not misread as a categorical hit, and multiple
+ineligible holdings resolved deterministically). Full existing suite run
+before/after — see the PR for exact counts.
+
+See PR for `feat/opportunity-cost-rotation`.
