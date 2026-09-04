@@ -277,6 +277,60 @@ def test_earnings_analyst_accepts_valid_analysis(agent, report):
     assert analysis["investment_implications"]["sentiment"] == "bullish"
 
 
+def test_analyze_reports_wrapper_carries_analysis_path_to_full_extraction(agent, report):
+    """Item 18 (2026-09-04): PM's prompt now gets a short verdict, not this
+    whole report — but the full 8-field extraction must still be computed,
+    saved to disk, and reachable via a pointer in the wrapper dict the
+    pipeline hands to `PortfolioManagerAgent.build_user_message`. This is
+    that plumbing: `analysis_path` on the wrapper must point at a real file
+    that, when read back, still carries every one of the eight extraction
+    fields — nothing was dropped, only what reaches PM's prompt changed.
+    """
+    agent.run = MagicMock(
+        return_value=AgentResult(
+            raw_text=json.dumps(_valid_analysis(report)),
+            tokens_used=123,
+            model="test-model",
+        )
+    )
+
+    results = agent.analyze_reports([report])
+
+    assert len(results) == 1
+    wrapper = results[0]
+    assert wrapper["analysis_path"] == report.analysis_path
+    assert Path(wrapper["analysis_path"]).exists()
+
+    on_disk = json.loads(
+        Path(wrapper["analysis_path"]).read_text().split("```json\n")[1].split("\n```")[0]
+    )
+    for field in (
+        "revenue", "profitability", "cash_flow", "balance_sheet",
+        "strategic_direction", "risk_flags", "strategy_consistency",
+        "data_quality",
+    ):
+        assert field in on_disk, f"full extraction lost field {field!r} on disk"
+
+
+def test_existing_analysis_wrapper_also_carries_analysis_path(agent, report):
+    """Same pointer, for the cached (not-new-filing) branch of `_analyze_one`
+    — a symbol re-served from a prior session's cache still needs to be
+    locatable by PM's short-verdict pointer, not only a freshly analyzed one.
+    """
+    report.is_new = False
+    analysis_path = Path(report.analysis_path)
+    analysis_path.parent.mkdir(parents=True, exist_ok=True)
+    analysis_path.write_text(
+        "# Cached\n\n```json\n" + json.dumps(_valid_analysis(report), indent=2) + "\n```\n"
+    )
+
+    results = agent.analyze_reports([report])
+
+    assert len(results) == 1
+    assert results[0]["analysis_path"] == report.analysis_path
+    assert results[0]["is_new"] is False
+
+
 def test_earnings_analyst_rejects_metadata_mismatch(agent, report):
     bad = _valid_analysis(report)
     bad["symbol"] = "TSLA"
