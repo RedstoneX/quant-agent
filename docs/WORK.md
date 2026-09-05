@@ -742,18 +742,7 @@ whatever plan survived it. See `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 
 **13. One number was carrying three different meanings — FIXED 2026-09-04, PR #255.** A target weight of 0% used to mean three incompatible things (refuse / close / short) with no way to tell them apart, so a refused BUY could silently liquidate a held position. Fixed with a borrowed, proven pattern (`pysystemtrade`'s override algebra — distinct intents, not one ambiguous float). See `docs/INCIDENT_HISTORY.md`.
 
-**14. Replace the budget guard — SHIPPED on `feat/replace-budget-reservation`.**
-
-Per-call cost reservation deleted entirely (it held ~2.6x what it actually
-spent, stopping the desk on money never spent — full reasoning in
-`docs/INCIDENT_HISTORY.md`, "item 14"). Replaced with (b) a settled-cost cap
-checked before and after each call, and (c) a plain per-session call-count
-cap as the real defence against a runaway loop. (a), an API-key-level spend
-cap outside our code, is NOT built — flagged in `cost_circuit.py` pointing
-back here, needs the provider's exact limit options verified first.
-
-**(c)'s number is a placeholder, not measured — see the DECIDE BY line
-above.** Everything else in this item is implemented and tested.
+**14. Replace the budget guard — SHIPPED on `feat/replace-budget-reservation`.** (a), an API-key-level spend cap outside our code, is NOT built. **(c)'s call-count number is a placeholder, not measured — see the DECIDE BY line above.** Detail: `docs/INCIDENT_HISTORY.md`, "item 14: the budget guard was stopping the desk on money it never spent".
 
 **15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
 
@@ -927,13 +916,13 @@ one, and do not ship a placeholder.
 
 **24. The drawdown position cap could be skipped after a Risk Manager edit — FIXED 2026-09-03**, same PR as item 23.
 
-**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — BUILT (PR #249), THREE real questions, two now decided by the owner, one still real and unrecorded until now.**
+**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — BUILT AND SHIPPED (PR #249). One real question still open.**
 
-Deterministic check built for the two most common claims (a real price-level break, confirmed over two closing days; a real macro/news-based claim, checked against recorded data). Precondition fixed 2026-09-03: `TradeDecision`'s stated invalidation reason used to reach storage only as text two truncations (500/280 chars) could cut off — now a dedicated, untruncated field + `trades` column.
+Deterministic check built for the two most common claims (a real price-level break, confirmed over two closing days; a real macro/news-based claim, checked against recorded data). Precondition fixed 2026-09-03: `TradeDecision`'s stated invalidation reason used to reach storage only as text two truncations (500/280 chars) could cut off — now a dedicated, untruncated field + `trades` column. The flat "<5 days" protection window is gone: protection is `exit_guard.py::check_structural_protection`'s data-driven answer, with no day count anywhere in the decision.
 
 **Real asymmetry found in independent review, not yet resolved:** the two-day close confirmation exists specifically to stop a single noisy/whipsaw day from lifting protection (a one-day dip-and-reclaim is a known bullish reversal pattern, not a breakdown). But that confirmation gate only applies to the LEVEL-BACKED path. A momentum/breakout trade using the no-structure noise-band fallback gets ZERO confirmation days — same-day lift, identical magnitude test, no whipsaw protection at all. The trades most likely to need protection from a one-day noise event are the ones currently getting none. **Not yet decided whether this is deliberate (breakout trades genuinely shouldn't get the same grace period) or a real gap — owner has not weighed in on this specific question yet.**
 
-**Escalation — DECIDED 2026-09-04.** When the check catches a PROVEN-FALSE claim (not just an unverifiable one), the trade is now blocked, not just logged, and a Telegram alert fires so the false-claim rate can be tracked. Grounded in real doctrine (SEC Rule 15c3-5, the Knight Capital $460M loss from 97 ignored automated warnings) — a check that never blocks decays into decoration.
+**Escalation — DECIDED 2026-09-04, and now SHIPPED.** When the check catches a PROVEN-FALSE claim (not just an unverifiable one), the trade is blocked, not just logged, and a Telegram alert fires so the false-claim rate can be tracked. Grounded in real doctrine (SEC Rule 15c3-5, the Knight Capital $460M loss from 97 ignored automated warnings) — a check that never blocks decays into decoration. Implementation: `exit_guard.py::holding_discipline_claim_check` returns a three-valued verdict — **false** blocks and alerts, **unverifiable** (macro seat untrusted, or no same-day news row names the symbol either way) is logged only and never blocks or alerts, **ok** does nothing. That split is the whole design; absence of proof is not proof. The veto reuses the existing per-symbol Risk Manager refusal mechanism in `RiskStage`, not a second veto path, and the alert is its own message with severity in plain words, deliberately not deduplicated so the count survives. Detail: `INCIDENT_HISTORY.md`, 2026-09-04 "a sell whose stated reason is provably untrue now actually gets stopped".
 
 **Long-term design — PARKED, owner wants a dedicated conversation, not bundled with other items.** Full design exists (make the release condition itself objective — reuse structured news/state-change data for the "new bearish evidence" claim, use a real index structural-level break as an honest stand-in for "market risk-off" until a properly researched risk-off classifier exists) but is NOT being implemented until that conversation happens. Do not re-raise unprompted.
 

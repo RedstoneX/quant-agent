@@ -22,6 +22,65 @@ what would catch it next time.
 
 ---
 
+### 2026-09-04 — item 25: a sell whose stated reason is provably untrue now actually gets stopped, and the owner is told
+
+**In plain words:** the desk already had a check that could catch the AI
+saying something untrue to justify selling a position it should be holding —
+claiming the market turned risk-off today when the recorded macro reading
+says it did not, or claiming fresh bad news on the stock when the recorded
+news for today says the opposite. Until now that check only wrote a note in
+the log. The trade went through anyway. It now stops the trade, and sends a
+Telegram message saying which position, what was claimed, and why it was
+found untrue. The owner approved this change so the desk can also start
+measuring how often it actually happens.
+
+**The one distinction the whole change rests on.** "We proved this claim
+false" and "we could not check this claim" are different answers and must
+never be collapsed into one. Only the first blocks anything.
+
+- *Proven false* — the reasoning asserts a checkable fact and the desk's own
+  recorded data for TODAY says the opposite: a claimed risk-off flip against
+  a trusted macro read showing a different regime; a claimed high-conviction
+  bearish news event against a same-day news row that names the symbol with
+  a non-bearish direction. Blocks the decision, alerts the owner.
+- *Unverifiable* — the claim was made but the data needed to judge it is not
+  there this run: the macro seat failed or was untrusted, or no same-day news
+  row names the symbol at all. Logged exactly as before, never blocked, never
+  alerted. The news pipeline can simply not have written a real catalyst up
+  as a formal row yet, so treating "not found" as "false" would manufacture
+  vetoes against honest exits — which would be a worse bug than the gap being
+  closed.
+- The third allowed exit trigger, the trade's own `thesis_invalid_if`, is
+  still never evaluated here at all, so a sell resting on it is untouched.
+
+Before this, the code had no name for the middle case: an unverifiable claim
+and a confirmed claim both simply returned nothing. Adding the veto forced
+the three-way split to be made explicit, which is most of the change.
+
+**What was deliberately NOT changed:** the bar for reaching "false". The
+claim-detection is still phrase matching over free text with a short
+negation-cue guard, and the reason that used to be given for keeping this
+check toothless is now the reason the FALSE bar stays exactly where it is.
+The known residual risk is accepted with eyes open and was the owner's call:
+a correctly-read false claim about the macro or news trigger does not by
+itself prove the sell is wrong, because an unverifiable `thesis_invalid_if`
+might independently justify it. The Risk Manager can re-propose the exit next
+cycle citing something true. The alert exists so the frequency of that
+trade-off gets measured rather than assumed — and, like the data-quality
+alert, it is deliberately not deduplicated, because suppressing repeats would
+destroy the count that is the point of it.
+
+**What would catch a regression:** `tests/test_holding_discipline_block.py`
+pins all three verdicts at the unit level and end to end through the risk
+stage — proven-false blocks and alerts once; unverifiable is logged with no
+alert and the decision survives; a true claim produces no event at all. It
+also pins that an alerting failure cannot break the trading path, and that
+blocking the last surviving leg ends the run through the same terminal
+"rejected" status a per-symbol Risk Manager refusal already used. The veto
+reuses that existing refusal mechanism rather than adding a second one.
+
+---
+
 ### 2026-09-04 — three independent exit-management defects fixed in one PR
 
 **In plain words:** a real-data audit of tonight's exit and ranking
@@ -422,6 +481,124 @@ the point of building something more trustworthy than the honour system.
 Tested against the real recorded sentences above (14 tests, all passing);
 the test-breaking/restoring check that proves the tests actually exercise
 the logic is recorded in the same session's work, not repeated here.
+
+---
+
+### 2026-09-03 — item 25: the Risk Manager's "did PM really have a reason to sell early" check was 100% prompt-only; now the two checkable parts are, one is not, and the fix only ever catches a proven-false claim
+
+**In plain words:** the desk tells its AI Risk Manager to police an early
+exit (a position sold before 5 days old, "protection period") by checking
+that PM's stated reason is one of three real things — a triggered
+invalidation, a market-wide flip to risk-off that day, or a genuinely
+bearish news event about that stock that day — and to check the real News
+and Macro data itself before agreeing. Nothing in code ever checked that it
+did. The AI was grading its own homework, same shape as the sub-floor
+catalyst gate fixed earlier today (§ above): a citation existing is not the
+same thing as a citation being real.
+
+**What's fixed and what isn't.** Two of the three triggers are now checked
+in Python: (1) a claimed market-wide flip to risk-off is checked against the
+day's own real macro reading; (2) a claimed bearish stock-specific news
+event is checked against the day's own real news record. The third —
+whether a stop-loss condition set at the time of the original purchase has
+actually been triggered — is NOT checked. That would mean teaching code to
+read an arbitrary written condition ("closes below the 50-day average") and
+test it against a live chart, which is a much bigger, separate piece of
+work, and a rough guess at it would be worse than admitting it isn't done.
+Investigation also found that even the narrower question — "was a stop-loss
+condition honestly written down at purchase time, not invented after the
+fact" — cannot currently be answered reliably: the only place that record
+survives is buried inside a length-capped free-text note, written two
+different ways by two different parts of the code, and both are cut off
+before the full note is guaranteed to fit. That gap is flagged for the
+owner, not fixed here.
+
+**Why a proven-false claim only gets logged, not blocked.** Whether the
+market flipped to risk-off, or whether a specific bearish story broke on a
+stock, are both checkable against real, single-source-of-truth data, so a
+mismatch there is provable, not a guess. But the check still can't fully
+trust its own reading of PM's sentence — matching words in free text cannot
+always tell "the regime flipped" from "the regime did NOT flip," so a
+wrongly-read sentence could look like a lie when it isn't. And even a
+correctly caught false claim about these two triggers doesn't rule out the
+third (the stop-loss one), which nothing here can check either way. So a
+provably false claim is written to the record for review, not used to
+cancel the trade — flagged for a second look before this graduates to
+actually blocking anything.
+
+**Update, same day, from independent review:** the "can't always tell a
+claim from its denial" risk above was real, not theoretical — a reviewer
+found a concrete sentence ("No regime shift to risk-off has occurred...")
+that got misread as CLAIMING a flip before this fix, which would have
+wrongly flagged an honest exit. A short negation check (a small list of
+words like "no"/"not"/"without" appearing just before the matched phrase)
+now catches this specific case. It is not a general fix for every possible
+way free text can be misread — just this demonstrated one — which is
+exactly why this still only ever writes to the record rather than blocking
+a trade.
+
+**Update, same day: the flat "<5 days" protection window itself is gone.**
+The owner rejected the day-count as arbitrary — it traced to an April 2026
+commit with a stated philosophy and no backtest behind it. Protection is
+now decided by data, not a clock: a position keeps protection from a plain
+sell-with-no-real-trigger UNLESS the level actually backing its thesis has
+been broken by price. If the trade recorded its own "what proves this
+wrong" condition (`thesis_invalid_if`), that condition is checked for real
+using the price/moving-average checker built the same day
+(`check_thesis_invalid_if`, see the entry above). If none was recorded, or
+the checker can't parse it, the desk falls back to the same structural
+support/resistance level — using the same already-agreed "at least 5 real
+touches" bar that already decides whether a stop-loss is allowed to be
+honoured (`portfolio_constructor.py::_level_backing_stop`) to pick WHICH
+level backs the stop. No new number was invented anywhere in this change.
+`days_held` no longer plays any part in the decision.
+
+**Two corrections made the same day, after real technical-analysis
+practice was checked rather than assumed.** First draft: any position with
+neither a stated condition nor a qualifying structural level got no
+automatic protection at all. The owner correctly flagged this as
+systematically stripping protection from breakout/momentum trades, which
+by design don't have classic multi-touch support/resistance under them —
+that is not the same thing as "nothing backing the thesis." Fixed: that
+case now falls back to the desk's EXISTING volatility noise band (the same
+"is this adverse move real or just noise" check already used elsewhere in
+this file) rather than an automatic unprotect — no second noise-band number
+was invented for it.
+
+Second, and more important: the first design lifted protection the moment
+a break was seen on ANY single check, including mid-session. Checked
+against real trading practice, that is wrong in two ways at once — an
+intraday wick through a level that closes back inside is textbook noise,
+not a break; and even a genuine CLOSE beyond a level can be a "spring" (a
+well-documented false-breakdown pattern that often reverses bullish the
+very next day), which can take a day or two to resolve, not one same-day
+recheck. Fixed: a break is now judged ONLY on the completed DAILY CLOSE,
+by a decisive margin (the existing noise-band multiple, not the tighter
+number used only to identify which level a stop sits on), and must hold on
+TWO CONSECUTIVE TRADING DAYS' closes before protection actually lifts — a
+break-then-reclaim the next day resets to fully protected rather than
+half-confirming toward a future break. The state needed to compare against
+"yesterday's close" is a new small memory row (which trading day's close
+came back broken, per position) added alongside the desk's existing
+review-memory pattern, not a new architecture.
+
+Real, hand-computed tests (not mocked) prove all of this, including the
+most important case: a position whose close breaks a level on day one and
+reclaims it on day two never loses protection (the spring case); the same
+break confirmed on two consecutive days' closes does lift it; a close that
+dips only slightly below a level (inside the noise-band margin) is never
+read as broken at all — the same thing an intraday wick-and-recover would
+look like, since the function only ever sees a close; a position with
+neither a stated condition nor a qualifying level stays protected inside
+the noise band and loses protection only once a real adverse move exceeds
+it; and an intact thesis or level protects a position with no time limit
+at all (30 "days held" makes no difference — there is no such input any
+more). The two independent lift-protection triggers already shipped
+(regime flip, bearish state change) are unchanged, are NOT subject to this
+two-day confirmation gate (they still act same-day), and their existing
+tests still pass. Still open, unrelated to this piece: the
+`thesis_invalid_if` verification scope note above, and whether a
+proven-false claim should ever escalate beyond logging.
 
 ---
 
