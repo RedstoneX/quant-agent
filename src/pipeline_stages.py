@@ -2242,6 +2242,28 @@ class MorningResearchStage:
                 )
             else:
                 data_status["news"] = "ok"
+            # Self-reported confidence is a second, independent signal from
+            # the coverage check above: coverage measures whether the wire
+            # feeds returned data, confidence is the model's own read on
+            # how well it could make sense of what it got. A report can
+            # structurally parse clean on feeds that DID return data and
+            # still carry confidence="low" (thin/contradictory/ambiguous
+            # headlines) — that combination was reaching "ok" with nothing
+            # anywhere to show for it, which is exactly the "no data, but
+            # everything's fine!" lie the owner flagged. Mirrors how a
+            # truncated smart-money response always wins over "ok"/"empty"
+            # above: the model's own honesty signal overrides an otherwise-
+            # clean status rather than being silently absorbed by it. Only
+            # fires on what would otherwise be "ok" — coverage-driven
+            # partial/failed/parse_error already say something is wrong and
+            # take priority.
+            if data_status["news"] == "ok" and news_intel and news_intel.confidence == "low":
+                data_status["news"] = "low_confidence"
+                logger.warning(
+                    "News parsed cleanly on sufficient coverage but the "
+                    "model self-reported confidence='low' — flagging "
+                    "data_status['news']='low_confidence' instead of 'ok'.",
+                )
         except PaidAnalysisSuspended:
             raise
         except Exception as e:
