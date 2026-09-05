@@ -331,6 +331,45 @@ def test_existing_analysis_wrapper_also_carries_analysis_path(agent, report):
     assert results[0]["is_new"] is False
 
 
+def test_analyze_reports_carries_xbrl_facts_through_to_the_wrapper(agent, report):
+    """The XBRL cross-check (`_classify_earnings_status`, src/pipeline_stages.py)
+    reads `xbrl_facts` off the wrapper dict `analyze_reports` returns — it
+    must actually be there, both for a freshly analyzed filing and for one
+    served from the cache, not just present on the `EarningsReport` and
+    silently dropped on the way to the results list."""
+    report.xbrl_facts = {"revenue": 50_000_000_000.0, "net_income": 5_000_000_000.0}
+    agent.run = MagicMock(
+        return_value=AgentResult(
+            raw_text=json.dumps(_valid_analysis(report)),
+            tokens_used=123,
+            model="test-model",
+        )
+    )
+
+    results = agent.analyze_reports([report])
+
+    assert len(results) == 1
+    assert results[0]["xbrl_facts"] == {"revenue": 50_000_000_000.0, "net_income": 5_000_000_000.0}
+
+
+def test_analyze_reports_xbrl_facts_defaults_empty_when_none_available(agent, report):
+    """The ordinary case: no XBRL data was available for this filer/period
+    (`_fetch_xbrl_raw` fails open to `{}`) — the wrapper must carry that
+    through as `{}`, which the cross-check already reads as "nothing to
+    compare," not as a mismatch."""
+    agent.run = MagicMock(
+        return_value=AgentResult(
+            raw_text=json.dumps(_valid_analysis(report)),
+            tokens_used=123,
+            model="test-model",
+        )
+    )
+
+    results = agent.analyze_reports([report])
+
+    assert results[0]["xbrl_facts"] == {}
+
+
 def test_earnings_analyst_rejects_metadata_mismatch(agent, report):
     bad = _valid_analysis(report)
     bad["symbol"] = "TSLA"
@@ -596,7 +635,14 @@ def test_xbrl_facts_fails_open_on_network_error(tmp_path, monkeypatch):
 
 def test_xbrl_facts_gets_prepended_to_extracted_text(tmp_path, monkeypatch):
     """End-to-end wiring: `_check_symbol` must actually attach the XBRL
-    block to `text_excerpt`, not just have the method exist unused."""
+    block to `text_excerpt`, not just have the method exist unused.
+
+    Mocks `_fetch_xbrl_raw` — the one real fetch `_check_symbol` now makes
+    (see its docstring: `_get_xbrl_financial_facts` and
+    `_xbrl_comparable_values` both derive from this single call so a filing
+    isn't fetched twice) — rather than `_get_xbrl_financial_facts` directly,
+    so this test isn't silently making a real SEC network call while
+    believing it's exercising the mock."""
     from src.data.earnings import EarningsDataProvider, FilingInfo
 
     provider = EarningsDataProvider(data_dir=str(tmp_path))
@@ -614,11 +660,8 @@ def test_xbrl_facts_gets_prepended_to_extracted_text(tmp_path, monkeypatch):
     local_html.write_text("<html><body>Some filing text with no clean sections.</body></html>")
     monkeypatch.setattr(provider, "_download_filing", lambda cik, filing: str(local_html))
     monkeypatch.setattr(
-        provider, "_get_xbrl_financial_facts",
-        lambda cik, ticker, filing_date: (
-            "=== STRUCTURED FINANCIAL FACTS (SEC XBRL, not text-extracted) ===\n"
-            "Net Income: $31,778,000,000 (period ending 2026-03-31)\n"
-        ),
+        provider, "_fetch_xbrl_raw",
+        lambda cik, ticker, filing_date: {"net_income": (31_778_000_000.0, "2026-03-31")},
     )
 
     report = provider._check_symbol("MSFT")
@@ -626,6 +669,52 @@ def test_xbrl_facts_gets_prepended_to_extracted_text(tmp_path, monkeypatch):
     assert report is not None
     assert "STRUCTURED FINANCIAL FACTS" in report.text_excerpt
     assert "Net Income: $31,778,000,000" in report.text_excerpt
+    # And the same fetch's parsed value reaches the comparable-values dict
+    # the XBRL cross-check (src/pipeline_stages.py) reads.
+    assert report.xbrl_facts == {"net_income": 31_778_000_000.0}
+
+
+def test_xbrl_comparable_values_keeps_only_the_one_to_one_fields(tmp_path):
+    """`_xbrl_comparable_values` must expose ONLY the concepts that map
+    one-to-one onto an `EarningsAnalysis` field (revenue, net_income, cash,
+    eps) — not gross_profit/operating_income (the analyst reports MARGINS,
+    a ratio it computes itself, not these raw dollar figures) and not
+    long_term_debt (XBRL here is non-current debt only, while
+    `total_debt` conventionally includes the current portion — comparing
+    them would flag a definitional gap as a factual error)."""
+    from src.data.earnings import EarningsDataProvider
+
+    provider = EarningsDataProvider(data_dir=str(tmp_path))
+    raw = {
+        "revenue": (50_000_000_000.0, "2026-03-31"),
+        "net_income": (5_000_000_000.0, "2026-03-31"),
+        "gross_profit": (20_000_000_000.0, "2026-03-31"),
+        "operating_income": (10_000_000_000.0, "2026-03-31"),
+        "assets": (300_000_000_000.0, "2026-03-31"),
+        "cash": (10_000_000_000.0, "2026-03-31"),
+        "long_term_debt": (40_000_000_000.0, "2026-03-31"),
+        "eps": (2.5, "2026-03-31"),
+    }
+
+    values = provider._xbrl_comparable_values(raw)
+
+    assert values == {
+        "revenue": 50_000_000_000.0,
+        "net_income": 5_000_000_000.0,
+        "cash": 10_000_000_000.0,
+        "eps": 2.5,
+    }
+
+
+def test_xbrl_comparable_values_empty_when_nothing_fetched(tmp_path):
+    """`_fetch_xbrl_raw` fails open to `{}` (no XBRL data for this
+    filer/period) — `_xbrl_comparable_values` must pass that straight
+    through as `{}`, not error or invent a value."""
+    from src.data.earnings import EarningsDataProvider
+
+    provider = EarningsDataProvider(data_dir=str(tmp_path))
+
+    assert provider._xbrl_comparable_values({}) == {}
 
 
 def test_auditors_letter_is_not_mistaken_for_financial_statements(tmp_path):

@@ -2130,6 +2130,143 @@ def test_earnings_data_quality_flags_problem_matches_real_failure_phrases():
     assert _earnings_data_quality_flags_problem("") is False
 
 
+# --- XBRL cross-check: a confident but WRONG (not merely empty) figure ---
+#
+# The gap this closes: `_earnings_analysis_has_real_figures` and
+# `_earnings_data_quality_flags_problem` above only catch an EMPTY or
+# self-flagged analysis. Neither would ever see a problem in a filing where
+# every field is populated, plausible-looking, and simply doesn't match
+# what the filer actually filed — the AI isn't reporting any doubt. These
+# tests exercise the real SEC-XBRL ground-truth comparison that catches
+# exactly that case. See `_earnings_xbrl_mismatch_fields` in
+# src/pipeline_stages.py for the field scope and tolerance reasoning.
+
+def test_parse_reported_figure_handles_real_world_formats():
+    from src.pipeline_stages import _parse_reported_figure
+
+    assert _parse_reported_figure("$50B") == 50_000_000_000.0
+    assert _parse_reported_figure("$5.2 billion") == 5_200_000_000.0
+    assert _parse_reported_figure("12%") == 12.0
+    assert _parse_reported_figure("$0") == 0.0
+    assert _parse_reported_figure("($500M)") == -500_000_000.0
+    assert _parse_reported_figure("not disclosed") is None
+    assert _parse_reported_figure("") is None
+    # A phrasing the parser doesn't recognize is "nothing to compare," not
+    # a mismatch — see the function's own docstring.
+    assert _parse_reported_figure("roughly fifty billion") is None
+
+
+def test_classify_earnings_status_ok_when_figures_match_real_xbrl_data():
+    """Genuine match: the analyst's reported figures agree (within
+    legitimate rounding) with the real SEC XBRL values fetched for this
+    filing. Must read as ordinary 'ok', not flagged."""
+    from src.pipeline_stages import _classify_earnings_status
+
+    analysis = _valid_earnings_analysis()  # revenue $50B, net_income $5B, eps $2.50, cash $10B
+    results = [{
+        "symbol": "AAPL", "analysis": analysis, "is_new": True,
+        "xbrl_facts": {
+            "revenue": 49_700_000_000.0,  # "$50B" rounds this, well within 5%
+            "net_income": 5_000_000_000.0,
+            "eps": 2.50,
+            "cash": 10_000_000_000.0,
+        },
+    }]
+
+    assert _classify_earnings_status(results) == "ok"
+
+
+def test_classify_earnings_status_figures_contradicted_on_material_xbrl_mismatch():
+    """The real gap this task closes: a confident, non-empty, structurally
+    valid figure that is simply WRONG next to the filer's own real SEC
+    data. Must downgrade — and land on the distinct 'figures_contradicted'
+    status, not 'content_missing' (this filing has plenty of content, it's
+    just false) and not 'ok'."""
+    from src.pipeline_stages import _classify_earnings_status
+
+    analysis = _valid_earnings_analysis(**{"revenue.total": "$50B"})
+    results = [{
+        "symbol": "AAPL", "analysis": analysis, "is_new": True,
+        # Real filed revenue is $20B — "$50B" is not a rounding of this,
+        # it's a different number entirely.
+        "xbrl_facts": {"revenue": 20_000_000_000.0},
+    }]
+
+    status = _classify_earnings_status(results)
+    assert status == "figures_contradicted"
+    assert status not in ("ok", "empty", "content_missing", "partial")
+
+
+def test_classify_earnings_status_figures_contradicted_dominates_a_mixed_batch():
+    """A mismatch on even one filing must not be diluted into the routine
+    'partial' bucket by other filings in the same run being clean — a
+    provably wrong figure is a stronger, more specific signal than an
+    ordinary mixed day and must not blend into it."""
+    from src.pipeline_stages import _classify_earnings_status
+
+    good = _valid_earnings_analysis(symbol="AAPL")
+    bad = _valid_earnings_analysis(symbol="MSFT", **{"profitability.net_income": "$50B"})
+    results = [
+        {"symbol": "AAPL", "analysis": good, "is_new": True,
+         "xbrl_facts": {"revenue": 49_700_000_000.0, "net_income": 5_000_000_000.0}},
+        {"symbol": "MSFT", "analysis": bad, "is_new": True,
+         "xbrl_facts": {"net_income": 5_000_000_000.0}},
+    ]
+
+    assert _classify_earnings_status(results) == "figures_contradicted"
+
+
+def test_classify_earnings_status_tolerates_legitimate_rounding():
+    """Prove the threshold isn't accidentally too tight: a model paraphrasing
+    an exact filed figure to a round, readable number (a couple percent off,
+    the kind of rounding every earnings summary uses) must NOT trigger the
+    downgrade — only a materially wrong figure should."""
+    from src.pipeline_stages import _classify_earnings_status
+
+    # "$50B" reported against an exact $49.3B filed value — ~1.4% off,
+    # comfortably inside the tolerance real rounding-for-readability produces.
+    analysis = _valid_earnings_analysis(**{"revenue.total": "$50B"})
+    results = [{
+        "symbol": "AAPL", "analysis": analysis, "is_new": True,
+        "xbrl_facts": {"revenue": 49_300_000_000.0},
+    }]
+
+    assert _classify_earnings_status(results) == "ok"
+
+
+def test_classify_earnings_status_no_xbrl_data_is_not_a_mismatch():
+    """`_get_xbrl_financial_facts`/`_fetch_xbrl_raw` fail open when SEC has
+    no XBRL data for a filer/period — `xbrl_facts` then arrives as `{}`.
+    That must never itself be read as a mismatch; there is simply nothing
+    to cross-check, and the analysis is judged purely on the existing
+    content-honesty checks, same as before this cross-check existed."""
+    from src.pipeline_stages import _classify_earnings_status
+
+    analysis = _valid_earnings_analysis()
+    results = [{"symbol": "AAPL", "analysis": analysis, "is_new": True, "xbrl_facts": {}}]
+
+    assert _classify_earnings_status(results) == "ok"
+
+    # Also true when the key is simply absent (older-shaped result dicts,
+    # or the cached-read path — see EarningsReport.xbrl_facts).
+    results_no_key = [{"symbol": "AAPL", "analysis": analysis, "is_new": True}]
+    assert _classify_earnings_status(results_no_key) == "ok"
+
+
+def test_earnings_xbrl_mismatch_fields_skips_unparseable_and_absent_values():
+    from src.pipeline_stages import _earnings_xbrl_mismatch_fields
+
+    analysis = _valid_earnings_analysis(**{
+        "revenue.total": "not disclosed",
+        "profitability.net_income": "roughly a lot",
+    })
+    # Real data exists for both, but neither analyst field parsed into a
+    # comparable number — must not be flagged as a mismatch.
+    xbrl_values = {"revenue": 50_000_000_000.0, "net_income": 5_000_000_000.0}
+
+    assert _earnings_xbrl_mismatch_fields(analysis, xbrl_values) == []
+
+
 def test_morning_research_stage_news_low_self_reported_confidence_marks_status_low_confidence():
     """The confidence half of the honesty fix: full coverage AND a clean
     parse (the one case the coverage fix alone reads as 'ok'), but the
