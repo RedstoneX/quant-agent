@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -802,13 +803,147 @@ def _earnings_data_quality_flags_problem(data_quality) -> bool:
     return any(phrase in text for phrase in _EARNINGS_DATA_QUALITY_RED_FLAGS)
 
 
+# --- XBRL cross-check: catches a WRONG (not merely empty/self-flagged) figure ---
+#
+# 2026-09-05: the emptiness/self-report check above closes "the AI returned
+# nothing useful." It cannot catch the harder case the owner specifically
+# flagged: a confident, plausible-looking, non-empty figure that simply
+# doesn't match what the filer actually filed — the AI isn't reporting any
+# doubt, so nothing above would ever see a problem. `EarningsDataProvider`
+# (src/data/earnings.py) already fetches SEC's own structured XBRL figures
+# for exactly this filing and hands the earnings analyst the real numbers
+# directly in its prompt (the "STRUCTURED FINANCIAL FACTS" block) — so this
+# doesn't need a second data source, just a comparison against ground
+# truth that was already fetched.
+#
+# Scope is deliberately narrow: only NUMERIC, FACTUAL fields that have one
+# real correct answer to check against. Prose/judgment fields (strategic
+# risk, management execution, investment thesis, valuation context) have no
+# single right answer — forcing a "ground truth" for those would be
+# inventing a fake one, so they are out of scope on purpose, not an
+# oversight.
+
+_UNIT_MULTIPLIERS = {
+    "b": 1e9, "bn": 1e9, "billion": 1e9,
+    "m": 1e6, "mm": 1e6, "million": 1e6,
+    "k": 1e3, "thousand": 1e3,
+}
+
+# A number, optionally $-prefixed / comma-separated / %-suffixed / unit-
+# suffixed, after any surrounding parens (accounting negative notation) and
+# whitespace have already been stripped by the caller.
+_FIGURE_RE = re.compile(
+    r"^-?\d[\d,]*(?:\.\d+)?\s*(billion|million|thousand|bn|mm|b|m|k)?$",
+    re.IGNORECASE,
+)
+
+
+def _parse_reported_figure(value) -> float | None:
+    """Best-effort real number out of one `EarningsAnalysis` free-text
+    figure field — "$50B", "$5.2 billion", "12%", "($500M)", "$0",
+    "not disclosed".
+
+    Returns None for the absence sentinel (see `_earnings_field_disclosed`
+    — "not disclosed" is "nothing to compare," never a mismatch) and for
+    any text this parser doesn't recognize. An unparseable string is NOT
+    evidence of a mismatch — it just means the model phrased it in a way
+    this regex doesn't cover — so only a pair of numbers that both parsed
+    AND actually disagree should ever be flagged (`_earnings_xbrl_mismatch_fields`).
+    A real, disclosed zero ("$0") parses to 0.0, distinct from None.
+    """
+    if not _earnings_field_disclosed(value):
+        return None
+    text = str(value).strip()
+    negative = text.startswith("(") and text.endswith(")")
+    if negative:
+        text = text[1:-1].strip()
+    text = text.replace(",", "").replace("$", "").replace("%", "").strip()
+    match = _FIGURE_RE.match(text)
+    if not match:
+        return None
+    unit = (match.group(1) or "").lower()
+    number_text = text[: match.start(1)] if match.group(1) else text
+    try:
+        number = float(number_text.strip())
+    except ValueError:
+        return None
+    number *= _UNIT_MULTIPLIERS.get(unit, 1)
+    return -abs(number) if negative else number
+
+
+# 5% mirrors the traditional accounting-materiality rule of thumb (SEC Staff
+# Accounting Bulletin No. 99 discusses 5% of the relevant base as the
+# customary quantitative starting point before any qualitative override)
+# and comfortably covers legitimate rounding: paraphrasing an exact XBRL
+# figure to 2 significant digits for readability ("~$50B" for an exact
+# $49.7B) is under 1% off, well inside this band. A gap bigger than 5% is
+# not "rounded for readability" — the analyst's number and the filer's own
+# reported number disagree about what happened.
+_EARNINGS_XBRL_TOLERANCE_PCT = 0.05
+
+# Floors stop the percentage test from exploding on a near-zero true value
+# (breakeven net income, de-minimis cash) where even a trivial rounding
+# difference would otherwise read as a huge relative mismatch — only kicks
+# in when 5% of the real figure is smaller than this. $10M is small next to
+# any filer this fetch actually has data for (see `_fetch_xbrl_raw`'s
+# docstring in src/data/earnings.py: MSFT/AAPL/GOOGL/BAC/CVX/NFLX-scale
+# filers), so it never masks a real error on a figure that size — it only
+# absorbs rounding noise on a near-zero one. $0.02 is one cent above
+# ordinary EPS reporting precision (nearest cent), covering print/rounding
+# noise without covering an actually-wrong EPS figure.
+_EARNINGS_XBRL_DOLLAR_FLOOR = 10_000_000.0
+_EARNINGS_XBRL_EPS_FLOOR = 0.02
+
+# (xbrl_key from EarningsDataProvider._xbrl_comparable_values, EarningsAnalysis
+# section, field, absolute floor) — only fields where the XBRL concept and
+# the model field are the SAME real-world figure by definition. See
+# `EarningsDataProvider._XBRL_COMPARABLE_KEYS` (src/data/earnings.py) for
+# why margins, total_debt, and cash-flow-statement fields are excluded —
+# that exclusion is authoritative; this tuple must stay a subset of it.
+_EARNINGS_XBRL_COMPARABLE_FIELDS = (
+    ("revenue", "revenue", "total", _EARNINGS_XBRL_DOLLAR_FLOOR),
+    ("net_income", "profitability", "net_income", _EARNINGS_XBRL_DOLLAR_FLOOR),
+    ("eps", "profitability", "eps", _EARNINGS_XBRL_EPS_FLOOR),
+    ("cash", "balance_sheet", "cash_and_equivalents", _EARNINGS_XBRL_DOLLAR_FLOOR),
+)
+
+
+def _earnings_xbrl_mismatch_fields(analysis: dict, xbrl_values: dict) -> list[str]:
+    """Which of the analyst's own reported figures materially contradict
+    the real SEC XBRL values already fetched for this same filing.
+
+    Returns "section.field" names for every real disagreement — empty when
+    nothing was comparable at all (no XBRL data for this filer/period —
+    `xbrl_values` fails open to `{}`, see `EarningsReport.xbrl_facts`) or
+    when every comparable field agreed within `_EARNINGS_XBRL_TOLERANCE_PCT`.
+    A field the analyst reported as "not disclosed", or in a format
+    `_parse_reported_figure` doesn't recognize, is skipped rather than
+    flagged — only an ACTUAL, provable disagreement between two real parsed
+    numbers counts.
+    """
+    if not isinstance(analysis, dict) or not xbrl_values:
+        return []
+    mismatches = []
+    for xbrl_key, section, field_name, floor in _EARNINGS_XBRL_COMPARABLE_FIELDS:
+        true_value = xbrl_values.get(xbrl_key)
+        if true_value is None:
+            continue
+        reported = _parse_reported_figure((analysis.get(section) or {}).get(field_name))
+        if reported is None:
+            continue
+        tolerance = max(abs(true_value) * _EARNINGS_XBRL_TOLERANCE_PCT, floor)
+        if abs(reported - true_value) > tolerance:
+            mismatches.append(f"{section}.{field_name}")
+    return mismatches
+
+
 def _classify_earnings_status(earnings_results: list) -> str:
     """Turn this run's `earnings_results` into an honest `data_status["earnings"]`.
 
-    `earnings_results` items are `{"symbol", "analysis", "queued", ...}`
-    dicts from `EarningsAnalystAgent`/`_load_earnings_analyses` — see
-    `EarningsAnalystAgent._analyze_new`/`_load_analysis`. Only items that
-    actually carry an `analysis` dict are judged for content here; a
+    `earnings_results` items are `{"symbol", "analysis", "xbrl_facts",
+    "queued", ...}` dicts from `EarningsAnalystAgent`/`_load_earnings_analyses`
+    — see `EarningsAnalystAgent._analyze_new`/`_load_analysis`. Only items
+    that actually carry an `analysis` dict are judged for content here; a
     `queued=True` placeholder (a new filing preprocess hasn't analyzed yet)
     is already surfaced honestly by that flag and sized around downstream —
     that is a separate, already-handled state this pass does not touch.
@@ -829,19 +964,49 @@ def _classify_earnings_status(earnings_results: list) -> str:
       filing existed and was run through the LLM is never benign — it is
       the exact silent-failure shape this fix exists to catch, so it must
       alert every time, not blend into the "nothing to see" bucket.
+    - Any analyzed item's own reported figures materially CONTRADICT the
+      real SEC XBRL data already fetched for that filing → "figures_contradicted",
+      regardless of how many other filings this run were clean. Deliberately
+      a distinct status, not folded into "content_missing": those two are
+      different failure shapes an operator needs to read differently — one
+      says "the seat gave us nothing," the other says "the seat gave us a
+      confident, wrong answer," which is the specific silent-failure shape
+      this cross-check exists to catch and is worse than empty, not the
+      same as it. Deliberately dominant over "ok"/"partial" too — a batch
+      that is otherwise clean but contains one provably wrong filing is not
+      "mostly fine," and diluting it into "partial" (the routine, expected
+      bucket for an ordinary mixed day) would bury exactly the alert this
+      exists to raise.
     """
     analyzed = [
-        item.get("analysis") for item in earnings_results
+        item for item in earnings_results
         if isinstance(item, dict) and isinstance(item.get("analysis"), dict)
     ]
     if not analyzed:
         return "ok"
 
-    good = [
-        a for a in analyzed
-        if _earnings_analysis_has_real_figures(a)
-        and not _earnings_data_quality_flags_problem(a.get("data_quality"))
-    ]
+    good = []
+    contradicted = []
+    for item in analyzed:
+        a = item["analysis"]
+        if not _earnings_analysis_has_real_figures(a) or _earnings_data_quality_flags_problem(
+            a.get("data_quality")
+        ):
+            continue
+        mismatches = _earnings_xbrl_mismatch_fields(a, item.get("xbrl_facts") or {})
+        if mismatches:
+            contradicted.append((item.get("symbol", "?"), mismatches))
+            continue
+        good.append(a)
+
+    if contradicted:
+        logger.error(
+            "Earnings: %d filing(s) this run reported figures that "
+            "materially contradict SEC XBRL data — %s",
+            len(contradicted),
+            "; ".join(f"{sym}: {', '.join(fields)}" for sym, fields in contradicted),
+        )
+        return "figures_contradicted"
     if len(good) == len(analyzed):
         return "ok"
     if good:

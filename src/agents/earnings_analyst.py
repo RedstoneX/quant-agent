@@ -155,6 +155,16 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
                         # and `src/data/earnings_deep_dive.py`, which already
                         # reads analyses back out by this same path.
                         "analysis_path": report.analysis_path,
+                        # Real, parsed SEC XBRL values for the fields that
+                        # map one-to-one onto this analysis (see
+                        # EarningsDataProvider._xbrl_comparable_values) —
+                        # ground truth `_classify_earnings_status`
+                        # (src/pipeline_stages.py) cross-checks the LLM's
+                        # own reported figures against, to catch a
+                        # confident but fabricated number that isn't empty
+                        # and isn't self-flagged. {} (not missing) when no
+                        # XBRL data was available for this filer/period.
+                        "xbrl_facts": report.xbrl_facts,
                     })
             elif report.analysis_path and Path(report.analysis_path).exists():
                 # Existing analysis — read from disk
@@ -168,6 +178,10 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
                         "form_type": report.form_type,
                         "filing_date": report.filing_date,
                         "analysis_path": report.analysis_path,
+                        # No fresh XBRL fetch on the cached-read path (see
+                        # EarningsReport.xbrl_facts docstring) — {} reads as
+                        # "nothing to cross-check," same as fails-open.
+                        "xbrl_facts": report.xbrl_facts,
                     })
 
         return results

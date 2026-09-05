@@ -10,7 +10,7 @@ import os
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from src.risk.rules import EARNINGS_STANCE_MAX_AGE_DAYS
@@ -70,6 +70,19 @@ class EarningsReport:
     analysis_path: str | None  # local path to analysis markdown
     text_excerpt: str  # extracted text for LLM (truncated)
     is_new: bool  # True if just downloaded this run
+    # Parsed (not text-block) SEC XBRL values for the small set of fields
+    # that map ONE-TO-ONE onto an `EarningsAnalysis` field — see
+    # `EarningsDataProvider._xbrl_comparable_values` for which fields and
+    # why only those. Used by `_classify_earnings_status`
+    # (src/pipeline_stages.py) to cross-check the analyst's own reported
+    # figures against the real filed numbers, catching a confident but
+    # FABRICATED figure that isn't empty and isn't self-flagged. Empty dict
+    # (not None) both when XBRL had nothing for this filer/period (fails
+    # open, same as the text block) and for the cached-analysis path below,
+    # which never re-fetches XBRL — either way there is nothing to cross-
+    # check against, which the mismatch check already treats as "not a
+    # mismatch" for an absent value.
+    xbrl_facts: dict = field(default_factory=dict)
 
 
 class EarningsDataProvider:
@@ -363,7 +376,7 @@ class EarningsDataProvider:
             ))
         return filings
 
-    def _get_xbrl_financial_facts(self, cik: str, ticker: str, filing_date: str) -> str:
+    def _fetch_xbrl_raw(self, cik: str, ticker: str, filing_date: str) -> dict[str, tuple[float, str]]:
         """Pull hard financial-statement figures from SEC's structured XBRL
         data instead of hoping a text-regex found the right heading in the
         filing's rendered HTML.
@@ -389,9 +402,20 @@ class EarningsDataProvider:
         so that stays on the text-matching path exactly as before.
 
         Fails open: any error (network, missing CIK in XBRL, no matching
-        concept) returns "" and the caller proceeds with text-only
-        extraction exactly as it did before this existed — a SEC API
-        hiccup can only leave the analysis as good as before, never worse.
+        concept) returns {} and callers proceed exactly as before this
+        existed — a SEC API hiccup can only leave the analysis as good as
+        before, never worse. Two callers share this one fetch so a filing
+        is only hit once per `_check_symbol` run, not twice:
+        `_get_xbrl_financial_facts` (below) turns this into the prompt's
+        text block, and `_xbrl_comparable_values` turns it into the
+        parsed-number ground truth `_classify_earnings_status`
+        (src/pipeline_stages.py) cross-checks the analyst's own figures
+        against.
+
+        Returns a plain `{concept_key: (value, period_end_iso)}` dict —
+        `concept_key` is the internal name used below ("revenue",
+        "net_income", "gross_profit", "operating_income", "assets", "cash",
+        "long_term_debt", "eps"), not the raw XBRL tag name.
         """
         padded_cik = cik.zfill(10)
         url = f"{SEC_BASE}/api/xbrl/companyfacts/CIK{padded_cik}.json"
@@ -401,11 +425,11 @@ class EarningsDataProvider:
             logger.warning(
                 "XBRL companyfacts fetch failed for %s (CIK %s): %s", ticker, cik, e,
             )
-            return ""
+            return {}
 
         facts = data.get("facts", {}).get("us-gaap", {})
         if not facts:
-            return ""
+            return {}
 
         try:
             target = date.fromisoformat(filing_date)
@@ -476,27 +500,68 @@ class EarningsDataProvider:
                 return None
             return val, end
 
-        lines: list[str] = []
+        raw: dict[str, tuple[float, str]] = {}
         revenue = _best_value(
             ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"], "USD",
         )
         if revenue is not None:
-            lines.append(f"Total Revenue: ${revenue[0]:,.0f} (period ending {revenue[1]})")
-        for concept, label in (
-            ("NetIncomeLoss", "Net Income"),
-            ("GrossProfit", "Gross Profit"),
-            ("OperatingIncomeLoss", "Operating Income"),
-            ("Assets", "Total Assets"),
-            ("CashAndCashEquivalentsAtCarryingValue", "Cash & Equivalents"),
-            ("LongTermDebtNoncurrent", "Long-Term Debt"),
+            raw["revenue"] = revenue
+        for concept, key in (
+            ("NetIncomeLoss", "net_income"),
+            ("GrossProfit", "gross_profit"),
+            ("OperatingIncomeLoss", "operating_income"),
+            ("Assets", "assets"),
+            ("CashAndCashEquivalentsAtCarryingValue", "cash"),
+            ("LongTermDebtNoncurrent", "long_term_debt"),
         ):
             v = _best_value([concept], "USD")
             if v is not None:
-                lines.append(f"{label}: ${v[0]:,.0f} (period ending {v[1]})")
+                raw[key] = v
         eps = _best_value(["EarningsPerShareDiluted"], "USD/shares")
         if eps is not None:
-            lines.append(f"Diluted EPS: ${eps[0]:.2f} (period ending {eps[1]})")
+            raw["eps"] = eps
+        return raw
 
+    # Human-readable labels for the text block the LLM prompt reads, in the
+    # same fixed order the block has always rendered in — kept in one place
+    # so `_get_xbrl_financial_facts` and any future consumer of
+    # `_fetch_xbrl_raw` render the same concepts under the same names.
+    _XBRL_TEXT_LABELS = (
+        ("revenue", "Total Revenue"),
+        ("net_income", "Net Income"),
+        ("gross_profit", "Gross Profit"),
+        ("operating_income", "Operating Income"),
+        ("assets", "Total Assets"),
+        ("cash", "Cash & Equivalents"),
+        ("long_term_debt", "Long-Term Debt"),
+        ("eps", "Diluted EPS"),
+    )
+
+    def _get_xbrl_financial_facts(self, cik: str, ticker: str, filing_date: str) -> str:
+        """Fetch + format `_fetch_xbrl_raw`'s values as the text block
+        prepended to the filing text the earnings analyst LLM reads —
+        unchanged output from before this was split out of one combined
+        fetch+format method, see `_fetch_xbrl_raw`'s docstring for the real
+        motivation and the fail-open contract this inherits unchanged
+        ("" on no data/error). `_check_symbol` calls `_format_xbrl_text`
+        directly instead of this, so a filing already fetched once via
+        `_fetch_xbrl_raw` isn't fetched again just to build this block."""
+        return self._format_xbrl_text(self._fetch_xbrl_raw(cik, ticker, filing_date))
+
+    def _format_xbrl_text(self, raw: dict[str, tuple[float, str]]) -> str:
+        """Pure formatter half of `_get_xbrl_financial_facts` — no network."""
+        if not raw:
+            return ""
+        lines: list[str] = []
+        for key, label in self._XBRL_TEXT_LABELS:
+            entry = raw.get(key)
+            if entry is None:
+                continue
+            value, end = entry
+            if key == "eps":
+                lines.append(f"{label}: ${value:.2f} (period ending {end})")
+            else:
+                lines.append(f"{label}: ${value:,.0f} (period ending {end})")
         if not lines:
             return ""
         return (
@@ -504,6 +569,35 @@ class EarningsDataProvider:
             + "\n".join(lines)
             + "\n"
         )
+
+    # Concept keys (from `_fetch_xbrl_raw`) that map ONE-TO-ONE onto an
+    # `EarningsAnalysis` field — the same real-world figure, not a derived
+    # or differently-scoped one. Deliberately excludes `gross_profit` /
+    # `operating_income` (the analyst reports MARGINS — ratios it computes
+    # itself — not the raw dollar figures XBRL tags, so there's no
+    # apples-to-apples number to compare) and `long_term_debt` (XBRL here
+    # is non-current debt only, while `EarningsBalanceSheet.total_debt`
+    # conventionally includes the current portion too — comparing them
+    # would flag a definitional gap as if it were a factual error). Cash
+    # flow statement fields aren't fetched by `_fetch_xbrl_raw` at all yet,
+    # so there is nothing to compare them against.
+    _XBRL_COMPARABLE_KEYS = ("revenue", "net_income", "cash", "eps")
+
+    def _xbrl_comparable_values(self, raw: dict[str, tuple[float, str]]) -> dict[str, float]:
+        """The subset of `_fetch_xbrl_raw`'s output usable as real,
+        directly-comparable ground truth — see `_XBRL_COMPARABLE_KEYS` for
+        which fields and why only those. Pure/no network: callers already
+        have `raw` from one `_fetch_xbrl_raw` call and derive both the
+        prompt text block and this from it, rather than fetching twice.
+
+        Returns {} (not None) when nothing comparable was available — the
+        SEC XBRL fetch failed open, or none of the comparable concepts had
+        current data — which the mismatch check downstream already treats
+        the same as "nothing to compare," never as a mismatch.
+        """
+        return {
+            key: raw[key][0] for key in self._XBRL_COMPARABLE_KEYS if key in raw
+        }
 
     def _download_filing(self, cik: str, filing: FilingInfo) -> str | None:
         """Download filing HTML and save to local file. Returns local path."""
@@ -850,7 +944,8 @@ class EarningsDataProvider:
             return self._get_existing_analysis(symbol, form_type=latest.form_type)
 
         text = self._extract_text(local_path)
-        xbrl_block = self._get_xbrl_financial_facts(cik, symbol, latest.filing_date)
+        xbrl_raw = self._fetch_xbrl_raw(cik, symbol, latest.filing_date)
+        xbrl_block = self._format_xbrl_text(xbrl_raw)
         if xbrl_block:
             text = xbrl_block + "\n" + text
         analysis_path = self._get_analysis_path(symbol, latest.form_type, latest.filing_date)
@@ -863,6 +958,7 @@ class EarningsDataProvider:
             analysis_path=analysis_path,
             text_excerpt=text,
             is_new=True,
+            xbrl_facts=self._xbrl_comparable_values(xbrl_raw),
         )
 
     def _get_existing_analysis(
