@@ -2004,6 +2004,32 @@ def test_multiple_bad_seats_are_all_named_in_one_alert():
     assert "tech=partial" in body
 
 
+def test_low_confidence_macro_status_fires_the_same_standalone_alert():
+    """2026-09-04: `data_status["macro"]` can now be "low_confidence" (a
+    technically clean call the model itself rates low-confidence — see
+    pipeline_stages.py). Deliberately routed through this SAME existing
+    alert path rather than a new one: `maybe_alert_data_quality` already
+    treats anything but "ok"/"empty" as bad, so no new plumbing was needed,
+    and this condition is expected to be rare in production (the model's
+    daily-indicator staleness gate for `confidence` sits at 3 days, comfortably
+    above FRED's real ~2-day lag — unlike the unrelated, already-tracked
+    `regime_shift` 1-day gate that fires on 52% of runs) so it should not
+    compound that existing alert volume."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {
+        "run_id": "run-lowconf",
+        "data_status": {"tech": "ok", "news": "ok", "macro": "low_confidence",
+                         "earnings": "ok", "smart_money": "empty"},
+    }
+    with patch("src.notifier.send_owner_alert", return_value=True) as alert:
+        fired = maybe_alert_data_quality(result, mode="morning")
+
+    assert fired is True
+    body = alert.call_args.args[0]
+    assert "macro=low_confidence" in body
+
+
 def test_missing_or_malformed_result_never_raises():
     from src.notifier import maybe_alert_data_quality
 

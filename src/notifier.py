@@ -658,6 +658,20 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
 _ALERT_EXEMPT_PER_SEAT: dict[str, set[str]] = {
     "tech": {"low_confidence"},
 }
+#
+# 2026-09-04: `data_status["macro"]` gained the same "low_confidence" value
+# — a technically clean call (coverage fine, parsed fine) whose own
+# self-reported `MacroAnalysis.confidence` came back "low" (see
+# pipeline_stages.py's macro branch). Deliberately NOT added to the
+# exemption dict above: a critical seat's own stated self-doubt belongs in
+# the SAME "do not trust this session blind" alert as a coverage failure,
+# not a quieter side channel. Considered and rejected suppressing it to
+# avoid alert fatigue: the seat's OTHER known noisy self-check
+# (`regime_shift`'s stale-data gate, tracked separately in docs/WORK.md,
+# firing on ~52% of runs) is driven by a `staleness_days<=1` bar that real
+# FRED lag can't reach; `confidence`'s own staleness bar is `>3` days,
+# comfortably above that real ~2-day lag, so "low" is expected to be a rare,
+# meaningful signal in practice, not a duplicate of that known noise.
 
 
 def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:

@@ -1277,6 +1277,133 @@ def test_morning_research_stage_populates_ctx_on_success():
     assert result_ctx.earnings_results == []
 
 
+def _macro_stage_with_coverage(macro_analysis, coverage):
+    """Shared builder for the confidence-override tests below: a
+    MorningResearchStage whose macro leg returns `macro_analysis` and whose
+    `macro.last_coverage` (what `src/pipeline_stages.py` actually reads,
+    see ~line 1608) is `coverage` — a real `MacroCoverage`, not a MagicMock,
+    so the coverage-based ok/partial/failed branches run for real instead of
+    falling into the coverage-less test-double fallback."""
+    from src.agents.base import AgentResult
+
+    agent_result = AgentResult(raw_text="{}", tokens_used=100, model="test", user_message="x")
+    macro_agent = MagicMock()
+    macro_agent.analyze.return_value = (macro_analysis, agent_result)
+
+    macro = MagicMock()
+    macro.last_coverage = coverage
+
+    market = MagicMock()
+    market.get_ohlcv.return_value = []
+
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+
+    mock_config = MagicMock()
+    mock_config.trading.universe = ["NVDA"]
+    mock_config.trading.lookback_days = 30
+    mock_config.llm.macro_analyst_model = "claude-opus-4-6"
+    mock_config.llm.tech_analyst_model = "claude-opus-4-6"
+
+    return MorningResearchStage(
+        config=mock_config,
+        db=MagicMock(),
+        market=market,
+        macro=macro,
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=MagicMock(),
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_agent,
+        news_analyst=MagicMock(),
+        tech_analyst=MagicMock(),
+        earnings_analyst=MagicMock(),
+        has_actionable_signal_fn=lambda *args, **kw: False,
+        run_news_update_fn=lambda run_id, session: (None, None),
+        load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
+    )
+
+
+def _minimal_macro_analysis(confidence="high"):
+    from src.models import MacroAnalysis, MacroReasoningChain, MacroPositionGuidance
+
+    return MacroAnalysis(
+        reasoning_chain=MacroReasoningChain(
+            volatility_analysis="a", yield_curve_analysis="b",
+            monetary_policy_analysis="c", inflation_labor_credit="d",
+            cross_signal_synthesis="e", sector_implications="f",
+        ),
+        regime="risk-on", confidence=confidence, equity_outlook="bullish",
+        position_guidance=MacroPositionGuidance(
+            target_invested_pct=70, cash_recommendation_pct=30, reasoning="y",
+        ),
+        summary="z",
+    )
+
+
+def test_morning_research_stage_macro_low_self_reported_confidence_marks_status_low_confidence():
+    """The confidence half of the honesty fix: full FRED coverage AND a
+    clean parse (the one case coverage alone reads as 'ok'), but the
+    model's own `confidence` field says 'low' — a coherent set of
+    indicators the model itself isn't confident reading. Coverage can't
+    catch this; it only counts whether FRED series came back, not whether
+    the model made sense of them. Before this, that combination was
+    indistinguishable from a clean, trustworthy 'ok' run anywhere
+    data_status['macro'] is read. Must read as its own distinct status."""
+    from src.data.macro import MacroCoverage
+
+    ma = _minimal_macro_analysis(confidence="low")
+    coverage = MacroCoverage(configured=9, succeeded=9, failed=[])
+    stage = _macro_stage_with_coverage(ma, coverage)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["macro"] == "low_confidence"
+    assert result_ctx.data_status["macro"] != "ok"
+
+
+def test_morning_research_stage_macro_high_confidence_full_coverage_stays_ok():
+    """Control case: high self-reported confidence on full coverage must
+    NOT be touched by the new override — only 'low' downgrades an
+    otherwise-'ok' status."""
+    from src.data.macro import MacroCoverage
+
+    ma = _minimal_macro_analysis(confidence="high")
+    coverage = MacroCoverage(configured=9, succeeded=9, failed=[])
+    stage = _macro_stage_with_coverage(ma, coverage)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["macro"] == "ok"
+
+
+def test_morning_research_stage_macro_low_confidence_does_not_override_coverage_failure():
+    """Coverage-driven failure must still win over a confidence check — a
+    total FRED outage is 'failed' regardless of what the model's own
+    confidence field says on all-None input."""
+    from src.data.macro import MacroCoverage, SeriesFailure
+
+    ma = _minimal_macro_analysis(confidence="low")
+    coverage = MacroCoverage(
+        configured=9, succeeded=0,
+        failed=[SeriesFailure(series_id=f"S{i}", reason="timed out") for i in range(9)],
+    )
+    stage = _macro_stage_with_coverage(ma, coverage)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["macro"] == "failed"
+
+
 def test_morning_research_stage_records_admission_reason_without_collision():
     """A qualified external SEC candidate must not abort morning research.
 

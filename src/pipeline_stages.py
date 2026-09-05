@@ -2177,6 +2177,26 @@ class MorningResearchStage:
                 )
             else:
                 data_status["macro"] = "ok"
+            # Self-reported confidence is a second, independent signal from
+            # the coverage check above: coverage measures whether FRED
+            # actually returned data, confidence is the model's own read on
+            # how well it could make sense of what it got. A run can have
+            # full coverage and still carry confidence="low" (contradictory
+            # or ambiguous indicators) — that combination was reaching "ok"
+            # with nothing anywhere to show for it, the same "no data, but
+            # everything's fine!" gap flagged for every other seat tonight.
+            # Deliberately separate from (and does not touch) the existing
+            # staleness/freshness check above, which is its own, already-
+            # tracked, owner-decision-pending issue. Only fires on what
+            # would otherwise be "ok" — coverage-driven partial/failed/
+            # parse_error already say something is wrong and take priority.
+            if data_status["macro"] == "ok" and macro_analysis and macro_analysis.confidence == "low":
+                data_status["macro"] = "low_confidence"
+                logger.warning(
+                    "Macro parsed cleanly on sufficient coverage but the "
+                    "model self-reported confidence='low' — flagging "
+                    "data_status['macro']='low_confidence' instead of 'ok'.",
+                )
         except PaidAnalysisSuspended:
             raise
         except Exception as e:
