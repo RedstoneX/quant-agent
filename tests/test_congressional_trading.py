@@ -15,9 +15,28 @@ from src.data.congressional_trading import (
 )
 from src.data.smart_money import SECForm4Provider
 from src.models import SmartMoneyFinding, SmartMoneyObservation
+from src.util.time import et_today
 
 
-TODAY = date.today()
+# `CongressionalTradingProvider` computes every disclosure age/lag against
+# `et_today()` (US Eastern, matching the real House/Senate filing clock),
+# NOT the system/UTC date -- using `date.today()` here disagreed with the
+# code under test for several real hours every night (UTC has already
+# rolled to the next calendar day while it is still "today" in ET), not a
+# rare midnight-boundary flake but a persistent, every-night mismatch.
+TODAY = et_today()
+
+
+@pytest.fixture(autouse=True)
+def _refresh_today(monkeypatch):
+    """Re-pin `TODAY` fresh at the start of every test to whatever
+    `et_today()` says right now (module globals are looked up by name at
+    call time, so this reaches every use of the bare `TODAY` name,
+    including inside helpers like `_kadoa_row`) -- keeps a test internally
+    consistent with the code under test even if the ET calendar day ticks
+    over mid-suite."""
+    import sys
+    monkeypatch.setattr(sys.modules[__name__], "TODAY", et_today())
 
 
 def _kadoa_row(
