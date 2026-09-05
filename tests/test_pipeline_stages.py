@@ -1521,6 +1521,129 @@ def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_com
     tech_store.update.assert_called_once_with([resolved])
 
 
+def _tech_stage_for_conviction_test(analyses_map):
+    """Shared MorningResearchStage wiring for the low-conviction tests below
+    — every symbol resolves (no None entries), only `conviction` varies."""
+    mock_config = MagicMock()
+    mock_config.trading.universe = ["AAPL", "MSFT"]
+    mock_config.trading.lookback_days = 30
+
+    market = MagicMock()
+    market.get_ohlcv.return_value = [MagicMock()]
+
+    tech_analyst = MagicMock()
+    tech_analyst.analyze_batch.return_value = (
+        analyses_map,
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+
+    macro_store = MagicMock()
+    macro_store.load_last_state.return_value = None
+    news_store = MagicMock()
+    news_store.load_macro_narrative.return_value = None
+    macro_agent = MagicMock()
+    macro_agent.analyze.return_value = (None, MagicMock(
+        user_message="m", raw_text="{}", tokens_used=1, model="t",
+        input_tokens=1, output_tokens=1, cost_usd=0.0,
+    ))
+    tech_store = MagicMock()
+    tech_store.load.return_value = {}
+    tech_store.compute_ages.return_value = {}
+
+    return MorningResearchStage(
+        config=mock_config,
+        db=MagicMock(),
+        market=market,
+        macro=MagicMock(),
+        news_provider=MagicMock(),
+        news_store=news_store,
+        macro_store=macro_store,
+        tech_store=tech_store,
+        earnings_provider=MagicMock(),
+        macro_analyst=macro_agent,
+        news_analyst=MagicMock(),
+        tech_analyst=tech_analyst,
+        earnings_analyst=MagicMock(),
+        has_actionable_signal_fn=lambda *args, **kw: True,
+        run_news_update_fn=lambda run_id, session: (None, None),
+        load_earnings_analyses_fn=lambda run_id, session, ctx=None: ([], []),
+    )
+
+
+@patch("src.pipeline_stages.compute_indicators")
+def test_morning_research_stage_tech_full_batch_low_conviction_marks_low_confidence(
+    mock_compute_indicators,
+):
+    """2026-09-04 data-honesty fix: a batch where every symbol resolves
+    (data_status would otherwise be a plain 'ok') must not hide a read the
+    model itself flagged as low-conviction. One low-conviction read among
+    otherwise-resolved symbols downgrades data_status['tech'] to the new
+    'low_confidence' value — real, visible, but distinct from 'partial'/
+    'failed' since the content is present, just self-reportedly shaky."""
+    mock_compute_indicators.return_value = MagicMock()
+
+    from src.models import TechAnalysisResult, TechReasoningChain
+
+    def _mk(symbol, conviction):
+        return TechAnalysisResult(
+            symbol=symbol, rating="buy", conviction=conviction,
+            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+            support_levels=[95.0], resistance_levels=[110.0],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning_chain=TechReasoningChain(
+                trend="x", momentum="x", volatility="x", volume="x",
+                support_resistance="x",
+            ),
+            reasoning="test",
+        )
+
+    analyses_map = {"AAPL": _mk("AAPL", "medium"), "MSFT": _mk("MSFT", "low")}
+    stage = _tech_stage_for_conviction_test(analyses_map)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    # Both symbols resolved — this is NOT a partial/failed batch.
+    assert {a.symbol for a in result_ctx.analyses} == {"AAPL", "MSFT"}
+    assert result_ctx.data_status["tech"] == "low_confidence"
+
+
+@patch("src.pipeline_stages.compute_indicators")
+def test_morning_research_stage_tech_full_batch_high_conviction_stays_ok(
+    mock_compute_indicators,
+):
+    """Control case: a fully-resolved batch with no low-conviction reads is
+    unaffected by the new check and still reports plain 'ok'."""
+    mock_compute_indicators.return_value = MagicMock()
+
+    from src.models import TechAnalysisResult, TechReasoningChain
+
+    def _mk(symbol, conviction):
+        return TechAnalysisResult(
+            symbol=symbol, rating="buy", conviction=conviction,
+            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+            support_levels=[95.0], resistance_levels=[110.0],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning_chain=TechReasoningChain(
+                trend="x", momentum="x", volatility="x", volume="x",
+                support_resistance="x",
+            ),
+            reasoning="test",
+        )
+
+    analyses_map = {"AAPL": _mk("AAPL", "high"), "MSFT": _mk("MSFT", "medium")}
+    stage = _tech_stage_for_conviction_test(analyses_map)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert {a.symbol for a in result_ctx.analyses} == {"AAPL", "MSFT"}
+    assert result_ctx.data_status["tech"] == "ok"
+
+
 def _minimal_news_report(confidence="medium"):
     from src.models import MacroNarrative, NewsIntelligenceReport
     return NewsIntelligenceReport(
