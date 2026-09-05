@@ -1337,6 +1337,14 @@ class SmartMoneyFinding(LLMOutputModel):
             and o.direction == "buy"
             for o in self.observations
         )
+        # Same honesty rule as the congressional branch above: the model's
+        # own economic_role self-report must not survive a deterministic
+        # "too thin" verdict. Without this, an SEC/insider finding whose
+        # only observation is stale (or whose directions don't agree) could
+        # still claim "actionable" and reach the PM at full magnitude/high
+        # conviction via to_verdict() while support_eligible is False.
+        if not self.support_eligible:
+            self.economic_role = "historical"
         return self
 
     def to_verdict(self) -> "AnalystVerdict":
