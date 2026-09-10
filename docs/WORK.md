@@ -925,27 +925,9 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**21. Alerts must be their OWN message, and must not rely on colour — owner's spec, 2026-09-02. DONE.** See `docs/INCIDENT_HISTORY.md`, "alerts stop relying on colour".
-
-**22. A hard-coded 0.5% risk cap silently overrode the ratified 5% envelope — FIXED.** Now reads `config.risk.max_position_risk_pct` instead of the hardcoded `RISK_BUDGET_PCT = 0.5`. Detail: `docs/INCIDENT_HISTORY.md`. (Note: item 32 below found a SEPARATE, still-live cap that reintroduces the same failure mode by a different path.)
-
-**23. Risk Manager edits to a trade were trusted for shape, never for substance — FIXED 2026-09-03.** Now rejects an edit that zeros an exit's allocation or breaches the R/R or noise-band floor. See `docs/INCIDENT_HISTORY.md`.
-
-**24. The drawdown position cap could be skipped after a Risk Manager edit — FIXED 2026-09-03**, same PR as item 23.
-
 **25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DONE 2026-09-04.** `risk_manager.md` asked the RM to confirm a sell trigger itself; no Python verified it against real data. Two of the three allowed exits are now checked in Python (`exit_guard.py::holding_discipline_claim_check`): a claimed regime flip vs the recorded macro read, and a claimed high-conviction bearish state_change vs the recorded same-day news row. The third, `thesis_invalid_if`, is deliberately never evaluated here. The flat "<5 days" protection window was REPLACED by `exit_guard.py::check_structural_protection` — data-driven, no day count anywhere, close-only breaks confirmed over two consecutive trading days, noise-band fallback when there is neither a stated condition nor a qualifying level. **Escalation to a real veto, 2026-09-04 (owner-approved): a PROVEN-FALSE claim now BLOCKS the exit — reusing the existing per-symbol Risk Manager refusal mechanism, not a new one — and fires a standalone Telegram alert naming the symbol, the claim and why it was found false, so the frequency gets measured. An UNVERIFIABLE claim (macro seat untrusted, or no same-day news row names the symbol) is still only logged: never blocked, never alerted. That split is the whole design; absence of proof is not proof.** Nothing open on this item. Detail: `INCIDENT_HISTORY.md`, 2026-09-04 "a sell whose stated reason is provably untrue now actually gets stopped", and 2026-09-03 "item 25."
 
-**26. RM modification matching is case-sensitive — FIXED 2026-09-03.** See `docs/INCIDENT_HISTORY.md`.
-
-**27. Risk budget can undercount held-book risk when heat data is partially unavailable — FIXED 2026-09-03.** Gate now requires `existing_risk_pct` before the allocator runs at all; see `docs/INCIDENT_HISTORY.md`.
-
-All six found in the same 2026-09-03 pass that read the Portfolio Manager,
-order-construction and Risk Manager code end to end for the first time
-(item 18's catalyst-door and missing-tiebreaker findings came from the
-same read, applied one layer earlier). Full detail on all six:
-`docs/INCIDENT_HISTORY.md`.
-
-**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — FIXED 2026-09-04.** Config keys the test forced no longer exist after item 14's cost-circuit rewrite. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys".
+**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — STILL BROKEN, this file's own FIXED claim was wrong.** Marked FIXED 2026-09-04 (config keys the test forced no longer exist, after item 14's cost-circuit rewrite) but re-verified directly 2026-09-10, three separate times against a clean `origin/main` checkout: this test still fails, identically, every time. Whatever landed did not actually resolve it, and nobody re-checked the claim before writing FIXED. Needs someone to actually read the failure and re-diagnose it — not re-apply the same fix that already didn't work. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys" for the (incomplete) original diagnosis.
 
 **29. The analyst scorecard was already built and is already live — item withdrawn 2026-09-03, corrected after being written up as new work in error.** See `docs/INCIDENT_HISTORY.md`, 2026-09-03 "the analyst scorecard got written up as missing work; it already existed."
 
@@ -1081,50 +1063,9 @@ No DECIDE BY — revisit only if it recurs.
 
 **36. Congressional (House + Senate) trading data added to smart-money — SHIPPED 2026-09-04.**
 
-The "both known aggregators are dead" read recorded below was stale: two
-different free, credentialless sources were verified live 2026-09-04
-(`docs/INCIDENT_HISTORY.md` has the full detail) —
-`kadoa-org/congress-trading-monitor` on GitHub as primary,
-`congresswatch.us` as secondary cross-check. `CongressionalTradingProvider`
-(`src/data/congressional_trading.py`) fetches both, dedupes the same real
-trade across them by (ticker, normalized filer name, transaction date), and
-flags — never silently resolves — a disagreement between them on direction
-or dollar bracket via a new `cross_source_agreement`/`cross_source_note`
-pair on `SmartMoneyObservation`. Reuses the exact same 2-day cluster-window
-materiality logic as SEC Form 4 (extracted to
-`src/data/smart_money_cluster.py` so the two cannot drift), and the same
-$ thresholds, applied to the bracket LOW value conservatively since
-congressional disclosures are ranges, not exact dollars. Congressional data
-never grows the trading universe or triggers admission — it stays
-confirmatory context for symbols already in the configured universe, per
-the seat's existing acceptance contract. Off by default
-(`smart_money.congress_enabled`); wired into the existing single
-`smart_money_provider` slot via a new `CombinedSmartMoneyProvider` that
-fans one `SmartMoneySource` call out to SEC Form 4 and this new provider,
-isolating either one's failure from the other and from the rest of the run.
+Two free, credentialless, cross-checked sources feed `CongressionalTradingProvider`, confirmatory-only (never grows the universe); two real data-loss bugs were found and corrected before merge. Full detail moved to `docs/INCIDENT_HISTORY.md`, 2026-09-04.
 
-**Two data-loss bugs found and fixed on the same PR before merge, 2026-09-04.**
-Both came from reading a comparable free tool's author documenting his own
-gotchas (an n8n congressional-trading workflow template shared on Reddit) —
-real-world lessons from someone who already ran this data in anger, not
-defects we reasoned our way to. (1) The disclosure window was 30 days, which
-cannot even cover the STOCK Act's own 45-day filing deadline — members
-routinely file at or past it, so real, recent, legitimate trades were being
-thrown away before the analyst ever saw them. Widened to 180 days, the same
-figure that tool's author landed on for the same reason. This is a coverage
-window only: the separate contract that decides whether congressional
-evidence may actually support a thesis still demands disclosures <=7 days
-old, so nothing stale became load-bearing. SEC Form 4's own much tighter
-7-day window is untouched and must stay that way — Form 4 has a
-2-business-day legal deadline, a different statute entirely. (2) Direction
-parsing only understood full words ("Purchase"/"Sale"/"Exchange"), but real
-House disclosure forms use short codes — `P`, `S`, `S (partial)`, `E`. Every
-such row silently became "unknown" direction, on a feed whose whole purpose is
-knowing who bought and who sold. Now an explicit allowlist of the real code
-and word forms (deliberately not a loose single-letter match, which would
-misread "Stock Split" as a sale), and anything still unrecognized is logged
-and recorded once rather than vanishing — so the next upstream format change
-is visible instead of silent.
+**Still genuinely undecided:** `smart_money.congress_enabled` remains False (off) — flipping it to True has not been ratified.
 
 **37. Eleven PRs open at once tonight (#249-#262) — merge ORDER matters, see `docs/INCIDENT_HISTORY.md`.** None conflict in logic; several share files (`portfolio_manager.py`/`.md` especially — #257, #259, #261). Full recommended order recorded there so it survives a compaction, not just this session's head.
 
@@ -1139,7 +1080,9 @@ dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 
 **39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
 
-**41. A persistently broken ticker in the intraday scan failed silently forever — FIXED 2026-09-10.** The BRK-B fix (item covered in `docs/INCIDENT_HISTORY.md`, "QAMC Pipeline Autopsy") stopped one bad symbol from crashing the whole 101-symbol scan, but a symbol Alpaca can't return snapshot data for was still indistinguishable from "just didn't move today" — silently and permanently excluded, zero owner visibility. `intraday_symbol_health` now counts consecutive misses per symbol and alerts the owner at 3 in a row (~90 min), re-alerting at most once/24h while still broken. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-10.
+**41. A persistently broken ticker in the intraday scan could fail silently forever — FIXED 2026-09-10.** The BRK-B fix (item covered in `docs/INCIDENT_HISTORY.md`, "QAMC Pipeline Autopsy") stopped one bad symbol from crashing the whole 101-symbol scan, but a symbol Alpaca can't return snapshot data for was still indistinguishable from "this stock just didn't move today" — silently and permanently excluded from every scan, with zero owner visibility. New `intraday_symbol_health` table now counts consecutive misses per symbol (independent per symbol, reset on any successful tick) and fires a standalone owner alert at 3 consecutive misses (~90 minutes), re-alerting at most once every 24 hours while the symbol stays broken rather than paging every 30-minute tick for an already-known problem. Full derivation and test coverage: `docs/INCIDENT_HISTORY.md`, 2026-09-10.
+
+**42. Order-fill detection was a fixed-interval REST poll from 1992, not the real-time mechanism Alpaca actually offers — REPLACED 2026-09-10.** `wait_for_order_terminal` asked "has this order filled yet?" once a second in a loop for up to a fixed timeout — the timeout had already been raised twice (15s -> 30s) after real trades (OXY, NVDA) were cancelled unfilled while still working. The owner's direct challenge — "I doubt the majority of people using this API just set up a simple timer like it's 1992" — was correct and took one documentation search to confirm: Alpaca's own docs recommend its real-time `trade_updates` websocket for exactly this, specifically instead of polling. Now: the stream is watched first and a fill/cancel/reject is detected the instant Alpaca reports it (no more guessing a wait duration for the common case); REST polling remains as the fallback ONLY if the stream itself cannot connect at all, preserving the old reliability guarantee. The timeout constant (`_ENTRY_FILL_TIMEOUT_S`) still exists but is now purely that fallback's ceiling, raised to the originally-researched 90s since a generous fallback now costs nothing. **New standing principle recorded because this shape will recur:** `docs/OUTCOME.md`, "Check what the platform already solved, before tuning your own workaround" — before adding a timeout/retry/poll around any third-party API, check whether that API's own docs already describe the real mechanism. Full derivation and test coverage: `docs/INCIDENT_HISTORY.md`, 2026-09-10.
 
 ---
 

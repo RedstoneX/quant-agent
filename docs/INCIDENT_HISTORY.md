@@ -5073,3 +5073,67 @@ end-to-end with a real (non-mocked) database: one miss does not page,
 three consecutive misses for the same symbol pages exactly once, and a
 recovered symbol's streak resets rather than carrying into a later,
 unrelated outage.
+
+## 2026-09-10 — the order-fill timeout was the wrong question; watch for the fill instead
+
+**In plain words:** when the desk buys a stock, it places an order and then
+gives up on it if the order doesn't fill within a fixed number of seconds —
+because a filled position needs its protective stop-loss immediately, and
+an order still hasn't produced a position yet, so waiting too long risks
+nothing directly but risks losing the trade to an over-eager cancel. That
+number had already been raised twice (15 -> 30 seconds) after real trades
+were lost to it. The desk was about to raise it a third time, to a properly
+researched 90 seconds — until the owner asked a different question:
+why is this a guess-a-number problem at all, when Alpaca can just tell the
+code the instant an order fills?
+
+**The owner was right, and it took one search to confirm, not a research
+project.** Alpaca's own documentation names its real-time `trade_updates`
+websocket stream as the way to know about a fill, specifically instead of
+repeatedly asking the REST API "did it fill yet?" The desk's code was
+doing exactly the polling pattern Alpaca's docs describe as the thing not
+to do — asking once a second, in a loop, for up to a fixed timeout.
+
+**The fix:** `wait_for_order_terminal` (`src/execution/broker.py`) now
+subscribes to Alpaca's real-time order stream for the specific order it is
+watching. A fill, cancel, or rejection is detected the instant Alpaca
+reports it — no more guessing how long is "enough." Three real outcomes,
+each handled on purpose:
+
+- **A terminal event arrives for this order** — return it immediately. No
+  REST call needed. This is the common case, and it is now effectively
+  instantaneous instead of costing up to a full poll interval.
+- **The stream connects cleanly but nothing arrives before the timeout**
+  (the order is genuinely still open) — one single REST check, to preserve
+  this function's existing contract of returning the last known status.
+- **The stream itself cannot be used at all** (library unavailable, or the
+  websocket never reaches a live, authenticated connection) — fall back to
+  the exact REST-polling loop this function used before this change, so a
+  websocket outage degrades to the old, already-proven-reliable behaviour
+  rather than to no behaviour at all.
+
+**The timeout did not disappear — it was demoted.** 90 seconds (the
+originally-researched, never-shipped number) is now the ceiling for the
+RARE fallback path only, not the primary detection mechanism. There is
+close to no cost to a generous fallback timeout now, because the common
+case no longer uses it at all.
+
+**Why this belongs in the project's permanent doctrine, not just this
+fix.** Recorded in `docs/OUTCOME.md` under a new principle, "Check what the
+platform already solved, before tuning your own workaround" — companion
+to the existing "no arbitrary numbers" principle. The lesson generalizes
+past this one function: before adding a timeout, retry count, or polling
+interval around a THIRD-PARTY API's behavior, check whether that API's own
+documentation already describes the real mechanism for the problem. A
+broker or data API serious enough to run a trading desk on has almost
+always already published the answer.
+
+**What would catch a regression:** `tests/test_order_fill_stream.py`
+proves the dispatch logic end to end with a fake stream double — no real
+network I/O — covering the fast-fill path, a non-matching update still
+correctly falling to a single REST check, and three distinct
+stream-unusable scenarios (library missing, subscribe failure, connection
+failure) all correctly falling back to the untouched polling
+implementation. `tests/test_broker.py`'s existing polling test now passes
+`use_stream=False` to exercise that fallback path directly and
+deterministically.

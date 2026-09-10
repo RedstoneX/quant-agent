@@ -146,6 +146,50 @@ for what in this codebase has actually been measured versus merely
 asserted. If a real number cannot yet be derived from data or a measured
 record, mark it explicitly as provisional — never let it read as settled.
 
+## Check what the platform already solved, before tuning your own workaround
+
+**Owner correction, 2026-09-10.** A sibling mistake to "no arbitrary
+numbers," worth naming on its own: sometimes the number is the wrong thing
+to be arguing about at all, because the mechanism it is tuning was never
+the right mechanism.
+
+`wait_for_order_terminal` asked "has this order filled yet?" once a second
+in a loop, for up to a fixed timeout, before deciding to give up on it.
+When that timeout turned out to be too short (real trades cancelled while
+still working), the instinct — mine, initially — was to find a better
+number for it: 15, then 30, then a researched 90. **The owner's question
+cut underneath all three:** *"I doubt the majority of people using this API
+just set up a simple timer like it's 1992."* He was right, and it took one
+search to confirm it, not deep investigation — Alpaca's own documentation
+names its real-time `trade_updates` websocket as the recommended way to
+know about a fill, specifically instead of polling the REST endpoint. A
+fill is reported the instant it happens; there was never a number of
+seconds that makes "ask once a second and hope" correct, because the
+premise was wrong, not the tuning.
+
+**The general lesson, for this desk and for any future one built the same
+way:** before adding a timeout, a retry count, a polling interval, or any
+other made-up-feeling number around a THIRD-PARTY API's behavior, check
+whether that API's own documentation already describes the intended
+mechanism for the problem being solved. A polling loop around a fill,
+a price, a fund transfer, an order status — these are common enough
+integration problems that a serious broker/data API has almost always
+already published the real answer (a websocket stream, a webhook, a
+callback), and it is usually a single documentation search away, not a
+research project. Reach for a fixed-interval poll only after confirming
+the platform genuinely offers nothing better, and say so explicitly in the
+code when that is the finding, so the next person does not re-litigate it
+from scratch.
+
+**What this does NOT mean:** the timeout does not disappear. It becomes
+the ceiling for the case the better mechanism cannot be used at all (the
+websocket connection itself failed) — a real, still-necessary number, just
+demoted from "the primary detection method" to "the fallback's safety
+net." See `src/execution/broker.py::wait_for_order_terminal` for the
+shipped shape of this: try the real-time mechanism first, fall back to the
+old polling behavior only on a genuine connection failure, never silently
+lose the old reliability guarantee while gaining the new speed one.
+
 ## Execution-environment principle
 
 Paper and live operation share one trading architecture. No agent, portfolio-construction, risk, position-management, reflection or Dashboard semantics should become easier, looser, or materially different merely because the current broker account is Paper.
