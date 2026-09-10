@@ -264,18 +264,51 @@ class ConstructorConfig:
     # trending one. ATR itself already adapts the distance to each stock and
     # each session; these adjust how many ATRs that stock's setup deserves.
     #
-    # 3.0 -> 1.5 on 2026-09-04. Sweeney Maximum Adverse Excursion analysis on
-    # this desk's real trade signals: the worst adverse excursion among all
-    # real EVENTUAL WINNERS was 1.84x ATR, so a 1.5x ATR floor would have
-    # stopped out ~1% of real winners while roughly TRIPLING the reward:risk
-    # arithmetic — `_shares_for_risk` derives size from stop distance, so a
-    # tighter stop at the same dollar risk is a larger position on the same
-    # target. The 3.0 it replaces was never derived from anything: measured
-    # against this desk's own record it cleared 0 of 42 real candidates on the
-    # one day with usable level data, and 0 of 222 real signals for range
-    # setups at any horizon this desk states. See `config/settings.yaml`'s
-    # own comment on this key for the full derivation and its caveats.
-    min_stop_atr_multiple: float = 1.5
+    # 3.0 -> 1.5 -> 2.5 (2026-09-10). This ONLY applies when no real level
+    # backs the stop (see `absolute_min_stop_atr_multiple` below for that
+    # case) — the owner's standing rule is that a REAL level is always judged
+    # on its own honest distance, never overwritten by this number. This is
+    # purely the fallback for trades that have no such level.
+    #
+    # The 1.5 this replaces was measured (Sweeney MAE) against this desk's
+    # own ~2-week trade history — the SAME history whose signals were later
+    # found to include seats that misreported confidence and data quality
+    # (the "content-honesty" fixes, 2026-09-04/05). That window is too short,
+    # too clean a regime (no risk-off), and now of suspect provenance to be
+    # the sole basis for a risk-of-ruin number. Not necessarily wrong, just
+    # no longer trustworthy as the ONLY input.
+    #
+    # 2.5 instead comes from published doctrine that does not depend on this
+    # desk's own data at all: general swing-trading stop-placement guidance
+    # puts a FIXED entry stop at 2.5-3.0x ATR (vs. 1.0x scalping, 1.5-2.0x
+    # intraday momentum) for a multi-day hold. QAMC's prompt describes itself
+    # as exactly that kind of book (days-to-weeks holds), so 2.5 sits inside
+    # that bracket rather than at either edge.
+    #
+    # Caveat, stated honestly: Chuck LeBeau's Chandelier Exit and Van Tharp's
+    # volatility-stop work (also cited in this debate, also 2.0-3.0x) are
+    # TRAILING-stop mechanisms — the stop recalculates off each new high, it
+    # is not a fixed distance from a static entry. This settings file already
+    # flagged, correctly, that applying a trailing-stop multiple to a fixed
+    # entry stop plus a hard reward:risk floor is a different, more binding
+    # combination than the literature's trailing-stop use case. 2.5 is
+    # grounded in the general entry-stop consensus above, not in Chandelier/
+    # Tharp specifically — noted so the two aren't conflated later.
+    #
+    # Known tension, disclosed rather than hidden: `min_reward_risk_after_
+    # widening` (1.5) requires roughly `sqrt(H) >= 1.5 x effective_multiple`
+    # to clear (H = hold in sessions). At the tightest reachable case (range
+    # setup, risk-on: 2.5 x 0.90 x 0.95 = 2.14) that needs H >= ~10 sessions
+    # — in line with this desk's real observed holds (e.g. ORCL, 10-session
+    # horizon). At the widest case (breakout, risk-off: 2.5 x 1.00 x 1.20 =
+    # 3.0) it needs H >= ~20 sessions — a real ask, not a free pass. This is
+    # the same shape of tension the old 3.0 constant created (which needed
+    # ~27 sessions and effectively passed nothing); 2.5 does not eliminate
+    # it, it moves the binding constraint back into a range doctrine and this
+    # desk's own stated horizons can plausibly both satisfy. Re-measure once
+    # honest post-fix trade history exists — this is a doctrine-grounded
+    # placeholder, not a permanent constant.
+    min_stop_atr_multiple: float = 2.5
     #: Multipliers ON the base, by `TechAnalysisResult.setup_type`.
     #:
     #: DIRECTION CORRECTED 2026-09-04 — these used to read breakout 0.85 /
@@ -289,24 +322,24 @@ class ConstructorConfig:
     #: it — so ATR systematically UNDERSTATES a breakout's post-entry range.
     #: A breakout therefore earns at least the base, never a discount.
     #:
-    #: HOW THESE TWO NUMBERS WERE PICKED, and how far to trust them. The 1.5
-    #: base is the well-grounded part of this change; these magnitudes are a
-    #: secondary, less-verified layer and are labelled as such. There is no
-    #: per-setup-type MAE breakdown in this repo to size them from, so:
-    #:   breakout 1.00 — no measurement supports a specific widening, so the
-    #:     correction is made by REMOVING the unearned 0.85 discount rather
-    #:     than by inventing a number. Breakouts run at the base.
-    #:   range 0.90 — the tightest scaler that keeps the NARROWEST reachable
-    #:     stop outside the one measured noise figure this codebase owns.
-    #:     Worst case is a range setup on a risk-on tape: 1.5 x 0.90 x 0.95 =
-    #:     1.2825 ATR, still outside the measured 1.25 ATR "one ordinary day's
-    #:     range" band (`src/risk/exit_guard.py`, Phase 3 trailing). 0.85 was
-    #:     rejected for exactly this reason: 1.5 x 0.85 x 0.95 = 1.2113, which
-    #:     puts the stop back INSIDE the measured noise band — the original
-    #:     defect, reintroduced from the other side.
-    #: Net effect: every reachable floor now lies in [1.2825, 1.80] ATR —
-    #: above the measured 1.25 noise band, below the 1.84 worst real winner
-    #: excursion. Both ends are real measurements, not chosen numbers.
+    #: HOW THESE TWO NUMBERS WERE PICKED, and how far to trust them.
+    #: The relative direction (range tighter than breakout) is the
+    #: well-grounded part — it is doctrine, not this desk's own data: a range
+    #: setup invalidates at its own band edge (lower-volatility, mean-
+    #: reversion structure), while a breakout enters on volatility EXPANSION
+    #: whose ATR reading (taken over the quiet pre-break consolidation)
+    #: systematically UNDERSTATES its post-entry range. There is still no
+    #: per-setup-type MAE breakdown in this repo to size the magnitudes from,
+    #: so they are unchanged from the 2026-09-04 correction:
+    #:   breakout 1.00 — runs at the base; no measurement supports a specific
+    #:     widening beyond it.
+    #:   range 0.90 — a modest tightening off the base, not a specific
+    #:     measured number.
+    #: Net effect with the 2.5 base (2026-09-10): reachable floor spans
+    #: [2.14, 3.00] ATR (range/risk-on to breakout/risk-off) — see
+    #: `min_stop_atr_multiple`'s comment for why that range is now judged
+    #: against published doctrine rather than this desk's own (suspect)
+    #: noise-band/MAE measurements.
     stop_atr_setup_scale: tuple[tuple[str, float], ...] = (
         ("breakout", 1.00),
         ("range", 0.90),

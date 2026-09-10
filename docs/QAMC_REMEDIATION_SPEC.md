@@ -1868,8 +1868,13 @@ outcomes instead of one, each logged by name:
 | not at a computed level | widened to `min_stop_atr_multiple` ATRs, as before | the band edge |
 | no ATR reading at all | left alone | the kept stop |
 
-**Neither threshold moved.** `min_stop_atr_multiple` is still 3.0 and
-`min_reward_risk_after_widening` is still 1.5. This changes WHICH stop the
+**Neither threshold moved AT THE TIME THIS SPEC SECTION WAS WRITTEN.**
+`min_stop_atr_multiple` has since moved twice — 3.0 (as written here) -> 1.5
+(2026-09-04, own MAE data, later found to overlap a window of misreported
+seat confidence) -> 2.5 (2026-09-10, published swing-trading doctrine
+instead). `min_reward_risk_after_widening` is still 1.5, unmoved. This spec
+is a historical record and is not corrected number-by-number below; check
+`docs/STATE.md` for the current value. This changes WHICH stop the
 arithmetic is performed on, nothing else — a level-backed trade whose real
 geometry still fails 1.5 is still refused, by a distinctly named code.
 

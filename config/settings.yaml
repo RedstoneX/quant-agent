@@ -452,28 +452,30 @@ risk:
   # floor. That specific combination is self-defeating and does not appear in
   # the literature.
   #
-  # WHERE 1.5 COMES FROM — Sweeney Maximum Adverse Excursion analysis on this
-  # desk's real trade signals. MAE asks the only question that sets a stop
-  # honestly: how far did trades that EVENTUALLY WON dip against entry before
-  # they worked? A stop must sit outside that, and no further. Measured: the
-  # worst adverse excursion among all real winners in the sample was 1.84x
-  # ATR. A 1.5x ATR floor would have stopped out ~1% of real winners while
-  # roughly TRIPLING the reward-to-risk arithmetic — because position size is
-  # derived from stop distance (shares = risk_usd / |entry - stop|), a tighter
-  # stop at the same dollar risk buys a larger position and a better payoff on
-  # the same target.
+  # 1.5 -> 2.5 (2026-09-10). The 1.5 was Sweeney MAE analysis on this desk's
+  # own ~2-week trade history — the SAME window whose seat outputs were later
+  # found to include misreported confidence/data quality (the 2026-09-04/05
+  # content-honesty fixes). Owner call: that history is too short and now of
+  # suspect provenance to be the ONLY basis for a risk-of-ruin number.
   #
-  # 1.5 also sits ABOVE the only independently measured number in this
-  # codebase: the 1.0-1.25x ATR noise band (see absolute_min_stop_atr_multiple
-  # below and src/risk/exit_guard.py). So the floor is bracketed on both
-  # sides by real measurement — outside one ordinary day's range (1.25),
-  # inside the worst real winner's drawdown (1.84).
+  # 2.5 instead comes from published doctrine independent of this desk's own
+  # data: general swing-trading guidance puts a fixed entry stop at 2.5-3.0x
+  # ATR for a multi-day hold (vs 1.0x scalping, 1.5-2.0x intraday). This ONLY
+  # applies when no real level backs the stop — a level-backed stop is always
+  # judged on its own honest distance (owner clarification, 2026-09-10: the
+  # reward:risk floor was never rejected as a concept; judging it against a
+  # stop THIS FLOOR invented instead of a real one was).
   #
-  # CAVEAT, stated plainly: the MAE sample is this desk's own short history —
-  # roughly two weeks, no risk-off regime in it. 1.5 is far better grounded
-  # than the 3.0 it replaces, but it is not a permanent constant. Re-measure
-  # once there is post-fix realised stop-out data.
-  min_stop_atr_multiple: 1.5
+  # Note: Chandelier Exit / Van Tharp (also ~2-3x ATR, also raised in this
+  # debate) are TRAILING-stop mechanisms, not fixed-entry ones — cited here
+  # only as corroboration that this magnitude of ATR multiple is standard in
+  # the literature, not as direct support for this specific fixed-stop use.
+  #
+  # CAVEAT, stated plainly: 2.5 does not by itself resolve the reward:risk
+  # arithmetic tension below — it moves the binding horizon requirement into
+  # a range this desk's own stated holds can plausibly clear, it does not
+  # guarantee it. Re-measure once honest post-fix trade history exists.
+  min_stop_atr_multiple: 2.5
   # A widened stop lowers reward:risk because the target does not move. Under
   # this, the setup only ever qualified on a stop too tight to survive.
   #
