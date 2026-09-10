@@ -1,3 +1,4 @@
+import json
 import logging
 import sqlite3
 import threading
@@ -2415,6 +2416,91 @@ class Database:
             row = dict(row)
             # Rows arrive newest-first, so the first sighting of a symbol wins.
             latest.setdefault(row["symbol"], row)
+        return latest
+
+    # --- Holding-discipline structural-protection memory (spec item 25,
+    # owner refinements 2026-09-04) ------------------------------------
+    #
+    # A thesis/level break only lifts protection once it shows up on the
+    # DAILY CLOSE of two CONSECUTIVE TRADING DAYS — see
+    # `src.risk.exit_guard.check_structural_protection`'s "CONFIRMATION
+    # GATE" docstring for why (a same-day intrabar wick or a one-day
+    # "spring" false-breakdown must not read as a real break). That
+    # function is pure and holds no state itself; this is the one place
+    # across days that "was this position's thesis/level basis already
+    # broken on its last completed close" is remembered, following the same
+    # read/write shape as `save_position_review_metrics` /
+    # `get_prior_position_review_metrics` just above, keyed additionally by
+    # `bar_date` — the date of the CLOSE the read was judged against, not
+    # the wall-clock time the pipeline happened to run — so that several
+    # intraday pipeline cycles re-reading the SAME day's close never get
+    # miscounted as two separate confirming days.
+
+    HOLDING_PROTECTION_BREAK_KIND = "holding_protection_break"
+
+    def save_holding_protection_break(
+        self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
+    ) -> int:
+        """Record whether the close dated `bar_date` came back broken for
+        `symbol`, so a LATER, DIFFERENT bar_date's read can require it to
+        still be broken before treating the break as confirmed."""
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="risk_manager",
+            kind=self.HOLDING_PROTECTION_BREAK_KIND, scope="symbol",
+            symbol=symbol.upper(),
+            evidence_json=json.dumps({
+                "raw_broken": bool(raw_broken), "bar_date": str(bar_date),
+            }),
+        )
+
+    def get_prior_holding_protection_break(
+        self, symbols, *, today_bar_date: str, exclude_run_id: str | None = None,
+    ) -> dict[str, bool]:
+        """The most recent `raw_broken` flag per symbol from a close dated
+        STRICTLY BEFORE `today_bar_date` — i.e. the last completed prior
+        trading day's read, skipping any rows that share today's own
+        bar_date (repeat intraday reads of the same close).
+
+        A symbol absent from the result has no qualifying prior-day read on
+        record (first look at this position, a gap, or the last read failed
+        to persist) — callers must treat that as `False` (no confirmed-
+        eligible break seen yet), never as True, so a missing row can never
+        manufacture a confirmed break.
+        """
+        wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        sql = (
+            "SELECT symbol, evidence_json, timestamp FROM specialist_evidence "
+            f"WHERE agent_name='risk_manager' AND kind=? AND symbol IN ({placeholders})"
+        )
+        params: list = [self.HOLDING_PROTECTION_BREAK_KIND, *wanted]
+        if exclude_run_id:
+            sql += " AND run_id != ?"
+            params.append(exclude_run_id)
+        # Newest first, capped generously per symbol below — recent history
+        # only; this is a same-week confirmation check, not an archive scan.
+        sql += " ORDER BY timestamp DESC, id DESC LIMIT 500"
+        with self._lock:
+            rows = self.conn.execute(sql, tuple(params)).fetchall()
+        latest: dict[str, bool] = {}
+        for row in rows:
+            row = dict(row)
+            sym = row["symbol"]
+            if sym in latest:
+                continue  # already have this symbol's most recent prior day
+            try:
+                payload = json.loads(row.get("evidence_json") or "{}")
+                bar_date = payload.get("bar_date")
+            except (TypeError, ValueError):
+                continue
+            if not bar_date or bar_date >= today_bar_date:
+                # Same day (or, defensively, a future-dated row) — not a
+                # distinct PRIOR trading day's close. Keep scanning for an
+                # older one instead of using it.
+                continue
+            latest[sym] = bool(payload.get("raw_broken"))
         return latest
 
     def record_intraday_evaluation(

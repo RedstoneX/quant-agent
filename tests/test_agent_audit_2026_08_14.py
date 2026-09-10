@@ -102,11 +102,13 @@ def _rm_message(**overrides) -> str:
 # F6 — risk evidence completeness
 # ===========================================================================
 
-def test_f6_rm_sees_position_age_and_its_discipline_tier() -> None:
-    """RM's prompt makes it the auditor of PM's tiered holding discipline —
-    `<5d` is a protection period where only three named triggers permit a
-    SELL. `Position` carries no entry date, so RM was enforcing a rule keyed
-    on a number it never received: every SELL looked equally legitimate.
+def test_f6_rm_sees_position_age_as_plain_context() -> None:
+    """`held: Nd` is informational only (spec item 25, 2026-09-03/04): the
+    old flat `<5d` / `5-15d` / `>15d` tiers were replaced by a deterministic,
+    data-driven check (`check_structural_protection`) that RM cannot see
+    before it speaks, so the prompt no longer asserts a protection tier off
+    the age alone — `Position` carries no entry date, so age still has to
+    come from `position_history`, just without the retired tier labels.
     """
     msg = _rm_message(
         positions=[
@@ -119,12 +121,11 @@ def test_f6_rm_sees_position_age_and_its_discipline_tier() -> None:
             "JPM": {"days_held": 40},
         },
     )
-    assert "held: 2d (<5d PROTECTED" in msg, (
-        "RM must see that NVDA is inside the protection period, or it cannot "
-        "tell a disciplined exit from a day-2 panic sell."
-    )
-    assert "held: 9d (5-15d maturity)" in msg
-    assert "held: 40d (>15d)" in msg
+    assert "held: 2d" in msg
+    assert "held: 9d" in msg
+    assert "held: 40d" in msg
+    assert "PROTECTED" not in msg
+    assert "maturity" not in msg
 
 
 def test_f6_unknown_position_age_is_explicit_not_omitted() -> None:
