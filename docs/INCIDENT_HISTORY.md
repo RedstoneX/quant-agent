@@ -4787,3 +4787,53 @@ the README):**
    already work, both are small, and replacing working code with a
    four-container dependency for the same data would be a straight
    downgrade in operational risk for no gain.
+
+## 2026-09-10 — stop-floor base re-derived again: 1.5 -> 2.5 ATR, doctrine not our own data
+
+The 1.5x ATR floor (item 33, above) was measured via Sweeney MAE analysis on
+this desk's own ~2-week trade signal history. That same window was later
+found (2026-09-04/05) to include seat outputs that misreported confidence
+and data quality — the "content-honesty" fixes. Owner call: a risk-of-ruin
+number should not rest solely on data of now-uncertain provenance, even
+though it is not necessarily wrong.
+
+Replaced with 2.5x ATR, sourced from published swing-trading doctrine
+instead: general stop-placement guidance puts a fixed entry stop at
+2.5-3.0x ATR for a multi-day hold (vs 1.0x scalping, 1.5-2.0x intraday
+momentum). Chandelier Exit (Chuck LeBeau) and Van Tharp's volatility-stop
+work were also raised in this discussion — both use a similar 2-3x ATR
+magnitude, but as TRAILING stops (recalculated off each new high), not
+fixed distances from a static entry. They are cited here as corroboration
+that this magnitude is standard in the literature, not as direct support
+for this specific fixed-entry use — noted so the two are not conflated by a
+future reader.
+
+**Owner clarification carried into docs/WORK.md item 1, permanent:** the
+reward:risk floor was never rejected as a concept. What was rejected
+(2026-09-02/03, see item 1's original history above) was judging a trade's
+reward:risk against a stop THE ATR FLOOR invented, instead of a real
+support/resistance level. That distinction is unaffected by this change — a
+level-backed stop (e.g. the live ORCL position, entry 146.82 / stop 137.53
+at a computed support level) is honoured at its own honest distance
+regardless of what this floor is set to. This number only ever applies to a
+stop with nothing real on the chart behind it.
+
+**Known, disclosed tension, not resolved by this change:**
+`min_reward_risk_after_widening` (1.5) requires roughly
+`sqrt(hold_sessions) >= 1.5 x effective_multiple` to clear. At the tightest
+reachable case (range setup, risk-on: 2.5 x 0.90 = 2.25 ATR) that needs
+~10 sessions — in line with this desk's real observed holds (e.g. ORCL's
+own 10-session horizon). At the widest (breakout, risk-off: 2.5 x 1.00 x
+1.20 = 3.0 ATR) it needs ~20 sessions — a real ask, not a free pass. This
+is the same shape of tension the old 3.0 constant created (which
+effectively passed nothing); 2.5 does not eliminate it, it moves the
+binding constraint into a range this desk's own stated horizons can
+plausibly satisfy. **Re-measure once honest post-fix trade history
+exists** — this is a doctrine-grounded placeholder, not a permanent
+constant.
+
+Test fixtures in `tests/test_risk_based_sizing.py` and
+`tests/test_shorts_stage3.py` that hand-derive specific stop/reward:risk
+values to prove the level-backed-vs-unbacked distinction were re-derived
+by hand against the new base (not relabelled from actual output) —
+worked arithmetic is in each fixture's own comment.

@@ -586,8 +586,10 @@ the same 68.
 
 **1. The reward:risk floor — 17 of 68 (25%). TOO STRICT. IN FLIGHT.**
 
-*2026-09-04: the stop-geometry half of this is now fixed — see item 33. The
-floor itself (1.5) did not move; the stop it divides by did. Not yet
+*Owner clarification, 2026-09-10: the reward:risk ratio is not rejected as a
+concept — judging it against a stop THE ATR FLOOR invented, instead of a real
+level, was. A level-backed stop is always judged on its own honest distance.
+Stop-geometry half fixed, see item 33 (floor now 2.5x ATR). Not yet
 re-measured against the same 68.*
 
 The single largest cause; nothing else is close. 10 died before an order was
@@ -1024,51 +1026,37 @@ now reads the same derived target construction uses, re-measured against
 real data (0/0 overlap on two separate real samples before the fix).
 
 **Uncovered by that fix, and now FIXED IN TURN — the entry stop-width
-floor was structurally broken, not merely tight.** Measured 2026-09-04
-on real data (1,301 stored analyses, 222 real actionable signals, two
-weeks): at the old floor (3.0× ATR, itself never derived from any
-measurement — traced to a comment jumping from a measured 1.25 to a
-chosen 3.0 with nothing cited), **0 of 42 real candidates cleared on the
-one day with usable structural-level data**, and for range trades (this
-desk's majority setup) **0 of 222 real signals cleared at ANY horizon
-this desk has ever stated — not tight, categorically closed for that
-setup type.**
+floor was structurally broken, not merely tight.** Old floor (3.0× ATR,
+never derived from anything) cleared 0 of 42 real candidates and, for range
+trades (this desk's majority setup), 0 of 222 real signals at any stated
+horizon. Full 2026-09-04 measurement: `docs/INCIDENT_HISTORY.md`.
 
-**Replacement derived and shipped 2026-09-04: the floor is now 1.5× ATR.**
-It comes from a Sweeney Maximum Adverse Excursion study on this desk's own
-real trade signals — how far trades that EVENTUALLY WON dipped against
-entry before they worked. Worst real winner drew down 1.84× ATR, so a
-1.5× floor would have stopped out about 1% of real winners while roughly
-tripling the reward:risk arithmetic (size is derived from stop distance,
-so a tighter stop at the same dollar risk is a larger position on the same
-target). The number is bracketed by real measurement on both sides:
-outside the measured 1.25× ATR one-day noise band, inside the 1.84× worst
-real winner excursion.
+**Floor history: 3.0 (undated) -> 1.5 (2026-09-04) -> 2.5 (2026-09-10),
+current.** The 1.5 was Sweeney MAE analysis on this desk's own ~2-week trade
+signals — later found to overlap the window some seats misreported
+confidence/data quality in, so no longer trusted as the sole basis for a
+risk-of-ruin number. **2.5 instead comes from published swing-trading
+doctrine** (fixed entry stops run 2.5-3.0× ATR for a multi-day hold),
+independent of this desk's own data. Applies ONLY when no real level backs
+the stop — a level-backed stop is always honoured at its own distance,
+never this number (see item 1's clarification above).
 
-**The setup scalers were also backwards and are corrected in the same
-change.** Range setups — the calmest, most common, and the ones the old
-floor closed outright — were getting the WIDEST floor (×1.15) and
-breakouts the tightest (×0.85). Now breakout ×1.00, range ×0.90. Every
-reachable floor lands in 1.28–1.80× ATR.
+Setup scalers (breakout ×1.00, range ×0.90 — corrected 2026-09-04 from a
+backwards ×0.85/×1.15) are unchanged by the base move. Reachable floor now
+2.14-3.00× ATR. Known, disclosed tension: the 1.5 reward:risk floor needs
+roughly `sqrt(hold_sessions) >= 1.5 x effective_multiple` to clear — ~10
+sessions at the tightest case (matches this desk's real observed holds),
+~20 at the widest (a real ask). Not eliminated, moved into a range this
+desk's stated horizons can plausibly satisfy. **Re-measure once honest
+post-fix trade history exists** — not a permanent constant. Full
+derivation: `docs/INCIDENT_HISTORY.md`, 2026-09-10.
 
-**Confidence is NOT uniform across this change, and that matters.** The
-1.5 base is well grounded. The scaler magnitudes are a secondary,
-less-verified layer: there is no per-setup-type MAE breakdown to size them
-from, so the range scaler is set at the tightest value that keeps the
-narrowest reachable stop outside the measured 1.25× noise band, and the
-breakout scaler is 1.00 because no measurement supports a specific
-widening — the correction was made by REMOVING the unearned discount
-rather than inventing a number. Data-coverage caveats stand: roughly two
-weeks, no risk-off regime, no post-fix realised stop-out data. **Re-measure
-once there is real post-fix trade history.** Full derivation and
-methodology: `docs/INCIDENT_HISTORY.md`, 2026-09-04.
-
-**Known consequence, recorded not fixed:** halving stop distances roughly
-doubles the notional a full 5%-risk trade wants, so the 100% single-name
-cap binds again on tight-stop names (~3.5% delivered risk rather than 5%).
-That is `allow_margin: false` showing through, not a regression — >100% of
-equity in one name is unreachable cash-only regardless. Enabling margin is
-an owner call.
+**Known consequence, recorded not fixed:** a tighter stop than the old 3.0
+floor demands a bigger position for the same dollar risk, so the 100%
+single-name cap binds again on tight-stop names (~3.5% delivered risk
+rather than 5%). That is `allow_margin: false` showing through, not a
+regression — >100% of equity in one name is unreachable cash-only
+regardless. Enabling margin is an owner call.
 
 **34. Exit management barely managed, and ranking was close to alphabetical — FIXED, pending review.**
 
