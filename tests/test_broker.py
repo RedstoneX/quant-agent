@@ -1500,7 +1500,12 @@ def test_wait_for_order_terminal_polls_until_filled(mock_tc_cls):
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
-    status = broker.wait_for_order_terminal("order-1", timeout_seconds=2.0, poll_interval=0.0)
+    # use_stream=False: this test exercises the REST-polling fallback path
+    # specifically (2026-09-10 — see test_order_fill_stream.py for the
+    # real-time stream path, now the default).
+    status = broker.wait_for_order_terminal(
+        "order-1", timeout_seconds=2.0, poll_interval=0.0, use_stream=False,
+    )
 
     assert status == "filled"
     assert mock_client.get_order_by_id.call_count == 2
@@ -1865,8 +1870,11 @@ def test_place_entry_protection_uses_gtc_and_actual_fill_qty(mock_tc_cls):
     assert float(req.qty) == 7.0                    # actual fill, not the 10 requested
     assert float(req.stop_price) == 90.0
     assert float(req.limit_price) == 87.3           # 3% buffer below the stop
+    # 30.0 -> 90.0 (2026-09-10): the fallback-only ceiling now that
+    # `wait_for_order_terminal` watches the real-time fill stream first —
+    # see tests/test_order_fill_stream.py.
     broker.wait_for_order_terminal.assert_called_once_with(
-        "e1", timeout_seconds=30.0,
+        "e1", timeout_seconds=90.0,
     )
 
 
