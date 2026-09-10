@@ -756,3 +756,95 @@ def test_todays_move_propagates_through_the_full_decision_chain(mock_compute_ind
     ]
     assert any('"stage": "opportunity"' in row["evidence_json"] for row in lifecycle)
     assert any('"stage": "specialist"' in row["evidence_json"] for row in lifecycle)
+
+
+# ---------- symbol snapshot-health tracking / owner alert (2026-09-10) ----
+
+def test_a_symbol_missing_snapshot_data_is_tracked_but_not_alerted_once():
+    """A single miss must not page the owner — see
+    `Database.record_intraday_symbol_snapshot_result`'s threshold reasoning."""
+    from src.storage.db import Database
+
+    p = _intraday_pipeline(universe=["SPY", "BADTIX"])
+    real_db = Database(str(Path(tempfile.mkdtemp()) / "t.db"))
+    real_db.initialize()
+    p.db = real_db
+    p.db.get_trades = lambda *a, **k: []
+    p.broker.get_intraday_snapshots.return_value = {
+        "SPY": _snapshot(last=500.0, prev=499.0),
+        # BADTIX: no entry at all -> falls back to {} -> not (last, prev) numeric
+    }
+    with patch("src.notifier.send_owner_alert") as mock_alert:
+        ctx = RunContext.start("intra_check")
+        p._run_intraday_opportunity_scan(ctx)
+        mock_alert.assert_not_called()
+    row = real_db.conn.execute(
+        "SELECT consecutive_misses FROM intraday_symbol_health WHERE symbol='BADTIX'"
+    ).fetchone()
+    assert row["consecutive_misses"] == 1
+    real_db.close()
+
+
+def test_three_consecutive_missing_snapshots_pages_the_owner_once():
+    """Three ticks in a row with no snapshot data for the same symbol must
+    fire exactly one owner alert (2026-09-10 fix for the residual BRK-B-
+    shaped gap: a persistently broken symbol used to fail silently
+    forever)."""
+    from src.storage.db import Database
+
+    # BADTIX absent from every reply while SPY is present and healthy —
+    # the real shape of `get_intraday_snapshots` when one symbol in an
+    # otherwise-working universe keeps failing (see that function: it
+    # returns an entry for every requested symbol as long as AT LEAST ONE
+    # batch succeeds; only a TOTAL fetch failure returns {} outright, which
+    # is the separate, already-handled "intraday_scan_no_opportunity" path
+    # and out of scope for this fix).
+    p = _intraday_pipeline(universe=["SPY", "BADTIX"])
+    real_db = Database(str(Path(tempfile.mkdtemp()) / "t.db"))
+    real_db.initialize()
+    p.db = real_db
+    p.db.get_trades = lambda *a, **k: []
+    p.broker.get_intraday_snapshots.return_value = {
+        "SPY": _snapshot(last=500.0, prev=499.0),
+    }
+
+    with patch("src.notifier.send_owner_alert") as mock_alert:
+        for _ in range(3):
+            ctx = RunContext.start("intra_check")
+            p._run_intraday_opportunity_scan(ctx)
+        assert mock_alert.call_count == 1
+        assert "BADTIX" in mock_alert.call_args.args[0]
+        assert "3 consecutive" in mock_alert.call_args.args[0]
+    real_db.close()
+
+
+def test_a_recovered_symbol_resets_its_miss_streak():
+    """A symbol that comes back healthy must not carry its miss count into
+    a future, unrelated outage."""
+    from src.storage.db import Database
+
+    p = _intraday_pipeline(universe=["SPY", "BADTIX"])
+    real_db = Database(str(Path(tempfile.mkdtemp()) / "t.db"))
+    real_db.initialize()
+    p.db = real_db
+    p.db.get_trades = lambda *a, **k: []
+
+    p.broker.get_intraday_snapshots.return_value = {
+        "SPY": _snapshot(last=500.0, prev=499.0),
+    }
+    for _ in range(2):
+        ctx = RunContext.start("intra_check")
+        p._run_intraday_opportunity_scan(ctx)
+
+    p.broker.get_intraday_snapshots.return_value = {
+        "SPY": _snapshot(last=500.0, prev=499.0),
+        "BADTIX": _snapshot(last=50.0, prev=49.0),
+    }
+    ctx = RunContext.start("intra_check")
+    p._run_intraday_opportunity_scan(ctx)
+
+    row = real_db.conn.execute(
+        "SELECT consecutive_misses FROM intraday_symbol_health WHERE symbol='BADTIX'"
+    ).fetchone()
+    assert row["consecutive_misses"] == 0
+    real_db.close()

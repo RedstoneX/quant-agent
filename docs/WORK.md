@@ -1139,6 +1139,8 @@ dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 
 **39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
 
+**41. A persistently broken ticker in the intraday scan failed silently forever — FIXED 2026-09-10.** The BRK-B fix (item covered in `docs/INCIDENT_HISTORY.md`, "QAMC Pipeline Autopsy") stopped one bad symbol from crashing the whole 101-symbol scan, but a symbol Alpaca can't return snapshot data for was still indistinguishable from "just didn't move today" — silently and permanently excluded, zero owner visibility. `intraday_symbol_health` now counts consecutive misses per symbol and alerts the owner at 3 in a row (~90 min), re-alerting at most once/24h while still broken. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-10.
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs
