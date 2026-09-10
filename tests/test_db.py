@@ -1198,3 +1198,65 @@ def test_backfill_position_ids_respects_rows_already_assigned_by_live_trading(db
     position_ids = {t["position_id"] for t in trades}
     assert len(position_ids) == 1
     assert live_row["position_id"] in position_ids
+
+
+# --- intraday snapshot health (2026-09-10) ------------------------------
+
+def test_intraday_symbol_snapshot_ok_resets_streak(db):
+    for _ in range(3):
+        db.record_intraday_symbol_snapshot_result("ORCL", ok=False)
+    result = db.record_intraday_symbol_snapshot_result("ORCL", ok=True)
+    assert result["consecutive_misses"] == 0
+    assert result["should_alert"] is False
+    row = db.conn.execute(
+        "SELECT consecutive_misses FROM intraday_symbol_health WHERE symbol='ORCL'"
+    ).fetchone()
+    assert row["consecutive_misses"] == 0
+
+
+def test_intraday_symbol_snapshot_does_not_alert_below_threshold(db):
+    r1 = db.record_intraday_symbol_snapshot_result("XYZ", ok=False)
+    r2 = db.record_intraday_symbol_snapshot_result("XYZ", ok=False)
+    assert r1["consecutive_misses"] == 1
+    assert r1["should_alert"] is False
+    assert r2["consecutive_misses"] == 2
+    assert r2["should_alert"] is False
+
+
+def test_intraday_symbol_snapshot_alerts_at_threshold(db):
+    db.record_intraday_symbol_snapshot_result("BADTIX", ok=False)
+    db.record_intraday_symbol_snapshot_result("BADTIX", ok=False)
+    r3 = db.record_intraday_symbol_snapshot_result("BADTIX", ok=False)
+    assert r3["consecutive_misses"] == 3
+    assert r3["should_alert"] is True
+
+
+def test_intraday_symbol_snapshot_does_not_realert_within_cooldown(db):
+    for _ in range(3):
+        result = db.record_intraday_symbol_snapshot_result("BADTIX", ok=False)
+    assert result["should_alert"] is True
+    # Still broken, one more tick 30 minutes later — must not re-alert yet.
+    again = db.record_intraday_symbol_snapshot_result("BADTIX", ok=False)
+    assert again["consecutive_misses"] == 4
+    assert again["should_alert"] is False
+
+
+def test_intraday_symbol_snapshot_realerts_after_cooldown_elapses(db):
+    for _ in range(3):
+        db.record_intraday_symbol_snapshot_result("BADTIX", ok=False)
+    # Simulate the cooldown having elapsed by backdating last_alert_at.
+    db.conn.execute(
+        "UPDATE intraday_symbol_health SET last_alert_at = datetime('now', '-25 hours') "
+        "WHERE symbol='BADTIX'"
+    )
+    db.conn.commit()
+    result = db.record_intraday_symbol_snapshot_result("BADTIX", ok=False)
+    assert result["should_alert"] is True
+
+
+def test_intraday_symbol_snapshot_streaks_are_independent_per_symbol(db):
+    db.record_intraday_symbol_snapshot_result("AAA", ok=False)
+    db.record_intraday_symbol_snapshot_result("AAA", ok=False)
+    r = db.record_intraday_symbol_snapshot_result("BBB", ok=False)
+    assert r["consecutive_misses"] == 1
+    assert r["should_alert"] is False

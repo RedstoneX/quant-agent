@@ -711,6 +711,22 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_intraday_evaluations_symbol_time
                 ON intraday_evaluations(symbol, timestamp);
+
+            -- Per-symbol intraday-snapshot health. A symbol Alpaca cannot
+            -- return snapshot data for (bad/delisted ticker, a one-off API
+            -- gap) used to fail identically to "this stock just didn't move
+            -- today" — see `get_intraday_snapshots`: both collapse to an
+            -- all-None dict for that symbol, so the scan silently, forever,
+            -- excludes it with zero owner visibility (2026-09-10 finding,
+            -- the residual gap the BRK-B fix did not close). This table
+            -- lets the scan tell "quiet" from "broken" by counting
+            -- CONSECUTIVE misses, and remembers the last time it alerted so
+            -- a known, still-unresolved problem doesn't re-page every tick.
+            CREATE TABLE IF NOT EXISTS intraday_symbol_health (
+                symbol TEXT PRIMARY KEY,
+                consecutive_misses INTEGER NOT NULL DEFAULT 0,
+                last_alert_at TEXT
+            );
         """)
         self.conn.commit()
         self._migrate()
@@ -2526,6 +2542,94 @@ class Database:
                 (symbol.upper(), f"-{float(cooldown_hours):g} hours"),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # --- Intraday snapshot health (2026-09-10) --------------------------
+    #
+    # `get_intraday_snapshots` cannot tell its caller "this symbol is
+    # broken" from "this symbol simply didn't move" — both come back as an
+    # all-None dict for that symbol (see that function's docstring). Left
+    # alone, a persistently bad ticker is silently and permanently excluded
+    # from every 30-minute scan with zero owner visibility — the same shape
+    # of gap the BRK-B bug exposed, just smaller in blast radius now that
+    # one bad symbol no longer kills the whole scan.
+    #
+    # ALERT_THRESHOLD = 3 consecutive misses (~90 minutes at this scan's
+    # 30-minute cadence). Mirrors this codebase's own established pattern
+    # for "rule out one noisy reading before acting on it" (the holding-
+    # discipline structural-protection break above requires 2 CONSECUTIVE
+    # daily closes, not one) — a single miss is routinely a transient API
+    # gap that resolves on its own next tick; three in a row within the
+    # same trading session is not noise.
+    #
+    # ALERT_COOLDOWN_HOURS = 24: once flagged, re-alert at most once a day
+    # while the symbol stays broken, rather than every 30-minute tick for a
+    # problem the owner has already been told about. This departs from
+    # `maybe_alert_data_quality`'s deliberately-not-deduplicated design
+    # (that alert fires once per SESSION, 5-6 times a day; this one runs on
+    # a scan that ticks every 30 minutes, so undeduplicated would be a
+    # dozen-plus repeats of the same fact before the trading day is half
+    # over) — the goal here is "cannot go unnoticed for days," not "must
+    # never repeat," and a daily reminder already satisfies that.
+    INTRADAY_SNAPSHOT_ALERT_THRESHOLD = 3
+    INTRADAY_SNAPSHOT_ALERT_COOLDOWN_HOURS = 24.0
+
+    def record_intraday_symbol_snapshot_result(
+        self, symbol: str, *, ok: bool,
+    ) -> dict:
+        """Update one symbol's consecutive-miss streak; report whether this
+        call should trigger an owner alert (crossed the threshold, and no
+        alert fired within the cooldown window).
+
+        Returns {"consecutive_misses": int, "should_alert": bool}. Never
+        raises past `_locked_write`'s own retry/re-raise contract — a bug
+        here must not be able to break the scan it is monitoring.
+        """
+        symbol = symbol.upper()
+        result: dict = {"consecutive_misses": 0, "should_alert": False}
+
+        def _do():
+            if ok:
+                self.conn.execute(
+                    "INSERT INTO intraday_symbol_health(symbol, consecutive_misses) "
+                    "VALUES (?, 0) ON CONFLICT(symbol) DO UPDATE SET "
+                    "consecutive_misses=0",
+                    (symbol,),
+                )
+                self.conn.commit()
+                return
+            row = self.conn.execute(
+                "SELECT consecutive_misses, last_alert_at "
+                "FROM intraday_symbol_health WHERE symbol=?",
+                (symbol,),
+            ).fetchone()
+            misses = (row["consecutive_misses"] if row else 0) + 1
+            last_alert_at = row["last_alert_at"] if row else None
+            should_alert = misses >= self.INTRADAY_SNAPSHOT_ALERT_THRESHOLD
+            if should_alert and last_alert_at:
+                from datetime import datetime, timedelta, timezone
+                try:
+                    last_dt = datetime.fromisoformat(last_alert_at).replace(tzinfo=timezone.utc)
+                    cutoff = datetime.now(timezone.utc) - timedelta(
+                        hours=self.INTRADAY_SNAPSHOT_ALERT_COOLDOWN_HOURS,
+                    )
+                    should_alert = last_dt <= cutoff
+                except ValueError:
+                    # Unparseable timestamp: fail toward alerting rather than
+                    # silently swallowing a real, ongoing problem.
+                    should_alert = True
+            self.conn.execute(
+                "INSERT INTO intraday_symbol_health"
+                "(symbol, consecutive_misses, last_alert_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(symbol) DO UPDATE SET consecutive_misses=excluded.consecutive_misses"
+                + (", last_alert_at=datetime('now')" if should_alert else ""),
+                (symbol, misses, last_alert_at),
+            )
+            self.conn.commit()
+            result["consecutive_misses"] = misses
+            result["should_alert"] = should_alert
+
+        self._locked_write(_do, label="record_intraday_symbol_snapshot_result")
+        return result
 
     def session_prefixes_logged_on(self, trading_day: date | None = None) -> set[str]:
         """Set of session run_id PREFIXES that produced agent_logs on the given

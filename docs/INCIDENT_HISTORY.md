@@ -5015,3 +5015,61 @@ Test fixtures in `tests/test_risk_based_sizing.py` and
 values to prove the level-backed-vs-unbacked distinction were re-derived
 by hand against the new base (not relabelled from actual output) —
 worked arithmetic is in each fixture's own comment.
+
+## 2026-09-10 — a persistently broken ticker in the intraday scan could fail silently forever
+
+**In plain words:** the every-30-minute scan that watches for stocks making a
+big move could not tell "this stock is broken and Alpaca won't give us data
+on it" apart from "this stock just didn't move today." Both looked
+identical: the stock was quietly skipped. A ticker that started failing —
+delisted, renamed, a data-provider glitch — could stay silently excluded
+from every single scan, forever, with nothing ever telling the owner.
+
+**Where this came from.** Found while confirming the BRK-B ticker-spelling
+fix (`docs/INCIDENT_HISTORY.md`, "QAMC Pipeline Autopsy") was general and
+not a one-off patch. It is general — any class-share ticker is translated
+the same way, and a second, independent fix already stops one bad symbol
+from crashing the whole 101-symbol batch. But neither of those fixes gives
+the owner any way to find out a specific symbol has gone dark. The owner
+asked directly: "will I find out, or will it fail silently the next day,
+and the next, and the next hour, and the next" — the honest answer, checked
+against the actual code, was no.
+
+**The fix.** A new table, `intraday_symbol_health`, tracks each symbol's
+CONSECUTIVE miss count (reset to 0 on any tick that returns real snapshot
+data). At 3 consecutive misses (~90 minutes at this scan's 30-minute
+cadence) it fires a standalone Telegram alert naming the symbol and how
+long it has been failing, then waits at least 24 hours before repeating the
+same alert while the symbol stays broken — a known, already-flagged
+problem does not need to re-page every 30 minutes, but it also must never
+go more than a day without a reminder.
+
+**Why 3, not 1 or 5.** A single miss is routinely a transient API blip that
+resolves on its own the next tick — alerting on one would be noise. Three
+in a row mirrors this codebase's own existing standard for "rule out one
+noisy reading before acting" (the holding-discipline structural-protection
+break requires 2 consecutive daily closes before it counts as real, not
+noise — see item 25 above). Three during a scan that ticks every 30 minutes
+catches a real, ongoing problem well within the same trading session,
+which is the actual goal — the original BRK-B bug went undetected for
+roughly a week of silent failures; this closes that same shape of gap for
+any future bad ticker, not just that one.
+
+**Why the 24-hour cooldown, unlike the data-quality alert's deliberate
+no-deduplication.** `maybe_alert_data_quality` fires once per SESSION
+(5-6 times a day) and is deliberately never deduplicated, because a
+repeated alert on an unresolved session-level problem is meant to be
+noticed each time. This scan ticks every 30 minutes; undeduplicated would
+mean a dozen-plus identical pages before the trading day is even half over
+for a problem the owner has already been told about once. The goal here is
+"cannot go unnoticed for days," not "must repeat every tick" — a daily
+reminder satisfies the first without becoming the second.
+
+**What would catch a regression:** `tests/test_db.py` pins the threshold,
+the per-symbol independence of the streak, the reset-on-recovery behaviour,
+and both the cooldown-suppression and cooldown-elapsed-so-realert cases at
+the database layer. `tests/test_intraday_scan.py` proves the wiring
+end-to-end with a real (non-mocked) database: one miss does not page,
+three consecutive misses for the same symbol pages exactly once, and a
+recovered symbol's streak resets rather than carrying into a later,
+unrelated outage.
