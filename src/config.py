@@ -513,7 +513,18 @@ class RiskConfig(BaseModel):
     # 2.56% of price — about 1.7 ATRs, barely more than one ordinary day's
     # range, which is what was firing exits inside noise AND forcing enormous
     # positions to reach any meaningful risk.
-    min_stop_atr_multiple: float = Field(default=3.0, gt=0, le=10)
+    #
+    # 3.0 -> 1.5 -> 2.5 (2026-09-10). The 1.5 came from this desk's own
+    # ~2-week MAE sample — later found to overlap the window whose seat
+    # outputs were misreporting confidence/data quality, so no longer trusted
+    # as the sole basis. 2.5 comes from published swing-trading doctrine
+    # instead (2.5-3.0x ATR for a fixed entry stop on a multi-day hold),
+    # independent of this desk's own data. Only applies with no real level
+    # backing the stop — a level-backed stop is judged on its own honest
+    # distance regardless of this number. Full derivation and caveats:
+    # `config/settings.yaml` (this key) and docs/INCIDENT_HISTORY.md
+    # 2026-09-10. Keep the three in sync.
+    min_stop_atr_multiple: float = Field(default=2.5, gt=0, le=10)
     # Widening a stop lowers reward:risk, because the target does not move.
     # Under this the setup only ever qualified on a stop too tight to survive.
     #

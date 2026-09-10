@@ -64,7 +64,9 @@ def _analysis(symbol: str, entry: float, stop: float, target: float) -> TechAnal
     The ATR sits just inside the noise band so the structural stop is left
     alone; these tests are about sizing, not stop widening. The long horizon
     is not decoration — reaching a target W away from a stop R away needs
-    `sqrt(sessions) >= 2.3 * W/R` once the stop is held at 3.45 ATRs.
+    `sqrt(sessions) >= 0.9 * W/R` once the stop is held at 1.35 ATRs (it
+    was 2.3 at 3.45 ATRs, before the 2026-09-04 floor change — see the same
+    note in `tests/test_portfolio_constructor.py::_analysis`).
     """
     return TechAnalysisResult(
         symbol=symbol, rating="strong_buy", entry_price=entry,

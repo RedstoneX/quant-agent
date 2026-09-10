@@ -39,8 +39,14 @@ def _analysis(
     The ATR is set just inside the noise band so the structural stop is left
     alone — these tests are about sizing, not about stop widening. The long
     horizon is not decoration: reaching a target W away from a stop R away
-    needs sqrt(sessions) >= 2.3 * W/R once the stop is held at 3.45 ATRs, so
-    a 3:1 fixture payoff genuinely implies a multi-month hold.
+    needs sqrt(sessions) >= 1.5 * W/R once the stop is held at 2.25 ATRs
+    (the coefficient is `min_stop_atr_multiple` x setup scaler divided by
+    `MAX_REACH_ATR_MULTIPLE`: 2.5 x 0.90 = 2.25, and 2.25 / 1.5 = 1.5). It
+    was 0.9 at the 1.5 base (1.35 / 1.5) and 2.3 while the floor was 3.0
+    base / 1.15 range, which is why the fixture horizons here are
+    far longer than the geometry now requires. They are left long on
+    purpose — a fixture that only just clears a gate stops testing sizing
+    the moment the gate moves again.
     """
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry,

@@ -397,9 +397,18 @@ class TestSLB:
     STOP = 55.50
     RISK = ENTRY - STOP                       # $4.60 / share
     MODEL_TARGET = ENTRY + 1.28 * RISK        # ~$65.99, the 1.28 R/R figure
-    # The stop is `min_stop_atr_multiple` (3.0) x 1.15 (range setup) = 3.45
-    # ATRs out, which back-solves the ATR the run must have been working
-    # with. Stated, not assumed silently.
+    # The stop SLB actually shipped with on 2026-09-01 was
+    # `min_stop_atr_multiple` (3.0 at the time) x 1.15 (the range scaler at
+    # the time) = 3.45 ATRs out, which back-solves the ATR the run must have
+    # been working with. Stated, not assumed silently.
+    #
+    # 3.45 is deliberately kept here as a HISTORICAL constant and is not
+    # re-derived from config. The floor became 1.5 base / 0.90 range on
+    # 2026-09-04 (= 1.35 ATRs) and 2.5 / 0.90 on 2026-09-10 (= 2.25 ATRs),
+    # but this class reproduces what that specific
+    # run did, and re-deriving it from live settings would silently rewrite
+    # the historical record every time the config moves. Tests that assert
+    # CURRENT behaviour read the config; this one asserts the past.
     ATR = RISK / 3.45                         # ~$1.33, 2.2% of price
     FLOOR = 1.5
 
@@ -461,9 +470,24 @@ class TestSLB:
         ))
         # Structural stop deliberately inside the noise band, so widening
         # fires and the reward:risk gate is reached.
+        #
+        # Numbers reworked 2026-09-04 for the 1.5 floor (range 1.35 ATRs),
+        # re-derived 2026-09-10 for the 2.5 floor (range 2.25 ATRs).
+        # Worked by hand, and both conditions still have to hold:
+        #   band distance  2.25 x 1.33333 = $3.00  -> widened stop $57.10
+        #   stop $59.00 is $1.10 out, INSIDE $3.00, so widening fires
+        #   nearest shelf $62.50 -> reward $2.40, risk $3.00, R/R 0.80 < 1.5
+        # The shelf itself does NOT have to move again. It moved $63.50 ->
+        # $62.50 in the 2026-09-04 rework because the 1.35-ATR band left only
+        # $1.80 of risk, against which $63.50's $3.40 of reward scored 1.89
+        # and TRADED. A 2.25-ATR band is a larger denominator, so $62.50 now
+        # fails by more than it did (0.80 where it was 1.33), not less — and
+        # $63.50 would fail too, at 3.40 / 3.00 = 1.13. The shelf is left at
+        # $62.50 so the fixture keeps failing for the same reason it has
+        # since that rework, with margin rather than on a knife edge.
         analysis = _analysis(
             symbol="SLB", rating="buy", entry=self.ENTRY, stop=59.0,
-            model_target=self.MODEL_TARGET, levels=[55.0, 63.50],
+            model_target=self.MODEL_TARGET, levels=[55.0, 62.50],
             atr=self.ATR, horizon=30,
         )
         decisions = constructor.construct_orders(
