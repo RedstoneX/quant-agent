@@ -667,11 +667,15 @@ _ALERT_EXEMPT_PER_SEAT: dict[str, set[str]] = {
 # the SAME "do not trust this session blind" alert as a coverage failure,
 # not a quieter side channel. Considered and rejected suppressing it to
 # avoid alert fatigue: the seat's OTHER known noisy self-check
-# (`regime_shift`'s stale-data gate, tracked separately in docs/WORK.md,
-# firing on ~52% of runs) is driven by a `staleness_days<=1` bar that real
-# FRED lag can't reach; `confidence`'s own staleness bar is `>3` days,
-# comfortably above that real ~2-day lag, so "low" is expected to be a rare,
-# meaningful signal in practice, not a duplicate of that known noise.
+# (`regime_shift`'s stale-data gate, which fired on ~52% of runs) was driven
+# by a `staleness_days<=1` bar that real FRED lag could never reach, so
+# "low" was not expected to duplicate it. That day-count gate is GONE as of
+# 2026-09-11 — both macro gates now test whether the held reading is the
+# latest FRED has published and whether a newer print is overdue, never its
+# age (`src/data/macro.py::SeriesFreshness`). An overdue print gets its own
+# `data_status["macro"] = "release_overdue"` value and pages through this
+# same alert, which is intended: an overdue macro release is a real
+# publication or fetch failure, not normal cadence.
 
 
 def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:

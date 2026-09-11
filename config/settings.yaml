@@ -907,6 +907,15 @@ macro:
   retry_backoff_jitter_s: 1.0
   breaker_after_failed_series: 1
   total_fetch_deadline_s: 90.0
+  # Freshness has NO setting here on purpose (2026-09-11). It used to be a
+  # calendar-day threshold in code, and any replacement number would have
+  # been just as arbitrary — FRED's daily series run about two business
+  # days behind, CPI and payrolls are monthly, GDP quarterly, so no single
+  # day count can be right for all of them. The provider now derives each
+  # series' expected next print from that series' OWN observed cadence and
+  # its OWN publication lag (FRED metadata), and reports whether the held
+  # reading is the latest published one or whether a newer print is
+  # overdue. Nothing left to tune: see src/data/macro.py::SeriesFreshness.
 
 event_risk:
   # Scheduled-event lookups that ground the Risk Manager's mandatory

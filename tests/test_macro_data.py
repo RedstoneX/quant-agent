@@ -314,3 +314,310 @@ def test_success_resets_outage_breaker(mock_fred_cls, mock_sleep):
 
     assert result["current"] == 1.0
     assert mock.get_series.call_count == 5
+
+
+# ===========================================================================
+# Freshness — latest-available-published-reading, NOT calendar age
+# ===========================================================================
+#
+# Replaces the calendar-day freshness tests (2026-09-11). The old design
+# asked "how old is this reading?" and blocked past a threshold; FRED's real
+# publication lag meant the regime-shift gate demanded a print that does not
+# exist and fired on 52% of production runs. The tests below pin the
+# replacement: a reading counts when it is the latest FRED has published for
+# that series and no newer print is overdue by that series' OWN measured
+# cadence and publication lag. See src/data/macro.py::SeriesFreshness.
+
+from datetime import date, timedelta  # noqa: E402
+
+from src.data.macro import (  # noqa: E402
+    FRESHNESS_CURRENT, FRESHNESS_EMPTY, FRESHNESS_OVERDUE, FRESHNESS_UNKNOWN,
+)
+
+
+def _info(observation_end: date, last_updated: date):
+    """A minimal stand-in for FRED's /fred/series metadata response, which
+    fredapi returns as a pandas Series of strings."""
+    return pd.Series({
+        "id": "X",
+        "observation_end": observation_end.isoformat(),
+        "last_updated": f"{last_updated.isoformat()} 08:31:05-05",
+        "frequency_short": "D",
+    })
+
+
+def _daily_series(today: date, *, lag_days: int = 2, points: int = 10):
+    """A business-daily series whose latest observation sits `lag_days`
+    business days behind `today` — FRED's real, ordinary behaviour."""
+    end = pd.Timestamp(today) - pd.tseries.offsets.BDay(lag_days)
+    index = pd.bdate_range(end=end, periods=points)
+    return pd.Series([4.2 + i * 0.01 for i in range(points)], index=index)
+
+
+def _monthly_series(today: date, *, months_back: int = 1, points: int = 14):
+    """A monthly series indexed at the reference-month start, with the most
+    recent reference month `months_back` months before the current one —
+    i.e. an ordinary CPI/UNRATE profile, weeks old by construction."""
+    end = (pd.Timestamp(today).normalize().replace(day=1)
+           - pd.DateOffset(months=months_back))
+    index = pd.date_range(end=end, periods=points, freq="MS")
+    return pd.Series([300.0 + i for i in range(points)], index=index)
+
+
+@patch("src.data.macro.Fred")
+def test_daily_series_at_real_fred_lag_is_current_not_stale(mock_fred_cls):
+    """THE defect case, at provider level: a daily series two business days
+    behind, published one day after its reference date. That is FRED being
+    normal — it must read `current`, whatever its age."""
+    today = date(2026, 9, 10)
+    series = _daily_series(today, lag_days=2)
+    obs_end = series.index[-1].date()
+    mock = MagicMock()
+    mock.get_series.return_value = series
+    mock.get_series_info.return_value = _info(obs_end, obs_end + timedelta(days=1))
+    mock_fred_cls.return_value = mock
+
+    with patch("src.data.macro.et_today", return_value=today):
+        provider = MacroDataProvider(api_key="test-key")
+        vix = provider.get_vix()
+
+    assert vix["freshness"] == FRESHNESS_CURRENT
+    assert vix["staleness_days"] == 2, (
+        "the age is still reported — it is context for the seat, no longer a gate"
+    )
+
+
+@patch("src.data.macro.Fred")
+def test_monthly_series_weeks_old_is_current_not_stale(mock_fred_cls):
+    """A monthly series whose newest reference month is last month, published
+    ~2 weeks after that month began. Roughly six weeks 'old' and completely
+    current: no newer CPI exists."""
+    today = date(2026, 9, 10)
+    series = _monthly_series(today, months_back=1)
+    obs_end = series.index[-1].date()
+    mock = MagicMock()
+    mock.get_series.return_value = series
+    mock.get_series_info.return_value = _info(obs_end, obs_end + timedelta(days=14))
+    mock_fred_cls.return_value = mock
+
+    with patch("src.data.macro.et_today", return_value=today):
+        provider = MacroDataProvider(api_key="test-key")
+        infl = provider.get_inflation()
+
+    assert infl["freshness"] == FRESHNESS_CURRENT
+    assert infl["staleness_days"] > 20, (
+        "fixture must genuinely be weeks old, or it isn't testing the point"
+    )
+
+
+@patch("src.data.macro.Fred")
+def test_monthly_series_is_overdue_once_a_cycle_is_actually_missed(mock_fred_cls):
+    """Same monthly series, four months behind: the next print is long past
+    due on the series' own 31-day cadence plus its own 14-day publication
+    lag. That is real staleness and must be flagged."""
+    today = date(2026, 9, 10)
+    series = _monthly_series(today, months_back=4)
+    obs_end = series.index[-1].date()
+    mock = MagicMock()
+    mock.get_series.return_value = series
+    mock.get_series_info.return_value = _info(obs_end, obs_end + timedelta(days=14))
+    mock_fred_cls.return_value = mock
+
+    with patch("src.data.macro.et_today", return_value=today):
+        provider = MacroDataProvider(api_key="test-key")
+        infl = provider.get_inflation()
+
+    assert infl["freshness"] == FRESHNESS_OVERDUE
+    assert "due by" in infl["freshness_detail"]
+
+
+@patch("src.data.macro.Fred")
+def test_daily_series_is_overdue_when_publication_stalls(mock_fred_cls):
+    """A daily series three weeks behind — a publication failure, a fetch
+    failure, or a shutdown. Flagged, on the same derivation that leaves the
+    two-day-lag case alone."""
+    today = date(2026, 9, 10)
+    series = _daily_series(today, lag_days=15)
+    obs_end = series.index[-1].date()
+    mock = MagicMock()
+    mock.get_series.return_value = series
+    mock.get_series_info.return_value = _info(obs_end, obs_end + timedelta(days=1))
+    mock_fred_cls.return_value = mock
+
+    with patch("src.data.macro.et_today", return_value=today):
+        provider = MacroDataProvider(api_key="test-key")
+        vix = provider.get_vix()
+
+    assert vix["freshness"] == FRESHNESS_OVERDUE
+
+
+@patch("src.data.macro.Fred")
+def test_overdue_when_fred_holds_observations_the_fetch_did_not_return(mock_fred_cls):
+    """FRED's own metadata says it has published past what we received. The
+    query sets no observation_end, so this should be impossible — if it
+    happens, what we hold is NOT the latest available reading, and that is a
+    real problem rather than a normal release gap."""
+    today = date(2026, 9, 10)
+    series = _daily_series(today, lag_days=2)
+    obs_end = series.index[-1].date() + timedelta(days=1)
+    mock = MagicMock()
+    mock.get_series.return_value = series
+    mock.get_series_info.return_value = _info(obs_end, obs_end)
+    mock_fred_cls.return_value = mock
+
+    with patch("src.data.macro.et_today", return_value=today):
+        provider = MacroDataProvider(api_key="test-key")
+        vix = provider.get_vix()
+
+    assert vix["freshness"] == FRESHNESS_OVERDUE
+    assert "has published observations through" in vix["freshness_detail"]
+
+
+@patch("src.data.macro.Fred")
+def test_trailing_holiday_rows_with_no_value_are_not_overdue(mock_fred_cls):
+    """FRED emits a row with value "." on a market holiday, which fredapi
+    turns into NaN. That is a day with no print, not a missing print: the
+    series' own observed gaps already include weekends, so the holiday must
+    not read as overdue."""
+    today = date(2026, 9, 10)
+    series = _daily_series(today, lag_days=3)
+    # One trailing no-value row the day after the last real reading.
+    series = pd.concat([
+        series,
+        pd.Series([float("nan")], index=[series.index[-1] + pd.Timedelta(days=1)]),
+    ])
+    obs_end = series.index[-1].date()
+    mock = MagicMock()
+    mock.get_series.return_value = series
+    mock.get_series_info.return_value = _info(obs_end, obs_end + timedelta(days=1))
+    mock_fred_cls.return_value = mock
+
+    with patch("src.data.macro.et_today", return_value=today):
+        provider = MacroDataProvider(api_key="test-key")
+        vix = provider.get_vix()
+
+    assert vix["freshness"] == FRESHNESS_CURRENT
+
+
+@patch("src.data.macro.Fred")
+def test_freshness_unknown_when_metadata_unavailable(mock_fred_cls):
+    """No metadata, no due-date derivation. The honest answer is `unknown`:
+    the reading we hold is still FRED's latest published observation, but we
+    cannot check whether a newer one should have arrived. Never reported as
+    `current`, never as broken."""
+    today = date(2026, 9, 10)
+    mock = MagicMock()
+    mock.get_series.return_value = _daily_series(today, lag_days=2)
+    mock.get_series_info.side_effect = TimeoutError("metadata down")
+    mock_fred_cls.return_value = mock
+
+    with patch("src.data.macro.et_today", return_value=today):
+        provider = MacroDataProvider(api_key="test-key")
+        vix = provider.get_vix()
+
+    assert vix["freshness"] == FRESHNESS_UNKNOWN
+    assert vix["current"] is not None, "the reading itself is still usable"
+
+
+@patch("src.data.macro.Fred")
+def test_malformed_metadata_does_not_crash_and_reads_unknown(mock_fred_cls):
+    """A redesigned response, a partial row, or a bare test double must
+    degrade to `unknown` rather than raising inside a live trading
+    session."""
+    today = date(2026, 9, 10)
+    mock = MagicMock()
+    mock.get_series.return_value = _daily_series(today, lag_days=2)
+    mock_fred_cls.return_value = mock
+    for bad in (
+        pd.Series({"id": "X"}),                                   # fields absent
+        pd.Series({"observation_end": "not-a-date",
+                   "last_updated": "also-not-a-date"}),           # unparseable
+        pd.Series({"observation_end": "2026-09-08"}),             # half present
+        "a string, not a metadata row",                           # wrong type
+        None,
+    ):
+        mock.get_series_info.return_value = bad
+        with patch("src.data.macro.et_today", return_value=today):
+            provider = MacroDataProvider(api_key="test-key")
+            vix = provider.get_vix()
+        assert vix["freshness"] == FRESHNESS_UNKNOWN, bad
+
+
+@patch("src.data.macro.Fred")
+def test_empty_series_reports_empty_freshness_and_no_values(mock_fred_cls):
+    """Genuinely missing data stays missing: `empty`, with every value None.
+    It must never be handed on as a reading of any kind."""
+    mock = MagicMock()
+    mock.get_series.return_value = pd.Series(dtype=float)
+    mock_fred_cls.return_value = mock
+
+    provider = MacroDataProvider(api_key="test-key")
+    vix = provider.get_vix()
+
+    assert vix["freshness"] == FRESHNESS_EMPTY
+    assert vix["current"] is None and vix["staleness_days"] is None
+    assert mock.get_series_info.call_count == 0, (
+        "no point asking for metadata about a series that returned nothing"
+    )
+
+
+@patch("src.data.macro.Fred")
+def test_fetch_failure_reports_empty_freshness(mock_fred_cls):
+    mock = MagicMock()
+    mock.get_series.side_effect = TimeoutError("down")
+    mock_fred_cls.return_value = mock
+
+    provider = MacroDataProvider(api_key="test-key", max_retries=0)
+    vix = provider.get_vix()
+
+    assert vix["freshness"] == FRESHNESS_EMPTY
+    assert vix["current"] is None
+
+
+@patch("src.data.macro.Fred")
+def test_single_observation_window_cannot_derive_cadence(mock_fred_cls):
+    """One reading shows no gap, so the series' own cadence is
+    underivable — `unknown`, not an assumed cadence."""
+    today = date(2026, 9, 10)
+    series = pd.Series([4.2], index=pd.DatetimeIndex([pd.Timestamp("2026-09-08")]))
+    mock = MagicMock()
+    mock.get_series.return_value = series
+    mock.get_series_info.return_value = _info(
+        date(2026, 9, 8), date(2026, 9, 9),
+    )
+    mock_fred_cls.return_value = mock
+
+    with patch("src.data.macro.et_today", return_value=today):
+        provider = MacroDataProvider(api_key="test-key")
+        vix = provider.get_vix()
+
+    assert vix["freshness"] == FRESHNESS_UNKNOWN
+    assert "cadence" in vix["freshness_detail"]
+
+
+@patch("src.data.macro.Fred")
+def test_macro_summary_coverage_carries_overdue_series(mock_fred_cls):
+    """An overdue print is a coverage-level fact the operator surface reads
+    (`data_status["macro"] == "release_overdue"`), so it has to reach
+    `last_coverage` and be named in `describe()`."""
+    today = date(2026, 9, 10)
+    mock = MagicMock()
+    mock.get_series.return_value = _daily_series(today, lag_days=20)
+    mock.get_series_info.side_effect = lambda sid: _info(
+        _daily_series(today, lag_days=20).index[-1].date(),
+        _daily_series(today, lag_days=20).index[-1].date() + timedelta(days=1),
+    )
+    mock_fred_cls.return_value = mock
+
+    with patch("src.data.macro.et_today", return_value=today):
+        provider = MacroDataProvider(api_key="test-key")
+        provider.get_macro_summary()
+
+    coverage = provider.last_coverage
+    assert coverage is not None
+    assert coverage.overdue_count > 0
+    assert coverage.status == "ok", (
+        "the fetch worked — overdue is a publication problem on a separate "
+        "axis from coverage, not a fetch failure"
+    )
+    assert "OVERDUE" in coverage.describe()

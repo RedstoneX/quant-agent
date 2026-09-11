@@ -2383,6 +2383,24 @@ class MorningResearchStage:
                 logger.warning(
                     "Macro coverage PARTIAL this run: %s", macro_coverage.describe(),
                 )
+            elif getattr(macro_coverage, "overdue", None):
+                # Every configured series answered, but at least one of them
+                # is sitting on a reading that should already have been
+                # superseded — a publication or fetch failure, NOT normal
+                # release timing (the freshness test is derived per series
+                # from its own cadence and publication lag; see
+                # src/data/macro.py::SeriesFreshness). This is the real
+                # staleness that survived the removal of the old
+                # calendar-day gate, so it must stay visible: "ok" here
+                # would be the same "no data, but everything's fine!" gap
+                # every other seat's audit closed. A new VALUE on the
+                # existing `macro` key, not a new key — so the
+                # ">= 2 degraded sources" advisory arithmetic below is
+                # untouched.
+                data_status["macro"] = "release_overdue"
+                logger.error(
+                    "Macro prints OVERDUE this run: %s", macro_coverage.describe(),
+                )
             else:
                 data_status["macro"] = "ok"
             # Self-reported confidence is a second, independent signal from
@@ -2393,9 +2411,9 @@ class MorningResearchStage:
             # or ambiguous indicators) — that combination was reaching "ok"
             # with nothing anywhere to show for it, the same "no data, but
             # everything's fine!" gap flagged for every other seat tonight.
-            # Deliberately separate from (and does not touch) the existing
-            # staleness/freshness check above, which is its own, already-
-            # tracked, owner-decision-pending issue. Only fires on what
+            # Deliberately separate from (and does not touch) the
+            # release_overdue check above, which is a deterministic
+            # publication fact rather than the model's own read. Only fires on what
             # would otherwise be "ok" — coverage-driven partial/failed/
             # parse_error already say something is wrong and take priority.
             if data_status["macro"] == "ok" and macro_analysis and macro_analysis.confidence == "low":
