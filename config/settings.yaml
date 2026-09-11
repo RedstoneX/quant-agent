@@ -367,8 +367,68 @@ risk:
   # is doctrine; the anchor's absolute calibration is flagged PROVISIONAL in
   # docs/WORK.md pending real post-fix trade data — an owner call, not
   # decided by this change.
-  max_daily_loss_pct: 6.7
+  # ---------------------------------------------------------------------
+  # THE BASIS CHANGED — docs/WORK.md item 32, owner call 2026-09-11.
+  # ---------------------------------------------------------------------
+  # Everything above this line reasons about a loss alarm as a FIXED
+  # PERCENTAGE OF EQUITY. That was the defect: a fixed percentage is only
+  # right for the volatility regime it was chosen in, and markets are not
+  # stationary — too tight in a quiet market (de-levers a book that is
+  # behaving normally), too loose in a violent one (sleeps through a
+  # genuinely abnormal loss). The owner REFUSED a recalibration of the
+  # number from more history, because that just produces another frozen
+  # number with the same flaw.
+  #
+  # `max_daily_loss_pct` is now DELIBERATELY null. It is an override that
+  # beats every derivation (`RiskConfig.effective_max_daily_loss_pct`), so
+  # the literal 6.7 that used to sit here would have pinned the breaker to
+  # a fixed percentage forever and made this whole change inert in
+  # production. Setting a number here is a conscious decision to opt this
+  # desk OUT of volatility-relative loss alarms — do not restore one
+  # casually.
+  #
+  # With it unset the breaker trips at
+  # `drawdown_vol_sensitivity x sigma_daily`, where sigma_daily is the
+  # account's OWN realized daily volatility over the trailing 20 sessions,
+  # recomputed every session. `daily_loss_risk_multiple` below survives as
+  # the COLD-START FALLBACK only — used while the account has too little
+  # history of its own to measure a volatility worth acting on, which is
+  # exactly this desk's state after the 2026-09-02 reset (verified
+  # 2026-09-11: `daily_pnl` holds one row). At the 5% risk unit that
+  # fallback is the same 6.7% as before, so nothing jumps on day one.
+  #
+  # NOT volatility targeting. No position is resized by any of this; the
+  # only thing that changed is the yardstick the ALARM measures a loss
+  # against. Volatility-target exposure scaling was separately REJECTED for
+  # this desk (docs/OUTCOME.md) — do not extend this into sizing.
+  max_daily_loss_pct: null
   daily_loss_risk_multiple: 1.34
+  # docs/WORK.md item 32, owner call 2026-09-11 — how many multiples of the
+  # account's own recent realized daily volatility trip a loss alarm, scaled
+  # to each window by sqrt(time).
+  #
+  # PROVISIONAL, AND HONESTLY SO. The sqrt(time) window scaling IS real,
+  # published research (Van Hemert/Ganz/Harvey, JPM 2020, cited above), and
+  # measuring risk relative to recent realized volatility is standard
+  # practice. The TRIGGER MULTIPLE is neither: researched 2026-09-11, there
+  # is no citable industry-standard number for "how many multiples of
+  # recent volatility should trip a drawdown alarm".
+  #
+  # 6.7 is set by DAY-ONE CONTINUITY, not by a severity opinion — at a
+  # reference sigma_daily of 1.0%/session it reproduces the thresholds
+  # already shipped (6.7% daily, 15.0% over 5 days), so the only thing that
+  # changes on the day this lands is that they now MOVE with conditions.
+  # That 1.0% reference was measured 2026-09-11 from real market data over
+  # this desk's own configured universe (trailing-20-session realized daily
+  # volatility of equal-weight baskets the size this desk runs: median
+  # 1.04% at 5 names, 0.86% at 8, 0.80% at 12).
+  #
+  # Recorded, not acted on: 6.7 sigma is a very remote daily event, which
+  # is the first real measurement of how loose the INHERITED anchor always
+  # was. Whether the sensitivity should come down is an owner call about
+  # risk appetite. Full reasoning: `RiskConfig.drawdown_vol_sensitivity`
+  # in src/config.py.
+  drawdown_vol_sensitivity: 6.7
   # docs/WORK.md item 32. Same derivation and same #258/#259 dependency as
   # `max_daily_loss_pct` above, for the two rolling-return "drawdown brake"
   # windows in src/pipeline.py::_compute_recent_performance
@@ -398,6 +458,16 @@ risk:
   # (3 x sqrt(20/5) = 6, i.e. -30%); the ladder constraint binds first.
   # FULL reconciliation of the two systems is a real open design question
   # and an OWNER call — see docs/WORK.md item 32.
+  #
+  # BASIS CHANGED 2026-09-11 (see `drawdown_vol_sensitivity` above). These
+  # two multiples are now the COLD-START FALLBACK for the 5-day and 20-day
+  # brakes, not the live basis: with enough history the thresholds are
+  # `drawdown_vol_sensitivity x sigma_daily x sqrt(window)`, recomputed
+  # every session. Bug 2's constraint SURVIVES the change — the 20-day
+  # threshold is still capped at the ladder's -20% owner-alert point, so it
+  # can never be asleep past the point the ladder escalates, and the 5-day
+  # threshold is clamped to the 20-day one so a shorter window can never
+  # tolerate a bigger loss than a longer one.
   drawdown_5d_risk_multiple: 3
   drawdown_20d_risk_multiple: 4
   # Spec §10.3 (owner-ratified 2026-09-01) — this is the concentration

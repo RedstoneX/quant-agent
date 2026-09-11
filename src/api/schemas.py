@@ -140,6 +140,16 @@ class RiskLimits(BaseModel):
     fails — never a guessed/default limit standing in for the real one."""
     max_position_pct: float | None = None
     max_total_position_pct: float | None = None
+    # docs/WORK.md item 32 (owner call 2026-09-11): this is the CONFIGURED
+    # fixed-percentage fallback, NOT the threshold necessarily in force.
+    # Since that change the daily circuit breaker trips at a multiple of the
+    # account's own recent realized volatility whenever there is enough
+    # history to measure one, and that figure needs `src.risk.rules` +
+    # the equity curve — neither of which `src/api/` may reach
+    # (tests/test_api_safety.py). Same deliberate omission, and same
+    # reason, as `max_gross_exposure_x` below: the live number reaches the
+    # operator on the session alert, not here. Do not "fix" this by
+    # importing the risk module.
     max_daily_loss_pct: float | None = None
     max_sector_pct: float | None = None
     # Spec §11.2. The STANDING gross-exposure cap as a multiple of equity

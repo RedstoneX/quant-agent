@@ -416,6 +416,74 @@ threshold on this desk is, on new evidence, not a re-guess.
 
 ---
 
+## 8. Drawdown alarms — what the literature gives you, and what it does not (2026-09-11)
+
+Recorded here because the useful result is a NEGATIVE one, and a negative
+result is exactly the kind of thing that gets quietly re-invented as a
+confident number by the next session that looks at this.
+
+**Context.** The desk's three loss alarms (daily circuit breaker, 5-day and
+20-day rolling-return brakes) were each a fixed percentage of equity. That
+basis assumes stationarity, which markets do not have, so it was replaced
+with a basis relative to the account's own recent realized volatility. See
+`docs/INCIDENT_HISTORY.md`, 2026-09-11.
+
+### What IS in the literature, and is used
+
+- **Drawdown magnitude scales with the square root of the window length.**
+  Van Hemert, Ganz, Harvey et al., *Drawdowns*, Journal of Portfolio
+  Management, 2020. This is what lets one sensitivity govern all three
+  windows: `threshold(T) = sensitivity x sigma_daily x sqrt(T)`. It was
+  already cited in this codebase before this change and is unchanged by it.
+- **Measuring risk relative to trailing realized volatility** is ordinary
+  practice, not a novelty — a ~20-trading-day realized-volatility window is
+  a well-established convention. Robert Carver's systematic-trading risk
+  writing is the usual accessible reference for the general approach.
+
+### What is NOT in the literature, searched for specifically and not found
+
+**There is no citable, published, industry-standard number for how many
+multiples of recent volatility should trip a drawdown alarm.** This was
+searched for directly on 2026-09-11 rather than assumed. The published work
+covers how drawdowns SCALE and how volatility is MEASURED; the trigger
+level is a risk-appetite choice each desk makes, and the numbers that
+circulate informally are not traceable to a result.
+
+Consequences, applied:
+
+- The sensitivity is shipped as an explicitly provisional value, labelled as
+  such in `src/config.py`, `config/settings.yaml`, `docs/WORK.md` and its
+  test module. It is NOT presented as researched.
+- It was set by day-one continuity against the previously-shipped
+  thresholds, so the change in basis did not smuggle in a change in
+  severity. Deciding the level is on `docs/WORK.md`'s dated decision list.
+- **Do not "find" a citation for it later.** If a future session believes it
+  has one, check that the source actually gives a trigger multiple for a
+  drawdown alarm and is not a volatility-TARGETING paper (a different
+  technique, and one this desk has separately rejected — `docs/OUTCOME.md`).
+
+### One real measurement made in support of it
+
+The account's own equity curve could not supply a reference volatility: the
+live `daily_pnl` table was read on 2026-09-11 and holds exactly one row
+(the 2026-09-02 reset). A proxy was measured instead, from real market data
+over this desk's own configured 101-symbol universe — trailing-20-session
+realized daily volatility of equal-weight baskets the size this desk runs:
+
+| Basket size | Median 20-session daily volatility | 60-session |
+|---|---|---|
+| 5 names | 1.04% | 1.23% |
+| 8 names | 0.86% | 1.07% |
+| 12 names | 0.80% | 0.99% |
+
+Spread across draws was roughly 0.55%-1.7%. For scale, SPY over the same
+window measured 0.54% and the median single name 1.57%. 1.0% per session
+was taken as the reference. **This is a proxy for the account's book, not a
+measurement of it** — it is honest about the universe and the basket sizes,
+and it is not a substitute for the real equity curve once one exists.
+
+---
+
 ## Summary of what to build, in order
 
 | Priority | Item | Type |
@@ -427,5 +495,6 @@ threshold on this desk is, on new evidence, not a re-guess.
 | 5 | Insider purchase as % of holdings, role weighting, cap tilt | Python |
 | 6 | Post-cutoff discipline in the backtester | Process |
 | 7 | Level-quality measurement — built, measured, `levels.py` strength now touch-count-based; `level_quality.py` itself NOT wired; stop-honouring touch bar (5) ratified 2026-09-03 | Python |
+| 8 | Drawdown-alarm basis — volatility-relative, shipped 2026-09-11; sqrt(time) scaling research-grounded, trigger sensitivity provisional (no published number exists) | Python |
 
 Items 1, 2 and 5 need no new data source and no model spend.

@@ -1,5 +1,6 @@
 import logging
 import math
+import statistics
 from dataclasses import dataclass, field
 from src.config import RiskConfig
 from src.models import TradeDecision, Position
@@ -568,6 +569,194 @@ GROSS_LADDER_ALERT_PCT = -20.0
 #: Name of the deterministic hard-block rule this ceiling raises. Listed in
 #: `HARD_BLOCK_RULES` (src/pipeline.py) — one string, two files.
 GROSS_EXPOSURE_RULE = "max_gross_exposure"
+
+
+# ---------------------------------------------------------------------------
+# Volatility-relative drawdown alarm basis (docs/WORK.md item 32)
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. The three loss alarms — the daily circuit breaker and the
+# 5-day / 20-day rolling-return brakes — were each a FIXED PERCENTAGE OF
+# EQUITY (-6.7% / -15% / -20%), derived once from `max_position_risk_pct`.
+# A fixed percentage assumes the future resembles the past: whatever number
+# is chosen is right only for the volatility regime it was chosen in, and
+# markets are not stationary. It is too tight in a quiet market (the alarm
+# fires on ordinary noise and de-levers a book that is behaving normally)
+# and too loose in a violent one (the alarm sleeps through a genuinely
+# abnormal loss because the absolute number has not moved). Owner call
+# 2026-09-11: recalibrating the fixed number from more history was REFUSED
+# for exactly this reason — the basis, not the calibration, was wrong.
+#
+# THE BASIS NOW. Each alarm trips at a multiple of what this account's OWN
+# RECENT TRADING has actually been showing as normal day-to-day movement:
+# the sample standard deviation of daily account-equity returns over a
+# rolling trailing window. That number is recomputed every session, so the
+# thresholds move with conditions instead of being frozen.
+#
+# THIS IS NOT VOLATILITY TARGETING. Nothing here resizes positions. The
+# only thing volatility is used for is the YARDSTICK the alarm measures a
+# loss against. Continuous volatility-target exposure scaling was
+# separately investigated and REJECTED for this desk (it imports a fund's
+# smoothness goal, not this desk's survival goal — see docs/OUTCOME.md).
+# Do not extend this machinery into sizing.
+
+#: Trailing window, in trading sessions, over which the account's own
+#: realized daily volatility is measured. 20 sessions (~one trading month)
+#: is a standard convention for realized-volatility estimation and is
+#: already the longer of the two rolling-return windows this desk brakes
+#: on, so no new window length is introduced by this change.
+REALIZED_VOL_WINDOW_SESSIONS = 20
+
+#: Fewest daily returns that may stand behind a volatility estimate before
+#: it is allowed to set a risk threshold. NOT a round number: the relative
+#: standard error of a sample standard deviation is approximately
+#: `1 / sqrt(2(n-1))`, so n=10 returns puts the estimate's own error at
+#: ~24% of the estimate, and n=5 at ~35%. 10 is the point at which the
+#: yardstick is more precise than the ~25%-ish uncertainty already carried
+#: by the provisional sensitivity multiple below; below it the estimate is
+#: the dominant source of error and the fixed-percentage fallback is the
+#: more honest answer. Directly relevant after the 2026-09-02 clean-slate
+#: reset, which left the equity curve with a single point.
+MIN_REALIZED_VOL_RETURNS = 10
+
+#: Sessions dropped from the NEWEST end before the volatility window starts.
+#: 1, because the yardstick must not include the session being judged: a
+#: violent day would otherwise widen its own alarm threshold, which is
+#: precisely backwards — a -6% session on a book that normally moves 0.25%
+#: raises the measured volatility enough to re-classify itself as ordinary.
+#: The alarm asks "is today abnormal against what came BEFORE it", so the
+#: window ends at the previous session.
+REALIZED_VOL_SKIP_NEWEST_SESSIONS = 1
+
+
+def realized_daily_vol_pct(
+    equity_values,
+    *,
+    window_sessions: int = REALIZED_VOL_WINDOW_SESSIONS,
+    min_returns: int = MIN_REALIZED_VOL_RETURNS,
+    skip_newest: int = REALIZED_VOL_SKIP_NEWEST_SESSIONS,
+) -> float | None:
+    """The account's own realized daily volatility, in percent per session.
+
+    `equity_values` is the account equity curve NEWEST-FIRST — the ordering
+    `Database.get_daily_pnl` returns (`ORDER BY date DESC`), so callers can
+    hand over `[r["total_value"] for r in rows]` unchanged. The newest
+    `skip_newest` readings are dropped before the window starts, so the
+    session under judgement does not set its own threshold (see
+    `REALIZED_VOL_SKIP_NEWEST_SESSIONS`).
+
+    Returns the sample standard deviation (ddof=1, the unbiased-variance
+    convention) of consecutive daily percentage returns over at most
+    `window_sessions` sessions, or None when the history cannot support an
+    estimate worth acting on. None means "fall back to the fixed
+    percentage" — it is a real answer, not an error.
+
+    Only the CONTIGUOUS newest run of usable readings is used. A gap (a
+    missing, zero, negative or non-finite `total_value`) truncates the
+    window rather than being skipped over: skipping would silently splice a
+    multi-session move into a single "daily" return and inflate the
+    volatility estimate, which would LOOSEN every alarm on exactly the days
+    the data is unreliable.
+    """
+    try:
+        window = int(window_sessions)
+        floor = int(min_returns)
+        skip = max(0, int(skip_newest))
+    except (TypeError, ValueError):
+        return None
+    if window < 2 or floor < 2:
+        return None
+
+    candidates = list(equity_values or ())[skip:]
+    contiguous: list[float] = []
+    for value in candidates:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            break
+        value = float(value)
+        if not math.isfinite(value) or value <= 0:
+            break
+        contiguous.append(value)
+        # `window` sessions of returns needs `window + 1` equity readings.
+        if len(contiguous) >= window + 1:
+            break
+
+    if len(contiguous) < floor + 1:
+        return None
+
+    # Oldest-first so consecutive pairs are (yesterday, today).
+    series = list(reversed(contiguous))
+    returns = [
+        (series[i] - series[i - 1]) / series[i - 1]
+        for i in range(1, len(series))
+    ]
+    if len(returns) < floor:
+        return None
+    try:
+        sigma = statistics.stdev(returns) * 100.0
+    except statistics.StatisticsError:
+        return None
+    if not math.isfinite(sigma) or sigma <= 0:
+        # A dead-flat equity curve (no trading since the reset) has zero
+        # measured volatility. Zero would collapse every threshold to zero
+        # and trip the alarm on the first cent lost, so this is treated as
+        # "no usable estimate" and falls back.
+        return None
+    return sigma
+
+
+def vol_relative_drawdown_threshold_pct(
+    *,
+    daily_vol_pct: float | None,
+    window_sessions: int,
+    sensitivity: float,
+    fallback_pct: float,
+    cap_pct: float | None = None,
+) -> float:
+    """One loss-alarm threshold, as a negative percent of equity.
+
+    `daily_vol_pct` is the account's realized daily volatility from
+    `realized_daily_vol_pct`; None (not enough history) returns
+    `fallback_pct` unchanged, which is the fixed-percentage threshold this
+    design replaces — so a cold-started account behaves exactly as it did
+    before this change and nothing has to guess.
+
+    Window scaling is square-root-of-time: drawdown magnitude over a window
+    scales with the square root of the window length (Van Hemert, Ganz,
+    Harvey et al., "Drawdowns", Journal of Portfolio Management, 2020). That
+    relationship is the part of this design that IS research-grounded, and
+    it is unchanged from the fixed-percentage version — one sensitivity
+    multiple, scaled by sqrt(T), reproduces the existing 1 : sqrt(5) ratio
+    between the daily and 5-day alarms exactly.
+
+    `cap_pct` is an optional hard floor on how deep the threshold may go,
+    used by the 20-day window to keep this brake reconciled with the §11.2
+    de-levering ladder (see `GROSS_LADDER`): the brake must not still be
+    asleep past the point the ladder halves the book and alerts the owner.
+    """
+    fallback = float(fallback_pct)
+    if daily_vol_pct is None:
+        return fallback
+    if isinstance(daily_vol_pct, bool) or not isinstance(
+        daily_vol_pct, (int, float),
+    ):
+        return fallback
+    sigma = float(daily_vol_pct)
+    sens = _positive_float(sensitivity, 0.0)
+    if not math.isfinite(sigma) or sigma <= 0 or sens <= 0:
+        return fallback
+    try:
+        horizon = int(window_sessions)
+    except (TypeError, ValueError):
+        return fallback
+    if horizon < 1:
+        return fallback
+
+    magnitude = sens * sigma * math.sqrt(horizon)
+    if not math.isfinite(magnitude) or magnitude <= 0:
+        return fallback
+    if cap_pct is not None and math.isfinite(float(cap_pct)):
+        magnitude = min(magnitude, abs(float(cap_pct)))
+    return -round(magnitude, 2)
 
 
 def _positive_float(value, default: float = 0.0) -> float:
@@ -1435,8 +1624,102 @@ class RiskViolation:
 
 
 class RiskRuleEngine:
-    def __init__(self, config: RiskConfig):
+    def __init__(
+        self,
+        config: RiskConfig,
+        *,
+        equity_history_provider=None,
+    ):
         self.config = config
+        # docs/WORK.md item 32 (owner call 2026-09-11). Optional zero-arg
+        # callable returning the account equity curve NEWEST-FIRST (the
+        # ordering `Database.get_daily_pnl` gives). Supplied, the daily
+        # circuit breaker measures a loss against the account's OWN recent
+        # realized volatility instead of a fixed percentage of equity; not
+        # supplied — every existing test fixture, and any caller with no
+        # database — it falls back to the fixed percentage exactly as
+        # before, so this is additive.
+        #
+        # A PROVIDER rather than a value passed to `check_daily_loss`
+        # deliberately: the breaker is called from six separate places in
+        # `src/pipeline.py`, not all of them after the session has computed
+        # rolling performance. Threading a value through would have left
+        # some of those call sites silently on the old basis, which is the
+        # exact class of half-applied fix item 32 already found twice.
+        self.equity_history_provider = equity_history_provider
+
+    def realized_daily_vol_pct(self) -> float | None:
+        """The account's own realized daily volatility, or None.
+
+        None means the history cannot support an estimate worth acting on
+        (see `MIN_REALIZED_VOL_RETURNS`) and the fixed-percentage fallback
+        governs. A provider that raises is treated the same way: a broken
+        volatility read must never disable the circuit breaker, so it
+        degrades to the old basis and logs.
+        """
+        provider = self.equity_history_provider
+        if provider is None:
+            return None
+        try:
+            values = provider()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "RiskRuleEngine: equity-history provider failed (%s) — the "
+                "daily circuit breaker falls back to its fixed-percentage "
+                "threshold for this call.", exc,
+            )
+            return None
+        try:
+            return realized_daily_vol_pct(
+                values,
+                window_sessions=REALIZED_VOL_WINDOW_SESSIONS,
+                min_returns=MIN_REALIZED_VOL_RETURNS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "RiskRuleEngine: realized-volatility estimate failed (%s) — "
+                "falling back to the fixed-percentage daily threshold.", exc,
+            )
+            return None
+
+    @property
+    def daily_loss_limit_pct(self) -> float:
+        """The daily circuit breaker's limit, as a POSITIVE percent.
+
+        Precedence, unchanged in its first rung and extended in its second:
+
+          1. an explicit `max_daily_loss_pct` always wins (the override
+             pattern ~50 fixtures in this repo rely on);
+          2. otherwise the volatility-relative threshold, if the account
+             has enough of its own history to measure one;
+          3. otherwise `effective_max_daily_loss_pct`, the fixed percentage
+             derived from the real per-trade risk unit — the cold-start
+             fallback, and what this desk is actually on today.
+        """
+        explicit = getattr(self.config, "max_daily_loss_pct", None)
+        if isinstance(explicit, (int, float)) and not isinstance(explicit, bool):
+            if math.isfinite(float(explicit)) and float(explicit) > 0:
+                return float(explicit)
+        fallback = self.config.effective_max_daily_loss_pct
+        sigma = self.realized_daily_vol_pct()
+        if sigma is None:
+            return fallback
+        threshold = vol_relative_drawdown_threshold_pct(
+            daily_vol_pct=sigma,
+            window_sessions=1,
+            sensitivity=getattr(
+                self.config, "drawdown_vol_sensitivity", 0.0,
+            ),
+            fallback_pct=-abs(float(fallback)),
+            # Capped at the §11.2 ladder's owner-alert point for the same
+            # reason the 20-day brake is: a single session that loses more
+            # than that is a circuit-breaker event whatever the book's
+            # recent volatility has been, and without the cap a violent
+            # regime could put the DAILY limit past the 20-day brake's —
+            # a shorter window tolerating a bigger loss than a longer one.
+            cap_pct=GROSS_LADDER_ALERT_PCT,
+        )
+        return abs(threshold)
 
     def check(self, decision: TradeDecision, positions: list[Position],
               total_value: float, daily_pnl: float,
@@ -1815,10 +2098,12 @@ class RiskRuleEngine:
             )
         else:
             daily_loss_pct = abs(daily_pnl / baseline * 100) if daily_pnl < 0 else 0
-            # docs/WORK.md item 32: `effective_max_daily_loss_pct` (not the
-            # raw field) so this rescales with the real per-trade risk unit
-            # when no explicit override is configured.
-            limit = self.config.effective_max_daily_loss_pct
+            # docs/WORK.md item 32: `daily_loss_limit_pct` (not the raw
+            # field) so this measures the loss against the account's own
+            # recent realized volatility when that is measurable, and
+            # against the risk-unit-derived fixed percentage when it is
+            # not. Both beaten by an explicit `max_daily_loss_pct`.
+            limit = self.daily_loss_limit_pct
             if daily_loss_pct > limit:
                 violations.append(RiskViolation(
                     rule="max_daily_loss_pct",
@@ -2090,8 +2375,9 @@ class RiskRuleEngine:
         if baseline <= 0:
             return None
         daily_loss_pct = abs(daily_pnl / baseline * 100) if daily_pnl < 0 else 0
-        # docs/WORK.md item 32: derived limit, see check() above.
-        limit = self.config.effective_max_daily_loss_pct
+        # docs/WORK.md item 32: volatility-relative limit where measurable,
+        # fixed-percentage fallback otherwise. See `check()` above.
+        limit = self.daily_loss_limit_pct
         if daily_loss_pct > limit:
             return RiskViolation(
                 rule="max_daily_loss_pct",

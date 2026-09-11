@@ -40,6 +40,9 @@ from src.risk.constants import REWARD_RISK_FLOOR
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     GROSS_LADDER,
+    GROSS_LADDER_ALERT_PCT,
+    REALIZED_VOL_SKIP_NEWEST_SESSIONS,
+    REALIZED_VOL_WINDOW_SESSIONS,
     GrossCeiling,
     RiskRuleEngine,
     apply_gross_ceiling,
@@ -47,7 +50,9 @@ from src.risk.rules import (
     gross_exposure,
     peak_to_trough_pct,
     position_weight_pct,
+    realized_daily_vol_pct,
     resolve_gross_ceiling,
+    vol_relative_drawdown_threshold_pct,
 )
 from src.execution.broker import (
     AlpacaBroker,
@@ -117,6 +122,31 @@ def _risk_number(value, default: float) -> float:
     always need a concrete number (§10.3's minimum order size)."""
     resolved = _optional_risk_number(value)
     return default if resolved is None else resolved
+
+
+def _daily_loss_limit_for_alert(engine, risk_config) -> float | None:
+    """The daily circuit-breaker limit actually in force, for operator alerts.
+
+    docs/WORK.md item 32 (owner call 2026-09-11). Prefers the engine's
+    `daily_loss_limit_pct` — the volatility-relative threshold when the
+    account has enough of its own history to measure one — and falls back to
+    the configured fixed percentage, then to None. Never raises: this feeds
+    a notification, and a broken read must not take a session alert down.
+    """
+    for source, attribute in (
+        (engine, "daily_loss_limit_pct"),
+        (risk_config, "effective_max_daily_loss_pct"),
+    ):
+        if source is None:
+            continue
+        try:
+            value = getattr(source, attribute, None)
+        except Exception:  # noqa: BLE001
+            continue
+        resolved = _optional_risk_number(value)
+        if resolved is not None:
+            return resolved
+    return None
 
 
 HARD_BLOCK_RULES = {
@@ -583,6 +613,14 @@ class TradingPipeline:
             daily_loss_risk_multiple=_risk_number(
                 getattr(config.risk, "daily_loss_risk_multiple", None), 3.0,
             ),
+            # docs/WORK.md item 32 (owner call 2026-09-11): how many
+            # multiples of the account's OWN recent realized volatility trip
+            # the daily breaker. Threaded for the same reason as the two
+            # above — an unthreaded value would silently derive against this
+            # model's bare default rather than real settings.
+            drawdown_vol_sensitivity=_risk_number(
+                getattr(config.risk, "drawdown_vol_sensitivity", None), 6.7,
+            ),
             max_sector_pct=config.risk.max_sector_pct,
             # Spec §10.3 — the absolute ceiling behind the sector dial.
             # Read through the same MagicMock guard `_risk_setting` applies
@@ -601,7 +639,14 @@ class TradingPipeline:
             # Result: a user opting in to margin had their BUYs blocked
             # by a hard rule the agent didn't know was active.
             allow_margin=config.risk.allow_margin,
-        ))
+        # docs/WORK.md item 32 (owner call 2026-09-11). Lets the daily
+        # circuit breaker measure a loss against the account's OWN recent
+        # realized volatility rather than a frozen percentage of equity.
+        # Read lazily, at each check, because the breaker fires from six
+        # separate places in this file and not all of them run after the
+        # session has computed rolling performance. Returns None-safe
+        # values; a failing read falls back to the fixed percentage.
+        ), equity_history_provider=self._equity_curve_newest_first)
         self.position_reviewer = PositionReviewerAgent(
             api_key=_key_for(config.llm.position_reviewer_model, config.llm.position_reviewer_provider),
             model=config.llm.position_reviewer_model,
@@ -7462,14 +7507,50 @@ class TradingPipeline:
         rolling_5d = _pct_change(5)
         rolling_20d = _pct_change(20)
 
-        # docs/WORK.md item 32: these two thresholds are derived from the
-        # real per-trade risk unit (`RiskConfig.max_position_risk_pct`)
-        # rather than hardcoded, so they rescale automatically instead of
-        # going stale the way the old flat -3.0 / -8.0 literals did. See
-        # `RiskConfig.drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct`
-        # for the derivation and its provisional multiplier.
-        threshold_5d = self.config.risk.drawdown_5d_threshold_pct
-        threshold_20d = self.config.risk.drawdown_20d_threshold_pct
+        # docs/WORK.md item 32 (owner call 2026-09-11). These thresholds are
+        # no longer a fixed percentage of equity at all — they are a multiple
+        # of the account's OWN realized daily volatility over the trailing
+        # window, scaled to each window by sqrt(time). A fixed percentage is
+        # only correct for the volatility regime it was chosen in, and
+        # markets are not stationary; the owner refused a recalibration of
+        # the fixed number for exactly that reason.
+        #
+        # `drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct` (the
+        # risk-unit-derived fixed percentages) survive as the COLD-START
+        # FALLBACK, used when the account has too little of its own history
+        # to measure a volatility worth acting on — which is the desk's real
+        # state after the 2026-09-02 reset. See
+        # `RiskConfig.drawdown_vol_sensitivity` for the sensitivity and,
+        # honestly, for what about it is and is not research-grounded.
+        daily_vol = realized_daily_vol_pct(
+            [r.get("total_value") for r in rows],
+        )
+        sensitivity = _risk_number(
+            getattr(self.config.risk, "drawdown_vol_sensitivity", None), 6.7,
+        )
+        threshold_5d = vol_relative_drawdown_threshold_pct(
+            daily_vol_pct=daily_vol, window_sessions=5,
+            sensitivity=sensitivity,
+            fallback_pct=self.config.risk.drawdown_5d_threshold_pct,
+        )
+        # The 20-day window is capped at `GROSS_LADDER_ALERT_PCT`, preserving
+        # the 2026-09-04 bug-2 fix: this brake must never again be asleep
+        # past the point the §11.2 de-levering ladder halves the book and
+        # alerts the owner. The cap is why the 20-day threshold is tighter
+        # than sqrt(time) alone would put it.
+        threshold_20d = vol_relative_drawdown_threshold_pct(
+            daily_vol_pct=daily_vol, window_sessions=20,
+            sensitivity=sensitivity,
+            fallback_pct=self.config.risk.drawdown_20d_threshold_pct,
+            cap_pct=GROSS_LADDER_ALERT_PCT,
+        )
+        # Keep the severity ORDER coherent in a high-volatility regime: once
+        # the 20-day cap binds, an uncapped 5-day threshold could end up
+        # DEEPER than the 20-day one, i.e. a shorter window tolerating a
+        # bigger loss than a longer one. Clamped to the 20-day threshold so
+        # |1d| <= |5d| <= |20d| <= |ladder alert| always holds.
+        if threshold_5d < threshold_20d:
+            threshold_5d = threshold_20d
 
         in_drawdown = False
         if rolling_5d is not None and rolling_5d < threshold_5d:
@@ -7506,9 +7587,50 @@ class TradingPipeline:
             # would go stale the moment these are rescaled again.
             "drawdown_5d_threshold_pct": threshold_5d,
             "drawdown_20d_threshold_pct": threshold_20d,
+            # docs/WORK.md item 32: the yardstick itself, surfaced so an
+            # operator (and Mission Control) can see WHY a threshold sits
+            # where it does. None means "not enough history — the
+            # fixed-percentage fallback is governing".
+            "realized_daily_vol_pct": (
+                None if daily_vol is None else round(daily_vol, 3)
+            ),
             "trailing_days": len(rows),
             "peak_to_trough_pct": peak_to_trough,
         }
+
+    def _equity_curve_newest_first(self) -> list:
+        """The account equity curve, newest-first, for the risk engine.
+
+        docs/WORK.md item 32 (owner call 2026-09-11). Injected into
+        `RiskRuleEngine` as `equity_history_provider` so the daily circuit
+        breaker can measure a loss against the account's own recent realized
+        volatility. Kept deliberately dumb — one read, no derivation — so
+        the volatility definition lives in exactly one place
+        (`src/risk/rules.py::realized_daily_vol_pct`) rather than being
+        re-implemented per caller, which is how this desk ended up with two
+        unreconciled drawdown measures in the first place.
+
+        Returns an empty list rather than raising: a failed read must fall
+        back to the fixed-percentage threshold, never disable the breaker.
+        """
+        try:
+            rows = self.db.get_daily_pnl(
+                # +1 for the extra equity reading a window of returns needs,
+                # +`REALIZED_VOL_SKIP_NEWEST_SESSIONS` for the session under
+                # judgement, which is excluded from its own yardstick.
+                limit=(
+                    REALIZED_VOL_WINDOW_SESSIONS + 1
+                    + REALIZED_VOL_SKIP_NEWEST_SESSIONS
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to read daily_pnl for the volatility-relative daily "
+                "circuit breaker; it falls back to its fixed-percentage "
+                "threshold: %s", exc,
+            )
+            return []
+        return [r.get("total_value") for r in (rows or [])]
 
     def _refresh_account_state(self):
         account = self.broker.get_account()
@@ -12265,12 +12387,15 @@ class TradingPipeline:
             # Observability: surface a silently-missing session + the loss cap
             # so the notifier can raise deterministic escalation (not just LLM).
             "missing_sessions": missing_sessions,
-            # docs/WORK.md item 32: the effective (possibly derived) limit,
-            # not the raw field, so this reads correctly whether or not an
-            # explicit max_daily_loss_pct override is configured.
-            "max_daily_loss_pct": getattr(
+            # docs/WORK.md item 32: the limit ACTUALLY IN FORCE, read off
+            # the engine rather than the config, so the operator alert shows
+            # the volatility-relative threshold when one is measurable and
+            # the fixed-percentage fallback when it is not. Reading the
+            # config field here would have quietly reported the fallback
+            # every day regardless.
+            "max_daily_loss_pct": _daily_loss_limit_for_alert(
+                getattr(self, "risk_engine", None),
                 getattr(self.config, "risk", None),
-                "effective_max_daily_loss_pct", None,
             ),
             "stop_coverage_gaps": coverage_gaps,
             # True 4pm-to-4pm headline P&L (None → notifier falls back to the

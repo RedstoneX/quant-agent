@@ -148,18 +148,80 @@ def test_invariant_hard_risk_gate_unaffected_by_garbage_llm_config():
     assert any("NVDA" in msg for msg in blocked)
 
 
+#: Keyword-only constructor arguments `RiskRuleEngine` may accept BESIDES
+#: its one config object, each with the reason it is not a hole in this
+#: invariant. Nothing reaches this list without being ACCOUNT STATE — never
+#: config, never anything an LLM authored or a provider supplied.
+#:
+#:   equity_history_provider — docs/WORK.md item 32, owner call 2026-09-11.
+#:     Supplies the account's own equity curve so the daily circuit breaker
+#:     can measure a loss against the account's recent realized volatility
+#:     instead of a frozen percentage of equity. Equity readings from this
+#:     desk's own `daily_pnl` table; no model output, no provider config,
+#:     and a failed read falls back to the fixed percentage rather than
+#:     disabling the breaker.
+_ENGINE_ALLOWED_KEYWORD_ARGS = {"equity_history_provider"}
+
+
 def test_invariant_risk_rule_engine_never_reads_llm_or_provider_config():
     """RiskRuleEngine is constructed from RiskConfig ALONE — no LLMConfig,
     no provider config — so the explicit provider/model fields Stage 1 added
-    to LLMConfig structurally cannot reach deterministic risk math."""
+    to LLMConfig structurally cannot reach deterministic risk math.
+
+    Widened 2026-09-11 to permit ACCOUNT-STATE keyword arguments on an
+    explicit allowlist (`_ENGINE_ALLOWED_KEYWORD_ARGS`), and TIGHTENED at the
+    same time: the positional signature is still exactly `(self, config)`, so
+    a second config object cannot be slipped in, every extra argument must be
+    keyword-only and listed above with a reason, and no argument name may
+    look like model/provider plumbing however it is passed.
+    """
     import inspect
     from src.risk.rules import RiskRuleEngine as _Engine
     sig = inspect.signature(_Engine.__init__)
-    assert list(sig.parameters) == ["self", "config"], (
-        "RiskRuleEngine must take exactly one config object (RiskConfig); "
-        "widening this to also accept llm/provider config would create a "
-        "path from Stage 1's provider plumbing into hard risk math"
+    params = sig.parameters
+
+    positional = [
+        name for name, p in params.items()
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    assert positional == ["self", "config"], (
+        "RiskRuleEngine must take exactly one positional config object "
+        "(RiskConfig); widening this to also accept llm/provider config "
+        "would create a path from Stage 1's provider plumbing into hard "
+        "risk math"
     )
+    assert not any(
+        p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in params.values()
+    ), "*args/**kwargs would let anything at all reach the risk engine"
+
+    extra = set(params) - {"self", "config"}
+    assert extra <= _ENGINE_ALLOWED_KEYWORD_ARGS, (
+        f"RiskRuleEngine grew constructor argument(s) "
+        f"{sorted(extra - _ENGINE_ALLOWED_KEYWORD_ARGS)} that are not on the "
+        f"account-state allowlist. Add it to _ENGINE_ALLOWED_KEYWORD_ARGS "
+        f"WITH a written reason it is account state rather than config, or "
+        f"do not pass it into deterministic risk math."
+    )
+    for name in extra:
+        assert params[name].kind == params[name].KEYWORD_ONLY, (
+            f"`{name}` must be keyword-only so it can never be passed by "
+            f"position where a config object is expected"
+        )
+        assert params[name].default is None, (
+            f"`{name}` must default to None: an engine built with a config "
+            f"alone — which is how ~50 fixtures in this repo and any caller "
+            f"without a database build it — must behave exactly as before"
+        )
+    forbidden = ("llm", "model", "provider_order", "api_key", "prompt")
+    for name in params:
+        if name in _ENGINE_ALLOWED_KEYWORD_ARGS:
+            # `equity_history_provider` contains "provider"; the check below
+            # is about MODEL providers, so match on the narrower tokens.
+            continue
+        assert not any(token in name for token in forbidden), (
+            f"`{name}` names model/provider plumbing — it must not reach "
+            f"deterministic risk math"
+        )
 
 
 # ---------------------------------------------------------------------------

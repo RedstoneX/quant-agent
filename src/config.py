@@ -557,6 +557,77 @@ class RiskConfig(BaseModel):
     # decided here. See docs/WORK.md item 32.
     drawdown_5d_risk_multiple: float = Field(default=3.0, gt=0)
     drawdown_20d_risk_multiple: float = Field(default=4.0, gt=0)
+    # docs/WORK.md item 32, owner call 2026-09-11 — THE BASIS CHANGE.
+    #
+    # Everything above this line expresses a loss alarm as a FIXED
+    # PERCENTAGE OF EQUITY. That was the defect the owner rejected: a fixed
+    # percentage is only correct for the volatility regime it was picked in,
+    # and markets are not stationary. Recalibrating the percentage from more
+    # history was explicitly REFUSED — it would have produced another frozen
+    # number with the same flaw.
+    #
+    # The alarms now trip at `sensitivity x sigma_daily x sqrt(T)`, where
+    # `sigma_daily` is the account's OWN realized daily volatility over a
+    # rolling trailing window, recomputed every session
+    # (`src/risk/rules.py::realized_daily_vol_pct`). The multiples above
+    # remain as the COLD-START FALLBACK only, for an account with too little
+    # history to estimate its own volatility — which is the desk's actual
+    # state after the 2026-09-02 clean-slate reset.
+    #
+    # NOT volatility targeting. Nothing here resizes a position; this only
+    # changes the yardstick the ALARM measures a loss against. Continuous
+    # volatility-target exposure scaling was separately REJECTED for this
+    # desk (docs/OUTCOME.md).
+    #
+    # THE SENSITIVITY IS PROVISIONAL AND IS NOT RESEARCH-GROUNDED.
+    # Researched 2026-09-11 and stated plainly: the sqrt(T) window scaling
+    # IS real, published, and cited (Van Hemert/Ganz/Harvey, "Drawdowns",
+    # JPM 2020), and volatility-relative risk measurement in general is
+    # standard practice — but there is NO citable industry-standard number
+    # for "how many multiples of recent volatility should trip a drawdown
+    # alarm". Anyone who presents one has invented it.
+    #
+    #   HOW 6.7 WAS SET — day-one continuity, not a severity opinion.
+    #   The value is chosen so that at a documented reference volatility the
+    #   new thresholds equal the ones already shipped, so behaviour does not
+    #   jump the day this lands and the ONLY change is that they now move
+    #   with conditions:
+    #
+    #     reference sigma_daily = 1.0% per session. MEASURED 2026-09-11 from
+    #     real market data over this desk's OWN 101-symbol configured
+    #     universe (`trading.universe`): trailing-20-session realized daily
+    #     volatility of equal-weight baskets the size this desk actually
+    #     runs — median 1.04% at 5 names, 0.86% at 8, 0.80% at 12, with a
+    #     5th-to-95th spread of roughly 0.55%-1.7%. A proxy for the account's
+    #     own equity curve, used ONLY to strike this equivalence, because the
+    #     account's real curve cannot supply one (see below).
+    #
+    #     daily : 6.7  x 1.0 x sqrt(1)  = 6.70%  (shipped fixed: 6.7%)
+    #     5-day : 6.7  x 1.0 x sqrt(5)  = 14.98% (shipped fixed: 15%)
+    #
+    #   One sensitivity reproduces BOTH, because the two shipped multiples
+    #   were already sqrt-time consistent with each other. The 20-day window
+    #   is the exception: sqrt(T) would give 29.96%, but it is capped at
+    #   `GROSS_LADDER_ALERT_PCT` (-20%) so this brake can never again be
+    #   asleep past the point the §11.2 de-levering ladder halves the book
+    #   and alerts the owner — the same constraint, and the same reasoning,
+    #   as bug 2 above.
+    #
+    #   MEASURED OBSERVATION, RECORDED NOT ACTED ON. 6.7 sigma is a very
+    #   remote daily event. That is not a property this change introduced —
+    #   it is the first real measurement of how severe the INHERITED anchor
+    #   always was, and it says the daily breaker is far looser relative to
+    #   the desk's plausible volatility than "3 losing R's" sounded. Whether
+    #   the sensitivity should come down is an OWNER call about risk
+    #   appetite, deliberately not decided here. See docs/WORK.md item 32.
+    #
+    #   NOT VALIDATED against real post-reset trading behaviour, because
+    #   there is none: verified 2026-09-11 against the live desk database,
+    #   `daily_pnl` holds exactly ONE row (2026-09-02, the reset day). Every
+    #   attempt to calibrate this from the account's own record is blocked on
+    #   that, exactly as the anchor multiple above already is. Revisit once a
+    #   real equity curve exists.
+    drawdown_vol_sensitivity: float = Field(default=6.7, gt=0)
     # Below this an idea is not worth trading: a token position pays full
     # commission and full attention for an immaterial payoff. A request
     # rationed under the floor is denied outright rather than shrunk.

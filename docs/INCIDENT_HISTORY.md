@@ -22,6 +22,141 @@ what would catch it next time.
 
 ---
 
+### 2026-09-11 — the desk's loss alarms assumed the future would look like the past
+
+**In plain words:** the desk had three alarms that say "we have lost too
+much, stop taking risk" — one for a single day, one for a week, one for a
+month. Each was set to a fixed percentage of the account: lose more than
+6.7% in a day and the alarm goes off. The trouble with a fixed percentage
+is that it is only the right number for the kind of market it was chosen
+in. In a calm market 6.7% in one day is a catastrophe the alarm should
+have caught much earlier; in a violent one it is an ordinary Tuesday and
+the alarm shuts the desk down for no reason. The alarms now measure a loss
+against how much the account itself has actually been moving lately, and
+that measurement is redone every day. Nothing about how big a position
+gets was touched.
+
+**The owner's objection, and why the obvious fix was refused.** The
+previous round (2026-09-04, entry below) had already fixed two real bugs in
+these numbers, and the remaining complaint was that the underlying
+"anchor" had never been validated against real trading history. The
+obvious next step was to recalibrate it from more history. **The owner
+refused that**, and was right to: markets are not stationary, so a number
+picked once — however carefully, and from however much history — is wrong
+again as soon as conditions change. Recalibrating produces a *better*
+frozen number with the *identical* structural flaw. The basis had to
+change, not the calibration.
+
+**What the new basis is.** Each alarm trips at
+`sensitivity × (the account's own realized daily volatility) × √(window
+length)`. The volatility is the sample standard deviation of the account's
+daily equity returns over a rolling trailing 20 sessions, recomputed every
+session. One measurement, one definition, three alarms.
+
+**What is genuinely research-grounded here, and what is not. This
+distinction is the point of the entry.**
+
+- The **√time window relationship** is real, published, and already cited
+  in this codebase: drawdown magnitude over a window scales with the
+  square root of the window length (Van Hemert, Ganz, Harvey et al.,
+  *Drawdowns*, Journal of Portfolio Management, 2020). Unchanged. It is
+  now expressed ONCE, as a single sensitivity scaled by √T, instead of as
+  three independently-stored per-window multiples — which is exactly the
+  arrangement that allowed the 2026-09-04 "the daily breaker and the
+  5-day brake share one multiple" bug to exist at all.
+- Measuring risk **relative to recent realized volatility** is ordinary,
+  standard risk-management practice, not an invention of this desk.
+- The **trigger sensitivity is NOT importable.** Real research was done
+  on 2026-09-11 specifically looking for a published convention for "N
+  multiples of recent volatility trips a drawdown alarm", and there is
+  none. Anyone presenting such a number as an industry standard has
+  invented it. So it is shipped as an explicitly provisional value and
+  labelled that way in `src/config.py`, `config/settings.yaml`,
+  `docs/WORK.md` and the test module — not as a researched constant.
+
+**How the provisional sensitivity was set, and why that method was chosen.**
+Day-one continuity, deliberately not a severity opinion. The value (6.7) is
+the one that makes the new thresholds equal the ones already live at a
+documented reference volatility, so the only thing that changed on the day
+this landed is that the thresholds now MOVE. The reference — 1.0% per
+session — was measured from real market data over this desk's own
+configured 101-symbol universe: trailing-20-session realized daily
+volatility of equal-weight baskets the size this desk actually runs came in
+at a median of 1.04% (5 names), 0.86% (8) and 0.80% (12), spread roughly
+0.55%-1.7%. At 1.0% the arithmetic reproduces 6.70% for one day and 14.98%
+for five, against the 6.7% and 15% already shipped. One sensitivity covers
+both because those two shipped multiples were already √time-consistent
+with each other after the 2026-09-04 fix.
+
+**Why it could not be calibrated from the account's own record, stated
+plainly rather than glossed.** It should have been, and the attempt was
+made first. The live desk's `daily_pnl` table was read directly on
+2026-09-11 and holds **exactly one row** — 2026-09-02, the clean-slate
+reset day. There is no equity curve, so there is nothing to calibrate
+against. That is the same blocker the old anchor multiplier had, and this
+change inherits it rather than resolving it: the architecture is fixed, the
+sensitivity is not validated.
+
+**One measured finding recorded here because it needs an owner's view, not
+an agent's.** 6.7 multiples of this desk's plausible daily volatility is a
+very remote daily event. That is not a property this change introduced — it
+is the first actual measurement of how loose the INHERITED setting always
+was, and it says the daily circuit breaker sits much further out than "3
+losing max-size trades in a day" ever sounded. Lowering it is a
+risk-appetite decision. It is on the dated decision list in
+`docs/WORK.md`, not silently applied.
+
+**Two bugs found and fixed while building this, both real.**
+
+- **A violent session was widening its own alarm.** With the volatility
+  window including the session being judged, a -6% day on a book that
+  normally moves 0.25% raises the measured volatility enough to
+  re-classify itself as ordinary — the alarm becomes unable to fire on
+  precisely the days it exists for. The window now ends at the previous
+  session: the question is "is today abnormal against what came before
+  it".
+- **In a violent regime the DAILY limit could go deeper than the 20-day
+  brake.** Only the 20-day window was capped at the de-levering ladder's
+  -20% owner-alert point, so at high volatility the one-day limit computed
+  to -34% — a shorter window tolerating a bigger loss than a longer one.
+  All three are capped at the ladder alert now, and the 5-day threshold is
+  additionally clamped to the 20-day one, so
+  `|1-day| ≤ |5-day| ≤ |20-day| ≤ 20%` always holds.
+
+**A trap that would have made the whole change inert, worth recording.**
+`config/settings.yaml` carried `max_daily_loss_pct: 6.7`. That field is an
+override that beats every derivation, so production would have stayed on a
+fixed percentage forever while every unit test passed. It is now `null`,
+with the reason written above it, and a test asserts it stays null.
+
+**What was deliberately NOT done.** Position sizing was not touched, and
+no volatility-targeting exposure scaling was added. That technique was
+investigated and rejected for this desk separately (it imports a fund's
+portfolio-smoothness goal, which is not this desk's survival goal — see
+`docs/OUTCOME.md`). Volatility here is only the yardstick the ALARM
+measures a loss against. A test asserts no sizing-shaped output leaks out
+of the drawdown-alarm path.
+
+**Behaviour today, and why nothing visibly changed.** With one row of
+history the volatility is unmeasurable, so all three alarms fall back to
+the previously-shipped fixed percentages. The fallback is deliberate and
+tested: a cold-started account behaves exactly as it did on main. The new
+basis engages once ~11 sessions of real history exist.
+
+**What would catch a regression:**
+`tests/test_drawdown_vol_relative_brake.py` proves the same absolute loss
+trips the alarm on a calm book and does not on a volatile one; that
+doubling measured volatility doubles the alarm distance; that the √time
+relation and the severity ordering hold at every volatility tested; that a
+violent session cannot widen its own threshold; that too little history,
+a data gap, a flat curve and a failing database read all fall back to the
+fixed percentage rather than disabling the breaker; and that
+`settings.yaml` does not pin the breaker back to a literal.
+`tests/test_drawdown_brake_rescale.py` still pins the fallback numbers
+unchanged.
+
+---
+
 ### 2026-09-04 — the minimum stop distance was a number nobody derived, and it was closing the funnel
 
 **In plain words:** every trade had to put its stop-loss at least three
