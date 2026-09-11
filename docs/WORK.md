@@ -535,11 +535,19 @@ instead ("Halve allocation per R/R enforcement policy" appears verbatim on
 XLF, XLE x2, XLB). So the floor both blocks and shrinks, and only the blocking
 half is counted above.
 
-It rests on a fake number. Evidence, verbatim from the record: *"PM's reasoning
-assumes R/R 1.67 but the executed order has R/R 1.18"* — the same trade,
-evaluated twice, with different stop geometry. Cause is the ATR stop FLOOR
-overwriting a structural stop, widening the risk denominator and crushing the
-ratio. See `qamc-rr-geometry-defect`.
+It rests on the ATR floor overwriting a real level. Evidence, `run-64290730`
+(2026-09-01): SLB entered at $60.10, stop at $55.50 — exactly the 3.0x ATR
+floor, not a level — over a 15-session hold, for an analyst reward:risk of
+1.28 against a geometric maximum of 1.29. The floor cannot be cleared once it,
+not the level, sets the stop. See `qamc-rr-geometry-defect`.
+
+**RETRACTED, 2026-09-04 — do not re-cite:** the earlier "PM's reasoning
+assumes R/R 1.67 but the executed order has R/R 1.18" example did NOT show
+this mechanism. Re-verification found the stop identical ($61.54) on both
+the analyst's read and the executed order; only the ENTRY price drifted
+between the analysis snapshot and the live fill. The ATR floor was not
+involved. See `docs/QAMC_REMEDIATION_SPEC.md`, the 2026-09-04 correction
+near line 2002.
 
 **The gate fails in BOTH directions, and that is the thing to understand.**
 It refuses good trades on a fabricated ratio (above), AND it waves through
@@ -684,8 +692,11 @@ cap as the real defence against a runaway loop. (a), an API-key-level spend
 cap outside our code, is NOT built — flagged in `cost_circuit.py` pointing
 back here, needs the provider's exact limit options verified first.
 
-**(c)'s number is a placeholder, not measured — see the DECIDE BY line
-above.** Everything else in this item is implemented and tested.
+**(c)'s number (40) is measured, not a placeholder** — set from real
+production data (worst COMPLETE session on record made 14 calls; see the
+RECONFIRM note above and `config/settings.yaml`'s own comment on
+`max_calls_per_session`). Everything else in this item is implemented and
+tested.
 
 **15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
 
@@ -723,8 +734,10 @@ stopped until a person happens to look. On an unattended desk that is a day
      retried on any later boundary/process, instead of vanishing after one
      failed send. A real second notification channel (beyond Telegram) was
      NOT built — a new dependency/design tradeoff, not a retry-count
-     choice. **DECIDE BY 2026-09-17 — does the desk need a second,
-     independent alert channel beyond Telegram, and if so which one?**
+     choice. **DEFERRED, no due date — see the note above.** (This line
+     used to carry its own "DECIDE BY 2026-09-17" text; PR #234 deferred
+     the decision and removed the DECISIONS PENDING copy but missed this
+     duplicate. One status, recorded once, above.)
   c. **SHIPPED 2026-09-03 — `src/silence_watchdog.py` +
      `scripts/silence_heartbeat.py`**, alerting on "no completed session in
      N scheduled windows", desk-wide. Threshold RATIFIED at 2 (~1hr), not

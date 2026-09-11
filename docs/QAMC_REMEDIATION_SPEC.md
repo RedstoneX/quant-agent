@@ -1337,7 +1337,8 @@ and the portfolio-level ceilings are untouched.
 
 **Status: ratified by Rex on 2026-09-01. 11.1 NOT implemented. 11.2's gross
 cap, de-levering ladder and liquidation guard IMPLEMENTED 2026-09-01 — see
-the note at the end of 11.2. `allow_margin` remains `false`.**
+the note at the end of 11.2. `allow_margin` went `true` on 2026-09-02 — see
+the note at line ~1646.**
 Two decisions taken together because they both change how a position is
 sized, and shipping one without the other changes the risk profile in a way
 neither decision intended. The required ordering is therefore satisfied: the
