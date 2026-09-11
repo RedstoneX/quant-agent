@@ -8278,6 +8278,135 @@ class TradingPipeline:
 
         return check
 
+    def _holding_discipline_check_for_exit(
+        self,
+        *,
+        symbol: str,
+        action: str,
+        reason: str,
+        positions,
+        run_id: str,
+        position_history: dict | None = None,
+    ):
+        """Fact-check ONE midday/close exit's hard-trigger claim, using the
+        same deterministic checker the morning Portfolio-Manager path uses.
+
+        2026-09-11. `_reason_cites_hard_trigger` is a SUBSTRING MATCH and
+        has never been anything else: it forces the reason to make a CLAIM
+        ("a regime shift happened"), and until this landed nothing on the
+        midday/close surface ever asked whether the claim was TRUE.
+        `src/risk/exit_guard.holding_discipline_claim_check` — built for
+        exactly that question, and live on the morning PM path since
+        2026-09-03/04 (`RiskStage.run`, "Holding-discipline compliance") —
+        was imported from that one call site and nowhere else, so the
+        desk's two BUSIEST exit surfaces ran on the words alone.
+
+        This method only ASSEMBLES the inputs; the verdict semantics are
+        the checker's and are deliberately not re-decided here. The caller
+        drops the exit on `check.blocks` (PROVABLY FALSE) and lets an
+        UNVERIFIABLE verdict through — absence of proof is not proof, and
+        blocking an exit we merely cannot check would strand the desk in a
+        losing position, which is strictly worse than the gap being closed.
+
+        Inputs this path can supply, and how:
+          - `protected`: YES, in full. `_structural_protection_for_holding`
+            already lives on this class (it is the same method RiskStage
+            calls) and its entry context — `thesis_invalid_if`,
+            `entry_price`, `stop_loss` — comes from
+            `_build_position_history`, the same DB-backed builder the
+            morning path reads through `ctx.position_history`. No LLM and
+            no morning-only state is involved in either.
+          - `active_state_changes`: YES, identical. `_build_active_state_changes`
+            is a plain news-store read on this class; RiskStage calls the
+            very same method.
+          - `macro_regime_today` / `macro_status`: PARTIALLY, and honestly
+            so. No macro analyst runs at midday or close, so there is no
+            fresh read to pass. `_carry_forward_macro` returns this
+            MORNING's stored read and is itself date-scoped — it refuses
+            anything not dated today — which is exactly the condition
+            `TRUSTED_MACRO_STATUSES` already recognises as
+            `"carried_from_morning"`. When it returns nothing (no macro ran
+            today, or the stored state is stale), `macro_status` is passed
+            as None and the checker's own UNVERIFIABLE branch handles it.
+            Nothing is defaulted, substituted or invented to fill the gap:
+            an absent macro read makes a regime claim unverifiable, never
+            false.
+
+        Returns the `HoldingDisciplineClaimCheck`, or None when there is
+        nothing for it to adjudicate (see the short-circuit below).
+        """
+        # Local imports: `pipeline_stages` imports this module, so the
+        # `_macro_regime` reader (reused rather than reimplemented — it is
+        # the same "MacroAnalysis or carried-forward dict" reader RiskStage
+        # feeds the checker with) can only be pulled in at call time.
+        from src.pipeline_stages import _macro_regime
+        from src.risk.exit_guard import (
+            claims_bearish_state_change,
+            claims_regime_flip,
+            holding_discipline_claim_check,
+        )
+
+        if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
+            return None
+        # Behaviour-preserving short-circuit, not a second rule: with
+        # neither claim present `holding_discipline_claim_check` returns
+        # "ok" regardless of everything else it is passed, so there is no
+        # verdict to lose by skipping it — and skipping it avoids a bars
+        # fetch, an indicator recompute and a protection-state persist per
+        # exit that was never going to be adjudicated.
+        if not (claims_regime_flip(reason) or claims_bearish_state_change(reason)):
+            return None
+
+        symbol_u = (symbol or "").strip().upper()
+        if position_history is None:
+            position_history = {}
+        hist = position_history.get(symbol) or position_history.get(symbol_u) or {}
+        pos = next(
+            (p for p in (positions or []) if (p.symbol or "").upper() == symbol_u),
+            None,
+        )
+        protection = self._structural_protection_for_holding(
+            symbol=symbol_u,
+            thesis_invalid_if=hist.get("thesis_invalid_if"),
+            entry_price=hist.get("entry_price"),
+            stop_loss=hist.get("stop_loss"),
+            is_short=bool(pos is not None and pos.qty < 0),
+            run_id=run_id,
+        )
+        logger.info(
+            "Holding-discipline structural protection for %s: protected=%s "
+            "basis=%s — %s",
+            symbol_u, protection.protected, protection.basis, protection.detail,
+        )
+
+        # This morning's macro read, or nothing. `_carry_forward_macro` is
+        # already the producer of the `carried_from_morning` status
+        # elsewhere in this class (see the intraday-scan data_status block),
+        # so the label is reused rather than a second one invented.
+        carried_macro = self._carry_forward_macro()
+        macro_regime_today = _macro_regime(carried_macro)
+        macro_status = "carried_from_morning" if carried_macro else None
+
+        try:
+            active_state_changes = self._build_active_state_changes()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "holding discipline: state-change lookup failed (%s) — "
+                "bearish-state-change claims go unverified for %s",
+                e, symbol_u,
+            )
+            active_state_changes = ""
+
+        return holding_discipline_claim_check(
+            action=action,
+            reason=reason,
+            symbol=symbol_u,
+            protected=protection.protected,
+            macro_regime_today=macro_regime_today,
+            macro_status=macro_status,
+            active_state_changes=active_state_changes,
+        )
+
     def _trail_tightened_recently(self, symbol: str, calendar_days: int = 4) -> bool:
         """True when a non-canceled TRAIL_STOP for `symbol` landed within the
         last `calendar_days` days (~2 trading days across a weekend).
@@ -8640,6 +8769,11 @@ class TradingPipeline:
             for symbol in (already_trimmed_today or set())
             if symbol and symbol.strip()
         }
+        # Entry context (thesis_invalid_if / entry price / entry stop) for the
+        # holding-discipline claim check below. Built ONCE and only if some
+        # exit actually reaches that gate — a HOLD-only or TRAIL_STOP-only
+        # review must not buy the DB reads.
+        hd_position_history: dict | None = None
         for action_item in best_by_symbol.values():
             act = action_item.get("action")
             if act not in ("SELL", "REDUCE", "TRAIL_STOP", "COVER"):
@@ -8807,6 +8941,83 @@ class TradingPipeline:
                 except Exception as e:  # noqa: BLE001
                     logger.warning("exit gate: audit write failed: %s", e)
                 continue
+
+            # 2026-09-11 — and now: is the named trigger actually TRUE?
+            #
+            # The gate immediately above only proves the reason SAYS the
+            # words. Until this landed that was the whole of the midday /
+            # close check: "regime shift to risk-off; correlation breach
+            # across the book" executed a SELL on a structurally protected
+            # position on the strength of the phrasing, with no part of the
+            # system ever asking whether a regime shift had happened. The
+            # deterministic answer to that question already existed —
+            # `exit_guard.holding_discipline_claim_check` — but was wired
+            # only to the morning Portfolio-Manager path in
+            # `pipeline_stages.RiskStage`. Same function here, same
+            # semantics, assembled by `_holding_discipline_check_for_exit`.
+            #
+            # PROVABLY FALSE drops the exit (the morning path's own
+            # response, mirroring the existing gates on this loop).
+            # UNVERIFIABLE is recorded and ALLOWED THROUGH, unchanged from
+            # the morning path and deliberately: absence of proof is not
+            # proof, and refusing an exit on a claim we merely cannot check
+            # would trap the desk in a losing position — a far worse
+            # failure than the one being fixed. An infrastructure failure
+            # inside the check fails OPEN for the same reason, matching
+            # `_risk_review_exits`' disclosed posture on this path.
+            if act in ("SELL", "REDUCE", "COVER"):
+                if hd_position_history is None:
+                    try:
+                        hd_position_history = self._build_position_history(positions)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "holding discipline: entry-context lookup failed "
+                            "(%s) — protection is read without it this run", e,
+                        )
+                        hd_position_history = {}
+                try:
+                    hd_check = self._holding_discipline_check_for_exit(
+                        symbol=symbol, action=act, reason=reason_text,
+                        positions=positions, run_id=run_id,
+                        position_history=hd_position_history,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "holding discipline: check failed for %s %s (%s) — "
+                        "the claim goes unverified rather than blocking the "
+                        "exit", act, symbol, e,
+                    )
+                    hd_check = None
+                if hd_check is not None and hd_check.blocks:
+                    logger.warning(
+                        "Position reviewer: blocking %s %s — holding-"
+                        "discipline claim PROVEN FALSE. %s",
+                        act, symbol, hd_check.finding,
+                    )
+                    try:
+                        self.db.record_intraday_evaluation(
+                            symbol=symbol, run_id=run_id,
+                            status="exit_blocked_holding_discipline_claim_false",
+                            detail=(hd_check.finding or "")[:500],
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "holding discipline: audit write failed: %s", e,
+                        )
+                    continue
+                if hd_check is not None and hd_check.verdict == "unverifiable":
+                    # Audit trail only. NOT a block — see above.
+                    logger.warning("Holding discipline: %s", hd_check.finding)
+                    try:
+                        self.db.record_intraday_evaluation(
+                            symbol=symbol, run_id=run_id,
+                            status="holding_discipline_claim_unverified",
+                            detail=(hd_check.finding or "")[:500],
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "holding discipline: audit write failed: %s", e,
+                        )
 
             # The same-day-trim gate that used to sit here is GONE, not
             # relaxed: it read `symbol in already_trimmed and not
