@@ -546,15 +546,23 @@ def agreement_ceiling_for_score(schedule: list[float] | tuple[float, ...], score
 #: brakes" (`RiskConfig.drawdown_5d_threshold_pct` /
 #: `drawdown_20d_threshold_pct`, halving new BUY size via
 #: `apply_drawdown_scale`) measure a DIFFERENT quantity — rolling window
-#: return, not peak-to-trough — and were calibrated independently. As of
-#: 2026-09-04 they are at least no longer in open contradiction with this
-#: table: the 5-day brake fires at -15%, matching the 1.0x rung, and the
-#: 20-day brake was moved from -40% to -20% so it can no longer stay silent
-#: past the point THIS ladder escalates to the owner. That is a floor on the
-#: disagreement, not agreement. Whether one drawdown response should govern
-#: both, and which, is an open OWNER-level design question. **Do not
-#: re-tune either side in isolation** — changing this table without checking
-#: `src/config.py::drawdown_20d_risk_multiple` re-opens the same gap.
+#: return, not peak-to-trough — and were calibrated independently.
+#:
+#: They are at least no longer in open contradiction with this table.
+#: `GROSS_LADDER_ALERT_PCT` below is a hard cap on all three of them, so
+#: none can be asleep past the point THIS ladder halves the book and alerts
+#: the owner — the constraint that came out of bug 2 on 2026-09-04, and it
+#: survived the 2026-09-11 change of their basis from a fixed percentage of
+#: equity to a multiple of the account's own realized volatility. THIS
+#: TABLE IS STILL FIXED PERCENTAGES, deliberately: it is a ratified owner
+#: table about peak-to-trough exposure, not a loss alarm, and it was not in
+#: scope for that change.
+#:
+#: That cap is a floor on the disagreement, not agreement. Whether one
+#: drawdown response should govern both, and which, is an open OWNER-level
+#: design question. **Do not re-tune either side in isolation** — changing
+#: this table without checking `src/config.py::drawdown_vol_sensitivity`
+#: and `drawdown_20d_risk_multiple` re-opens the same gap.
 GROSS_LADDER: tuple[tuple[float, float], ...] = (
     (-8.0, 1.5),
     (-15.0, 1.0),

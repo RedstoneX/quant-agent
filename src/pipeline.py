@@ -7475,10 +7475,18 @@ class TradingPipeline:
         Used to tell PM 'we've been losing — size down' regardless of what the market
         is doing. Independent of VIX / macro regime (which reflect market, not us).
 
+        The two thresholds MOVE EVERY SESSION since the 2026-09-11 basis
+        change (docs/WORK.md item 32): they are a multiple of the account's
+        own realized daily volatility over the trailing window, not a fixed
+        percentage of equity. `realized_daily_vol_pct` carries the yardstick
+        they came from, and is None when there is too little history and the
+        fixed-percentage fallback is governing.
+
         Returns e.g. {'rolling_5d_pct': -2.3, 'rolling_20d_pct': -6.1,
                       'in_drawdown': True, 'trailing_days': 18,
-                      'drawdown_5d_threshold_pct': -15.0,
-                      'drawdown_20d_threshold_pct': -40.0}
+                      'realized_daily_vol_pct': 0.94,
+                      'drawdown_5d_threshold_pct': -14.08,
+                      'drawdown_20d_threshold_pct': -20.0}
         """
         try:
             rows = self.db.get_daily_pnl(limit=25)
