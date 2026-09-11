@@ -283,36 +283,29 @@ risk:
   # stop distances a 20% ceiling caps DELIVERED risk to `20% x stop_pct`
   # regardless of stated conviction. Measured live: 6 of 13 proposed orders
   # pinned at exactly 20% notional; a 2.8% and a 1.0% risk request both
-  # delivered ~1% either way. The 2026-08-27 stop-width fix (`min_stop_atr_
-  # multiple: 3.0` above) independently pushes quiet-name stops out to
-  # roughly 5-9% (see that setting's own comment) — at the tight end of
-  # that range, reaching the full 5% envelope needs `5 / 5 x 100 = 100%`
-  # notional. 100 is therefore the number where the 20-100% "normal" range
-  # this desk actually produces (see min_stop_atr_multiple's own measured
-  # 5-9% figure) stops being clipped, while a stop tighter than 5% — only
-  # reachable today via the level-backed exception down to
-  # `absolute_min_stop_atr_multiple: 1.0` (~2.56% at the median 2.56% ATR
-  # this desk trades) — still gets clamped, which is exactly the
-  # "genuinely too tight" case this cap exists for.
+  # delivered ~1% either way.
+  #
+  # RE-DERIVED 2026-09-11 against the CURRENT stop floor (this file's
+  # min_stop_atr_multiple moved 3.0 -> 1.5 -> 2.5 since this cap was first
+  # set; the 5-9%/~3.5% figures once written here are both stale — do not
+  # trust either without recomputing, which is exactly what this update
+  # does). At 2.5x ATR base (0.90-1.20x setup/regime scalers) and this
+  # desk's ~2.56% median ATR, typical stops now run ~5.5-7.7% of price.
+  # At the current 4% conviction-band ceiling (item 32, 2026-09-11), that
+  # needs `4 / 5.5 x 100 ≈ 73%` notional — comfortably inside 100 with real
+  # headroom, not a close call. Only a stop tighter than ~4-5.5% of price
+  # (reachable via the level-backed exemption down to
+  # `absolute_min_stop_atr_multiple: 1.0`, ~2.56% at the median ATR) still
+  # hits this clamp — the same, already-intentional "genuinely too tight"
+  # case this cap exists for, not a new edge case.
   #
   # 100 was chosen over a larger number (the math above tops out needing
   # ~195% notional for that 1x-ATR degenerate floor) because `allow_margin`
   # is false: the cash-only rule already makes anything past 100% of equity
   # in one name unreachable in practice, so 100 IS the real ceiling — this
   # only documents it rather than leaving a number that does nothing.
-  # Revisit together if `allow_margin` ever flips on.
-  #
-  # KNOWN INTERACTION, RECORDED 2026-09-04, NOT FIXED HERE. The stop floor
-  # above went 3.0 -> 1.5 the same day, which roughly HALVES real stop
-  # distances: at the median 2.56%-of-price ATR this desk trades, a floored
-  # stop is now ~3.5% rather than ~5-9%. `notional = risk / stop` then wants
-  # `5 / 3.5 x 100 = ~143%` of equity to deliver the full 5% envelope, so
-  # this 100 cap binds again on tight-stop names and delivers ~3.5% risk
-  # instead of 5%. That is NOT a regression introduced by the stop fix —
-  # `allow_margin: false` makes >100% of equity in one name physically
-  # unreachable regardless of what any cap says. It is the cash-only rule
-  # showing through. Stated here so nobody re-derives it as a new defect;
-  # whether to enable margin is an owner call, not a config tweak.
+  # Revisit together, and re-derive this comment again, if either
+  # `min_stop_atr_multiple` or `allow_margin` ever changes again.
   max_position_pct: 100
   # Caps NET exposure (longs minus shorts) as % of equity.
   #
@@ -337,10 +330,28 @@ risk:
   # (an "April-2026-era constant" sized for this desk's real per-trade risk
   # when a since-fixed notional-cap bug, PRs #258/#259, suppressed it to
   # ~1% regardless of stated conviction). Re-derived as
-  # `daily_loss_risk_multiple x max_position_risk_pct` = 3 x 5 = 15 so it
-  # tracks the REAL per-trade risk unit those PRs restore, enforced by the
-  # `_daily_loss_matches_risk_unit` validator in src/config.py (config
-  # fails to load if these two drift apart again).
+  # `daily_loss_risk_multiple x max_position_risk_pct` so it tracks the REAL
+  # per-trade risk unit those PRs restore, rather than sitting as an
+  # independently-chosen flat percent that goes stale the next time the risk
+  # unit moves (`RiskConfig.effective_max_daily_loss_pct`, src/config.py).
+  #
+  # BUG 1, FIXED 2026-09-04 — the multiple was 3, giving 3 x 5 = 15. That is
+  # the SAME multiple as the 5-day window's, and two windows of different
+  # length cannot share one multiple and fire at a comparable rate. At -15%
+  # in a single session the daily breaker was only ever reachable on a
+  # single-name gap event, not on any realistic bad trading day: decorative.
+  #
+  #   Square-root-of-time (Van Hemert/Ganz/Harvey et al., "Drawdowns",
+  #   Journal of Portfolio Management 2020 — drawdown magnitude over a
+  #   window scales with sqrt(time)), anchored on the 5-day window:
+  #
+  #       N_1d = N_5d x sqrt(1/5) = 3 x 0.44721 = 1.34164... -> 1.34
+  #
+  #   giving 1.34 x 5 = 6.7%. The 1-day : 5-day ratio is now 1 : sqrt(5)
+  #   = 1 : 2.24, instead of the old incoherent 1 : 1.
+  #
+  # Full derivation in the `daily_loss_risk_multiple` field comment in
+  # src/config.py.
   #
   # DEPENDS ON PRs #258/#259 LANDING FIRST: `max_position_risk_pct` (5,
   # below) has said 5 since 2026-08-27, but PR #258's notional-cap fix is
@@ -349,24 +360,46 @@ risk:
   # a state that does not exist on main yet. Do not merge this ahead of
   # #258/#259; see this PR's description.
   #
-  # The multiplier (3) is UNCHANGED from the pre-existing, never
+  # The ANCHOR multiple (N_5d = 3) is UNCHANGED from the pre-existing, never
   # independently validated constant — there is no measured drawdown
   # history to check it against (the 2026-09-02 clean-slate reset wiped the
-  # equity curve). Only the UNIT is fixed here; the multiplier is flagged
-  # PROVISIONAL in docs/WORK.md pending real post-fix trade data — an owner
-  # call, not decided by this change.
-  max_daily_loss_pct: 15
-  daily_loss_risk_multiple: 3
+  # equity curve). Bug 1 fixes the RELATIVE scaling between windows, which
+  # is doctrine; the anchor's absolute calibration is flagged PROVISIONAL in
+  # docs/WORK.md pending real post-fix trade data — an owner call, not
+  # decided by this change.
+  max_daily_loss_pct: 6.7
+  daily_loss_risk_multiple: 1.34
   # docs/WORK.md item 32. Same derivation and same #258/#259 dependency as
   # `max_daily_loss_pct` above, for the two rolling-return "drawdown brake"
   # windows in src/pipeline.py::_compute_recent_performance
   # (`RiskConfig.drawdown_5d_threshold_pct` /
   # `drawdown_20d_threshold_pct`): was flat -3.0 / -8.0, now
-  # `-(multiple x max_position_risk_pct)` = -(3 x 5) = -15 / -(8 x 5) = -40.
-  # Multipliers (3, 8) UNCHANGED and PROVISIONAL for the same reason —
-  # see src/config.py field comments.
+  # `-(multiple x max_position_risk_pct)`.
+  #
+  # 5-day: 3 x 5 = -15%. UNCHANGED and still the provisional anchor. It
+  # lands exactly on the de-levering ladder's -15% -> 1.0x rung
+  # (src/risk/rules.py::GROSS_LADDER), so at this window the desk's two
+  # drawdown-response systems already agree.
+  #
+  # BUG 2, FIXED 2026-09-04 — 20-day was 8, i.e. -40%. This desk has a
+  # SECOND, older drawdown-response system, the §11.2 peak-to-trough
+  # gross-exposure de-levering LADDER, which de-levers from -8%, is at 1.0x
+  # by -15%, and at -20% drops to 0.5x AND alerts the owner
+  # (GROSS_LADDER_ALERT_PCT). The two were never reconciled: the ladder had
+  # already halved the book and woken the owner while this brake sat
+  # silent, and stayed silent for another twenty points.
+  #
+  #   Minimal honest fix — the 20-day brake must not still be asleep past
+  #   the ladder's own owner-alert point:
+  #
+  #       N_20d <= 20 / max_position_risk_pct = 20 / 5 = 4
+  #
+  # This is TIGHTER than sqrt-time from the 5-day anchor would give
+  # (3 x sqrt(20/5) = 6, i.e. -30%); the ladder constraint binds first.
+  # FULL reconciliation of the two systems is a real open design question
+  # and an OWNER call — see docs/WORK.md item 32.
   drawdown_5d_risk_multiple: 3
-  drawdown_20d_risk_multiple: 8
+  drawdown_20d_risk_multiple: 4
   # Spec §10.3 (owner-ratified 2026-09-01) — this is the concentration
   # TARGET, not a veto. A sector at or over it no longer refuses the next
   # trade in it; the constructor SHRINKS that trade instead, progressively,
@@ -380,8 +413,8 @@ risk:
   # this limit's ONLY remaining job is bounding correlated blow-up risk.
   #
   # THE COST, STATED PLAINLY: at 75% of equity in one sector, an ordinary
-  # 20% sector-wide drawdown costs 15% of equity — FIVE TIMES the 3%
-  # max_daily_loss_pct circuit breaker below, and it will trip the
+  # 20% sector-wide drawdown costs 15% of equity — more than TWICE the 6.7%
+  # max_daily_loss_pct circuit breaker above, and it will trip the
   # de-levering ladder. That is the accepted price of a concentrated
   # trading desk, not an oversight.
   #

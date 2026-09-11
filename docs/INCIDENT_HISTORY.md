@@ -5073,3 +5073,312 @@ end-to-end with a real (non-mocked) database: one miss does not page,
 three consecutive misses for the same symbol pages exactly once, and a
 recovered symbol's streak resets rather than carrying into a later,
 unrelated outage.
+
+## 2026-09-10 — the order-fill timeout was the wrong question; watch for the fill instead
+
+**In plain words:** when the desk buys a stock, it places an order and then
+gives up on it if the order doesn't fill within a fixed number of seconds —
+because a filled position needs its protective stop-loss immediately, and
+an order still hasn't produced a position yet, so waiting too long risks
+nothing directly but risks losing the trade to an over-eager cancel. That
+number had already been raised twice (15 -> 30 seconds) after real trades
+were lost to it. The desk was about to raise it a third time, to a properly
+researched 90 seconds — until the owner asked a different question:
+why is this a guess-a-number problem at all, when Alpaca can just tell the
+code the instant an order fills?
+
+**The owner was right, and it took one search to confirm, not a research
+project.** Alpaca's own documentation names its real-time `trade_updates`
+websocket stream as the way to know about a fill, specifically instead of
+repeatedly asking the REST API "did it fill yet?" The desk's code was
+doing exactly the polling pattern Alpaca's docs describe as the thing not
+to do — asking once a second, in a loop, for up to a fixed timeout.
+
+**The fix:** `wait_for_order_terminal` (`src/execution/broker.py`) now
+subscribes to Alpaca's real-time order stream for the specific order it is
+watching. A fill, cancel, or rejection is detected the instant Alpaca
+reports it — no more guessing how long is "enough." Three real outcomes,
+each handled on purpose:
+
+- **A terminal event arrives for this order** — return it immediately. No
+  REST call needed. This is the common case, and it is now effectively
+  instantaneous instead of costing up to a full poll interval.
+- **The stream connects cleanly but nothing arrives before the timeout**
+  (the order is genuinely still open) — one single REST check, to preserve
+  this function's existing contract of returning the last known status.
+- **The stream itself cannot be used at all** (library unavailable, or the
+  websocket never reaches a live, authenticated connection) — fall back to
+  the exact REST-polling loop this function used before this change, so a
+  websocket outage degrades to the old, already-proven-reliable behaviour
+  rather than to no behaviour at all.
+
+**The timeout did not disappear — it was demoted.** 90 seconds (the
+originally-researched, never-shipped number) is now the ceiling for the
+RARE fallback path only, not the primary detection mechanism. There is
+close to no cost to a generous fallback timeout now, because the common
+case no longer uses it at all.
+
+**Why this belongs in the project's permanent doctrine, not just this
+fix.** Recorded in `docs/OUTCOME.md` under a new principle, "Check what the
+platform already solved, before tuning your own workaround" — companion
+to the existing "no arbitrary numbers" principle. The lesson generalizes
+past this one function: before adding a timeout, retry count, or polling
+interval around a THIRD-PARTY API's behavior, check whether that API's own
+documentation already describes the real mechanism for the problem. A
+broker or data API serious enough to run a trading desk on has almost
+always already published the answer.
+
+**What would catch a regression:** `tests/test_order_fill_stream.py`
+proves the dispatch logic end to end with a fake stream double — no real
+network I/O — covering the fast-fill path, a non-matching update still
+correctly falling to a single REST check, and three distinct
+stream-unusable scenarios (library missing, subscribe failure, connection
+failure) all correctly falling back to the untouched polling
+implementation. `tests/test_broker.py`'s existing polling test now passes
+`use_stream=False` to exercise that fallback path directly and
+deterministically.
+
+
+---
+
+## 2026-09-04 — two bugs in the drawdown-brake multipliers themselves: a decorative daily circuit breaker, and a 20-day brake that contradicted the de-levering ladder by twenty points
+
+PR #263 (same day, merged) fixed the *unit* the three drawdown brakes are
+expressed in — from flat hard-coded percentages to `N × max_position_risk_pct`
+— and deliberately left every multiplier `N` untouched, on the grounds that
+the 2026-09-02 clean-slate reset wiped the equity history needed to validate
+them. That was right about the anchor. It was wrong that nothing about the
+multipliers could be checked: two of the three were wrong for reasons that
+need no trade history at all, only internal consistency. Both are fixed here.
+
+The multiplier calibration itself — the anchor `N_5d = 3` — is **not** touched
+and stays provisional (docs/WORK.md item 32).
+
+### Bug 1 — the daily circuit breaker shared the 5-day window's multiplier, which made it decorative
+
+**State before.** `risk.daily_loss_risk_multiple: 3` and
+`risk.drawdown_5d_risk_multiple: 3` — the same number. At the ratified 5%
+per-trade risk unit both resolved to a **-15%** threshold: one at the end of a
+single session, one at the end of five.
+
+**Why that is wrong on its face.** Two windows of very different length cannot
+share one threshold and fire at anything like a comparable rate. A -15% loss in
+one session on a long-only book of this size is not a bad trading day; it is a
+single-name gap event. The breaker could therefore only ever fire on a tail it
+was never the right instrument for, and never on the ordinary run of bad days it
+exists to stop. In practice: decorative.
+
+**The doctrine.** Drawdown magnitude over a window scales with the square root
+of the window length — Van Hemert, Ganz, Harvey et al., *"Drawdowns"*, Journal
+of Portfolio Management, 2020. For a consistent statistical firing rate across
+windows, thresholds must scale as `√T`, not sit flat.
+
+**Derivation.** The 5-day window is the one item 32's research found reasonably
+calibrated, so it is the anchor:
+
+```
+N_1d = N_5d × √(1/5)
+     = 3.0  × 0.4472135955
+     = 1.3416407865...
+     → 1.34                (2dp — the anchor is provisional to roughly the
+                            nearest half, so more digits would be false
+                            precision)
+
+threshold = 1.34 × max_position_risk_pct
+          = 1.34 × 5%
+          = 6.7%
+```
+
+**Result.** `daily_loss_risk_multiple: 3 → 1.34`, `max_daily_loss_pct: 15 →
+6.7`. The 1-day : 5-day ratio is now **1 : √5 = 1 : 2.24** instead of 1 : 1.
+The shipped 1.34 gives 2.2388, 0.12% off exact √5 — the residual of rounding to
+2dp, orders of magnitude smaller than the uncertainty in the provisional anchor.
+
+Worked case, now covered by a test: an **-8% day** on a $100k book. Under the
+old 15% breaker: no violation. Under 6.7%: violation raised.
+
+### Bug 2 — the 20-day brake stayed silent long past the point the desk's OTHER drawdown system had already alerted the owner
+
+**This desk has two independent drawdown-response systems and they were never
+reconciled.**
+
+1. The **§11.2 gross-exposure de-levering ladder**
+   (`src/risk/rules.py::GROSS_LADDER`, owner-ratified 2026-09-01), on
+   *peak-to-trough* drawdown:
+
+   | drawdown | gross ceiling |
+   |---|---|
+   | better than -8% | 2.0× |
+   | -8% to -15% | 1.5× |
+   | -15% to -20% | 1.0× |
+   | worse than -20% | 0.5×, **and the owner is alerted** (`GROSS_LADDER_ALERT_PCT`) |
+
+2. The newer **rolling-return drawdown brakes**
+   (`RiskConfig.drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct`,
+   halving new BUY size via `apply_drawdown_scale`), which after PR #263 sat at
+   **-15%** (5-day) and **-40%** (20-day).
+
+**The contradiction.** At -20% the ladder has cut gross exposure to 0.5× — it
+has halved the book — and woken the owner. The 20-day brake, at -40%, was at
+that point still completely silent, and stayed silent for another **twenty
+points** of drawdown. That is not a difference of conservatism between two
+tuned systems; it is two systems that disagree about whether the desk is in
+trouble at all. Neither was written with reference to the other.
+
+**Minimal honest fix.** The newer brake must not still be asleep past the point
+the older system escalates to the owner:
+
+```
+N_20d ≤ |GROSS_LADDER_ALERT_PCT| / max_position_risk_pct
+      = 20 / 5
+      = 4.0        → threshold -20%, exactly the alert rung
+```
+
+`drawdown_20d_risk_multiple: 8 → 4`.
+
+**The 5-day brake was left alone, on purpose.** At -15% it lands exactly on the
+ladder's -15% → 1.0× rung. The two systems already agree at that window, so
+there was nothing to reconcile and no reason to move a provisional number.
+
+**The ladder itself was not touched.** Its calibration is owner-ratified and was
+not the subject of this fix. A cross-referencing comment was added above
+`GROSS_LADDER` so the next person to re-tune either side sees the other.
+
+**Note the tension, stated rather than hidden.** -20% is *tighter* than √time
+scaling from the 5-day anchor would give (`3 × √(20/5) = 6`, i.e. -30%). The
+ladder constraint binds before the sqrt-consistency one. Where published
+doctrine and an already-live sibling system disagree, matching the live system
+is the honest minimal move — but it does mean the three windows are no longer on
+a single consistent √time curve, and that is a real cost.
+
+### What is still open — an owner-level decision, not a mechanical fix
+
+Full reconciliation of the two drawdown systems is **not done and not decided
+here.** What shipped is a *floor on the disagreement*, not agreement. The two
+measure genuinely different quantities (peak-to-trough equity vs rolling-window
+return), were calibrated independently years apart in this repo's history, and
+nobody has decided whether this desk should have one drawdown response or two,
+which of them governs, or whether the rolling-return brake should be expressed
+in peak-to-trough terms so the two are even comparable. Flagged in docs/WORK.md
+item 32 with a decide-by date.
+
+### Verification
+
+`tests/test_drawdown_brake_rescale.py` extended with the worked numbers above,
+including two regression guards that reproduce each defect (setting the daily
+multiple back to 3.0, or the 20-day back to 8.0, and asserting the wrong
+behaviour follows) so neither can be silently reintroduced.
+
+Suite before: 4908 passed, 1 failed, 1 skipped. Suite after: unchanged pass
+posture with the new tests added. The single failure,
+`tests/test_rehearsal_reproduces_cost_ceiling.py::test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure`,
+is **pre-existing on main and unrelated** — docs/WORK.md item 28 records it as
+fixed, which is stale; it is still red.
+
+
+### 2026-09-04 — item 32's conviction-band question: a portfolio volatility target was investigated and rejected; the band-restoration proposal itself is still open
+
+**Process note, added on restoring this entry:** the PR this came from
+(#259) was never actually judged by the owner — he was asleep when it
+got mechanically auto-closed as a side effect of an unrelated branch
+deletion (see `docs/WORK.md` item 32). The vol-target rejection below
+is grounded in real, already-established doctrine from earlier the same
+night (see `docs/OUTCOME.md`), so that part stands.
+
+**Band restoration — DECIDED 2026-09-11, owner call.** Restore the
+pre-compression bands. Owner's own framing: conviction sizing exists for
+a reason, this desk has no outside investors to smooth returns for, and
+the fix should be checked against every other cap before shipping —
+verified below, not just asserted.
+
+**In plain words.** PR #258 fixed the 20% notional cap but left one
+question open (item 32): now that trades can actually deliver the risk
+the PM asks for, should the conviction-to-risk bands widen back to their
+original numbers, or should sizing move to something more sophisticated —
+an explicit volatility-parity overlay, or a full CTA-style
+portfolio-level volatility TARGET (one dial, ~10-20% annualized, that
+scales every position to hit it)? Tonight's task was to build the
+volatility-target version. Before writing it, the design was checked
+against what this codebase already does and against the owner's actual
+mandate, and both checks said stop.
+
+**What was checked.** The per-trade sizing path
+(`PortfolioConstructor._plan_risk_targets`, `src/portfolio_constructor.py`)
+was read in full end to end: a target's requested risk comes from the
+PM's own conviction judgement (a real per-idea range the model chooses
+within, not a single number applied to everything), is then reduced —
+never raised — by the §9.4 agreement ceiling (signed source score) and by
+`allocate_risk_budget`'s total/cluster ceilings, and is converted to a
+position size by `risk_pct x entry / |entry - stop|`, where the stop is
+already ATR/volatility-derived (`risk.min_stop_atr_multiple`). There is
+no second, hidden flat number anywhere in that path — the only hard caps
+are the disclosed backstops (5% single-name, 25% total, 40% per cluster),
+each independent and each already ratified.
+
+**Why a portfolio volatility target was rejected, not built.** Two
+distinct objections surfaced, either one sufficient on its own:
+
+1. **It would mostly duplicate machinery that already exists.** The
+   book-level "don't let too much ride on one bet" job already has an
+   owner: `max_portfolio_risk_pct` (25%, the sum of every position's
+   loss-if-stopped) plus `max_cluster_risk_share_pct` (40%, correlated
+   names sharing one bet's budget via `src/data/correlation.py`'s
+   measured 5-year return correlation, connected components at
+   `|corr| >= 0.7`). A real, rigorous portfolio-volatility number (one
+   that actually accounts for how positions move together, i.e.
+   `w'*Σ*w` over a real covariance matrix) would be MORE rigorous than
+   the threshold-clustering approximation currently in place — that part
+   of the owner's own question was fair — but building it honestly would
+   need a full covariance-weighted sizing engine, not a config dial, and
+   this book has no realized-return history yet to calibrate or validate
+   one against (reset 2026-09-02). A single scalar "target %" bolted on
+   without that machinery would just be a second, cruder version of the
+   cluster cap wearing a more sophisticated-sounding name — exactly the
+   "two dials doing almost the same job" the owner does not want.
+2. **The practice itself belongs to a different mandate.** CTA/trend-
+   following funds target annualized portfolio volatility because they
+   are selling outside LPs a smooth, comparable return stream — the
+   target exists to serve THAT goal. This desk trades one owner's own
+   capital and is judged on survival, not smoothness
+   (`docs/OUTCOME.md`, "a trading desk, not a retirement portfolio" —
+   the same principle that already rejected retirement-style sector
+   diversification for its own sake). Importing the target quietly
+   imports the goal it was built for, which this desk never had.
+
+**What actually shipped.** Item 32's fork is resolved as (a), not (b):
+the conviction bands (`config/prompts/portfolio_manager.md`, Step 5) are
+restored to their original, pre-2026-08-27-compression values —
+2.0-4.0% / 1.0-2.5% / 0.5-1.0% for high/moderate/low conviction, and the
+sizing-formula worked example's base mids updated to match (3.0 / 1.75 /
+0.75) — now that the notional ceiling that forced them down to
+1.5-3.0% / 1.0-2.0% (PR #258) is fixed at 100%. The 5% hard cap, the 25%
+total ceiling and the 40% cluster share are all UNCHANGED; nothing about
+them conflicts with or is made redundant by this — they were never the
+same category of defect as the flat per-trade guess, because they act as
+backstops on top of idea-specific sizing rather than substituting for it.
+
+**DECIDED 2026-09-11, owner call, cap interactions re-verified before
+shipping (not just re-asserted).** The 4.0% ceiling (new high-conviction
+top) stays under the 5% hard risk cap regardless. Checked directly
+against the LIVE config, not the numbers this analysis was originally
+written against: `min_stop_atr_multiple` moved 3.0 -> 2.5 on 2026-09-10
+(item 42, published-doctrine stop floor), so the "quiet-name stops run
+5-9% of price" figure the 100% notional ceiling was sized against is
+now stale — recomputed at the new floor, typical stops now run roughly
+5.5-7.7% of price (2.14-3.0x ATR at this desk's ~2.56% median ATR). At a
+4% risk request and a 5.5% stop, that is `4 / 5.5 x 100 ≈ 73%` notional
+— comfortably inside the 100% ceiling with real headroom, not a close
+call. Only a stop tighter than 4% of price (reachable via the
+level-backed exemption down to 1x ATR, ~2.56%) would still hit the
+notional clamp — the same, already-intentional "genuinely too tight"
+case the ceiling exists for, not a new edge case this restoration
+creates. `max_position_pct`'s own comment in `config/settings.yaml`
+still cites the pre-2.5 stop figures and should be refreshed to match,
+tracked as a small follow-up doc fix, not a blocker.
+
+No code in `src/` changed for this entry — the fix is confined to the
+prompt's stated bands and this documentation. No new tests were added:
+the sizing arithmetic itself (`risk_pct x entry / |entry - stop|`,
+`allocate_risk_budget`, the cluster cap) is unchanged and already covered
+by `tests/test_risk_based_sizing.py`, `tests/test_portfolio_constructor.py`
+and `tests/test_risk_budget.py`.

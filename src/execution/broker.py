@@ -9,6 +9,10 @@ from pathlib import Path
 
 import yfinance as yf
 from alpaca.trading.client import TradingClient
+try:
+    from alpaca.trading.stream import TradingStream
+except ImportError:  # pragma: no cover - optional dependency surface
+    TradingStream = None
 from alpaca.trading.requests import (
     MarketOrderRequest, LimitOrderRequest, StopLimitOrderRequest,
     TakeProfitRequest, StopLossRequest, ReplaceOrderRequest,
@@ -57,13 +61,21 @@ _ETF_SECTORS = {
 _BROKER_HTTP_TIMEOUT = 30.0
 _SECTOR_LOOKUP_TIMEOUT_S = 10  # per-symbol ceiling on yfinance .info hang in _get_sector
 
-# A marketable limit on a liquid US equity should normally fill immediately.
-# This is deliberately longer than the old 15-second guard (which production
-# evidence showed canceling ordinary accepted entries) but bounded well below
-# a stale DAY order. Later entries in a submission burst have already rested
-# while earlier entries are finalized, so 30 seconds is a conservative floor,
-# not a blind per-order sleep added to every order.
-_ENTRY_FILL_TIMEOUT_S = 30.0
+# 2026-09-10: 15 -> 30 -> 90. `wait_for_order_terminal` now watches Alpaca's
+# real-time trade_updates stream first (see that method) — a fill is
+# detected the instant Alpaca reports it, not on the next poll tick, so this
+# number no longer trades speed against safety in the common case. It is
+# now purely the ceiling for the RARE path where the stream itself could
+# not be used (import/auth/network failure) and the code falls back to REST
+# polling exactly as before. 90 seconds is the originally-researched value
+# (an ordinary marketable limit on a liquid US equity fills in seconds, but
+# a stale/illiquid DAY order should be given real room before being pulled)
+# — it was never actually shipped because the fallback-only framing didn't
+# exist yet. Bounded well below a stale DAY order regardless. Later entries
+# in a submission burst have already rested while earlier entries are
+# finalized, so this is a conservative ceiling, not a blind per-order sleep
+# added to every order.
+_ENTRY_FILL_TIMEOUT_S = 90.0
 
 # Spec §11.1, guard 1: "stop placement retries immediately and hard on
 # failure". IMMEDIATELY — at the point of failure, inside the same call,
@@ -392,6 +404,7 @@ class AlpacaBroker:
                  kill_switch_path: str | None = None):
         self.api_key = api_key
         self.secret_key = secret_key
+        self._paper = paper
         self.client = TradingClient(api_key, secret_key, paper=paper)
         _install_http_timeout(self.client)
         self._data_client = None
@@ -1957,35 +1970,186 @@ class AlpacaBroker:
             "filled_avg_price": filled_avg_price,
         }
 
+    #: `OrderStatus`/`TradeEvent` values that mean "this order will not
+    #: change again" — shared between the stream and polling paths so the
+    #: two mechanisms can never quietly disagree about what "terminal" means.
+    _ORDER_TERMINAL_STATES = frozenset({
+        "filled", "canceled", "cancelled", "expired", "rejected",
+        "done_for_day", "replaced",
+    })
+
     def wait_for_order_terminal(
         self,
         order_id: str,
         timeout_seconds: float = 15.0,
         poll_interval: float = 1.0,
+        use_stream: bool = True,
     ) -> str | None:
-        """Wait for an order to reach a terminal state and return its last known status."""
+        """Wait for an order to reach a terminal state and return its last known status.
+
+        2026-09-10: watches Alpaca's real-time `trade_updates` websocket
+        first — see `_wait_for_order_terminal_via_stream` — instead of
+        polling `get_order_by_id` on a fixed interval. A fill, cancel or
+        reject is detected the instant Alpaca reports it, so the timeout no
+        longer trades detection speed against giving a slow-to-fill order
+        enough room; it is now purely a ceiling. This was the actual
+        question the owner asked when the fixed-timeout number was under
+        discussion: not "what should the number be" but "why are we
+        guessing at all when Alpaca tells you the instant it happens."
+
+        Three distinct outcomes from the stream attempt, each handled
+        differently on purpose:
+          - a terminal event arrived for THIS order -> return it immediately,
+            no REST call needed at all.
+          - the stream connected fine but nothing terminal arrived before
+            `timeout_seconds` (a genuinely still-open order) -> one single
+            REST check, to preserve this function's existing contract of
+            returning the LAST KNOWN status (which may be non-terminal,
+            e.g. "new") rather than None.
+          - the stream itself could not be used at all (library missing,
+            auth/network failure) -> fall back to the full REST polling
+            loop exactly as this function worked before this change, so a
+            websocket outage degrades to the old behaviour rather than to
+            no behaviour.
+
+        `use_stream=False` skips straight to REST polling — an explicit
+        escape hatch for a misbehaving stream in production, and what unit
+        tests use to exercise the polling path deterministically without
+        real network I/O.
+        """
+        if use_stream:
+            status, connected = self._wait_for_order_terminal_via_stream(
+                order_id, timeout_seconds,
+            )
+            if status is not None:
+                return status
+            if connected:
+                return self._get_order_status_once(order_id)
+            logger.warning(
+                "order-fill stream unavailable for %s — falling back to REST polling",
+                order_id,
+            )
+        return self._wait_for_order_terminal_via_polling(
+            order_id, timeout_seconds, poll_interval,
+        )
+
+    def _get_order_status_once(self, order_id: str) -> str | None:
+        """Single REST read of an order's current status, lowercased. None
+        on any failure — callers already treat None as "no information"."""
+        try:
+            order = self.client.get_order_by_id(order_id)
+            status = str(getattr(getattr(order, "status", None), "value",
+                                 getattr(order, "status", ""))).lower()
+            return status or None
+        except Exception as exc:
+            logger.warning("Failed to read order %s: %s", order_id, exc)
+            return None
+
+    def _wait_for_order_terminal_via_stream(
+        self, order_id: str, timeout_seconds: float,
+    ) -> tuple[str | None, bool]:
+        """Block until Alpaca's `trade_updates` websocket reports a terminal
+        event for `order_id`, or `timeout_seconds` elapses.
+
+        Returns `(status, connected)`:
+          - `(status, True)` — a terminal event for this order arrived;
+            `status` is one of `_ORDER_TERMINAL_STATES`.
+          - `(None, True)` — the stream connected and ran cleanly for the
+            full window but nothing terminal arrived for this order (it is
+            genuinely still open, or belongs to a different account feed
+            entirely — either way the stream itself is not at fault).
+          - `(None, False)` — the stream could not be used at all: the
+            `alpaca-py` streaming extra is not installed, or the websocket
+            never reached a running/authenticated state within the window.
+            Callers must fall back to REST polling on this outcome, not on
+            `(None, True)`.
+
+        Runs Alpaca's own `TradingStream` (the same class its own docs
+        recommend for order-fill notification instead of polling) on a
+        background thread via its public `run()`/`stop()` API — deliberately
+        NOT reaching into its private `_run_forever` coroutine, so this
+        keeps working across `alpaca-py` versions that change internals.
+        Never raises: any failure here is reported as `(None, False)` so the
+        caller's fallback path is the only thing that can fail loudly.
+        """
+        if TradingStream is None:
+            return None, False
+
+        result: dict = {"status": None}
+        matched = threading.Event()
+        connected = threading.Event()
+        run_error: list[Exception] = []
+        stream = TradingStream(self.api_key, self.secret_key, paper=self._paper)
+
+        async def _handler(update) -> None:
+            try:
+                connected.set()
+                order = getattr(update, "order", None)
+                if str(getattr(order, "id", "") or "") != str(order_id):
+                    return
+                status = str(getattr(getattr(order, "status", None), "value",
+                                     getattr(order, "status", ""))).lower()
+                if status in self._ORDER_TERMINAL_STATES:
+                    result["status"] = status
+                    matched.set()
+                    await stream.stop_ws()
+            except Exception:
+                logger.warning(
+                    "order-fill stream handler error for %s", order_id,
+                    exc_info=True,
+                )
+
+        try:
+            stream.subscribe_trade_updates(_handler)
+        except Exception as exc:
+            logger.warning("order-fill stream subscribe failed: %s", exc)
+            return None, False
+
+        def _run() -> None:
+            try:
+                stream.run()
+            except Exception as exc:
+                run_error.append(exc)
+
+        thread = threading.Thread(
+            target=_run, name=f"order-fill-stream-{order_id}", daemon=True,
+        )
+        thread.start()
+        matched.wait(timeout=timeout_seconds)
+        try:
+            stream.stop()
+        except Exception:
+            pass  # best-effort; the background thread is a daemon regardless
+        thread.join(timeout=5.0)
+
+        if not matched.is_set() and run_error and not connected.is_set():
+            # Never reached a live, authenticated connection — treat as
+            # "stream unusable", not "order still open".
+            return None, False
+        return result["status"], True
+
+    def _wait_for_order_terminal_via_polling(
+        self,
+        order_id: str,
+        timeout_seconds: float,
+        poll_interval: float,
+    ) -> str | None:
+        """The original REST-polling implementation, unchanged, kept as the
+        fallback path for when the real-time stream cannot be used at all."""
         deadline = time.monotonic() + timeout_seconds
-        terminal_states = {
-            "filled",
-            "canceled",
-            "cancelled",
-            "expired",
-            "rejected",
-            "done_for_day",
-            "replaced",
-        }
         last_status = None
 
         while time.monotonic() < deadline:
             try:
                 order = self.client.get_order_by_id(order_id)
-                status = str(getattr(getattr(order, "status", None), "value", getattr(order, "status", ""))).lower()
+                status = str(getattr(getattr(order, "status", None), "value",
+                                     getattr(order, "status", ""))).lower()
             except Exception as exc:
                 logger.warning("Failed to poll order %s: %s", order_id, exc)
                 return last_status
 
             last_status = status or last_status
-            if status in terminal_states:
+            if status in self._ORDER_TERMINAL_STATES:
                 return status
             time.sleep(poll_interval)
 
