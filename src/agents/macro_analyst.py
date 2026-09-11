@@ -50,33 +50,48 @@ class MacroAnalystAgent(BaseAgent):
         claims = macro_summary.get("jobless_claims", {}) or {}
 
         def _stale(d: dict, monthly: bool = False, weekly: bool = False) -> str:
-            """Per-cadence staleness label.
+            """Freshness label for one indicator's heading.
 
-            Daily series (VIX, yields, DFF, HY OAS): >3 business days
-            without a print is genuinely stale. Monthly series (CPI/PCE,
-            UNRATE) are indexed at the reference-month START and released
-            weeks later — their staleness_days runs 20-51 business days
-            when the data is the freshest print that EXISTS. Labeling
-            that "(stale 36d)" taught the model to treat normal BLS/BEA
-            cadence as degraded data: 2026-08-18..20 production runs
-            cited "stale inflation figures" among the reasons for
-            low-confidence / 55%-cash guidance. Monthly series are only
-            flagged once a release cycle has actually been missed.
+            NOT a day count any more (2026-09-11). The previous version
+            labelled an indicator stale past a per-cadence calendar
+            threshold (>3 business days daily, >55 monthly, >10 weekly).
+            Both the threshold and the idea were wrong: the reading FRED
+            publishes IS the current reading whatever its age, so age
+            measures the publication calendar, not data quality. The
+            provider now states, per series, whether the held value is the
+            latest published reading and whether a newer print is overdue
+            (`src/data/macro.py::SeriesFreshness`); this renders that.
 
-            weekly=True (ICSA, and DTWEXBGS which publishes with a similar
-            lag despite being a daily-index series) uses a >10 business-day
-            threshold — live-verified 2026-08-30: ICSA's latest print
-            trailed by ~6 business days and DTWEXBGS's by ~7, both NORMAL
-            release cadence, not staleness.
+            Age is still shown, because "the current CPI print is 36 days
+            old" is real, useful context for the seat's reasoning — it is
+            just presented as the publication cadence it is, never as a
+            defect. The `monthly` / `weekly` flags survive only to word
+            that sentence; they no longer gate anything.
             """
+            freshness = d.get("freshness")
             s = d.get("staleness_days")
-            if not isinstance(s, int):
-                return ""
-            if monthly:
-                return f" (stale {s}d — release cycle missed)" if s > 55 else ""
-            if weekly:
-                return f" (stale {s}d)" if s > 10 else ""
-            return f" (stale {s}d)" if s > 3 else ""
+            age = f", {s}d old" if isinstance(s, int) else ""
+            cadence = "monthly" if monthly else "weekly" if weekly else "daily"
+            if freshness == "overdue":
+                detail = d.get("freshness_detail") or ""
+                return (
+                    f" (OVERDUE — a newer print is past due and has not "
+                    f"arrived{'; ' + detail if detail else ''}. Treat the "
+                    f"value below as a reading that should already have been "
+                    f"superseded, not as current.)"
+                )
+            if freshness == "empty":
+                return " (NO DATA returned this run — not a reading of any kind)"
+            if freshness == "current":
+                return (
+                    f" (latest published reading{age}; normal {cadence} "
+                    f"release cadence)"
+                )
+            # None/unknown: freshness could not be established this run.
+            return (
+                f" (latest reading we hold{age}; freshness UNVERIFIED — "
+                f"FRED release metadata unavailable this run)"
+            )
 
         universe_text = ", ".join(universe) if universe else "N/A"
 
@@ -267,27 +282,39 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
         """Soft Python-side floor for two `macro_analyst.md` discipline
         rules the LLM occasionally violates by self-inflating.
 
-        Prompt and code now share the same PER-CADENCE staleness
-        semantics (see the Confidence Calibration section of the prompt
-        and `_stale()` above): daily series are stale past 3 business
-        days; monthly series (CPI/PCE, UNRATE) only once a release cycle
-        has been missed (> 55 business days) — their staleness_days runs
-        20-51 on perfectly-normal BLS/BEA cadence. We enforce only the
-        two most flagrant violations:
+        Both rules used to be CALENDAR-DAY tests and both were wrong for
+        macro data. Rule 2 required `staleness_days <= 1` on two of the six
+        primary indicators; FRED's real publication lag on its daily series
+        is about 2 business days, so the bar demanded a print that does not
+        exist and the rule fired on 14 of 27 retained production runs (52%,
+        2026-08-17..09-02) — the macro seat's regime call was being thrown
+        away about half the time for being punctual. Rule 1 had the same
+        shape at a looser number (>3 daily, >55 monthly). Full reasoning,
+        the measurement, and what replaced the day count:
+        `src/data/macro.py::SeriesFreshness`.
 
-        1. `confidence == "high"` requires ALL six primary indicators
-           non-null and fresh BY THEIR OWN CADENCE. Any null / stale →
-           downgrade to "medium". ("high" is the LLM's most-impactful
-           confidence call; PM's Step 1 evening-tilt scales sizing by
-           it, so a self-inflated "high" with stale data leaks into
-           position size.)
+        The test now is the one that matches how macro data actually
+        publishes: an indicator counts when it is the LATEST PUBLISHED
+        reading for its series and no newer print is overdue. A CPI figure
+        five weeks old is the current figure; a daily yield two days behind
+        is the current yield. What does NOT count is an indicator that is
+        missing, or one whose next print is past due by that series' own
+        measured cadence and publication lag (a publication failure, a
+        fetch failure, a shutdown) — that is real staleness and it still
+        blocks, which is the half of the old gate worth keeping.
 
-        2. `regime_shift == True` requires ≥ 2 primary indicators with
-           `staleness_days <= 1` per the prompt's "Regime-Shift
+        1. `confidence == "high"` requires all six primary indicators to
+           be present with a usable reading and none overdue. ("high" is
+           the LLM's most-impactful confidence call; PM's Step 1
+           evening-tilt scales sizing by it, so a self-inflated "high" on
+           absent data leaks into position size.)
+
+        2. `regime_shift == True` requires >= 2 primary indicators
+           present and not overdue, per the prompt's "Regime-Shift
            Detection" rule. Below that, clear `regime_shift` and
-           `shift_reason` — calling a flip on stale data is guessing,
-           and PM treats `regime_shift=true` as a "size appropriately
-           and name the flip" trigger.
+           `shift_reason` — calling a flip when the data is missing is
+           guessing, and PM treats `regime_shift=true` as a "size
+           appropriately and name the flip" trigger.
 
         Logs a warning on each override so the operator can see WHICH
         side of the gate misbehaved (LLM ignored prompt rule vs the
@@ -297,67 +324,60 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
             "vix", "treasury", "fed_funds_rate",
             "inflation", "unemployment", "credit_spread",
         )
+        _USABLE = {"current", "unknown"}
+        _BLOCKING = {"overdue", "empty"}
 
-        # Build staleness map. Missing dict / non-int staleness → None
-        # (treated as "not provably fresh", which fails the high/shift
-        # gates). Mirrors the user-message builder's `_stale()` helper
-        # which uses the same `isinstance(s, int)` check.
-        staleness: dict[str, int | None] = {}
+        # Per-indicator freshness state, as reported by the provider.
+        #
+        # A caller that predates the `freshness` field (an older test
+        # double, a replayed checkpoint) is not assumed fresh and is not
+        # assumed broken: `staleness_days is None` means "no data at all"
+        # by that field's own long-standing contract (see
+        # `MacroDataProvider._staleness_days`), so it maps to "empty"; any
+        # real age maps to "unknown", which is usable but unverified. That
+        # is the honest reading of a payload that cannot answer the
+        # question, and it is what keeps this gate reachable instead of
+        # recreating the defect in a new form.
+        state: dict[str, str] = {}
         for key in primary_keys:
             d = macro_summary.get(key)
             if not isinstance(d, dict) or not d:
-                staleness[key] = None
+                state[key] = "empty"
                 continue
-            s = d.get("staleness_days")
-            staleness[key] = s if isinstance(s, int) else None
+            reported = d.get("freshness")
+            if reported in _USABLE or reported in _BLOCKING:
+                state[key] = str(reported)
+                continue
+            state[key] = "empty" if d.get("staleness_days") is None else "unknown"
 
-        # Per-cadence staleness thresholds, matching `_stale()` in the
-        # user-message builder and the prompt's Confidence Calibration
-        # section. Monthly series (CPI/PCE, UNRATE) are indexed at the
-        # reference-month start and print weeks later, so their
-        # staleness_days runs 20-51 business days when the data is the
-        # freshest print that EXISTS. The old flat `> 3` gate therefore
-        # made confidence='high' UNREACHABLE in production — every 'high'
-        # was silently downgraded on normal BLS/BEA cadence, and PM's
-        # evening-tilt sizing never saw a high-confidence macro call.
-        _MONTHLY = {"inflation", "unemployment"}
-        _monthly_stale_after = 55
+        blocked = [k for k, v in state.items() if v in _BLOCKING]
 
-        def _is_stale(key: str, v: int | None) -> bool:
-            if v is None:
-                return True
-            return v > (_monthly_stale_after if key in _MONTHLY else 3)
-
-        null_or_stale = [
-            k for k, v in staleness.items() if _is_stale(k, v)
-        ]
-
-        # Rule 1: high confidence requires every indicator present and
-        # fresh by its own cadence.
-        if analysis.confidence == "high" and null_or_stale:
+        # Rule 1: high confidence requires every indicator present, and no
+        # indicator whose next print is overdue.
+        if analysis.confidence == "high" and blocked:
             logger.warning(
                 "Macro sanity-check: LLM emitted confidence='high' but "
-                "indicator(s) %s are stale by their own cadence or null/"
-                "missing — downgrading to 'medium' per macro_analyst.md "
-                "Confidence Calibration rule.",
-                ", ".join(null_or_stale),
+                "indicator(s) %s are missing or their next print is OVERDUE "
+                "— downgrading to 'medium' per macro_analyst.md Confidence "
+                "Calibration rule.",
+                ", ".join(f"{k} ({state[k]})" for k in blocked),
             )
             analysis.confidence = "medium"
 
-        # Rule 2: regime_shift requires >= 2 fresh indicators.
+        # Rule 2: regime_shift requires >= 2 usable indicators.
         if analysis.regime_shift:
-            fresh = [
-                k for k, v in staleness.items()
-                if isinstance(v, int) and v <= 1
-            ]
-            if len(fresh) < 2:
+            usable = [k for k, v in state.items() if v in _USABLE]
+            if len(usable) < 2:
                 logger.warning(
                     "Macro sanity-check: LLM set regime_shift=True but only "
-                    "%d indicator(s) are fresh (staleness_days <= 1)%s — "
+                    "%d indicator(s) carry a usable latest reading%s — "
                     "clearing regime_shift per macro_analyst.md Regime-Shift "
-                    "Detection rule ('shift requires >= 2 fresh indicators').",
-                    len(fresh),
-                    f" ({', '.join(fresh)})" if fresh else "",
+                    "Detection rule ('shift requires >= 2 indicators whose "
+                    "latest published reading is in hand and not overdue'). "
+                    "Blocked: %s.",
+                    len(usable),
+                    f" ({', '.join(usable)})" if usable else "",
+                    ", ".join(f"{k}={state[k]}" for k in blocked) or "none",
                 )
                 analysis.regime_shift = False
                 analysis.shift_reason = ""

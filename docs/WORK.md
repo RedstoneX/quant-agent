@@ -83,8 +83,7 @@ blocking decision; the mechanism is live either way.
 
 **RATIFIED 2026-09-03 — the silence-watchdog threshold (item 17c) set to 2
 windows (~1hr of total desk-wide silence), not the 6-window placeholder.**
-See `src/silence_watchdog.py` (`DEFAULT_SILENT_WINDOW_THRESHOLD`) and
-`docs/INCIDENT_HISTORY.md`.
+See `docs/INCIDENT_HISTORY.md`.
 
 **DEFERRED 2026-09-03 — a second, independent alert channel beyond
 Telegram.** Owner decision: not now, bigger problems to solve first;
@@ -119,22 +118,14 @@ macro, earnings, smart_money, evening) has data-quality issues — empty
 fields, silent death, or empty data passed to the PM as if it were real.
 Audited from real production logs, not assumed. Ranked by measured severity:
 
-1. **Earnings — worst, fixed.** 12 of 67 filings extracted ZERO figures
-   (bad section-matching); fixed via SEC's structured XBRL API. See
-   `docs/INCIDENT_HISTORY.md`.
-2. **Smart money — fixed.** Token ceiling was 13x smaller than every
-   other seat with no measured justification, truncating a real call in
-   production. See `docs/INCIDENT_HISTORY.md`.
-3. **Tech analyst — already fixed by an earlier 2026-09-02 session**
-   (`thesis_invalid_if` null crash); confirmed no recurrence post-deploy.
+(Items 1-3 and 5's full write-ups already live in `docs/INCIDENT_HISTORY.md`;
+see the struck-through index above for status.)
+
 4. **News analyst — root cause found and fixed: one dropped opening quote
    broke whole-document JSON parsing, not a real 4-field gap.** See
    `docs/INCIDENT_HISTORY.md`. **Still open:** a second, different
    failure (a dropped symbol key) — left unfixed, can't be auto-repaired
    without inventing data.
-5. **Evening analyst — audited. One real bug fixed, one already-fixed
-   regression confirmed closed, one is by design.** See
-   `docs/INCIDENT_HISTORY.md`.
 6. **Macro analyst — CORRECTED 2026-09-03, prior "no defect" claim was
    wrong.** Fires on 52% of runs, not rare. NOT a fetch/pipeline defect —
    FRED's real publication lag is 2 days, but the gate's freshness bar
@@ -142,10 +133,7 @@ Audited from real production logs, not assumed. Ranked by measured severity:
    risk-threshold call for the owner — see DECIDE BY below. Full
    measurement: `docs/INCIDENT_HISTORY.md`.
 
-**Also shipped: a bad analyst seat now gets its OWN Telegram alert.**
-Before this, `data_status` anything but "ok"/"empty" only showed up as one
-line inside the routine session-result message — exactly what the alert
-rule below forbids. See PR merging `feat/data-quality-alert`.
+**Also shipped: a bad analyst seat now gets its OWN Telegram alert.** Moved to `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **Standing alert-design rule, reiterated by the owner 2026-09-02 (already
 in effect for margin/naked-position alerts, now extended to data quality):
@@ -355,68 +343,18 @@ looks — the board, `docs/phases.yaml`'s `rehearsal_rig` entry, and here.
   Reported, not fixed — it is a decision about what the acceptance test
   should now assert, not a bug with an obvious repair.
 
-**Config drift is closed (2026-08-28).** `config/settings.yaml` in git now
-matches the production box byte for byte. Until this change the box carried
-five hand-edited values that existed nowhere in git, so any deploy that lost
-the stash/pop step would have silently reverted them — including the two that
-were raised specifically to end the 2026-08-28 outage. Reconciled:
-
-| setting | was in git | now (and live) |
-| --- | --- | --- |
-| `intraday_scan.enabled` | `false` | `true` |
-| `llm_cost_circuit.daily_cost_limit_usd` | `1.50` | `2.75` |
-| `llm_cost_circuit.session_reserved_exposure_limit_usd` | `1.80` | `2.60` |
-| `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
-| `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
-
-**The Mission Control URL — and a stale preview that was masking a week of
-work (2026-08-28).**
-
-- The correct, production Mission Control address is
-  `https://ovh-vps.wallaby-bowfin.ts.net/cockpit/`. Tailscale Serve proxies
-  tailnet-only port 443 to the qamc API on `127.0.0.1:8800`.
-- The qamc API binds loopback-only by design (`QUANT_AGENT_API_HOST=127.0.0.1`
-  in `quant-agent-api.service`). Tailscale Serve, not the bind address, is what
-  makes it reachable. Do not "fix" reachability by rebinding the service.
-- `http://100.111.170.97:8810/cockpit` is NOT Mission Control. It was
-  `ops/preview/branch_preview.py`, the ephemeral branch-preview server,
-  running as the parked `dev` account out of
-  `/home/dev/projects/quant-agent-dashboard`. Its own module docstring states
-  it has no systemd unit and no auto-start and is meant to be killed after a
-  review session.
-- It was started 2026-08-21 16:16 ET and was still running on 2026-08-28,
-  seven days later. It served a bundle built 2026-08-21 09:43 containing no
-  dockview layout key at all — predating PR #120 entirely. None of the cockpit
-  trader-view work (PR #120, pass 2 via PR #130, pass 3 via PR #137) was
-  visible at that address.
-- The orphaned process (PID 2267757) was killed on 2026-08-28. Port 8810 is
-  now closed. The production URL was re-checked immediately afterward and
-  returned HTTP 200.
-- **Diagnostic worth keeping:** to tell the two apart in one step, compare the
-  hashed bundle filename returned by `curl -sk
-  https://ovh-vps.wallaby-bowfin.ts.net/cockpit/` against whatever else claims
-  to be the cockpit. Different filenames mean something other than production
-  is being served.
-- **Consequence for `feat/telegram-links` (PR #136):** it defaults
-  `notifications.mission_control_url` to the stale
-  `http://100.111.170.97:8810/cockpit` in both `config/settings.yaml` and
-  `src/config.py`. That is being corrected to the HTTPS tailnet host before
-  merge; note it here so the reason is on record.
-- State plainly that this is the likely explanation for the operator
-  repeatedly seeing old cockpit code after deploys that had in fact landed
-  correctly.
+**The correct, production Mission Control address is
+`https://ovh-vps.wallaby-bowfin.ts.net/cockpit/`** (Tailscale Serve proxying
+to the loopback-only qamc API). The 2026-08-28 config-drift reconciliation
+and the stale branch-preview server that was masking a week of cockpit work
+under a different address are both closed; full record moved to
+`docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **A `git checkout` on the box is not a deploy.** The API holds the
 cockpit bundle, so `/cockpit` keeps serving the old one until
 `quant-agent-api.service` is restarted. Always restart it and then
 confirm the hashed bundle filename the server returns matches the one on
 disk under `src/api/static_cockpit/assets/`.
-
-Two corrections to the 2026-08-28 notes recorded elsewhere in this file: the
-git baseline for `daily_reserved_exposure_limit_usd` was `1.90`, not `3.20`
-(`3.20` was itself an earlier uncommitted box value), and `daily_cost_limit_usd`
-was also a git delta — the box had been running `2.75` against a committed
-`1.50`.
 
 **These are not the final values.** `max_paid_sessions_per_mode_per_day: 8` and
 `daily_reserved_exposure_limit_usd: 5.50` are stopgaps that the four
@@ -437,17 +375,9 @@ the SHA you get against `git log origin/main` and the ordered backlog below
 to see what production has and what is still pending.
 
 
-**Two findings from 2026-08-27 that outlive this PR:**
+**Two findings from 2026-08-27 that outlive this PR** (the fixed
+benchmark-harness finding moved to `docs/INCIDENT_HISTORY.md`, 2026-09-11):
 
-1. **The model benchmark harness was broken two independent ways and nothing
-   detected either.** `ops/model_policy/scenarios.py` stopped importing when
-   Phase 1 (`138edd2`) made `setup_type` required — same day — AND it had
-   carried a backslash inside an f-string expression since `2016c9b`
-   (2026-08-14), which is a SyntaxError on Python 3.11, the project's declared
-   floor and what CI runs. Local dev is 3.12, so it parsed here and never
-   there. `tests/test_ops_scripts_importable.py` now imports every module
-   under `ops/` and `scripts/` and rejects 3.12-only f-strings, because
-   `pytest` collects `tests/` only and that blind spot is what let both sit.
 2. **The LLM-spend baseline is contaminated** — see the annotated
    measured-spend section below. Do not build allocation conclusions on it.
 
@@ -503,12 +433,8 @@ owner reviewed a brief written for an autonomous overnight session
 creating it was itself a document-authority mistake this file's own rule
 exists to prevent) and corrected it on the spot:
 
-- **Short selling ships finished and enabled, not behind a flag.** An earlier
-  draft proposed shipping Phase 5 stages 2-3 disabled by default. The owner
-  rejected that: this is a paper account that resets, markets are closed,
-  there are no users and no real money, and a disabled feature is unvalidated
-  code — the point of reaching the finish line is to surface the next layer
-  of bugs. The gate is completeness and verification, not a switch.
+- **Short selling ships finished and enabled, not behind a flag** — moved to
+  `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 - **The next session runs autonomously overnight and must not ask him
   anything.** It reports decisions afterward, in plain language, for him to
   overrule.
@@ -609,11 +535,19 @@ instead ("Halve allocation per R/R enforcement policy" appears verbatim on
 XLF, XLE x2, XLB). So the floor both blocks and shrinks, and only the blocking
 half is counted above.
 
-It rests on a fake number. Evidence, verbatim from the record: *"PM's reasoning
-assumes R/R 1.67 but the executed order has R/R 1.18"* — the same trade,
-evaluated twice, with different stop geometry. Cause is the ATR stop FLOOR
-overwriting a structural stop, widening the risk denominator and crushing the
-ratio. See `qamc-rr-geometry-defect`.
+It rests on the ATR floor overwriting a real level. Evidence, `run-64290730`
+(2026-09-01): SLB entered at $60.10, stop at $55.50 — exactly the 3.0x ATR
+floor, not a level — over a 15-session hold, for an analyst reward:risk of
+1.28 against a geometric maximum of 1.29. The floor cannot be cleared once it,
+not the level, sets the stop. See `qamc-rr-geometry-defect`.
+
+**RETRACTED, 2026-09-04 — do not re-cite:** the earlier "PM's reasoning
+assumes R/R 1.67 but the executed order has R/R 1.18" example did NOT show
+this mechanism. Re-verification found the stop identical ($61.54) on both
+the analyst's read and the executed order; only the ENTRY price drifted
+between the analysis snapshot and the live fill. The ATR floor was not
+involved. See `docs/QAMC_REMEDIATION_SPEC.md`, the 2026-09-04 correction
+near line 2002.
 
 **The gate fails in BOTH directions, and that is the thing to understand.**
 It refuses good trades on a fabricated ratio (above), AND it waves through
@@ -712,10 +646,8 @@ Full reasoning + test: `docs/INCIDENT_HISTORY.md`. Stop is
 sided correctly at ingestion; the quote moves before construction —
 refusal stands.
 
-**9. Tail causes — 3 of 68 combined. WORKING AS INTENDED.**
-
-Insufficient cash (1), a quote 14.6% off reference rejected as dirty data (1),
-outright broker rejection (1). Not material; do not spend time here.
+**9. Tail causes — 3 of 68 combined. WORKING AS INTENDED.** Moved to
+`docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **10. Slots burned re-proposing names that never fill. PARTIALLY CLOSED,
 re-measured 2026-09-03 — see `docs/INCIDENT_HISTORY.md`.**
@@ -748,11 +680,7 @@ no bars at all, persists it, and pages the owner directly when the share
 crosses a threshold too high to be a coincidental quiet market. Full
 detail: `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 
-**~~12. The desk's own funnel reporting misattributes vetoes. FIXED 2026-09-03.~~**
-
-`_outcome` in `src/pipeline.py` now matches the census script: a constructor
-drop is attributed to the constructor, never to a Risk Manager veto of
-whatever plan survived it. See `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
+**~~12. The desk's own funnel reporting misattributes vetoes. FIXED 2026-09-03.~~** See `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 
 **14. Replace the budget guard — SHIPPED on `feat/replace-budget-reservation`.**
 
@@ -764,8 +692,11 @@ cap as the real defence against a runaway loop. (a), an API-key-level spend
 cap outside our code, is NOT built — flagged in `cost_circuit.py` pointing
 back here, needs the provider's exact limit options verified first.
 
-**(c)'s number is a placeholder, not measured — see the DECIDE BY line
-above.** Everything else in this item is implemented and tested.
+**(c)'s number (40) is measured, not a placeholder** — set from real
+production data (worst COMPLETE session on record made 14 calls; see the
+RECONFIRM note above and `config/settings.yaml`'s own comment on
+`max_calls_per_session`). Everything else in this item is implemented and
+tested.
 
 **15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
 
@@ -778,11 +709,8 @@ needs an owner decision between two competing `read_price_bars`
 implementations (`rescue/price-provenance` branch), a real architecture
 choice, not a mechanical merge.
 
-**16. The afternoon spending reserve — MOOT, deleted with item 14.**
-
-Was 37 unwired lines on `fix/dollar-based-session-cap` (2026-08-29). Item
-14's rewrite deleted the entire projection-based reservation layer this
-belonged to, so there is nothing left to wire in. Nothing to do.
+**16. The afternoon spending reserve — MOOT, deleted with item 14.** Moved to
+`docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **17. The desk can switch itself off silently — DEFECT. Observed, not theorised.**
 
@@ -806,8 +734,10 @@ stopped until a person happens to look. On an unattended desk that is a day
      retried on any later boundary/process, instead of vanishing after one
      failed send. A real second notification channel (beyond Telegram) was
      NOT built — a new dependency/design tradeoff, not a retry-count
-     choice. **DECIDE BY 2026-09-17 — does the desk need a second,
-     independent alert channel beyond Telegram, and if so which one?**
+     choice. **DEFERRED, no due date — see the note above.** (This line
+     used to carry its own "DECIDE BY 2026-09-17" text; PR #234 deferred
+     the decision and removed the DECISIONS PENDING copy but missed this
+     duplicate. One status, recorded once, above.)
   c. **SHIPPED 2026-09-03 — `src/silence_watchdog.py` +
      `scripts/silence_heartbeat.py`**, alerting on "no completed session in
      N scheduled windows", desk-wide. Threshold RATIFIED at 2 (~1hr), not
@@ -931,7 +861,7 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DONE 2026-09-04.** Structural protection replaced the flat "<5 days" window (data-driven, two-close confirmation); 2 of 3 allowed exit claims are now checked against real data; a proven-false claim blocks and alerts. Nothing open. Detail: `INCIDENT_HISTORY.md`, 2026-09-04 "a sell whose stated reason is provably untrue now actually gets stopped", and 2026-09-03 "item 25."
+**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DONE 2026-09-04.** Nothing open. Detail: `INCIDENT_HISTORY.md`, 2026-09-04 "a sell whose stated reason is provably untrue now actually gets stopped", and 2026-09-03 "item 25."
 
 **28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — STILL BROKEN, this file's own FIXED claim was wrong.** Marked FIXED 2026-09-04 (config keys the test forced no longer exist, after item 14's cost-circuit rewrite) but re-verified directly 2026-09-10, three separate times against a clean `origin/main` checkout: this test still fails, identically, every time. Whatever landed did not actually resolve it, and nobody re-checked the claim before writing FIXED. Needs someone to actually read the failure and re-diagnose it — not re-apply the same fix that already didn't work. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys" for the (incomplete) original diagnosis.
 
@@ -1099,20 +1029,14 @@ dig into this specific historical instance now.
 
 No DECIDE BY — revisit only if it recurs.
 
-**36. Congressional (House + Senate) trading data added to smart-money — SHIPPED 2026-09-04.**
-
-Two free, credentialless, cross-checked sources feed `CongressionalTradingProvider`, confirmatory-only (never grows the universe); two real data-loss bugs were found and corrected before merge. Full detail moved to `docs/INCIDENT_HISTORY.md`, 2026-09-04.
+**36. Congressional (House + Senate) trading data added to smart-money — SHIPPED 2026-09-04.** Full detail: `docs/INCIDENT_HISTORY.md`, 2026-09-04.
 
 **Still genuinely undecided:** `smart_money.congress_enabled` remains False (off) — flipping it to True has not been ratified.
 
-**37. Eleven PRs open at once tonight (#249-#262) — merge ORDER matters, see `docs/INCIDENT_HISTORY.md`.** None conflict in logic; several share files (`portfolio_manager.py`/`.md` especially — #257, #259, #261). Full recommended order recorded there so it survives a compaction, not just this session's head.
+**37. Eleven PRs open at once tonight (#249-#262) — merge ORDER matters, see `docs/INCIDENT_HISTORY.md`.**
 
 **~~38. Insider cluster window was 7x the cited research — FIXED 2026-09-04.~~**
-`smart_money.cluster_window_days` was 14 with no rationale; the cited paper
-(Alldredge & Blank, `docs/RESEARCH_FINDINGS.md`:19) defines a cluster as ~2
-days. Corrected to 2. Verified on a fresh live SEC pull: real multi-owner
-clusters this week never spread past 2 days, so nothing real was lost
-narrowing it. Detail: `docs/INCIDENT_HISTORY.md`. Separate, NOT fixed here:
+Detail: `docs/INCIDENT_HISTORY.md`. Separate, NOT fixed here:
 the same paper says size should be relative to holdings, not an absolute
 dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 
@@ -1155,18 +1079,10 @@ one. This is a bookkeeping bar, not a gate on shipping the next fix.
 
 
 **~~A held SHORT makes its sector look SMALLER to the risk engine~~ — DECIDED
-AND BUILT 2026-09-01.** The owner answered the question this item was raised
-to ask: the sector cap measures **concentration, per side**, not net
-directional exposure. Long sector exposure and short sector exposure are now
-tracked independently, each against the same limit, and neither offsets the
-other — *"A long and a short in the same sector is not a hedge... We are
-trading opportunities."*
-
-Gross summing was considered and REJECTED, because it would block a legitimate
-pair trade (long the leader, short the laggard in one hot sector). Ratified as
-spec §12.2 and implemented the same day; the build record, the four
-implementations it reconciled, and the yfinance sector-coverage exposure it
-did NOT fix are all in `docs/QAMC_REMEDIATION_SPEC.md` §12.2.
+AND BUILT 2026-09-01.** Long and short sector exposure are now tracked
+independently, each against the same limit, per spec §12.2 (build record in
+`docs/QAMC_REMEDIATION_SPEC.md` §12.2). Full decision record moved to
+`docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 Shipped alongside it, spec §12.3: the sector limit moved **40% → 75%**, with
 the absolute ceiling at 90%. **The 90 is not owner-ratified** — it was chosen
@@ -1214,14 +1130,9 @@ complete.
 
 **Next, in order (set 2026-08-30) — start here**
 
-Two owner decisions ratified 2026-08-30, recorded as ratified, not inferred:
-
-- **The inverse exchange-traded funds stay in the tradeable list**, not
-  retired. Rex: *"they have their uses they can still be useful for some
-  situations."*
-- **Paid news sources are refused, permanently.** Rex: *"not worth paying for.
-  There has to be other sources available."* Free sources only — closes the
-  open question the previous session left.
+Two owner decisions ratified 2026-08-30 (inverse ETFs stay tradeable; paid
+news sources refused permanently) moved to `docs/INCIDENT_HISTORY.md`,
+2026-09-11.
 
 
 Single ordered list of outstanding work. A session resuming cold should start
@@ -1241,30 +1152,8 @@ decisions from that day are live, not finished, and stay below.
 
 **Owner decisions, 2026-08-27 (ratified in session, not inferred)**
 
-- **Phase 3 runs before the rest of Phase 2.** The spec's stated order is
-  Phase 2 → Phase 3. The owner reordered it on the evidence below. Phase 1
-  already shipped `expected_horizon_sessions`, which is what Phase 3's pace fix
-  needs, so nothing blocks it.
-  *Evidence:* on 2026-08-26/27 the book went to fully flat. The evening
-  reviewer graded its own exits — EPD (5d) **premature**, "thesis may have only
-  been temporarily paused"; MRVL (5d) **premature**, "thesis intact... closed
-  position anyway". Two of the last three exits cut intact theses. Sizing
-  trades more precisely does not help when they are cut on day 5 against a
-  self-referential pace metric.
-- **§3.5 resolved: leave the reviewer's model alone, fix the scenario instead.**
-  The spec's premise — `position_reviewer` runs "the weakest model in the
-  stack" — is contradicted by `ops/model_policy/results/merged.json`:
-  `google/gemini-2.5-flash-lite` scores `quality_min 1.0 / quality_mean 1.0`
-  at `midday_exit`, tied with `openai/gpt-5.5`,
-  `deepseek/deepseek-v4-pro-0813`, `qwen/qwen3.7-flash` and
-  `qwen/qwen3-235b-a22b-2507`, and scores 1.0 on every scenario it was ever
-  measured on. `gpt-5.5` costs ~84x more per review ($0.0927 vs $0.0011) for
-  no measured gain. The real EPD/MRVL failure was a broken pace metric and
-  missing memory, not model weakness. The honest gap is that `midday_exit`
-  ties five of twelve candidates at 1.0 and therefore does not discriminate;
-  the owner chose to build a scenario that does (the EPD shape: metrics
-  improved, reason claims stalling) rather than pay 84x on faith. Routing
-  unchanged.
+- **Phase 3-before-Phase-2 reorder, and the §3.5 reviewer-model question** —
+  both resolved this day, moved to `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 - **Standing autonomy grant.** The owner instructed that work should not halt
   at phase gates for approval. Proceed through this backlog — implement, test,
   PR, merge, deploy to PAPER, verify — and interrupt only for something
@@ -1282,15 +1171,9 @@ decisions from that day are live, not finished, and stay below.
   move to real money that's something to look at again."* **Revisit before any
   live-capital activation** — execution-quality numbers measured under IEX are
   not trustworthy.
-- **Fractional shares are IN — this decision was REVERSED on 2026-09-01**
-  (spec §11.1) and BUILT the same day. The original reasoning rested on the
-  stop being an OTO bracket leg; it has not been one since 2026-07-16, so the
-  fill→stop window fractional was said to introduce already existed on every
-  entry. Owner: *"if the gap is brief upon entry, then it's irrelevant to
-  eliminate that option."* Behind `execution.fractional_enabled` (default on),
-  gated on a broker-confirmed `fractionable` flag that fails closed, with the
-  three required stop-placement guards. Recovers the whole-share rounding tax
-  (V wanted 6%, got 3.84%).
+- **Fractional shares are IN — reversed back in and built 2026-09-01**
+  (spec §11.1), behind `execution.fractional_enabled` (default on) — moved to
+  `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 - **The desk must deliberate, not just filter** — see `Phase 9` in
   `docs/QAMC_REMEDIATION_SPEC.md`. Rex: *"We have agents doing research and
   analysis. If something has high conviction or strong candidacy it should be
@@ -1463,11 +1346,12 @@ Two facts worth acting on:
 - **The rig cannot rehearse `earnings_preprocess` at all.** `ops/rehearsal/runner.py`'s `SESSIONS` mapping and `run.py`'s `--session` choices list only `morning`/`midday`/`close`/`evening`/`intra_check`. `TradingPipeline.run_earnings_preprocess()` is a real, scheduled (08:00 ET), LLM-calling session — the *only* place 10-Q/10-K filings get analyzed — with the same structural shape (RunContext, trading-day gate, cost-session activation, protection-restore drain) as the five modes the rig supports. This is undocumented anywhere in the rig's code, tests or docs; it appears to be an oversight, not a deliberate scope cut. Consequence: a defect specific to earnings preprocessing — like the earnings-extraction bug fixed in PR #115 the same week — would be invisible to this harness.
 - **A failed broker read cannot be rehearsed.** `RehearsalTradingClient`/`RehearsalDataClient` never raise on `get_account()`/`get_positions()`; only `get_asset()` and `close_position()` are wired to fail. Production's `except Exception: return {"status": "broker_error", ...}` path in `run_morning`/`run_intra_check` is therefore completely untested by this harness. Consistent with the module's own documented scope, but worth naming since "a broker read that fails" is exactly the kind of resilience case this rig should be able to exercise.
 
-**Confirmed working as designed, not defects:** running with no `--source-data` at all correctly fails closed at the pricing gate ("the cost circuit cannot confirm current rates offline and will suspend paid analysis") before any model call, rather than proceeding with an unbounded cost; and deleting every row from a sandbox copy's `positions` table (simulating a flattened book) correctly surfaced the trade-ledger-vs-broker stop-out reconciler declining to guess ("recording nothing rather than guessing") for all six affected symbols, with the session still completing end-to-end rather than crashing on the inconsistency.
-
+Two rehearsal-rig behaviors checked and confirmed as non-defects (offline
+`--source-data`-less runs fail closed at the pricing gate; a flattened
+sandbox book correctly makes the reconciler decline to guess) moved to
+`docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 #### SMALLER, RECORDED
-- After the constructor rejects a BUY for reward:risk, it logs a second confusing line — "no valid stop below entry (stop=None)" — because the None propagates. Cosmetic.
 - OneCLI: OpenRouter spend from a live rehearsal would be real money on the same account, but the rehearsal runs its own cost-circuit database, so production would under-count the true daily bill.
 - OneCLI: production's Alpaca secret matches `*.alpaca.markets`, which also covers the paper host, so both credential sets match the same address. The gateway fails closed on the ambiguity. Narrowing the production pattern risks breaking live credential resolution and was deliberately left for the owner.
 
@@ -1482,9 +1366,6 @@ rejection; answer was that the targets were never real measurements).
 
 #### DELISTED WARRANTS REACHING THE DATA LAYER
 Five symbols returned "possibly delisted; no price data found" on 2026-08-28: DSPC, SXTPW, NRSNW, LIMNW, ERNAW. All are warrants. They should not be reaching a bar fetch at all — this is universe/admission hygiene, and it is also what triggers the recursion fault above.
-
-#### EARNINGS CACHE ASSERTS PRICE-DERIVED VALUATION
-Repeated on 2026-08-28 for MTZ and KO: the cached earnings analysis asserts price-derived valuation (P/E, market cap) in `valuation_context`, but the agent was given filing text only. Pre-existing; logged as a warning and otherwise ignored.
 
 **Set aside — small, easily forgotten**
 

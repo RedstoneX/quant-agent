@@ -300,12 +300,22 @@ risk:
   # case this cap exists for, not a new edge case.
   #
   # 100 was chosen over a larger number (the math above tops out needing
-  # ~195% notional for that 1x-ATR degenerate floor) because `allow_margin`
-  # is false: the cash-only rule already makes anything past 100% of equity
-  # in one name unreachable in practice, so 100 IS the real ceiling — this
-  # only documents it rather than leaving a number that does nothing.
-  # Revisit together, and re-derive this comment again, if either
-  # `min_stop_atr_multiple` or `allow_margin` ever changes again.
+  # ~195% notional for that 1x-ATR degenerate floor) on the grounds that
+  # `allow_margin` was false: the cash-only rule made anything past 100% of
+  # equity in one name unreachable in practice, so 100 WAS the real ceiling
+  # — this only documented it rather than leaving a number that does
+  # nothing.
+  #
+  # THAT PREMISE NO LONGER HOLDS. `allow_margin` has been `true` (2.0x
+  # gross) since 2026-09-02 — before this paragraph was first written
+  # (2026-09-04) and again before it was last touched (2026-09-10) — so
+  # cash-only no longer bounds notional at 100% on its own; margin can
+  # reach past it. The 100% figure still hard-blocks in the risk engine, so
+  # this is not a silent cap failure, but the "100 is the real ceiling
+  # anyway" reasoning above is stale, and the number has never been
+  # re-derived for a margin-enabled, 2x-gross book as this comment itself
+  # has twice said it must be. Left at 100, CURRENTLY UNJUSTIFIED, pending
+  # an owner decision — do not pick a replacement unilaterally.
   max_position_pct: 100
   # Caps NET exposure (longs minus shorts) as % of equity.
   #
@@ -907,6 +917,15 @@ macro:
   retry_backoff_jitter_s: 1.0
   breaker_after_failed_series: 1
   total_fetch_deadline_s: 90.0
+  # Freshness has NO setting here on purpose (2026-09-11). It used to be a
+  # calendar-day threshold in code, and any replacement number would have
+  # been just as arbitrary — FRED's daily series run about two business
+  # days behind, CPI and payrolls are monthly, GDP quarterly, so no single
+  # day count can be right for all of them. The provider now derives each
+  # series' expected next print from that series' OWN observed cadence and
+  # its OWN publication lag (FRED metadata), and reports whether the held
+  # reading is the latest published one or whether a newer print is
+  # overdue. Nothing left to tune: see src/data/macro.py::SeriesFreshness.
 
 event_risk:
   # Scheduled-event lookups that ground the Risk Manager's mandatory

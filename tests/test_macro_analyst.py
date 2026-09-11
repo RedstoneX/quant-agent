@@ -346,10 +346,18 @@ def test_sanity_check_keeps_high_when_monthly_staleness_is_normal_cadence(mock_c
 
 
 @patch("anthropic.Anthropic")
-def test_sanity_check_downgrades_high_when_daily_indicator_stale(mock_cls, caplog):
-    """A DAILY indicator (VIX) stale >3 business days still downgrades
-    'high' — per-cadence semantics tighten nothing for daily series."""
-    macro = {**MACRO_SUMMARY, "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 10}}
+def test_sanity_check_downgrades_high_when_print_is_overdue(mock_cls, caplog):
+    """The staleness that IS real: a daily series whose next print is past
+    due by its own cadence and publication lag. Age is not the trigger —
+    `staleness_days` here is the same 2 that a perfectly healthy day
+    shows; what blocks 'high' is the provider reporting the print
+    OVERDUE."""
+    macro = {
+        **MACRO_SUMMARY,
+        "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 2,
+                "freshness": "overdue",
+                "freshness_detail": "VIXCLS: OVERDUE — next print was due 6 days ago"},
+    }
     _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
 
     agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
@@ -366,12 +374,75 @@ def test_sanity_check_downgrades_high_when_daily_indicator_stale(mock_cls, caplo
 
 
 @patch("anthropic.Anthropic")
-def test_sanity_check_downgrades_high_when_monthly_release_cycle_missed(mock_cls):
-    """A monthly indicator past ~55 business days HAS missed a release
-    cycle — that is genuine staleness and still downgrades 'high'."""
+def test_sanity_check_keeps_high_when_daily_print_is_legitimately_old(mock_cls):
+    """A daily indicator can be several days old and still be the only
+    reading that exists (a long holiday weekend, a slow FRED update). The
+    old gate downgraded 'high' past 3 business days regardless; age is no
+    longer a test, so a `current` reading passes at any age."""
     macro = {
         **MACRO_SUMMARY,
-        "inflation": {**MACRO_SUMMARY["inflation"], "staleness_days": 60},
+        "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 10,
+                "freshness": "current"},
+    }
+    _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
+
+    agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
+    analysis, _ = agent.analyze(macro_summary=macro, universe=["SPY"])
+
+    assert analysis is not None
+    assert analysis.confidence == "high"
+
+
+@patch("anthropic.Anthropic")
+def test_sanity_check_keeps_high_when_monthly_print_is_old_but_current(mock_cls):
+    """A monthly series 60 business days back, reported `current`, is the
+    freshest CPI that exists — the old `>55` bar called that a missed
+    release cycle purely on arithmetic. Only the provider's own
+    cadence-and-lag derivation can say a cycle was missed, and here it
+    says it wasn't."""
+    macro = {
+        **MACRO_SUMMARY,
+        "inflation": {**MACRO_SUMMARY["inflation"], "staleness_days": 60,
+                      "freshness": "current"},
+    }
+    _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
+
+    agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
+    analysis, _ = agent.analyze(macro_summary=macro, universe=["SPY"])
+
+    assert analysis is not None
+    assert analysis.confidence == "high"
+
+
+@patch("anthropic.Anthropic")
+def test_sanity_check_downgrades_high_when_monthly_release_is_overdue(mock_cls):
+    """A monthly series whose next print really did not arrive (the
+    provider flags it OVERDUE) still downgrades 'high' — the half of the
+    old gate that was protecting something real."""
+    macro = {
+        **MACRO_SUMMARY,
+        "inflation": {**MACRO_SUMMARY["inflation"], "staleness_days": 60,
+                      "freshness": "overdue",
+                      "freshness_detail": "CPIAUCSL: OVERDUE"},
+    }
+    _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
+
+    agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
+    analysis, _ = agent.analyze(macro_summary=macro, universe=["SPY"])
+
+    assert analysis is not None
+    assert analysis.confidence == "medium"
+
+
+@patch("anthropic.Anthropic")
+def test_sanity_check_downgrades_high_when_series_returned_no_data(mock_cls):
+    """Genuinely empty data must never pass as a real reading: a series
+    the provider reports `empty` blocks 'high' exactly as a missing key
+    does."""
+    macro = {
+        **MACRO_SUMMARY,
+        "credit_spread": {"current_bps": None, "change_30d_bps": None,
+                          "staleness_days": None, "freshness": "empty"},
     }
     _mock_macro_llm(mock_cls, _llm_response_dict(confidence="high", regime_shift=False))
 
@@ -433,19 +504,25 @@ def test_sanity_check_keeps_high_confidence_when_all_fresh(mock_cls):
 
 
 @patch("anthropic.Anthropic")
-def test_sanity_check_clears_regime_shift_with_insufficient_fresh_indicators(mock_cls, caplog):
-    """LLM declares regime_shift=True but only 1 indicator has
-    staleness_days <= 1 in MACRO_SUMMARY (vix=0; treasury=0; ...; but
-    inflation=10, unemployment=15 are not fresh). Need >= 2 fresh to
-    justify a flip — and MACRO_SUMMARY has 4 fresh (vix, treasury,
-    fed_funds_rate, credit_spread all =0). Tweak the input so only 1
-    is fresh, then assert regime_shift gets cleared."""
+def test_sanity_check_clears_regime_shift_when_indicators_missing_or_overdue(mock_cls, caplog):
+    """A flip still needs >= 2 primary indicators you actually hold. Here
+    four of the six are unusable for real reasons — two returned nothing
+    and two are past due — leaving one usable, so the flip is cleared.
+
+    Note what is NOT one of those reasons any more: age. Every indicator
+    in this fixture that DOES count is several days old."""
     macro = {
         **MACRO_SUMMARY,
-        "treasury": {**MACRO_SUMMARY["treasury"], "staleness_days": 5},
-        "fed_funds_rate": {**MACRO_SUMMARY["fed_funds_rate"], "staleness_days": 5},
-        "credit_spread": {**MACRO_SUMMARY["credit_spread"], "staleness_days": 5},
-        # Only vix has staleness_days=0; inflation+unemployment already stale.
+        "treasury": {"us2y": None, "us10y": None, "staleness_days": None,
+                     "freshness": "empty"},
+        "fed_funds_rate": {"current": None, "change_30d": None,
+                           "staleness_days": None, "freshness": "empty"},
+        "credit_spread": {**MACRO_SUMMARY["credit_spread"],
+                          "freshness": "overdue"},
+        "inflation": {**MACRO_SUMMARY["inflation"], "freshness": "overdue"},
+        "unemployment": {**MACRO_SUMMARY["unemployment"], "freshness": "overdue"},
+        "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 2,
+                "freshness": "current"},
     }
     _mock_macro_llm(
         mock_cls,
@@ -462,13 +539,15 @@ def test_sanity_check_clears_regime_shift_with_insufficient_fresh_indicators(moc
 
     assert analysis is not None
     assert analysis.regime_shift is False, (
-        "regime_shift=True must be cleared when < 2 indicators are fresh"
+        "regime_shift=True must be cleared when < 2 indicators carry a "
+        "usable latest reading"
     )
     assert analysis.shift_reason == "", (
-        "shift_reason must also be cleared so PM doesn't read a stale flip narrative"
+        "shift_reason must also be cleared so PM doesn't read a flip "
+        "narrative built on data we don't have"
     )
     assert any(
-        "regime_shift=True" in r.message and "fresh" in r.message
+        "regime_shift=True" in r.message and "usable" in r.message
         for r in caplog.records
     ), "clear must log the gate that fired"
 
@@ -495,44 +574,31 @@ def test_sanity_check_keeps_regime_shift_with_two_fresh_indicators(mock_cls):
 
 
 @patch("anthropic.Anthropic")
-def test_sanity_check_clears_regime_shift_under_realistic_fred_lag(mock_cls, caplog):
-    """Live-verified 2026-09-03: as of a real query against FRED's public
-    fredgraph.csv endpoint, DGS10/DGS2/DFF/VIXCLS/BAMLH0A0HYM2 ALL sat at
-    staleness_days=2 (their latest print trailed the query date by 2
-    business days) — not the 0-1 the existing fixtures above assume. Nine
-    independent production checkpoints (data/checkpoints/*-morning.json,
-    2026-08-18..2026-09-02) confirm this is the NORM, not a bad day:
-    treasury and fed_funds_rate read staleness_days=2 in 9/9 samples,
-    never 1. vix and credit_spread occasionally reach 1 (2/9 each) but
-    usually also sit at 2.
+def test_regime_shift_survives_real_fred_publication_lag(mock_cls):
+    """THE REGRESSION TEST for the defect this replaced (docs/WORK.md data
+    quality audit item 6).
 
-    This means the regime-shift gate's `staleness_days <= 1` "fresh" bar
-    (macro_analyst.md 'Regime-Shift Detection', mirrored here) is only
-    reachable by the two indicators that occasionally get lucky (vix,
-    credit_spread) — and only when BOTH happen to land on staleness=1 on
-    the SAME day. Under the realistic, day-to-day-typical staleness
-    profile below (everything at its normal 2-business-day FRED lag,
-    which is NOT stale by the >3 cadence bar used everywhere else in this
-    file), the gate clears every regime_shift call. Production logs
-    confirm this isn't theoretical: 14 of 27 retained macro_analyst runs
-    (2026-08-17..09-02) hit this exact override — not the rare
-    edge-case the pre-audit docs described.
+    The old gate required `staleness_days <= 1` on 2+ of the six primary
+    indicators. FRED's real publication lag on its daily series is about 2
+    business days: six production checkpoints (data/checkpoints/*-morning.json,
+    2026-08-18..2026-08-27) show treasury and fed_funds_rate at
+    `staleness_days=2` in 6/6 samples, never 1, and a live check against
+    FRED's public fredgraph.csv endpoint on 2026-09-03 confirmed DGS10,
+    DGS2, DFF, VIXCLS and BAMLH0A0HYM2 were ALL sitting at a real 2-day
+    lag at query time. So the bar demanded a print that does not exist,
+    and it cleared the seat's regime call on 14 of 27 retained production
+    runs (52%, 2026-08-17..09-02).
 
-    This test PINS today's actual code behavior (root-cause: no fetch
-    defect — FRED itself has not yet published a fresher print; verified
-    live). It intentionally does NOT change the `<=1` threshold — that
-    number is a deliberate, documented risk-calibration choice
-    (macro_analyst.md: "calling a flip on stale data is guessing") and
-    picking a replacement value is a threshold call for the desk owner,
-    not something to decide here. See docs/WORK.md DATA QUALITY AUDIT
-    item 6 and the DECIDE BY line under Open Decisions.
+    The fixture below is that ordinary day: every daily indicator at its
+    normal 2-business-day lag, each one the latest published reading FRED
+    has. The flip must now STAND. This test is the inverse of the one it
+    replaces (`test_sanity_check_clears_regime_shift_under_realistic_fred_lag`),
+    which pinned the defect deliberately while the replacement was an open
+    owner decision.
     """
-    realistic_typical_lag = {
-        **MACRO_SUMMARY,
-        "vix": {**MACRO_SUMMARY["vix"], "staleness_days": 2},
-        "treasury": {**MACRO_SUMMARY["treasury"], "staleness_days": 2},
-        "fed_funds_rate": {**MACRO_SUMMARY["fed_funds_rate"], "staleness_days": 2},
-        "credit_spread": {**MACRO_SUMMARY["credit_spread"], "staleness_days": 2},
+    ordinary_day = {
+        key: {**value, "staleness_days": 2, "freshness": "current"}
+        for key, value in MACRO_SUMMARY.items()
     }
     _mock_macro_llm(
         mock_cls,
@@ -543,34 +609,60 @@ def test_sanity_check_clears_regime_shift_under_realistic_fred_lag(mock_cls, cap
     )
 
     agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
-    import logging
-    with caplog.at_level(logging.WARNING):
-        analysis, _ = agent.analyze(macro_summary=realistic_typical_lag, universe=["SPY"])
+    analysis, _ = agent.analyze(macro_summary=ordinary_day, universe=["SPY"])
 
     assert analysis is not None
-    assert analysis.regime_shift is False, (
-        "documents current behavior: a normal (not-stale-by-cadence) "
-        "day still clears regime_shift because none of the four daily "
-        "indicators land at staleness_days<=1 under real FRED lag — "
-        "see docstring for the live + production evidence"
+    assert analysis.regime_shift is True, (
+        "a normal FRED day — every indicator at its real ~2-business-day "
+        "publication lag and each one the latest print that exists — must "
+        "NOT clear a regime shift; that was the 52%-of-runs defect"
     )
-    assert any(
-        "only 0 indicator(s) are fresh" in r.message
-        for r in caplog.records
-    ), "typical-lag day should present as ZERO fresh indicators, not a rare partial miss"
+    assert analysis.shift_reason == (
+        "Curve steepened and credit tightened together"
+    )
 
 
-def test_prompt_uses_one_consistent_staleness_rule_for_daily_and_monthly():
-    """External review: the UNSOURCED-token rule and the Confidence
-    Calibration section previously disagreed on the daily threshold
-    (>7 vs >3) and the UNSOURCED rule didn't state the monthly number at
-    all. Pin both sections to the SAME numbers so the prompt can't drift
-    out of sync with `_stale()` / `_apply_sanity_checks` again."""
+@patch("anthropic.Anthropic")
+def test_regime_shift_gate_reachable_when_freshness_unverified(mock_cls):
+    """When FRED's release metadata does not come back, freshness is
+    `unknown`: the reading we hold is still FRED's latest published
+    observation (the fetch sets no `observation_end`), only the
+    overdue-check is unverifiable. Unknown must therefore stay USABLE —
+    refusing to act on unverifiable metadata is precisely how the old gate
+    became unreachable."""
+    unverified = {
+        key: {**value, "freshness": "unknown"}
+        for key, value in MACRO_SUMMARY.items()
+    }
+    _mock_macro_llm(
+        mock_cls,
+        _llm_response_dict(
+            confidence="medium", regime_shift=True,
+            shift_reason="HY OAS widened 40bps",
+        ),
+    )
+
+    agent = MacroAnalystAgent(api_key="test", model="claude-sonnet-4-6")
+    analysis, _ = agent.analyze(macro_summary=unverified, universe=["SPY"])
+
+    assert analysis is not None
+    assert analysis.regime_shift is True
+
+
+def test_prompt_carries_no_calendar_day_freshness_threshold():
+    """The prompt and the code must not drift back to a day count. The
+    three thresholds the old design used (>3 daily, >55 monthly, <=1 for a
+    regime shift) are gone from both sides; what replaced them is the
+    latest-published / overdue language asserted below."""
     from src.agents.macro_analyst import PROMPT_PATH
     text = PROMPT_PATH.read_text()
-    assert "staleness_days > 7" not in text, (
-        "stale >7 threshold must not reappear — daily cadence is >3 "
-        "everywhere in this prompt"
-    )
-    assert "staleness_days > 3" in text
-    assert "staleness_days > 55" in text
+    for gone in (
+        "staleness_days > 7", "staleness_days > 3", "staleness_days > 55",
+        "staleness_days ≤ 1", "staleness_days <= 1",
+    ):
+        assert gone not in text, (
+            f"{gone!r} must not reappear — macro freshness is no longer a "
+            f"calendar-day test (see src/data/macro.py::SeriesFreshness)"
+        )
+    assert "latest published reading" in text
+    assert "OVERDUE" in text

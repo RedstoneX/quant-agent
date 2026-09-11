@@ -2039,3 +2039,24 @@ def test_missing_or_malformed_result_never_raises():
         assert maybe_alert_data_quality({"data_status": "not-a-dict"}, mode="morning") is False
 
     alert.assert_not_called()
+
+
+def test_macro_release_overdue_status_fires_a_standalone_alert():
+    """`release_overdue` is the macro seat's new status for an expected FRED
+    print that did not arrive (a publication or fetch failure, not normal
+    release timing — see src/data/macro.py::SeriesFreshness). It replaced a
+    calendar-day staleness gate that could never be satisfied, and unlike
+    that gate it describes a real problem, so it must page like any other
+    non-ok/empty value rather than being exempted as expected noise."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {
+        "run_id": "run-overdue1",
+        "data_status": {"tech": "ok", "macro": "release_overdue"},
+    }
+    with patch("src.notifier.send_owner_alert", return_value=True) as alert:
+        fired = maybe_alert_data_quality(result, mode="morning")
+
+    assert fired is True
+    body = alert.call_args.args[0]
+    assert "macro=release_overdue" in body
