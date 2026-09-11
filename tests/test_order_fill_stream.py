@@ -188,3 +188,92 @@ def test_stream_and_polling_share_the_same_terminal_states():
         "filled", "canceled", "cancelled", "expired", "rejected",
         "done_for_day", "replaced",
     }
+
+
+# ---------- one replace at a time (2026-09-11) ----------
+#
+# Alpaca refuses to replace an order whose status is `accepted`,
+# `pending_new`, `pending_cancel` or `pending_replace`. A replacement leaves
+# the order in `pending_replace` while the broker works, so a second PATCH
+# fired into that window is rejected outright. `await_replacement_confirmed`
+# is the gate: it watches the OLD order reach the terminal status `replaced`
+# on this same stream before the caller is allowed to send another one.
+
+@patch("src.execution.broker.TradingStream")
+def test_replacement_confirmed_by_a_replaced_event_on_the_stream(mock_stream_cls):
+    mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+        *a, updates=[_FakeUpdate("old-1", "replaced")], **k,
+    )
+    broker = _broker()
+
+    assert broker.await_replacement_confirmed(
+        "old-1", "new-2", timeout_seconds=10.0,
+    ) is True
+
+
+@patch("src.execution.broker.TradingStream")
+def test_a_fill_on_the_old_order_is_not_a_replacement_confirmation(mock_stream_cls):
+    """`filled` is terminal but it is not `replaced`. Confirming on any
+    terminal status would wave through exactly the case where the swap did
+    NOT happen."""
+    mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+        *a, updates=[_FakeUpdate("old-1", "filled")], **k,
+    )
+    broker = _broker()
+    broker.resolve_replacement_chain = MagicMock(return_value="old-1")
+
+    assert broker.await_replacement_confirmed(
+        "old-1", "new-2", timeout_seconds=10.0,
+    ) is False
+
+
+@patch("src.execution.broker.TradingStream")
+def test_a_missed_event_falls_back_to_asking_the_broker(mock_stream_cls):
+    """No `replaced` event inside the window is not proof of anything, so
+    the chain is re-read rather than guessed at either way."""
+    mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+        *a, updates=[_FakeUpdate("someone-else", "filled")], **k,
+    )
+    broker = _broker()
+    broker._get_order_status_once = MagicMock(return_value="pending_replace")
+    broker.resolve_replacement_chain = MagicMock(return_value="new-2")
+
+    assert broker.await_replacement_confirmed(
+        "old-1", "new-2", timeout_seconds=1.0,
+    ) is True
+
+
+@patch("src.execution.broker.TradingStream")
+def test_an_unreadable_broker_is_never_read_as_confirmed(mock_stream_cls):
+    """"I could not confirm" and "it is safe to send another replace" are
+    different statements."""
+    mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+        *a, updates=[], **k,
+    )
+    broker = _broker()
+    broker._get_order_status_once = MagicMock(return_value=None)
+    broker.resolve_replacement_chain = MagicMock(return_value=None)
+
+    assert broker.await_replacement_confirmed(
+        "old-1", "new-2", timeout_seconds=1.0,
+    ) is False
+
+
+def test_confirmation_never_raises_when_the_wait_blows_up():
+    broker = _broker()
+    broker.wait_for_order_terminal = MagicMock(
+        side_effect=RuntimeError("websocket gone"))
+
+    assert broker.await_replacement_confirmed("old-1", "new-2") is False
+
+
+def test_confirmation_refuses_empty_ids():
+    broker = _broker()
+    assert broker.await_replacement_confirmed("", "new-2") is False
+    assert broker.await_replacement_confirmed("old-1", "") is False
+
+
+def test_replaced_is_a_terminal_state_the_stream_actually_reports():
+    """The gate depends on this: if `replaced` were not in the terminal set
+    the stream handler would ignore the very event being waited for."""
+    assert "replaced" in AlpacaBroker._ORDER_TERMINAL_STATES
