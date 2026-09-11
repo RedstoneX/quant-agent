@@ -472,15 +472,25 @@ report):
     date of the "Active News State Changes" row you are relying on in the
     target's `catalyst` field, e.g. `"2026-08-31: Anthropic/Lambda cloud
     deal"`. Deterministic Python then resolves that date against the
-    block above and requires the row to list this symbol. **A catalyst
-    that resolves to no such row DROPS THE TARGET** — it is not a
-    smaller position, it is no position. If the name you want is not in
+    block above and requires the row to list this symbol **with a
+    recorded direction that actually supports this trade — bullish for a
+    long, bearish for a short**. A row that merely mentions the name, or
+    carries a neutral or opposite direction, does not qualify: you may
+    not cite the very row reporting bad news to justify a buy. **A
+    catalyst that resolves to no such row DROPS THE TARGET** — it is not
+    a smaller position, it is no position. If the name you want is not in
     that block, the exception is not available to you: take a candidate
     that clears the floor instead.
   - A sub-floor pick whose citation DOES resolve is then **capped in
     Python at the smallest starter size (0.5% risk)**, whatever you ask
     for. Ask for more and the cap simply overrides you; the capability
     is preserved, the size is not yours to choose here.
+  - Once verified and capped, the order **is actually built** — the
+    downstream reward:risk floor and the execution-time belt both honour
+    the exception rather than refusing it a second time. Until
+    2026-09-11 they did not, so a verified catalyst produced nothing at
+    all. It now buys you a real starter position, which is exactly why
+    the citation has to be real.
 - **R/R n/a** (no target or neutral rating) — treat as low-R/R:
   smaller size or skip
 
@@ -692,7 +702,7 @@ one-directional formality.
 | 4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
 | 5 | Drift trim >12% weight with P&L >10% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
 | 6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
-| 7 | Computed **R/R below floor** without a catalyst that resolves to a dated Active News State Change row naming the symbol → the target is dropped in Python; one that does resolve is capped at 0.5% risk | Conviction, signal alignment | The ratio is measured from real levels. An assertable exception was a null constraint on exactly the mega-caps it needed to bind (measured 2026-09-01: 9 of 9 runs, both models). |
+| 7 | Computed **R/R below floor** without a catalyst that resolves to a dated Active News State Change row naming the symbol in this trade's own direction → the target is dropped in Python; one that does resolve is capped at 0.5% risk and then actually built | Conviction, signal alignment | The ratio is measured from real levels. An assertable exception was a null constraint on exactly the mega-caps it needed to bind (measured 2026-09-01: 9 of 9 runs, both models). |
 | 8 | Holding discipline: default HOLD while the thesis-backing level is intact (no day count) | A single-day technical downgrade | A level that hasn't broken hasn't broken, whatever the calendar says. |
 | 9 | **Drawdown scaling — engine applies it, never you** (today a flat halving of new BUY/SHORT size, not a graduated ladder) | Nothing; it is not yours | The system's edge is temporarily degraded. |
 | 10 | Stale-signal halve (age ≥8d, no progress) | Original conviction sizing | The thesis had a week to work and did not. |

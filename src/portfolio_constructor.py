@@ -113,6 +113,12 @@ STOP_REFUSAL_GEOMETRY_AT_BAND = "reward_risk_below_floor_at_widened_stop"
 STOP_REFUSAL_GEOMETRY_AT_LEVEL = "reward_risk_below_floor_at_honoured_stop"
 STOP_REFUSAL_GEOMETRY_AT_KEPT = "reward_risk_below_floor_at_kept_stop"
 STOP_REFUSAL_GEOMETRY_UNMEASURABLE = "reward_risk_not_measurable"
+#: Not a refusal — the one PERMIT code in this block. A below-floor ratio let
+#: through because the PM's sub-floor catalyst gate verified the citation and
+#: capped the size (docs/WORK.md item 1, parts (b)+(c)). Greppable so "how
+#: often does the exception actually fire?" is answerable from logs, which is
+#: the number part (d) will need before it replaces the hard floor at all.
+STOP_PERMIT_SUBFLOOR_CATALYST = "reward_risk_below_floor_catalyst_verified"
 
 #: Which refusal code names the failure, given the rule that placed the stop.
 #: One refusal per stop rule, so a log line says both what the stop IS and
@@ -1194,6 +1200,14 @@ class PortfolioConstructor:
         stop_loss = self._widen_stop_past_noise(
             target.symbol, analysis, entry_price, stop_loss, regime=regime,
             direction=target.direction, target_price=derivation.price,
+            # The PM's sub-floor catalyst gate has already run by the time a
+            # target reaches here; this is where its verdict is honoured
+            # rather than silently re-litigated. `getattr` because
+            # `_resolve_entry_and_stop` is also called with hand-built
+            # targets from the backtest shim and older tests.
+            subfloor_catalyst_exception=bool(
+                getattr(target, "subfloor_catalyst_verified", False)
+            ),
         )
         if stop_loss is not None:
             stop_loss = round(stop_loss, 2)
@@ -1437,6 +1451,7 @@ class PortfolioConstructor:
         regime: str | None = None,
         direction: str = "long",
         target_price: float | None = None,
+        subfloor_catalyst_exception: bool = False,
     ) -> float | None:
         """Decide the stop that will actually ship, and say which rule did it.
 
@@ -1496,6 +1511,25 @@ class PortfolioConstructor:
         Returns None when widening would leave a reward:risk the trade cannot
         justify. That is deliberate: a trade that only cleared the bar on a
         stop too tight to survive was never the trade it appeared to be.
+
+        `subfloor_catalyst_exception` (2026-09-11, docs/WORK.md item 1 parts
+        (b)+(c)) is the ONE exemption from that last refusal, and only from
+        that one. True means
+        `PortfolioManagerAgent._apply_subfloor_catalyst_rule` already
+        verified this target's catalyst against a real dated
+        `active_state_changes` row naming this symbol in this direction, and
+        already capped it at the starter risk size. Without this the
+        exception was inert: the PM granted it and this method refused the
+        order anyway on the same floor one stage later, so a verified
+        catalyst could never produce a trade (measured 2026-09-11 — a
+        level-backed stop with a real structural target at reward:risk 1.2
+        was kept and capped by the PM and then returned `(None, None)`
+        here). Everything else still applies unchanged: the stop is widened
+        by the same rules, an UNMEASURABLE ratio still fails closed (an
+        exception is permission to take a poor payoff, never permission to
+        take an unknown one), and the geometry checks in
+        `_resolve_entry_and_stop` still run. The flag is not model-settable
+        — see `TargetPosition.subfloor_catalyst_verified`.
 
         `target_price` (2026-09-01) is the DERIVED target — computed from
         structure by `_derive_target`. It has to be passed in rather than
@@ -1744,6 +1778,24 @@ class PortfolioConstructor:
                     target_price, honoured, rule, entry_price,
                 )
                 return None
+        elif reward_risk < floor and subfloor_catalyst_exception:
+            # Verified sub-floor catalyst. The payoff geometry is exactly as
+            # poor as the number says — nothing here improves it — so this
+            # permits the trade at the starter size the PM gate already
+            # capped it to, and says so in the log rather than looking like
+            # the floor silently stopped working.
+            logger.info(
+                "Constructor: %s %s permitted BELOW the %.2f floor at "
+                "reward:risk %.2f [%s] — its catalyst resolved to a real "
+                "dated state-change row naming the symbol in this trade's "
+                "direction, and the PM gate has already capped it to starter "
+                "size. Stop $%.2f placed by %s; target $%.2f. The payoff is "
+                "unchanged and still poor: this is permission, not approval.",
+                side_label, symbol, floor, reward_risk,
+                STOP_PERMIT_SUBFLOOR_CATALYST, honoured, rule,
+                target_price,
+            )
+            return honoured
         elif reward_risk < floor:
             logger.info(
                 "Constructor: %s %s refused [%s] — against the stop it will "
@@ -2322,6 +2374,13 @@ class PortfolioConstructor:
             stop_rule=self.shipped_stop_rule(
                 analysis, entry_price, stop_loss, target.direction,
             ),
+            # Carried for the SAME reason as stop_rule: so the execution
+            # stage's own reward:risk belt does not kill an order that was
+            # deliberately permitted below the floor. See
+            # TradeDecision.subfloor_catalyst_exception.
+            subfloor_catalyst_exception=bool(
+                getattr(target, "subfloor_catalyst_verified", False)
+            ),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
             thesis_invalid_if=target.thesis_invalid_if or None,
@@ -2486,6 +2545,13 @@ class PortfolioConstructor:
             # constructor deliberately honoured at a computed level.
             stop_rule=self.shipped_stop_rule(
                 analysis, entry_price, stop_loss, target.direction,
+            ),
+            # Carried for the SAME reason as stop_rule: so the execution
+            # stage's own reward:risk belt does not kill an order that was
+            # deliberately permitted below the floor. See
+            # TradeDecision.subfloor_catalyst_exception.
+            subfloor_catalyst_exception=bool(
+                getattr(target, "subfloor_catalyst_verified", False)
             ),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from datetime import datetime, date
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, computed_field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, computed_field, field_validator, model_validator
 
 from src.quantities import collapse_stances
 
@@ -392,7 +392,32 @@ class LLMOutputModel(BaseModel):
             return values
         values = dict(values)
         for field_name in sorted(hits):
-            del values[field_name]
+            # 2026-09-11: deleting the key is what makes the declared default
+            # apply — but ONLY on the construction path. Every model here
+            # that enables `validate_assignment` re-runs this validator on
+            # assignment, and pydantic treats the dict it gets back as the
+            # instance's COMPLETE new state: a key deleted there leaves the
+            # field genuinely UNSET, so the next plain read of it raises
+            # `AttributeError`, not the default. Measured on `TargetPosition`
+            # — capping `risk_allocation_pct` deleted `thesis_invalid_if` and
+            # `catalyst` (both default `""`), and
+            # `PortfolioConstructor._build_buy` then raised reading
+            # `target.thesis_invalid_if`. It was latent only because the
+            # sub-floor catalyst gate's own cap was the main assignment site
+            # and the constructor refused those orders earlier for an
+            # unrelated reason.
+            #
+            # So: when the value ALREADY EQUALS the declared default,
+            # deleting it changes nothing on construction (this validator's
+            # own docstring above says exactly that) and breaks the instance
+            # on assignment. Leave it in place. Still tallied and still
+            # logged — "the model said nothing where the prompt asked for
+            # something" is real signal and is not being suppressed.
+            default = cls.model_fields[field_name].get_default(
+                call_default_factory=True,
+            )
+            if values[field_name] != default:
+                del values[field_name]
             parse_telemetry.record_null_coercion(cls.__name__, field_name)
         logger.warning(
             "%s: dropped explicit null/empty on defaulted field(s) %s — the "
@@ -991,6 +1016,25 @@ class TradeDecision(LLMOutputModel):
     # bars. Recomputing level-backing there instead would have created
     # exactly the second data path §12.1 was careful not to build.
     stop_rule: str | None = None
+    # --- The sub-floor catalyst exception, carried to execution (2026-09-11)
+    # True when this order was permitted BELOW `min_reward_risk_after_
+    # widening` because the PM's sub-floor catalyst gate verified its
+    # citation against a real dated state-change row and capped it at
+    # starter size. Mirrors `stop_rule` directly above in both purpose and
+    # mechanism: a fact the constructor knows and the execution stage cannot
+    # re-derive without building a second copy of the gate.
+    #
+    # `src/pipeline_stages.py` carries a SECOND, execution-time reward:risk
+    # belt (a flat 1.2) that only fires when execution changed the geometry
+    # the Risk Manager audited. Without this field that belt killed every
+    # such order the moment anything drifted — not because execution had
+    # degraded the trade, but because the trade was deliberately below 1.2
+    # to begin with, which is the condition the exception exists to permit.
+    # docs/WORK.md funnel item 4 ("a SECOND reward:risk floor at execution
+    # time") says to fold that belt into item 1(b); this is that fold. With
+    # the flag set, the belt checks for DEGRADATION instead: execution may
+    # not make the ratio worse than the geometry the RM approved.
+    subfloor_catalyst_exception: bool = False
     # --- Thesis invalidation, as a real field (2026-09-03) ----------------
     # Mirrors the conviction-ledger fields above: pinned at ENTRY (BUY/
     # SHORT) only, default None so every pre-existing construction site
@@ -1528,6 +1572,55 @@ class TargetPosition(LLMOutputModel):
     # the broker's live price for entry.
     suggested_stop_price: float | None = None
     catalyst: str = ""  # populated when target violates R/R < 1.5 discipline
+    # --- The sub-floor catalyst exception, as a CHECKED fact (2026-09-11) --
+    # Set to True by `PortfolioManagerAgent._apply_subfloor_catalyst_rule`,
+    # and by nothing else, for a below-floor target whose `catalyst` cited
+    # the ISO date of a real `active_state_changes` row that names this
+    # symbol in the direction this trade needs — and which that same gate
+    # then capped at `STARTER_POSITION_RISK_PCT`.
+    #
+    # It exists because the exception was previously INERT end to end. The
+    # PM gate verified the citation and capped the size, and then
+    # `PortfolioConstructor._widen_stop_past_noise` refused the order
+    # anyway on `min_reward_risk_after_widening` — the same floor, applied
+    # a second time one stage later, with no knowledge that the exception
+    # had been granted. Measured 2026-09-11 on a level-backed stop with a
+    # real structural target at reward:risk 1.2: the PM kept and capped it,
+    # the constructor returned `(None, None)`. So a verified catalyst could
+    # never produce a trade, which made parts (b) and (c) of docs/WORK.md
+    # item 1 decorative.
+    #
+    # NOT MODEL-SETTABLE, and that is the whole point of making it a PRIVATE
+    # attribute rather than a field: prompt compliance is not a control, so
+    # the flag the constructor trusts must be one only Python can write. A
+    # private attribute cannot be supplied in input at all — not by raw LLM
+    # JSON, and not by a stored historical row re-validated through this
+    # model by `src/replay.py` or the Mission Control API, which would
+    # otherwise be claiming a check that never ran. Stripping a public field
+    # in a validator was tried and is NOT equivalent: pydantic runs
+    # model-level before-validators on the `validate_assignment` path too,
+    # so the same strip that blocks the model also blocks the gate.
+    #
+    # Read it via `subfloor_catalyst_verified`; write it only via
+    # `mark_subfloor_catalyst_verified()`. The PM decision object is handed
+    # to `PortfolioConstructor.construct_orders` directly (see
+    # `src/pipeline_stages.py`) with no serialization hop in between, so a
+    # private attribute survives the whole journey it needs to.
+    _subfloor_catalyst_verified: bool = PrivateAttr(default=False)
+
+    @property
+    def subfloor_catalyst_verified(self) -> bool:
+        """Was a sub-floor reward:risk catalyst exception GRANTED for this
+        target by `PortfolioManagerAgent._apply_subfloor_catalyst_rule`?
+
+        Read-only on purpose. See `_subfloor_catalyst_verified` above.
+        """
+        return self._subfloor_catalyst_verified
+
+    def mark_subfloor_catalyst_verified(self) -> None:
+        """Record that the exception was granted. Called by the PM gate, in
+        the same breath as the starter-size cap, and by nothing else."""
+        self._subfloor_catalyst_verified = True
     # Default preserves read compatibility for historical agent logs.  New
     # live PM decisions are required to populate this by the deterministic
     # PM grounding validator before they may reach PortfolioConstructor.
