@@ -2230,3 +2230,30 @@ def test_no_board_note_is_orphaned_in_the_real_repository():
         "prose). Leaving it strands the explanation and the owner's board "
         "renders that item as never explained."
     )
+
+
+def test_every_rendered_entry_carries_a_reference_handle():
+    """The owner refers to an entry by a short handle ("item 44") instead of
+    quoting a title that can run to a paragraph. An entry rendered without
+    one cannot be talked about except by reading it out, which is exactly
+    the friction the handle exists to remove.
+
+    This asserts the handle is PRESENT on every entry. Whether it is legible
+    is a styling question the template answers; whether it exists at all is
+    this test's job, because an entry silently losing its handle would look
+    fine on the page and only surface as the owner being unable to name it.
+    """
+    work = sb.REPO_ROOT / "docs" / "WORK.md"
+    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    queue, _ = sb.load_funnel_queue(work, notes)
+    gate, _ = sb.load_pm_gate(work, notes)
+    decisions = sb.load_pending_decisions(work, notes=notes)
+
+    entries = [*queue, *gate, *decisions]
+    assert entries, "no entries parsed — the fixture, not the rule, is wrong"
+    missing = [getattr(e, "title", None) or getattr(e, "question", "?")
+               for e in entries if not getattr(e, "ref", "").strip()]
+    assert missing == [], (
+        f"{len(missing)} board entries would render with no reference handle, "
+        f"so the owner could not name them: {missing[:3]}"
+    )
