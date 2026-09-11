@@ -1,15 +1,25 @@
-# Human status board — pairs with quant-agent-status-board.timer.
-# Install:
+# Human status board — pairs with quant-agent-status-board.path, which is
+# what triggers it. There is no timer: a .timer unit used to drive this on an
+# hourly clock and was retired in favour of the .path unit, so the board
+# rebuilds when something that changes what it SAYS actually changes.
+#
+# This unit itself needs no change when the .path unit's watch list grows:
+# it takes no arguments from the trigger and always does the same thing —
+# regenerate the whole page from scratch.
+#
+# Install (the .path unit carries the full install/uninstall sequence,
+# including removing the retired timer if it is still present):
 #   cp scripts/systemd/quant-agent-status-board.* ~/.config/systemd/user/
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now quant-agent-status-board.timer
+#   systemctl --user enable --now quant-agent-status-board.path
 [Unit]
 Description=quant-agent status board (no LLM, no trading, read-only)
 
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
-# Read-only. It re-evaluates docs/phases.yaml against the tree, reads the
+# Read-only. It reads docs/WORK.md, re-evaluates docs/phases.yaml against
+# the tree, reads the
 # deployed SHA, and opens the ledger through a read-only SQLite URI. It writes
 # exactly one thing: data/board/index.html. `data/` is gitignored, so
 # regenerating the board can never dirty the checkout and become deploy drift.

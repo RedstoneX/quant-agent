@@ -357,6 +357,31 @@ Compared against the **deployed checkout**, not `origin/main`, deliberately: tha
 
 The repository half is `tests/test_systemd_units.py`: CI cannot see the box, so it gates the units instead — no foreign `/home/*` path, `WorkingDirectory` at the deploy root, every `ExecStart` naming a script that exists, every timer paired with its service and installable, every service reachable, no inline credentials, and the six session units plus the API pinned by name. Neither half subsumes the other: CI stops the repo regressing, the timer stops the box diverging.
 
+### The desk status board (`/board`)
+
+One page, on a phone, for the owner — who is trader-minded and is neither a developer nor a finance professional. It is served at `/board` by Mission Control and it is the only status surface he is expected to read.
+
+**It records nothing.** `docs/WORK.md` is the single source of truth for what the desk is doing, and `scripts/status_board.py` reads it — the running order, the decisions waiting on the owner, what is parked, what is already resolved — every time the page is built. `docs/phases.yaml` supplies the mechanically checkable evidence rules, and every one of them is re-evaluated against the current tree on every build. Anything that cannot be established by machine renders as **unknown**, never as a guess and never as a fallback to the recorded claim. The output that matters is the disagreement: something recorded as finished whose evidence no longer holds is rendered loudly as **proof no longer holds**, and the script exits non-zero so the unit shows it as failed too. Every hand-maintained status document in this repo has gone stale expensively; this page exists so that the next one cannot.
+
+**The prose it shows is written, not generated.** A plain-language explanation, a real-world example and a recommendation cannot be derived from code, so they live in `docs/WORK.md` next to the item they describe and are rendered through. Inside the body of a numbered backlog item or a pending decision, each on its own line:
+
+```markdown
+**Plain language —** what this is, in words a trader understands.
+**Example —** a concrete case that makes it tangible.
+**The decision —** what the owner specifically has to rule on.
+**Recommendation —** what we think he should do, stated as a recommendation.
+```
+
+Leading whitespace is fine, the `**` is optional, and the separator may be an em dash, a hyphen or a colon. A block runs until the next label, the next item, the next heading, or **a blank line** — one paragraph each, so ordinary engineering prose further down the item is never absorbed into a recommendation. Nothing is mandatory and **nothing is invented**: an item nobody has written a plain-English version for is shown with an explicit "not written for you yet" marker rather than being hidden, dropped, or auto-summarised into friendly-sounding text that means something the backlog never said. Prose is run through the same mechanical jargon detector as the phase summaries, so an explanation containing a file name, a PR number or a code identifier is marked as written for a developer — and still rendered in full, because an unreadable description beats none.
+
+**Two accessibility constraints are requirements, not preferences.** The owner is red/green colour blind, so no status, verdict or priority on the page is carried by hue: every one is spelled out in words, supported by left-border weight, position and type size. And the page is mobile-first — narrow layout by default, 44px tap targets, and the one wide element (the plan table) scrolling inside its own container so the page body never scrolls sideways.
+
+**It rebuilds itself.** `quant-agent-status-board.path` watches `docs/WORK.md`, `docs/phases.yaml` and `.git/HEAD` (the deploy signal on a detached-HEAD checkout) and triggers `quant-agent-status-board.service`. There is no timer; an hourly one was retired in favour of rebuilding when something that changes what the page *says* actually changes. The ledger is deliberately **not** watched — it is written on every fill, and watching it would be a rebuild storm.
+
+Install: `cp scripts/systemd/quant-agent-status-board.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now quant-agent-status-board.path`. Generate by hand with `python scripts/status_board.py --out data/board/index.html`, or point `--out` outside the repo for a preview. **`data/` is gitignored on purpose**: a machine-written file that git also tracked is how the deploy-drift problem of 2026-08-28 started, and regenerating the board must never dirty the production checkout.
+
+**Freshness is a fact check, not a clock.** The build stamps the commit it was generated against into a `<meta>` tag; `src/api/server.py` reads it back at serve time, compares it against a freshly-read live commit, and shows a banner when they differ — or says the freshness is *unknown* when either cannot be read. It never says "fine" by default.
+
 ### Proving the alert channel is alive
 
 Every alarm here is a Telegram message. Nothing used to check that a Telegram message could still be sent, so **"no alert arrived" meant both "nothing is wrong" and "the alarm is broken"** — a present-but-revoked token, a wrong chat id, a blocked bot, or a new egress rule are all invisible to a credentials check and fatal to a send.
