@@ -596,16 +596,9 @@ proposals accumulate. **The capability is shipped; the evidence it needs was
 erased hours later.** Do not read a quiet Proposal Conversion block as "no
 stuck loops" — read it as "no data yet".
 
-**2. Thirteen proposals died with no explanation anywhere — 13 of 68 (19%). PARTIALLY FIXED.**
+**~~2. Thirteen proposals died with no explanation anywhere — RESOLVED 2026-09-11.~~** The 9-item `order_not_placed` shape was investigated: not an interrupted run — 4 real, legitimate incidents (a malformed risk-check response, insufficient cash, a sector-concentration block, a symbol-guard block), each already writing a durable reason the reporting script just never read. Script fixed (PR #310). One correction to the original write-up: the cash cause is NOT settlement delay — it was a confirmed-vs-assumed-fill bug (already fixed 2026-08-25), never a multi-day settlement gate. Detail: `docs/INCIDENT_HISTORY.md`.
 
-The constructor-dropped share of this bucket is FIXED (the reason always
-existed as a log line, now persisted — going forward only). Full reasoning:
-`docs/INCIDENT_HISTORY.md` ("funnel item 2").
-
-**Still open:** the separate 9-item `order_not_placed` shape (an order was
-built and then nothing else appears in any record) — structurally different,
-looks like an interrupted run, not investigated yet. Until both are closed,
-treat this page's percentages as having a residual blind spot.
+**Still open, not fixed here:** the PM's own "Proposal Conversion" memory section mirrors this same classification independently and was not extended — it can still undercount the same 3 causes in what the PM itself sees. Flagged, not built.
 
 **3. Accepted by the broker, never filled, cancelled — 6 of 68 (9%). WORKING AS INTENDED.**
 
