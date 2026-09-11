@@ -1223,6 +1223,49 @@ def _min_order_usd(pipeline) -> float:
     return value
 
 
+#: The execution-time reward:risk belt's ordinary bar. Deliberately looser
+#: than `REWARD_RISK_FLOOR`: this belt is not a second opinion on whether the
+#: trade was worth taking (the constructor already settled that) — it asks
+#: only whether EXECUTION degraded the geometry the Risk Manager audited into
+#: something nobody reviewed. docs/WORK.md funnel item 4 records that having
+#: two numbers for one quantity is itself unresolved doctrine; this names the
+#: number rather than leaving it a bare literal in the submit loop.
+EXECUTION_REWARD_RISK_BELT = 1.2
+
+
+def _execution_rr_floor(decision) -> float:
+    """The reward:risk bar THIS order must clear at execution time.
+
+    Ordinarily `EXECUTION_REWARD_RISK_BELT`. For an order carrying a
+    verified sub-floor catalyst exception (2026-09-11, docs/WORK.md item 1
+    parts (b)+(c), folding in funnel item 4) the flat belt is the wrong
+    question: that order was deliberately permitted below the 1.5 floor and
+    is therefore very likely below 1.2 as well, so the belt killed every one
+    of them the instant execution moved anything — not because execution had
+    degraded the trade, but because of the sub-floor payoff it was granted
+    permission for. For those the bar becomes the approved geometry's OWN
+    ratio: execution may not make it worse than what the Risk Manager
+    reviewed.
+
+    `min` is load-bearing. The returned bar can only ever be LOWER than the
+    ordinary belt, never higher, so an exception can never loosen the check
+    for an order whose approved geometry already cleared 1.2 — and an
+    approved geometry that is itself unmeasurable buys no leniency at all.
+    The caller's own unmeasurable-executed-geometry refusal is unchanged and
+    is never exempted: permission to take a poor payoff is not permission to
+    take an unknown one.
+    """
+    if not getattr(decision, "subfloor_catalyst_exception", False):
+        return EXECUTION_REWARD_RISK_BELT
+    approved_rr = reward_to_risk(
+        decision.entry_price, decision.stop_loss, decision.take_profit,
+        is_short=(decision.action == "SHORT"),
+    )
+    if approved_rr is None:
+        return EXECUTION_REWARD_RISK_BELT
+    return min(EXECUTION_REWARD_RISK_BELT, float(approved_rr))
+
+
 # --- Spec §11.2 — the EXECUTION-time deployment budget --------------------
 #
 # THE DEFECT THIS REPLACES (2026-09-02, the morning margin was switched on).
@@ -5096,28 +5139,51 @@ class ExecutionStage:
                         sizing_price, stop_price, decision.take_profit,
                         is_short=False,
                     )
+                    # WHICH BAR THIS ORDER ANSWERS TO. Normally the flat 1.2
+                    # above. But an order carrying a VERIFIED sub-floor
+                    # catalyst exception (2026-09-11, docs/WORK.md item 1
+                    # (b)+(c), folding in funnel item 4) was deliberately
+                    # permitted below the 1.5 floor and is therefore very
+                    # likely below 1.2 as well — measuring it against 1.2
+                    # here killed every one of them the instant execution
+                    # moved anything, which is not what this belt is for.
+                    # This belt's question is "did EXECUTION degrade the
+                    # trade the RM audited?", so for those orders it asks
+                    # exactly that: the executed ratio may not come in worse
+                    # than the approved geometry's own ratio. It can only
+                    # ever be LOWER than 1.2, never higher — `min` — so no
+                    # ordinary order gets a looser bar out of this.
+                    floor_rr = _execution_rr_floor(decision)
                     # FAIL CLOSED. None means the executed geometry is not
                     # measurable at all — a non-finite price, a stop at or
                     # above the entry, a target below it. That is strictly
                     # worse than a low ratio, not better, and it used to
                     # fall through this gate untouched because the old
-                    # `risk > 0` guard simply skipped the check.
-                    if executed_rr is None or executed_rr < 1.2:
+                    # `risk > 0` guard simply skipped the check. A verified
+                    # catalyst never exempts this half: permission to take a
+                    # poor payoff is not permission to take an unknown one.
+                    if executed_rr is None or executed_rr < floor_rr:
                         rr_text = (
                             "unmeasurable" if executed_rr is None
                             else f"{executed_rr:.2f}"
                         )
                         logger.warning(
                             "BUY %s skipped: executed geometry makes R/R %s "
-                            "(<1.2) — RM approved entry $%.2f / stop $%.2f, "
-                            "execution moved it to $%.2f / $%.2f.",
-                            decision.symbol, rr_text,
+                            "(<%.2f) — RM approved entry $%.2f / stop $%.2f, "
+                            "execution moved it to $%.2f / $%.2f.%s",
+                            decision.symbol, rr_text, floor_rr,
                             decision.entry_price, decision.stop_loss,
                             sizing_price, stop_price,
+                            " Bar is the approved geometry's own ratio: this "
+                            "order carries a verified sub-floor catalyst "
+                            "exception, so the skip is execution DEGRADING "
+                            "it, not the sub-floor payoff it was permitted "
+                            "with." if decision.subfloor_catalyst_exception
+                            else "",
                         )
                         _record_execution_skip(
                             pipeline, ctx, decision.symbol, "geometry_rr",
-                            f"executed geometry R/R {rr_text} < 1.2 "
+                            f"executed geometry R/R {rr_text} < {floor_rr:.2f} "
                             f"(RM approved ${decision.entry_price:.2f}/"
                             f"${decision.stop_loss:.2f}, execution moved to "
                             f"${sizing_price:.2f}/${stop_price:.2f})",
