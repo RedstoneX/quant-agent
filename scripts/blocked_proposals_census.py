@@ -32,16 +32,37 @@ before the Risk Manager ever saw it. This script checks `proposed_order`
 membership first, so a constructor-dropped symbol is correctly counted as
 a constructor casualty, not an AI Risk Manager one.
 
-What it CANNOT recover from the database alone: the specific reason the
-deterministic constructor (`PortfolioConstructor._widen_stop_past_noise` /
+2026-09-11: this script now also reads the durable `pipeline_event` rows
+`src/pipeline_stages.py` writes for the other three deterministic/agent
+causes that used to fall into the unexplained buckets below even though the
+pipeline already recorded a real reason for them: a symbol dropped by the
+symbol guard (`reason="symbol_guard"`), a symbol dropped by the portfolio-
+level hard risk filter, which includes the sector-concentration rule among
+others (`reason="hard_risk"`), and every symbol on a plan the AI Risk
+Manager's response failed to parse at all (`stage="risk"`,
+`reason="risk_manager_unparseable_output"`). `proposed_order` rows are
+written for a target BEFORE any of these three checks run, so a symbol they
+block already has a `proposed_order` row and, before this fix, had nothing
+else — no verdict, no execution_skip — so `classify()` fell through to
+`order_not_placed`, indistinguishable from a genuinely stalled run. See
+`_load_recorded_reasons` below for the exact (stage, outcome, reason)
+tuples this reads. A fourth durable cause, insufficient cash
+(`reason="insufficient_cash"`), was ALREADY correctly attributed before
+this change: it is written as an `execution_skip` row (a kind this script
+has always read via `_load_skips`), not a `pipeline_event` row.
+
+What this script still CANNOT recover from the database alone: the specific
+reason the deterministic constructor (`PortfolioConstructor._widen_stop_past_noise` /
 `_resolve_entry_and_stop`, `src/portfolio_constructor.py`) dropped a target
-before ever building a `proposed_order` row. That decision is deterministic
-Python, but its reason is only ever `logger.info`/`logger.warning` text —
-never persisted to a table. Rows this script cannot explain are counted
-under `no_order_built` (PM proposed it, no order was ever built for it) or
-`order_not_placed` (an order WAS built and apparently reviewed, but no
-trade and no execution_skip exist for it either — a stalled/incomplete run
-is the most likely explanation for that second shape specifically).
+is captured (see `_load_recorded_reasons`'s `constructor_dropped` case,
+2026-09-03), but only going forward — a drop from before that date left
+only `logger.info`/`logger.warning` text, never persisted to a table, and
+cannot be reconstructed retroactively. Rows still unexplained after all of
+the above are counted under `no_order_built` (PM proposed it, no order was
+ever built for it) or `order_not_placed` (an order WAS built and
+apparently reviewed, but no trade, no execution_skip and none of the
+`pipeline_event` reasons above exist for it either — a stalled/incomplete
+run is the most likely explanation for that second shape specifically).
 
 If `journalctl --user` retention still reaches back far enough on the box
 this runs on, those two buckets can often be resolved further by grepping
@@ -143,17 +164,44 @@ def _load_skips(con: sqlite3.Connection) -> dict[tuple[str, str], dict]:
     return out
 
 
-def _load_constructor_drops(con: sqlite3.Connection) -> dict[tuple[str, str], str]:
-    """2026-09-03: `pipeline_stages.DecisionStage` now persists a
-    `pipeline_event` row (stage='deterministic_gate', outcome='blocked',
-    reason='constructor_dropped') for every target the deterministic
-    constructor drops before ever building a `proposed_order` row — see
-    `PortfolioConstructor.last_drop_reasons`. Before this, a constructor
-    drop had NO row of any kind and fell into `no_order_built` with no
-    further explanation recoverable from the database (module docstring
-    above). Runs from before 2026-09-03 still have no such row and still
-    fall through to the old `no_order_built` bucket — this only narrows
-    the bucket going forward, it cannot retroactively explain history.
+# (stage, outcome, reason) tuples that `pipeline_stages.py` writes as a
+# `pipeline_event` row for a REAL, durable cause this census can now cite
+# by name instead of dumping the symbol into an unexplained bucket. The
+# dict value is the census's own label for that cause — kept identical to
+# the `reason` string already used elsewhere so a new occurrence groups
+# with any historical text that mentions the same cause.
+_RECORDED_REASON_KINDS: dict[tuple[str, str, str], str] = {
+    # 2026-09-03 — constructor drops a target before ever building a
+    # `proposed_order` row (see `PortfolioConstructor.last_drop_reasons`).
+    ("deterministic_gate", "blocked", "constructor_dropped"): "constructor_dropped",
+    # 2026-09-11 — the deterministic symbol guard blocks a symbol AFTER a
+    # `proposed_order` row already exists for it (RiskStage runs after
+    # DecisionStage), so before this it fell through to `order_not_placed`.
+    ("deterministic_gate", "blocked", "symbol_guard"): "symbol_guard",
+    # 2026-09-11 — the portfolio-level hard risk filter (includes the
+    # sector-concentration rule among others in `src/risk/rules.py`) blocks
+    # a symbol the same way, same previously-misclassified shape.
+    ("deterministic_gate", "blocked", "hard_risk"): "hard_risk",
+    # 2026-09-11 — the AI Risk Manager's response failed to parse at all
+    # (no verdict row is ever written in this case, since `RiskStage` only
+    # persists kind='verdict' when a verdict object exists), so every
+    # symbol on that plan used to fall through to `order_not_placed` too.
+    ("risk", "failed", "risk_manager_unparseable_output"): "risk_manager_unparseable_output",
+}
+
+
+def _load_recorded_reasons(con: sqlite3.Connection) -> dict[tuple[str, str], str]:
+    """Durable `pipeline_event` reasons this census can attribute by name.
+
+    Before 2026-09-03 these causes had NO row of any kind and fell into
+    `no_order_built` / `order_not_placed` with no further explanation
+    recoverable from the database (module docstring above) — the pipeline
+    logged a real sentence explaining each one, but only ever to
+    `logger.info`/`logger.warning`, never to a table. `_record_pipeline_event`
+    now persists one for each cause in `_RECORDED_REASON_KINDS`. Runs from
+    before a given cause's own persistence date still have no such row and
+    still fall through to the old unexplained buckets — this only narrows
+    them going forward, it cannot retroactively explain history.
     """
     out: dict[tuple[str, str], str] = {}
     for r in con.execute(
@@ -164,12 +212,17 @@ def _load_constructor_drops(con: sqlite3.Connection) -> dict[tuple[str, str], st
             d = json.loads(r["evidence_json"] or "{}")
         except (TypeError, ValueError):
             continue
-        if d.get("stage") != "deterministic_gate" or d.get("outcome") != "blocked":
-            continue
-        if d.get("reason") != "constructor_dropped":
+        label = _RECORDED_REASON_KINDS.get(
+            (d.get("stage"), d.get("outcome"), d.get("reason")),
+        )
+        if label is None:
             continue
         key = (r["decision_id"], (r["symbol"] or "").strip().upper())
-        out[key] = d.get("detail") or "constructor_dropped"
+        # First recorded reason wins if a symbol somehow matches more than
+        # one tuple (should not happen given the pipeline's own ordering,
+        # but a duplicate should never overwrite a real reason with another
+        # real reason non-deterministically).
+        out.setdefault(key, label)
     return out
 
 
@@ -196,16 +249,22 @@ def _load_fills(con: sqlite3.Connection) -> dict[tuple[str, str], str]:
 
 def classify(
     did: str, sym: str, *, ordered: set, verdicts: dict, skips: dict, fills: dict,
-    constructor_drops: dict | None = None,
+    recorded_reasons: dict | None = None,
 ) -> str | None:
     """None == converted (filled). Otherwise the verbatim/derived cause.
 
-    Precedence follows the pipeline's OWN order of operations:
-    constructor -> (portfolio-level hard risk filter, invisible to this
-    join key -- see module docstring) -> AI Risk Manager -> execution ->
+    Precedence follows the pipeline's OWN order of operations: constructor
+    -> deterministic symbol guard -> portfolio-level hard risk filter
+    (includes sector concentration) -> AI Risk Manager -> execution ->
     broker. A verdict rejection or zeroing is only attributed to a symbol
     that is confirmed to have reached the constructor's OWN order list
-    (`ordered`) -- the fix over the existing `_outcome` helper.
+    (`ordered`) -- the fix over the existing `_outcome` helper. `skips`
+    (execution_skip rows — covers, among others, `insufficient_cash`) and
+    `recorded_reasons` (pipeline_event rows — covers `constructor_dropped`,
+    `symbol_guard`, `hard_risk`, `risk_manager_unparseable_output`) are both
+    checked BEFORE the verdict/`ordered` fallback, because every one of
+    those causes can leave a `proposed_order` row with no verdict and no
+    fill — the exact shape that used to be misread as `order_not_placed`.
     """
     key = (did, sym)
     status = fills.get(key)
@@ -215,12 +274,8 @@ def classify(
         return f"order_{status}"
     if key in skips:
         return skips[key].get("reason") or "execution_skip_unlabeled"
-    if constructor_drops and key in constructor_drops:
-        # A fixed category, not the (per-symbol-unique) detail text, so the
-        # ranked-causes table still aggregates sensibly. The real sentence
-        # — the constructor's own words — is in `constructor_drops[key]`
-        # for anyone drilling into one proposal.
-        return "constructor_dropped"
+    if recorded_reasons and key in recorded_reasons:
+        return recorded_reasons[key]
     v = verdicts.get(did)
     if isinstance(v, dict) and key in ordered:
         if v.get("approved") is False:
@@ -263,13 +318,13 @@ def main(argv: list[str] | None = None) -> int:
         verdicts = _load_verdicts(con)
         skips = _load_skips(con)
         fills = _load_fills(con)
-        constructor_drops = _load_constructor_drops(con)
+        recorded_reasons = _load_recorded_reasons(con)
 
         results = []
         for t in entry:
             reason = classify(
                 t["decision_id"], t["symbol"], ordered=ordered, verdicts=verdicts,
-                skips=skips, fills=fills, constructor_drops=constructor_drops,
+                skips=skips, fills=fills, recorded_reasons=recorded_reasons,
             )
             results.append({**t, "reason": reason})
 
