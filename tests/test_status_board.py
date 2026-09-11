@@ -1196,9 +1196,19 @@ def test_pm_gate_items_do_not_leak_into_the_funnel_queue_or_vice_versa(tmp_path)
 # board exists to catch, wearing a friendlier face.
 # ---------------------------------------------------------------------------
 
+# The item itself — number, title, status, engineering notes — is still
+# docs/WORK.md's shape. Its prose has moved out to a separate fixture below,
+# standing in for docs/BOARD_NOTES.md, keyed to the item by "## item 1"
+# rather than living inside the item's own body.
 _FULL_ITEM = (
     "## THE FUNNEL QUEUE\n\n"
     "**1. The reward:risk floor — 17 of 68 (25%). TOO STRICT.**\n\n"
+    "Engineering detail nobody should have to read: the ATR floor overwrites\n"
+    "the structural stop, and this paragraph mentions that it was fixed.\n"
+)
+
+_FULL_ITEM_NOTES = (
+    "## item 1\n\n"
     "**Plain language —** The desk refuses a trade unless the likely gain is\n"
     "at least one and a half times what it is risking.\n"
     "**Example —** You want to buy at $100 with a stop at $98 and a target at\n"
@@ -1208,13 +1218,24 @@ _FULL_ITEM = (
     "honoured, however tight it is?\n"
     "**Recommendation —** Yes. Pad the stop only when there is no real level\n"
     "to put it at.\n\n"
-    "Engineering detail nobody should have to read: the ATR floor overwrites\n"
-    "the structural stop, and this paragraph mentions that it was fixed.\n"
+    "A stray unlabelled paragraph, mentioning the ATR floor, that must not be\n"
+    "swallowed into the recommendation above it just because it sits in the\n"
+    "same notes block.\n"
 )
 
 
-def test_an_item_carries_its_plain_language_example_and_recommendation():
-    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1])
+def _notes(tmp_path, text):
+    """Write `text` as a `docs/BOARD_NOTES.md`-shaped fixture and parse it,
+    the same way `render` parses the real file."""
+    p = tmp_path / "BOARD_NOTES.md"
+    p.write_text(text)
+    return sb.load_board_notes(p)
+
+
+def test_an_item_carries_its_plain_language_example_and_recommendation(tmp_path):
+    notes = _notes(tmp_path, _FULL_ITEM_NOTES)
+    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1],
+                                     notes=notes)
     assert len(items) == 1
     p = items[0].prose
     assert p.plain.startswith("The desk refuses a trade")
@@ -1223,19 +1244,121 @@ def test_an_item_carries_its_plain_language_example_and_recommendation():
     assert p.recommendation.startswith("Yes.")
 
 
-def test_a_blank_line_ends_a_block_so_engineering_prose_is_not_swallowed():
-    """The paragraph after the blank line is engineering detail. If it leaked
-    into the recommendation the owner would be shown notes for a developer
-    under a heading promising the opposite."""
-    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1])
+def test_a_blank_line_ends_a_block_so_engineering_prose_is_not_swallowed(tmp_path):
+    """The paragraph after the blank line in docs/BOARD_NOTES.md is ordinary
+    commentary, not a labelled field. If it leaked into the recommendation
+    the owner would be shown text nobody wrote as one."""
+    notes = _notes(tmp_path, _FULL_ITEM_NOTES)
+    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1],
+                                     notes=notes)
     assert "ATR floor" not in items[0].prose.recommendation
     assert "ATR floor" not in items[0].prose.plain
 
 
-def test_wrapped_prose_lines_are_joined_not_truncated():
-    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1])
+def test_wrapped_prose_lines_are_joined_not_truncated(tmp_path):
+    notes = _notes(tmp_path, _FULL_ITEM_NOTES)
+    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1],
+                                     notes=notes)
     # The second physical line of the plain-language block must be present.
     assert "one and a half times" in items[0].prose.plain
+
+
+def test_prose_no_longer_comes_from_work_mds_own_body():
+    """The relocation's core guarantee: a plain-language block typed straight
+    into a WORK.md item's body must NOT reach the page — only a matching
+    heading in docs/BOARD_NOTES.md does. Without that, this file's own cap
+    would be pointless: the prose it was moved to avoid could just come back
+    in through the body text instead."""
+    body = ("**3. A thing — DEFECT.**\n\n"
+            "**Plain language —** this text is typed into the wrong file "
+            "now.\n")
+    items = sb._parse_numbered_items(body)  # no notes: nothing to look up
+    assert items[0].prose.plain == ""
+    assert not items[0].prose.has_any
+    # Still visible, but as raw engineering notes, never as plain language.
+    assert "wrong file" in items[0].raw_body
+
+
+# ---------------------------------------------------------------------------
+# docs/BOARD_NOTES.md — the prose file itself
+#
+# The key property this file's whole design rests on: an entry is found by
+# the item's NUMBER and SECTION, never by its title, so a rename in
+# docs/WORK.md can never silently orphan the note written for it.
+# ---------------------------------------------------------------------------
+
+def test_board_notes_keys_by_number_and_section_not_title(tmp_path):
+    notes = _notes(tmp_path, (
+        "## item 7\n\n"
+        "**Plain language —** it is a queue thing.\n\n"
+        "## gate item 3\n\n"
+        "**Plain language —** it is a gate thing.\n\n"
+        "## decision due 2026-09-16\n\n"
+        "**Recommendation —** Yes.\n"
+    ))
+    assert notes["item 7"].plain == "it is a queue thing."
+    assert notes["gate item 3"].plain == "it is a gate thing."
+    assert notes["decision due 2026-09-16"].recommendation == "Yes."
+    # The funnel queue and the gate both number from 1: "item 3" and "gate
+    # item 3" must never collapse onto the same entry.
+    assert "item 3" not in notes
+
+
+def test_board_notes_heading_matches_regardless_of_case_or_spacing(tmp_path):
+    notes = _notes(tmp_path, "###   ITEM   9\n\n**Plain language —** ok.\n")
+    assert notes["item 9"].plain == "ok."
+
+
+def test_board_notes_missing_file_is_empty_not_an_error(tmp_path):
+    assert sb.load_board_notes(tmp_path / "nope.md") == {}
+
+
+def test_board_notes_with_no_recognised_heading_is_empty(tmp_path):
+    p = tmp_path / "BOARD_NOTES.md"
+    p.write_text("Just a header and some prose, no heading it can key on.\n")
+    assert sb.load_board_notes(p) == {}
+
+
+def test_an_item_with_no_matching_note_is_unexplained_not_borrowed(tmp_path):
+    """The whole point of keying by number: an item docs/BOARD_NOTES.md has
+    never heard of must render as unexplained, never silently inherit
+    prose written for a different item."""
+    notes = _notes(tmp_path, "## item 7\n\n**Plain language —** for item 7 only.\n")
+    items = sb._parse_numbered_items("**9. Something else — DEFECT.**\n", notes=notes)
+    assert not items[0].prose.has_any
+
+
+def test_the_real_board_notes_file_loads_without_error():
+    """docs/BOARD_NOTES.md ships in the repo; whatever it currently holds
+    must parse without raising, exactly like the real backlog."""
+    path = Path(__file__).resolve().parents[1] / "docs" / "BOARD_NOTES.md"
+    assert path.exists()
+    notes = sb.load_board_notes(path)
+    assert isinstance(notes, dict)
+
+
+def test_render_reads_prose_from_board_notes_not_work_md(tmp_path):
+    """End to end: `render` must take its prose from `board_notes`, not from
+    anything typed into the `work_md` item's own body."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. A real thing — 1 of 2 (50%). DEFECT.**\n\n"
+        "**Plain language —** typed into the wrong file, must not render.\n"
+    )
+    notes = tmp_path / "BOARD_NOTES.md"
+    notes.write_text(
+        "## item 1\n\n"
+        "**Plain language —** the desk explanation lives here now.\n"
+    )
+    phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
+             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
+    template = (Path(__file__).resolve().parents[1] / "scripts"
+                / "status_board_template.html")
+    out = sb.render(phases, state, template, work_md=work, board_notes=notes)
+    assert "the desk explanation lives here now" in out
+    assert "typed into the wrong file, must not render" not in out
 
 
 @pytest.mark.parametrize("line,field", [
@@ -1411,10 +1534,17 @@ def test_a_headline_wrapped_onto_a_second_line_does_not_hide_the_item():
     assert "ranking path just got" in items[0].title
 
 
-def test_prose_after_the_headline_on_the_same_line_is_still_read():
+def test_body_text_after_the_headline_on_the_same_line_still_lands_in_raw_body():
+    """Text on the same physical line as the closing `**` used to be where a
+    plain-language block was typed, back when prose lived in this file. It no
+    longer is — a `Plain language` line here has no heading to attach it to,
+    so it is not treated as prose at all — but it must still be captured as
+    engineering body text rather than silently dropped, same as any other
+    body content on that line."""
     body = ("\n**5. A thing — DEFECT.** **Plain language —** it is a thing.\n")
     items = sb._parse_numbered_items(body)
-    assert items[0].prose.plain == "it is a thing."
+    assert items[0].prose.plain == ""
+    assert "it is a thing" in items[0].raw_body
 
 
 def test_the_real_backlog_shows_more_items_than_the_strict_shape_would():
@@ -1823,20 +1953,42 @@ def test_nothing_to_do_says_so_rather_than_inventing_urgency():
 # A decision carries its own explanation and recommendation
 # ---------------------------------------------------------------------------
 
-def test_a_decision_reads_its_indented_plain_language_block(tmp_path):
+def test_a_decision_reads_its_plain_language_block_from_board_notes(tmp_path):
+    """The decision's own line in docs/WORK.md carries only the question now
+    — its prose comes from docs/BOARD_NOTES.md, keyed by the decision's due
+    date (`PendingDecision.ref`), because a decision has no number of its
+    own to key on."""
     p = tmp_path / "WORK.md"
     p.write_text(
         "- [ ] DECIDE BY 2099-01-01 — Which model runs the decision seat?\n"
-        "  **Plain language —** Which AI does the desk's final trade call.\n"
-        "  **Example —** Same shortlist, two models: one buys three names,\n"
-        "  the other buys one.\n"
-        "  **Recommendation —** Re-measure first, then decide.\n"
     )
-    got = sb.load_pending_decisions(p, today=dt.date(2098, 1, 1))
+    notes = _notes(tmp_path, (
+        "## decision due 2099-01-01\n\n"
+        "**Plain language —** Which AI does the desk's final trade call.\n"
+        "**Example —** Same shortlist, two models: one buys three names,\n"
+        "the other buys one.\n"
+        "**Recommendation —** Re-measure first, then decide.\n"
+    ))
+    got = sb.load_pending_decisions(p, today=dt.date(2098, 1, 1), notes=notes)
     assert len(got) == 1
     assert got[0].prose.plain.startswith("Which AI does")
     assert "two models" in got[0].prose.example
     assert got[0].prose.recommendation == "Re-measure first, then decide."
+
+
+def test_a_decisions_indented_body_no_longer_carries_prose(tmp_path):
+    """The relocation's guarantee for decisions too: prose typed straight
+    into the indented body under a `DECIDE BY` line must not reach the page
+    without a matching heading in docs/BOARD_NOTES.md."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "- [ ] DECIDE BY 2099-01-01 — Which model runs the decision seat?\n"
+        "  **Plain language —** this text is typed into the wrong file now.\n"
+    )
+    got = sb.load_pending_decisions(p, today=dt.date(2098, 1, 1))
+    assert len(got) == 1
+    assert got[0].prose.plain == ""
+    assert not got[0].prose.has_any
 
 
 def test_a_wrapped_question_is_not_truncated_to_a_fragment(tmp_path):
@@ -1915,6 +2067,17 @@ def test_the_rebuild_trigger_watches_the_backlog():
             / "quant-agent-status-board.path").read_text()
     assert "docs/WORK.md" in unit
     assert "PathChanged=/home/qamc/quant-agent/docs/WORK.md" in unit
+
+
+def test_the_rebuild_trigger_also_watches_the_board_notes_file():
+    """The prose the page renders now lives in docs/BOARD_NOTES.md, not
+    docs/WORK.md. An edit to it changes what the board says exactly as much
+    as an edit to the backlog does, so it must fire the same rebuild — the
+    same defect the WORK.md watch above exists to prevent, on the other
+    half of the page's source material."""
+    unit = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
+            / "quant-agent-status-board.path").read_text()
+    assert "PathChanged=/home/qamc/quant-agent/docs/BOARD_NOTES.md" in unit
 
 
 def test_the_board_service_does_not_point_at_the_retired_timer():

@@ -16,7 +16,9 @@ So this board records nothing. It reads `docs/WORK.md` — the backlog that is t
 single source of truth for what this desk is doing — and `docs/phases.yaml`,
 where each phase carries mechanically checkable evidence rules. It re-evaluates
 every rule against the current tree, reads live state off the production box and
-its database, and renders what it found.
+its database, and renders what it found. A separate file, `docs/BOARD_NOTES.md`,
+supplies the owner-facing prose rendered alongside each item — see "The prose
+problem" below for why that is a second file rather than a section of WORK.md.
 
 The important output is not "phase 3 is done". It is the DISAGREEMENT case: a
 phase recorded as done whose evidence no longer holds is reported as
@@ -49,11 +51,26 @@ The prose problem, and the convention that solves it
 A plain-language explanation, a real-world example and a recommendation cannot
 be derived from the code — they are prose, and somebody has to write them.
 Putting them in this script would recreate exactly the hand-maintained document
-this board exists to replace. So they live in `docs/WORK.md`, next to the item
-they describe, and are rendered through to the page.
+this board exists to replace. So they live in `docs/BOARD_NOTES.md`, keyed to
+the item they describe by its NUMBER and section — never by its title, which
+can be reworded without warning.
 
-The convention, inside the body of a numbered backlog item or a pending
-decision, each on its own line:
+`docs/BOARD_NOTES.md` is deliberately a file of its own, separate from
+`docs/WORK.md`. `docs/WORK.md` stays the agent-facing source of truth for what
+an item IS — its number, title, status and ordering, everything this script
+re-derives — and is mechanically capped at 100,000 bytes (see
+`tests/test_status_board.py::test_work_md_stays_under_a_hundred_thousand_bytes`)
+precisely because it is meant to stay a short, current backlog, not a growing
+prose archive. Owner-facing explanation does not belong under that cap or in
+that file: it has a different author, a different reader, and no mechanical
+reason to be size-limited. An item's number and its section (the funnel queue,
+the PM test gate, or a pending decision's due date) is the only thing that
+connects the two files — see `load_board_notes`, `QueueItem.ref` and
+`PendingDecision.ref` for exactly how that key is spelled.
+
+The convention, inside `docs/BOARD_NOTES.md`, under a heading naming the item
+it describes ("## item 32", "## gate item 4", "## decision due 2026-09-16"),
+each field on its own line:
 
     **Plain language —** what this is, in words a trader understands.
     **Example —** a concrete case that makes it tangible.
@@ -63,21 +80,27 @@ decision, each on its own line:
 
 Rules, deliberately few and deliberately dumb:
 
-  * The label must start the line. Leading whitespace is fine (a decision's
-    body is indented), the surrounding `**` is optional, and the separator may
-    be an em dash, a hyphen or a colon.
-  * A block runs until the next label, the next item, the next heading, or a
-    BLANK LINE. One paragraph per label. Wrapped lines are fine; a blank line
-    ends the block. That keeps ordinary engineering prose further down the item
-    from being swallowed into the recommendation.
+  * The label must start the line. Leading whitespace is fine, the
+    surrounding `**` is optional, and the separator may be an em dash, a
+    hyphen or a colon.
+  * A block runs until the next label, the next heading, or a BLANK LINE. One
+    paragraph per label. Wrapped lines are fine; a blank line ends the block.
+    That keeps ordinary commentary further down a note from being swallowed
+    into the recommendation.
   * Nothing is mandatory, and nothing is invented. An item with no plain-
-    language block renders with an explicit "not yet explained in plain
-    language" marker — never hidden, never dropped, and never auto-generated
-    into fake-friendly prose. Inventing an explanation would recreate the
-    staleness this board exists to prevent.
+    language block — whether because nobody has written to
+    `docs/BOARD_NOTES.md` for it yet, or because `docs/WORK.md` names an item
+    number no note names — renders with an explicit "not yet explained in
+    plain language" marker — never hidden, never dropped, and never
+    auto-generated into fake-friendly prose. Inventing an explanation would
+    recreate the staleness this board exists to prevent.
   * Prose is checked by the same mechanical jargon detector the phase
     summaries use, so an explanation written for a developer is visibly
     marked as one rather than quietly passing as plain English.
+
+`docs/WORK.md` still supplies everything this convention does NOT: an item's
+number, its title, its open/paused/resolved status, and its ordering. Only the
+prose source moved.
 
 Usage
 -----
@@ -622,6 +645,58 @@ def parse_prose(body_lines: list[str]) -> Prose:
     )
 
 
+#: The heading `docs/BOARD_NOTES.md` uses to key a prose block to the item it
+#: describes: "## item 32", "## gate item 4", "## decision due 2026-09-16".
+#: Deliberately the SAME strings `QueueItem.ref` and `PendingDecision.ref`
+#: already render to the owner, so a lookup is one dict access and the key
+#: survives an item being retitled in `docs/WORK.md` — it names the item's
+#: number and section, never its title.
+_BOARD_NOTES_HEADING_RE = re.compile(
+    r"^#{1,6}\s+(item\s+\d+|gate\s+item\s+\d+|decision\s+due\s+\d{4}-\d{2}-\d{2})\s*$",
+    re.I,
+)
+
+
+def load_board_notes(path: Path) -> dict[str, Prose]:
+    """Parse `docs/BOARD_NOTES.md` into ``{identifier: Prose}``.
+
+    Keyed by the owner-facing identifier the page already shows for that item
+    (`QueueItem.ref` / `PendingDecision.ref`) — ``"item 32"``, ``"gate item
+    4"``, ``"decision due 2026-09-16"`` — never by title, so a rename in
+    `docs/WORK.md` cannot silently orphan the note written for it, and a
+    lookup by the same two callers that already compute `.ref` is a single
+    dict access.
+
+    A missing file, or one with no recognised heading, is not an error: it
+    just means nothing has been written yet, which every caller already
+    renders as the explicit "not yet explained in plain language" marker
+    rather than a crash. Same defensive posture as `load_funnel_queue` and
+    `load_pending_decisions` — a malformed notes file must never break the
+    page, only leave more of it unexplained.
+    """
+    if not path.exists():
+        return {}
+    notes: dict[str, Prose] = {}
+    key: str | None = None
+    lines: list[str] = []
+
+    def _flush() -> None:
+        if key is not None:
+            notes[key] = parse_prose(lines)
+
+    for raw in path.read_text().splitlines():
+        m = _BOARD_NOTES_HEADING_RE.match(raw.strip())
+        if m:
+            _flush()
+            key = " ".join(m.group(1).lower().split())
+            lines = []
+            continue
+        if key is not None:
+            lines.append(raw)
+    _flush()
+    return notes
+
+
 #: An open item whose own headline carries one of these is not waiting on
 #: anybody — it is parked on purpose. It goes in the "no decision needed"
 #: section so it stops competing for the owner's attention, which is the
@@ -848,7 +923,8 @@ class QueueItem:
         return "open"
 
 
-def _parse_numbered_items(body: str, source: str = "backlog") -> list[QueueItem]:
+def _parse_numbered_items(body: str, source: str = "backlog",
+                           notes: dict[str, Prose] | None = None) -> list[QueueItem]:
     """Shared parser behind every `**N. Title — ...**` numbered section this
     board reads. One shape, one parser, so a funnel-queue item and a PM-gate
     item can never silently drift into two different conventions.
@@ -856,7 +932,16 @@ def _parse_numbered_items(body: str, source: str = "backlog") -> list[QueueItem]
     `source` names WHICH numbered sequence these items belong to, and is what
     makes the identifier on the page unambiguous — the funnel queue and the PM
     test gate both number from 1. See `_SOURCE_REF_LABEL`.
+
+    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes`
+    into ``{identifier: Prose}``. An item's prose is looked up by its own
+    `ref` (``"item 32"``, ``"gate item 4"``) — never parsed out of this body
+    text, which is `docs/WORK.md` and carries the item itself, not the
+    owner-facing explanation of it. Omitted (the default) for callers that
+    only care about the item shape, in which case every item's prose is
+    empty, which is exactly what an item with no note should show.
     """
+    notes = notes or {}
     lines = body.splitlines()
     items: list[QueueItem] = []
     i = 0
@@ -867,6 +952,7 @@ def _parse_numbered_items(body: str, source: str = "backlog") -> list[QueueItem]
         rank = int(_ITEM_OPEN_RE.match(lines[i].strip()).group(1))
         headline, body_lines, i = _headline_and_body(lines, i)
         share_m = _QUEUE_SHARE_RE.search(headline)
+        ref = f"{_SOURCE_REF_LABEL.get(source, 'item')} {rank}"
         items.append(QueueItem(
             rank=rank,
             title=_tidy_title(headline),
@@ -878,7 +964,7 @@ def _parse_numbered_items(body: str, source: str = "backlog") -> list[QueueItem]
             # `_ITEM_OPEN_RE`, so only the closing one survives into the
             # headline. Either spelling counts as struck through.
             done="~~" in headline,
-            prose=parse_prose(body_lines),
+            prose=notes.get(ref, Prose()),
             headline=_strip_markdown(headline),
             source=source,
             raw_body=_strip_markdown(" ".join(body_lines)),
@@ -950,8 +1036,14 @@ def _tidy_title(rest: str) -> str:
     return title.strip().rstrip(".,").strip("~ ").strip()
 
 
-def load_funnel_queue(work_md: Path) -> tuple[list[QueueItem], str | None]:
+def load_funnel_queue(work_md: Path,
+                       notes: dict[str, Prose] | None = None
+                       ) -> tuple[list[QueueItem], str | None]:
     """Parse the ranked funnel queue out of docs/WORK.md.
+
+    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes` —
+    the item itself (number, title, status) still comes from `work_md`, only
+    its plain-language prose is looked up from `notes`.
 
     Returns `(items, problem)`. `problem` is a plain-English sentence when the
     queue could not be read, and None when it could — the caller renders the
@@ -972,7 +1064,7 @@ def load_funnel_queue(work_md: Path) -> tuple[list[QueueItem], str | None]:
         if stop in body:
             body = body.split(stop, 1)[0]
 
-    items = _parse_numbered_items(body, source="backlog")
+    items = _parse_numbered_items(body, source="backlog", notes=notes)
     if not items:
         return [], (
             "The queue heading is there but no numbered items could be read "
@@ -992,8 +1084,13 @@ _PM_GATE_HEADING = "## PM TEST GATE"
 _PM_GATE_STOP = "<!-- END PM TEST GATE -->"
 
 
-def load_pm_gate(work_md: Path) -> tuple[list[QueueItem], str | None]:
+def load_pm_gate(work_md: Path,
+                  notes: dict[str, Prose] | None = None
+                  ) -> tuple[list[QueueItem], str | None]:
     """Parse the PM-test-readiness gate out of docs/WORK.md.
+
+    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes` —
+    same lookup-by-`ref` arrangement as `load_funnel_queue`.
 
     Same shape and same failure behaviour as `load_funnel_queue`: a missing
     heading or an unparseable body is reported as a plain-English problem,
@@ -1013,7 +1110,7 @@ def load_pm_gate(work_md: Path) -> tuple[list[QueueItem], str | None]:
         if stop in body:
             body = body.split(stop, 1)[0]
 
-    items = _parse_numbered_items(body, source="pm-gate")
+    items = _parse_numbered_items(body, source="pm-gate", notes=notes)
     if not items:
         return [], (
             "The gate heading is there but no numbered items could be read "
@@ -1200,15 +1297,20 @@ class PendingDecision:
         return f"decision due {self.due.isoformat()}"
 
 
-def load_pending_decisions(work_md: Path, today: dt.date | None = None) -> list[PendingDecision]:
+def load_pending_decisions(work_md: Path, today: dt.date | None = None,
+                            notes: dict[str, Prose] | None = None
+                            ) -> list[PendingDecision]:
     """Decisions the owner still owes an answer on, soonest first.
 
-    Each decision's indented body is scanned for the plain-language
-    convention, so a decision can carry its own explanation, example and
-    recommendation instead of the owner having to reconstruct the question
-    from engineering notes. A decision with no recommendation is shown as
-    having none — this never picks one for him.
+    `notes` is `docs/BOARD_NOTES.md`, already parsed by `load_board_notes`.
+    A decision has no number of its own, so it is keyed by its due date —
+    `"decision due 2026-09-16"`, the same string `PendingDecision.ref`
+    renders — which is looked up here so a decision can carry its own
+    explanation, example and recommendation instead of the owner having to
+    reconstruct the question from engineering notes. A decision with no
+    matching note is shown as having none — this never picks one for him.
     """
+    notes = notes or {}
     if not work_md.exists():
         return []
     today = today or dt.date.today()
@@ -1250,7 +1352,7 @@ def load_pending_decisions(work_md: Path, today: dt.date | None = None) -> list[
             text.append(s)
         out.append(PendingDecision(
             due, _strip_markdown(" ".join(text)), (due - today).days,
-            parse_prose(body),
+            notes.get(f"decision due {due.isoformat()}", Prose()),
             refs=extract_refs(question + " " + " ".join(body)),
             raw_body=_strip_markdown(" ".join(body)),
         ))
@@ -1899,16 +2001,22 @@ def _render_right_now(contradicted: list[PhaseView],
             'nothing on this page to act on.</p></div></article>')
 
 
-def _safely(loader: Any, work_md: Path, what: str) -> tuple[list[QueueItem], str | None]:
+def _safely(loader: Any, work_md: Path, what: str,
+            notes: dict[str, Prose] | None = None
+            ) -> tuple[list[QueueItem], str | None]:
     """Run a backlog loader; turn any breakage into a sentence, never a crash.
 
     The loaders already report a moved heading or a changed item shape as a
     plain-English problem. This catches the rest — an unreadable file, a
     decoding error, a shape nobody anticipated — and reports it the same way,
     because the one thing this page must never do is fail to load.
+
+    `notes` is forwarded to the loader (`docs/BOARD_NOTES.md`, already
+    parsed) — a broken notes file must degrade the same way a broken backlog
+    does: reported, never crashed on.
     """
     try:
-        return loader(work_md)
+        return loader(work_md, notes=notes)
     except Exception as exc:  # noqa: BLE001 - a sentence beats a stack trace
         return [], (f"The backlog could not be read, so {what} is not shown "
                     f"here. The file itself needs looking at "
@@ -1931,7 +2039,8 @@ def _unexplained_note(unexplained: int, total: int) -> str:
 
 
 def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
-           work_md: Path | None = None) -> str:
+           work_md: Path | None = None,
+           board_notes: Path | None = None) -> str:
     now = datetime.now(ET)
     total_rules = sum(len(p.results) for p in phases)
     total_pass = sum(p.passed for p in phases)
@@ -2040,12 +2149,21 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     # could not read the backlog — it must never produce a stack trace on his
     # phone, because a board that 500s is a board he stops trusting.
     work_md = work_md or (REPO_ROOT / "docs" / "WORK.md")
-    queue_items, queue_problem = _safely(load_funnel_queue, work_md,
-                                         "the running order")
-    pm_gate_items, pm_gate_problem = _safely(load_pm_gate, work_md,
-                                             "the model-test gate")
+    # docs/BOARD_NOTES.md carries only the owner-facing prose, keyed by each
+    # item's number and section (see `load_board_notes`). It is read
+    # defensively too, for the same reason: a broken notes file must fall
+    # back to "not yet explained" for every item, never a stack trace.
+    board_notes = board_notes or (REPO_ROOT / "docs" / "BOARD_NOTES.md")
     try:
-        decisions = load_pending_decisions(work_md)
+        notes = load_board_notes(board_notes)
+    except Exception:  # noqa: BLE001 - a blank prose set beats a stack trace
+        notes = {}
+    queue_items, queue_problem = _safely(load_funnel_queue, work_md,
+                                         "the running order", notes=notes)
+    pm_gate_items, pm_gate_problem = _safely(load_pm_gate, work_md,
+                                             "the model-test gate", notes=notes)
+    try:
+        decisions = load_pending_decisions(work_md, notes=notes)
     except Exception:  # noqa: BLE001 - see above
         decisions = []
 
@@ -2109,6 +2227,10 @@ def main() -> int:
     ap.add_argument("--work-md", default="docs/WORK.md",
                     help="the backlog to render from; point it elsewhere to "
                          "preview a page without touching the real one")
+    ap.add_argument("--board-notes", default="docs/BOARD_NOTES.md",
+                    help="the owner-facing prose to render alongside the "
+                         "backlog's items; point it elsewhere to preview a "
+                         "page without touching the real one")
     ap.add_argument("--json", action="store_true", help="also print the findings as JSON")
     ap.add_argument("--explain", metavar="PHASE_ID", default=None,
                     help="print every rule and its verdict for one phase, then exit")
@@ -2149,7 +2271,11 @@ def main() -> int:
     work_md = Path(args.work_md)
     if not work_md.is_absolute():
         work_md = REPO_ROOT / work_md
-    out.write_text(render(phases, state, REPO_ROOT / args.template, work_md))
+    board_notes = Path(args.board_notes)
+    if not board_notes.is_absolute():
+        board_notes = REPO_ROOT / board_notes
+    out.write_text(render(phases, state, REPO_ROOT / args.template, work_md,
+                          board_notes))
 
     contradicted = [p.title for p in phases if p.verdict == "CONTRADICTED"]
     if args.json:
