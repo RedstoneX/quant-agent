@@ -318,6 +318,37 @@ class PriceBarsResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# /events/{symbol} — dividend/earnings chart markers
+# ---------------------------------------------------------------------------
+
+class DividendEvent(BaseModel):
+    """One ex-dividend date, past or upcoming. `amount` is None when a
+    source reported the date without a per-share figure (never fabricated)."""
+    date: str  # YYYY-MM-DD
+    amount: float | None = None
+
+
+class EarningsEvent(BaseModel):
+    """One earnings-report date. `upcoming=True` marks a scheduled/estimated
+    future report (not yet happened); `upcoming=False` marks one already
+    reported — the chart renders these as visually distinct markers."""
+    date: str  # YYYY-MM-DD
+    upcoming: bool
+
+
+class SymbolEventsResponse(BaseModel):
+    """Dividend/earnings markers for one symbol's price chart. Sourced from
+    yfinance (src.data.market.MarketDataProvider) — market-data read only,
+    same dependency already used for ex-div stop adjustment and the
+    next-earnings-date risk signal. Empty lists (not an error) when the
+    source has nothing to report for this symbol."""
+    symbol: str
+    dividends: list[DividendEvent] = []
+    earnings: list[EarningsEvent] = []
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # /quotes
 # ---------------------------------------------------------------------------
 
