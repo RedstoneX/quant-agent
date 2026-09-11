@@ -299,14 +299,101 @@ risk:
   # hits this clamp — the same, already-intentional "genuinely too tight"
   # case this cap exists for, not a new edge case.
   #
-  # 100 was chosen over a larger number (the math above tops out needing
-  # ~195% notional for that 1x-ATR degenerate floor) because `allow_margin`
-  # is false: the cash-only rule already makes anything past 100% of equity
-  # in one name unreachable in practice, so 100 IS the real ceiling — this
-  # only documents it rather than leaving a number that does nothing.
-  # Revisit together, and re-derive this comment again, if either
-  # `min_stop_atr_multiple` or `allow_margin` ever changes again.
-  max_position_pct: 100
+  # 100 -> 33 on 2026-09-11. THE JUSTIFICATION FOR 100 WAS FALSE WHEN IT WAS
+  # WRITTEN. It read: "100 was chosen over a larger number because
+  # `allow_margin` is false: the cash-only rule already makes anything past
+  # 100% of equity in one name unreachable in practice." Checked against git:
+  # `allow_margin` was flipped to true on 2026-09-02 (commit a82f761, "margin
+  # ON at 2.0x"), and that comment was written on 2026-09-04 (commit 012289a,
+  # PR #258) — TWO DAYS AFTER the fact it asserted had stopped being true.
+  # A cash-only rule was doing the work, and there was no cash-only rule.
+  # So 100 was not a documented-but-unreachable ceiling; it was a live one.
+  # With margin on and `max_gross_exposure_x: 2.0`, a single name at 100% of
+  # equity is genuinely reachable.
+  #
+  # WHAT THIS CAP IS FOR, RESTATED. Every other risk number on this desk is
+  # STOP-CONDITIONAL: `max_position_risk_pct` (5), the §9.4 agreement bands
+  # ([3,4,5,5,5]) and `max_portfolio_risk_pct` (25) all price risk as
+  # `shares x distance to stop`, which is the loss only if the stop actually
+  # FILLS. This cap is the only parameter in the file that bounds the loss
+  # when it does NOT — an overnight gap, a halt, a fraud disclosure, a
+  # regulatory action. That failure mode is idiosyncratic and unforeseeable
+  # by construction: no quantity of analyst agreement reduces it, because
+  # every seat this desk runs is reading the same public record and shares
+  # the same blind spot. This is a SURVIVAL ceiling, not diversification.
+  # It is emphatically NOT portfolio construction — see docs/OUTCOME.md and
+  # the owner's framing: "this is a trading desk, not a hedge fund, not a
+  # mutual fund, not an ETF." Do not re-derive this from variance reduction,
+  # risk parity or volatility targeting; all three have been rejected here.
+  #
+  # THE NUMBER. Labelled honestly, because it is two different kinds of
+  # answer stacked:
+  #
+  # (a) REAL, CITABLE PRACTICE — direction only, not the number. Searched
+  #     for a stated single-name NOTIONAL concentration limit used by real
+  #     prop desks / CTAs. It does not exist as an industry standard: the
+  #     published prop-firm "1-5% position cap" figures are RISK-PER-TRADE
+  #     (this desk's own `max_position_risk_pct`, already set at 5), not a
+  #     notional cap, and CTA sources state such limits are manager-specific.
+  #     Do not let a later pass cite those as a notional standard; they are
+  #     not one. The one genuinely citable regulatory number is SEC Rule
+  #     15c3-1(c)(2)(vi)(M), the broker-dealer net-capital "undue
+  #     concentration" provision: a single non-exempt equity position above
+  #     10% of net capital (pre-haircut) attracts a 50% larger deduction.
+  #     FINRA Rule 4210(g)(1)(I) likewise REQUIRES concentration monitoring
+  #     but states no percentage. So regulators do treat single-name
+  #     concentration as a first-order capital risk, and they start counting
+  #     in the low tens of percent — but 10% of equity here would deliver
+  #     ~0.6% risk per trade at this desk's stop distances and is a dealer
+  #     inventory rule, not a directional desk's rule. It anchors the
+  #     direction and the order of magnitude. It is not the number.
+  #
+  # (b) ACCOUNT-DERIVED — this IS the number, from this desk's own already-
+  #     ratified parameters plus real, dated market events.
+  #     CONSTRAINT: one idiosyncratic gap in one name must not, ON ITS OWN,
+  #     put the desk past the deepest rung of its own ratified de-levering
+  #     ladder — `GROSS_LADDER`'s -20% peak-to-trough rung
+  #     (src/risk/rules.py), where the ceiling drops to 0.5x AND the owner is
+  #     alerted. That is this desk's existing, owner-signed definition of
+  #     "this is now an emergency". A single name must not be able to declare
+  #     one by itself.
+  #     TAIL MAGNITUDE, from real dated single-session declines on
+  #     idiosyncratic disclosures — the cases where a stop does not protect
+  #     you because the move is a gap or a halt:
+  #       Luckin Coffee   2020-04-02  ~-75% (fabricated sales disclosed)
+  #       Wirecard        2020-06-18  ~-62% (EUR 1.9bn unverifiable)
+  #       Silicon Valley Bank 2023-03-09 ~-60% (then halted and closed)
+  #       Kraft Heinz     2019-02-22  ~-28% (SEC subpoena, writedown)
+  #       ADM             2024-01-21  ~-24% (accounting investigation)
+  #     Median -60%. Small and deliberately severity-weighted: this is a TAIL
+  #     parameter, not a central estimate, and -60% is the magnitude twice
+  #     independently observed above rather than the -75% worst case.
+  #     ARITHMETIC: 20 / 0.60 = 33.3 -> 33.
+  #     Cross-checks. At the -75% worst case a 33% position costs 25% of
+  #     equity: past the alert rung, but the desk still holds 75% of its
+  #     equity and trades on. At the mildest case above (-24%) it costs ~8%,
+  #     which trips exactly the FIRST ladder rung — correct, since even the
+  #     mild version of this event should be a real event for the desk.
+  #
+  # WHAT THIS COSTS, STATED PLAINLY RATHER THAN HIDDEN. At the stop distances
+  # derived above (~5.5-7.7%), a 3% tier-1 agreement request needs ~39-55%
+  # notional and a 4% tier-2 request ~52-73%. So 33 BINDS on ordinary trades,
+  # and delivered risk where it binds is ~1.8-2.5% rather than the full 3-4%.
+  # That is the same shape of effect PR #258 removed at 20, and it is being
+  # reintroduced KNOWINGLY, for a reason #258 did not have: the two ceilings
+  # govern different failure modes. The risk envelope prices the stop filling;
+  # this prices it not filling. When they disagree the tighter one must win,
+  # because the desk survives the first case either way and only survives the
+  # second if this number is small. Conviction-based sizing is otherwise
+  # untouched — a high-conviction idea is still sized larger than a low one,
+  # all the way up to this ceiling. The constructor already writes the clamp
+  # into the audit trail (`cap_note`), so this is never silent.
+  # Never below `min_position_risk_pct` (0.5): even at the tightest stop the
+  # level-backed exemption allows (1.0x ATR, ~2.56%), 33% notional still
+  # delivers ~0.84% risk, so this cap shrinks trades and never refuses them.
+  # Re-derive this comment again if `allow_margin`, `max_gross_exposure_x`,
+  # `min_stop_atr_multiple` or the -20% `GROSS_LADDER` rung moves.
+  max_position_pct: 33
   # Caps NET exposure (longs minus shorts) as % of equity.
   #
   # 90 -> 200 on 2026-09-02. This number PREDATES the gross-exposure ladder
@@ -743,11 +830,12 @@ risk:
   # Was set to half of max_position_pct (20 -> 10) when both were chosen; a
   # short's loss is unbounded while a long's is capped at -100%, so one
   # short's concentration budget was made tighter. HISTORICAL relationship
-  # only, not live: `max_position_pct` moved to 100 on 2026-09-04 once it
-  # stopped functioning as a concentration lever (cash-only already makes
-  # 100% the real ceiling), and shorts were out of scope for that change —
-  # 10 stands on the unbounded-loss justification alone until its own
-  # review. Hard block on opening/adding a short; never blocks a COVER.
+  # only, not live: `max_position_pct` moved 20 -> 100 on 2026-09-04 and
+  # 100 -> 33 on 2026-09-11, and shorts were out of scope for both changes.
+  # At 33 this cap is now roughly a THIRD of the long ceiling rather than a
+  # half — i.e. tighter than the old relationship would give (16.5), which
+  # is the safe direction. 10 stands on the unbounded-loss justification
+  # alone until its own review. Hard block on opening/adding a short; never blocks a COVER.
   max_single_short_pct: 10
   # Largest total gross BEARISH exposure across the book, as % of equity —
   # true shorts plus LONG positions in an inverse/leveraged ETF (SH, SDS,

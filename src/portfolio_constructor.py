@@ -178,31 +178,34 @@ class ConstructorConfig:
     # this clamp a BUY over the ceiling is dropped entirely rather than
     # trimmed.
     #
-    # 20 -> 100 on 2026-09-04 (real-data audit): a concentration/liquidity
-    # BACKSTOP is supposed to only bind on a genuinely too-tight stop, not
-    # the ordinary case. At 20 it bound on nearly every trade — notional =
-    # risk_pct x entry/(entry - stop), so at this book's real ~5-9% stop
-    # distances (see `risk.min_stop_atr_multiple`'s own comment in
-    # settings.yaml) even the full 5% envelope needed 55-100% notional,
-    # 6 of 13 real proposed orders pinned at exactly 20%, and delivered risk
-    # collapsed to ~1% regardless of stated conviction. 100 is where that
-    # real 5-9% range stops being clipped (5% risk / 5% stop = 100%
-    # notional), while a stop tighter than 5% — reachable today only via the
-    # level-backed exception down to `absolute_min_stop_atr_multiple` — still
-    # gets clamped, which is the genuinely-too-tight case this ceiling
-    # exists for. `allow_margin` is false, so 100 is also the real ceiling:
-    # nothing past 100% of one name's equity is reachable cash-only anyway.
+    # 20 -> 100 on 2026-09-04 (real-data audit): at 20 this bound on nearly
+    # every trade — notional = risk_pct x entry/(entry - stop) — so delivered
+    # risk collapsed to ~1% regardless of stated conviction (6 of 13 real
+    # proposed orders pinned at exactly 20%). 100 removed that clipping.
+    #
+    # 100 -> 33 on 2026-09-11. The 2026-09-04 justification for 100 rested on
+    # `allow_margin` being false, which had ALREADY been flipped to true two
+    # days earlier (2026-09-02) — so 100 was a live single-name ceiling, not
+    # the unreachable documentation it was described as. 33 is derived in
+    # full under `risk.max_position_pct` in config/settings.yaml; the short
+    # version is that this is the ONLY parameter bounding a loss when the
+    # stop does not fill (gap, halt, fraud, regulatory action), every other
+    # risk number on the desk being stop-conditional, and 33 is what keeps a
+    # single -60% idiosyncratic gap — the median of five real, dated
+    # single-session collapses — from alone reaching the -20% `GROSS_LADDER`
+    # rung where the owner is alerted. SURVIVAL against single-name tail
+    # risk, NOT diversification, variance reduction or risk parity, all of
+    # which are rejected for this desk.
+    #
+    # This ceiling therefore BINDS on ordinary trades again, knowingly: a 3-4%
+    # agreement-band request needs ~39-73% notional at current stop distances,
+    # so delivered risk where it binds is ~1.8-2.5%. Unlike the 2026-09-04
+    # case that is not a bug, because the clamp is deliberate and is written
+    # into the audit trail by `_build_buy`'s `cap_note`. Conviction still
+    # sizes trades relative to each other below the ceiling.
     # Keep in sync with `risk.max_position_pct` — pipeline.py wires them from
     # the same setting.
-    #
-    # NOTE the "~5-9%" above is the stop distance the OLD 3.0 ATR floor
-    # produced. Since the floor became 1.5 (2026-09-04) real stops are
-    # roughly half that (~3.5% at this desk's median ATR), so this ceiling
-    # binds again on tight-stop names and delivers ~3.5% risk rather than the
-    # full 5%. Cash-only makes anything past 100% unreachable anyway — see
-    # the same note under `risk.max_position_pct` in settings.yaml. Recorded,
-    # deliberately not "fixed": enabling margin is an owner decision.
-    max_position_pct: float = 100.0
+    max_position_pct: float = 33.0
     # Spec §10.3 "concentration scales size, it does not veto". The sector
     # diversification target and the absolute ceiling behind it. Unlike every
     # other ceiling in this dataclass these do not merely make the constructor
@@ -2435,7 +2438,8 @@ class PortfolioConstructor:
             cap_note += (
                 f" [constructor: size capped to {max(0.0, name_headroom_pct):.2f}% "
                 f"by the {self.cfg.max_single_short_pct:.0f}% single-short "
-                f"ceiling — deliberately half the long single-name ceiling. "
+                f"ceiling — deliberately tighter than the long single-name "
+                f"ceiling. "
                 f"Deterministic, not PM inconsistency]"
             )
             allocation_pct = name_headroom_pct
