@@ -8,6 +8,7 @@ from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, RiskModification,
     RiskVerdict, SymbolRejection, TechAnalysisResult,
 )
+from src.risk.constants import reward_risk_floor_applies
 from src.risk.rules import RiskViolation
 
 logger = logging.getLogger(__name__)
@@ -107,7 +108,26 @@ class RiskManagerAgent(BaseAgent):
             # trade on the wrong one. The ratio the floor is judged against
             # must come from the same deterministic code that built the order.
             # None only for SELL/COVER/HOLD, which have no entry geometry.
-            rr = f" | R/R {d.reward_risk}:1" if d.reward_risk is not None else ""
+            #
+            # 2026-09-11 (docs/WORK.md item 1(d)): a Type B / breakout order
+            # gets no ratio shown at all, and is told why. The arithmetic
+            # would still divide — `take_profit` carries a measured-move
+            # reference — but printing "R/R 0.9:1" to a seat whose prompt
+            # tells it R/R discipline is non-negotiable invited exactly the
+            # refusal this change removed, on a number no gate in the
+            # pipeline consults for this setup type any more. Silence would
+            # be worse than a bad number here: the RM would simply assume
+            # the field was missing.
+            if not reward_risk_floor_applies(getattr(d, "setup_type", None)):
+                rr = (
+                    " | R/R n/a — BREAKOUT setup: no overhead level to "
+                    "measure a reward against, managed by trailing stop with "
+                    "no fixed target. Judge it on the RISK side (stop, "
+                    "conviction, evidence); do NOT refuse or resize it on a "
+                    "reward:risk figure"
+                )
+            else:
+                rr = f" | R/R {d.reward_risk}:1" if d.reward_risk is not None else ""
             return (
                 f"- {d.action} {d.symbol}: {alloc} | Entry: ${d.entry_price} | "
                 f"Stop: ${d.stop_loss} | Target: ${d.take_profit}{rr}\n  Reasoning: {d.reasoning}"

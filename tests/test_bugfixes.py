@@ -840,12 +840,23 @@ def test_risk_mod_partial_sell_trim_still_applies():
     assert rejected == []
 
 
-def test_risk_mod_stop_widening_below_rr_floor_is_rejected():
-    """2026-09-03 audit: an RM stop_loss widening that drops the resulting
-    reward:risk below the constructor's own 1.5 floor must be caught and
-    reverted, not shipped. Before this fix, both the pre-RM and post-RM
-    hard-risk re-filters compared the modified decision only against
-    itself, so nothing caught this."""
+def test_risk_mod_stop_widening_below_rr_floor_is_now_allowed():
+    """**Inverted 2026-09-11, docs/WORK.md item 1(d).**
+
+    The 2026-09-03 audit added this guard so an RM stop_loss widening could
+    not ship a reward:risk the CONSTRUCTOR would have refused. The
+    constructor no longer refuses on that floor, so the guard's whole
+    premise — "a fresh decision would have to clear 1.5" — is void, and
+    keeping it would leave a hard 1.5 floor alive in the one place nobody
+    would think to look.
+
+    The edit is applied. What still guards this path is unchanged and
+    tested below: an edit that pulls the stop inside the ATR noise band is
+    refused. (The guard's other surviving half — refusing an edit that makes
+    the ratio UNMEASURABLE — has no test because it cannot be reached
+    through this path: `TradeDecision`'s own validators already refuse a
+    stop above entry or a target below it, one step earlier. It is kept as
+    defence in depth against a non-finite value.)"""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     buy = TradeDecision(
         action="BUY", symbol="SPY", allocation_pct=10,
@@ -855,7 +866,7 @@ def test_risk_mod_stop_widening_below_rr_floor_is_rejected():
     modifications = [
         RiskModification(
             symbol="SPY", field="stop_loss",
-            original_value=490, new_value=470,  # R/R -> 1.0, below 1.5 floor
+            original_value=490, new_value=470,  # R/R -> 1.0
             reason="give it more room",
         )
     ]
@@ -863,15 +874,12 @@ def test_risk_mod_stop_widening_below_rr_floor_is_rejected():
     updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
 
     assert len(updated) == 1
-    assert updated[0].stop_loss == 490  # reverted to pre-modification value
-    assert len(rejected) == 1
-    assert rejected[0]["symbol"] == "SPY"
-    assert rejected[0]["field"] == "stop_loss"
-    assert "reward:risk" in rejected[0]["reason"]
+    assert updated[0].stop_loss == 470
+    assert rejected == []
 
 
-def test_risk_mod_short_stop_widening_below_rr_floor_is_rejected():
-    """Mirror of the BUY case for a SHORT — the floor applies identically."""
+def test_risk_mod_short_stop_widening_below_rr_floor_is_now_allowed():
+    """Mirror of the BUY case for a SHORT — item 1(d) applies identically."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     short = TradeDecision(
         action="SHORT", symbol="XLB", allocation_pct=10,
@@ -888,8 +896,8 @@ def test_risk_mod_short_stop_widening_below_rr_floor_is_rejected():
 
     updated, rejected = pipeline._apply_risk_modifications([short], modifications)
 
-    assert updated[0].stop_loss == 104
-    assert len(rejected) == 1
+    assert updated[0].stop_loss == 112
+    assert rejected == []
 
 
 def test_risk_mod_stop_inside_noise_band_is_rejected_when_bars_available():

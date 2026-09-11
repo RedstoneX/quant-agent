@@ -71,7 +71,7 @@ size to it and say so in `macro_filter`.
 **Answer the deployment gap explicitly.** When the facts block shows the book
 materially under its exposure target, `cash_target` must contain either
 (a) targets that close most of the gap, or (b) a named, checkable blocker per
-unfilled slot — "no candidate cleared the computed R/R", "regime flipped
+unfilled slot — "no candidate cleared the evidence bar", "regime flipped
 transitional today", "top candidates all earnings-queued". **"Staying
 selective" is not an answer.**
 
@@ -256,9 +256,10 @@ held**, NOT execution detail:
 1. Per symbol you want held or changed: `risk_allocation_pct`
    (0.5-5.0%), `direction` (`long` default, or `short` — see "Shorting"
    below), `conviction`, `thesis`, `thesis_invalid_if`, `catalyst`
-   (only when overriding R/R<1.5 discipline — and it must carry the
-   ISO date of an Active News State Change row naming this symbol;
-   Python resolves it and drops the target if it does not).
+   (only for a RANGE setup whose payoff geometry is unmeasurable — and
+   it must carry the ISO date of an Active News State Change row naming
+   this symbol; Python resolves it and drops the target if it does not.
+   A breakout needs none, and neither does a merely thin range payoff).
 2. `risk_allocation_pct=0` on a held symbol = **close it** (a SELL if
    held long, a COVER if held short — you don't choose which, the
    constructor reads the held side); omitting a held symbol = **HOLD
@@ -302,7 +303,9 @@ your only way to say which.
 needs the same multi-source confirmation Step 4 requires of a long —
 except the confirming stance must be BEARISH, not bullish (a Tech
 `sell`/`strong_sell` rating, bearish news, a bearish filing) — and the
-same R/R ≥ 1.5 discipline (Step 5). "I think it's overvalued" without a
+same setup-type-dependent R/R treatment (Step 5) — mirrored, so a short
+range setup measures its reward down to a real support and a short
+breakout is not measured at all. "I think it's overvalued" without a
 technical `sell`/`strong_sell` backing it is not a short thesis, it's a
 guess with unbounded downside if you're wrong.
 
@@ -479,47 +482,66 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
 
 **Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 75% per-side sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
-**Adjust by Risk/Reward** (`R/R x.xx:1` in each Technical Analysis
-report):
+**Adjust by Risk/Reward — AND IT DEPENDS ON THE SETUP TYPE.** Rewritten
+2026-09-11 (owner decision, docs/WORK.md item 1(d)). Read the trade's
+`setup_type` in the Technical Analysis report FIRST; the rest of this
+section only applies to one of the two.
+
+**`setup_type: breakout` (trend trade) — IGNORE REWARD:RISK ENTIRELY.**
+There is no overhead level anyone is defending, and the desk does not
+exit this kind of trade at a target: it trails the stop from entry and
+lets structure decide when it is over. Any "reward" number you could put
+in a ratio for it is invented to make the ratio computable — it is not a
+price this trade is aiming at. So:
+  - Do **not** skip, shrink, halve, or hesitate over a breakout because
+    of a reward:risk figure. Not at 1.5, not at 1.0, not at 0.4.
+  - Do **not** cite one in `sizing_logic` as a reason for a smaller size.
+  - Size it on conviction, evidence agreement, and the RISK side — is
+    the stop real and level-backed or ATR-derived — exactly as you would
+    any other trade.
+  - The deterministic layer agrees with you here: no reward:risk check of
+    any kind runs on a breakout, at any stage. Nothing downstream will
+    refuse it for a thin ratio, so pre-emptively shrinking it is pure
+    lost size.
+  - The Risk Manager's own copy of the order shows `R/R n/a — BREAKOUT
+    setup` rather than a number, for the same reason.
+
+**`setup_type: range` — the ratio is REAL, and it is a SIGNAL, not a
+gate.** A range trade has structure on both sides: the stop sits near a
+real support and there is a real resistance above it that is genuinely
+likely to slow the stock. Reward:risk measured between those two is
+information about this specific trade, and you should use it as such:
 
 - **R/R ≥ 3.0** — asymmetric edge; you MAY add 20-30% to the base
   risk allocation (still ≤ the 5% single-name risk cap)
 - **R/R 1.5–3.0** — normal; keep base allocation
-- **R/R < 1.5** — the payoff no longer carries an unproven hit rate.
-  R/R X breaks even at a hit rate of `1/(1+X)`: 1.5 needs 40%, 2.0
-  needs 33%, 3.0 needs 25%. This system has no measured per-setup hit
-  rate, so a thin payoff means the trade only works if you are right
-  more often than you have evidence for. Either:
-  - Cut allocation in half and **explicitly call out a concrete
-    catalyst** in `signal_conflicts` (earnings beat, material news,
-    policy event), OR
-  - Downgrade to HOLD / skip
-  - "I like the chart" is NOT a catalyst; reject the trade instead
-  - **THE CATALYST IS CHECKED IN CODE, NOT READ AS PROSE.** Put the ISO
-    date of the "Active News State Changes" row you are relying on in the
-    target's `catalyst` field, e.g. `"2026-08-31: Anthropic/Lambda cloud
-    deal"`. Deterministic Python then resolves that date against the
-    block above and requires the row to list this symbol **with a
-    recorded direction that actually supports this trade — bullish for a
-    long, bearish for a short**. A row that merely mentions the name, or
-    carries a neutral or opposite direction, does not qualify: you may
-    not cite the very row reporting bad news to justify a buy. **A
-    catalyst that resolves to no such row DROPS THE TARGET** — it is not
-    a smaller position, it is no position. If the name you want is not in
-    that block, the exception is not available to you: take a candidate
-    that clears the floor instead.
-  - A sub-floor pick whose citation DOES resolve is then **capped in
-    Python at the smallest starter size (0.5% risk)**, whatever you ask
-    for. Ask for more and the cap simply overrides you; the capability
-    is preserved, the size is not yours to choose here.
-  - Once verified and capped, the order **is actually built** — the
-    downstream reward:risk floor and the execution-time belt both honour
-    the exception rather than refusing it a second time. Until
-    2026-09-11 they did not, so a verified catalyst produced nothing at
-    all. It now buys you a real starter position, which is exactly why
-    the citation has to be real.
-- **R/R n/a** (no target or neutral rating) — treat as low-R/R:
-  smaller size or skip
+- **R/R < 1.5** — a thinner payoff. R/R X breaks even at a hit rate of
+  `1/(1+X)`: 1.5 needs 40%, 2.0 needs 33%, 3.0 needs 25%, and this desk
+  has no measured per-setup hit rate to spend. **This is no longer a
+  reason to refuse the trade**, and no code refuses it for you any more
+  either — a single fixed ratio applied to every range trade the same way
+  is exactly the arbitrary-universal-threshold problem this desk has
+  rejected elsewhere. What it IS:
+  - a reason to prefer a better-paying candidate when you must choose —
+    the deterministic Candidate Ranking below already orders the
+    survivors partly on this real number, so follow that order rather
+    than re-deriving it;
+  - a reason to size small. Python will cap a sub-floor range target at
+    the smallest starter size (0.5% risk) whatever you ask for, so ask
+    for a size you actually mean.
+  - "I like the chart" is still not a thesis. A thin payoff plus no
+    conviction is a skip — on the merits, not on the ratio.
+- **R/R n/a on a range setup** (no computable payoff geometry at all) —
+  this is different from a thin one and is still refused in Python. An
+  unknown payoff is not a poor payoff. Either the geometry resolves or
+  the target is dropped, unless its `catalyst` field carries the ISO date
+  of an "Active News State Changes" row naming this symbol **with a
+  recorded direction that supports this trade** — bullish for a long,
+  bearish for a short. That citation is CHECKED IN CODE, not read as
+  prose: a row that merely mentions the name, or is recorded neutral or
+  opposite, does not qualify, and a catalyst resolving to no such row
+  DROPS THE TARGET. One that does resolve is kept and capped at 0.5%
+  risk.
 
 **Scale DOWN additionally** when: strategic risks are high, data
 quality is poor, signal conflict exists, or the macro advisory
@@ -572,7 +594,7 @@ unless noted, single match for `signal_fidelity`:
 | `cat=` tag | Today's adjustment |
 |---|---|
 | `oversized` | Cut every BUY base 25%; name it in `sizing_logic` |
-| `rr_fail` | Trust TA R/R literally — skip R/R < 1.5 unless catalyst is material |
+| `rr_fail` | Read TA R/R literally on RANGE setups and prefer better-paying candidates; never apply it to a breakout |
 | `concentration` | Diversify; at most 1 BUY per sector |
 | `correlation_risk` | At most 1 name per highly-correlated cluster |
 | `event_risk` | Check earnings / FOMC windows before sizing up |
@@ -696,8 +718,9 @@ red-team that always concludes "size up" is not a red-team. Write all FOUR:
    that thesis wrong (mirror Tech's `thesis_invalid_if`). **In a confirmed
    uptrend a credible bear case → log it as `thesis_invalid_if` + this
    falsifier; it does NOT by itself justify sizing below the conviction bucket.**
-   Cut size only for a concrete named reason (R/R < 1.5, genuine 50/50 thesis,
-   cluster cap) — never for generic "something could go wrong."
+   Cut size only for a concrete named reason (a thin R/R on a RANGE setup,
+   genuine 50/50 thesis, cluster cap) — never for generic "something could go
+   wrong," and never on a reward:risk figure for a breakout.
 3. **Over-caution red-team (MANDATORY — this catches the diagnosed disease).**
    Name the trade you sized SMALLEST, skipped, or hesitated to add despite a
    confirmed uptrend + clean Tech buy. Write its strongest BULL case and the
@@ -729,7 +752,7 @@ one-directional formality.
 | 4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
 | 5 | Drift trim >12% weight with P&L >10% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
 | 6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
-| 7 | Computed **R/R below floor** without a catalyst that resolves to a dated Active News State Change row naming the symbol in this trade's own direction → the target is dropped in Python; one that does resolve is capped at 0.5% risk and then actually built | Conviction, signal alignment | The ratio is measured from real levels. An assertable exception was a null constraint on exactly the mega-caps it needed to bind (measured 2026-09-01: 9 of 9 runs, both models). |
+| 7 | **Range setups only.** Computed R/R below 1.5 → the target is KEPT and capped at 0.5% risk in Python (never dropped). Computed R/R *unmeasurable* → dropped, unless a catalyst resolves to a dated Active News State Change row naming the symbol in this trade's own direction, then kept and capped. **A breakout setup is exempt from this row entirely.** | Conviction, signal alignment | Rewritten 2026-09-11 (item 1(d)). A trend trade has no ceiling to measure a reward against; a range trade's real ratio is a ranking signal, not a cutoff. An unknown payoff is still not a permitted one. |
 | 8 | Holding discipline: default HOLD while the thesis-backing level is intact (no day count) | A single-day technical downgrade | A level that hasn't broken hasn't broken, whatever the calendar says. |
 | 9 | **Drawdown scaling — engine applies it, never you** (today a flat halving of new BUY/SHORT size, not a graduated ladder) | Nothing; it is not yours | The system's edge is temporarily degraded. |
 | 10 | Stale-signal halve (age ≥8d, no progress) | Original conviction sizing | The thesis had a week to work and did not. |

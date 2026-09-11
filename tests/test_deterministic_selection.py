@@ -53,20 +53,33 @@ def test_catalyst_parsing_reads_only_the_arrow_list():
     assert catalyst_symbols(text) == {"NVDA", "SMH", "AMD"} | {"NVDA"}
 
 
-def test_rules_admit_twelve_names_and_rank_none_of_them(rows):
-    """THE finding. The rules gate and ceiling; they never choose."""
+def test_rules_admit_twentyfive_names_and_rank_none_of_them(rows):
+    """THE finding. The rules gate and ceiling; they never choose.
+
+    **12 -> 25, 2026-09-11 (docs/WORK.md item 1(d)).** Removing the
+    reward:risk floor from R4 more than doubles the eligible set on this
+    exact real day — 13 of the 25 were being refused for a thin-but-real
+    payoff alone. The finding itself is unchanged and, if anything, sharper:
+    the rules now permit twenty-five names and still choose none of them."""
     summary = summarise(rows)
     assert summary["analysed"] == 59
-    assert summary["eligible"] == 12
-    assert summary["clears_rr_floor_alone"] == ["CHPX", "FLNC", "NKE", "PFE", "XLE"]
-    assert summary["enters_via_catalyst_door"] == [
-        "COP", "CRM", "CVX", "MSFT", "NVDA", "PATH", "TSM",
+    assert summary["eligible"] == 25
+    assert summary["clears_rr_floor_alone"] == [
+        "AAPL", "CHPX", "CMCSA", "COP", "CRM", "CVX", "DE", "DIS", "FLNC",
+        "JNJ", "JPM", "KO", "MU", "NKE", "NUE", "NVDA", "PATH", "PFE",
+        "RSG", "SLB", "V", "VLO", "XLE",
     ]
-    # 13.5% of a 25% total-risk budget: every eligible name fits at once, so
-    # no cap forces the desk to drop any of them. Nothing in the rule set
-    # narrows twelve permitted names to one pick.
-    assert summary["total_max_risk_pct"] == 13.5
-    assert summary["total_max_risk_pct"] < 25.0
+    # The catalyst door has all but closed: only the two names whose payoff
+    # is UNMEASURABLE still need it. That is the redundancy item 1(d)
+    # creates, visible on real data.
+    assert summary["enters_via_catalyst_door"] == ["MSFT", "TSM"]
+    # 48% against a 25% total-risk budget. NEW as of item 1(d) and worth
+    # stating plainly: the eligible set no longer fits at once, so the
+    # RISK BUDGET — not the reward:risk floor — is now what forces a choice
+    # between permitted names. `allocate_risk_budget` rations it; the rule
+    # set still names no single pick.
+    assert summary["total_max_risk_pct"] == 48.0
+    assert summary["total_max_risk_pct"] > 25.0
     assert summary["rules_name_a_single_pick"] is False
 
 
@@ -75,13 +88,17 @@ def test_subfloor_catalyst_door_is_reachable_only_by_news_covered_names(rows):
     names the wires cover, so the sub-floor exception is available to
     mega-caps and effectively nobody else."""
     by_door = {r["symbol"] for r in rows if r["eligible"] and r["subfloor_catalyst"]}
-    assert {"NVDA", "MSFT", "TSM"} <= by_door
+    # **Narrowed 2026-09-11 (item 1(d)).** The door is only reachable at all
+    # now by a name whose payoff is UNMEASURABLE — a thin-but-real one walks
+    # in the front. On this day that leaves MSFT and TSM; NVDA, the name this
+    # whole line of work was written about, no longer needs the door.
+    assert by_door == {"MSFT", "TSM"}
     # Both famous-and-weak names the benchmark's `familiarity_bias` check
-    # penalises are ADMITTED by the desk's own rules, at 0.5% risk.
+    # penalises are still ADMITTED by the desk's own rules.
     for symbol in ("NVDA", "MSFT"):
         row = next(r for r in rows if r["symbol"] == symbol)
         assert row["eligible"] is True
-        assert row["max_risk_pct"] == 0.5
+    assert next(r for r in rows if r["symbol"] == "MSFT")["max_risk_pct"] == 0.5
 
 
 def test_three_of_the_five_qualified_shorts_are_refused_by_the_net_rule(rows):
@@ -107,7 +124,10 @@ def test_block_reason_census(rows):
         for reason in row["blocked_by"]:
             key = re.match(r"R\d", reason).group(0)
             census[key] = census.get(key, 0) + 1
-    assert census == {"R2": 21, "R4": 41, "R5": 14}
+    # R4 41 -> 20 (item 1(d)): 21 of the 41 R4 blocks on this day were the
+    # reward:risk floor refusing a measurable payoff. What remains is the
+    # unmeasurable half, which still fails closed.
+    assert census == {"R2": 21, "R4": 20, "R5": 14}
 
 
 # --------------------------------------------------------------------------
@@ -133,14 +153,16 @@ def test_equal_weight_ranking_order_is_pinned(rows):
     """THE deterministic output on run-64290730. If this moves, the write-up
     in docs/WORK.md item 18 is stale and must be re-derived."""
     ranked = rank_eligible(rows)
-    assert len(ranked) == 12
+    assert len(ranked) == 25
     assert [r["symbol"] for r in ranked] == [
-        "XLE", "NVDA", "COP", "CHPX", "PATH", "NKE",
-        "MSFT", "TSM", "FLNC", "CVX", "PFE", "CRM",
+        "VLO", "XLE", "NUE", "NVDA", "AAPL", "JPM", "COP", "JNJ", "CHPX",
+        "RSG", "KO", "V", "PATH", "DIS", "SLB", "CMCSA", "DE", "NKE",
+        "MSFT", "TSM", "MU", "FLNC", "CVX", "PFE", "CRM",
     ]
     assert [r["composite_score"] for r in ranked] == [
-        1.9848, 1.7424, 1.6402, 1.5, 1.3523, 1.2159,
-        1.1742, 1.1667, 1.0492, 1.0, 0.9205, 0.5341,
+        2.3674, 1.9848, 1.8977, 1.7424, 1.7386, 1.6477, 1.6402, 1.5795, 1.5,
+        1.3902, 1.3788, 1.3674, 1.3523, 1.3371, 1.3371, 1.3068, 1.2614,
+        1.2159, 1.1742, 1.1667, 1.1477, 1.0492, 1.0, 0.9205, 0.5341,
     ]
 
 

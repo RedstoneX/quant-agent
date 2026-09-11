@@ -57,7 +57,11 @@ from src.models import (
 from src.nominations import select_nominations
 from src.portfolio_constructor import LEVEL_BACKED_STOP_RULES
 from src.pipeline_context import RunContext
-from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
+from src.risk.constants import (
+    REWARD_RISK_FLOOR,
+    STARTER_POSITION_RISK_PCT,
+    reward_risk_floor_applies,
+)
 
 if TYPE_CHECKING:
     from src.agents.earnings_analyst import EarningsAnalystAgent
@@ -1233,30 +1237,54 @@ def _min_order_usd(pipeline) -> float:
 EXECUTION_REWARD_RISK_BELT = 1.2
 
 
-def _execution_rr_floor(decision) -> float:
-    """The reward:risk bar THIS order must clear at execution time.
+def _execution_rr_floor(decision) -> float | None:
+    """The reward:risk bar THIS order must clear at execution time, or None
+    when no reward:risk bar applies to it at all.
 
-    Ordinarily `EXECUTION_REWARD_RISK_BELT`. For an order carrying a
-    verified sub-floor catalyst exception (2026-09-11, docs/WORK.md item 1
-    parts (b)+(c), folding in funnel item 4) the flat belt is the wrong
-    question: that order was deliberately permitted below the 1.5 floor and
-    is therefore very likely below 1.2 as well, so the belt killed every one
-    of them the instant execution moved anything — not because execution had
-    degraded the trade, but because of the sub-floor payoff it was granted
-    permission for. For those the bar becomes the approved geometry's OWN
-    ratio: execution may not make it worse than what the Risk Manager
-    reviewed.
+    **None for a Type B / breakout order (2026-09-11, docs/WORK.md item
+    1(d), owner decision).** Nothing overhead is expected to stop the stock
+    and the position is managed by a trailing stop with no fixed target
+    (`src/risk/trailing.py`), so `take_profit` is a measured-move reference
+    rather than a price the desk trades toward — a belt measured against it
+    would be judging execution drift against an invented number. The entry
+    gates upstream no longer apply any reward:risk test to this setup type
+    either; leaving this one running would have reinstated the floor at the
+    last possible moment. Every RISK-side execution check around it is
+    unchanged, including the 1x ATR stop floor immediately above the call
+    site and the unmeasurable-geometry refusal at it.
+
+    For a Type A / range order the bar is
+    `min(EXECUTION_REWARD_RISK_BELT, the approved geometry's own ratio)`.
+
+    That `min` was introduced 2026-09-11 for verified sub-floor catalyst
+    orders only (item 1 parts (b)+(c), folding in funnel item 4): such an
+    order was deliberately permitted below 1.5 and is therefore very likely
+    below 1.2 too, so the flat belt killed every one of them the instant
+    execution moved anything — not because execution had degraded the trade,
+    but because of the payoff it had been granted permission for. **Item
+    1(d) generalises that to every range order, because the same thing is
+    now true of every range order:** the entry gates no longer refuse a
+    sub-floor payoff at all, so a flat 1.2 here would be the removed floor
+    reappearing at the last possible moment, on a different number, for
+    exactly the trades the change exists to allow. This belt's own stated
+    question is "did EXECUTION degrade the trade the Risk Manager audited?"
+    and `min(belt, approved)` is that question asked exactly.
 
     `min` is load-bearing. The returned bar can only ever be LOWER than the
-    ordinary belt, never higher, so an exception can never loosen the check
-    for an order whose approved geometry already cleared 1.2 — and an
-    approved geometry that is itself unmeasurable buys no leniency at all.
-    The caller's own unmeasurable-executed-geometry refusal is unchanged and
-    is never exempted: permission to take a poor payoff is not permission to
+    ordinary belt, never higher, so this can never loosen the check for an
+    order whose approved geometry already cleared 1.2 — and an approved
+    geometry that is itself unmeasurable buys no leniency at all. The
+    caller's own unmeasurable-EXECUTED-geometry refusal is unchanged and is
+    never exempted: permission to take a poor payoff is not permission to
     take an unknown one.
+
+    `subfloor_catalyst_exception` no longer changes anything here — its
+    behaviour is what every range order now gets. The flag is still carried
+    and still logged. Whether the catalyst mechanism should be retired is an
+    owner call; it is flagged, not removed.
     """
-    if not getattr(decision, "subfloor_catalyst_exception", False):
-        return EXECUTION_REWARD_RISK_BELT
+    if not reward_risk_floor_applies(getattr(decision, "setup_type", None)):
+        return None
     approved_rr = reward_to_risk(
         decision.entry_price, decision.stop_loss, decision.take_profit,
         is_short=(decision.action == "SHORT"),
@@ -5134,7 +5162,30 @@ class ExecutionStage:
                     stop_price != decision.stop_loss
                     or (decision.entry_price > 0 and sizing_price > decision.entry_price)
                 )
-                if not is_short and geometry_changed and decision.take_profit > 0:
+                # `_execution_rr_floor` returns None for a Type B / breakout
+                # order — no reward:risk bar applies to it at all (item
+                # 1(d)) — so the whole check, including its fail-closed
+                # unmeasurable half, is skipped for those. That half is a
+                # reward-side refusal too, and the owner decision is that no
+                # reward-side computation may block a trend trade. The
+                # risk-side execution checks above and below are untouched.
+                rr_belt = _execution_rr_floor(decision)
+                if (
+                    not is_short and geometry_changed
+                    and decision.take_profit > 0 and rr_belt is None
+                ):
+                    logger.info(
+                        "BUY %s: execution moved the geometry (entry $%.2f -> "
+                        "$%.2f, stop $%.2f -> $%.2f) but NO reward:risk belt "
+                        "applies — breakout setup, managed by trailing with "
+                        "no fixed target (item 1(d)).",
+                        decision.symbol, decision.entry_price, sizing_price,
+                        decision.stop_loss, stop_price,
+                    )
+                if (
+                    not is_short and geometry_changed
+                    and decision.take_profit > 0 and rr_belt is not None
+                ):
                     executed_rr = reward_to_risk(
                         sizing_price, stop_price, decision.take_profit,
                         is_short=False,
@@ -5153,7 +5204,7 @@ class ExecutionStage:
                     # than the approved geometry's own ratio. It can only
                     # ever be LOWER than 1.2, never higher — `min` — so no
                     # ordinary order gets a looser bar out of this.
-                    floor_rr = _execution_rr_floor(decision)
+                    floor_rr = rr_belt
                     # FAIL CLOSED. None means the executed geometry is not
                     # measurable at all — a non-finite price, a stop at or
                     # above the entry, a target below it. That is strictly

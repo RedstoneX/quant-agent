@@ -958,10 +958,14 @@ def test_the_atr_multiple_is_not_one_constant_for_every_trade():
     assert stop("range", "risk-off") == 93.66
 
 
-def test_widening_a_stop_into_a_bad_payoff_rejects_the_trade():
-    """The target does not move when the stop does, so reward:risk falls. A
-    setup that only cleared the bar on a stop too tight to survive was never
-    the trade it appeared to be."""
+def test_widening_a_stop_into_a_bad_payoff_no_longer_rejects_the_trade():
+    """**Inverted 2026-09-11, docs/WORK.md item 1(d).** The target still does
+    not move when the stop does, so the reward:risk still falls — and it is
+    still computed and logged. What changed is that a range trade is no
+    longer REFUSED for it: the real ratio is a ranking signal, not a
+    universal cutoff, and the PM gate has already capped a sub-floor range
+    target at starter size. The stop is unchanged — item 1(d) touched no
+    risk-side rule."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_risk_target("MSFT", 1.0)], positions=[],
@@ -974,7 +978,9 @@ def test_widening_a_stop_into_a_bad_payoff_rejects_the_trade():
         analyses=[_vol_analysis("MSFT", 100.0, 97.6, 104.0, atr=2.35)],
         total_value=EQUITY, price_map={"MSFT": 100.0},
     )
-    assert decisions == []
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == round(100.0 - 2.25 * 2.35, 2)
+    assert decisions[0].reward_risk < 1.5
 
 
 def test_no_volatility_reading_leaves_the_structural_stop_untouched():
@@ -1119,8 +1125,14 @@ def test_an_unbacked_tight_stop_is_still_widened_to_the_band():
     """The other half, and the part that must not regress. Identical trade,
     except nothing computed sits under the $95.00 stop — the analyst simply
     placed it there. The band applies exactly as it always did, and here it
-    is fatal: risk 5.2875 against reward 7.85 is R/R 1.4846, under the
-    floor. The level-backed twin above ships at 1.5700 on the same reward."""
+    is expensive: risk 5.2875 against reward 7.85 is R/R 1.4846. The
+    level-backed twin above ships at 1.5700 on the same reward.
+
+    **Assertion changed 2026-09-11 (item 1(d)).** Until then 1.4846 was
+    fatal — the trade was refused. It is not any more; the ratio is a
+    ranking signal, not a cutoff. What this test exists for is the STOP, and
+    that is unchanged: an unbacked tight stop is still pushed out to the
+    band."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
         targets=[_risk_target("MSFT", 1.0)], positions=[],
@@ -1130,17 +1142,23 @@ def test_an_unbacked_tight_stop_is_still_widened_to_the_band():
         )],
         total_value=EQUITY, price_map={"MSFT": _ENTRY},
     )
-    assert decisions == []
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == _BAND_EDGE
+    assert decisions[0].reward_risk == 1.48
 
 
 def test_reward_risk_is_measured_against_the_stop_that_will_actually_ship():
     """The pair above IS the fix, stated as arithmetic.
 
     Same entry, same stop, same computed target $107.85. Against the
-    fabricated band stop the ratio is 7.85 / 5.2875 = 1.4846 and the trade
-    dies; against the stop the desk will actually place it is 7.85 / 5.00 =
-    1.5700 and it trades. Nothing about the trade changed — only which stop
-    the division was performed on, which is the defect §12.1 removes."""
+    fabricated band stop the ratio is 7.85 / 5.2875 = 1.4846; against the
+    stop the desk will actually place it is 7.85 / 5.00 = 1.5700. Nothing
+    about the trade changed — only which stop the division was performed on,
+    which is the defect §12.1 removes.
+
+    **2026-09-11 (item 1(d)):** both now SHIP — the difference the ratio
+    makes is to the ranking, not to a refusal — so the assertion below is on
+    the stop each path produces rather than on a None."""
     constructor = PortfolioConstructor()
 
     def stop_for(computed):
@@ -1156,9 +1174,9 @@ def test_reward_risk_is_measured_against_the_stop_that_will_actually_ship():
     assert honoured == _TIGHT_STOP
     assert round((_UPPER_LEVEL - _ENTRY) / (_ENTRY - honoured), 4) == 1.5700
 
-    # Unbacked: widened, and the ratio against the widened stop is under 1.5,
-    # so the function refuses rather than returning a worse trade.
-    assert stop_for([_UPPER_LEVEL]) is None
+    # Unbacked: widened to the band edge. The ratio against that widened
+    # stop is under 1.5 and is no longer a refusal (item 1(d)).
+    assert stop_for([_UPPER_LEVEL]) == round(_ENTRY - 2.25 * _ATR, 4)
     # 2.25 x 2.35 = 5.2875 is the exact band distance the refusal used; the
     # $94.71 constant above is that same edge rounded to a shippable price.
     assert round((_UPPER_LEVEL - _ENTRY) / (2.25 * _ATR), 4) == 1.4846
@@ -1274,11 +1292,12 @@ def test_a_level_below_the_touch_bar_does_not_earn_the_exemption():
         )],
         total_value=EQUITY, price_map={"MSFT": _ENTRY},
     )
-    # R/R against the band stop is 7.85 / 5.2875 = 1.4846 here (see the
-    # unbacked-tight-stop test above) — under the 1.5 floor, so the trade is
-    # refused rather than merely widened. That refusal IS the assertion: it
-    # proves the level was NOT treated as backing the stop.
-    assert decisions == []
+    # The assertion is the STOP, not a refusal (changed 2026-09-11, item
+    # 1(d) — the sub-floor ratio no longer refuses anything). A stop widened
+    # to the band edge instead of honoured at $95.00 is what proves the level
+    # was NOT treated as backing it.
+    assert len(decisions) == 1
+    assert decisions[0].stop_loss == _BAND_EDGE
 
 
 def test_a_level_exactly_at_the_touch_bar_earns_the_exemption():
@@ -1450,10 +1469,14 @@ class TestSLBStopIsHonoured:
         assert round(rr, 2) == 2.59
 
     def test_the_floor_does_not_move_to_accommodate_slb(self):
-        """The honest other half, mirroring TestSLB in test_target_derivation.
-        If the computed shelf is nearer, the honoured stop does not rescue the
-        trade — 1.5 still binds. §12.1 changed which stop is divided by, not
-        what the answer has to clear."""
+        """**Inverted 2026-09-11, docs/WORK.md item 1(d).** This used to say
+        "1.5 still binds": if the computed shelf was nearer, the honoured
+        stop did not rescue the trade. Nothing binds on that number any more
+        for a range setup — the honest 1.06 is computed, logged, capped at
+        starter size by the PM gate, and ranked below better payoffs, but it
+        is not refused. §12.1's own point survives intact: the stop is
+        honoured at the computed level, and the division is performed on the
+        stop that ships."""
         constructor = PortfolioConstructor()
         near_shelf = 62.50            # reward $2.40 against risk $2.27 = 1.06
         decisions = constructor.construct_orders(
@@ -1465,7 +1488,9 @@ class TestSLBStopIsHonoured:
             )],
             total_value=EQUITY, price_map={"SLB": self.ENTRY},
         )
-        assert decisions == []
+        assert len(decisions) == 1
+        assert decisions[0].stop_loss == self.LEVEL_STOP
+        assert decisions[0].reward_risk == 1.06
 
 
 # --------------------------------------------------------------------------
@@ -1516,18 +1541,24 @@ def test_xle_the_1_67_versus_1_18_divergence_is_entry_drift_not_stop_geometry():
     assert analyst != order
 
 
-def test_xle_is_now_refused_by_code_rather_than_by_the_risk_managers_prose():
-    """On the day, the constructor SHIPPED this order at 1.18 and an LLM
-    stopped it. The 1.5 floor never ran, because $61.54 was already outside
-    the ATR band (breakout setup, risk-on tape) and that path returned early.
-    It runs now, and the refusal names the rule that placed the stop.
+def test_xle_a_breakout_is_no_longer_measured_against_any_reward_risk_floor():
+    """**Inverted 2026-09-11, docs/WORK.md item 1(d) — and XLE is the case
+    that makes the point.**
 
-    Band arithmetic corrected 2026-09-10 (the "2.42x" written here was stale
-    — it matched no base this file has run under). At the 2.5 base a breakout
-    on a risk-on tape earns 2.5 x 1.00 x 0.95 = 2.375 ATRs, so 2.375 x 1.21 =
+    On the day, the constructor SHIPPED this order at 1.18 and an LLM stopped
+    it. 2026-09-02 made the deterministic floor run on every path, and this
+    test then asserted the floor refused it. It is a BREAKOUT: there is no
+    overhead level to measure the $68.00 "reward" against, and the position
+    would be managed by a trailing stop with no fixed target at all
+    (`src/risk/trailing.py`). So the 1.18 was a ratio against a number the
+    trade was never going to trade toward, and the owner's decision is that
+    no such number may block or size a trend trade. The stop ships.
+
+    The RISK side is untouched and still the reason this fixture is precise.
+    Band arithmetic corrected 2026-09-10: at the 2.5 base a breakout on a
+    risk-on tape earns 2.5 x 1.00 x 0.95 = 2.375 ATRs, so 2.375 x 1.21 =
     $2.87375 and the band edge is 64.51 - 2.87375 = $61.6363. The stop is
-    $2.97 out (2.4545 ATRs), still outside the band — by only $0.10, which is
-    why the exact multiple is worth stating rather than approximating."""
+    $2.97 out (2.4545 ATRs), outside the band — by only $0.10."""
     constructor = PortfolioConstructor()
     assert constructor._widen_stop_past_noise(
         "XLE",
@@ -1535,7 +1566,7 @@ def test_xle_is_now_refused_by_code_rather_than_by_the_risk_managers_prose():
                       atr=_XLE_ATR, setup="breakout"),
         entry_price=_XLE_LIVE_ENTRY, stop_loss=_XLE_STOP,
         regime="risk-on", direction="long", target_price=_XLE_TARGET,
-    ) is None
+    ) == _XLE_STOP
 
 
 def test_a_wide_stop_that_clears_the_floor_still_ships_untouched():

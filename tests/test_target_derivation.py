@@ -206,15 +206,62 @@ class TestRefusals:
         )
         assert result.refusal == "no_expected_horizon"
 
-    def test_a_range_setup_with_no_level_in_the_direction_refuses(self):
-        """Structure exists but none of it is overhead, and the analyst did
-        not call this a breakout. Chart and read disagree — decline."""
+    def test_no_level_in_the_direction_now_earns_the_measured_move(self):
+        """**Inverted 2026-09-11, docs/WORK.md funnel item 6.**
+
+        Structure exists but none of it is overhead, and the analyst did not
+        type the word "breakout". This used to be refused as "chart and read
+        disagree". It is not a disagreement: the desk's OWN level computation
+        succeeded (there are levels below) and found nothing in the trade's
+        direction, which is a measured absence of a ceiling. The other
+        reading of an empty direction — an unreadable chart — is caught one
+        branch earlier as `no_structure`.
+
+        So the ATR measured-move projection that already existed in this
+        function, and was reachable only through the label, now applies on
+        the real condition. 2.0 ATR x sqrt(20) x 1.0 = $8.94 -> $108.94.
+
+        The classification is the SAME one the reward:risk exemption uses
+        (`src.risk.constants.is_trend_trade`), which is the point: a trade
+        with no ceiling gets a projected target AND is not judged against a
+        reward:risk floor, by one definition rather than two."""
         result = derive_structural_target(
             entry_price=100.0, direction="long", levels=[80.0, 90.0],
             atr=2.0, horizon_sessions=20, setup_type="range",
         )
-        assert result.refusal == "no_level_in_direction"
-        assert "does not claim a breakout" in result.detail
+        assert not result.refusal
+        assert result.basis == "measured_move"
+        assert result.price == round(100.0 + 2.0 * (20 ** 0.5), 2)
+        assert result.level_used is None
+        assert "nothing overhead is expected to stop this trade" in result.detail
+
+    def test_an_unreadable_chart_is_still_refused_and_is_not_this_case(self):
+        """The distinction funnel item 6's fix rests on. No levels AT ALL
+        means the history was too short or too dirty to say anything — that
+        is not "no ceiling", and it still refuses whatever the setup says."""
+        result = derive_structural_target(
+            entry_price=100.0, direction="long", levels=[],
+            atr=2.0, horizon_sessions=20, setup_type="breakout",
+        )
+        assert result.refusal == "no_structural_levels"
+
+    def test_the_trend_classification_is_shared_with_the_reward_risk_gate(self):
+        """One definition, asserted as one function. If someone adds a second
+        way to decide "this trade has no ceiling", this fails first."""
+        from src.risk.constants import is_trend_trade, reward_risk_floor_applies
+
+        # The label alone.
+        assert is_trend_trade("breakout") is True
+        assert reward_risk_floor_applies("breakout") is False
+        # The measurement alone — no label, no ceiling found.
+        assert is_trend_trade("range", structural_ceiling=False) is True
+        assert reward_risk_floor_applies("range", structural_ceiling=False) is False
+        # A real ceiling, no label: the floor machinery still applies.
+        assert is_trend_trade("range", structural_ceiling=True) is False
+        assert reward_risk_floor_applies("range", structural_ceiling=True) is True
+        # Unknown on both counts fails to the conservative side.
+        assert is_trend_trade(None) is False
+        assert reward_risk_floor_applies(None) is True
 
     def test_each_refusal_names_a_different_thing_being_wrong(self):
         """'No trade' without a reason is what let the original defect
@@ -231,9 +278,14 @@ class TestRefusals:
             derive_structural_target(
                 entry_price=100.0, direction="long", levels=[],
                 atr=2.0, horizon_sessions=20, setup_type="range").refusal,
+            # A projection too small to clear its own noise floor — the
+            # fourth distinct refusal. (It used to be "no level in the
+            # direction on a range setup"; funnel item 6 made that a
+            # measured move rather than a refusal, so a different fourth
+            # case is used to prove the codes stay distinct.)
             derive_structural_target(
                 entry_price=100.0, direction="long", levels=[80.0],
-                atr=2.0, horizon_sessions=20, setup_type="range").refusal,
+                atr=2.0, horizon_sessions=1, setup_type="breakout").refusal,
         }
         assert len(codes) == 4
 
@@ -460,11 +512,17 @@ class TestSLB:
         assert result.divergence_pct is not None
         assert result.divergence_pct < 0
 
-    def test_the_geometry_refusal_is_distinct_from_a_bad_guess(self):
-        """When the stop rule and the computed target cannot make a trade
-        together, that is a statement about the trade's shape. It must not
-        read as 'the model guessed badly' — the two call for different
-        responses from whoever reads the log."""
+    def test_a_thin_computed_geometry_now_ships_and_is_not_a_refusal(self):
+        """**Inverted 2026-09-11, docs/WORK.md item 1(d).** This used to
+        assert that when the stop rule and the computed target could not make
+        a trade together, the trade was refused with a GEOMETRY code rather
+        than a bad-guess one. The refusal is gone for a range setup: the
+        honest 0.80 is computed from real structure, capped at starter size
+        by the PM gate, ranked below better payoffs, and traded.
+
+        The derivation itself is what this class exists for and is unchanged
+        — the target still comes from the computed shelf, not the model's
+        guess, and the divergence is still measured."""
         constructor = PortfolioConstructor(ConstructorConfig(
             min_reward_risk_after_widening=self.FLOOR,
         ))
@@ -498,4 +556,7 @@ class TestSLB:
             positions=[], analyses=[analysis], total_value=100_000,
             price_map={"SLB": self.ENTRY},
         )
-        assert decisions == []
+        assert len(decisions) == 1
+        assert decisions[0].take_profit == 62.50   # the computed shelf, not the guess
+        assert decisions[0].stop_loss == 57.10     # widened to the band edge
+        assert decisions[0].reward_risk == 0.8

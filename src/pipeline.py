@@ -39,6 +39,7 @@ from src.data.earnings import EarningsDataProvider
 from src.risk.constants import (
     DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
     REWARD_RISK_FLOOR,
+    reward_risk_floor_applies,
 )
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
@@ -1998,20 +1999,44 @@ class TradingPipeline:
         constructed decision would have to clear, else None.
 
         Reuses `TradeDecision.reward_risk` (== `models.reward_to_risk`, the
-        one ratio definition this codebase shares end to end) against
-        `REWARD_RISK_FLOOR` — the exact floor the constructor itself
-        enforces before a decision ever reaches the Risk Manager. Does not
+        one ratio definition this codebase shares end to end). Does not
         re-derive the ratio or the number.
+
+        **2026-09-11, docs/WORK.md item 1(d).** This guard's whole premise
+        was "the constructor would have refused this trade at these prices".
+        The constructor no longer refuses on a reward:risk floor, so neither
+        does this:
+
+          * **Type B / breakout** — the reward:risk half does not run at
+            all. There is no overhead level to measure a reward against, so
+            an RM stop/target edit on a breakout cannot be judged by one.
+            The noise-band half below still runs: that is a RISK-side check
+            and it applies to every setup.
+          * **Type A / range** — a sub-floor ratio is no longer a refusal.
+            An UNMEASURABLE one still is, unchanged: this codebase fails
+            closed on unknown geometry, and an RM edit that makes the
+            arithmetic impossible is not an edit anyone reviewed.
         """
         new_rr = modified.reward_risk
-        if new_rr is None or new_rr < REWARD_RISK_FLOOR:
-            rr_text = "unmeasurable" if new_rr is None else f"{new_rr:.2f}"
+        if new_rr is None:
             return (
                 f"modified geometry (entry ${modified.entry_price:.2f}, stop "
                 f"${modified.stop_loss:.2f}, target ${modified.take_profit:.2f}) "
-                f"reward:risk={rr_text} < {REWARD_RISK_FLOOR} floor — the "
-                f"constructor would have refused this trade at these prices. "
+                f"makes reward:risk unmeasurable — a stop or target on the "
+                f"wrong side of entry, or a non-finite price. Fails closed: "
+                f"an unknown payoff is not a permitted one. "
                 f"RM reason given: {mod.reason!r}"
+            )
+        if (
+            reward_risk_floor_applies(getattr(modified, "setup_type", None))
+            and new_rr < REWARD_RISK_FLOOR
+        ):
+            logger.info(
+                "Risk mod on %s leaves reward:risk %.2f, under the %.2f "
+                "reference (range setup) — allowed. Item 1(d) made that "
+                "ratio a ranking signal, not a gate; the constructor no "
+                "longer refuses it either.",
+                original.symbol, new_rr, REWARD_RISK_FLOOR,
             )
 
         if mod.field != "stop_loss" or not symbols_bars:
