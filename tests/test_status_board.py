@@ -1926,7 +1926,7 @@ def test_rot_outranks_a_decision_which_outranks_the_running_order():
     d = _decision(-3, "Overdue question")
 
     both = sb._render_right_now([rotten], [d], [top])
-    assert "no longer proves it is finished" in both
+    assert "can no longer prove it is still finished" in both
     assert "Overdue question" not in both
 
     no_rot = sb._render_right_now([], [d], [top])
