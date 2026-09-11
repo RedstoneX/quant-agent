@@ -15,14 +15,25 @@
 #   rm ~/.config/systemd/user/quant-agent-status-board.path
 #   systemctl --user daemon-reload
 [Unit]
-Description=quant-agent status board — rebuild on phases.yaml edit or deploy (no schedule)
+Description=quant-agent status board — rebuild on backlog edit, plan edit or deploy (no schedule)
 
 [Path]
+# docs/WORK.md is the SINGLE SOURCE OF TRUTH the board renders: the running
+# order, the decisions waiting on the owner, what is parked, what is already
+# resolved, and the plain-language explanation and worked example carried by
+# each of those. Every one of those is read out of this file at build time,
+# so an edit to it changes what the board says and must rebuild the board.
+#
+# Until 2026-09-11 this was NOT watched, which was the board's core defect:
+# the file the owner's page is made of could change all day and the page he
+# actually opened would not move until somebody touched the plan file or
+# deployed. PathChanged (not PathModified) so a single edit fires once, on
+# close, not once per byte written.
+PathChanged=/home/qamc/quant-agent/docs/WORK.md
+
 # docs/phases.yaml is the plan the board evaluates: every phase's evidence
 # rule is checked against the tree relative to what this file claims. An
 # edit changes what the board SHOULD say, so it must trigger a rebuild.
-# PathChanged (not PathModified) so a single edit fires once, on close, not
-# once per byte written.
 PathChanged=/home/qamc/quant-agent/docs/phases.yaml
 
 # The board reports the running commit via `git -C PROD_CHECKOUT rev-parse
