@@ -484,9 +484,10 @@ _QUEUE_CLASSES = (
 #: This deliberately does NOT require the bold to close at end of line. The
 #: older shape did, and it silently dropped every item whose author wrote body
 #: text after the closing `**`, or whose headline wrapped onto a second line.
-#: That is real and common: ten live backlog items, four of them shipped in
-#: the last two days, were invisible on the owner's board for that reason
-#: alone. An item he cannot see at all is worse than one he sees imperfectly.
+#: That is real and common: ten live backlog items were invisible on the
+#: owner's board for that reason alone, three of them added on 2026-09-10 or
+#: 2026-09-11 (dated from git, not from impression). An item he cannot see at
+#: all is worse than one he sees imperfectly.
 _ITEM_OPEN_RE = re.compile(r"^\*\*(?:~~)?(\d+)\.\s*(.*)$")
 
 #: The legacy strict shape — bold from the item number to end of line — kept
