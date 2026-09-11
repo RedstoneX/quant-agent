@@ -338,22 +338,66 @@ def test_production_scale_pm_prompt_and_grounding_contract():
     ) == []
 
 
-def test_pm_rejects_historical_smart_money_as_support():
+def test_pm_rejects_uncorrelated_smart_money_as_support():
+    """2026-09-11 owner redesign: smart-money support is no longer gated by
+    age -- it is gated by whether it CORRELATES with at least one other
+    CURRENT source. This finding is a real, structurally eligible bullish
+    insider buy, but nothing else in this analysis (bearish technical,
+    nothing else covering the symbol) currently agrees with it -- an
+    island, not a fake calendar cutoff -- so it still cannot support the
+    target on its own."""
     from src.models import SmartMoneyFinding, SmartMoneyObservation
     finding = SmartMoneyFinding(
-        symbol="AAPL", stance="bullish", economic_role="historical",
+        symbol="AAPL", stance="bullish", economic_role="actionable",
         summary="one disclosed purchase", why_now="new disclosure",
         observations=[SmartMoneyObservation(
-            symbol="AAPL", actor="Example Member", direction="buy",
+            symbol="AAPL", stream="insider", actor="Example Member", direction="buy",
             transaction_date=date(2026, 6, 1), disclosure_date=date(2026, 7, 11),
             source_url="https://example.test/filing", lag_days=40,
             disclosure_age_days=20,
-            freshness="stale", economic_role="historical",
+            freshness="stale", economic_role="confirmatory",
         )],
     )
     target = {
         "symbol": "AAPL", "target_weight_pct": 5, "conviction": "medium",
-        "thesis": "Technical trend plus congressional context.",
+        "thesis": "Insider buy, but nothing else currently agrees.",
+        "provenance": [
+            {"source": "technical", "observed_stance": "sell", "relationship": "conflicts", "evidence": "downtrend"},
+            {"source": "smart_money", "observed_stance": "bullish", "relationship": "supports", "evidence": "disclosure"},
+        ],
+    }
+    errors = PortfolioManagerAgent.validate_grounding(
+        _decision(target), analyses=[_analysis("AAPL", "sell")], positions=[],
+        news_intel=None, earnings_analyses=[], macro_analysis=None,
+        smart_money_findings=[finding], total_value=100_000,
+    )
+    assert any(
+        "nothing else currently corroborating it cannot support" in error
+        for error in errors
+    )
+
+
+def test_pm_accepts_aged_smart_money_as_support_when_it_correlates():
+    """The other half of the same redesign: this insider buy is JUST AS OLD
+    as the one rejected above (disclosure_age_days=20, freshness=stale) --
+    but here a current technical read independently agrees with the same
+    bullish direction. Correlation, not the calendar, is what makes it
+    count now."""
+    from src.models import SmartMoneyFinding, SmartMoneyObservation
+    finding = SmartMoneyFinding(
+        symbol="AAPL", stance="bullish", economic_role="actionable",
+        summary="one disclosed purchase", why_now="new disclosure",
+        observations=[SmartMoneyObservation(
+            symbol="AAPL", stream="insider", actor="Example Member", direction="buy",
+            transaction_date=date(2026, 6, 1), disclosure_date=date(2026, 7, 11),
+            source_url="https://example.test/filing", lag_days=40,
+            disclosure_age_days=20,
+            freshness="stale", economic_role="confirmatory",
+        )],
+    )
+    target = {
+        "symbol": "AAPL", "target_weight_pct": 5, "conviction": "medium",
+        "thesis": "Technical trend agrees with the older insider buy.",
         "provenance": [
             {"source": "technical", "observed_stance": "buy", "relationship": "supports", "evidence": "trend"},
             {"source": "smart_money", "observed_stance": "bullish", "relationship": "supports", "evidence": "disclosure"},
@@ -364,7 +408,7 @@ def test_pm_rejects_historical_smart_money_as_support():
         news_intel=None, earnings_analyses=[], macro_analysis=None,
         smart_money_findings=[finding], total_value=100_000,
     )
-    assert any("historical smart-money evidence cannot support" in error for error in errors)
+    assert not any("smart-money" in error for error in errors)
 
 
 # ==========================================================================

@@ -1303,19 +1303,43 @@ class SmartMoneyFinding(LLMOutputModel):
             o.direction for o in self.observations
             if o.direction in {"buy", "sell"}
         }
+        # 2026-09-11, owner redesign: a calendar-age cutoff on WHETHER this
+        # evidence can support a thesis is gone. Owner's framing, direct:
+        # "this is one piece of information — if it doesn't correlate with
+        # anything else, that's fine, it just changes the decision matrix;
+        # if it does correlate, stronger weights." An insider trade is a
+        # fact that happened; it does not expire on a clock. Real research
+        # backs treating it this way rather than a short fixed window:
+        # Seyhun (1986) found only ~1/4 of the eventual abnormal return from
+        # an insider purchase realizes in the first 5 days and ~1/2 is still
+        # unrealized after a full month; pre-announcement run-ups in real
+        # M&A data are documented starting MONTHS before the news breaks.
+        # A 7-day cutoff was never grounded in either fact.
+        #
+        # What decides whether this can actually support a target now is
+        # CORRELATION with other CURRENT evidence, checked where that
+        # evidence is actually visible together —
+        # `PortfolioManagerAgent`'s grounding validator, which requires at
+        # least one other live source (technical/news/earnings/macro) to
+        # currently agree with this finding's direction before smart_money
+        # may be marked `supports` rather than `context`. This model only
+        # still enforces STRUCTURAL validity — is this real, single-
+        # direction, legally-disclosed evidence at all — never how old it
+        # is.
         if streams == {"congressional"}:
             # Preserve the original conservative congressional contract.
             # lag_days cap raised 30 -> 45: the STOCK Act's own legal filing
             # deadline is 45 days after the transaction, so a lag of up to
-            # 45 days is a legally on-time disclosure, not a stale one.
+            # 45 days is a legally on-time disclosure, not a stale one. This
+            # is about LEGAL disclosure timing (when we were allowed to
+            # learn about the trade), not the trade's own informational
+            # age — a different question, kept.
             actors = {o.actor.strip().casefold() for o in self.observations}
             self.support_eligible = (
                 len(self.observations) >= 2
                 and len(actors) >= 2
                 and len(directional) == 1
-                and all(o.disclosure_age_days <= 7 for o in self.observations)
                 and all(o.lag_days <= 45 for o in self.observations)
-                and all(o.freshness != "stale" for o in self.observations)
             )
             if not self.support_eligible:
                 self.economic_role = "historical"
@@ -1323,13 +1347,18 @@ class SmartMoneyFinding(LLMOutputModel):
             return self
 
         # SEC observations have already passed the provider's deterministic
-        # materiality/cluster filter.  Fresh, one-direction evidence may
-        # support PM provenance.  Only an explicit open-market purchase can
-        # enter the separately governed transient-candidate lane.
+        # materiality/cluster filter. Real, one-direction evidence may
+        # support PM provenance (subject to the correlation check above).
+        # Only an explicit open-market purchase can enter the separately
+        # governed transient-candidate lane, which keeps its own,
+        # deliberately stricter freshness bar (`admission_eligible` in
+        # `src/data/smart_money.py`) — a single stale signal must never
+        # alone justify pulling a brand-new symbol into the universe, which
+        # is a different risk than confirming a thesis on a symbol already
+        # in play.
         self.support_eligible = (
             bool(directional)
             and len(directional) == 1
-            and all(o.freshness != "stale" for o in self.observations)
         )
         self.transient_admission_eligible = any(
             o.transient_admission_eligible

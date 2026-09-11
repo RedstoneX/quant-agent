@@ -751,7 +751,11 @@ smart_money:
   request_timeout_s: 15
   refresh_deadline_s: 180
   requests_per_second: 8
-  lookback_days: 7
+  # 7 -> 90 on 2026-09-11 — see src/config.py::SmartMoneyConfig.lookback_days
+  # for the full derivation. Fetch/retention bound only; whether an old
+  # observation can support a target is now decided by correlation with
+  # other current evidence, not by this number.
+  lookback_days: 90
   max_filings_per_refresh: 1000
   max_observations: 40
   min_transaction_value_usd: 100000

@@ -1060,7 +1060,21 @@ class SmartMoneyConfig(BaseModel):
     request_timeout_s: float = Field(default=15.0, ge=1, le=60)
     refresh_deadline_s: float = Field(default=180.0, ge=10, le=600)
     requests_per_second: float = Field(default=8.0, ge=0.5, le=10.0)
-    lookback_days: int = Field(default=7, ge=1, le=30)
+    # 7 -> 90 on 2026-09-11. This bounded how far back an insider/SEC
+    # observation was even FETCHED and shown to the analyst at all — a
+    # trade older than this was invisible, not just discounted. 7 days
+    # matched nothing real: Seyhun (1986) found only ~1/4 of an insider
+    # purchase's eventual abnormal return realizes in the first 5 days and
+    # ~1/2 is still unrealized after a full month. Reused 90 rather than
+    # inventing a new number — it already matches `EARNINGS_STANCE_MAX_AGE_
+    # DAYS` (src/risk/rules.py) and this desk's other real-earnings-evidence
+    # cutoffs, so the desk isn't running two different opinions about how
+    # long a piece of evidence stays worth looking at. This is a FETCH/
+    # RETENTION bound, not a support-eligibility gate — whether an old
+    # observation can actually support a target is decided by correlation
+    # with other current evidence (see `PortfolioManagerAgent`'s grounding
+    # validator), not by this number.
+    lookback_days: int = Field(default=90, ge=1, le=180)
     max_filings_per_refresh: int = Field(default=1000, ge=1, le=5000)
     max_observations: int = Field(default=40, ge=1, le=200)
     min_transaction_value_usd: float = Field(default=100_000, ge=1_000)
