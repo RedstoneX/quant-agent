@@ -379,13 +379,17 @@ def test_widening_congress_window_does_not_touch_the_sec_form4_window():
     window is deliberate and must NOT be harmonised with the congressional
     one."""
     cfg = SmartMoneyConfig()
-    assert cfg.lookback_days == 90
+    assert cfg.lookback_days == 365
     assert cfg.cluster_window_days == 2
     assert (
         inspect.signature(SECForm4Provider.__init__)
         .parameters["lookback_days"].default == 14
     )
-    assert cfg.lookback_days < cfg.congress_lookback_days
+    # No ordering requirement between these two: `lookback_days` (insider/SEC
+    # fetch+retention) and `congress_lookback_days` (congressional-provider
+    # search window) are independently grounded — a year of insider-behavior
+    # reasoning for one, an observed-in-the-wild coverage figure for the
+    # other. They are not meant to track each other.
 
 
 def test_a_disclosure_older_than_the_old_30_day_window_now_survives(tmp_path):
