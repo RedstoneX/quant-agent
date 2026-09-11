@@ -2255,6 +2255,47 @@ investigation.
 
 ---
 
+### 2026-09-11 — the other 9: not an interrupted run, four ordinary reasons the report just couldn't read yet
+
+**In plain words:** the 9 remaining cases from the entry above — where an
+order looked like it was being built and then the trail went completely
+cold — turned out not to be silent failures at all. Every one ran to
+completion, and the desk explained itself every time. The explanation just
+wasn't written to the place a later report could find it.
+
+**What the 9 actually were, once traced: 4 real incidents, not 9 mysteries.**
+A malformed safety-check response correctly aborted a whole trading plan.
+Three proposals were skipped because the account genuinely didn't have the
+cash yet. One was blocked for pushing too much of the account into one
+sector. One was blocked because that stock had no supporting research that
+run. All four are ordinary, correct behaviour — nothing crashed, nothing
+hung, no order vanished mid-flight.
+
+**One correction to how the cash case was first described.** It is NOT a
+settlement-delay issue — paper trading does not gate same-day buying power
+behind a multi-day wait. The real, already-fixed bug (2026-08-19): the
+system credited a stock sale's proceeds as available cash the moment the
+sell order was *submitted*, without confirming it had actually *filled* —
+so a buy could be sized against money that was never really freed if the
+sale hadn't gone through yet. That is a confirmed-vs-assumed-fill bug, not
+a settlement wait, and it was fixed the same day it was found.
+
+**The actual gap, closed today:** three of the four reasons above were
+already being saved correctly by the pipeline — the reporting tool that
+reads them back just never learned to look for them, so a real, already-
+recorded reason kept showing up on this report as "no explanation." Fixed:
+the report now reads all four reason types.
+
+**What this means for the anxiety behind this whole item:** the failure
+mode that mattered most — something breaks with zero way to ever know why
+— did not happen here. This was a reporting gap, not a control failure.
+
+**What would catch a regression:** `tests/test_blocked_proposals_census.py`
+proves all four causes are correctly attributed against a real database,
+plus a guard that the already-working cash-cause path stays working.
+
+---
+
 ### 2026-09-03 — item 15 (price provenance), position-mark slice shipped
 
 **In plain words:** every price the desk uses was just a bare number, with

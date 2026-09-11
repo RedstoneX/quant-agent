@@ -114,8 +114,9 @@ this line, one heading per item.
 
 ## item 2
 
-**Plain language —** About a fifth of all trade ideas vanished from the record with no explanation of why — not blocked by any known rule, just gone. One cause (a step silently dropping ideas without logging why) is fixed going forward. A separate, still-unexplained pattern of ideas that got partway built and then disappeared has not been investigated yet.
-**Example —** Nine of these look like an order was being built and then nothing else was ever recorded, as if the process was interrupted mid-way with no error and no explanation left behind.
+**Plain language —** About a fifth of all trade ideas once appeared to vanish from the record with no explanation. Investigated fully: none of them actually vanished. Every one had a real, ordinary reason — not enough cash yet, a safety check correctly aborting a plan, a sector limit, a stock with no supporting research that day. The desk explained itself every time; the report reading those explanations back just hadn't been taught to look in the right place yet. That's now fixed.
+**Example —** Nine cases looked like an order was being built and then the trail went cold, as if something crashed mid-way. It didn't. All nine traced back to four ordinary, already-logged reasons — the report just wasn't reading that log yet.
+**Recommendation —** None needed; this is resolved. One thing worth knowing: the original explanation for one of the four reasons (insufficient cash) was itself corrected — it was never a settlement delay, it was a since-fixed bug where the system counted a sale's proceeds before confirming the sale had actually gone through.
 
 
 ## item 3
