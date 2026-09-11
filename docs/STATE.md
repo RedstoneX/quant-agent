@@ -143,6 +143,26 @@ This file records what is accepted and true **now**. Git history preserves imple
   miss and guidance cut); a non-matching reason is dropped and logged as
   `exit_blocked_no_named_trigger`, and the position is held, protected by its
   broker-resident stop.
+  **Extended 2026-09-11 — the named trigger is now FACT-CHECKED at midday and
+  close, not just named.** `_reason_cites_hard_trigger` is a substring match
+  and nothing more; the deterministic verifier built for exactly this problem
+  (`src/risk/exit_guard.holding_discipline_claim_check`, live on the morning
+  Portfolio-Manager path in `RiskStage` since 2026-09-03/04) was imported from
+  that one call site and nowhere else, so on the intraday surfaces a claimed
+  regime flip or bearish state change executed on the strength of the words
+  alone. `_midday_execute_llm_actions` now runs the same check, on the same
+  inputs, for every SELL/REDUCE/COVER — `run_position_review` backs both
+  midday and close, so one gate covers both. **The PROVABLY-FALSE /
+  UNVERIFIABLE split is unchanged and load-bearing:** only a claim real
+  same-day data CONTRADICTS drops the exit
+  (`exit_blocked_holding_discipline_claim_false`); a claim that merely cannot
+  be checked is recorded (`holding_discipline_claim_unverified`) and ALLOWED
+  through, because blocking an exit on absence of proof would strand the desk
+  in a losing position. No macro analyst runs intraday, so the regime input is
+  this morning's stored read via the already date-scoped
+  `_carry_forward_macro` (status `carried_from_morning`); when nothing is
+  stored for today the status is passed as None and the claim is unverifiable,
+  never defaulted into a value that could call it false.
 - **Phase 3 of the remediation spec is COMPLETE and DEPLOYED** at `058273f1`
   (rollback `9f77b03e`), live on the paper account since ~09:20 ET
   2026-08-27. §3.1 the `pace` feedback loop is cut — the horizon is pinned to
