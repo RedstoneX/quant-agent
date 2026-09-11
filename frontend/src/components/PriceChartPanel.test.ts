@@ -13,6 +13,15 @@ function position(overrides: Partial<PositionItem> = {}): PositionItem {
     unrealized_intraday_pnl: null,
     sector: null,
     is_cash_equivalent: false,
+    position_mark: {
+      value: null,
+      price_kind: "broker_position_mark",
+      provider: null,
+      feed: null,
+      market_as_of: null,
+      retrieved_at: "2026-01-01T00:00:00Z",
+      freshness: "unknown",
+    },
     direction: "long",
     ...overrides,
   };
