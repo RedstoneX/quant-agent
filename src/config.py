@@ -381,7 +381,17 @@ class ExecutionConfig(BaseModel):
     """How long to let the working order rest before each re-peg attempt.
     Total added latency per entry is bounded by
     `repeg_max_attempts * repeg_poll_seconds`, and lands BEFORE
-    `place_entry_protection`'s own fill wait."""
+    `place_entry_protection`'s own fill wait.
+
+    That product is now ENFORCED, not just claimed: `_repeg_entry_order`
+    holds a monotonic deadline of `repeg_max_attempts * repeg_poll_seconds`,
+    checks it before every attempt and clips each wait (including the
+    one-replace-at-a-time confirmation wait) to what is left. Previously a
+    slow wait, quote or replace round-trip could push real elapsed time past
+    this figure without limit, because nothing measured it. There is
+    deliberately no separate "max total seconds" knob — a second,
+    differently-derived number would only be one more thing to keep
+    consistent with this one."""
 
     # Spec §11.1 (owner-ratified 2026-09-01), reversing the 2026-08-27
     # decision to keep fractional off.
