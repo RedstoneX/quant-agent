@@ -53,8 +53,10 @@ export function LiquidityStrip({
   }
 
   return (
+    /* Vertical-space reallocation pass, 2026-09-11: mt-1.5 -> mt-1, same
+       low-risk inter-section trim as the other stacked chrome sections. */
     <div
-      className="mx-3 mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-border bg-panel-alt px-3 py-1.5"
+      className="mx-3 mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-border bg-panel-alt px-3 py-1.5"
       aria-label="Liquidity"
     >
       <Text className="uppercase tracking-wide">Liquidity</Text>

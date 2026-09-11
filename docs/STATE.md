@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-09-01
+Updated: 2026-09-11
 
 This file records what is accepted and true **now**. Git history preserves implementation detail; do not turn this file into a changelog.
 
@@ -551,7 +551,14 @@ Accepted behavior includes:
 - selected-session execution rows can drive chart context;
 - accepted chart timeframes are `5m Today`, `15m`, `1h`, and `1D` using read-only market data;
 - intraday OHLCV timestamps are preserved so execution markers can align to relevant candles;
-- stale/degraded read-side data must be identified rather than silently represented as current.
+- stale/degraded read-side data must be identified rather than silently represented as current;
+- historical chart pan-to-load-more has no artificial day cap — Alpaca's own history depth is the only limit, not a client-side ceiling;
+- chart zoom/pan state is user-controlled (persists across the live-quote poll; explicit "Reset zoom" control) rather than being silently reset by background polling;
+- all chart time display (axis, crosshair, subtitle) is DST-aware US Eastern time, not unlabeled UTC;
+- dividend/earnings markers on the price chart are sourced from `GET /events/{symbol}` (`MarketDataProvider.get_price_chart_events`, yfinance), separate from the single-next-value ex-div/earnings helpers stop adjustment and risk prompts use;
+- a position's entry marker is placed at the real entry-fill bar, not an approximation;
+- the Positions/Orders panel row uses a real resize sash (draggable, minimum-height floor) rather than a CSS-only hack that could crush the panel;
+- Positions/Orders table columns support resize and drag-to-reorder, opt-in per table via `DataTable` props, persisted to `localStorage`.
 
 The chart live-price/current-price truth issue is **already resolved**. Commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b` (`fix(qamc): show session fills and live chart price`, 2026-08-21) introduced the genuinely live `/quotes` path and separated live/current price from historical bars. Current `PriceChartPanel` also hides the historical series' default last-value line and renders explicit `LIVE` and `PREV CLOSE` lines. This is accepted behavior and is not an outstanding task.
 

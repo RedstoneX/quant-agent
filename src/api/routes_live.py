@@ -72,13 +72,32 @@ from src.api.schemas import (
     PriceBar,
     PriceBarsResponse,
     RiskLimits,
+    DividendEvent,
+    EarningsEvent,
+    SymbolEventsResponse,
 )
+# Market-data read only (yfinance) — same dependency `/prices`' underlying
+# stop-adjustment/risk-prompt code already uses for the single-next-value
+# `get_upcoming_ex_dividend`/`get_next_earnings_date` calls; this route uses
+# the separate, chart-scoped `get_price_chart_events` (see its docstring).
+# `src.data.market` imports only `src.models`/`src.util.time` — it is not
+# `src.pipeline`/`src.pipeline_stages`/`src.risk.*`, so this import does not
+# breach the Stage 2 isolation invariant `tests/test_api_isolation.py` /
+# `tests/test_api_safety.py` enforce for this router.
+from src.data.market import MarketDataProvider
 
 _MAX_QUOTE_SYMBOLS = 25
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# One shared instance for the /events route below. Stateless for this call
+# (get_price_chart_events opens its own yf.Ticker per request; the instance
+# just carries the unused `fallback_bars` hook get_ohlcv would need, which
+# this route never calls) — no different from constructing it per-request,
+# just avoids doing so on every call.
+_market_data = MarketDataProvider()
 
 _LAST_RUN_MODES = [
     "morning", "midday", "close", "evening", "intra_check", "earnings_preprocess",
@@ -553,7 +572,11 @@ def get_quotes(symbols: str = Query(..., description="Comma-separated symbols, e
 @router.get("/prices/{symbol}", response_model=PriceBarsResponse)
 def get_prices(
     symbol: str,
-    lookback_days: int = Query(120, ge=1, le=500),
+    # No upper bound reflecting a real limit: Alpaca provides decades of
+    # daily history for this account/plan. `le=36500` (100y) is only an
+    # input-sanity guard against a pathological request, not a claimed
+    # data-availability ceiling.
+    lookback_days: int = Query(120, ge=1, le=36500),
     timeframe: Literal["5m", "15m", "1h", "1d"] = Query("1d"),
 ) -> PriceBarsResponse:
     """OHLCV bars for one symbol/timeframe — market-data read only (Alpaca's
@@ -574,3 +597,24 @@ def get_prices(
         return PriceBarsResponse(
             symbol=symbol, timeframe=timeframe, bars=[], error=str(exc)
         )
+
+
+@router.get("/events/{symbol}", response_model=SymbolEventsResponse)
+def get_symbol_events(
+    symbol: str,
+    lookback_days: int = Query(400, ge=1, le=3650),
+) -> SymbolEventsResponse:
+    """Dividend ex-dates and earnings-report dates (past + upcoming) for one
+    symbol — market-data read only (yfinance), never account/order/trading
+    state. Powers the price chart's dividend/earnings markers; distinct from
+    `/prices`' OHLCV bars. `lookback_days` bounds how far back past events
+    are returned; yfinance/earnings_dates typically also surfaces a handful
+    of upcoming estimated dates regardless of this bound."""
+    try:
+        symbol = symbol.strip().upper()
+        result = _market_data.get_price_chart_events(symbol, lookback_days=lookback_days)
+        dividends = [DividendEvent(**d) for d in result.get("dividends", [])]
+        earnings = [EarningsEvent(**e) for e in result.get("earnings", [])]
+        return SymbolEventsResponse(symbol=symbol, dividends=dividends, earnings=earnings)
+    except Exception as exc:
+        return SymbolEventsResponse(symbol=symbol, error=str(exc))

@@ -144,11 +144,24 @@ timestamp-preserving, read-only
 distinct read-only client from the trading client `broker_reads.py`
 already uses for account/positions/orders. Never places, cancels, or
 references an order; degrades to `{"bars": [], "error": "..."}` on any
-failure rather than raising. `5m` is scoped to today's ET session; the
-other controls use bounded chart lookbacks. Powers the cockpit's price
-chart panel and timestamp-aligned execution markers. During market hours
-daily bars can run one session behind — see `/quotes` below for the true
-current price this chart is deliberately never mistaken for.
+failure rather than raising. `5m` honors `lookback_days` like the other
+timeframes (previously ignored it — FIXED 2026-09-11). `lookback_days` has
+no real ceiling beyond the `le=36500` input-sanity guard: the prior
+500-day client-side cap was never a real Alpaca limit and has been
+removed, so pan-to-load-more can page back through Alpaca's full history.
+`AlpacaBroker` caches fully-closed prior daily bars in memory (today's bar
+is always fetched fresh, never cached). Powers the cockpit's price chart
+panel and timestamp-aligned execution markers. During market hours daily
+bars can run one session behind — see `/quotes` below for the true current
+price this chart is deliberately never mistaken for.
+
+`GET /events/{symbol}?lookback_days=400` (`SymbolEventsResponse`):
+dividend ex-dates and earnings-report dates (past and upcoming) for the
+chart's fixed-row markers, via `MarketDataProvider.get_price_chart_events`
+(yfinance) — separate from the existing single-next-value
+`get_upcoming_ex_dividend`/`get_next_earnings_date` helpers stop
+adjustment and risk prompts use, whose contracts this does not touch.
+Empty `dividends`/`earnings` lists are a normal result, not an error.
 
 ## Mission Control data-truth / run-history / decision-explainability tranche (2026-08-21)
 

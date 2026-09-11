@@ -97,13 +97,20 @@ export function OrdersPanel({
       {!error && orders.length === 0 && <StateMessage text={`No ${orderStatus} orders.`} />}
       {!error && orders.length > 0 && filtered.length === 0 && <StateMessage text="No orders match this filter." />}
       {!error && filtered.length > 0 && (
-        <DataTable
-          data={filtered}
-          columns={columns}
-          getRowId={(order) => order.id}
-          initialSorting={[{ id: "submitted_at", desc: true }]}
-          onRowClick={onInspect}
-        />
+        // pb-5 (20px): same bottom-breathing-room fix as PositionsPanel —
+        // see comment there. Owner-requested 2026-09-11.
+        <div className="pb-5">
+          <DataTable
+            data={filtered}
+            columns={columns}
+            getRowId={(order) => order.id}
+            initialSorting={[{ id: "submitted_at", desc: true }]}
+            onRowClick={onInspect}
+            resizable
+            reorderable
+            storageKey="orders-columns"
+          />
+        </div>
       )}
     </Panel>
   );
