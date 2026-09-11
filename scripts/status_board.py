@@ -1930,6 +1930,59 @@ def _render_review_owed(items: list[QueueItem]) -> str:
 #   5. nothing — and it says so, rather than inventing urgency
 # --------------------------------------------------------------------------
 
+#: Turn a mechanical rule detail into words the owner can read. The evidence
+#: rules name settings and tests by their code identifiers, which is correct
+#: for the rules and wrong for this page — see "Who this page is for". This
+#: does not summarise or interpret: it renames, and the numbers it reports are
+#: the ones the rule actually found.
+_HUMAN_WORDS = {
+    "pct": "percent", "usd": "dollars", "atr": "daily range",
+    "min": "minimum", "max": "maximum", "llm": "AI", "pm": "portfolio manager",
+    "rr": "reward to risk", "cfg": "configuration",
+}
+
+
+def _humanise_identifier(name: str) -> str:
+    """`risk.min_stop_atr_multiple` -> "minimum stop daily range multiple"."""
+    tail = name.rsplit(".", 1)[-1]
+    if tail.startswith("test_"):
+        tail = tail[len("test_"):]
+    words = [_HUMAN_WORDS.get(w, w) for w in tail.split("_") if w]
+    #: A date written as separate underscore-joined parts (2026_08_28) would
+    #: read as three unrelated numbers once the underscores become spaces.
+    joined = " ".join(words)
+    return re.sub(r"\b(\d{4}) (\d{2}) (\d{2})\b", r"\1-\2-\3", joined)
+
+
+def _plain_failure(result: "RuleResult") -> str:
+    """One failing evidence rule, in plain words. Empty if it is not a
+    failure this card should speak about."""
+    detail = result.detail or ""
+    m = re.match(r"^(\S+)\s*=\s*(.+?)\s*\(expected\s*(.+?)\)\s*$", detail)
+    if m:
+        return (f"it expects the {_humanise_identifier(m.group(1))} to be "
+                f"{m.group(3)}, and it is {m.group(2)}")
+    m = re.match(r"^(\S+)\s+is NOT present in settings\s*$", detail)
+    if m:
+        return (f"it looks for a setting called {_humanise_identifier(m.group(1))}, "
+                "which no longer exists under that name")
+    m = re.match(r"^(\S+)\s+MISSING\s*$", detail)
+    if m:
+        return (f"it looks for a test called {_humanise_identifier(m.group(1))}, "
+                "which no longer exists under that name")
+    return ""
+
+
+def _failure_lines(contradicted: list["PhaseView"]) -> list[tuple[str, list[str]]]:
+    out: list[tuple[str, list[str]]] = []
+    for ph in contradicted:
+        reasons = [r for r in (_plain_failure(x) for x in ph.results
+                               if x.verdict == FAIL) if r]
+        if reasons:
+            out.append((_strip_markdown(ph.title), reasons))
+    return out
+
+
 def _render_right_now(contradicted: list[PhaseView],
                       decisions: list[PendingDecision],
                       open_items: list[QueueItem]) -> str:
@@ -1952,23 +2005,48 @@ def _render_right_now(contradicted: list[PhaseView],
                 f'{_ref_tag(ref) if ref else ""}{_esc(title)}</h2>{inner}</article>')
 
     if contradicted:
-        names = "; ".join(f"{_strip_markdown(p.title)} (stage {p.id})"
-                          for p in contradicted)
         n = len(contradicted)
+        groups = _failure_lines(contradicted)
+        total = sum(len(r) for _, r in groups)
+        detail = "".join(
+            f'<p><strong>{_esc(title)}</strong><br>'
+            + "<br>".join(_esc(r[0].upper() + r[1:]) for r in reasons)
+            + "</p>"
+            for title, reasons in groups)
+        example = (groups[0][1][0] if groups and groups[0][1] else "")
         return card(
-            "something that was true has stopped being true",
-            "A piece of finished work no longer proves it is finished",
-            f'<div class="pb pb-plain"><span class="pb-k">In plain language'
-            f'</span><p>{n} thing{"s" if n != 1 else ""} recorded as done '
-            'cannot be shown to still be done. Nobody broke a rule &mdash; '
-            'this page re-checks the proof behind every finished item each '
-            'time it is built, and this time the proof did not hold.</p></div>'
-            f'<div class="pb pb-dec"><span class="pb-k">Affected</span>'
-            f'<p>{_esc(names)}</p></div>'
+            "a proof that has gone out of date",
+            f'{n} finished item{"s" if n != 1 else ""} can no longer prove '
+            f'{"they are" if n != 1 else "it is"} still finished',
+            '<div class="pb pb-plain"><span class="pb-k">In plain language'
+            '</span><p>Every finished piece of work carries a short list of '
+            'automatic checks that prove it is still in place, and this page '
+            're-runs all of them each time it is built. '
+            f'{total} of those checks now fail. A failing check means the '
+            'check and the system disagree &mdash; it does NOT by itself mean '
+            'the work broke. A setting deliberately changed since the check '
+            'was written fails it exactly the same way real breakage would, '
+            'so each one has to be read before it is believed.</p></div>'
+            + (f'<div class="pb pb-ex"><span class="pb-k">For example</span>'
+               f'<p>One failing check says {_esc(example)}. '
+               'If that difference is a decision already taken, the check is '
+               'simply out of date. If nobody decided it, something moved '
+               'that should not have.</p></div>' if example else "")
+            + f'<div class="pb pb-dec"><span class="pb-k">What is failing'
+              f'</span>{detail}</div>'
+            '<div class="pb pb-dec"><span class="pb-k">What you have to decide'
+            '</span><p>For each one: was this a change you made on purpose, or '
+            'not? That answer decides whether the check gets updated or the '
+            'system gets investigated. Nobody can settle it from this page '
+            'alone.</p></div>'
             '<div class="pb pb-rec"><span class="pb-k">Our recommendation'
-            '</span><p>Treat it as live breakage until it is re-checked. '
-            'This is the one failure this page exists to catch, so it '
-            'outranks everything else on it.</p></div>')
+            '</span><p>Work through them one at a time rather than treating '
+            'the whole group as an alarm. Where a check names a setting or a '
+            'test that was renamed, updating the check is the fix. Where a '
+            'check expects a number you have since changed on purpose, the '
+            'check is stale and should follow your decision. Anything left '
+            'over after that is the real finding, and it is the only part '
+            'worth alarm.</p></div>')
 
     overdue = [d for d in decisions if d.overdue]
     due = overdue or [d for d in decisions if d.days_left <= 7]
@@ -2078,8 +2156,9 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
             f'<h3>{len(contradicted)} piece(s) of finished work no longer prove '
             'they are finished</h3>'
             f'<p>{names}</p>'
-            '<p>Something that was true has stopped being true. This is the failure '
-            'this page exists to catch.</p></div>'
+            '<p>A check and the system disagree. That can mean the work broke, '
+            'or it can mean the check still expects something you changed on '
+            'purpose. The card at the top of this page lists each one.</p></div>'
         )
     else:
         alarm = (
