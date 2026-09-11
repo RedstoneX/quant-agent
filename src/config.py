@@ -837,12 +837,15 @@ class RiskConfig(BaseModel):
     # a long's loss is bounded at -100% of the position, a short's is not,
     # so the per-name concentration budget for one short was made tighter
     # than for one long. That "half" relationship is now HISTORICAL, not
-    # live — `max_position_pct` moved to 100 on 2026-09-04 once it stopped
-    # working as a concentration lever (cash-only makes 100% the real
-    # reachable ceiling regardless of the number here), and this was NOT
-    # scaled with it: shorts were never in scope for that fix, and blindly
-    # 5x-ing short concentration risk without its own review would be
-    # exactly the kind of unreviewed change this desk's process forbids.
+    # live — `max_position_pct` moved 20 -> 100 on 2026-09-04 and 100 -> 33
+    # on 2026-09-11 (a survival ceiling against single-name gap risk; see
+    # `risk.max_position_pct` in config/settings.yaml for the derivation),
+    # and this was NOT scaled with it on either occasion: shorts were never
+    # in scope for either change, and moving short concentration risk
+    # without its own review would be exactly the kind of unreviewed change
+    # this desk's process forbids. At 33 the long ceiling is now 3.3x this
+    # one rather than 2x, so 10 is TIGHTER than the old half-relationship
+    # would give (16.5) — the safe direction, and left alone deliberately.
     # 10 stands on its own justification (unbounded short loss) until a
     # separate pass re-examines it. Both caps below are HARD BLOCKS in the
     # deterministic risk engine (src/risk/rules.py) on opening/adding a

@@ -987,12 +987,11 @@ desk's stated horizons can plausibly satisfy. **Re-measure once honest
 post-fix trade history exists** — not a permanent constant. Full
 derivation: `docs/INCIDENT_HISTORY.md`, 2026-09-10.
 
-**Known consequence, recorded not fixed:** a tighter stop than the old 3.0
-floor demands a bigger position for the same dollar risk, so the 100%
-single-name cap binds again on tight-stop names (~3.5% delivered risk
-rather than 5%). That is `allow_margin: false` showing through, not a
-regression — >100% of equity in one name is unreachable cash-only
-regardless. Enabling margin is an owner call.
+**Known consequence, since RESOLVED — see item 47.** (This paragraph
+previously said margin was off and >100% notional was unreachable
+regardless; both were already false when written. See item 47 and
+`docs/INCIDENT_HISTORY.md`, 2026-09-11, for the correction and the real
+number.)
 
 **34. Exit management barely managed, and ranking was close to alphabetical — FIXED, pending review.**
 
@@ -1047,6 +1046,8 @@ dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 **45. Two pivot windows disagree about what a "swing low" is — OPEN, found 2026-09-11 by audit.** `src/risk/trailing.py:103` sets `PIVOT_WINDOW = 3` and its comment claims it matches `src/data/levels.py` "so 'a higher low' means the same thing in both places". `src/data/levels.py:39` sets `PIVOT_WINDOW = 5`. Verified by direct read. Consequence: the trailing-stop ratchet can see a higher low the structural-level detector does not, and vice versa. Neither number carries a derivation. Do not "fix" by copying one onto the other — picking 3 or 5 is picking a number.
 
 **46. `level_match_atr_tolerance` fails its own stated justification — OPEN, found 2026-09-11 by audit.** `config/settings.yaml:623` sets `0.25` and justifies it as "at least" the 1% level-cluster zone width. At this book's own stated median ATR of 2.56%, 0.25 ATR is 0.64% — under the 1% it claims to cover, by ~1.6x. Governs whether a stop counts as level-backed and is therefore exempt from the ATR stop floor, so it feeds directly into item 1's geometry. Either the tolerance or the justification is wrong; both are numbers, so owner call.
+
+**47. `risk.max_position_pct`'s cash-only justification was already false when written — RESOLVED 2026-09-11, owner call.** 100's comment asserted `allow_margin: false` made >100% notional unreachable; `allow_margin` had been `true` since 2026-09-02, two days before that comment (PR #258, 2026-09-04). Derived replacement: 20 (ladder emergency rung) / 0.60 (median of 5 real dated single-session idiosyncratic collapses) = 33, the largest single bet where that median disaster stays under the ladder's -20% owner-alert rung. Owner reviewed and set **65** instead — his own risk-appetite call, not a data disagreement; rejected 33 as too tight for a desk that avoids penny/micro-cap names, correction on the table first (the 5 reference disasters were all liquid, non-penny names). At 65 the same median disaster costs ~39%, past the alert rung rather than under it — knowing trade-off, not an oversight. `max_position_pct: 65` in settings.yaml, `ConstructorConfig.max_position_pct` and `pipeline.py`'s wiring default kept in sync. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **48. Macro `regime_shift` freshness — RESOLVED 2026-09-11, decision superseded not answered.** The DECIDE-BY question (loosen the `staleness_days<=1` bar, keep it strict, or source VIX same-day) assumed a calendar-day test was the right shape. None of its 3 options was taken: the day-count was removed entirely, replaced by `SeriesFreshness` — "is this the latest published reading" plus a separate "is a newer one overdue" signal, per-series cadence derived from the series' own observed gaps rather than a fixed number. Fixes the 52%-of-runs sanity-check-clears-regime_shift measured 2026-09-03. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 

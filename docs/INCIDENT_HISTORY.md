@@ -250,6 +250,63 @@ unchanged.
 
 ---
 
+### 2026-09-11 — a rule allowing one stock to be the whole account rested on a fact that had already stopped being true
+
+**In plain words:** a rule let a single stock be sized up to 100% of the
+account. The note explaining why said it was safe because the account
+could not borrow money to buy more than it held in cash. Borrowing had
+been switched on two days *before* that note was written. Nobody
+noticed, and the note stood for a week describing a safety net that no
+longer existed.
+
+Why it mattered: every other safety number on this desk assumes the
+stop-loss sell order actually fires. That is a fair assumption for a
+stock that drifts down. It does nothing for a stock that gaps — opens
+60% lower on a Monday, or stops trading entirely because a fraud was
+discovered overnight. The stop never gets a chance to fire. The single-name
+cap was the only thing left limiting the damage in that case, and it had
+quietly stopped doing its job.
+
+**First pass: a derived number, not a guessed one.** Real industry
+practice was checked first. No stated "this is the standard notional
+concentration limit" number exists for a desk like this — the closest
+real regulation (a broker-capital rule) only establishes that
+concentration is a recognized risk, not what the limit should be. So the
+number was derived instead from this desk's own already-ratified
+parameters: a single stock's worst realistic one-day disaster should not,
+by itself, reach the point where the desk's own -20% ladder already
+declares an emergency and alerts the owner. Using the median of five real,
+dated single-session collapses in liquid, well-covered stocks (Luckin
+Coffee -75%, Wirecard -62%, Silicon Valley Bank -60%, Kraft Heinz -28%,
+ADM -24% — none penny stocks), that arithmetic gives 33%.
+
+**Second pass, same day: the owner reviewed the derivation and set his own
+number instead.** Not a data disagreement — a risk-appetite one. He
+rejected 33% as too conservative for a desk that does not trade
+penny/micro-cap names. Corrected directly: avoiding penny stocks does not
+remove this failure mode, since all five reference disasters above were
+liquid, well-covered companies, not cheap stock. That correction was on
+the table before he chose the number, not after. He set **65%.**
+
+**What 65% actually costs, stated plainly rather than glossed over.** At
+65%, the same median disaster (-60%) now costs about 39% of the account —
+past the desk's own emergency line, not under it, the way 33% guaranteed.
+Only the mildest of the five reference events stays under that line at
+65%. In exchange, 65% barely binds on ordinary trades at this desk's real
+stop distances — unlike 33%, which would have shrunk high-conviction
+trades to roughly two-thirds of what was requested. This is a knowing
+trade-off, not an oversight, and it is written into the code comment
+exactly this way so it cannot be mistaken for a derived number later.
+
+**What would catch a regression:** `tests/test_risk_based_sizing.py`
+pins the deployed ceiling at 65, checks it against the shipped setting,
+and checks it against the portfolio-wide net exposure cap so the two
+never get confused for one another. `tests/test_prompts_anchors.py`
+pins the number inside the PM's own prompt so a prompt edit cannot drift
+from the code silently.
+
+---
+
 ### 2026-09-04 — the minimum stop distance was a number nobody derived, and it was closing the funnel
 
 **In plain words:** every trade had to put its stop-loss at least three
