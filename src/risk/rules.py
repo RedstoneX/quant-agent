@@ -2201,16 +2201,17 @@ class RiskRuleEngine:
                     message=(
                         f"{decision.symbol} short would be {single_short_pct:.1f}% "
                         f"and exceed max {self.config.max_single_short_pct}% "
-                        f"(half the {self.config.max_position_pct:.0f}% long "
-                        f"single-name ceiling — a short's loss is unbounded)"
+                        f"(tighter than the {self.config.max_position_pct:.0f}% "
+                        f"long single-name ceiling — a short's loss is "
+                        f"unbounded)"
                     ),
                     value=single_short_pct,
                     limit=self.config.max_single_short_pct,
                 ))
             # Deliberately NOT extended to a BUY of an inverse ETF, even
             # though such a BUY is bearish exposure and IS gated by the
-            # gross ceiling just below. `max_single_short_pct` sits at half
-            # of `max_position_pct` specifically because a SHORT's loss is
+            # gross ceiling just below. `max_single_short_pct` sits BELOW
+            # `max_position_pct` specifically because a SHORT's loss is
             # unbounded — a squeeze has no floor the way a long's does at
             # -100%. An inverse-ETF LONG's loss is bounded at the position's
             # notional exactly like any other long, so it does not earn

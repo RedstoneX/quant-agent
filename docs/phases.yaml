@@ -498,7 +498,7 @@ phases:
         path: "config/settings.yaml"
         key: "risk.max_single_short_pct"
         value: 10
-        note: "single-name short cap — deliberately half of max_position_pct, since a short's loss is unbounded where a long's floors at -100%."
+        note: "single-name short cap — deliberately tighter than max_position_pct, since a short's loss is unbounded where a long's floors at -100%. The old 'half' relationship is historical: max_position_pct moved 20 -> 100 (2026-09-04) then 100 -> 33 (2026-09-11) without shorts being rescaled."
       - kind: setting_equals
         path: "config/settings.yaml"
         key: "risk.max_gross_bearish_pct"

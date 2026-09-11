@@ -184,38 +184,39 @@ class ConstructorConfig:
     # this clamp a BUY over the ceiling is dropped entirely rather than
     # trimmed.
     #
-    # 20 -> 100 on 2026-09-04 (real-data audit): a concentration/liquidity
-    # BACKSTOP is supposed to only bind on a genuinely too-tight stop, not
-    # the ordinary case. At 20 it bound on nearly every trade — notional =
-    # risk_pct x entry/(entry - stop), so at this book's real ~5-9% stop
-    # distances (see `risk.min_stop_atr_multiple`'s own comment in
-    # settings.yaml) even the full 5% envelope needed 55-100% notional,
-    # 6 of 13 real proposed orders pinned at exactly 20%, and delivered risk
-    # collapsed to ~1% regardless of stated conviction. 100 is where that
-    # real 5-9% range stops being clipped (5% risk / 5% stop = 100%
-    # notional), while a stop tighter than 5% — reachable today only via the
-    # level-backed exception down to `absolute_min_stop_atr_multiple` — still
-    # gets clamped, which is the genuinely-too-tight case this ceiling
-    # exists for. This paragraph originally added: "`allow_margin` is
-    # false, so 100 is also the real ceiling: nothing past 100% of one
-    # name's equity is reachable cash-only anyway." THAT NO LONGER HOLDS —
-    # `allow_margin` has been `true` (2.0x gross) since 2026-09-02, so cash
-    # alone does not bound notional at 100% any more; margin can reach past
-    # it. The cap now rests only on the stop-distance derivation above, not
-    # on a cash-only backstop, and has not been re-derived for a
-    # margin-enabled, 2x-gross book. Left at 100 pending an owner decision —
-    # not because margin re-justifies the number.
+    # 20 -> 100 on 2026-09-04 (real-data audit): at 20 this bound on nearly
+    # every trade — notional = risk_pct x entry/(entry - stop) — so delivered
+    # risk collapsed to ~1% regardless of stated conviction (6 of 13 real
+    # proposed orders pinned at exactly 20%). 100 removed that clipping.
+    #
+    # 100 -> 33 on 2026-09-11. The 2026-09-04 justification for 100 rested on
+    # `allow_margin` being false, which had ALREADY been flipped to true two
+    # days earlier (2026-09-02) — so 100 was a live single-name ceiling, not
+    # the unreachable documentation it was described as (a separate pass
+    # this same day independently caught and recorded the same drift before
+    # this fix landed — see docs/INCIDENT_HISTORY.md). 33 was derived from
+    # this desk's own -20% `GROSS_LADDER` rung against a -60% median real,
+    # dated single-session idiosyncratic collapse — see `risk.max_position_pct`
+    # in config/settings.yaml for the full derivation.
+    #
+    # 33 -> 65 the same day, owner override. Reviewed the derivation directly
+    # and set his own risk-appetite number rather than the ladder-consistent
+    # one — recorded honestly, not re-derived to fit. At 65 the SAME median
+    # disaster (-60%) now costs ~39% of equity, past the -20% alert rung
+    # rather than under it; only the mildest of the five reference events
+    # stays under that line. The ladder still de-levers what remains — this
+    # number no longer prevents that rung from being reached by one name
+    # alone, the way 33 was built to. In exchange, 65 mostly does not bind
+    # on ordinary trades at current stop distances (33 bound knowingly; 65
+    # is mostly a pure backstop against the no-stop-fills case, not a live
+    # tax on everyday sizing). This is the ONLY parameter bounding a loss
+    # when the stop does not fill at all (gap, halt, fraud, regulatory
+    # action) — every other risk number on the desk is stop-conditional.
+    # SURVIVAL against single-name tail risk, NOT diversification, variance
+    # reduction or risk parity, all of which are rejected for this desk.
     # Keep in sync with `risk.max_position_pct` — pipeline.py wires them from
     # the same setting.
-    #
-    # NOTE the "~5-9%" above is the stop distance the OLD 3.0 ATR floor
-    # produced. `risk.min_stop_atr_multiple` has since moved 3.0 -> 1.5 ->
-    # 2.5 — see that setting's own comment in settings.yaml for the current
-    # re-derivation (last done 2026-09-11 against the 2.5x floor: ~5.5-7.7%
-    # stops, ~73% notional at the current 4% conviction ceiling —
-    # comfortably inside 100). Recorded, deliberately not "fixed": choosing
-    # a different ceiling is an owner decision.
-    max_position_pct: float = 100.0
+    max_position_pct: float = 65.0
     # Spec §10.3 "concentration scales size, it does not veto". The sector
     # diversification target and the absolute ceiling behind it. Unlike every
     # other ceiling in this dataclass these do not merely make the constructor
@@ -2501,7 +2502,8 @@ class PortfolioConstructor:
             cap_note += (
                 f" [constructor: size capped to {max(0.0, name_headroom_pct):.2f}% "
                 f"by the {self.cfg.max_single_short_pct:.0f}% single-short "
-                f"ceiling — deliberately half the long single-name ceiling. "
+                f"ceiling — deliberately tighter than the long single-name "
+                f"ceiling. "
                 f"Deterministic, not PM inconsistency]"
             )
             allocation_pct = name_headroom_pct
