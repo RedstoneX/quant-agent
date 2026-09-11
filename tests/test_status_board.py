@@ -310,7 +310,12 @@ def test_the_template_carries_every_placeholder_the_renderer_fills():
     for key in ("{{STAMP}}", "{{BUILT_SHA}}", "{{DEPLOY}}", "{{CIRCUIT}}", "{{SPEND}}",
                 "{{SPEND_PCT}}", "{{SPEND_NOTE}}", "{{SESSIONS}}", "{{ROWS}}", "{{ALARM}}",
                 "{{RULES_TOTAL}}", "{{RULES_PASS}}", "{{RULES_FAIL}}",
-                "{{RULES_UNKNOWN}}", "{{BOX_SHA}}", "{{MAIN_SHA}}", "{{JARGON_BANNER}}"):
+                "{{RULES_UNKNOWN}}", "{{BOX_SHA}}", "{{MAIN_SHA}}", "{{JARGON_BANNER}}",
+                "{{RIGHT_NOW}}", "{{DECISIONS}}", "{{QUEUE}}", "{{PAUSED}}",
+                "{{CONTRADICTS}}", "{{RESOLVED}}", "{{QUEUE_OPEN}}",
+                "{{QUEUE_TOTAL}}", "{{PAUSED_COUNT}}", "{{RESOLVED_COUNT}}",
+                "{{UNEXPLAINED_NOTE}}", "{{PM_GATE}}",
+                "{{PM_GATE_DONE}}", "{{PM_GATE_OPEN}}", "{{PM_GATE_TOTAL}}"):
         assert key in template, f"template is missing {key}"
 
 
@@ -963,7 +968,10 @@ def test_a_renamed_heading_says_so_instead_of_rendering_empty(tmp_path):
     items, problem = sb.load_funnel_queue(p)
     assert items == []
     assert problem and "could not be read" in problem
-    assert "Queue unavailable" in sb._render_queue(items, problem)
+    rendered = sb._render_open_queue(items, problem)
+    assert "could not be read" in rendered
+    # And it must not read as an empty backlog.
+    assert "Nothing is queued" not in rendered
 
 
 def test_a_missing_backlog_file_says_so(tmp_path):
@@ -987,7 +995,7 @@ def test_classification_is_carried_by_the_word_not_only_colour():
         sb.QueueItem(1, "A blocked thing", "TOO STRICT", "17 of 68 (25%)", 25, False),
         sb.QueueItem(2, "A broken thing", "DEFECT", "2 of 68 (3%)", 3, False),
     ]
-    html_out = sb._render_queue(items, None)
+    html_out = sb._render_open_queue(items, None)
     text_only = re.sub(r"<[^>]+>", " ", html_out)
     assert "too strict" in text_only
     assert "defect" in text_only
@@ -996,7 +1004,10 @@ def test_classification_is_carried_by_the_word_not_only_colour():
 def test_a_finished_item_reads_as_done():
     done = sb.QueueItem(1, "Fixed thing", "DEFECT", "", None, True)
     assert done.state == "done"
-    assert "line-through" in sb._render_queue([done], None)
+    assert done.bucket == "resolved"
+    # Struck through in the resolved list — and the strike-through is on top
+    # of the words "Already resolved" in the template, never instead of them.
+    assert "ol-done" in sb._render_one_liners([done], "nothing", struck=True)
 
 
 def test_pending_decisions_show_time_remaining_and_overdue(tmp_path):
@@ -1171,3 +1182,411 @@ def test_pm_gate_items_do_not_leak_into_the_funnel_queue_or_vice_versa(tmp_path)
     queue_items, _ = sb.load_funnel_queue(p)
     assert [i.title for i in gate_items] == ["Gate item"]
     assert [i.title for i in queue_items] == ["Queue item"]
+
+
+# ---------------------------------------------------------------------------
+# The plain-language convention
+#
+# These pin the property the whole rewrite rests on: prose the owner reads is
+# WRITTEN, in the backlog, by a person — and where nobody has written it, the
+# page says so. It is never invented, never summarised out of the engineering
+# notes, and never dropped. An invented explanation would be the same rot this
+# board exists to catch, wearing a friendlier face.
+# ---------------------------------------------------------------------------
+
+_FULL_ITEM = (
+    "## THE FUNNEL QUEUE\n\n"
+    "**1. The reward:risk floor — 17 of 68 (25%). TOO STRICT.**\n\n"
+    "**Plain language —** The desk refuses a trade unless the likely gain is\n"
+    "at least one and a half times what it is risking.\n"
+    "**Example —** You want to buy at $100 with a stop at $98 and a target at\n"
+    "$105: risking $2 to make $5. The desk moves the stop to $95 on its own,\n"
+    "recalculates it as risking $5 to make $5, and refuses the trade.\n"
+    "**The decision —** Should a stop you can point at on the chart always be\n"
+    "honoured, however tight it is?\n"
+    "**Recommendation —** Yes. Pad the stop only when there is no real level\n"
+    "to put it at.\n\n"
+    "Engineering detail nobody should have to read: the ATR floor overwrites\n"
+    "the structural stop, and this paragraph mentions that it was fixed.\n"
+)
+
+
+def test_an_item_carries_its_plain_language_example_and_recommendation():
+    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1])
+    assert len(items) == 1
+    p = items[0].prose
+    assert p.plain.startswith("The desk refuses a trade")
+    assert "$100" in p.example and "$95" in p.example
+    assert p.decision.startswith("Should a stop")
+    assert p.recommendation.startswith("Yes.")
+
+
+def test_a_blank_line_ends_a_block_so_engineering_prose_is_not_swallowed():
+    """The paragraph after the blank line is engineering detail. If it leaked
+    into the recommendation the owner would be shown notes for a developer
+    under a heading promising the opposite."""
+    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1])
+    assert "ATR floor" not in items[0].prose.recommendation
+    assert "ATR floor" not in items[0].prose.plain
+
+
+def test_wrapped_prose_lines_are_joined_not_truncated():
+    items = sb._parse_numbered_items(_FULL_ITEM.split("## THE FUNNEL QUEUE")[1])
+    # The second physical line of the plain-language block must be present.
+    assert "one and a half times" in items[0].prose.plain
+
+
+@pytest.mark.parametrize("line,field", [
+    ("**Plain language —** a", "plain"),
+    ("Plain English: a", "plain"),
+    ("  **Example -** a", "example"),
+    ("DECISION — a", "decision"),
+    ("**My recommendation —** a", "recommendation"),
+])
+def test_every_accepted_label_spelling_parses(line, field):
+    """The labels are typed by hand. A near-miss spelling must land in the
+    right block rather than being silently ignored, because silently ignored
+    means the owner is told nobody wrote it when somebody did."""
+    assert getattr(sb.parse_prose([line]), field) == "a"
+
+
+def test_markdown_never_reaches_the_page_as_literal_characters():
+    got = sb.parse_prose(["Plain language: the **stop** sits at `entry - 2*atr`"])
+    assert "**" not in got.plain
+    assert "`" not in got.plain
+    assert "stop" in got.plain and "entry - 2*atr" in got.plain
+
+
+def test_an_item_with_no_prose_renders_honestly_and_is_not_dropped():
+    """The honest outcome, and the one that must never regress into invention:
+    the item is still on the page, and the page says nobody has explained it."""
+    bare = sb.QueueItem(7, "Some unexplained thing", "DEFECT", "", None, False)
+    out = sb._render_open_queue([bare], None)
+    assert "Some unexplained thing" in out          # not dropped
+    assert "Nobody has written" in out              # stated, not papered over
+    assert "no plain-English version yet" in out    # and flagged on the line
+
+
+def test_nothing_is_invented_for_an_unexplained_item():
+    """Whatever the page says about an unexplained item, it must not contain
+    an explanation. The only text allowed is the standing 'nobody wrote this'
+    sentence, so this pins that no summary of the engineering body leaks in."""
+    body = ("## THE FUNNEL QUEUE\n\n"
+            "**3. A thing — DEFECT.**\n\n"
+            "The real cause is a recursion fault in the bar fetch, traced to\n"
+            "a delisted warrant reaching the data layer.\n")
+    items = sb._parse_numbered_items(body.split("## THE FUNNEL QUEUE")[1])
+    out = sb._render_open_queue(items, None)
+    assert "recursion" not in out
+    assert "delisted" not in out
+    assert not items[0].prose.has_any
+
+
+def test_prose_written_for_a_developer_is_marked_not_accepted_silently():
+    p = sb.parse_prose(["Plain language: see `portfolio_manager.py` and PR #212"])
+    assert p.jargon_markers
+    out = sb._render_prose(p)
+    assert "Written for a developer" in out
+    # ...and the words still render. An unreadable description beats none.
+    assert "portfolio_manager.py" in out
+
+
+# ---------------------------------------------------------------------------
+# Reading the real item shape
+#
+# The old parser required the bold to close at end of line, and silently
+# dropped every item that did not. Ten live items were invisible to the owner
+# for that reason alone.
+# ---------------------------------------------------------------------------
+
+def test_body_text_on_the_headline_line_does_not_hide_the_item():
+    body = ("\n**41. A persistently broken ticker could fail silently — "
+            "FIXED 2026-09-10.** The earlier fix stopped one bad symbol from "
+            "crashing the whole scan.\n")
+    items = sb._parse_numbered_items(body)
+    assert [i.rank for i in items] == [41]
+    assert items[0].title.startswith("A persistently broken ticker")
+
+
+def test_a_headline_wrapped_onto_a_second_line_does_not_hide_the_item():
+    body = ("\n**30. The sizing path still owes the same amendment the ranking\n"
+            "path just got — FIXED.**\n\nSome body.\n")
+    items = sb._parse_numbered_items(body)
+    assert [i.rank for i in items] == [30]
+    assert "ranking path just got" in items[0].title
+
+
+def test_prose_after_the_headline_on_the_same_line_is_still_read():
+    body = ("\n**5. A thing — DEFECT.** **Plain language —** it is a thing.\n")
+    items = sb._parse_numbered_items(body)
+    assert items[0].prose.plain == "it is a thing."
+
+
+def test_the_real_backlog_shows_more_items_than_the_strict_shape_would():
+    """Guards the actual regression this fixed. If someone narrows the item
+    regex back to the strict shape, the owner's board silently loses items
+    again — so assert the widened parser finds strictly more of them."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    items, problem = sb.load_funnel_queue(work_md)
+    assert problem is None
+    body = work_md.read_text().split(sb._QUEUE_HEADING, 1)[1]
+    for stop in ("### Re-measure gate", "\n## ", "\n### "):
+        if stop in body:
+            body = body.split(stop, 1)[0]
+    strict = [l for l in body.splitlines() if sb._QUEUE_ITEM_RE.match(l.strip())]
+    assert len(items) > len(strict)
+
+
+# ---------------------------------------------------------------------------
+# The closure check must not regress
+# ---------------------------------------------------------------------------
+
+def test_body_prose_saying_fixed_is_not_read_as_the_items_own_claim(tmp_path):
+    """The exact historical false positive: an item whose BODY mentions that
+    something was fixed is not claiming to be closed itself, and must not fail
+    the build. This is why the closure check reads the bold span, never the
+    whole physical line."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. Still very much open — NOT YET DIAGNOSED.** The neighbouring "
+        "problem was fixed on Tuesday, which is why this one now shows up.\n"
+    )
+    assert sb.find_closed_items_not_marked_done(p) == []
+
+
+def test_a_title_claiming_closure_is_still_flagged_after_the_widening(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text("## THE FUNNEL QUEUE\n\n**4. A thing — FIXED.**\n")
+    assert sb.find_closed_items_not_marked_done(p)
+
+
+def test_the_board_reports_a_self_contradicting_item_to_the_owner_itself():
+    """The build check is deliberately narrow. The page is not: an item whose
+    own words say finished while it is still listed as live work is shown to
+    him, in its own section, rather than being filed as open or as done."""
+    it = sb.QueueItem(25, "A protected-position rule", "", "", None, False,
+                      headline="A protected-position rule — DONE 2026-09-04.")
+    assert it.claims_closure is True
+    assert it.bucket == "contradicts_itself"
+    out = sb._render_self_contradicting([it])
+    assert "One of the two is wrong" in out
+
+
+def test_a_partial_claim_stays_open_not_contradictory():
+    it = sb.QueueItem(2, "A thing", "", "", None, False,
+                      headline="A thing — PARTIALLY FIXED, one gap open.")
+    assert it.claims_closure is False
+    assert it.bucket == "open"
+
+
+# ---------------------------------------------------------------------------
+# Buckets: one item, one section
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("headline,expected", [
+    ("A thing — DEFERRED, not investigated further.", "paused"),
+    ("A thing — MOOT, deleted with item 14.", "paused"),
+    ("A thing — TOO STRICT. IN FLIGHT.", "open"),
+])
+def test_paused_items_are_separated_from_live_work(headline, expected):
+    it = sb.QueueItem(1, "A thing", "", "", None, False, headline=headline)
+    assert it.bucket == expected
+
+
+def test_a_struck_through_item_is_resolved_not_open():
+    body = "\n**~~12. A thing — FIXED 2026-09-03.~~**\n"
+    items = sb._parse_numbered_items(body)
+    assert items[0].done is True
+    assert items[0].bucket == "resolved"
+
+
+# ---------------------------------------------------------------------------
+# RIGHT NOW — exactly one thing
+# ---------------------------------------------------------------------------
+
+def _decision(days_left, question="A question", prose=None):
+    return sb.PendingDecision(dt.date.today() + dt.timedelta(days=days_left),
+                              question, days_left, prose or sb.Prose())
+
+
+def test_right_now_shows_exactly_one_thing():
+    rotten = _phase_with([sb.RuleResult("file_exists", sb.FAIL, "")],
+                         recorded="DONE AND LIVE", title="Rotten")
+    out = sb._render_right_now(
+        [rotten], [_decision(-3), _decision(2)],
+        [sb.QueueItem(1, "Top item", "", "", None, False)])
+    assert out.count('class="rn"') == 1
+
+
+def test_rot_outranks_a_decision_which_outranks_the_running_order():
+    rotten = _phase_with([sb.RuleResult("file_exists", sb.FAIL, "")],
+                         recorded="DONE AND LIVE", title="Rotten")
+    top = sb.QueueItem(1, "Top item", "", "", None, False)
+    d = _decision(-3, "Overdue question")
+
+    both = sb._render_right_now([rotten], [d], [top])
+    assert "no longer proves it is finished" in both
+    assert "Overdue question" not in both
+
+    no_rot = sb._render_right_now([], [d], [top])
+    assert "Overdue question" in no_rot
+    assert "Top item" not in no_rot
+
+    queue_only = sb._render_right_now([], [], [top])
+    assert "Top item" in queue_only
+
+
+def test_a_decision_far_in_the_future_does_not_outrank_the_running_order():
+    top = sb.QueueItem(1, "Top item", "", "", None, False)
+    out = sb._render_right_now([], [_decision(60, "Distant question")], [top])
+    assert "Top item" in out
+    assert "Distant question" not in out
+
+
+def test_nothing_to_do_says_so_rather_than_inventing_urgency():
+    out = sb._render_right_now([], [], [])
+    assert "Nothing needs you" in out
+
+
+# ---------------------------------------------------------------------------
+# A decision carries its own explanation and recommendation
+# ---------------------------------------------------------------------------
+
+def test_a_decision_reads_its_indented_plain_language_block(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "- [ ] DECIDE BY 2099-01-01 — Which model runs the decision seat?\n"
+        "  **Plain language —** Which AI does the desk's final trade call.\n"
+        "  **Example —** Same shortlist, two models: one buys three names,\n"
+        "  the other buys one.\n"
+        "  **Recommendation —** Re-measure first, then decide.\n"
+    )
+    got = sb.load_pending_decisions(p, today=dt.date(2098, 1, 1))
+    assert len(got) == 1
+    assert got[0].prose.plain.startswith("Which AI does")
+    assert "two models" in got[0].prose.example
+    assert got[0].prose.recommendation == "Re-measure first, then decide."
+
+
+def test_a_wrapped_question_is_not_truncated_to_a_fragment(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "- [ ] DECIDE BY 2099-01-01 — What should the freshness bar be,\n"
+        "  given the real lag on the economic data?\n"
+    )
+    got = sb.load_pending_decisions(p, today=dt.date(2098, 1, 1))
+    assert got[0].question.endswith("economic data?")
+
+
+def test_a_decision_with_no_recommendation_says_so(tmp_path):
+    p = tmp_path / "WORK.md"
+    p.write_text("- [ ] DECIDE BY 2099-01-01 — A bare question?\n")
+    got = sb.load_pending_decisions(p, today=dt.date(2098, 1, 1))
+    out = sb._render_decisions(got)
+    assert "A bare question?" in out
+    assert "nothing here to agree or disagree with" in out
+
+
+# ---------------------------------------------------------------------------
+# It must never 500 his phone
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("content", [
+    "",
+    "\x00\x01\x02 not markdown at all",
+    "## THE FUNNEL QUEUE\n" + ("**1. " * 400) + "\n",
+    "## THE FUNNEL QUEUE\n\n**notanumber. A thing — DEFECT.**\n",
+    "- [ ] DECIDE BY 9999-99-99 — an impossible date\n",
+])
+def test_a_malformed_backlog_still_renders_a_page(tmp_path, content):
+    """A board that fails to load is a board he stops opening. Whatever the
+    backlog looks like, a page comes out and it does not pretend."""
+    p = tmp_path / "WORK.md"
+    p.write_text(content)
+    phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
+             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render(phases, state, template, work_md=p)
+    assert "{{" not in out
+    assert "QAMC Desk Board" in out
+
+
+def test_a_missing_backlog_file_does_not_break_the_page(tmp_path):
+    phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
+    state = {"in_sync": None, "circuit": None, "spend_today": None,
+             "sessions_today": None, "box_sha": None, "main_sha": None}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render(phases, state, template, work_md=tmp_path / "gone.md")
+    assert "{{" not in out
+    assert "could not be read" in out or "missing" in out
+
+
+# ---------------------------------------------------------------------------
+# Accessibility and the rebuild trigger
+# ---------------------------------------------------------------------------
+
+def test_no_status_on_the_page_depends_on_colour_alone():
+    """The owner is red/green colour blind. Every verdict has to survive all
+    colour being stripped out, so each one must be a WORD in the markup."""
+    for _cls, label in sb.VERDICT_PILL.values():
+        assert label and label.strip() == label
+        assert not label.lower() in ("red", "green", "amber")
+    # And each label is real words, not a colour name or a bare symbol.
+    labels = [lbl for _c, lbl in sb.VERDICT_PILL.values()]
+    assert all(any(ch.isalpha() for ch in lbl) for lbl in labels)
+
+
+def test_the_rebuild_trigger_watches_the_backlog():
+    """The board's core defect before this change: the file it is made of was
+    not watched, so editing the backlog did not update the owner's page."""
+    unit = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
+            / "quant-agent-status-board.path").read_text()
+    assert "docs/WORK.md" in unit
+    assert "PathChanged=/home/qamc/quant-agent/docs/WORK.md" in unit
+
+
+def test_the_board_service_does_not_point_at_the_retired_timer():
+    """A .timer unit used to drive this and was replaced by the .path unit.
+    Install instructions naming the timer would have an operator enable a unit
+    that no longer exists."""
+    svc = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
+           / "quant-agent-status-board.service").read_text()
+    enable_lines = [l for l in svc.splitlines()
+                    if "systemctl" in l and "enable" in l]
+    assert enable_lines
+    assert all("status-board.timer" not in l for l in enable_lines)
+
+
+@pytest.mark.parametrize("headline,expected", [
+    # Real lines from the live backlog that a plain word search got wrong.
+    ("Order-fill detection was a fixed-interval REST poll — REPLACED 2026-09-10.",
+     False),
+    ("The sizing path still owes an amendment — deliberately NOT done yet.",
+     False),
+    ("An acceptance test is broken on main — STILL BROKEN, this file's own "
+     "FIXED claim was wrong.", False),
+    # And the ones that genuinely do claim to be finished.
+    ("A protected-position rule — DONE 2026-09-04.", True),
+    ("A broken ticker could fail silently forever — FIXED 2026-09-10.", True),
+])
+def test_a_description_is_not_read_as_a_closure_claim(headline, expected):
+    """A marker that cries wolf gets ignored, which is worse than no marker.
+    Only the STATUS half of a headline — after the last em dash — is a claim
+    about where the item stands, and a negated status is not a claim at all."""
+    it = sb.QueueItem(1, "t", "", "", None, False, headline=headline)
+    assert it.claims_closure is expected
+
+
+def test_the_real_backlog_flags_only_genuine_self_contradictions():
+    """Pins the live outcome so a widened word list cannot quietly reintroduce
+    false positives on the owner's own page."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    items, problem = sb.load_funnel_queue(work_md)
+    assert problem is None
+    flagged = [i for i in items if i.bucket == "contradicts_itself"]
+    for i in flagged:
+        tail = i.status_tail
+        assert any(w in tail for w in sb._CLOSURE_WORDS), i.rank
+        assert not any(w in tail for w in sb._CLOSURE_NEGATIONS), i.rank
