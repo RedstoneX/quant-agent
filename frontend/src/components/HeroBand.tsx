@@ -186,7 +186,12 @@ export function HeroBand({
   }
 
   return (
-    <div className={`mx-3 mt-3 grid grid-cols-1 gap-3 ${regime?.macro.regime ? "lg:grid-cols-[1.2fr_1fr_1fr]" : "lg:grid-cols-[1.2fr_1fr]"}`}>
+    /* Vertical-space reallocation pass, 2026-09-11: outer mt-3 -> mt-2,
+       same low-risk inter-section trim as the other stacked chrome
+       sections (HoldingsStrip/LiquidityPanel/TodaySessionsStrip/
+       DecisionStateBanner) — internal mt-3 spacing inside this component
+       is untouched. */
+    <div className={`mx-3 mt-2 grid grid-cols-1 gap-3 ${regime?.macro.regime ? "lg:grid-cols-[1.2fr_1fr_1fr]" : "lg:grid-cols-[1.2fr_1fr]"}`}>
       <Card
         decoration="top"
         decorationColor={accountError ? "amber" : "cyan"}

@@ -80,7 +80,12 @@ export function HoldingsStrip({
   const everLoaded = Boolean(updatedAt);
 
   return (
-    <section className="mx-3 mt-3" aria-label="Holdings">
+    /* Vertical-space reallocation pass, 2026-09-11: mt-3 -> mt-2, a
+       low-risk trim of the inter-section chrome gap (see other stacked
+       sections below for the same trim) that feeds a few extra px back
+       into the live-measured --chrome-h budget without cramming
+       anything. */
+    <section className="mx-3 mt-2" aria-label="Holdings">
       <div className="flex items-center gap-2 pb-1.5">
         <Text className="uppercase tracking-wide">Holdings</Text>
         <Badge color="slate" size="xs">

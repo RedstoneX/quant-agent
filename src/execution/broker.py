@@ -408,6 +408,12 @@ class AlpacaBroker:
         self.client = TradingClient(api_key, secret_key, paper=paper)
         _install_http_timeout(self.client)
         self._data_client = None
+        # In-memory cache for completed (closed) price bars only — see
+        # get_bars / get_intraday_chart_bars. Keyed so that the current,
+        # still-forming trading day is never stored and always refetched
+        # fresh; only prior, fully-closed days are ever served from here.
+        self._closed_bars_cache: dict = {}
+        self._closed_bars_cache_lock = threading.Lock()
         # Guard 1 (2026-09-02 operational safety guard — see
         # RiskConfig.kill_switch_path). `None` leaves the guard disabled,
         # which is only reachable from a construction site that predates
@@ -1034,38 +1040,67 @@ class AlpacaBroker:
             end = et_today()
             start = end - _td(days=lookback_days)
             alpaca_symbol = _alpaca_symbol(symbol)
-            req = StockBarsRequest(
-                symbol_or_symbols=alpaca_symbol,
-                timeframe=TimeFrame.Day,
-                start=start,
-                end=end,
-            )
-            raw = self._data_client.get_stock_bars(req)
-            # SDK returns a BarSet-like object with .data = {symbol: [Bar, ...]}
-            bars_list = None
-            if hasattr(raw, "data") and isinstance(raw.data, dict):
-                bars_list = raw.data.get(alpaca_symbol)
-            elif isinstance(raw, dict):
-                bars_list = raw.get(alpaca_symbol)
-            if not bars_list:
-                return []
-            out: list[OHLCV] = []
-            for b in bars_list:
-                ts = getattr(b, "timestamp", None)
-                d = ts.date() if ts is not None else None
-                if d is None:
-                    continue
-                try:
-                    out.append(OHLCV(
-                        date=d,
-                        open=float(getattr(b, "open", 0) or 0),
-                        high=float(getattr(b, "high", 0) or 0),
-                        low=float(getattr(b, "low", 0) or 0),
-                        close=float(getattr(b, "close", 0) or 0),
-                        volume=int(getattr(b, "volume", 0) or 0),
-                    ))
-                except (TypeError, ValueError):
-                    continue
+
+            def _fetch(range_start, range_end) -> list[OHLCV]:
+                req = StockBarsRequest(
+                    symbol_or_symbols=alpaca_symbol,
+                    timeframe=TimeFrame.Day,
+                    start=range_start,
+                    end=range_end,
+                )
+                raw = self._data_client.get_stock_bars(req)
+                # SDK returns a BarSet-like object with .data = {symbol: [Bar, ...]}
+                bars_list = None
+                if hasattr(raw, "data") and isinstance(raw.data, dict):
+                    bars_list = raw.data.get(alpaca_symbol)
+                elif isinstance(raw, dict):
+                    bars_list = raw.get(alpaca_symbol)
+                if not bars_list:
+                    return []
+                parsed: list[OHLCV] = []
+                for b in bars_list:
+                    ts = getattr(b, "timestamp", None)
+                    d = ts.date() if ts is not None else None
+                    if d is None:
+                        continue
+                    try:
+                        parsed.append(OHLCV(
+                            date=d,
+                            open=float(getattr(b, "open", 0) or 0),
+                            high=float(getattr(b, "high", 0) or 0),
+                            low=float(getattr(b, "low", 0) or 0),
+                            close=float(getattr(b, "close", 0) or 0),
+                            volume=int(getattr(b, "volume", 0) or 0),
+                        ))
+                    except (TypeError, ValueError):
+                        continue
+                return parsed
+
+            # Caching: only the portion of the range up to (and including)
+            # yesterday can possibly be closed/complete daily bars — Alpaca
+            # doesn't publish a daily bar for a session that hasn't closed
+            # yet, but we still never trust "today" to a cache: today's
+            # entry is always fetched fresh, never cached. Keyed so a new
+            # calendar day naturally invalidates the historical portion.
+            hist_end = end - _td(days=1)
+            cache_key = ("daily", alpaca_symbol, start, hist_end)
+            with self._closed_bars_cache_lock:
+                cached_hist = self._closed_bars_cache.get(cache_key)
+
+            if cached_hist is None:
+                # Cache miss: one fetch over the whole range, exactly as
+                # before caching existed. Split the result so only the
+                # closed (pre-today) portion is stored.
+                all_bars = _fetch(start, end)
+                cached_hist = [b for b in all_bars if b.date <= hist_end]
+                with self._closed_bars_cache_lock:
+                    self._closed_bars_cache[cache_key] = cached_hist
+                return all_bars
+
+            # Cache hit: reuse the closed history, only refetch today.
+            today_bars = _fetch(end, end)
+            out = cached_hist + [b for b in today_bars if b.date not in {c.date for c in cached_hist}]
+            out.sort(key=lambda b: b.date)
             return out
         except Exception as e:
             logger.warning("broker.get_bars failed for %s: %s", symbol, e)
@@ -1105,59 +1140,87 @@ class AlpacaBroker:
                 return []
 
             now = _dt.now(_tz.utc)
-            if timeframe == "5m":
-                # "5m" is explicitly today's session. Starting at ET
-                # midnight naturally includes the full regular session
-                # without relying on the host's timezone.
-                start = _dt.combine(
-                    now.astimezone(ET).date(), _dt.min.time(), tzinfo=ET
-                )
-            else:
-                start = now - _td(days=lookback_days)
+            start = now - _td(days=lookback_days)
             alpaca_symbol = _alpaca_symbol(symbol)
-            req = StockBarsRequest(
-                symbol_or_symbols=alpaca_symbol,
-                timeframe=timeframe_value,
-                start=start,
-                end=now,
-                # This account's market-data plan is entitled to IEX, not
-                # SIP. Leaving feed unset resolves to SIP server-side for
-                # sub-daily bars and comes back with zero bars for every
-                # symbol/range — silently, since Alpaca doesn't error, it
-                # just returns nothing. Daily bars (get_bars, above) aren't
-                # feed-gated the same way, which is why only this intraday
-                # path needs it.
-                feed=DataFeed.IEX,
-            )
-            raw = self._data_client.get_stock_bars(req)
-            if hasattr(raw, "data") and isinstance(raw.data, dict):
-                bars_list = raw.data.get(alpaca_symbol)
-            elif isinstance(raw, dict):
-                bars_list = raw.get(alpaca_symbol)
-            else:
-                bars_list = None
-            if not bars_list:
-                return []
 
-            out: list[dict] = []
-            for bar in bars_list:
-                ts = getattr(bar, "timestamp", None)
-                if ts is None:
-                    continue
-                try:
-                    out.append(
-                        {
-                            "date": ts.astimezone(ET).date().isoformat(),
-                            "timestamp": ts.isoformat(),
-                            "open": float(getattr(bar, "open", 0) or 0),
-                            "high": float(getattr(bar, "high", 0) or 0),
-                            "low": float(getattr(bar, "low", 0) or 0),
-                            "close": float(getattr(bar, "close", 0) or 0),
-                            "volume": int(getattr(bar, "volume", 0) or 0),
-                        }
-                    )
-                except (TypeError, ValueError):
-                    continue
+            def _fetch(range_start, range_end) -> list[dict]:
+                req = StockBarsRequest(
+                    symbol_or_symbols=alpaca_symbol,
+                    timeframe=timeframe_value,
+                    start=range_start,
+                    end=range_end,
+                    # This account's market-data plan is entitled to IEX, not
+                    # SIP. Leaving feed unset resolves to SIP server-side for
+                    # sub-daily bars and comes back with zero bars for every
+                    # symbol/range — silently, since Alpaca doesn't error, it
+                    # just returns nothing. Daily bars (get_bars, above) aren't
+                    # feed-gated the same way, which is why only this intraday
+                    # path needs it.
+                    feed=DataFeed.IEX,
+                )
+                raw = self._data_client.get_stock_bars(req)
+                if hasattr(raw, "data") and isinstance(raw.data, dict):
+                    bars_list = raw.data.get(alpaca_symbol)
+                elif isinstance(raw, dict):
+                    bars_list = raw.get(alpaca_symbol)
+                else:
+                    bars_list = None
+                if not bars_list:
+                    return []
+
+                parsed: list[dict] = []
+                for bar in bars_list:
+                    ts = getattr(bar, "timestamp", None)
+                    if ts is None:
+                        continue
+                    try:
+                        parsed.append(
+                            {
+                                "date": ts.astimezone(ET).date().isoformat(),
+                                "timestamp": ts.isoformat(),
+                                "open": float(getattr(bar, "open", 0) or 0),
+                                "high": float(getattr(bar, "high", 0) or 0),
+                                "low": float(getattr(bar, "low", 0) or 0),
+                                "close": float(getattr(bar, "close", 0) or 0),
+                                "volume": int(getattr(bar, "volume", 0) or 0),
+                            }
+                        )
+                    except (TypeError, ValueError):
+                        continue
+                return parsed
+
+            # Caching: only prior, fully-closed trading days are cacheable.
+            # Today (including its still-forming candle) is always fetched
+            # fresh, never cached. The historical portion is cached keyed
+            # by the (rounded-to-day) start and today's date, so a new
+            # calendar day naturally invalidates it. The start is rounded
+            # down to ET midnight of its day (a superset of the exact
+            # `start` instant) purely so repeated calls with the same
+            # lookback_days share one cache key — outside trading hours
+            # Alpaca simply returns nothing extra, so this never fabricates
+            # data, only makes the cache key stable.
+            today_et = now.astimezone(ET).date()
+            today_midnight_et = _dt.combine(today_et, _dt.min.time(), tzinfo=ET)
+            start_day_et = start.astimezone(ET).date()
+            cache_key = ("intraday", alpaca_symbol, timeframe, start_day_et, today_et)
+
+            with self._closed_bars_cache_lock:
+                cached_hist = self._closed_bars_cache.get(cache_key)
+
+            if cached_hist is None:
+                # Cache miss: one fetch over the whole range, exactly as
+                # before caching existed. Split the result so only the
+                # portion from before today is stored.
+                all_bars = _fetch(start, now)
+                cached_hist = [b for b in all_bars if b["date"] < today_et.isoformat()]
+                with self._closed_bars_cache_lock:
+                    self._closed_bars_cache[cache_key] = cached_hist
+                return all_bars
+
+            # Cache hit: reuse the closed history, only refetch today.
+            today_bars = _fetch(today_midnight_et, now)
+            out = cached_hist + today_bars
+            out.sort(key=lambda b: b["timestamp"])
             return out
         except Exception as exc:
             logger.warning(

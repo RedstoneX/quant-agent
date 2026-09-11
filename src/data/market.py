@@ -226,6 +226,95 @@ class MarketDataProvider:
             logger.debug("earnings date unavailable for %s: %s", symbol, exc)
             return None
 
+    def get_price_chart_events(self, symbol: str, lookback_days: int = 400) -> dict:
+        """Dividend ex-dates and earnings-report dates (past + upcoming),
+        for Mission Control's price-chart markers only — not read by any
+        trading/risk code path. Deliberately separate from
+        `get_upcoming_ex_dividend`/`get_next_earnings_date` above (which
+        answer a narrower "is one imminent" question for stop adjustment /
+        risk prompts and must keep their existing single-value contracts
+        unchanged): a chart wants the fuller list, past events included, not
+        just the next one.
+
+        Returns {"dividends": [...], "earnings": [...]}, each possibly
+        empty — yfinance returning nothing for a symbol (an ETF with no
+        earnings, a newly-listed name, a transient gap) is a normal, silent
+        empty result, never an error.
+        """
+        today = et_today()
+        cutoff = today - timedelta(days=lookback_days)
+
+        def _fetch():
+            ticker = yf.Ticker(symbol)
+            dividends = []
+            try:
+                series = ticker.dividends  # pandas Series, tz-aware DatetimeIndex
+                if series is not None and not series.empty:
+                    for ts, amount in series.items():
+                        d = ts.date() if hasattr(ts, "date") else ts
+                        if not hasattr(d, "year") or d < cutoff:
+                            continue
+                        try:
+                            amt = round(float(amount), 4)
+                        except (TypeError, ValueError):
+                            amt = None
+                        dividends.append({"date": d.isoformat(), "amount": amt})
+            except Exception as e:
+                logger.debug("dividend history unavailable for %s: %s", symbol, e)
+
+            # `ticker.earnings_dates` gives BOTH past-reported and upcoming
+            # estimated dates, but requires the optional `lxml` package —
+            # not installed in this environment (ImportError), so this
+            # silently contributes nothing there rather than raising. Kept
+            # rather than removed: it starts working for free, no code
+            # change needed, if lxml is ever added to the venv.
+            earnings_dates: set = set()
+            try:
+                frame = ticker.earnings_dates
+                if frame is not None and not frame.empty:
+                    for ts in frame.index:
+                        d = ts.date() if hasattr(ts, "date") else ts
+                        if not hasattr(d, "year") or d < cutoff:
+                            continue
+                        earnings_dates.add(d)
+            except Exception as e:
+                logger.debug("earnings_dates unavailable for %s: %s", symbol, e)
+
+            # `ticker.calendar` needs no optional dependency and is already
+            # the primary source `get_next_earnings_date` above uses — but
+            # it only ever reports the single NEXT scheduled date, never
+            # past ones. Folded in here (deduped against earnings_dates
+            # above) so "upcoming" markers still render even when lxml is
+            # absent and earnings_dates came back empty.
+            try:
+                calendar = getattr(ticker, "calendar", None)
+                if isinstance(calendar, dict):
+                    value = calendar.get("Earnings Date")
+                    candidates = value if isinstance(value, list) else ([value] if value is not None else [])
+                    for candidate in candidates:
+                        d = candidate.date() if hasattr(candidate, "date") and callable(candidate.date) else candidate
+                        if hasattr(d, "year") and d >= cutoff:
+                            earnings_dates.add(d)
+            except Exception as e:
+                logger.debug("earnings calendar unavailable for %s: %s", symbol, e)
+
+            earnings = [
+                {"date": d.isoformat(), "upcoming": d > today}
+                for d in sorted(earnings_dates)
+            ]
+
+            return {"dividends": dividends, "earnings": earnings}
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                return ex.submit(_fetch).result(timeout=_VALUATION_TIMEOUT_S)
+        except FuturesTimeout:
+            logger.warning("price-chart events fetch timed out for %s", symbol)
+            return {"dividends": [], "earnings": []}
+        except Exception as e:
+            logger.warning("price-chart events fetch failed for %s: %s", symbol, e)
+            return {"dividends": [], "earnings": []}
+
     def get_valuation_metrics(self, symbol: str) -> dict:
         """Fetch trailing PE, forward PE, and price-to-sales from yfinance.
 

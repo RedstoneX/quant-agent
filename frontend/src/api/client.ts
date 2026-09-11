@@ -277,6 +277,29 @@ export interface PriceBarsResponse {
 export type ChartTimeframe = "5m" | "15m" | "1h" | "1d";
 
 // ---------------------------------------------------------------------
+// /events/{symbol} — dividend/earnings chart markers. See
+// src/api/schemas.py's SymbolEventsResponse for the source-of-truth
+// contract (yfinance via src.data.market.MarketDataProvider).
+// ---------------------------------------------------------------------
+
+export interface DividendEvent {
+  date: string;
+  amount: number | null;
+}
+
+export interface EarningsEvent {
+  date: string;
+  upcoming: boolean;
+}
+
+export interface SymbolEventsResponse {
+  symbol: string;
+  dividends: DividendEvent[];
+  earnings: EarningsEvent[];
+  error: string | null;
+}
+
+// ---------------------------------------------------------------------
 // /quotes — current-session quote facts, distinct from PositionItem's
 // broker-marked current_price (held positions only) and PriceBar's
 // historical daily bars (up to one session behind during market hours).
@@ -927,6 +950,10 @@ export const api = {
   prices: (symbol: string, lookbackDays = 120, timeframe: ChartTimeframe = "1d") =>
     getJSON<PriceBarsResponse>(
       `/prices/${encodeURIComponent(symbol)}?lookback_days=${lookbackDays}&timeframe=${timeframe}`
+    ),
+  events: (symbol: string, lookbackDays = 400) =>
+    getJSON<SymbolEventsResponse>(
+      `/events/${encodeURIComponent(symbol)}?lookback_days=${lookbackDays}`
     ),
   quotes: (symbols: string[]) =>
     getJSON<LiveQuotesResponse>(`/quotes?symbols=${encodeURIComponent(symbols.join(","))}`),
