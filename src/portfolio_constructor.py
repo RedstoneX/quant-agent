@@ -190,18 +190,25 @@ class ConstructorConfig:
     # notional), while a stop tighter than 5% — reachable today only via the
     # level-backed exception down to `absolute_min_stop_atr_multiple` — still
     # gets clamped, which is the genuinely-too-tight case this ceiling
-    # exists for. `allow_margin` is false, so 100 is also the real ceiling:
-    # nothing past 100% of one name's equity is reachable cash-only anyway.
+    # exists for. This paragraph originally added: "`allow_margin` is
+    # false, so 100 is also the real ceiling: nothing past 100% of one
+    # name's equity is reachable cash-only anyway." THAT NO LONGER HOLDS —
+    # `allow_margin` has been `true` (2.0x gross) since 2026-09-02, so cash
+    # alone does not bound notional at 100% any more; margin can reach past
+    # it. The cap now rests only on the stop-distance derivation above, not
+    # on a cash-only backstop, and has not been re-derived for a
+    # margin-enabled, 2x-gross book. Left at 100 pending an owner decision —
+    # not because margin re-justifies the number.
     # Keep in sync with `risk.max_position_pct` — pipeline.py wires them from
     # the same setting.
     #
     # NOTE the "~5-9%" above is the stop distance the OLD 3.0 ATR floor
-    # produced. Since the floor became 1.5 (2026-09-04) real stops are
-    # roughly half that (~3.5% at this desk's median ATR), so this ceiling
-    # binds again on tight-stop names and delivers ~3.5% risk rather than the
-    # full 5%. Cash-only makes anything past 100% unreachable anyway — see
-    # the same note under `risk.max_position_pct` in settings.yaml. Recorded,
-    # deliberately not "fixed": enabling margin is an owner decision.
+    # produced. `risk.min_stop_atr_multiple` has since moved 3.0 -> 1.5 ->
+    # 2.5 — see that setting's own comment in settings.yaml for the current
+    # re-derivation (last done 2026-09-11 against the 2.5x floor: ~5.5-7.7%
+    # stops, ~73% notional at the current 4% conviction ceiling —
+    # comfortably inside 100). Recorded, deliberately not "fixed": choosing
+    # a different ceiling is an owner decision.
     max_position_pct: float = 100.0
     # Spec §10.3 "concentration scales size, it does not veto". The sector
     # diversification target and the absolute ceiling behind it. Unlike every

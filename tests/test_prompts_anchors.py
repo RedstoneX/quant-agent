@@ -2,8 +2,9 @@
 compression / refactor. Each anchor is either:
 
   (a) a number / constant that's also wired into Python code (so prompt
-      and code must stay in sync — e.g. the 20% single-name cap, 75%
-      per-side sector cap, $1 margin floor, 5% earnings-queued cap),
+      and code must stay in sync — e.g. the 100% single-name cap, 75%
+      per-side sector cap, $1 margin floor, 1% earnings-queued
+      (JUST FILED) cap),
   (b) a load-bearing rule heading that downstream tests or operators
       grep for (e.g. PM's "Rule Priority" table, position_reviewer's
       6 hard-trigger keyword classes),
