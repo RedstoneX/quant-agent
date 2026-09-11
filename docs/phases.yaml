@@ -316,7 +316,7 @@ phases:
         - "The free news sources the desk reads were widened from 8 to 11 feeds, adding several major financial outlets and regulatory press releases; one feed that had silently stopped publishing over a year earlier, while still reporting itself as healthy, was found and removed."
         - "Free per-company news was also added, but only for stocks already held or being actively considered, and capped, to keep costs down."
         - "The economic-data feed had a real reliability problem — all of its data series once failed within the same short window because of weak retry handling. That has been replaced with proper retries, a real time limit, and six new data series, all verified live."
-      outstanding: "Both things that used to remain here are now closed. Full wire-service news coverage (Reuters/AP) would need a paid subscription, and the owner has declined it — a closed decision, not an open one. And the calendar of scheduled economic events this phase was missing is now built, in a later phase: FRED covers the macro releases and the Fed's own free calendar covers FOMC meeting dates — see open_defects for that evidence."
+      outstanding: "Both things that used to remain here are now closed. Full wire-service news coverage (Reuters/AP) would need a paid subscription, and the owner has declined it — a closed decision, not an open one. And the calendar of scheduled economic events this phase was missing is now built, in a later phase: FRED covers the macro releases and the Fed's own free calendar covers FOMC meeting dates — see the separate list of found-and-fixed rough edges for that evidence."
     status: "DONE"
     confidence: "high"
     evidence:
@@ -977,7 +977,7 @@ phases:
       points:
         - "The ranked list below is now empty. Nothing on it ever affected trading decisions or risk — every entry was a rough edge, not a hazard."
         - "The last entry, a docstring pointing readers at a setup guide that was never written, is closed by removing the dangling reference rather than writing one: the module it points at already documents itself in full."
-      outstanding: "Nothing on the ranked list, and no open owner decision. The deploy-drift alarm's inability to send its Telegram alert (NEW (1)) is closed: fixed in PR #175, installed on the production box and verified 2026-08-31 (see the evidence below)."
+      outstanding: "Nothing on the ranked list, and no open owner decision. The deploy-drift alarm's inability to send its Telegram alert (NEW (1)) is closed: fixed, installed on the production box and verified 2026-08-31 (see the evidence below)."
     defects: []
     evidence:
       - kind: manual

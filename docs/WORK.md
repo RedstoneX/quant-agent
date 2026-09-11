@@ -30,7 +30,7 @@ while writing "all four were ratified". That is exactly the forbidden move this
 test guards against, and it made a later session believe the model choice was
 settled. Restored:**
 
-- [ ] DECIDE BY 2026-09-16 — Which model runs the `portfolio_manager` seat?
+- [ ] DECIDE BY 2026-09-16 — Which model should run the desk's actual trade-decision seat?
   **DATE MOVED 2026-09-02, reason recorded — not a silent deferral.** The
   re-measure this decision waits on DOES NOT EXIST: the newest file in
   `ops/model_policy/results/` is dated 2026-09-01, i.e. pre-rewrite and stale
@@ -96,7 +96,7 @@ Index into the audit below, for the board — struck-through = cleared.
 **~~3. Tech analyst seat data quality — FIXED.~~**
 **4. News analyst seat data quality — PARTIALLY FIXED, one gap open.**
 **~~5. Evening analyst seat data quality — FIXED.~~**
-**6. Macro analyst seat data quality — OPEN, owner risk-threshold call needed.**
+**~~6. Macro analyst seat data quality — RESOLVED 2026-09-11, see item 48.~~**
 **7. PM-input shape/volume redesign (bounded recommendation, not raw reasoning) — NOT STARTED.**
 **8. Every past model-comparison benchmark may be contaminated by bad seat data — OPEN, no re-run yet.** Same shape as the already-known spend-baseline contamination: a benchmark run before tonight's data-honesty fixes could have scored a model on how well it coped with (or quietly hid) empty/wrong input, not on real analytical quality. Combine with the PM model test itself — same re-run, same gate, not two separate jobs.
 
@@ -854,7 +854,7 @@ one, and do not ship a placeholder.
 
 **25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DONE 2026-09-04.** Nothing open. Detail: `INCIDENT_HISTORY.md`, 2026-09-04 "a sell whose stated reason is provably untrue now actually gets stopped", and 2026-09-03 "item 25."
 
-**28. `test_rehearsal_reproduces_cost_ceiling.py` is broken on main — STILL BROKEN, this file's own FIXED claim was wrong.** Marked FIXED 2026-09-04 (config keys the test forced no longer exist, after item 14's cost-circuit rewrite) but re-verified directly 2026-09-10, three separate times against a clean `origin/main` checkout: this test still fails, identically, every time. Whatever landed did not actually resolve it, and nobody re-checked the claim before writing FIXED. Needs someone to actually read the failure and re-diagnose it — not re-apply the same fix that already didn't work. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys" for the (incomplete) original diagnosis.
+**28. The offline test that must reproduce a known real cost-limit failure can no longer reproduce it — STILL BROKEN, previously marked fixed in error.** `test_rehearsal_reproduces_cost_ceiling.py` marked FIXED 2026-09-04 (config keys the test forced no longer exist, after item 14's cost-circuit rewrite) but re-verified directly 2026-09-10, three separate times against a clean `origin/main` checkout: this test still fails, identically, every time. Whatever landed did not actually resolve it, and nobody re-checked the claim before writing FIXED. Needs someone to actually read the failure and re-diagnose it — not re-apply the same fix that already didn't work. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys" for the (incomplete) original diagnosis.
 
 **29. The analyst scorecard was already built and is already live — item withdrawn 2026-09-03, corrected after being written up as new work in error.** See `docs/INCIDENT_HISTORY.md`, 2026-09-03 "the analyst scorecard got written up as missing work; it already existed."
 
@@ -1023,7 +1023,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **Still genuinely undecided:** `smart_money.congress_enabled` remains False (off) — flipping it to True has not been ratified.
 
-**37. Eleven PRs open at once tonight (#249-#262) — merge ORDER matters, see `docs/INCIDENT_HISTORY.md`.**
+**37. Eleven separate pieces of finished work were all ready to merge on the same night — the order they went in mattered.** See `docs/INCIDENT_HISTORY.md`.
 
 **~~38. Insider cluster window was 7x the cited research — FIXED 2026-09-04.~~**
 Detail: `docs/INCIDENT_HISTORY.md`. Separate, NOT fixed here:
@@ -1042,7 +1042,7 @@ dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 
 **45. Two pivot windows disagree about what a "swing low" is — OPEN, found 2026-09-11 by audit.** `src/risk/trailing.py:103` sets `PIVOT_WINDOW = 3` and its comment claims it matches `src/data/levels.py` "so 'a higher low' means the same thing in both places". `src/data/levels.py:39` sets `PIVOT_WINDOW = 5`. Verified by direct read. Consequence: the trailing-stop ratchet can see a higher low the structural-level detector does not, and vice versa. Neither number carries a derivation. Do not "fix" by copying one onto the other — picking 3 or 5 is picking a number.
 
-**46. `level_match_atr_tolerance` fails its own stated justification — OPEN, found 2026-09-11 by audit.** `config/settings.yaml:623` sets `0.25` and justifies it as "at least" the 1% level-cluster zone width. At this book's own stated median ATR of 2.56%, 0.25 ATR is 0.64% — under the 1% it claims to cover, by ~1.6x. Governs whether a stop counts as level-backed and is therefore exempt from the ATR stop floor, so it feeds directly into item 1's geometry. Either the tolerance or the justification is wrong; both are numbers, so owner call.
+**46. A stop-distance tolerance setting fails its own stated justification — OPEN, found 2026-09-11 by audit.** `level_match_atr_tolerance` in `config/settings.yaml:623` sets `0.25` and justifies it as "at least" the 1% level-cluster zone width. At this book's own stated median ATR of 2.56%, 0.25 ATR is 0.64% — under the 1% it claims to cover, by ~1.6x. Governs whether a stop counts as level-backed and is therefore exempt from the ATR stop floor, so it feeds directly into item 1's geometry. Either the tolerance or the justification is wrong; both are numbers, so owner call.
 
 **47. `risk.max_position_pct`'s cash-only justification was already false when written — RESOLVED 2026-09-11, owner call.** 100's comment asserted `allow_margin: false` made >100% notional unreachable; `allow_margin` had been `true` since 2026-09-02, two days before that comment (PR #258, 2026-09-04). Derived replacement: 20 (ladder emergency rung) / 0.60 (median of 5 real dated single-session idiosyncratic collapses) = 33, the largest single bet where that median disaster stays under the ladder's -20% owner-alert rung. Owner reviewed and set **65** instead — his own risk-appetite call, not a data disagreement; rejected 33 as too tight for a desk that avoids penny/micro-cap names, correction on the table first (the 5 reference disasters were all liquid, non-penny names). At 65 the same median disaster costs ~39%, past the alert rung rather than under it — knowing trade-off, not an oversight. `max_position_pct: 65` in settings.yaml, `ConstructorConfig.max_position_pct` and `pipeline.py`'s wiring default kept in sync. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
