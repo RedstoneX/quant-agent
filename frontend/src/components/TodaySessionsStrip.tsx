@@ -109,7 +109,9 @@ export function TodaySessionsStrip({
   } · ${noTradeCount} no-trade · ${fillsCount} fill${fillsCount === 1 ? "" : "s"}`;
 
   return (
-    <section className="mx-3 mt-3" aria-label="Today’s sessions">
+    /* Vertical-space reallocation pass, 2026-09-11: mt-3 -> mt-2, same
+       low-risk inter-section trim as the other stacked chrome sections. */
+    <section className="mx-3 mt-2" aria-label="Today’s sessions">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}

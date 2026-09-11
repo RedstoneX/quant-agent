@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card } from "@tremor/react";
 import {
   api,
@@ -125,16 +125,35 @@ function PaneNav({ pane, onChange }: { pane: MobilePane; onChange: (p: MobilePan
 function SelectedSymbolContext({
   funnel,
   symbol,
+  previousSymbol,
+  onGoBack,
   onOpenDetail,
 }: {
   funnel: RunFunnelResponse | null;
   symbol: string | null;
+  /** Quick "back to previous symbol" — see App.tsx's chartSymbol wrapper.
+   * Omitted (no button rendered) when there's nothing to go back to. */
+  previousSymbol?: string | null;
+  onGoBack?: () => void;
   onOpenDetail: () => void;
 }) {
   if (!symbol) return null;
   const c = funnel?.candidates.find((x) => x.symbol === symbol);
   return (
     <Card className="mb-3 flex !w-auto flex-wrap items-center gap-2 !bg-panel-alt !p-2.5 !ring-border">
+      {previousSymbol && previousSymbol !== symbol && onGoBack && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="xs"
+          color="cyan"
+          onClick={onGoBack}
+          title={`Back to ${previousSymbol}`}
+          aria-label={`Back to ${previousSymbol}`}
+        >
+          &larr; {previousSymbol}
+        </Button>
+      )}
       <span className="font-bold text-[0.95rem]">{symbol}</span>
       {c ? (
         <>
@@ -225,6 +244,22 @@ export default function App() {
     selectedRunIdRef.current = selectedRunId;
   }, [autoFollow, selectedRunId]);
 
+  // Owner-approved fix: auto-follow must not switch the charted symbol
+  // while the operator is actively engaged with the chart (recently
+  // panned/zoomed, changed timeframe, or clicked Reset zoom) — it was
+  // cascading setSelectedRunId -> chartSymbol change -> a legitimate-
+  // looking "new chart load" the operator never asked for. A ref, not
+  // state: this only gates a poll callback, never needs to trigger a
+  // render itself. 2 minutes is the owner-picked recency window — long
+  // enough to cover an operator actually looking at the chart, short
+  // enough that auto-follow resumes on its own rather than getting stuck
+  // on a stale symbol once they've moved on.
+  const lastChartInteractionRef = useRef(0);
+  const CHART_ENGAGED_WINDOW_MS = 2 * 60 * 1000;
+  const markChartInteraction = useCallback(() => {
+    lastChartInteractionRef.current = Date.now();
+  }, []);
+
   const funnel = selectedRunId ? todaysFunnels[selectedRunId] ?? null : null;
   const selectedSessionTrades = selectedRunId
     ? todaysTrades.filter((trade) => trade.run_id === selectedRunId)
@@ -303,7 +338,36 @@ export default function App() {
   // chart-led MARKET context (docs/OUTCOME.md) even before any candidate
   // exists; a real per-run candidate always overrides it once one exists
   // (see the selectedRunId effect below).
-  const [chartSymbol, setChartSymbol] = useState<string | null>("SPY");
+  const [chartSymbol, setChartSymbolState] = useState<string | null>("SPY");
+  // Quick "back to previous symbol" (owner request): a single-slot ref, not
+  // a full navigation history — tracks only the symbol charted immediately
+  // before the current one. Kept as a ref (not state) since it never needs
+  // to itself trigger a render; it's read at render time off the same tick
+  // that setChartSymbol runs on, so it's always current by the time
+  // anything reads it below. setChartSymbol wraps the raw setState setter
+  // (renamed setChartSymbolState above) so every existing call site below
+  // keeps working unchanged while gaining this bookkeeping for free.
+  const chartSymbolRef = useRef(chartSymbol);
+  const previousChartSymbolRef = useRef<string | null>(null);
+  function setChartSymbol(next: string | null, opts?: { isBack?: boolean }) {
+    if (!opts?.isBack && chartSymbolRef.current && chartSymbolRef.current !== next) {
+      previousChartSymbolRef.current = chartSymbolRef.current;
+    }
+    chartSymbolRef.current = next;
+    setChartSymbolState(next);
+  }
+  // Clicking "back" is itself a manual chart interaction — swaps current
+  // and previous (so a second click toggles back to where you were,
+  // matching the "last 1-2 symbols" scope the fix asked for) rather than
+  // unwinding a longer history.
+  function goBackToPreviousSymbol() {
+    const prev = previousChartSymbolRef.current;
+    const current = chartSymbolRef.current;
+    if (!prev || prev === current) return;
+    setChartSymbol(prev, { isBack: true });
+    previousChartSymbolRef.current = current;
+    markChartInteraction();
+  }
   // Mobile chart pane's inline holding strip (owner correction — no
   // modal/drawer, see PositionHoldingStrip). Desktop's Dockview ChartPane
   // derives the same thing from SupportWorkspace context directly.
@@ -424,7 +488,15 @@ export default function App() {
 
           const best = bestPrimaryRunId(day.runs, funnels);
           const stillExists = selectedRunIdRef.current && day.runs.some((r) => r.run_id === selectedRunIdRef.current);
-          if (autoFollowRef.current || !stillExists) {
+          // Owner-approved fix: while the operator is actively engaged with
+          // the chart (see markChartInteraction/CHART_ENGAGED_WINDOW_MS
+          // above), auto-follow's own promotion of a new primary run must
+          // not fire — that's what was cascading into an unwanted symbol
+          // switch. The `!stillExists` branch is untouched: the currently
+          // selected run having actually disappeared is a correctness need,
+          // not auto-follow "helpfully" jumping to a different one.
+          const chartEngaged = Date.now() - lastChartInteractionRef.current < CHART_ENGAGED_WINDOW_MS;
+          if ((autoFollowRef.current && !chartEngaged) || !stillExists) {
             selectedRunIdRef.current = best;
             setSelectedRunId(best);
           }
@@ -639,6 +711,9 @@ export default function App() {
                 funnel, loading: todaysLoading, error: todaysError,
                 updatedAt: todaysUpdatedAt, chartSymbol,
                 chartTrades: selectedSessionTrades, onSelectSymbol: setChartSymbol,
+                onChartInteraction: markChartInteraction,
+                previousChartSymbol: previousChartSymbolRef.current,
+                onGoBackSymbol: goBackToPreviousSymbol,
               }}>
                 <DesktopCockpitWorkspace />
               </CockpitWorkspaceProvider>
@@ -651,10 +726,10 @@ export default function App() {
                 {mobilePane === "watchlist" && <CandidateRail funnel={funnel} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} selectedSymbol={chartSymbol} onSelectSymbol={setChartSymbol} />}
                 {mobilePane === "chart" && (
                   <div className="flex min-h-[520px] flex-col gap-2">
-                    <SelectedSymbolContext funnel={funnel} symbol={chartSymbol} onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)} />
+                    <SelectedSymbolContext funnel={funnel} symbol={chartSymbol} previousSymbol={previousChartSymbolRef.current} onGoBack={goBackToPreviousSymbol} onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)} />
                     {chartHeldPosition && <PositionHoldingStrip position={chartHeldPosition} openOrders={openOrders} trades={trades} />}
                     <DecisionSummaryLine funnel={funnel} symbol={chartSymbol} />
-                    <div className="min-h-0 flex-1"><PriceChartPanel symbol={chartSymbol} trades={selectedSessionTrades} positionTrades={trades} positions={positions} openOrders={openOrders} /></div>
+                    <div className="min-h-0 flex-1"><PriceChartPanel symbol={chartSymbol} trades={selectedSessionTrades} positionTrades={trades} positions={positions} openOrders={openOrders} onUserInteraction={markChartInteraction} /></div>
                   </div>
                 )}
               </div>
@@ -698,7 +773,15 @@ export default function App() {
        * Journal and the Research Desk are separate views. */}
       {view === "scorecard" && <AnalystScorecard />}
 
-      <footer className="text-center text-[0.7rem] text-dim py-4 px-3">
+      {/* Vertical-space reallocation pass (owner-authorized overshoot,
+          2026-09-11): this footer's py-4 (32px) plus
+          DesktopCockpitWorkspace's own pb-6 (24px) wrapper padding were
+          reserved as dead space below the workspace box with nothing
+          rendered in it — reclaimed here (py-4 -> py-2, saving 16px) and
+          added directly back into the workspace box's own height formula
+          (see DesktopCockpitWorkspace.tsx) rather than left as an
+          unaccounted-for page margin. */}
+      <footer className="text-center text-[0.7rem] text-dim py-2 px-3">
         QAMC Mission Control is a read-only view. It cannot place, cancel, or modify orders, and its failure has no
         effect on trading.
       </footer>
