@@ -541,11 +541,25 @@ _PROSE_LINE_RE = re.compile(
 _MD_MARKS = re.compile(r"\*\*|__|~~")
 _MD_CODE = re.compile(r"`([^`]*)`")
 
+#: A SINGLE-asterisk emphasis delimiter — `*like this*`, which the backlog
+#: uses and which used to reach the page as two stray asterisks.
+#:
+#: Deliberately not a bare `\*`. A lone asterisk between two word characters
+#: is multiplication, and the backlog writes real arithmetic ("entry - 2*atr")
+#: that must survive verbatim; mangling a formula would be worse than leaving
+#: an asterisk in. So only a delimiter shape is removed: an asterisk that
+#: OPENS a span (nothing word-like before it, something non-space after) or
+#: CLOSES one (something non-space before it, nothing word-like after).
+_MD_EMPH_OPEN = re.compile(r"(?<![\w*])\*(?=[^\s*])")
+_MD_EMPH_CLOSE = re.compile(r"(?<=[^\s*])\*(?![\w*])")
+
 
 def _strip_markdown(text: str) -> str:
     """Plain text for a human, out of markdown written for a file."""
     text = _MD_CODE.sub(r"\1", text)
     text = _MD_MARKS.sub("", text)
+    text = _MD_EMPH_OPEN.sub("", text)
+    text = _MD_EMPH_CLOSE.sub("", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -620,8 +634,80 @@ _PAUSED_WORDS = ("PAUSED", "PARKED", "DEFERRED", "ON HOLD", "NOT SCHEDULED",
 #: from the live backlog, and both read as closure claims to a plain word
 #: search. A marker that cries wolf gets ignored, which costs more than not
 #: having the marker at all.
+#:
+#: The future-tense entries ("TO BE REPLACED", "WILL BE SHIPPED") are cheap
+#: insurance added alongside the widened vocabulary below: the new words are
+#: all past participles, and a past participle in a plan reads identically to
+#: one in a result unless the tense in front of it is read too.
 _CLOSURE_NEGATIONS = ("NOT ", "STILL BROKEN", "STILL OPEN", "NEVER ",
-                      "WAS WRONG", "NO LONGER")
+                      "WAS WRONG", "NO LONGER", "INCOMPLETE",
+                      "TO BE ", "WILL BE ", "SHOULD BE ", "NEEDS TO BE ",
+                      "YET TO BE ")
+
+
+# ---------------------------------------------------------------------------
+# Identifiers: what the owner can actually quote back
+#
+# His complaint, in his own words, was that he could see titles but had to
+# recite a whole title to ask a question about an item. So every rendered item
+# carries the identifier it has in the backlog.
+#
+# A bare number is NOT that identifier. The backlog runs more than one
+# numbered sequence — the funnel queue counts 1..43, and the PM TEST GATE
+# counts 1..8 independently — so "item 4" names two different things. Each
+# sequence therefore gets a distinct prefix, and the prefix is part of the
+# identifier he sees and quotes.
+# ---------------------------------------------------------------------------
+
+#: source key -> how the identifier is spoken on the page. The value is the
+#: whole disambiguator: "item 32" is a funnel-queue item, "gate item 4" is a
+#: PM-test-gate item, and neither can be mistaken for the other when quoted.
+_SOURCE_REF_LABEL = {
+    "backlog": "item",
+    "pm-gate": "gate item",
+}
+
+#: Real tracking references, extracted ONLY where they literally appear in the
+#: item's own source text. Nothing here is derived, looked up or guessed: if
+#: the backlog does not name a PR, the page shows no PR.
+_REF_PR_RE = re.compile(r"(?:PR\s*)?#(\d{2,5})\b")
+_REF_INCIDENT_RE = re.compile(r"INCIDENT_HISTORY\.md", re.I)
+#: A branch name, which the backlog does write ("SHIPPED on
+#: `feat/replace-budget-reservation`"). Deliberately excludes `docs/` — that
+#: is a real directory in this repo, so `docs/INCIDENT_HISTORY.md` would
+#: otherwise be announced to him as a branch. The trailing segment must carry
+#: no dot for the same reason: a branch name is not a filename.
+_REF_BRANCH_RE = re.compile(r"\b(?:feat|fix|chore|refactor|hotfix)/[A-Za-z0-9_-]{3,}\b")
+
+#: More than this many PR numbers on one item is a list, not a reference (item
+#: 37 names a range of eleven). Past the cap the page says how many there are
+#: instead of printing all of them.
+_MAX_PR_REFS = 3
+
+
+def extract_refs(source_text: str) -> tuple[str, ...]:
+    """Tracking references that are ACTUALLY present in `source_text`.
+
+    Returns owner-readable strings ("PR #252", "incident history"), in a
+    stable order, deduplicated. An empty tuple means the backlog named no
+    reference for this item — which is reported as nothing at all, never as a
+    guess at which PR it might have been.
+    """
+    refs: list[str] = []
+
+    prs = list(dict.fromkeys(_REF_PR_RE.findall(source_text)))
+    if len(prs) > _MAX_PR_REFS:
+        refs.append(f"{len(prs)} pull requests named in the backlog")
+    else:
+        refs.extend(f"PR #{n}" for n in prs)
+
+    if _REF_INCIDENT_RE.search(source_text):
+        refs.append("incident history")
+
+    for branch in dict.fromkeys(_REF_BRANCH_RE.findall(source_text)):
+        refs.append(f"branch {branch}")
+
+    return tuple(refs)
 
 
 @dataclass
@@ -638,6 +724,22 @@ class QueueItem:
     #: The item's own headline, markdown stripped. Kept because the bucket
     #: tests below must read the AUTHOR's words, not our tidied title.
     headline: str = ""
+    #: Which numbered sequence in the backlog this item came from. Drives the
+    #: identifier prefix, so a funnel-queue "4" and a PM-gate "4" are never
+    #: quoted back as the same thing. See `_SOURCE_REF_LABEL`.
+    source: str = "backlog"
+    #: The item's own body text, markdown stripped — the raw engineering notes
+    #: as written. Shown only inside the clearly-marked container in
+    #: `_render_prose`, and never as if it were a plain-language explanation.
+    raw_body: str = ""
+    #: Tracking references literally present in the item's source text.
+    refs: tuple[str, ...] = ()
+
+    @property
+    def ref(self) -> str:
+        """The identifier the owner sees and quotes back. Unambiguous across
+        the backlog's several independently-numbered sequences."""
+        return f"{_SOURCE_REF_LABEL.get(self.source, 'item')} {self.rank}"
 
     @property
     def state(self) -> str:
@@ -661,44 +763,99 @@ class QueueItem:
         return (head.rsplit("—", 1)[1] if "—" in head else head).upper()
 
     @property
-    def claims_closure(self) -> bool:
-        """Its status says finished, but it was never marked finished.
+    def closure_claim(self) -> str:
+        """What this item's OWN status says about being finished.
 
-        Reported, never believed. An item contradicting its own status is the
-        backlog's version of a CONTRADICTED phase, so it gets its own visible
-        section instead of being filed as open (which is false) or as done
-        (which is worse).
+        Three answers, deliberately, because collapsing them is what makes the
+        board misleading in one direction or the other:
+
+          ``"finished"``     nothing is outstanding — "SHIPPED 2026-09-04"
+          ``"review_owed"``  the work is done, a review is not — "FIXED,
+                             pending review"
+          ``"part_done"``    real work remains — "MOSTLY FIXED, one real
+                             judgment call left"
+          ``""``             it makes no closure claim at all
+
+        A negated status ("deliberately NOT done yet", "STILL BROKEN, this
+        file's own FIXED claim was wrong") is not a claim, and reads as ``""``.
+        Both of those are real backlog lines that a plain word search got
+        wrong, and a marker that cries wolf gets ignored — which costs more
+        than not having the marker at all.
+
+        Reads only `status_tail`, never the whole headline, for the same
+        reason: "a fixed-interval poll" describes a mechanism and claims
+        nothing.
         """
-        if self.done:
-            return False
         tail = self.status_tail
-        return (any(w in tail for w in _CLOSURE_WORDS)
-                and not any(w in tail for w in _CLOSURE_EXEMPT_WORDS)
-                and not any(w in tail for w in _CLOSURE_NEGATIONS))
+        if any(w in tail for w in _CLOSURE_NEGATIONS):
+            return ""
+        if not _closure_hit(tail, _RENDER_CLOSURE_WORDS):
+            return ""
+        if _closure_hit(tail, _RENDER_PART_DONE_WORDS):
+            return "part_done"
+        if _closure_hit(tail, _RENDER_REVIEW_OWED_WORDS):
+            return "review_owed"
+        return "finished"
+
+    @property
+    def claims_closure(self) -> bool:
+        """Its status says FULLY finished, but it was never marked finished.
+
+        Reported, never believed. An item saying one thing while the backlog's
+        strike-through says another is the backlog's version of a CONTRADICTED
+        phase — so the page shows it as finished (which is what its own author
+        wrote) while saying plainly that the backlog has not been ticked off,
+        rather than filing it as live work, which is the statement he called
+        déjà vu.
+        """
+        return not self.done and self.closure_claim == "finished"
+
+    @property
+    def review_owed(self) -> bool:
+        """Finished by its own account, with a review still outstanding."""
+        return not self.done and self.closure_claim == "review_owed"
+
+    @property
+    def part_done(self) -> bool:
+        """Mostly or partly finished, with real work still outstanding. Stays
+        in the running order — labelled, not moved."""
+        return not self.done and self.closure_claim == "part_done"
 
     @property
     def paused(self) -> bool:
-        if self.done or self.claims_closure:
+        if self.done or self.claims_closure or self.review_owed:
             return False
         return any(w in self.status_tail for w in _PAUSED_WORDS)
 
     @property
     def bucket(self) -> str:
         """Which section of the page this item belongs in. One item, one
-        section, decided once here so no two renderers can disagree."""
+        section, decided once here so no two renderers can disagree.
+
+        ``finished_unmarked`` is the bucket that answers the owner's "déjà vu"
+        complaint: an item whose status word the board did not used to
+        recognise ("SHIPPED", "REPLACED", "REDESIGNED") was drawn in the
+        running order, competing with live work. It is now drawn as finished.
+        """
         if self.done:
             return "resolved"
         if self.claims_closure:
-            return "contradicts_itself"
+            return "finished_unmarked"
+        if self.review_owed:
+            return "review_owed"
         if self.paused:
             return "paused"
         return "open"
 
 
-def _parse_numbered_items(body: str) -> list[QueueItem]:
+def _parse_numbered_items(body: str, source: str = "backlog") -> list[QueueItem]:
     """Shared parser behind every `**N. Title — ...**` numbered section this
     board reads. One shape, one parser, so a funnel-queue item and a PM-gate
     item can never silently drift into two different conventions.
+
+    `source` names WHICH numbered sequence these items belong to, and is what
+    makes the identifier on the page unambiguous — the funnel queue and the PM
+    test gate both number from 1. See `_SOURCE_REF_LABEL`.
     """
     lines = body.splitlines()
     items: list[QueueItem] = []
@@ -723,6 +880,12 @@ def _parse_numbered_items(body: str) -> list[QueueItem]:
             done="~~" in headline,
             prose=parse_prose(body_lines),
             headline=_strip_markdown(headline),
+            source=source,
+            raw_body=_strip_markdown(" ".join(body_lines)),
+            # References are read from the headline AND the body, because
+            # that is where the backlog actually writes them, and only from
+            # this item's own text — never from a neighbour's.
+            refs=extract_refs(headline + " " + " ".join(body_lines)),
         ))
     return sorted(items, key=lambda i: i.rank)
 
@@ -809,7 +972,7 @@ def load_funnel_queue(work_md: Path) -> tuple[list[QueueItem], str | None]:
         if stop in body:
             body = body.split(stop, 1)[0]
 
-    items = _parse_numbered_items(body)
+    items = _parse_numbered_items(body, source="backlog")
     if not items:
         return [], (
             "The queue heading is there but no numbered items could be read "
@@ -850,7 +1013,7 @@ def load_pm_gate(work_md: Path) -> tuple[list[QueueItem], str | None]:
         if stop in body:
             body = body.split(stop, 1)[0]
 
-    items = _parse_numbered_items(body)
+    items = _parse_numbered_items(body, source="pm-gate")
     if not items:
         return [], (
             "The gate heading is there but no numbered items could be read "
@@ -859,15 +1022,88 @@ def load_pm_gate(work_md: Path) -> tuple[list[QueueItem], str | None]:
     return items, None
 
 
-#: Words an item's own title uses to claim it is fully closed. Deliberately
-#: excludes "WITHDRAWN" acting alone from nothing else — see
-#: `_CLOSURE_EXEMPT_WORDS` below for the qualifiers that mean "not actually
-#: closed yet" even in the presence of one of these.
+# ---------------------------------------------------------------------------
+# TWO closure vocabularies, deliberately
+#
+# There are two consumers of "does this item's own status say it is finished?",
+# and they must NOT share a word list:
+#
+#   * `find_closed_items_not_marked_done` FAILS THE BUILD. Every word added to
+#     its vocabulary is a new way for CI to go red on a backlog nobody has
+#     edited, and the only fix available to a board change is a backlog edit —
+#     a different job, on a file several sessions write to at once.
+#   * the RENDERER only decides which section of the owner's page an item is
+#     drawn in. Getting that wrong costs him attention; getting it wrong in
+#     the direction of "finished work still looks live" is precisely the
+#     complaint this widening answers ("déjà vu every day dealing with the
+#     same stuff over and over").
+#
+# So the build check keeps the original, narrow list below, unchanged. The
+# renderer reads the wider `_RENDER_*` lists underneath it. Measured against
+# the live backlog on 2026-09-11, widening the BUILD list to match would newly
+# fail CI, which is why it is not done here.
+# ---------------------------------------------------------------------------
+
+#: BUILD-CHECK ONLY. Words an item's own title uses to claim it is fully
+#: closed. Deliberately excludes "WITHDRAWN" acting alone from nothing else —
+#: see `_CLOSURE_EXEMPT_WORDS` below for the qualifiers that mean "not actually
+#: closed yet" even in the presence of one of these. Do not widen this without
+#: first checking `find_closed_items_not_marked_done` against the live backlog.
 _CLOSURE_WORDS = ("FIXED", "DONE", "MERGED", "RESOLVED", "WITHDRAWN")
 
-#: A closure word next to one of these means the item is claiming progress,
-#: not a finished state — it must stay visibly open, not be struck through.
+#: BUILD-CHECK ONLY. A closure word next to one of these means the item is
+#: claiming progress, not a finished state — it must stay visibly open, not be
+#: struck through.
 _CLOSURE_EXEMPT_WORDS = ("PARTIALLY", "PARTIAL", "PENDING", "MOSTLY")
+
+#: RENDERING. The closure vocabulary the owner's page reads. Every word beyond
+#: the build list above was reported by the owner from his own backlog, where
+#: it read as finished to him and as live work to the board:
+#:
+#:   SHIPPED     — items 14 and 36 ("SHIPPED 2026-09-04")
+#:   REPLACED    — item 42 ("REPLACED 2026-09-10")
+#:   REDESIGNED  — item 43 ("REDESIGNED 2026-09-11, owner call")
+#:   CLOSED      — the natural partner of DONE; appears as "PARTIALLY CLOSED"
+#:   LANDED / SUPERSEDED / DELIVERED / COMPLETE(D) — the same shape, added so
+#:                 the next synonym somebody reaches for is already covered
+#:
+#: Matched on WORD BOUNDARIES (see `_closure_hit`), not as substrings: that is
+#: what keeps "INCOMPLETE" from reading as "COMPLETE" and "MERGE ORDER
+#: MATTERS" from reading as "MERGED".
+_RENDER_CLOSURE_WORDS = _CLOSURE_WORDS + (
+    "SHIPPED", "REPLACED", "REDESIGNED", "CLOSED", "LANDED", "SUPERSEDED",
+    "DELIVERED", "COMPLETE", "COMPLETED",
+)
+
+#: RENDERING. A closure word next to one of these means the work itself is
+#: done and only a REVIEW is owed — "FIXED, pending review" (items 33 and 34).
+#: Collapsing that into plain "done" would be the same kind of false statement
+#: the board exists to catch, so it gets its own section: not competing with
+#: live work, not claimed as signed off either.
+_RENDER_REVIEW_OWED_WORDS = (
+    "PENDING REVIEW", "PENDING SIGN-OFF", "PENDING SIGNOFF", "PENDING OWNER",
+    "AWAITING REVIEW", "AWAITING SIGN-OFF", "AWAITING SIGNOFF",
+    "NEEDS REVIEW", "NEEDS REVIEWING", "UNREVIEWED", "PENDING",
+)
+
+#: RENDERING. A closure word next to one of these means real work is still
+#: outstanding — "PARTIALLY FIXED, one gap open", "MOSTLY FIXED, one real
+#: judgment call left". These items STAY in the running order, because moving
+#: them out would hide live work, which is a worse failure than the one being
+#: fixed. They are labelled instead, so a mostly-finished item does not read
+#: as untouched.
+_RENDER_PART_DONE_WORDS = ("PARTIALLY", "PARTIAL", "MOSTLY")
+
+
+def _closure_hit(tail: str, words: tuple[str, ...]) -> bool:
+    """Whether any of `words` appears in `tail` as a whole word.
+
+    Substring matching is what makes a closure vocabulary dangerous as it
+    grows: "INCOMPLETE" contains "COMPLETE", "MERGE ORDER" nearly contains
+    "MERGED", and "UNRESOLVED" contains "RESOLVED". A word boundary on both
+    sides costs nothing and removes the whole class of error.
+    """
+    return any(re.search(r"\b" + re.escape(w) + r"\b", tail) for w in words)
 
 
 def find_closed_items_not_marked_done(work_md: Path) -> list[str]:
@@ -942,10 +1178,26 @@ class PendingDecision:
     question: str
     days_left: int
     prose: Prose = field(default_factory=Prose)
+    #: Tracking references literally present in this decision's own text.
+    refs: tuple[str, ...] = ()
+    #: The decision's own indented body, markdown stripped — shown only inside
+    #: the marked container in `_render_prose`, same as a backlog item's.
+    raw_body: str = ""
 
     @property
     def overdue(self) -> bool:
         return self.days_left < 0
+
+    @property
+    def ref(self) -> str:
+        """The identifier the owner quotes back for a decision.
+
+        A pending decision has no number in the backlog — its shape is
+        `- [ ] DECIDE BY <date> — question`, so the DATE is the only stable
+        handle it has. Spelled out in full rather than abbreviated, so
+        "the decision due 2026-09-16" names exactly one line in the file.
+        """
+        return f"decision due {self.due.isoformat()}"
 
 
 def load_pending_decisions(work_md: Path, today: dt.date | None = None) -> list[PendingDecision]:
@@ -996,8 +1248,12 @@ def load_pending_decisions(work_md: Path, today: dt.date | None = None) -> list[
             if not s or s.startswith("**") or _PROSE_LINE_RE.match(nxt):
                 break
             text.append(s)
-        out.append(PendingDecision(due, _strip_markdown(" ".join(text)),
-                                   (due - today).days, parse_prose(body)))
+        out.append(PendingDecision(
+            due, _strip_markdown(" ".join(text)), (due - today).days,
+            parse_prose(body),
+            refs=extract_refs(question + " " + " ".join(body)),
+            raw_body=_strip_markdown(" ".join(body)),
+        ))
     return sorted(out, key=lambda p: p.due)
 
 
@@ -1244,7 +1500,7 @@ def _row(p: PhaseView) -> str:
         )
     return (
         f'<tr><td><span class="chip {cls}">{_esc(label)}</span></td>'
-        f'<td><b>{_esc(_strip_markdown(p.title))}</b>'
+        f'<td><b>{_ref_tag("stage " + p.id)}{_esc(_strip_markdown(p.title))}</b>'
         f'{jargon}'
         f'{_render_summary(p.summary)}'
         f'<u>recorded as &ldquo;{_esc(p.recorded.lower())}&rdquo; &middot; {detail}</u></td></tr>'
@@ -1263,10 +1519,10 @@ def _row(p: PhaseView) -> str:
 #: What an item is missing, phrased as the gap it is rather than as an error.
 #: The board says "nobody has written this yet" and stops there. It does not
 #: write it, and it does not paper over it.
-_NO_PLAIN = ("Not yet explained in plain language. The backlog carries the "
-             "engineering detail for this one but nobody has written the "
-             "plain-English version yet, so there is nothing here that was "
-             "written for you.")
+_NO_PLAIN = ("Nobody has written the plain-English version of this one yet. "
+             "The backlog's own engineering notes are below, marked as such "
+             "&mdash; they are not a substitute for it, and nothing has been "
+             "invented to stand in.")
 _NO_EXAMPLE = ("No real-world example yet. Without one this item is hard to "
                "judge &mdash; it needs a concrete case adding to the backlog.")
 
@@ -1276,8 +1532,45 @@ def _prose_block(label: str, text: str, cls: str) -> str:
             f'<p>{_esc(text)}</p></div>')
 
 
+#: How much of an item's raw engineering body is worth showing inside the
+#: contained block before it stops being a glance and becomes a document. Past
+#: this it is cut and says so — the backlog has the rest, and the container is
+#: there to be secondary, not to reproduce the file.
+_RAW_SOURCE_CHARS = 600
+
+
+def _raw_source_block(raw: str) -> str:
+    """The item's own engineering notes, contained and clearly labelled.
+
+    This is the answer to the top card reading as a structural mess. When
+    nobody has written the plain-English version, the honest thing to show is
+    (a) that fact, and (b) the source text that DOES exist — but the source
+    text must not be laid out as if it were the explanation. So it goes in a
+    collapsed container, under a label saying who it was written for, in
+    smaller secondary type.
+
+    Nothing in here is rewritten, summarised or paraphrased. Markdown marks
+    are stripped and a long body is cut with the cut declared; that is all.
+    Paraphrasing engineering notes into friendly prose would be inventing an
+    explanation, which is the staleness this board exists to prevent wearing a
+    friendlier face.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    cut = len(text) > _RAW_SOURCE_CHARS
+    if cut:
+        text = text[:_RAW_SOURCE_CHARS].rsplit(" ", 1)[0] + "…"
+    tail = ('<span class="raw-cut">Shortened here. The rest is in the backlog, '
+            'unchanged.</span>' if cut else "")
+    return ('<details class="raw"><summary>Engineering notes from the backlog '
+            '&mdash; not an explanation</summary>'
+            f'<div class="raw-body"><p>{_esc(text)}</p>{tail}</div></details>')
+
+
 def _render_prose(prose: Prose, *, want_example: bool = True,
-                  want_recommendation: bool = False) -> str:
+                  want_recommendation: bool = False,
+                  raw_source: str = "") -> str:
     """One item's owner-facing prose, with its gaps stated rather than hidden.
 
     `want_example` / `want_recommendation` say whether the ABSENCE of that
@@ -1291,22 +1584,34 @@ def _render_prose(prose: Prose, *, want_example: bool = True,
     # three "nobody wrote this" paragraphs down a list of thirty items trains
     # him to scroll past the marker, which is the exact failure that got
     # jargon-blocking rejected in the first place.
+    #
+    # The un-written state is a two-part shape, and it is the same shape on
+    # every card on the page — the prominent top one included, which is where
+    # it was reading as a mess:
+    #
+    #   1. one short, plain sentence saying nobody has written this yet;
+    #   2. the raw engineering notes, contained and labelled as such.
+    #
+    # Never an invented explanation, and never the raw notes presented as
+    # though they were one.
     if not prose.has_any:
         tail = (' There is no recommendation either, so there is nothing here '
                 'to agree or disagree with &mdash; ask for one before ruling.'
                 if want_recommendation else '')
-        return ('<div class="pb pb-gap"><span class="pb-k">Not written for you '
-                'yet</span><p>Nobody has written the plain-English version of '
-                'this one, or an example, so there is nothing here that was '
-                'written for you &mdash; only engineering notes in the backlog. '
-                'It is listed rather than hidden, and nothing has been invented '
-                f'to fill the gap.{tail}</p></div>')
+        return ('<div class="pb pb-gap"><span class="pb-k">No plain-English '
+                'version yet</span><p>Nobody has written this one up for you '
+                'yet &mdash; no explanation and no example &mdash; so there is '
+                'nothing on this card that was written for you. It is listed '
+                'rather than hidden, and nothing has been invented to fill the '
+                f'gap.{tail}</p></div>'
+                + _raw_source_block(raw_source))
 
     if prose.plain:
         parts.append(_prose_block("In plain language", prose.plain, "pb-plain"))
     else:
-        parts.append(f'<div class="pb pb-gap"><span class="pb-k">Not written '
-                     f'for you yet</span><p>{_NO_PLAIN}</p></div>')
+        parts.append(f'<div class="pb pb-gap"><span class="pb-k">No '
+                     f'plain-English version yet</span><p>{_NO_PLAIN}</p></div>')
+        parts.append(_raw_source_block(raw_source))
 
     if prose.example:
         parts.append(_prose_block("For example", prose.example, "pb-eg"))
@@ -1335,6 +1640,22 @@ def _render_prose(prose: Prose, *, want_example: bool = True,
             'they contain ' + _esc(", ".join(markers)) + ' &mdash; so this one '
             'needs rewriting for you. Nothing is hidden.</p></div>')
     return "".join(parts)
+
+
+def _ref_tag(ref: str) -> str:
+    """The identifier, rendered so he can read it and quote it on a phone.
+
+    Sized to be legible and selectable but not to compete with the item's
+    name: monospace, one step down, muted. It is a handle, not a headline.
+    """
+    return f'<span class="ref">{_esc(ref)}</span>'
+
+
+def _ref_chips(refs: tuple[str, ...]) -> str:
+    """Tracking references, one quiet chip each. Empty when the backlog named
+    none — this never invents a reference to fill the row out."""
+    return "".join(f'<span class="chip chip-quiet">{_esc(r)}</span>'
+                   for r in refs)
 
 
 def _wording_note(text: str, what: str) -> str:
@@ -1374,9 +1695,10 @@ def _render_decisions(decisions: list[PendingDecision]) -> str:
             f'<article class="card {"card-urgent" if d.overdue or d.days_left == 0 else ""}">'
             f'<div class="chips"><span class="chip chip-strong">Your call</span>'
             f'<span class="chip">{_esc(_when_label(d))}</span>'
-            f'<span class="chip chip-quiet">by {_esc(d.due.strftime("%-d %B"))}</span></div>'
-            f'<h3>{_esc(d.question)}</h3>'
-            f'{_render_prose(d.prose, want_recommendation=True)}'
+            f'<span class="chip chip-quiet">by {_esc(d.due.strftime("%-d %B"))}</span>'
+            f'{_ref_chips(d.refs)}</div>'
+            f'<h3>{_ref_tag(d.ref)}{_esc(d.question)}</h3>'
+            f'{_render_prose(d.prose, want_recommendation=True, raw_source=d.raw_body)}'
             f'{_wording_note(d.question, "question")}'
             '</article>'
         )
@@ -1402,14 +1724,25 @@ def _render_open_queue(items: list[QueueItem], problem: str | None) -> str:
             meta.append(f'<span class="chip chip-quiet">{_esc(it.share)} of blocked trades</span>')
         if it.classification:
             meta.append(f'<span class="chip">{_esc(it.classification.lower())}</span>')
+        # A mostly-finished item stays in the running order — moving it out
+        # would hide real outstanding work — but it must not read as
+        # untouched. See `_RENDER_PART_DONE_WORDS`.
+        if it.part_done:
+            # "Partly", not "mostly": the same chip covers "PARTIALLY FIXED"
+            # and "MOSTLY FIXED", and calling a partial fix mostly done
+            # overstates it in the one direction that costs him a surprise.
+            meta.append('<span class="chip">partly done &mdash; some work '
+                        'still outstanding</span>')
+        meta.append(_ref_chips(it.refs))
         if not it.prose.plain:
             meta.append('<span class="chip chip-gap">no plain-English version yet</span>')
         rows.append(
             '<details class="q">'
-            f'<summary><span class="q-n">{it.rank}</span>'
+            f'<summary><span class="q-n">{_esc(it.ref)}</span>'
             f'<span class="q-t">{_esc(it.title)}</span></summary>'
             f'<div class="q-body"><div class="chips">{"".join(meta)}</div>'
-            f'{_render_prose(it.prose)}{_wording_note(it.title, "name")}</div>'
+            f'{_render_prose(it.prose, raw_source=it.raw_body)}'
+            f'{_wording_note(it.title, "name")}</div>'
             '</details>'
         )
     return "\n".join(rows)
@@ -1425,25 +1758,58 @@ def _render_one_liners(items: list[QueueItem], empty: str,
     rows = []
     for it in items:
         cls = "ol ol-done" if struck else "ol"
-        rows.append(f'<div class="{cls}"><span class="q-n">{it.rank}</span>'
+        rows.append(f'<div class="{cls}"><span class="q-n">{_esc(it.ref)}</span>'
                     f'<span>{_esc(it.title)}</span></div>')
     return "\n".join(rows)
 
 
-def _render_self_contradicting(items: list[QueueItem]) -> str:
-    """Items whose own words say finished while the backlog still lists them
-    as live work. Same rot, different file: reported, never resolved by
-    guessing which half is true."""
+def _render_finished_unmarked(items: list[QueueItem]) -> str:
+    """Items their own author has written up as finished, which the backlog
+    has not struck through.
+
+    Presented as FINISHED, because that is what the item's own status says,
+    with the untidied strike-through stated as the small record-keeping point
+    it actually is. Drawing these as live work is what the owner described as
+    "déjà vu every day dealing with the same stuff over and over" — the words
+    "SHIPPED", "REPLACED" and "REDESIGNED" were simply not in the board's
+    vocabulary, so finished work queued up alongside work that was not.
+
+    Nothing is believed on the item's behalf: the page says which half of the
+    backlog is claiming what, and never picks one.
+    """
     if not items:
-        return ('<div class="note">Nothing in the backlog contradicts its own '
-                'status.</div>')
+        return ('<div class="note">Every finished item in the backlog is also '
+                'ticked off as finished.</div>')
     rows = []
     for it in items:
         rows.append(
-            '<div class="ol ol-flag"><span class="q-n">' f'{it.rank}</span>'
-            f'<span>{_esc(it.title)} &mdash; its own note says this is '
-            'finished, but it is still listed as live work. One of the two is '
-            'wrong.</span></div>')
+            '<div class="ol ol-done ol-untidy">'
+            f'<span class="q-n">{_esc(it.ref)}</span>'
+            f'<span>{_esc(it.title)} '
+            '<em>&mdash; finished according to its own note; the backlog has '
+            'not ticked it off yet, so that one line needs tidying.</em>'
+            '</span></div>')
+    return "\n".join(rows)
+
+
+def _render_review_owed(items: list[QueueItem]) -> str:
+    """Finished work with a review still owed on it.
+
+    Deliberately NOT collapsed into "done". The backlog says "FIXED, pending
+    review", and that is two facts: the work is finished, and somebody still
+    owes it a look. Reporting only the first would be a false all-clear;
+    reporting only the second puts finished work back in the running order.
+    """
+    if not items:
+        return ('<div class="note">Nothing is waiting on a review.</div>')
+    rows = []
+    for it in items:
+        rows.append(
+            '<div class="ol ol-review"><span class="q-n">'
+            f'{_esc(it.ref)}</span>'
+            f'<span>{_esc(it.title)} '
+            '<em>&mdash; the work is done; a review is still owed.</em>'
+            '</span></div>')
     return "\n".join(rows)
 
 
@@ -1465,14 +1831,27 @@ def _render_self_contradicting(items: list[QueueItem]) -> str:
 def _render_right_now(contradicted: list[PhaseView],
                       decisions: list[PendingDecision],
                       open_items: list[QueueItem]) -> str:
-    def card(kind: str, title: str, inner: str) -> str:
+    #: A backlog headline is often a full sentence of engineering prose. Set
+    #: at the top card's display size it stops being a heading and becomes a
+    #: paragraph in heading clothing, which is what made this card read as a
+    #: structural mess. Past this length the card steps the heading down a
+    #: size instead. Presentation only: the title is never shortened, because
+    #: a shortened title is a second name that drifts from the real one.
+    long_title = 72
+
+    def card(kind: str, title: str, inner: str, *,
+             ref: str = "", refs: tuple[str, ...] = ()) -> str:
+        h_cls = "rn-h rn-h-long" if len(title) > long_title else "rn-h"
         return (f'<article class="rn"><div class="chips">'
                 f'<span class="chip chip-strong">Right now</span>'
-                f'<span class="chip">{_esc(kind)}</span></div>'
-                f'<h2 class="rn-h">{_esc(title)}</h2>{inner}</article>')
+                f'<span class="chip">{_esc(kind)}</span>'
+                f'{_ref_chips(refs)}</div>'
+                f'<h2 class="{h_cls}">'
+                f'{_ref_tag(ref) if ref else ""}{_esc(title)}</h2>{inner}</article>')
 
     if contradicted:
-        names = "; ".join(_strip_markdown(p.title) for p in contradicted)
+        names = "; ".join(f"{_strip_markdown(p.title)} (stage {p.id})"
+                          for p in contradicted)
         n = len(contradicted)
         return card(
             "something that was true has stopped being true",
@@ -1499,13 +1878,17 @@ def _render_right_now(contradicted: list[PhaseView],
             f'<div class="chips"><span class="chip">{_esc(_when_label(d))}</span>'
             f'<span class="chip chip-quiet">by '
             f'{_esc(d.due.strftime("%-d %B %Y"))}</span></div>'
-            + _render_prose(d.prose, want_recommendation=True)
-            + _wording_note(d.question, "question"))
+            + _render_prose(d.prose, want_recommendation=True,
+                            raw_source=d.raw_body)
+            + _wording_note(d.question, "question"),
+            ref=d.ref, refs=d.refs)
 
     if open_items:
         it = open_items[0]
         return card("top of the running order", it.title,
-                    _render_prose(it.prose) + _wording_note(it.title, "name"))
+                    _render_prose(it.prose, raw_source=it.raw_body)
+                    + _wording_note(it.title, "name"),
+                    ref=it.ref, refs=it.refs)
 
     return ('<article class="rn rn-clear"><div class="chips">'
             '<span class="chip chip-strong">Right now</span></div>'
@@ -1669,8 +2052,12 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     open_items = [i for i in queue_items if i.bucket == "open"]
     paused_items = [i for i in queue_items if i.bucket == "paused"]
     resolved_items = [i for i in queue_items if i.bucket == "resolved"]
-    self_contradicting = [i for i in queue_items
-                          if i.bucket == "contradicts_itself"]
+    # Finished by their own account, not ticked off in the backlog. Drawn as
+    # finished — see `_render_finished_unmarked` for why that is the honest
+    # reading and why drawing them as live work was the defect.
+    finished_unmarked = [i for i in queue_items
+                         if i.bucket == "finished_unmarked"]
+    review_owed = [i for i in queue_items if i.bucket == "review_owed"]
     unexplained = [i for i in open_items if not i.prose.plain]
 
     body = body.replace("{{RIGHT_NOW}}",
@@ -1681,7 +2068,9 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
         paused_items,
         "Nothing is parked. Everything in the backlog is either being worked "
         "on or already finished."))
-    body = body.replace("{{CONTRADICTS}}", _render_self_contradicting(self_contradicting))
+    body = body.replace("{{FINISHED_UNMARKED}}",
+                        _render_finished_unmarked(finished_unmarked))
+    body = body.replace("{{REVIEW_OWED}}", _render_review_owed(review_owed))
     body = body.replace("{{RESOLVED}}", _render_one_liners(
         resolved_items,
         "Nothing has been signed off as finished yet.", struck=True))
@@ -1689,6 +2078,8 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     body = body.replace("{{QUEUE_TOTAL}}", str(len(queue_items)))
     body = body.replace("{{PAUSED_COUNT}}", str(len(paused_items)))
     body = body.replace("{{RESOLVED_COUNT}}", str(len(resolved_items)))
+    body = body.replace("{{FINISHED_UNMARKED_COUNT}}", str(len(finished_unmarked)))
+    body = body.replace("{{REVIEW_OWED_COUNT}}", str(len(review_owed)))
     body = body.replace("{{UNEXPLAINED_NOTE}}",
                         _unexplained_note(len(unexplained), len(open_items)))
 

@@ -312,7 +312,9 @@ def test_the_template_carries_every_placeholder_the_renderer_fills():
                 "{{RULES_TOTAL}}", "{{RULES_PASS}}", "{{RULES_FAIL}}",
                 "{{RULES_UNKNOWN}}", "{{BOX_SHA}}", "{{MAIN_SHA}}", "{{JARGON_BANNER}}",
                 "{{RIGHT_NOW}}", "{{DECISIONS}}", "{{QUEUE}}", "{{PAUSED}}",
-                "{{CONTRADICTS}}", "{{RESOLVED}}", "{{QUEUE_OPEN}}",
+                "{{FINISHED_UNMARKED}}", "{{FINISHED_UNMARKED_COUNT}}",
+                "{{REVIEW_OWED}}", "{{REVIEW_OWED_COUNT}}",
+                "{{RESOLVED}}", "{{QUEUE_OPEN}}",
                 "{{QUEUE_TOTAL}}", "{{PAUSED_COUNT}}", "{{RESOLVED_COUNT}}",
                 "{{UNEXPLAINED_NOTE}}", "{{PM_GATE}}",
                 "{{PM_GATE_DONE}}", "{{PM_GATE_OPEN}}", "{{PM_GATE_TOTAL}}"):
@@ -1269,17 +1271,110 @@ def test_an_item_with_no_prose_renders_honestly_and_is_not_dropped():
 
 def test_nothing_is_invented_for_an_unexplained_item():
     """Whatever the page says about an unexplained item, it must not contain
-    an explanation. The only text allowed is the standing 'nobody wrote this'
-    sentence, so this pins that no summary of the engineering body leaks in."""
+    an invented explanation.
+
+    The backlog's own engineering notes ARE now shown — contained, collapsed
+    and labelled as engineering notes — because hiding them left the top card
+    with nothing on it at all. What must never appear is a sentence nobody
+    wrote: so every word of the notes shown here has to be a verbatim slice of
+    the source, and none of it may be laid out as a plain-language block.
+    """
     body = ("## THE FUNNEL QUEUE\n\n"
             "**3. A thing — DEFECT.**\n\n"
             "The real cause is a recursion fault in the bar fetch, traced to\n"
             "a delisted warrant reaching the data layer.\n")
     items = sb._parse_numbered_items(body.split("## THE FUNNEL QUEUE")[1])
     out = sb._render_open_queue(items, None)
-    assert "recursion" not in out
-    assert "delisted" not in out
     assert not items[0].prose.has_any
+
+    # The notes appear verbatim, and ONLY inside the marked container.
+    assert "recursion fault in the bar fetch" in items[0].raw_body
+    assert 'class="raw"' in out
+    assert "Engineering notes from the backlog" in out
+    raw_section = out.split('<details class="raw">', 1)[1]
+    assert "recursion" in raw_section
+    assert "delisted" in raw_section
+    # ...and never dressed up as the explanation somebody did not write.
+    before_raw = out.split('<details class="raw">', 1)[0]
+    assert "recursion" not in before_raw
+    assert "pb-plain" not in out
+    assert "pb-eg" not in out
+
+
+@pytest.mark.parametrize("raw,expect_in,expect_out", [
+    # Single-asterisk emphasis, which the real backlog uses and which used to
+    # reach the page as two stray asterisks inside the notes block.
+    ("*Owner clarification, 2026-09-10: not re-measured yet.*",
+     "Owner clarification", "*"),
+    # Arithmetic must survive verbatim. A lone asterisk between two word
+    # characters is multiplication, not emphasis.
+    ("the stop sits at entry - 2*atr on every fill", "2*atr", None),
+])
+def test_stray_markdown_never_reaches_the_notes_block(raw, expect_in, expect_out):
+    out = sb._render_prose(sb.Prose(), raw_source=sb._strip_markdown(raw))
+    assert expect_in in out
+    if expect_out:
+        assert expect_out not in out.split('class="raw"', 1)[1]
+
+
+def test_the_missing_prose_fallback_says_so_before_showing_raw_notes():
+    """The shape the owner asked for, in order: the honest sentence first, the
+    raw source second and clearly secondary. A card with no prose must never
+    read as though the engineering notes were the explanation."""
+    out = sb._render_prose(sb.Prose(), raw_source="Some engineering notes.")
+    assert out.index("No plain-English version yet") < out.index('class="raw"')
+    assert "Nobody has written this one up for you yet" in out
+    assert "not an explanation" in out
+
+
+def test_the_fallback_is_clean_when_there_is_no_raw_source_either():
+    """Nothing to show is not the same as something broken. With no prose AND
+    no source text, the card is one honest sentence and no empty container."""
+    out = sb._render_prose(sb.Prose(), raw_source="")
+    assert "No plain-English version yet" in out
+    assert 'class="raw"' not in out
+    assert "<p></p>" not in out
+
+
+def test_a_long_raw_body_is_cut_and_says_that_it_was_cut():
+    """Contained means contained. A 4,000-character engineering note pasted
+    whole under the top card is the structural mess by another route."""
+    long_note = "word " * 900
+    out = sb._render_prose(sb.Prose(), raw_source=long_note)
+    assert "Shortened here" in out
+    assert len(re.sub(r"<[^>]+>", "", out)) < 1600
+
+
+def test_the_top_card_with_no_prose_is_compact_and_contained(tmp_path):
+    """Complaint 2, end to end: the prominent card for an item nobody has
+    written up is short, says why, and keeps the raw notes behind a label."""
+    it = sb.QueueItem(
+        7, "A thing with a developer-written name", "DEFECT", "", None, False,
+        headline="A thing — DEFECT.",
+        raw_body="Traced to a recursion fault in `bar_fetch` for a delisted warrant.")
+    out = sb._render_right_now([], [], [it])
+    assert out.count('class="rn"') == 1
+    assert "No plain-English version yet" in out
+    # The raw text is present, contained, and behind the label.
+    assert 'class="raw"' in out
+    assert out.index("No plain-English version yet") < out.index('class="raw"')
+    # And the identifier is on the card, so he can quote it.
+    assert "item 7" in out
+
+
+def test_a_long_headline_on_the_top_card_is_stepped_down_not_rewritten():
+    """A whole sentence set at display size reads as a mess. The card calms
+    the type; it must never invent a shorter title, which would be a second
+    name that drifts from the real one."""
+    long_title = ("Order-fill detection was a fixed-interval REST poll from "
+                  "1992, not the real-time mechanism Alpaca offers")
+    it = sb.QueueItem(42, long_title, "", "", None, False)
+    out = sb._render_right_now([], [], [it])
+    assert "rn-h-long" in out
+    assert long_title in out            # shown in full, unshortened
+
+    short = sb.QueueItem(1, "The reward:risk floor", "", "", None, False)
+    assert "rn-h-long" not in sb._render_right_now([], [], [short])
 
 
 def test_prose_written_for_a_developer_is_marked_not_accepted_silently():
@@ -1363,14 +1458,17 @@ def test_a_title_claiming_closure_is_still_flagged_after_the_widening(tmp_path):
 
 def test_the_board_reports_a_self_contradicting_item_to_the_owner_itself():
     """The build check is deliberately narrow. The page is not: an item whose
-    own words say finished while it is still listed as live work is shown to
-    him, in its own section, rather than being filed as open or as done."""
+    own words say finished while the backlog has not struck it off is shown to
+    him as FINISHED, with the untidy line stated, rather than being filed as
+    live work (which is the déjà vu) or silently as signed off."""
     it = sb.QueueItem(25, "A protected-position rule", "", "", None, False,
                       headline="A protected-position rule — DONE 2026-09-04.")
     assert it.claims_closure is True
-    assert it.bucket == "contradicts_itself"
-    out = sb._render_self_contradicting([it])
-    assert "One of the two is wrong" in out
+    assert it.bucket == "finished_unmarked"
+    out = sb._render_finished_unmarked([it])
+    assert "finished according to its own note" in out
+    assert "not ticked it off" in out
+    assert "item 25" in out
 
 
 def test_a_partial_claim_stays_open_not_contradictory():
@@ -1378,6 +1476,278 @@ def test_a_partial_claim_stays_open_not_contradictory():
                       headline="A thing — PARTIALLY FIXED, one gap open.")
     assert it.claims_closure is False
     assert it.bucket == "open"
+
+
+# ---------------------------------------------------------------------------
+# The widened CLOSURE VOCABULARY — complaint 3
+#
+# The owner's words: "déjà vu every day dealing with the same stuff over and
+# over". Finished items were queued alongside live work because the board did
+# not recognise the words their authors had used.
+#
+# Two vocabularies exist on purpose (see the module's own comment): the build
+# check's narrow one, and the renderer's wider one. These tests pin BOTH, and
+# pin that widening the renderer did not widen the build check.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("tail,expected", [
+    # The words the owner reported, as they appear in his own backlog.
+    ("A thing — SHIPPED 2026-09-04.", "finished"),
+    ("A thing — REPLACED 2026-09-10.", "finished"),
+    ("A thing — REDESIGNED 2026-09-11, owner call.", "finished"),
+    ("A thing — LANDED 2026-09-04.", "finished"),
+    ("A thing — SUPERSEDED by the rewrite.", "finished"),
+    ("A thing — CLOSED 2026-09-04.", "finished"),
+    ("A thing — DELIVERED.", "finished"),
+    ("A thing — COMPLETE.", "finished"),
+    ("A thing — COMPLETED 2026-09-04.", "finished"),
+    # Still recognised from before the widening.
+    ("A thing — FIXED 2026-09-10.", "finished"),
+    ("A thing — DONE 2026-09-04.", "finished"),
+    ("A thing — item WITHDRAWN 2026-09-03.", "finished"),
+    # Work done, review owed — its own answer, never collapsed into "done".
+    ("A thing — FIXED, pending review.", "review_owed"),
+    ("A thing — SHIPPED, awaiting review.", "review_owed"),
+    ("A thing — REPLACED, pending sign-off.", "review_owed"),
+    # Work still outstanding — stays in the running order.
+    ("A thing — MOSTLY FIXED, one real judgment call left.", "part_done"),
+    ("A thing — PARTIALLY FIXED, one gap open.", "part_done"),
+    ("A thing — PARTIALLY CLOSED, re-measured.", "part_done"),
+    # No claim at all.
+    ("A thing — TOO STRICT. IN FLIGHT.", ""),
+    ("A thing — DEFECT. Observed, not theorised.", ""),
+])
+def test_the_widened_vocabulary_reads_the_three_states_apart(tail, expected):
+    it = sb.QueueItem(1, "t", "", "", None, False, headline=tail)
+    assert it.closure_claim == expected
+
+
+@pytest.mark.parametrize("headline", [
+    # The three real false positives this logic was built to survive. Every
+    # one of them is a line from the live backlog.
+    "Order-fill detection was a fixed-interval REST poll from 1992 — DEFECT.",
+    "The sizing path still owes the same amendment — deliberately NOT done yet.",
+    "An acceptance test is broken on main — STILL BROKEN, this file's own "
+    "FIXED claim was wrong.",
+    # And the same shapes built out of the NEWLY recognised words, which is
+    # where a widened list would break first.
+    "A fixed-interval poll — NOT YET SHIPPED.",
+    "The stream rewrite — STILL OPEN, the REPLACED claim was premature.",
+    "The prompt rewrite — TO BE REDESIGNED once item 18 lands.",
+    "The ranking change — WILL BE SHIPPED after the re-measure.",
+    "The sizing amendment — INCOMPLETE.",
+])
+def test_a_negated_or_future_status_is_not_a_closure_claim(headline):
+    """A marker that cries wolf gets ignored, which costs more than not having
+    the marker. Every one of the new words is a past participle, and a past
+    participle in a plan reads identically to one in a result unless the tense
+    in front of it is read too."""
+    it = sb.QueueItem(1, "t", "", "", None, False, headline=headline)
+    assert it.closure_claim == ""
+    assert it.claims_closure is False
+    assert it.bucket in ("open", "paused")
+
+
+@pytest.mark.parametrize("headline", [
+    # The word appears in the item's BODY half, describing something else. Only
+    # the status half of a headline — after the last em dash — is a claim.
+    "Slots burned re-proposing names that never get shipped — DEFECT.",
+    "The budget guard we shipped in August is the wrong shape — TOO STRICT.",
+    "A poll that was replaced everywhere else is still here — DEFECT.",
+    "The scorecard was redesigned upstream and we never took it — NO RECORD.",
+])
+def test_an_incidental_use_of_a_new_word_is_not_a_closure_claim(headline):
+    it = sb.QueueItem(1, "t", "", "", None, False, headline=headline)
+    assert it.closure_claim == ""
+    assert it.bucket == "open"
+
+
+def test_a_word_that_merely_contains_a_closure_word_is_not_one():
+    """Substring matching is what makes a growing vocabulary dangerous:
+    INCOMPLETE contains COMPLETE, UNRESOLVED contains RESOLVED, and MERGE
+    ORDER nearly contains MERGED. Matching is on word boundaries."""
+    for tail in ("A thing — UNRESOLVED.",
+                 "A thing — merge ORDER matters, see the incident history.",
+                 "A thing — UNDONE by the next change."):
+        it = sb.QueueItem(1, "t", "", "", None, False, headline=tail)
+        assert it.closure_claim == "", tail
+
+
+def test_widening_the_renderer_did_not_widen_the_build_failing_check(tmp_path):
+    """The one hard constraint on complaint 3. The build check and the
+    renderer read separate vocabularies precisely so the page can be made
+    honest without turning live backlog lines into a red CI run — which only
+    a backlog edit could then resolve."""
+    assert "SHIPPED" in sb._RENDER_CLOSURE_WORDS
+    assert "SHIPPED" not in sb._CLOSURE_WORDS
+    assert "REPLACED" not in sb._CLOSURE_WORDS
+    assert "REDESIGNED" not in sb._CLOSURE_WORDS
+    # Every build-check word is still a rendering word: the vocabularies
+    # diverge in one direction only.
+    assert set(sb._CLOSURE_WORDS) <= set(sb._RENDER_CLOSURE_WORDS)
+
+    # A newly-recognised word does NOT fail the build...
+    p = tmp_path / "WORK.md"
+    p.write_text("## THE FUNNEL QUEUE\n\n**4. A thing — SHIPPED 2026-09-04.**\n")
+    assert sb.find_closed_items_not_marked_done(p) == []
+    # ...while the page still shows it as finished rather than as live work.
+    items = sb._parse_numbered_items(p.read_text().split(sb._QUEUE_HEADING, 1)[1])
+    assert items[0].bucket == "finished_unmarked"
+
+
+def test_the_real_backlog_no_longer_queues_finished_work_as_live():
+    """The live outcome, pinned. These are the exact items the owner named."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    items, problem = sb.load_funnel_queue(work_md)
+    assert problem is None
+    by_rank = {i.rank: i for i in items}
+
+    # SHIPPED / REPLACED / REDESIGNED — finished, and no longer in the queue.
+    for rank in (14, 36, 42, 43):
+        assert by_rank[rank].bucket == "finished_unmarked", rank
+    # "FIXED, pending review" — finished, review still owed, its own section.
+    for rank in (33, 34):
+        assert by_rank[rank].bucket == "review_owed", rank
+    # Genuinely partial work stays where he can see it.
+    for rank in (2, 18, 32):
+        assert by_rank[rank].bucket == "open", rank
+        assert by_rank[rank].part_done is True, rank
+    # And the negated lines stay open, as they always did.
+    for rank in (28, 30):
+        assert by_rank[rank].bucket == "open", rank
+
+
+def test_a_mostly_finished_item_is_labelled_rather_than_hidden():
+    """Moving partly-finished work out of the running order would hide live
+    work, which is worse than the problem being fixed. It is labelled."""
+    it = sb.QueueItem(32, "The risk envelope", "", "", None, False,
+                      headline="The risk envelope — MOSTLY FIXED, one real "
+                               "judgment call left.")
+    assert it.bucket == "open"
+    out = sb._render_open_queue([it], None)
+    assert "partly done" in out
+    assert "still outstanding" in out
+
+
+def test_review_owed_is_neither_live_work_nor_signed_off():
+    it = sb.QueueItem(33, "The two risk checks", "", "", None, False,
+                      headline="The two risk checks — FIXED, pending review.")
+    assert it.bucket == "review_owed"
+    out = sb._render_review_owed([it])
+    assert "the work is done" in out
+    assert "a review is still owed" in out
+    # Never struck through: a strike-through reads as signed off.
+    assert "ol-done" not in out
+
+
+def test_empty_finished_and_review_sections_say_so_rather_than_render_blank():
+    assert "ticked off as finished" in sb._render_finished_unmarked([])
+    assert "waiting on a review" in sb._render_review_owed([])
+
+
+# ---------------------------------------------------------------------------
+# IDENTIFIERS — complaint 1
+#
+# His words: he could see titles, but to ask about an item he had to recite a
+# whole title rather than name a short handle that points back at the source
+# of truth. The backlog runs more than one numbered sequence, so the handle
+# has to disambiguate as well as identify.
+# ---------------------------------------------------------------------------
+
+def test_two_numbered_sequences_do_not_share_an_identifier():
+    """The funnel queue counts 1..43 and the PM TEST GATE counts 1..8,
+    independently. A bare number names two different things, so each sequence
+    carries its own prefix and the prefix is part of what he quotes."""
+    queue_item = sb.QueueItem(4, "A queue thing", "", "", None, False,
+                              source="backlog")
+    gate_item = sb.QueueItem(4, "A gate thing", "", "", None, False,
+                             source="pm-gate")
+    assert queue_item.ref == "item 4"
+    assert gate_item.ref == "gate item 4"
+    assert queue_item.ref != gate_item.ref
+
+
+def test_the_real_backlog_gives_every_item_a_unique_quotable_identifier():
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    queue, qp = sb.load_funnel_queue(work_md)
+    gate, gp = sb.load_pm_gate(work_md)
+    assert qp is None and gp is None
+    refs = [i.ref for i in queue] + [i.ref for i in gate]
+    assert len(refs) == len(set(refs)), "two items share one identifier"
+    assert all(i.source == "backlog" for i in queue)
+    assert all(i.source == "pm-gate" for i in gate)
+
+
+def test_every_rendered_item_carries_its_identifier():
+    """Every list he reads: the running order, the parked list, the finished
+    list, the finished-but-untidy list and the review list."""
+    it = sb.QueueItem(32, "A thing", "DEFECT", "", None, False,
+                      headline="A thing — DEFECT.")
+    assert "item 32" in sb._render_open_queue([it], None)
+    assert "item 32" in sb._render_one_liners([it], "nothing")
+    assert "item 32" in sb._render_one_liners([it], "nothing", struck=True)
+
+    fin = sb.QueueItem(42, "A finished thing", "", "", None, False,
+                       headline="A finished thing — REPLACED 2026-09-10.")
+    assert "item 42" in sb._render_finished_unmarked([fin])
+    rev = sb.QueueItem(33, "A reviewed thing", "", "", None, False,
+                       headline="A reviewed thing — FIXED, pending review.")
+    assert "item 33" in sb._render_review_owed([rev])
+
+
+def test_a_decision_carries_a_quotable_identifier_too():
+    """A pending decision has no number in the backlog — its shape is
+    `- [ ] DECIDE BY <date> — question` — so the date is its only stable
+    handle, and it is spelled out in full rather than abbreviated."""
+    d = sb.PendingDecision(dt.date(2026, 9, 16), "A question", 5)
+    assert d.ref == "decision due 2026-09-16"
+    assert "decision due 2026-09-16" in sb._render_decisions([d])
+
+
+def test_a_phase_carries_its_stage_identifier():
+    p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")], title="A stage")
+    assert "stage " + p.id in sb._row(p)
+
+
+def test_only_references_actually_present_in_the_source_are_shown():
+    """Nothing is looked up, derived or guessed. If the backlog names no PR,
+    the page shows no PR — inventing one would be the staleness this board
+    exists to prevent, wearing a tracking number."""
+    assert sb.extract_refs("A plain item with no references at all.") == ()
+    assert "PR #252" in sb.extract_refs("core cause MERGED 2026-09-04 (PR #252)")
+    assert "incident history" in sb.extract_refs(
+        "Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.")
+    assert "branch feat/replace-budget-reservation" in sb.extract_refs(
+        "SHIPPED on `feat/replace-budget-reservation`.")
+
+
+def test_a_documentation_path_is_not_announced_as_a_branch():
+    """`docs/` is a real directory in this repo, so a naive branch pattern
+    reports `docs/INCIDENT_HISTORY.md` to him as a branch name."""
+    refs = sb.extract_refs("See `docs/INCIDENT_HISTORY.md` and `docs/OUTCOME.md`.")
+    assert not any("branch" in r for r in refs)
+    assert refs == ("incident history",)
+
+
+def test_a_long_list_of_prs_is_counted_not_recited():
+    """One real item names eleven PRs. Eleven chips is a list, not a
+    reference."""
+    refs = sb.extract_refs("Eleven PRs open at once (#249, #250, #251, #252, "
+                           "#253, #254, #255, #256, #257, #261, #262).")
+    assert refs == ("11 pull requests named in the backlog",)
+
+
+def test_the_identifier_is_readable_but_does_not_dominate_the_card():
+    """It has to be quotable on a phone without becoming the loudest thing on
+    the card. Carried by a small monospace tag, not by heading type."""
+    template = (Path(__file__).resolve().parents[1]
+                / "scripts" / "status_board_template.html").read_text()
+    assert ".ref{" in template
+    ref_rule = template.split(".ref{", 1)[1].split("}", 1)[0]
+    assert "IBM Plex Mono" in ref_rule
+    assert "user-select:all" in ref_rule   # tap-and-copy on a phone
+    # And it is not set at heading weight/size.
+    assert "font-size:11.5px" in ref_rule
 
 
 # ---------------------------------------------------------------------------
@@ -1561,13 +1931,20 @@ def test_the_board_service_does_not_point_at_the_retired_timer():
 
 @pytest.mark.parametrize("headline,expected", [
     # Real lines from the live backlog that a plain word search got wrong.
-    ("Order-fill detection was a fixed-interval REST poll — REPLACED 2026-09-10.",
-     False),
+    # "a fixed-interval poll" DESCRIBES a mechanism; only the status half of a
+    # headline is a claim, which is why this one is still False despite the
+    # word "fixed" appearing in it.
+    ("Order-fill detection was a fixed-interval REST poll — DEFECT.", False),
     ("The sizing path still owes an amendment — deliberately NOT done yet.",
      False),
     ("An acceptance test is broken on main — STILL BROKEN, this file's own "
      "FIXED claim was wrong.", False),
-    # And the ones that genuinely do claim to be finished.
+    # And the ones that genuinely do claim to be finished. "REPLACED" moved
+    # from False to True deliberately: the owner reported it as a real
+    # closure word his board was drawing as live work. See the widened
+    # vocabulary tests above.
+    ("Order-fill detection was a fixed-interval REST poll — REPLACED "
+     "2026-09-10.", True),
     ("A protected-position rule — DONE 2026-09-04.", True),
     ("A broken ticker could fail silently forever — FIXED 2026-09-10.", True),
 ])
@@ -1581,12 +1958,15 @@ def test_a_description_is_not_read_as_a_closure_claim(headline, expected):
 
 def test_the_real_backlog_flags_only_genuine_self_contradictions():
     """Pins the live outcome so a widened word list cannot quietly reintroduce
-    false positives on the owner's own page."""
+    false positives on the owner's own page. Reads the RENDERING vocabulary,
+    which is the one the page is drawn from."""
     work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     items, problem = sb.load_funnel_queue(work_md)
     assert problem is None
-    flagged = [i for i in items if i.bucket == "contradicts_itself"]
+    flagged = [i for i in items if i.bucket == "finished_unmarked"]
+    assert flagged, "the live backlog has finished-but-unticked items"
     for i in flagged:
         tail = i.status_tail
-        assert any(w in tail for w in sb._CLOSURE_WORDS), i.rank
+        assert sb._closure_hit(tail, sb._RENDER_CLOSURE_WORDS), i.rank
         assert not any(w in tail for w in sb._CLOSURE_NEGATIONS), i.rank
+        assert not sb._closure_hit(tail, sb._RENDER_PART_DONE_WORDS), i.rank
