@@ -99,12 +99,11 @@ this line, one heading per item.
 **Recommendation —** Approve a small, capped spend for one fresh comparison before the due date. Do not switch models based on the old, invalidated numbers.
 
 
-## decision due 2026-09-17
+## item 48
 
-**Plain language —** A check meant to catch a shift in the broader market mood relies on government economic data, but that data always arrives a couple of days late. The rule currently refuses anything more than one day old, so ordinary reporting lag can make it fail almost every time regardless of what's actually happening in markets.
-**Example —** On a normal day, every one of the five economic reports this check watches came in about two days late, while the rule demands one day or fresher — an almost unreachable bar, not a rare exception.
-**The decision —** How strict this freshness rule should be: loosen it to match real reporting lag, keep it deliberately hard to satisfy, or switch to a same-day data source instead.
-**Recommendation —** Loosen it to match the real two-day lag. An unreachable bar functions as an off switch, not a safeguard, and gives no real information either way.
+**Plain language —** A check meant to catch a shift in the broader market mood relies on government economic data, which always arrives a couple of days late. The rule used to refuse anything more than one day old, so ordinary reporting lag made it fail almost every time regardless of what was actually happening in markets. Rather than pick a looser day-count, the day-count itself was removed: the check now asks whether the number on hand is the newest one that has actually been published, and separately, whether a newer one was due and never showed up.
+**Example —** Inflation and jobs figures only come out once a month. A 20-day-old inflation reading is not stale — it is the only one that exists. The old rule would have refused it anyway for being "too old." The new check asks the right question instead: is this the latest published figure, yes or no.
+**Recommendation —** None needed; this is resolved, not a decision. Worth knowing plainly: this was expected to clear roughly half of all runs that were previously refusing to make a call for no real reason, though that hasn't been re-measured against live trading yet since the fix ships forward, not backward.
 
 
 ## item 1

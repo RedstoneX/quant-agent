@@ -231,8 +231,8 @@ phases:
       - kind: setting_equals
         path: "config/settings.yaml"
         key: "risk.max_position_pct"
-        value: 100
-        note: "single-name ceiling the constructor now clamps to (b712f4c)"
+        value: 65
+        note: "single-name ceiling the constructor clamps to. 100 -> 33 -> 65 on 2026-09-11: 100's cash-only justification was already false when written (margin enabled two days earlier); 33 was derived from the desk's own -20% ladder rung; owner reviewed and set 65 instead, his own risk-appetite call. See docs/WORK.md item 47 and docs/INCIDENT_HISTORY.md, 2026-09-11."
       - kind: setting_equals
         path: "config/settings.yaml"
         key: "risk.min_stop_atr_multiple"
@@ -553,20 +553,16 @@ phases:
     evidence:
       - kind: setting_present
         path: "config/settings.yaml"
-        key: "llm_cost_circuit.max_free_failure_sessions_per_mode"
-        note: "see the max_mode_daily_exposure_pct rule below, live since PR #126 (2026-08-28). What IS still true and worth asserting here: this setting is now explicitly a backstop-only guard against an infinite free-failure loop, not the operative limit, and PR #149 (2026-08-29, commits 254a664 + c523da4) fixed it to count only sessions that made a provider attempt and settled at zero cost, renamed it from max_paid_sessions_per_mode_per_day to describe that, and made it cool off after backstop_cooloff_minutes instead of latching the mode for the rest of the ET day."
-      - kind: setting_present
-        path: "config/settings.yaml"
         key: "llm_cost_circuit.daily_cost_limit_usd"
         note: "the key's PRESENCE, not its value, is the evidence: daily_cost_limit_usd is a deliberately-tuned value expected to be re-tuned as real trading experience accumulates, and pinning a specific number would make every legitimate re-tune read as false rot."
       - kind: setting_present
         path: "config/settings.yaml"
-        key: "llm_cost_circuit.max_mode_daily_exposure_pct"
-        note: "§6.1's actual operative per-mode limit: a fraction of the daily dollar budget, not a session count. Landed 2026-08-28 (commit b796dce, PR #126, 'fix(cost-circuit): dollar-based per-mode daily cap, plus an afternoon reserve') — this key's presence at all is what proves the dollar-based cap the spec asked for actually exists; its value is a tuned stopgap, deliberately not pinned here for the same reason as daily_cost_limit_usd above."
+        key: "llm_cost_circuit.session_cost_limit_usd"
+        note: "2026-09-11: this evidence block previously named max_mode_daily_exposure_pct, afternoon_reserve_pct and max_free_failure_sessions_per_mode (the projection-based reservation layer, PR #126/#149, 2026-08-28/29). Item 14 (owner-approved, docs/WORK.md, 2026-09-02) DELETED that entire layer: real settled cost ran a median 0.38x of the pinned worst-case reservation rate, so the reservation machinery was stopping the desk on money that was never actually going to be spent. Replaced by real-settled-cost checks (session_cost_limit_usd / daily_cost_limit_usd, checked against what was ACTUALLY charged, no projection) plus the count-based max_calls_per_session backstop below. This is a deliberate simplification, not rot; the three deleted keys are gone by design and should never reappear in this evidence block."
       - kind: setting_present
         path: "config/settings.yaml"
-        key: "llm_cost_circuit.afternoon_reserve_pct"
-        note: "§6.1's afternoon reserve: a fraction of the daily budget walled off from every mode until afternoon_reserve_release_et_hour. Same commit as above (b796dce, 2026-08-28); src/cost_circuit.py's _morning_spend_ceiling is where begin_call enforces it."
+        key: "llm_cost_circuit.max_calls_per_session"
+        note: "the count-based runaway-loop backstop that replaced the old free-failure-session mechanism — see the note above."
       - kind: manual
         note: "position_id now links every trade in a position's chain (a BUY from flat mints one; SELL/REDUCE/TRAIL_STOP/etc inherit it until flat — see `_assign_position_ids` in src/storage/db.py), a one-time `scripts/backfill_position_ids.py` fills it in for pre-existing history, `GET /positions/{position_id}/history` (src/api/routes_history.py) reconstructs the entry/interim/exit chain with realized P&L and hold duration, and `reasoning` is now a column in frontend/src/components/TradesPanel.tsx (truncated with a reveal-on-click, same idiom AgentPromptViewer.tsx uses). §6.2(e) (exit_reason_category) also landed — see the mechanical rules below. §6.2(d) is separately closed as WON'T DO, not done — see the next note. Re-check with the mechanical rules below rather than re-reading this prose."
       - kind: manual
@@ -600,10 +596,8 @@ phases:
         note: "feat(transparency): link every trade to its position and report P&L against risk"
       - kind: test_exists
         path: "tests/test_cost_circuit.py"
-        test: "test_backstop_cools_off_after_the_configured_window"
-      - kind: test_exists
-        path: "tests/test_cost_circuit.py"
-        test: "test_healthy_day_many_paid_sessions_never_trip_the_backstop"
+        test: "test_session_count_backstop_still_trips_a_genuine_runaway_loop"
+        note: "2026-09-11: this evidence previously named test_backstop_cools_off_after_the_configured_window and test_healthy_day_many_paid_sessions_never_trip_the_backstop, which tested the reservation-layer backstop item 14 deleted (see the settings note above). This is the current test covering the count-based backstop that replaced it."
       - kind: test_exists
         path: "tests/test_api_contract.py"
         test: "test_position_history_closed_chain_reconstructs_entry_interim_exit"
@@ -972,9 +966,7 @@ phases:
       - kind: test_exists
         path: "tests/test_rehearsal_reproduces_cost_ceiling.py"
         test: "test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure"
-      - kind: test_exists
-        path: "tests/test_rehearsal_reproduces_cost_ceiling.py"
-        test: "test_the_pre_fix_estimator_still_reproduces_the_2026_08_28_block"
+        note: "2026-09-11: this evidence block previously ALSO named a second test, test_the_pre_fix_estimator_still_reproduces_the_2026_08_28_block, which has never existed under that name in this file — a phases.yaml authoring error, not a rename. Removed rather than corrected to a real name, because the one real test above is itself GENUINELY BROKEN right now (docs/WORK.md item 28: marked FIXED once in error, re-verified broken three times against a clean checkout, root cause still not found). This CONTRADICTED status is therefore correct and should stay red until item 28 is actually resolved — do not silence it by pointing this rule at a passing test instead."
       - kind: manual
         note: "Passing tests here prove the rig runs end to end and that it can still force-reproduce the 2026-08-28 cost-ceiling failure on demand — they do not prove the recorded model responses and market snapshot it replays against are still a faithful stand-in for a real trading day. That snapshot is fixed at the moment it was taken; as the strategy, the traded universe, and the market itself move on, a person needs to periodically judge whether it is still representative or needs refreshing, since no test can check that on its own. Re-check by looking at the snapshot's date and asking whether anything material has changed since."
 
