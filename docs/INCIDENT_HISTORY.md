@@ -5690,3 +5690,261 @@ proves the actual behavior change end to end: identical, equally-aged
 insider evidence is rejected as support when nothing else currently
 agrees with it, and accepted when a current technical read does — the
 correlation, not the calendar, is what decided the outcome in both cases.
+
+## Moved out of docs/WORK.md, 2026-09-11 — closed records freeing space under the byte cap
+
+**Why this section exists:** `docs/WORK.md` was 99,447 bytes against its
+100,000-byte hard cap, with almost no headroom left for new work. Everything
+below was genuinely finished — landed, shipped, or a checked non-defect —
+with no open question or follow-up left attached. Moved here verbatim rather
+than deleted, the same way the 2026-08-31 and 2026-09-02 records were.
+
+### 2026-08-27 — the model benchmark harness was broken two independent ways, and nothing caught it
+
+**In plain words:** the tool used to compare AI models against each other
+silently stopped working, twice over, and nobody noticed until it was
+needed.
+
+1. **The model benchmark harness was broken two independent ways and nothing
+   detected either.** `ops/model_policy/scenarios.py` stopped importing when
+   Phase 1 (`138edd2`) made `setup_type` required — same day — AND it had
+   carried a backslash inside an f-string expression since `2016c9b`
+   (2026-08-14), which is a SyntaxError on Python 3.11, the project's declared
+   floor and what CI runs. Local dev is 3.12, so it parsed here and never
+   there. `tests/test_ops_scripts_importable.py` now imports every module
+   under `ops/` and `scripts/` and rejects 3.12-only f-strings, because
+   `pytest` collects `tests/` only and that blind spot is what let both sit.
+
+### 2026-08-27 — Phase 3 was reordered ahead of Phase 2, and the position-reviewer model question was resolved
+
+**In plain words:** two decisions from the same review session. Exits were
+being cut too early against a self-referential pace metric, so the fix for
+that jumped the queue; and a plan to swap the exit-reviewer to a stronger,
+much more expensive model turned out to rest on a false premise once the
+actual measured scores were read.
+
+- **Phase 3 runs before the rest of Phase 2.** The spec's stated order is
+  Phase 2 → Phase 3. The owner reordered it on the evidence below. Phase 1
+  already shipped `expected_horizon_sessions`, which is what Phase 3's pace fix
+  needs, so nothing blocks it.
+  *Evidence:* on 2026-08-26/27 the book went to fully flat. The evening
+  reviewer graded its own exits — EPD (5d) **premature**, "thesis may have only
+  been temporarily paused"; MRVL (5d) **premature**, "thesis intact... closed
+  position anyway". Two of the last three exits cut intact theses. Sizing
+  trades more precisely does not help when they are cut on day 5 against a
+  self-referential pace metric.
+- **§3.5 resolved: leave the reviewer's model alone, fix the scenario instead.**
+  The spec's premise — `position_reviewer` runs "the weakest model in the
+  stack" — is contradicted by `ops/model_policy/results/merged.json`:
+  `google/gemini-2.5-flash-lite` scores `quality_min 1.0 / quality_mean 1.0`
+  at `midday_exit`, tied with `openai/gpt-5.5`,
+  `deepseek/deepseek-v4-pro-0813`, `qwen/qwen3.7-flash` and
+  `qwen/qwen3-235b-a22b-2507`, and scores 1.0 on every scenario it was ever
+  measured on. `gpt-5.5` costs ~84x more per review ($0.0927 vs $0.0011) for
+  no measured gain. The real EPD/MRVL failure was a broken pace metric and
+  missing memory, not model weakness. The honest gap is that `midday_exit`
+  ties five of twelve candidates at 1.0 and therefore does not discriminate;
+  the owner chose to build a scenario that does (the EPD shape: metrics
+  improved, reason claims stalling) rather than pay 84x on faith. Routing
+  unchanged.
+
+### 2026-08-28 — config drift between git and the production box, closed
+
+**In plain words:** the live trading box had five settings that had been
+hand-edited directly on the server and never saved into git. Any deploy that
+skipped a manual save/restore step would have silently wiped them out —
+including the two changes made specifically to end that day's outage.
+
+**Config drift is closed (2026-08-28).** `config/settings.yaml` in git now
+matches the production box byte for byte. Until this change the box carried
+five hand-edited values that existed nowhere in git, so any deploy that lost
+the stash/pop step would have silently reverted them — including the two that
+were raised specifically to end the 2026-08-28 outage. Reconciled:
+
+| setting | was in git | now (and live) |
+| --- | --- | --- |
+| `intraday_scan.enabled` | `false` | `true` |
+| `llm_cost_circuit.daily_cost_limit_usd` | `1.50` | `2.75` |
+| `llm_cost_circuit.session_reserved_exposure_limit_usd` | `1.80` | `2.60` |
+| `llm_cost_circuit.daily_reserved_exposure_limit_usd` | `1.90` | `5.50` |
+| `llm_cost_circuit.max_paid_sessions_per_mode_per_day` | `2` | `8` |
+
+Two corrections to the 2026-08-28 notes recorded elsewhere in this file: the
+git baseline for `daily_reserved_exposure_limit_usd` was `1.90`, not `3.20`
+(`3.20` was itself an earlier uncommitted box value), and `daily_cost_limit_usd`
+was also a git delta — the box had been running `2.75` against a committed
+`1.50`.
+
+### 2026-08-28 — a stale branch-preview server was masking a week of cockpit work as Mission Control
+
+**In plain words:** for a week, checking the dashboard at a bookmarked
+address showed old code, making finished work look like it hadn't shipped.
+The address was never Mission Control at all — it was a throwaway preview
+server someone forgot to kill.
+
+**The Mission Control URL — and a stale preview that was masking a week of
+work (2026-08-28).**
+
+- The correct, production Mission Control address is
+  `https://ovh-vps.wallaby-bowfin.ts.net/cockpit/`. Tailscale Serve proxies
+  tailnet-only port 443 to the qamc API on `127.0.0.1:8800`.
+- The qamc API binds loopback-only by design (`QUANT_AGENT_API_HOST=127.0.0.1`
+  in `quant-agent-api.service`). Tailscale Serve, not the bind address, is what
+  makes it reachable. Do not "fix" reachability by rebinding the service.
+- `http://100.111.170.97:8810/cockpit` is NOT Mission Control. It was
+  `ops/preview/branch_preview.py`, the ephemeral branch-preview server,
+  running as the parked `dev` account out of
+  `/home/dev/projects/quant-agent-dashboard`. Its own module docstring states
+  it has no systemd unit and no auto-start and is meant to be killed after a
+  review session.
+- It was started 2026-08-21 16:16 ET and was still running on 2026-08-28,
+  seven days later. It served a bundle built 2026-08-21 09:43 containing no
+  dockview layout key at all — predating PR #120 entirely. None of the cockpit
+  trader-view work (PR #120, pass 2 via PR #130, pass 3 via PR #137) was
+  visible at that address.
+- The orphaned process (PID 2267757) was killed on 2026-08-28. Port 8810 is
+  now closed. The production URL was re-checked immediately afterward and
+  returned HTTP 200.
+- **Diagnostic worth keeping:** to tell the two apart in one step, compare the
+  hashed bundle filename returned by `curl -sk
+  https://ovh-vps.wallaby-bowfin.ts.net/cockpit/` against whatever else claims
+  to be the cockpit. Different filenames mean something other than production
+  is being served.
+- **Consequence for `feat/telegram-links` (PR #136):** it defaults
+  `notifications.mission_control_url` to the stale
+  `http://100.111.170.97:8810/cockpit` in both `config/settings.yaml` and
+  `src/config.py`. That is being corrected to the HTTPS tailnet host before
+  merge; note it here so the reason is on record.
+- State plainly that this is the likely explanation for the operator
+  repeatedly seeing old cockpit code after deploys that had in fact landed
+  correctly.
+
+### 2026-08-28 — earnings cache asserts price-derived valuation from filing-only input
+
+**In plain words:** a cached earnings writeup twice mentioned P/E and market
+cap even though the analyst was only ever given the filing text, not a
+price. Logged and accepted rather than fixed — it is a cosmetic mismatch,
+not a wrong conclusion.
+
+#### EARNINGS CACHE ASSERTS PRICE-DERIVED VALUATION
+Repeated on 2026-08-28 for MTZ and KO: the cached earnings analysis asserts price-derived valuation (P/E, market cap) in `valuation_context`, but the agent was given filing text only. Pre-existing; logged as a warning and otherwise ignored.
+
+### 2026-08-28/29 — the rehearsal rig's own non-defects, confirmed rather than assumed
+
+**In plain words:** two behaviors that looked like they might be bugs during
+rehearsal-rig testing were checked directly and turned out to be the system
+working exactly as intended.
+
+**Confirmed working as designed, not defects:** running with no `--source-data` at all correctly fails closed at the pricing gate ("the cost circuit cannot confirm current rates offline and will suspend paid analysis") before any model call, rather than proceeding with an unbounded cost; and deleting every row from a sandbox copy's `positions` table (simulating a flattened book) correctly surfaced the trade-ledger-vs-broker stop-out reconciler declining to guess ("recording nothing rather than guessing") for all six affected symbols, with the session still completing end-to-end rather than crashing on the inconsistency.
+
+### 2026-08-29 — short selling ships finished and enabled, not behind a flag
+
+**In plain words:** an early draft proposed shipping the new short-selling
+feature switched off by default, "to be safe." The owner overruled that: on
+a paper account with no real money, a disabled feature is just unvalidated
+code hiding from its own bugs.
+
+- **Short selling ships finished and enabled, not behind a flag.** An earlier
+  draft proposed shipping Phase 5 stages 2-3 disabled by default. The owner
+  rejected that: this is a paper account that resets, markets are closed,
+  there are no users and no real money, and a disabled feature is unvalidated
+  code — the point of reaching the finish line is to surface the next layer
+  of bugs. The gate is completeness and verification, not a switch.
+
+### 2026-08-29/09-02 — a bad analyst seat now gets its own Telegram alert
+
+**In plain words:** before this, a broken data feed for one analyst only
+showed up as one easy-to-miss line inside a routine summary message. Now it
+pages the owner directly, on its own, every time.
+
+**Also shipped: a bad analyst seat now gets its OWN Telegram alert.**
+Before this, `data_status` anything but "ok"/"empty" only showed up as one
+line inside the routine session-result message — exactly what the alert
+rule below forbids. See PR merging `feat/data-quality-alert`.
+
+### 2026-08-30 — inverse ETFs stay tradeable; paid news sources refused permanently
+
+**In plain words:** two quick owner rulings that closed open questions from
+an earlier session: keep the inverse ETFs on the tradeable list, and never
+pay for a news source.
+
+Two owner decisions ratified 2026-08-30, recorded as ratified, not inferred:
+
+- **The inverse exchange-traded funds stay in the tradeable list**, not
+  retired. Rex: *"they have their uses they can still be useful for some
+  situations."*
+- **Paid news sources are refused, permanently.** Rex: *"not worth paying for.
+  There has to be other sources available."* Free sources only — closes the
+  open question the previous session left.
+
+### 2026-09-01 — a held short's sector exposure is tracked per side, not netted against a long
+
+**In plain words:** a short position was making its own sector look
+artificially small to the risk system, because a short and a long in the
+same sector were being netted against each other as if they cancelled out.
+The owner clarified the desk trades opportunities, not hedges, so long and
+short exposure in a sector are now each checked against the same limit,
+independently.
+
+**~~A held SHORT makes its sector look SMALLER to the risk engine~~ — DECIDED
+AND BUILT 2026-09-01.** The owner answered the question this item was raised
+to ask: the sector cap measures **concentration, per side**, not net
+directional exposure. Long sector exposure and short sector exposure are now
+tracked independently, each against the same limit, and neither offsets the
+other — *"A long and a short in the same sector is not a hedge... We are
+trading opportunities."*
+
+Gross summing was considered and REJECTED, because it would block a legitimate
+pair trade (long the leader, short the laggard in one hot sector). Ratified as
+spec §12.2 and implemented the same day; the build record, the four
+implementations it reconciled, and the yfinance sector-coverage exposure it
+did NOT fix are all in `docs/QAMC_REMEDIATION_SPEC.md` §12.2. (The 90%
+absolute sector ceiling shipped alongside it, spec §12.3, was left open for
+the owner to ratify and stays tracked in `docs/WORK.md`.)
+
+### 2026-09-01 — fractional shares reversed back in, now that the stop is not an OTO bracket leg
+
+**In plain words:** fractional-share buying had been turned off earlier
+because of a specific technical reason. That reason stopped being true back
+in July, so the feature was turned back on.
+
+- **Fractional shares are IN — this decision was REVERSED on 2026-09-01**
+  (spec §11.1) and BUILT the same day. The original reasoning rested on the
+  stop being an OTO bracket leg; it has not been one since 2026-07-16, so the
+  fill→stop window fractional was said to introduce already existed on every
+  entry. Owner: *"if the gap is brief upon entry, then it's irrelevant to
+  eliminate that option."* Behind `execution.fractional_enabled` (default on),
+  gated on a broker-confirmed `fractionable` flag that fails closed, with the
+  three required stop-placement guards. Recovers the whole-share rounding tax
+  (V wanted 6%, got 3.84%).
+
+### 2026-09-02 — funnel-queue tail causes, working as intended
+
+**In plain words:** a handful of trade ideas that never became trades, each
+for an ordinary, correct reason — not enough cash, a dirty quote, an
+outright broker rejection. Not worth chasing further.
+
+**9. Tail causes — 3 of 68 combined. WORKING AS INTENDED.**
+
+Insufficient cash (1), a quote 14.6% off reference rejected as dirty data (1),
+outright broker rejection (1). Not material; do not spend time here.
+
+### 2026-09-03 — the afternoon spending reserve is moot, deleted along with the budget guard it belonged to
+
+**In plain words:** an old, half-wired safety feature became irrelevant when
+the budget system it was part of got rebuilt from scratch. There is nothing
+left to finish.
+
+**16. The afternoon spending reserve — MOOT, deleted with item 14.**
+
+Was 37 unwired lines on `fix/dollar-based-session-cap` (2026-08-29). Item
+14's rewrite deleted the entire projection-based reservation layer this
+belonged to, so there is nothing left to wire in. Nothing to do.
+
+### 2026-09-04 — a cosmetic double-log line after a rejected BUY
+
+**In plain words:** a rejected trade sometimes logs a second, confusing
+line underneath the real reason. Harmless, low priority, recorded so it
+isn't rediscovered as new.
+
+- After the constructor rejects a BUY for reward:risk, it logs a second confusing line — "no valid stop below entry (stop=None)" — because the None propagates. Cosmetic.

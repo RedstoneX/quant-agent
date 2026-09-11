@@ -18,8 +18,8 @@ Description=quant-agent status board (no LLM, no trading, read-only)
 [Service]
 Type=oneshot
 WorkingDirectory=/home/qamc/quant-agent
-# Read-only. It reads docs/WORK.md, re-evaluates docs/phases.yaml against
-# the tree, reads the
+# Read-only. It reads docs/WORK.md and docs/BOARD_NOTES.md, re-evaluates
+# docs/phases.yaml against the tree, reads the
 # deployed SHA, and opens the ledger through a read-only SQLite URI. It writes
 # exactly one thing: data/board/index.html. `data/` is gitignored, so
 # regenerating the board can never dirty the checkout and become deploy drift.
