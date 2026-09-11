@@ -392,9 +392,9 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
 - Moderate conviction (partial confirmation or one named conflict): 1.0-2.5%
 - Low conviction: 0.5-1.0% or skip
 - **Hard cap: never exceed 5% risk per position.** The resulting
-  notional weight is separately capped at 100% single-name (a
-  concentration/liquidity backstop, raised from 20% on 2026-09-04 — see
-  below). `max_position_pct` is a HARD BLOCK in the risk engine, not a
+  notional weight is separately capped at 65% single-name (a SURVIVAL
+  ceiling against single-name gap risk, lowered from 100% on 2026-09-11,
+  owner-set — see below). `max_position_pct` is a HARD BLOCK in the risk engine, not a
   trim — so `PortfolioConstructor` clamps to that ceiling itself before
   an order ever reaches the engine, and your risk comes in under what
   you asked for rather than the trade being dropped, if it ever binds.
@@ -411,11 +411,36 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   has since moved 3.0 -> 1.5 (2026-09-04) -> 2.5 (2026-09-10, current —
   see that setting's own comment in settings.yaml for the derivation), so
   real stops today are back close to that original 5-9% band, not
-  roughly half of it. The ceiling is now 100% (see `risk.max_position_pct`
-  in settings.yaml for the full derivation) — at real stop distances
-  the full 0.5-5% conviction range should now reach the risk it asks
-  for, and this ceiling should only ever bind on a genuinely too-tight
-  stop, not an ordinary one. Size by conviction; do not shade the
+  roughly half of it. That ceiling went to 100% on 2026-09-04.
+
+  **2026-09-11: 100 -> 33 -> 65 the same day.** The justification written
+  for 100% said it was safe because the account was cash-only — but
+  margin had already been switched on two days before that was written,
+  so 100% of equity in one name was genuinely reachable. 33% was then
+  derived as a SURVIVAL ceiling, not a diversification rule (this is a
+  trading desk, not a fund — do not reason about it as portfolio
+  construction): every other risk number you work with, including the
+  0.5-5% bands above, prices risk as the distance to your stop — i.e. the
+  loss IF THE STOP FILLS. This cap is the only one that bounds the loss
+  when it does not: an overnight gap, a trading halt, a fraud disclosure,
+  a regulatory action. Real examples of exactly that, in one session:
+  Luckin Coffee −75% (2020-04-02), Wirecard −62% (2020-06-18), Silicon
+  Valley Bank −60% then halted (2023-03-09). No amount of agreement
+  between your analysts reduces this risk — every seat is reading the
+  same public record and shares the same blind spot.
+  **The owner then reviewed that derivation directly and set 65% as his
+  own risk-appetite call, not 33%.** At 65%, a −60% event in one name no
+  longer stays under the desk's emergency de-levering threshold the way
+  33% guaranteed — accepted knowingly. See `risk.max_position_pct` in
+  settings.yaml for the full numbers on both sides of that trade-off.
+
+  **What that means for you, practically:** at current stop distances
+  this ceiling mostly does NOT bind on ordinary trades — 65% clears the
+  full conviction range at realistic stop distances, unlike 33% which
+  would have. It remains a real hard ceiling: no conviction, however
+  high, and no stop, however tight, buys more than 65% in one name. Keep
+  sizing by conviction exactly as described above; the clamp is applied
+  for you and is written into the order's audit trail. Do not shade the
   number to guess at a name's volatility, the stop distance already
   carries that.
 
