@@ -283,36 +283,29 @@ risk:
   # stop distances a 20% ceiling caps DELIVERED risk to `20% x stop_pct`
   # regardless of stated conviction. Measured live: 6 of 13 proposed orders
   # pinned at exactly 20% notional; a 2.8% and a 1.0% risk request both
-  # delivered ~1% either way. The 2026-08-27 stop-width fix (`min_stop_atr_
-  # multiple: 3.0` above) independently pushes quiet-name stops out to
-  # roughly 5-9% (see that setting's own comment) — at the tight end of
-  # that range, reaching the full 5% envelope needs `5 / 5 x 100 = 100%`
-  # notional. 100 is therefore the number where the 20-100% "normal" range
-  # this desk actually produces (see min_stop_atr_multiple's own measured
-  # 5-9% figure) stops being clipped, while a stop tighter than 5% — only
-  # reachable today via the level-backed exception down to
-  # `absolute_min_stop_atr_multiple: 1.0` (~2.56% at the median 2.56% ATR
-  # this desk trades) — still gets clamped, which is exactly the
-  # "genuinely too tight" case this cap exists for.
+  # delivered ~1% either way.
+  #
+  # RE-DERIVED 2026-09-11 against the CURRENT stop floor (this file's
+  # min_stop_atr_multiple moved 3.0 -> 1.5 -> 2.5 since this cap was first
+  # set; the 5-9%/~3.5% figures once written here are both stale — do not
+  # trust either without recomputing, which is exactly what this update
+  # does). At 2.5x ATR base (0.90-1.20x setup/regime scalers) and this
+  # desk's ~2.56% median ATR, typical stops now run ~5.5-7.7% of price.
+  # At the current 4% conviction-band ceiling (item 32, 2026-09-11), that
+  # needs `4 / 5.5 x 100 ≈ 73%` notional — comfortably inside 100 with real
+  # headroom, not a close call. Only a stop tighter than ~4-5.5% of price
+  # (reachable via the level-backed exemption down to
+  # `absolute_min_stop_atr_multiple: 1.0`, ~2.56% at the median ATR) still
+  # hits this clamp — the same, already-intentional "genuinely too tight"
+  # case this cap exists for, not a new edge case.
   #
   # 100 was chosen over a larger number (the math above tops out needing
   # ~195% notional for that 1x-ATR degenerate floor) because `allow_margin`
   # is false: the cash-only rule already makes anything past 100% of equity
   # in one name unreachable in practice, so 100 IS the real ceiling — this
   # only documents it rather than leaving a number that does nothing.
-  # Revisit together if `allow_margin` ever flips on.
-  #
-  # KNOWN INTERACTION, RECORDED 2026-09-04, NOT FIXED HERE. The stop floor
-  # above went 3.0 -> 1.5 the same day, which roughly HALVES real stop
-  # distances: at the median 2.56%-of-price ATR this desk trades, a floored
-  # stop is now ~3.5% rather than ~5-9%. `notional = risk / stop` then wants
-  # `5 / 3.5 x 100 = ~143%` of equity to deliver the full 5% envelope, so
-  # this 100 cap binds again on tight-stop names and delivers ~3.5% risk
-  # instead of 5%. That is NOT a regression introduced by the stop fix —
-  # `allow_margin: false` makes >100% of equity in one name physically
-  # unreachable regardless of what any cap says. It is the cash-only rule
-  # showing through. Stated here so nobody re-derives it as a new defect;
-  # whether to enable margin is an owner call, not a config tweak.
+  # Revisit together, and re-derive this comment again, if either
+  # `min_stop_atr_multiple` or `allow_margin` ever changes again.
   max_position_pct: 100
   # Caps NET exposure (longs minus shorts) as % of equity.
   #
