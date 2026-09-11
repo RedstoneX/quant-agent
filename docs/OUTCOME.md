@@ -23,8 +23,10 @@ problem with that... This is a trading desk, not a long-term retirement desk."*
   hot sector is a legitimate and often correct trade. A sector limit's ONLY
   defensible job here is bounding correlated blow-up risk — one shock taking
   several positions at once — and it should be sized for that, not for
-  diversification. **The current 40% target is a retirement-portfolio number
-  and should be revisited on those grounds.**
+  diversification. **The 40% target was a retirement-portfolio number; it was
+  revisited on those grounds and moved to a 75% target / 90% absolute
+  ceiling (`docs/WORK.md` spec §12.3; `config/settings.yaml`
+  `max_sector_pct` / `max_sector_hard_pct`).**
 - **A long and a short in the same sector are NOT a hedge.** They are two
   separate opportunity trades that happen to share a sector label. Treating
   them as offsetting imports a portfolio-construction assumption that does not

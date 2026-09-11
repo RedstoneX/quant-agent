@@ -186,7 +186,9 @@ class ConstructorConfig:
     # 100 -> 33 on 2026-09-11. The 2026-09-04 justification for 100 rested on
     # `allow_margin` being false, which had ALREADY been flipped to true two
     # days earlier (2026-09-02) — so 100 was a live single-name ceiling, not
-    # the unreachable documentation it was described as. 33 was derived from
+    # the unreachable documentation it was described as (a separate pass
+    # this same day independently caught and recorded the same drift before
+    # this fix landed — see docs/INCIDENT_HISTORY.md). 33 was derived from
     # this desk's own -20% `GROSS_LADDER` rung against a -60% median real,
     # dated single-session idiosyncratic collapse — see `risk.max_position_pct`
     # in config/settings.yaml for the full derivation.
