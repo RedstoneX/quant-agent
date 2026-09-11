@@ -920,3 +920,342 @@ def test_refusing_to_add_to_a_held_name_drops_it_and_never_zeroes_it():
                                         or t.target_weight_pct == 0)
         for t in result.targets
     ), "a zeroed target would read as a SELL of a position we still want held"
+
+
+# --------------------------------------------------------------------------
+# END TO END — does a verified exception actually produce an order?
+#
+# Until 2026-09-11 it did not, and nothing in this file noticed. The PM gate
+# verified the citation and capped the size, and then
+# `PortfolioConstructor._widen_stop_past_noise` refused the order on
+# `min_reward_risk_after_widening` — the same floor, applied a second time one
+# stage later with no knowledge that the exception had been granted. So parts
+# (b) and (c) of docs/WORK.md item 1 were decorative: every verified catalyst
+# produced exactly nothing.
+#
+# The tests below pin the whole chain, in both directions, plus the guards
+# that keep the exemption narrow: it lifts the FLOOR refusal only, it is not
+# model-settable, and it never rescues unmeasurable geometry.
+# --------------------------------------------------------------------------
+
+def _subfloor_analysis(symbol: str = "AAA") -> TechAnalysisResult:
+    """A MEASURABLE sub-floor long: entry 100, level-backed stop at 95,
+    computed resistance at 106 → real reward:risk 1.2, under the 1.5 floor
+    and comfortably under the execution belt's 1.2 as well. Every price here
+    is a level the system computed, so nothing is refused for missing
+    structure — the only thing wrong with this trade is that the payoff is
+    thin, which is precisely the case a verified catalyst is meant to permit.
+    """
+    return TechAnalysisResult(
+        symbol=symbol, rating="buy", conviction="medium", entry_price=100.0,
+        stop_loss=95.0, reference_target=106.0, support_levels=[95.0],
+        resistance_levels=[106.0], computed_levels=[95.0, 106.0],
+        atr_14=(100.0 - 95.0) / 3.5, setup_type="range",
+        expected_horizon_sessions=60, reasoning="test",
+        reasoning_chain=_tech_rc(),
+    )
+
+
+def _verified_nvda_decision():
+    """The PM gate's own output for a sub-floor NVDA long citing the real
+    2026-08-31 bullish Lambda row. Not hand-built: run through
+    `_apply_subfloor_catalyst_rule` so the flag under test can only be set
+    the way production sets it."""
+    analysis = _subfloor_analysis("NVDA")
+    decision = _decision([
+        _target("NVDA", risk=4.0, catalyst="2026-08-31: Lambda cloud deal"),
+    ])
+    return _apply(decision, [analysis]), analysis
+
+
+def test_the_verified_flag_is_set_by_the_gate_and_travels_with_the_target():
+    result, _ = _verified_nvda_decision()
+    assert len(result.targets) == 1
+    target = result.targets[0]
+    assert target.subfloor_catalyst_verified is True
+    assert target.risk_allocation_pct == STARTER_POSITION_RISK_PCT
+
+
+def test_a_target_clearing_the_floor_is_never_flagged():
+    """The flag must mean "the exception was granted", not "a target went
+    through the gate". A normal trade carries no exemption into the
+    constructor."""
+    decision = _decision([_target("GEV", risk=4.0)])
+    result = _apply(decision, [_analysis("GEV", target=112.0)])
+    assert len(result.targets) == 1
+    assert result.targets[0].subfloor_catalyst_verified is False
+
+
+def test_the_flag_cannot_be_asserted_by_the_model():
+    """THE control. Prompt compliance is not a control, so the flag the
+    constructor trusts must be one only Python can write. A model emitting it
+    in its JSON is ignored — and the target is still judged on its catalyst,
+    so it is still dropped.
+
+    Both spellings are tried: the public read name and the private attribute
+    behind it. Neither is reachable from input."""
+    from src.models import TargetPosition
+
+    for key in ("subfloor_catalyst_verified", "_subfloor_catalyst_verified"):
+        row = _target("NVDA", risk=4.0, catalyst=LIVE_NVDA_CATALYST)
+        row[key] = True
+        assert TargetPosition(**row).subfloor_catalyst_verified is False, key
+
+    row = _target("NVDA", risk=4.0, catalyst=LIVE_NVDA_CATALYST)
+    row["subfloor_catalyst_verified"] = True
+
+    result = _apply(_decision([row]), [_subfloor_analysis("NVDA")])
+    assert result.targets == [], (
+        "a self-asserted flag must not survive parsing, and the unverifiable "
+        "catalyst must still drop the target"
+    )
+
+
+def test_a_replayed_historical_row_cannot_claim_a_check_that_never_ran():
+    """`src/replay.py` and the Mission Control API both re-validate stored PM
+    output through this model. A stored row asserting the flag would be
+    claiming a verification that may never have happened."""
+    from src.models import TargetPosition
+
+    row = _target("NVDA", risk=0.5, catalyst="2026-08-31: Lambda cloud deal")
+    row["subfloor_catalyst_verified"] = True
+    assert TargetPosition.model_validate(row).subfloor_catalyst_verified is False
+
+
+def test_an_unflagged_subfloor_target_is_still_refused_by_the_constructor():
+    """The ordinary floor path, unchanged. This is the behaviour that was
+    correct all along and must stay correct: a thin payoff with no verified
+    catalyst does not get an order."""
+    from src.portfolio_constructor import PortfolioConstructor
+    from src.models import TargetPosition
+
+    analysis = _subfloor_analysis()
+    constructor = PortfolioConstructor()
+    assert analysis.risk_reward == 1.2, "fixture must be measurably sub-floor"
+    target = TargetPosition(
+        symbol="AAA", conviction="medium", direction="long", thesis="t",
+        risk_allocation_pct=0.5,
+    )
+    assert target.subfloor_catalyst_verified is False
+    assert constructor._resolve_entry_and_stop(target, analysis, 100.0) == (
+        None, None,
+    )
+
+
+def test_a_verified_exception_actually_reaches_a_buildable_entry_and_stop():
+    """THE REGRESSION. This is the assertion whose absence made (b) and (c)
+    inert — the PM said yes, the constructor said no, and no test asked the
+    constructor."""
+    from src.portfolio_constructor import PortfolioConstructor
+
+    result, analysis = _verified_nvda_decision()
+    target = result.targets[0]
+    constructor = PortfolioConstructor()
+    entry, stop = constructor._resolve_entry_and_stop(target, analysis, 100.0)
+    assert entry == 100.0
+    assert stop == 95.0, (
+        "the level-backed stop must ship as-is — the exception lifts the "
+        "reward:risk refusal, it does not move the stop"
+    )
+
+
+def test_the_exception_lifts_only_the_floor_never_unmeasurable_geometry():
+    """Permission to take a poor payoff is not permission to take an unknown
+    one. A NaN makes every `ratio < floor` comparison False, which is exactly
+    how an unmeasurable trade would otherwise walk through a lifted floor."""
+    from src.portfolio_constructor import PortfolioConstructor
+
+    constructor = PortfolioConstructor()
+    analysis = _subfloor_analysis()
+    assert constructor._widen_stop_past_noise(
+        "AAA", analysis, 100.0, 95.0, direction="long",
+        target_price=float("nan"), subfloor_catalyst_exception=True,
+    ) is None
+
+
+def test_the_exception_does_not_rescue_a_stop_on_the_wrong_side_of_entry():
+    from src.portfolio_constructor import PortfolioConstructor
+
+    constructor = PortfolioConstructor()
+    analysis = _subfloor_analysis()
+    assert constructor._widen_stop_past_noise(
+        "AAA", analysis, 100.0, 105.0, direction="long",
+        target_price=106.0, subfloor_catalyst_exception=True,
+    ) is None
+
+
+def test_the_built_order_carries_the_exception_to_the_execution_stage():
+    """`TradeDecision.subfloor_catalyst_exception` exists so the
+    execution-time reward:risk belt can tell a deliberately-thin trade from
+    one execution has degraded. If the constructor does not set it, that belt
+    kills every exception order the moment anything drifts."""
+    from src.portfolio_constructor import PortfolioConstructor
+
+    result, analysis = _verified_nvda_decision()
+    target = result.targets[0]
+    constructor = PortfolioConstructor()
+    orders = constructor.construct_orders(
+        targets=[target], analyses=[analysis], positions=[],
+        total_value=100_000.0, price_map={"NVDA": 100.0},
+    )
+    buys = [o for o in orders if o.action == "BUY" and o.symbol == "NVDA"]
+    assert buys, f"the verified exception produced no BUY: {orders!r}"
+    assert buys[0].subfloor_catalyst_exception is True
+    assert buys[0].stop_loss == 95.0
+
+
+def test_an_ordinary_built_order_does_not_carry_the_exception():
+    from src.portfolio_constructor import PortfolioConstructor
+    from src.models import TargetPosition
+
+    # Same shape as `_subfloor_analysis` but with the computed resistance
+    # far enough out to clear the floor honestly (real R/R 2.4), so this
+    # control isolates the flag and nothing else.
+    analysis = TechAnalysisResult(
+        symbol="GEV", rating="buy", conviction="medium", entry_price=100.0,
+        stop_loss=95.0, reference_target=112.0, support_levels=[95.0],
+        resistance_levels=[112.0], computed_levels=[95.0, 112.0],
+        atr_14=(100.0 - 95.0) / 3.5, setup_type="range",
+        expected_horizon_sessions=60, reasoning="test",
+        reasoning_chain=_tech_rc(),
+    )
+    target = TargetPosition(
+        symbol="GEV", conviction="medium", direction="long", thesis="t",
+        risk_allocation_pct=2.0,
+    )
+    constructor = PortfolioConstructor()
+    orders = constructor.construct_orders(
+        targets=[target], analyses=[analysis], positions=[],
+        total_value=100_000.0, price_map={"GEV": 100.0},
+    )
+    buys = [o for o in orders if o.action == "BUY"]
+    assert buys, f"the control trade must still build: {orders!r}"
+    assert buys[0].subfloor_catalyst_exception is False
+
+
+# --------------------------------------------------------------------------
+# The EXECUTION-time reward:risk belt (docs/WORK.md funnel item 4, folded
+# into item 1(b) as that item instructs).
+#
+# The belt is a flat 1.2 and fires only when execution moved the geometry the
+# Risk Manager audited. A verified sub-floor exception order is BY
+# CONSTRUCTION below 1.5 and usually below 1.2, so the flat bar killed every
+# one of them on the first cent of drift — reporting "execution degraded this
+# trade" about a trade that was deliberately permitted at that ratio.
+# --------------------------------------------------------------------------
+
+def _order(*, entry, stop, target, exception: bool, action="BUY"):
+    from src.models import TradeDecision
+
+    return TradeDecision(
+        action=action, symbol="NVDA", allocation_pct=1.0, entry_price=entry,
+        stop_loss=stop, take_profit=target, reasoning="r",
+        subfloor_catalyst_exception=exception,
+    )
+
+
+def test_an_ordinary_order_answers_to_the_flat_execution_belt():
+    from src.pipeline_stages import (
+        EXECUTION_REWARD_RISK_BELT, _execution_rr_floor,
+    )
+
+    order = _order(entry=100.0, stop=95.0, target=112.0, exception=False)
+    assert _execution_rr_floor(order) == EXECUTION_REWARD_RISK_BELT
+
+
+def test_an_exception_order_answers_to_its_own_approved_geometry():
+    """Entry 100 / stop 95 / target 106 is reward:risk 1.2 exactly; make it
+    thinner (target 104 → 0.8) and the bar must follow it down, or the belt
+    is simply re-enforcing a floor this order was granted an exception
+    from."""
+    from src.pipeline_stages import _execution_rr_floor
+
+    order = _order(entry=100.0, stop=95.0, target=104.0, exception=True)
+    assert _execution_rr_floor(order) == pytest.approx(0.8)
+
+
+def test_the_exception_can_only_ever_lower_the_bar_never_raise_it():
+    """An exception order whose approved geometry happens to clear 1.2 does
+    NOT get a bar of 2.4. `min` is what guarantees this."""
+    from src.pipeline_stages import (
+        EXECUTION_REWARD_RISK_BELT, _execution_rr_floor,
+    )
+
+    order = _order(entry=100.0, stop=95.0, target=112.0, exception=True)
+    assert _execution_rr_floor(order) == EXECUTION_REWARD_RISK_BELT
+
+
+def test_an_unmeasurable_approved_geometry_buys_no_leniency():
+    """Fail closed, same posture as every other half of this gate.
+
+    `TradeDecision`'s own validators make an unmeasurable BUY geometry
+    unreachable through normal construction — a target below entry or a stop
+    above it is rejected outright — so this reaches the branch the only way
+    it can be reached, via `model_construct`. The guard is kept because the
+    consequence of losing it is a NaN silently setting the bar (every
+    `nan < floor` comparison is False), which is the exact failure this
+    gate's siblings each carry their own fail-closed branch for."""
+    from src.models import TradeDecision
+    from src.pipeline_stages import (
+        EXECUTION_REWARD_RISK_BELT, _execution_rr_floor,
+    )
+
+    order = TradeDecision.model_construct(
+        action="BUY", symbol="NVDA", allocation_pct=1.0, entry_price=100.0,
+        stop_loss=95.0, take_profit=float("nan"), reasoning="r",
+        subfloor_catalyst_exception=True,
+    )
+    assert _execution_rr_floor(order) == EXECUTION_REWARD_RISK_BELT
+
+
+def test_a_short_exception_order_is_measured_on_short_geometry():
+    """The belt's own caller is long-only today, but the bar must not be
+    computed with long geometry on a short — that would read as unmeasurable
+    and silently hand the order the flat 1.2."""
+    from src.pipeline_stages import _execution_rr_floor
+
+    order = _order(
+        entry=100.0, stop=105.0, target=96.0, exception=True, action="SHORT",
+    )
+    assert _execution_rr_floor(order) == pytest.approx(0.8)
+
+
+def test_the_execution_flag_survives_a_risk_manager_modification_rebuild():
+    """`TradingPipeline._apply_risk_modifications` rebuilds the decision via
+    `TradeDecision(**decision.model_dump())`. A flag that did not survive
+    that round trip would silently re-arm the belt against every exception
+    order the RM touched."""
+    from src.models import TradeDecision
+
+    order = _order(entry=100.0, stop=95.0, target=106.0, exception=True)
+    rebuilt = TradeDecision(**order.model_dump())
+    assert rebuilt.subfloor_catalyst_exception is True
+
+
+# --------------------------------------------------------------------------
+# Pre-existing latent defect this fix unmasked (2026-09-11).
+# --------------------------------------------------------------------------
+
+def test_capping_a_target_does_not_unset_its_other_defaulted_fields():
+    """`LLMOutputModel._explicit_null_means_absent` deletes a key so the
+    declared default applies — correct on construction, DESTRUCTIVE on the
+    `validate_assignment` path, where the returned dict is the instance's
+    complete new state and a deleted key leaves the field genuinely unset.
+
+    The sub-floor gate's own starter-size cap is an assignment, so capping a
+    target deleted `thesis_invalid_if` and `catalyst` from it and
+    `PortfolioConstructor._build_buy` then raised `AttributeError` reading
+    `target.thesis_invalid_if`. It was latent on main only because the
+    constructor refused every capped order earlier for an unrelated reason —
+    the very refusal this branch fixes.
+    """
+    from src.models import TargetPosition
+
+    target = TargetPosition(
+        symbol="AAA", conviction="medium", direction="long", thesis="t",
+        risk_allocation_pct=4.0,
+    )
+    target.risk_allocation_pct = STARTER_POSITION_RISK_PCT
+    assert target.thesis_invalid_if == ""
+    assert target.catalyst == ""
+    assert target.risk_allocation_pct == STARTER_POSITION_RISK_PCT

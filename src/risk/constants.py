@@ -34,7 +34,11 @@ forbidden, but it must clear the catalyst gate and it is capped at
 catalyst_rule`).
 
 Consumers (must stay aligned — if you edit one, verify the others):
-  - `RiskConfig.min_reward_risk_after_widening`   (the constructor's gate)
+  - `RiskConfig.min_reward_risk_after_widening`   (the constructor's gate,
+                                                   which honours a verified
+                                                   sub-floor catalyst — see
+                                                   `TargetPosition.subfloor_
+                                                   catalyst_verified`)
   - `PortfolioManagerAgent.decide`                (the PM-side default)
   - `config/prompts/portfolio_manager.md`         ("Adjust by Risk/Reward")
   - `config/prompts/risk_manager.md`              (`rr_fail` verdict)
