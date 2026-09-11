@@ -73,13 +73,24 @@ export function PositionsPanel({
         </Callout>
       )}
       {positions.length > 0 && (
-        <DataTable
-          data={positions}
-          columns={columns}
-          getRowId={(position) => position.symbol}
-          initialSorting={[{ id: "market_value", desc: true }]}
-          onRowClick={onSelectSymbol ? (position) => onSelectSymbol(position.symbol) : undefined}
-        />
+        // pb-5 (20px): real breathing room below the table's last row,
+        // inside the card body. panel-body's own py-3 (12px, index.css)
+        // applies evenly top/bottom at the CARD edge, but the ring-bordered
+        // DataTable wrapper sat flush against that bottom padding with
+        // nothing beyond it, reading as cramped. Owner-requested 2026-09-11;
+        // real CSS padding, not synthetic empty rows.
+        <div className="pb-5">
+          <DataTable
+            data={positions}
+            columns={columns}
+            getRowId={(position) => position.symbol}
+            initialSorting={[{ id: "market_value", desc: true }]}
+            onRowClick={onSelectSymbol ? (position) => onSelectSymbol(position.symbol) : undefined}
+            resizable
+            reorderable
+            storageKey="positions-columns"
+          />
+        </div>
       )}
     </Panel>
   );
