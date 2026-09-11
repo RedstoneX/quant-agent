@@ -484,18 +484,25 @@ with nothing able to separate them. `scripts/alert_heartbeat.py` closes that:
 
 Paid model requests share one persistent SQLite authority across systemd
 processes. It fails closed before provider I/O on missing/corrupt accounting,
-unknown or stale pricing/cost, unresolved attempted requests, excessive provider
-attempts, retries, repeated paid sessions, projected exposure, session spend or
-ET-day spend. Current limits are
-**$0.90 per session**, **$1.50 per ET day**, two provider attempts per logical
-call, two retry/repair attempts per session and two paid sessions per mode/day.
+unknown or stale pricing/cost, unresolved attempted requests, excessive
+provider attempts, session call count, or session/ET-day spend. Current
+limits are **$0.90 per session** and **$2.75 per ET day**, checked against
+real settled spend only, plus `max_calls_per_session` (40, a runaway-loop
+backstop) and a provider-attempt cap per logical call computed in code
+(`provider_attempt_budget()`, `src/agents/base.py`) rather than pinned here.
+**2026-09-02 (item 14):** the per-mode session cap, the separate per-session
+retry/repair-attempt limit, and the cost-reservation layer they existed to
+manage were all deliberately deleted — see `docs/WORK.md` item 14.
 
-Expected budget exhaustion creates the narrowest applicable quota hold: current
-run for session spend/retry exposure, current mode/day for paid-session count,
-or the current ET day for aggregate spend. Session holds do not block later
-independent runs. Day and mode/day holds rearm only after the ET date advances,
-the new ledger seeds exactly, accounting invariants pass and no prior-day
-attempted reservation remains unresolved. Trip and successful rearm each send
+Expected budget exhaustion creates the narrowest applicable quota hold: the
+current run (`run_id`) for session cost, call-count or provider-attempt
+exposure, or the current ET day for aggregate spend. Session holds do not
+block later independent runs. Day holds rearm only after the ET date
+advances, the new ledger seeds exactly, accounting invariants pass and no
+prior-day attempted reservation remains unresolved. (A `mode_day` hold scope
+still exists in the schema/rearm logic purely to recognize pre-2026-09-02
+historical rows; nothing in the current code can create a new one — see
+`docs/WORK.md` item 14.) Trip and successful rearm each send
 one deduplicated Telegram alert. Missing/corrupt or inexact accounting, unknown
 pricing/cost, unresolved attempted requests, provider-attempt exhaustion and any
 unrecognized trigger remain a hard global latch requiring an auditable operator
