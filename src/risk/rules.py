@@ -199,8 +199,8 @@ def sector_side_weights(
 # once.
 #
 # THE COST, STATED PLAINLY BECAUSE IT IS REAL: at 75% of equity in one
-# sector, an ordinary 20% sector-wide drawdown costs 15% of equity — FIVE
-# TIMES the 3% daily-loss circuit breaker (`max_daily_loss_pct`), and it will
+# sector, an ordinary 20% sector-wide drawdown costs 15% of equity — more than
+# TWICE the 6.7% daily-loss circuit breaker (`max_daily_loss_pct`), and it will
 # trip the de-levering ladder. That is the accepted price of a concentrated
 # trading desk, not an oversight.
 #
@@ -539,6 +539,21 @@ def agreement_ceiling_for_score(schedule: list[float] | tuple[float, ...], score
 #: The 2.0x row is the CONFIGURED cap (`risk.max_gross_exposure_x`), not a
 #: rung — the ladder can only ever tighten it, never raise it, so an operator
 #: who lowers the setting lowers every rung with it.
+#:
+#: **This is not the desk's only drawdown response, and the two were never
+#: reconciled (docs/WORK.md item 32, bug 2).** The rolling-return "drawdown
+#: brakes" (`RiskConfig.drawdown_5d_threshold_pct` /
+#: `drawdown_20d_threshold_pct`, halving new BUY size via
+#: `apply_drawdown_scale`) measure a DIFFERENT quantity — rolling window
+#: return, not peak-to-trough — and were calibrated independently. As of
+#: 2026-09-04 they are at least no longer in open contradiction with this
+#: table: the 5-day brake fires at -15%, matching the 1.0x rung, and the
+#: 20-day brake was moved from -40% to -20% so it can no longer stay silent
+#: past the point THIS ladder escalates to the owner. That is a floor on the
+#: disagreement, not agreement. Whether one drawdown response should govern
+#: both, and which, is an open OWNER-level design question. **Do not
+#: re-tune either side in isolation** — changing this table without checking
+#: `src/config.py::drawdown_20d_risk_multiple` re-opens the same gap.
 GROSS_LADDER: tuple[tuple[float, float], ...] = (
     (-8.0, 1.5),
     (-15.0, 1.0),

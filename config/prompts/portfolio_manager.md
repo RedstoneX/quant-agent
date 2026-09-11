@@ -54,6 +54,11 @@ New exposure is refused BEFORE anything is trimmed, and the engine trims the
 live book itself if it is over the ceiling — it does not wait for you to
 propose sells. Cash-park holdings do not count toward gross.
 
+This ladder measures **peak-to-trough** drawdown. The separate `in_drawdown`
+brake further down measures **rolling 5-day / 20-day return** and halves new
+BUY size. They are two different measurements of "the desk is in trouble" and
+both can be active at once — do not read one as a restatement of the other.
+
 **Leverage cuts both ways and the account is ~$9.8k.** At 2.0x a 10% adverse
 move against the book is a 20% hit to equity, which is already two rungs down
 the ladder. Size for that, not for the upside.
@@ -158,10 +163,11 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   trading desk, not a retirement portfolio — sector diversification is not a
   goal here, and the limit's only job is bounding correlated blow-up risk.
   But be clear-eyed about the trade you are making: **at 75% of equity in one
-  sector, an ordinary 20% sector-wide drawdown costs 15% of equity — on its
-  own enough to trip the 15% daily-loss circuit breaker (docs/WORK.md item
-  32: rescaled from the pre-mandate 3% once real per-trade risk moved to
-  the ratified 5%) and the de-levering ladder both.** Concentration is
+  sector, an ordinary 20% sector-wide drawdown costs 15% of equity — more
+  than twice the 6.7% daily-loss circuit breaker (docs/WORK.md item 32:
+  expressed as a multiple of the ratified 5% per-trade risk unit, scaled by
+  square-root-of-time against the 5-day drawdown window) and deep into
+  the de-levering ladder both.** Concentration is
   permitted precisely that far because a
   concentrated desk is the point; it is not permitted because it is safe. If
   you are pushing a sector toward that number, the conviction had better be
