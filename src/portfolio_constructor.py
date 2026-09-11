@@ -186,26 +186,29 @@ class ConstructorConfig:
     # 100 -> 33 on 2026-09-11. The 2026-09-04 justification for 100 rested on
     # `allow_margin` being false, which had ALREADY been flipped to true two
     # days earlier (2026-09-02) — so 100 was a live single-name ceiling, not
-    # the unreachable documentation it was described as. 33 is derived in
-    # full under `risk.max_position_pct` in config/settings.yaml; the short
-    # version is that this is the ONLY parameter bounding a loss when the
-    # stop does not fill (gap, halt, fraud, regulatory action), every other
-    # risk number on the desk being stop-conditional, and 33 is what keeps a
-    # single -60% idiosyncratic gap — the median of five real, dated
-    # single-session collapses — from alone reaching the -20% `GROSS_LADDER`
-    # rung where the owner is alerted. SURVIVAL against single-name tail
-    # risk, NOT diversification, variance reduction or risk parity, all of
-    # which are rejected for this desk.
+    # the unreachable documentation it was described as. 33 was derived from
+    # this desk's own -20% `GROSS_LADDER` rung against a -60% median real,
+    # dated single-session idiosyncratic collapse — see `risk.max_position_pct`
+    # in config/settings.yaml for the full derivation.
     #
-    # This ceiling therefore BINDS on ordinary trades again, knowingly: a 3-4%
-    # agreement-band request needs ~39-73% notional at current stop distances,
-    # so delivered risk where it binds is ~1.8-2.5%. Unlike the 2026-09-04
-    # case that is not a bug, because the clamp is deliberate and is written
-    # into the audit trail by `_build_buy`'s `cap_note`. Conviction still
-    # sizes trades relative to each other below the ceiling.
+    # 33 -> 65 the same day, owner override. Reviewed the derivation directly
+    # and set his own risk-appetite number rather than the ladder-consistent
+    # one — recorded honestly, not re-derived to fit. At 65 the SAME median
+    # disaster (-60%) now costs ~39% of equity, past the -20% alert rung
+    # rather than under it; only the mildest of the five reference events
+    # stays under that line. The ladder still de-levers what remains — this
+    # number no longer prevents that rung from being reached by one name
+    # alone, the way 33 was built to. In exchange, 65 mostly does not bind
+    # on ordinary trades at current stop distances (33 bound knowingly; 65
+    # is mostly a pure backstop against the no-stop-fills case, not a live
+    # tax on everyday sizing). This is the ONLY parameter bounding a loss
+    # when the stop does not fill at all (gap, halt, fraud, regulatory
+    # action) — every other risk number on the desk is stop-conditional.
+    # SURVIVAL against single-name tail risk, NOT diversification, variance
+    # reduction or risk parity, all of which are rejected for this desk.
     # Keep in sync with `risk.max_position_pct` — pipeline.py wires them from
     # the same setting.
-    max_position_pct: float = 33.0
+    max_position_pct: float = 65.0
     # Spec §10.3 "concentration scales size, it does not veto". The sector
     # diversification target and the absolute ceiling behind it. Unlike every
     # other ceiling in this dataclass these do not merely make the constructor

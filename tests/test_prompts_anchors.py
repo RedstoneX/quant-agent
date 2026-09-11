@@ -34,11 +34,11 @@ _HARD_ANCHORS = (
     # Sizing math + caps that mirror RiskRuleEngine in src/risk/rules.py
     # + the HARD_BLOCK_RULES set in src/pipeline.py:53.
     (
-        "portfolio_manager.md", "capped at 33% single-name",
-        "single-name hard cap mirrors RiskConfig.max_position_pct=33 "
-        "(20 -> 100 on 2026-09-04, then 100 -> 33 on 2026-09-11 as a "
-        "survival ceiling against single-name gap risk; see settings.yaml) "
-        "and HARD_BLOCK_RULES['max_position_pct']",
+        "portfolio_manager.md", "capped at 65% single-name",
+        "single-name hard cap mirrors RiskConfig.max_position_pct=65 "
+        "(20 -> 100 on 2026-09-04, then 100 -> 33 -> 65 on 2026-09-11, the "
+        "last an owner risk-appetite override of the survival-ceiling "
+        "derivation; see settings.yaml) and HARD_BLOCK_RULES['max_position_pct']",
     ),
     (
         # Spec §12.3 (owner-ratified 2026-09-01) moved the sector limit

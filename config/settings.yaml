@@ -368,32 +368,42 @@ risk:
   #     Median -60%. Small and deliberately severity-weighted: this is a TAIL
   #     parameter, not a central estimate, and -60% is the magnitude twice
   #     independently observed above rather than the -75% worst case.
-  #     ARITHMETIC: 20 / 0.60 = 33.3 -> 33.
-  #     Cross-checks. At the -75% worst case a 33% position costs 25% of
-  #     equity: past the alert rung, but the desk still holds 75% of its
-  #     equity and trades on. At the mildest case above (-24%) it costs ~8%,
-  #     which trips exactly the FIRST ladder rung — correct, since even the
-  #     mild version of this event should be a real event for the desk.
+  #     ARITHMETIC: 20 / 0.60 = 33.3 -> 33. This is the LADDER-CONSISTENT
+  #     number — the largest single bet where even the median real disaster
+  #     above stays under the desk's own -20% emergency rung.
   #
-  # WHAT THIS COSTS, STATED PLAINLY RATHER THAN HIDDEN. At the stop distances
-  # derived above (~5.5-7.7%), a 3% tier-1 agreement request needs ~39-55%
-  # notional and a 4% tier-2 request ~52-73%. So 33 BINDS on ordinary trades,
-  # and delivered risk where it binds is ~1.8-2.5% rather than the full 3-4%.
-  # That is the same shape of effect PR #258 removed at 20, and it is being
-  # reintroduced KNOWINGLY, for a reason #258 did not have: the two ceilings
-  # govern different failure modes. The risk envelope prices the stop filling;
-  # this prices it not filling. When they disagree the tighter one must win,
-  # because the desk survives the first case either way and only survives the
-  # second if this number is small. Conviction-based sizing is otherwise
-  # untouched — a high-conviction idea is still sized larger than a low one,
-  # all the way up to this ceiling. The constructor already writes the clamp
-  # into the audit trail (`cap_note`), so this is never silent.
+  # (c) OWNER OVERRIDE, 2026-09-11 — 33 -> 65, recorded honestly rather than
+  #     re-derived to fit. The owner reviewed (a) and (b) directly, rejected
+  #     33 as too tight for a desk that does not trade penny/micro-cap names,
+  #     and set 65 as his own risk-appetite call. Stated explicitly at the
+  #     time: avoiding penny stocks does not remove this failure mode —
+  #     Luckin, Wirecard, SVB and Kraft Heinz above were all liquid,
+  #     well-covered, non-penny names — and the owner accepted that trade-off
+  #     with that correction on the table, not before it.
+  #     WHAT 65 ACTUALLY COSTS, AT THE SAME FIVE EVENTS: the mildest (-24%)
+  #     stays under the -20% rung (~15.6% of equity); the median (-60%) does
+  #     NOT (~39%, nearly double the emergency line); the worst case (-75%)
+  #     costs ~49%. So this is no longer "one gap cannot declare an emergency
+  #     by itself" — a median-severity disaster now can. The ladder still
+  #     fires and still de-levers what remains; it does not prevent the
+  #     initial loss the way 33 was built to.
+  #     THE OFFSETTING BENEFIT, also stated plainly: at the stop distances
+  #     derived above (~5.5-7.7%), 65 does not bind on ordinary trades at all
+  #     — a 4% tier-2 request's full notional range (~52-73%) mostly clears
+  #     under 65, and only the tightest-stop extreme still clips. 33 was
+  #     reintroduced KNOWINGLY as a live constraint; 65 is, by contrast,
+  #     mostly a backstop against the single-name gap/fraud/halt scenario
+  #     rather than a number that shapes everyday sizing. Conviction-based
+  #     sizing is unaffected either way — a high-conviction idea still sizes
+  #     larger than a low one, up to whichever ceiling is in force.
   # Never below `min_position_risk_pct` (0.5): even at the tightest stop the
-  # level-backed exemption allows (1.0x ATR, ~2.56%), 33% notional still
-  # delivers ~0.84% risk, so this cap shrinks trades and never refuses them.
-  # Re-derive this comment again if `allow_margin`, `max_gross_exposure_x`,
-  # `min_stop_atr_multiple` or the -20% `GROSS_LADDER` rung moves.
-  max_position_pct: 33
+  # level-backed exemption allows (1.0x ATR, ~2.56%), 65% notional still
+  # delivers well above the floor, so this cap shrinks trades and never
+  # refuses them outright.
+  # Re-derive (b) again if `allow_margin`, `max_gross_exposure_x`,
+  # `min_stop_atr_multiple` or the -20% `GROSS_LADDER` rung moves — (c) is
+  # the owner's number regardless, but the comparison above should stay current.
+  max_position_pct: 65
   # Caps NET exposure (longs minus shorts) as % of equity.
   #
   # 90 -> 200 on 2026-09-02. This number PREDATES the gross-exposure ladder

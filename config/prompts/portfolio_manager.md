@@ -392,9 +392,9 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
 - Moderate conviction (partial confirmation or one named conflict): 1.0-2.5%
 - Low conviction: 0.5-1.0% or skip
 - **Hard cap: never exceed 5% risk per position.** The resulting
-  notional weight is separately capped at 33% single-name (a SURVIVAL
-  ceiling against single-name gap risk, lowered from 100% on 2026-09-11 —
-  see below). `max_position_pct` is a HARD BLOCK in the risk engine, not a
+  notional weight is separately capped at 65% single-name (a SURVIVAL
+  ceiling against single-name gap risk, lowered from 100% on 2026-09-11,
+  owner-set — see below). `max_position_pct` is a HARD BLOCK in the risk engine, not a
   trim — so `PortfolioConstructor` clamps to that ceiling itself before
   an order ever reaches the engine, and your risk comes in under what
   you asked for rather than the trade being dropped, if it ever binds.

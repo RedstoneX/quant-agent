@@ -314,10 +314,11 @@ def test_raising_the_single_name_notional_cap_does_not_raise_the_total_risk_ceil
     )
     assert len(decisions) == 1
     # 1% of the risk budget left, at a 5% stop: $1,000 risk / $5 per share
-    # -> 200 shares -> $20,000 -> 20% notional. Under the 33% single-name
-    # ceiling and the sector's 90%, so neither notional ceiling is touched
-    # — the RISK ceiling is what binds, and it is unmoved by either
-    # notional-cap change.
+    # -> 200 shares -> $20,000 -> 20% notional. Under the single-name
+    # ceiling (33 as of the 2026-09-11 survival-ceiling fix, 65 after the
+    # owner's same-day override) and the sector's 90%, so neither notional
+    # ceiling is touched — the RISK ceiling is what binds, and it is
+    # unmoved by either notional-cap change.
     assert abs(decisions[0].allocation_pct - 20.0) < 0.05
     assert abs(decisions[0].allocated_risk_pct - 1.0) < 0.05
 
@@ -633,16 +634,16 @@ def test_a_fully_sized_name_produces_no_order_rather_than_a_zero_one():
 def test_the_ceiling_no_longer_flattens_conviction_at_realistic_stop_distances():
     """2026-09-04 real-data audit, and the fix pinned as a test.
 
-    RESTATED 2026-09-11, when `max_position_pct` moved 100 -> 33 (a
-    SURVIVAL ceiling against single-name gap risk — see
-    `risk.max_position_pct` in settings.yaml). The property this test
-    protects is unchanged and is the one that matters: conviction must
-    still CHANGE THE SIZE. At the old 20% ceiling it did not — low,
-    moderate and high conviction all landed on the same 20% position,
-    which destroys the entire premise of §2.1. At 33 the ceiling is a
-    CEILING again rather than a flattener: below it conviction is fully
-    expressed, and it only equalises trades that were both asking for
-    more notional than one name may ever hold.
+    RESTATED 2026-09-11, when `max_position_pct` moved 100 -> 33 -> 65 the
+    same day (a SURVIVAL ceiling against single-name gap risk, then an
+    owner risk-appetite override — see `risk.max_position_pct` in
+    settings.yaml). The property this test protects is unchanged and is
+    the one that matters: conviction must still CHANGE THE SIZE. At the
+    old 20% ceiling it did not — low, moderate and high conviction all
+    landed on the same 20% position, which destroys the entire premise of
+    §2.1. At 65 the ceiling is a CEILING again rather than a flattener:
+    below it conviction is fully expressed, and it only equalises trades
+    that were both asking for more notional than one name may ever hold.
     """
     constructor = PortfolioConstructor()
 
@@ -697,7 +698,7 @@ def test_the_survival_ceiling_caps_any_conviction_at_the_deployed_number():
     # deployed number, not the sector cap standing in for it.
     from src.portfolio_constructor import ConstructorConfig as _CC
     ceiling = _CC().max_position_pct
-    assert ceiling == 33.0
+    assert ceiling == 65.0
     assert alloc(5.0, 95.0) == ceiling
     assert alloc(5.0, 97.5) == ceiling
     # And the cap is what says so, in the audit trail — not the sector dial.
@@ -725,7 +726,7 @@ def test_the_deployed_ceiling_matches_settings_yaml():
     settings = yaml.safe_load(
         (Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text()
     )
-    assert settings["risk"]["max_position_pct"] == 33
+    assert settings["risk"]["max_position_pct"] == 65
     assert _CC().max_position_pct == float(settings["risk"]["max_position_pct"])
 
 
@@ -738,7 +739,7 @@ def test_the_survival_ceiling_shrinks_trades_and_never_refuses_them():
     position that small cannot pay for its own attention). At the TIGHTEST
     stop this desk permits (the level-backed exemption down to
     `absolute_min_stop_atr_multiple: 1.0`, ~2.56% of price at the median
-    ATR) a 33% position still delivers ~0.84% risk and ~$33k of notional on
+    ATR) a 65% position still delivers ~1.66% risk and ~$65k of notional on
     this fixture, so the cap shrinks and does not refuse.
     """
     constructor = PortfolioConstructor()
@@ -749,7 +750,7 @@ def test_the_survival_ceiling_shrinks_trades_and_never_refuses_them():
     )
     assert len(decisions) == 1
     d = decisions[0]
-    assert d.allocation_pct == 33.0
+    assert d.allocation_pct == 65.0
     # Delivered risk = notional x stop distance. Comfortably above the
     # 0.5% floor, so nothing downstream refuses it for being immaterial.
     delivered_risk_pct = d.allocation_pct * 2.56 / 100
@@ -761,12 +762,13 @@ def test_the_survival_ceiling_shrinks_trades_and_never_refuses_them():
 def test_the_survival_ceiling_and_the_net_exposure_cap_do_not_collide():
     """The two caps bound different things and must not be confused.
 
-    `max_position_pct` (33) bounds ONE name. `max_total_position_pct` (200
+    `max_position_pct` (65) bounds ONE name. `max_total_position_pct` (200
     since 2026-09-02, equal to `max_gross_exposure_x: 2.0` and non-binding
     by construction) bounds the book's NET exposure. Three names each at
-    the single-name ceiling is 99% of equity — a legal book under the net
-    cap, so the single-name ceiling is genuinely the binding constraint on
-    concentration and the net cap is not quietly doing its job for it.
+    the single-name ceiling is 195% of equity — still a legal book under
+    the net cap, but only just, so the single-name ceiling is genuinely
+    the binding constraint on concentration and the net cap is not
+    quietly doing its job for it.
 
     The engine check is the one that matters: it is a HARD BLOCK, so an
     order a basis point over is dropped, not trimmed.
@@ -776,7 +778,7 @@ def test_the_survival_ceiling_and_the_net_exposure_cap_do_not_collide():
     from src.models import TradeDecision
 
     engine = RiskRuleEngine(RiskConfig(
-        max_position_pct=33, max_total_position_pct=200, max_daily_loss_pct=5,
+        max_position_pct=65, max_total_position_pct=200, max_daily_loss_pct=5,
         max_sector_pct=75, require_stop_loss=True,
     ))
 
@@ -790,10 +792,10 @@ def test_the_survival_ceiling_and_the_net_exposure_cap_do_not_collide():
             [], EQUITY, 0.0, cash=EQUITY * 3,
         )]
 
-    assert "max_position_pct" not in check(33.0)
-    assert "max_position_pct" in check(34.0)
-    # The net cap is nowhere near binding at three full-size names.
-    assert 3 * 33.0 < 200
+    assert "max_position_pct" not in check(65.0)
+    assert "max_position_pct" in check(66.0)
+    # The net cap is close, but still not binding, at three full-size names.
+    assert 3 * 65.0 < 200
 
 
 def test_the_survival_ceiling_accounts_for_what_is_already_held():
@@ -808,8 +810,8 @@ def test_the_survival_ceiling_accounts_for_what_is_already_held():
         total_value=EQUITY, price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
-    # 33% ceiling - 25% held = 8% of headroom, and not a basis point more.
-    assert decisions[0].allocation_pct == 8.0
+    # 65% ceiling - 25% held = 40% of headroom, and not a basis point more.
+    assert decisions[0].allocation_pct == 40.0
 
 
 def test_the_ceiling_still_binds_a_genuinely_too_tight_stop():
@@ -817,7 +819,7 @@ def test_the_ceiling_still_binds_a_genuinely_too_tight_stop():
     ATR-floor-governed range (only reachable via the level-backed exception
     down to `absolute_min_stop_atr_multiple`) is clamped far short of what
     conviction asked for — and since 2026-09-11 it is the single-name
-    SURVIVAL ceiling that does the clamping, at 33, rather than the
+    SURVIVAL ceiling that does the clamping, at 65, rather than the
     sector's unrelated 90% absolute cap standing in for it."""
     constructor = PortfolioConstructor()
     decisions = constructor.construct_orders(
@@ -826,10 +828,10 @@ def test_the_ceiling_still_binds_a_genuinely_too_tight_stop():
         total_value=EQUITY, price_map={"NVDA": 100.0},
     )
     assert len(decisions) == 1
-    # 5% risk / 2.5% stop asks for 200% — clamped to 33, so delivered risk
-    # is 0.825% (33% x 2.5%), under the 5% requested but still above the
+    # 5% risk / 2.5% stop asks for 200% — clamped to 65, so delivered risk
+    # is 1.625% (65% x 2.5%), under the 5% requested but still above the
     # 0.5% min_position_risk_pct floor.
-    assert decisions[0].allocation_pct == 33.0
+    assert decisions[0].allocation_pct == 65.0
 
 
 # --------------------------------------------------------------------------
