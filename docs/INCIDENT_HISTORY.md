@@ -1506,6 +1506,41 @@ rather than drift into it.
 
 ---
 
+### 2026-09-11 — the day-count itself was the wrong question; none of the three options above was taken
+
+**In plain words:** the decision above asked which calendar-day limit to
+pick for "is this economic data too old to trust" — loosen it, keep it
+strict, or switch to a same-day feed for one indicator. None of those was
+chosen. The day-count was removed instead, because it was never the right
+kind of test for this data. A government economic reading is not stale
+because a few days passed; it is stale because a NEWER reading exists and
+this one hasn't been updated to match. Inflation and jobs numbers are only
+published monthly — a 20-day-old inflation reading is not old, it is
+simply the only one that exists yet.
+
+**What replaced it.** The check no longer counts days at all. It asks
+whether the number on hand is the newest one that has actually been
+published, and separately, whether a newer one was due by now and never
+showed up (the real failure this desk needs to know about — a feed
+quietly breaking). A reading that is legitimately the latest one gets
+used, however many days old it is; a feed that has gone genuinely quiet
+past its own normal publishing schedule raises its own alert instead of
+silently degrading the macro read. Full build: `docs/WORK.md` was item 6's
+DECIDE BY line — removed, decision superseded rather than answered, since
+none of its three options describes what shipped. Code:
+`src/data/macro.py`'s `SeriesFreshness`, wired through
+`src/agents/macro_analyst.py`.
+
+**What this fixes in practice:** the sanity check was clearing roughly
+half of all real "the market's mood just flipped" calls (measured 2026-09-03,
+above) purely because the freshness bar could not be met by ordinary,
+healthy data. That should now happen only when data is genuinely
+overdue, not on every ordinary FRED publishing lag — not independently
+re-measured against live production yet, since this ships forward, not
+against the same historical window.
+
+---
+
 ### 2026-09-03 — the news analyst wasn't dropping data, it was tripping over one dropped quote mark
 
 **In plain words:** a rare news-report failure looked structural ("4 fields

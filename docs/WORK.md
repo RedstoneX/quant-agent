@@ -62,13 +62,7 @@ settled. Restored:**
   exists. Revisit on appetite or live evidence, never by fitting to this
   desk's own record (that is what was rejected).
 
-- [ ] DECIDE BY 2026-09-17 — What should the macro `regime_shift`
-  freshness bar be, given real FRED lag (measured `staleness_days=2` on
-  all 5 daily series, gate requires `<=1`)? Deliberate risk-tolerance
-  choice, not a calibration an agent should pick. Options: (a) loosen to
-  match real FRED cadence, (b) keep it deliberately near-unreachable, (c)
-  source VIX same-day instead of lagged FRED. Full measurement:
-  `docs/INCIDENT_HISTORY.md`. Not decided.
+**Macro `regime_shift` freshness DECIDE BY line — RESOLVED, see item 48.** Superseded rather than answered: the day-count this question was about was removed entirely, not re-tuned. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **RECONFIRM AFTER A FEW DAYS LIVE — item 14(c)'s call-count cap, owner
 instruction 2026-09-03.** Shipped at `max_calls_per_session: 40`, set from
@@ -1053,6 +1047,8 @@ dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 **45. Two pivot windows disagree about what a "swing low" is — OPEN, found 2026-09-11 by audit.** `src/risk/trailing.py:103` sets `PIVOT_WINDOW = 3` and its comment claims it matches `src/data/levels.py` "so 'a higher low' means the same thing in both places". `src/data/levels.py:39` sets `PIVOT_WINDOW = 5`. Verified by direct read. Consequence: the trailing-stop ratchet can see a higher low the structural-level detector does not, and vice versa. Neither number carries a derivation. Do not "fix" by copying one onto the other — picking 3 or 5 is picking a number.
 
 **46. `level_match_atr_tolerance` fails its own stated justification — OPEN, found 2026-09-11 by audit.** `config/settings.yaml:623` sets `0.25` and justifies it as "at least" the 1% level-cluster zone width. At this book's own stated median ATR of 2.56%, 0.25 ATR is 0.64% — under the 1% it claims to cover, by ~1.6x. Governs whether a stop counts as level-backed and is therefore exempt from the ATR stop floor, so it feeds directly into item 1's geometry. Either the tolerance or the justification is wrong; both are numbers, so owner call.
+
+**48. Macro `regime_shift` freshness — RESOLVED 2026-09-11, decision superseded not answered.** The DECIDE-BY question (loosen the `staleness_days<=1` bar, keep it strict, or source VIX same-day) assumed a calendar-day test was the right shape. None of its 3 options was taken: the day-count was removed entirely, replaced by `SeriesFreshness` — "is this the latest published reading" plus a separate "is a newer one overdue" signal, per-series cadence derived from the series' own observed gaps rather than a fixed number. Fixes the 52%-of-runs sanity-check-clears-regime_shift measured 2026-09-03. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 ---
 
