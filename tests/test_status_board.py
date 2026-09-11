@@ -2199,3 +2199,34 @@ def test_a_humanised_identifier_keeps_a_date_readable():
     """2026_08_28 becoming "2026 08 28" reads as three unrelated numbers."""
     assert "2026-08-28" in sb._humanise_identifier(
         "test_the_estimator_reproduces_the_2026_08_28_block")
+
+
+def test_no_board_note_is_orphaned_in_the_real_repository():
+    """Every prose entry in the REAL docs/BOARD_NOTES.md must match a real
+    item in the REAL docs/WORK.md.
+
+    The keying tests above prove the mechanism. This proves the live files
+    actually agree. Prose is keyed by item NUMBER, so renumbering an item in
+    docs/WORK.md silently orphans the explanation written for it: the board
+    cannot tell the difference between "this item was never explained" and
+    "its explanation is sitting right there under the old number", and it
+    honestly renders the owner's page as unexplained either way.
+
+    That is a rule no session should have to remember. This is the check.
+    """
+    work = sb.REPO_ROOT / "docs" / "WORK.md"
+    notes = sb.load_board_notes(sb.REPO_ROOT / "docs" / "BOARD_NOTES.md")
+    queue, _ = sb.load_funnel_queue(work, notes)
+    gate, _ = sb.load_pm_gate(work, notes)
+    decisions = sb.load_pending_decisions(work, notes=notes)
+    real = {x.ref for x in (*queue, *gate, *decisions)}
+
+    orphans = sorted(k for k in notes if k not in real
+                     and not k.lower().startswith("item n"))
+    assert orphans == [], (
+        "docs/BOARD_NOTES.md explains items that no longer exist under those "
+        f"keys in docs/WORK.md: {orphans}. Either the item was renumbered "
+        "(update the key in the same commit) or it was archived (remove its "
+        "prose). Leaving it strands the explanation and the owner's board "
+        "renders that item as never explained."
+    )

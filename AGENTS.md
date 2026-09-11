@@ -125,3 +125,43 @@ Status, current truth, and active work always live in Tier 1. If you are about t
 **Why this rule exists.** A 2026-08-27 review found that scope decisions taken by coding agents had been written into these documents as accepted constraints, and every later agent then treated them as instructions from the owner. Direct short selling is the clearest case: an agent decided it was out of scope, recorded that in the governance docs, and the system was subsequently built long-only against an owner mandate that never excluded shorting. The same mechanism recorded the project's purpose as a research question about model quality, when the actual mandate is to make money.
 
 Nobody misrepresented anything. Decisions laundered into requirements because there was no ratification step. This is that step.
+## The owner's board, and what editing `docs/WORK.md` obliges you to do
+
+The owner reads exactly one page: the status board at `/board`. It is generated
+by `scripts/status_board.py`, which re-derives everything it shows — it records
+nothing of its own. It reads each item's **number, title, status and ordering**
+out of `docs/WORK.md`, and the owner-facing plain-English prose for that item out
+of `docs/BOARD_NOTES.md`, keyed by number (`## item 44`, `## gate item 3`,
+`## decision due YYYY-MM-DD`).
+
+**If you change `docs/WORK.md`, three obligations follow.**
+
+1. **Never renumber an existing item** without updating its key in
+   `docs/BOARD_NOTES.md` in the same commit. The prose is keyed by number, so a
+   renumber silently orphans it and the board renders that item as unexplained.
+   The board cannot detect that it lost an explanation — it only knows the key
+   did not match.
+2. **A new backlog item or pending decision needs prose in `docs/BOARD_NOTES.md`,
+   not in `docs/WORK.md`.** `docs/WORK.md` is agent-facing and byte-capped at
+   100,000 by CI; `docs/BOARD_NOTES.md` is owner-facing and uncapped. Follow the
+   shape that file documents: plain language, a concrete worked example, and
+   where a ruling is needed, the decision and a recommendation. No file paths, no
+   function names, no code identifiers, no pull-request numbers — a mechanical
+   detector flags those and the board marks the prose as engineer-facing.
+   **An item with no prose renders honestly as "no plain-English version yet".
+   That is correct. Never invent an explanation to fill the gap** — a confident
+   wrong explanation on the owner's board is far worse than a visible absence.
+3. **Merging is not publishing.** The board is rebuilt automatically when
+   `docs/WORK.md` changes *in the production checkout* (`/home/qamc/quant-agent`,
+   see `scripts/systemd/quant-agent-status-board.path`), and that checkout only
+   changes on deploy. Deploy is by hand onto a detached HEAD. So a merge to
+   `main` alone leaves the owner reading the previous state with no indication
+   anything is missing. Either deploy, or confirm a session is watching `main`
+   and will.
+
+**Why this rule exists.** On 2026-09-11 the production checkout was found nine
+commits behind, so the owner's page had been showing week-old work while several
+sessions merged against it. Separately, three findings raised to him as questions
+were never written to the board at all, leaving him asked to rule on things he
+had no way to read. Both failures share one cause: the board was treated as
+something that updates itself, and it does not.
