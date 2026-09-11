@@ -337,3 +337,24 @@ this line, one heading per item.
 **Example —** An insider purchase from two months ago used to be automatically written off as too old to matter; it's now judged instead on whether at least one other current, independent source agrees on the same direction — if it does, it still counts as real support for a trade.
 
 
+
+## item 44
+
+**Plain language —** To sell a position it is supposed to keep holding, the desk's AI must name a real reason, and only a short list of reasons is accepted. Two of them — the market regime flipped, or bad news changed the story — are now checked against real data before the sale goes through. The third, "correlation breach", is accepted on the wording alone, because nothing anywhere in the system ever works out whether correlations actually broke. The words are the whole test.
+**Example —** The desk holds a position it is meant to keep for another week. The AI writes "exiting on correlation breach" and the sale executes. Had it written "exiting on regime shift" instead, the system would have checked whether the regime really shifted that day and blocked the sale when it had not. The correlation wording is never checked, so it always works. It is the one phrase that reliably opens the door.
+**The decision —** Whether to build something that can actually detect a correlation breach, or to stop accepting the phrase as a reason.
+**Recommendation —** Stop accepting the phrase. Building a detector means first deciding which correlation, measured over how many days, and how large a change counts as broken — three numbers nobody can derive for you, exactly the position you were in with the drawdown sensitivity. A reason that cannot be checked should not be an accepted reason, and removing it costs nothing because the two checkable reasons still cover a genuine change of circumstances.
+
+## item 45
+
+**Plain language —** Two parts of the desk look for the same thing on a chart: a swing low, meaning a dip with higher prices on both sides of it. One part requires three higher days on each side before it counts. The other requires five. A note written beside the first one claims the two match, so that a swing low means the same thing everywhere. They do not match, and that note has been wrong the whole time.
+**Example —** A stock dips on a Monday with four higher days either side of it. The trailing stop counts that as a genuine swing low and ratchets the stop up to sit just under it. The part of the system that finds support levels does not count it at all, because it wanted five. So one half of the desk is protecting a floor that the other half does not believe exists.
+**The decision —** Which definition is correct, or whether the two are meant to differ on purpose.
+**Recommendation —** Research what published swing-trading work actually uses before choosing, the same way the stop floor was settled. If both turn out defensible, make them the same number and record it as your own dial — what should not survive is two different answers with a note claiming they agree.
+
+## item 46
+
+**Plain language —** When the AI puts a stop near a price level the stock has bounced off before, the desk checks whether the stop is close enough to that level to count as genuinely backed by it. If it counts, the stop stays where it was placed. If it does not, the stop gets pushed wider, which automatically shrinks the trade. The setting that decides "close enough" was justified in writing as covering a one percent zone around the level. Do the arithmetic at this book's own typical daily range and it actually covers about two thirds of that.
+**Example —** A stock trades at one hundred dollars with a floor it has bounced off at ninety-seven. The AI places its stop at ninety-six eighty, just under the floor and well inside the one percent zone the written rule says is allowed. Because the real tolerance is narrower than the rule claims, that stop can be judged unbacked and pushed wider anyway — and the position is sized smaller than it should have been, for a reason that only exists on paper.
+**The decision —** Whether the setting is wrong or the justification beside it is wrong. They cannot both be right.
+**Recommendation —** Treat this as arithmetic rather than taste, because it is. Establish the real width of a level zone from published work first, then set the tolerance from that figure — rather than leaving a number in place and a sentence next to it that the number does not satisfy.
