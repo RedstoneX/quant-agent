@@ -2532,6 +2532,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # risk over weight whenever both are present (see
             # `TargetPosition`), so setting it here is what actually binds,
             # and leaving the weight alone would be a way around this rule.
+            # Record that the exception was GRANTED, not merely claimed, so
+            # the constructor can tell this target apart from an ordinary
+            # sub-floor one. Set before the cap so the two facts — "checked"
+            # and "capped" — can never diverge; see
+            # `TargetPosition.subfloor_catalyst_verified` for why only Python
+            # may write it and why the constructor needs to be told at all.
+            target.mark_subfloor_catalyst_verified()
             previous = target.risk_allocation_pct
             if previous is None or previous > starter_risk_pct:
                 target.risk_allocation_pct = starter_risk_pct

@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import re
+import html as html_mod
 import subprocess
 import sys
 from pathlib import Path
@@ -1926,7 +1927,7 @@ def test_rot_outranks_a_decision_which_outranks_the_running_order():
     d = _decision(-3, "Overdue question")
 
     both = sb._render_right_now([rotten], [d], [top])
-    assert "no longer proves it is finished" in both
+    assert "can no longer prove it is still finished" in both
     assert "Overdue question" not in both
 
     no_rot = sb._render_right_now([], [d], [top])
@@ -2133,3 +2134,68 @@ def test_the_real_backlog_flags_only_genuine_self_contradictions():
         assert sb._closure_hit(tail, sb._RENDER_CLOSURE_WORDS), i.rank
         assert not any(w in tail for w in sb._CLOSURE_NEGATIONS), i.rank
         assert not sb._closure_hit(tail, sb._RENDER_PART_DONE_WORDS), i.rank
+
+
+# ---------------------------------------------------------------------------
+# The page's own copy must obey the page's own rules.
+#
+# The jargon detector ran only over prose loaded from docs/BOARD_NOTES.md.
+# Every reader-facing string HARDCODED IN THIS SCRIPT was exempt from it —
+# so the one card written by hand was the one card nothing checked. On
+# 2026-09-11 that card told the owner three finished things had "stopped
+# being true" and to "treat it as live breakage", printed internal stage
+# identifiers, and carried no worked example. All three break rules this
+# module's own docstring commits to, and none of it was catchable.
+#
+# These tests close that: the rules are enforced mechanically instead of
+# depending on a session remembering to read the docstring.
+# ---------------------------------------------------------------------------
+
+def _strip_tags(html: str) -> str:
+    """Card markup reduced to the words the owner actually reads. The jargon
+    detector must not see tag names or class attributes — those are markup,
+    not copy, and flagging them would make this check meaningless."""
+    return html_mod.unescape(re.sub(r"<[^>]+>", " ", html))
+
+
+def _right_now_card_html():
+    rotten = _phase_with(
+        [sb.RuleResult("setting_equals", sb.FAIL, "the single-name ceiling",
+                       "risk.max_position_pct = 100 (expected 20)")],
+        recorded="DONE AND LIVE", title="Risk-based sizing")
+    return sb._render_right_now([rotten], [], [])
+
+
+def test_the_failed_proof_card_carries_a_worked_example():
+    """The docstring promises every item gets "a concrete real-world
+    example". The hand-written rot card silently did not."""
+    assert "For example" in _right_now_card_html()
+
+
+def test_the_failed_proof_card_names_the_real_numbers():
+    """A card that says a proof failed without saying WHAT failed is a
+    riddle. It must render the rule's own finding."""
+    html = _right_now_card_html()
+    assert "20" in html and "100" in html
+
+
+def test_the_failed_proof_card_never_prints_an_internal_identifier():
+    """No file paths, no function names, no code tokens — the whole premise
+    of this page. The old card printed "(stage phase_2)"."""
+    markers = sb.summary_engineering_markers(_strip_tags(_right_now_card_html()))
+    assert markers == [], f"owner-facing card leaks engineer markers: {markers}"
+
+
+def test_the_failed_proof_card_does_not_assert_breakage():
+    """A failing evidence rule means the rule and the system DISAGREE. A
+    deliberate settings change fails one identically to real breakage, so
+    the card must not tell the owner his own decisions are breakage."""
+    html = _strip_tags(_right_now_card_html()).lower()
+    assert "live breakage" not in html
+    assert "stopped being true" not in html
+
+
+def test_a_humanised_identifier_keeps_a_date_readable():
+    """2026_08_28 becoming "2026 08 28" reads as three unrelated numbers."""
+    assert "2026-08-28" in sb._humanise_identifier(
+        "test_the_estimator_reproduces_the_2026_08_28_block")
