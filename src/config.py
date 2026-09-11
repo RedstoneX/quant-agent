@@ -11,7 +11,11 @@ from src.agents.base import (
     provider_attempt_budget,
     resolve_provider,
 )
-from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
+from src.risk.constants import (
+    DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
+    REWARD_RISK_FLOOR,
+    STARTER_POSITION_RISK_PCT,
+)
 
 
 class ApiKeysConfig(BaseModel):
@@ -557,6 +561,101 @@ class RiskConfig(BaseModel):
     # decided here. See docs/WORK.md item 32.
     drawdown_5d_risk_multiple: float = Field(default=3.0, gt=0)
     drawdown_20d_risk_multiple: float = Field(default=4.0, gt=0)
+    # docs/WORK.md item 32, owner call 2026-09-11 — THE BASIS CHANGE.
+    #
+    # Everything above this line expresses a loss alarm as a FIXED
+    # PERCENTAGE OF EQUITY. That was the defect the owner rejected: a fixed
+    # percentage is only correct for the volatility regime it was picked in,
+    # and markets are not stationary. Recalibrating the percentage from more
+    # history was explicitly REFUSED — it would have produced another frozen
+    # number with the same flaw.
+    #
+    # The alarms now trip at `sensitivity x sigma_daily x sqrt(T)`, where
+    # `sigma_daily` is the realized daily volatility of THE BOOK THE DESK IS
+    # ACTUALLY HOLDING — reconstructed from the real market price history of
+    # its current holdings at their current weights, recomputed every session
+    # (`src/risk/rules.py::measure_portfolio_daily_vol`). The multiples above
+    # remain as the fallback for when there is genuinely nothing to measure:
+    # an all-cash book, or holdings without enough price history.
+    #
+    # NOT THE ACCOUNT'S OWN EQUITY CURVE. That was the first implementation
+    # of this change and the owner rejected it the same day, correctly:
+    #
+    #   1. RAMP-UP CONTAMINATION. The account was reset 2026-09-02 and its
+    #      first sessions go from all-cash to fully deployed. A mostly-cash
+    #      account barely moves, so the measured volatility over exactly the
+    #      sessions needed to activate the alarms would be artificially LOW,
+    #      setting the thresholds artificially TIGHT — and they would then
+    #      fire on completely normal behaviour once the book was deployed.
+    #   2. THE RECORD IS CONTAMINATED ANYWAY. This desk has never operated
+    #      correctly; that is the entire content of its defect backlog.
+    #      Calibrating a safety threshold from a record of malfunction is
+    #      not sound, and no waiting period cures it.
+    #
+    # Measuring the holdings instead works IMMEDIATELY (their price history
+    # is abundant, whatever the account's is), SCALES WITH DEPLOYMENT
+    # automatically (weights are fractions of equity and are deliberately
+    # not renormalised, so a third-deployed book gets a proportionally
+    # tighter threshold — intended), and never reads the account's own past
+    # performance at all.
+    #
+    # NOT volatility targeting. Nothing here resizes a position; this only
+    # changes the yardstick the ALARM measures a loss against. Continuous
+    # volatility-target exposure scaling was separately REJECTED for this
+    # desk (docs/OUTCOME.md).
+    #
+    # THE SENSITIVITY IS PROVISIONAL AND IS NOT RESEARCH-GROUNDED.
+    # Researched 2026-09-11 and stated plainly: the sqrt(T) window scaling
+    # IS real, published, and cited (Van Hemert/Ganz/Harvey, "Drawdowns",
+    # JPM 2020), and volatility-relative risk measurement in general is
+    # standard practice — but there is NO citable industry-standard number
+    # for "how many multiples of recent volatility should trip a drawdown
+    # alarm". Anyone who presents one has invented it. Do not let a later
+    # pass dress this number up as derived; it is a risk-appetite dial.
+    #
+    #   3.0 IS AN OWNER RISK-APPETITE DECISION, 2026-09-11. It replaces an
+    #   earlier 6.7, which had been set purely for day-one continuity — 6.7
+    #   x a ~1%/session reference volatility reproduced the old frozen
+    #   -6.7% daily breaker exactly, so nothing would jump when the basis
+    #   changed. Measuring that for the first time is what exposed the
+    #   problem: at 6.7 the daily breaker only fires on a ~6.7-sigma
+    #   session, a crash-grade event, i.e. it was effectively DORMANT. The
+    #   owner reviewed the measured numbers and chose 3.0 — roughly a 3%
+    #   daily loss on a ~1%/session book, a genuinely rough day rather than
+    #   a crash. That is a deliberate, REVERSIBLE tightening of risk
+    #   appetite, not a calibration result.
+    #
+    #   THE REFERENCE VOLATILITY, for reading the numbers below only:
+    #   ~1.0% per session. MEASURED 2026-09-11 from real market data over
+    #   this desk's OWN 101-symbol configured universe (`trading.universe`):
+    #   trailing-20-session realized daily volatility of equal-weight
+    #   baskets the size this desk actually runs — median 1.04% at 5 names,
+    #   0.86% at 8, 0.80% at 12, with a 5th-to-95th spread of roughly
+    #   0.55%-1.7%. That proxy measurement is what the live mechanism now
+    #   does for real, against actual holdings and actual weights, so it is
+    #   an illustration of scale and NOT an input to the live thresholds.
+    #
+    #     daily : 3.0 x 1.0 x sqrt(1)  =  3.00%  (was 6.70%)
+    #     5-day : 3.0 x 1.0 x sqrt(5)  =  6.71%  (was 14.98%)
+    #     20-day: 3.0 x 1.0 x sqrt(20) = 13.42%  (was capped at 20.00%)
+    #
+    #   One sensitivity drives all three; no per-window multiple survives,
+    #   which is what stops them drifting apart the way bug 1 did. At 3.0
+    #   and a ~1% book the 20-day cap at `GROSS_LADDER_ALERT_PCT` (-20%) no
+    #   longer binds — it only binds above ~1.5%/session — but it stays,
+    #   because it is the thing that guarantees this brake can never be
+    #   asleep past the point the §11.2 de-levering ladder halves the book
+    #   and alerts the owner, whatever the volatility regime.
+    #
+    #   NOT VALIDATED against this desk's own realised trading outcomes,
+    #   and by design cannot be: the whole point of the basis change is that
+    #   the account's own record is contaminated and must not calibrate a
+    #   safety threshold. What WOULD change this number is the owner's
+    #   appetite, or evidence from live operation that 3.0 fires on days
+    #   that turn out to be ordinary. Revisit on that basis, not by fitting.
+    drawdown_vol_sensitivity: float = Field(
+        default=DEFAULT_DRAWDOWN_VOL_SENSITIVITY, gt=0,
+    )
     # Below this an idea is not worth trading: a token position pays full
     # commission and full attention for an immaterial payoff. A request
     # rationed under the floor is denied outright rather than shrunk.
