@@ -170,10 +170,18 @@ details.q[open]>summary{border-bottom:1px solid var(--rule)}
    enough to be unambiguous across the backlog's several numbered sequences
    ("item 32" vs "gate item 4"), and a long handle sharing a line with a long
    title is what squeezes both on a phone. */
+/* The owner refers to an entry by this handle ("item 44") rather than
+   quoting a title that can run to a paragraph, so it has to be findable at
+   a glance on a phone. It was 11.5px in --muted above a 16.5px title, which
+   made it effectively invisible and he reported it as missing. It is now
+   full-contrast, boxed, and select-all on tap so it can be copied straight
+   into a message. Weight and border carry the emphasis, never colour alone. */
 .q-n{flex:0 0 100%;font-family:"IBM Plex Mono",ui-monospace,monospace;
-  font-size:11.5px;font-weight:600;color:var(--muted);letter-spacing:.04em;
-  white-space:nowrap;-webkit-user-select:all;user-select:all}
-.ol .q-n{flex:none;min-width:82px}
+  font-size:13px;font-weight:700;color:var(--ink);letter-spacing:.02em;
+  white-space:nowrap;-webkit-user-select:all;user-select:all;
+  align-self:flex-start;padding:2px 7px;border:1.5px solid var(--rule);
+  border-radius:4px;background:var(--quiet-bg);margin-bottom:2px}
+.ol .q-n{flex:none;min-width:92px;box-sizing:border-box;text-align:center}
 .q-t{font-family:Archivo,sans-serif;font-weight:600;font-size:16.5px;
   line-height:1.3;letter-spacing:-.005em}
 .q-body{padding:4px 14px 16px}
