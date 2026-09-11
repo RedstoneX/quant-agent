@@ -161,6 +161,21 @@ tr:last-child td {
   @apply bg-panel-alt border border-border rounded-lg px-3 py-2.5;
 }
 
+/* Chart bottom time-range slider (PriceChartPanel) — owner UI pass:
+ * restyled to match the visual weight of the thick rounded "pill"
+ * horizontal scrollbars the Positions/Orders panels below already show.
+ * Those are plain native `overflow-x-auto` scrollbars (no custom CSS class
+ * exists for them — checked styles/index.css and tailwind.config.js, there
+ * is none), so this reproduces that same thick/rounded/pill look directly
+ * rather than reusing a class that doesn't actually exist. Functional
+ * behavior (drag-to-pan) is unchanged — this is CSS only. */
+.chart-range-slider {
+  @apply h-3.5 rounded-full bg-panel-inset border border-border;
+}
+.chart-range-slider-handle {
+  @apply h-2.5 rounded-full bg-accent/40 border border-accent;
+}
+
 .state-message {
   @apply text-dim py-1.5;
   font-size: var(--fs-meta);
