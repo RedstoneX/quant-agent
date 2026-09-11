@@ -54,20 +54,13 @@ settled. Restored:**
   honoured however tight only when its level has 5+ touches). Detail:
   `docs/INCIDENT_HISTORY.md`, 2026-09-03 "a level needs 5 touches, not 2".
 
-- [x] RESOLVED 2026-09-11 — The drawdown-brake anchor multiplier. Replaced
-  outright: the alarms use a multiple of the account's own recent realized
-  volatility, not a fixed percentage of equity. Detail: item 32 below and
-  `docs/INCIDENT_HISTORY.md`. Its SENSITIVITY is still open — next line.
-
-- [ ] DECIDE BY 2026-10-16 — How sensitive should the drawdown alarms be, in
-  multiples of the account's own recent daily volatility? Shipped at 6.7,
-  set only so behaviour did not jump when the basis changed, and flagged
-  provisional in code and docs. NO published standard number exists for
-  this, so it cannot be researched into place; it is a risk-appetite call
-  needing real data. Date = one trading month, because the estimate is not
-  measurable until ~11 post-reset sessions exist. Measured input: 6.7x this
-  desk's plausible daily volatility is a very remote daily event, i.e. far
-  looser than "3 losing trades in a day" ever sounded.
+- [x] RESOLVED 2026-09-11 — The drawdown-brake anchor multiplier AND its
+  sensitivity. Alarms now trip at a multiple of how much the desk's actual
+  holdings normally move in a day; owner set the sensitivity to 3.0 the
+  same day. Detail: item 32 and `docs/INCIDENT_HISTORY.md`. **3.0 is a
+  reversible risk-appetite setting, not a researched number** — none
+  exists. Revisit on appetite or live evidence, never by fitting to this
+  desk's own record (that is what was rejected).
 
 - [ ] DECIDE BY 2026-09-17 — What should the macro `regime_shift`
   freshness bar be, given real FRED lag (measured `staleness_days=2` on
@@ -996,33 +989,40 @@ them √time-consistent, but they were still frozen numbers. **The owner
 refused a recalibration**: a fixed percentage is only right for the
 volatility regime it was chosen in, markets are not stationary, and a
 recalibrated frozen number has the identical flaw. So the BASIS changed,
-not the calibration — each alarm now trips at a multiple of what the
-account's own recent trading has shown as normal day-to-day movement
-(realized daily volatility of its equity curve over a rolling trailing 20
-sessions), recomputed every session, scaled per window by √time. Full
-reasoning: `docs/INCIDENT_HISTORY.md`, 2026-09-04 and 2026-09-11.
+not the calibration — each alarm now trips at a multiple of how much **the
+book actually held** normally moves in a day, reconstructed from its real
+holdings' market price history at their real weights, recomputed every
+session and scaled per window by √time.
+
+**Corrected same day, before merge — the load-bearing half.** The first
+implementation measured the ACCOUNT's own equity curve. Owner rejected it:
+the post-reset account ramps from cash for weeks, a mostly-cash account
+barely moves, so the measurement would have been far too small and the
+alarms far too tight — firing constantly once actually invested. And the
+account's record is a record of malfunction anyway. Holdings work from day
+one. Reasoning: `docs/INCIDENT_HISTORY.md`, 2026-09-04 and 2026-09-11.
 
 Settled vs. provisional — read before citing either half:
 
-- **SETTLED (architecture).** The stationarity flaw is gone; thresholds
-  move with conditions. The √time relation is real published research and
-  is now expressed ONCE, not as three per-window constants that can drift
-  apart — which is how the 2026-09-04 "decorative breaker" bug happened.
-- **PROVISIONAL (sensitivity).** No citable industry-standard number
-  exists for it; shipped at 6.7 purely for day-one continuity, and not
-  validated against this desk's own behaviour because there is none. It
-  replaces the old anchor multiplier and inherits its honesty status
-  rather than resolving it. See the dated decision line above.
+- **SETTLED (architecture).** Stationarity flaw gone, the yardstick never
+  touches the desk's own performance record, no warm-up needed, √time
+  expressed once rather than as drift-prone per-window constants.
+- **PROVISIONAL (sensitivity).** 3.0, owner, 2026-09-11. Reversible and
+  explicitly NOT researched or validated — no citable standard exists. At
+  a ~1%/session book: -3.0% daily, -6.7% over 5d, -13.4% over 20d (was
+  -6.7% / -15% / -20%). It replaced 6.7, which measurement showed left the
+  daily breaker firing only on a ~6.7σ session — dormant.
 - **NOT touched, deliberately.** Position sizing. Volatility here is only
-  the alarm's yardstick; volatility-target exposure scaling stays
-  REJECTED (`docs/OUTCOME.md`).
+  the alarm's yardstick; volatility-target sizing stays REJECTED
+  (`docs/OUTCOME.md`).
 
 **STILL OPEN, OWNER CALL — full reconciliation of the two drawdown
 systems.** Unchanged, and the reason all three alarms are capped at the
 §11.2 ladder's -20% owner-alert point: the brakes measure rolling-window
 return, the ladder peak-to-trough, calibrated independently, and nobody
 has decided whether the desk should have one drawdown response or two.
-The cap is a floor on the disagreement, not agreement.
+The cap is a floor on the disagreement, not agreement. At 3.0 it no longer
+binds below ~1.5%/session; it stays as the guarantee for violent regimes.
 
 **Conviction-band question — DECIDED 2026-09-11, owner call:** restore
 the pre-compression bands. See item 32's conviction-band entry below.

@@ -1,6 +1,7 @@
 import logging
 import math
 import statistics
+import sys
 from dataclasses import dataclass, field
 from src.config import RiskConfig
 from src.models import TradeDecision, Position
@@ -200,10 +201,12 @@ def sector_side_weights(
 # once.
 #
 # THE COST, STATED PLAINLY BECAUSE IT IS REAL: at 75% of equity in one
-# sector, an ordinary 20% sector-wide drawdown costs 15% of equity — more than
-# TWICE the 6.7% daily-loss circuit breaker (`max_daily_loss_pct`), and it will
-# trip the de-levering ladder. That is the accepted price of a concentrated
-# trading desk, not an oversight.
+# sector, an ordinary 20% sector-wide drawdown costs 15% of equity — several
+# times the daily-loss circuit breaker, and it will trip the de-levering
+# ladder. That is the accepted price of a concentrated trading desk, not an
+# oversight. (The breaker is no longer a fixed 6.7%: since 2026-09-11 it is
+# a multiple of the held book's own normal daily move, ~3% for a book moving
+# ~1% a session. The comparison got worse, not better.)
 #
 # The 90 ceiling is NOT in the ratified §12.3 text — the spec set the target
 # and left the terminal bound unstated. 90 was chosen when §12.3 was built:
@@ -553,7 +556,7 @@ def agreement_ceiling_for_score(schedule: list[float] | tuple[float, ...], score
 #: none can be asleep past the point THIS ladder halves the book and alerts
 #: the owner — the constraint that came out of bug 2 on 2026-09-04, and it
 #: survived the 2026-09-11 change of their basis from a fixed percentage of
-#: equity to a multiple of the account's own realized volatility. THIS
+#: equity to a multiple of the held book's own realized volatility. THIS
 #: TABLE IS STILL FIXED PERCENTAGES, deliberately: it is a ratified owner
 #: table about peak-to-trough exposure, not a loss alarm, and it was not in
 #: scope for that change.
@@ -595,11 +598,48 @@ GROSS_EXPOSURE_RULE = "max_gross_exposure"
 # 2026-09-11: recalibrating the fixed number from more history was REFUSED
 # for exactly this reason — the basis, not the calibration, was wrong.
 #
-# THE BASIS NOW. Each alarm trips at a multiple of what this account's OWN
-# RECENT TRADING has actually been showing as normal day-to-day movement:
-# the sample standard deviation of daily account-equity returns over a
-# rolling trailing window. That number is recomputed every session, so the
-# thresholds move with conditions instead of being frozen.
+# THE BASIS NOW. Each alarm trips at a multiple of the normal day-to-day
+# movement of THE BOOK THE DESK IS ACTUALLY HOLDING — reconstructed from the
+# real market price history of its current holdings at their current
+# weights, recomputed every session, so the thresholds move with conditions
+# instead of being frozen.
+#
+# WHY NOT THE ACCOUNT'S OWN EQUITY CURVE. That was the first implementation
+# of this change and the owner rejected it on 2026-09-11, correctly, for two
+# reasons that no amount of calibration fixes:
+#
+#   1. RAMP-UP CONTAMINATION. The account was reset 2026-09-02 and spends
+#      its first sessions going from all-cash to fully deployed. A
+#      mostly-cash account barely moves, so its measured volatility over
+#      exactly the sessions needed to activate the alarms is artificially
+#      LOW — which sets the thresholds artificially TIGHT, and they then
+#      fire on completely normal behaviour once the book is deployed.
+#   2. THE RECORD IS CONTAMINATED ANYWAY. This desk has never operated
+#      correctly; that is the entire content of its open defect backlog.
+#      Calibrating a safety threshold from a record of malfunction is not
+#      sound, and no waiting period cures it.
+#
+# Measuring the HOLDINGS instead fixes both and costs nothing:
+#
+#   - It WORKS IMMEDIATELY. There is no minimum wait on the account,
+#     because the history used is the holdings' market price history, which
+#     is abundant and long. A position opened this morning is measurable
+#     today — its ticker has years of bars regardless of when we bought it.
+#   - It SCALES WITH DEPLOYMENT AUTOMATICALLY, and this is intended. Weights
+#     are fractions OF EQUITY and are deliberately NOT renormalised to sum
+#     to one, so a 30%-deployed book reconstructs a normal daily move about
+#     30% the size of the same basket fully deployed, and the threshold
+#     tightens to match. That is correct: a third of the book at risk should
+#     not be allowed the same loss as all of it.
+#   - It NEVER READS THE ACCOUNT'S OWN PAST PERFORMANCE. Immune to the
+#     malfunction history and to the ramp.
+#
+# WHY WEIGHTED RETURNS RATHER THAN SUMMED VOLATILITIES. The daily return
+# series of the actual basket is built first and the standard deviation is
+# taken of THAT. Summing or averaging the holdings' individual volatilities
+# would ignore how they co-move and overstate a diversified book's normal
+# move (and understate a book that is really one bet wearing four tickers).
+# Correlation is handled implicitly and exactly by weighting the returns.
 #
 # THIS IS NOT VOLATILITY TARGETING. Nothing here resizes positions. The
 # only thing volatility is used for is the YARDSTICK the alarm measures a
@@ -608,23 +648,28 @@ GROSS_EXPOSURE_RULE = "max_gross_exposure"
 # smoothness goal, not this desk's survival goal — see docs/OUTCOME.md).
 # Do not extend this machinery into sizing.
 
-#: Trailing window, in trading sessions, over which the account's own
+#: Trailing window, in trading sessions, over which the held book's
 #: realized daily volatility is measured. 20 sessions (~one trading month)
 #: is a standard convention for realized-volatility estimation and is
 #: already the longer of the two rolling-return windows this desk brakes
 #: on, so no new window length is introduced by this change.
 REALIZED_VOL_WINDOW_SESSIONS = 20
 
-#: Fewest daily returns that may stand behind a volatility estimate before
-#: it is allowed to set a risk threshold. NOT a round number: the relative
-#: standard error of a sample standard deviation is approximately
+#: Fewest daily basket returns that may stand behind a volatility estimate
+#: before it is allowed to set a risk threshold. NOT a round number: the
+#: relative standard error of a sample standard deviation is approximately
 #: `1 / sqrt(2(n-1))`, so n=10 returns puts the estimate's own error at
 #: ~24% of the estimate, and n=5 at ~35%. 10 is the point at which the
 #: yardstick is more precise than the ~25%-ish uncertainty already carried
 #: by the provisional sensitivity multiple below; below it the estimate is
 #: the dominant source of error and the fixed-percentage fallback is the
-#: more honest answer. Directly relevant after the 2026-09-02 clean-slate
-#: reset, which left the equity curve with a single point.
+#: more honest answer.
+#:
+#: Unchanged in value and in derivation from the equity-curve version this
+#: replaced, but it is now a minimum on the HOLDINGS' PRICE HISTORY, not on
+#: the account's own trading record — which is the whole point of the
+#: 2026-09-11 basis change. In practice it is satisfied on day one for any
+#: normally-traded symbol and only bites on a genuinely new listing.
 MIN_REALIZED_VOL_RETURNS = 10
 
 #: Sessions dropped from the NEWEST end before the volatility window starts.
@@ -637,79 +682,304 @@ MIN_REALIZED_VOL_RETURNS = 10
 REALIZED_VOL_SKIP_NEWEST_SESSIONS = 1
 
 
-def realized_daily_vol_pct(
-    equity_values,
+@dataclass(frozen=True)
+class PortfolioVolEstimate:
+    """What a holdings-based volatility measurement actually produced.
+
+    `daily_vol_pct` is None whenever no measurement worth acting on exists,
+    and `reason` says which honest case it was. None is a real answer — it
+    means "fall back to the fixed percentage" — never an error, and it is
+    the ONLY way a threshold may be produced without a measurement behind
+    it. Never invent a number here.
+
+    The diagnostics exist so an operator can see WHY a threshold sits where
+    it does, and specifically so an incomplete measurement is visible rather
+    than silent: `unmeasured_symbols` names holdings whose price history
+    could not support a return series, and `measured_weight_pct` is how much
+    of the book's gross exposure the estimate actually covers.
+    """
+    daily_vol_pct: float | None
+    reason: str = ""
+    observations: int = 0
+    #: Gross (unsigned) weight of equity, in percent, covered by the
+    #: estimate. Less than the book's full gross weight when a holding had
+    #: unusable price history.
+    measured_weight_pct: float = 0.0
+    #: Gross weight of equity, in percent, of every holding considered.
+    book_weight_pct: float = 0.0
+    symbols_used: tuple[str, ...] = ()
+    unmeasured_symbols: tuple[str, ...] = ()
+
+
+def _closes_by_date(bars) -> dict:
+    """`{date: close}` from a bar series, skipping unusable bars.
+
+    Tolerates either OHLCV models or plain mappings so a caller is not
+    forced through one bar type, and drops any bar with a missing date or a
+    non-positive / non-finite close rather than letting it become an
+    infinite or sign-flipped return downstream.
+    """
+    out: dict = {}
+    for bar in bars or ():
+        if isinstance(bar, dict):
+            day, close = bar.get("date"), bar.get("close")
+        else:
+            day, close = getattr(bar, "date", None), getattr(bar, "close", None)
+        if day is None:
+            continue
+        if isinstance(close, bool) or not isinstance(close, (int, float)):
+            continue
+        close = float(close)
+        if not math.isfinite(close) or close <= 0:
+            continue
+        out[day] = close
+    return out
+
+
+def normalized_holding_weights(positions, equity: float) -> dict:
+    """`{symbol: signed weight as a FRACTION of equity}` for held positions.
+
+    docs/WORK.md item 32 (owner call 2026-09-11). The weighting convention
+    for the drawdown alarms' volatility yardstick, in one place so no caller
+    re-derives it.
+
+    Two deliberate differences from `position_weight_pct`, which is the
+    weight convention used for EXPOSURE CAPS and must not be reused here:
+
+      - NO LEVERAGE MULTIPLIER. `weight_pct_of` scales a leveraged ETF's
+        weight by its leverage factor, which is right for an exposure cap.
+        It would be double-counting here: a 3x ETF's OWN price history
+        already moves 3x, so multiplying the weight as well would report
+        nine times the volatility the book can actually experience.
+      - SIGNED, not gross. A short's negative weight is what makes a real
+        long/short offset show up as the smaller basket move it is. Taking
+        absolute values would report a hedged book as twice as volatile as
+        an unhedged one.
+
+    Weights are fractions of equity and are NOT renormalised to sum to one.
+    That is the deployment-scaling property: a 30%-deployed book must
+    produce a proportionally smaller normal daily move.
+    """
+    try:
+        eq = float(equity or 0.0)
+    except (TypeError, ValueError):
+        return {}
+    if not math.isfinite(eq) or eq <= 0:
+        return {}
+    weights: dict = {}
+    for position in positions or ():
+        symbol = str(getattr(position, "symbol", "") or "").strip().upper()
+        if not symbol:
+            continue
+        try:
+            market_value = float(getattr(position, "market_value", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(market_value) or market_value == 0:
+            continue
+        weights[symbol] = weights.get(symbol, 0.0) + market_value / eq
+    return {sym: w for sym, w in weights.items() if w != 0.0}
+
+
+def measure_portfolio_daily_vol(
+    weights,
+    bars_by_symbol,
     *,
     window_sessions: int = REALIZED_VOL_WINDOW_SESSIONS,
     min_returns: int = MIN_REALIZED_VOL_RETURNS,
     skip_newest: int = REALIZED_VOL_SKIP_NEWEST_SESSIONS,
-) -> float | None:
-    """The account's own realized daily volatility, in percent per session.
+) -> PortfolioVolEstimate:
+    """Realized daily volatility of the book actually held, in percent.
 
-    `equity_values` is the account equity curve NEWEST-FIRST — the ordering
-    `Database.get_daily_pnl` returns (`ORDER BY date DESC`), so callers can
-    hand over `[r["total_value"] for r in rows]` unchanged. The newest
-    `skip_newest` readings are dropped before the window starts, so the
-    session under judgement does not set its own threshold (see
-    `REALIZED_VOL_SKIP_NEWEST_SESSIONS`).
+    docs/WORK.md item 32, owner call 2026-09-11. `weights` is
+    `{symbol: signed fraction of equity}` from `normalized_holding_weights`;
+    `bars_by_symbol` is `{symbol: bar series}` of REAL MARKET price history
+    for those same symbols, in any order (dates are read off the bars, never
+    inferred from position in the list).
 
-    Returns the sample standard deviation (ddof=1, the unbiased-variance
-    convention) of consecutive daily percentage returns over at most
-    `window_sessions` sessions, or None when the history cannot support an
-    estimate worth acting on. None means "fall back to the fixed
-    percentage" — it is a real answer, not an error.
+    The basket's own daily return series is reconstructed first —
+    `r_portfolio(d) = sum_i weight_i * r_i(d)` — and the sample standard
+    deviation (ddof=1) is taken of that, the same convention the rest of
+    this module uses. Correlation between holdings is therefore handled
+    implicitly and exactly; nothing here sums individual volatilities.
 
-    Only the CONTIGUOUS newest run of usable readings is used. A gap (a
-    missing, zero, negative or non-finite `total_value`) truncates the
-    window rather than being skipped over: skipping would silently splice a
-    multi-session move into a single "daily" return and inflate the
-    volatility estimate, which would LOOSEN every alarm on exactly the days
-    the data is unreliable.
+    Returns a `PortfolioVolEstimate` whose `daily_vol_pct` is None when no
+    measurement worth acting on is available. It NEVER raises and NEVER
+    returns a number it did not measure.
+
+    THE COMMON DATE AXIS. Returns are computed on the dates every measurable
+    holding has a bar for, so each holding's return covers the same interval
+    and one symbol's halt cannot splice a multi-session move into another's
+    single-day return. Calendar gaps in that axis (weekends, market
+    holidays) are not splices — no trading happened, so there is no return
+    being skipped over.
+
+    A HOLDING WITH NO USABLE HISTORY is dropped from the estimate rather
+    than voiding it, and named in `unmeasured_symbols`. Dropping it makes
+    the measured volatility a LOWER BOUND on the book's true volatility, so
+    the threshold comes out tighter — the alarm fires sooner, never later,
+    which is the safe direction for a brake. It is also exactly the same
+    arithmetic as that holding not being deployed, which is the
+    deployment-scaling behaviour this design already wants. When NOTHING is
+    measurable the answer is None and the fixed percentage governs.
     """
     try:
         window = int(window_sessions)
         floor = int(min_returns)
         skip = max(0, int(skip_newest))
     except (TypeError, ValueError):
-        return None
+        return PortfolioVolEstimate(None, reason="bad measurement parameters")
     if window < 2 or floor < 2:
-        return None
+        return PortfolioVolEstimate(None, reason="bad measurement parameters")
 
-    candidates = list(equity_values or ())[skip:]
-    contiguous: list[float] = []
-    for value in candidates:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            break
-        value = float(value)
-        if not math.isfinite(value) or value <= 0:
-            break
-        contiguous.append(value)
-        # `window` sessions of returns needs `window + 1` equity readings.
-        if len(contiguous) >= window + 1:
-            break
+    clean: dict = {}
+    for symbol, weight in (weights or {}).items():
+        sym = str(symbol or "").strip().upper()
+        if not sym:
+            continue
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+            continue
+        weight = float(weight)
+        if not math.isfinite(weight) or weight == 0.0:
+            continue
+        clean[sym] = clean.get(sym, 0.0) + weight
+    clean = {sym: w for sym, w in clean.items() if w != 0.0}
+    book_weight_pct = sum(abs(w) for w in clean.values()) * 100.0
 
-    if len(contiguous) < floor + 1:
-        return None
+    if not clean:
+        # The book is entirely in cash. There is no portfolio to measure —
+        # not "a portfolio with zero volatility". Zero would collapse every
+        # threshold to zero and trip the alarm on the first cent lost.
+        return PortfolioVolEstimate(
+            None, reason="no holdings — the book is entirely in cash",
+        )
 
-    # Oldest-first so consecutive pairs are (yesterday, today).
-    series = list(reversed(contiguous))
-    returns = [
-        (series[i] - series[i - 1]) / series[i - 1]
-        for i in range(1, len(series))
-    ]
+    closes: dict = {}
+    unmeasured: list = []
+    for sym in clean:
+        series = _closes_by_date((bars_by_symbol or {}).get(sym))
+        # `floor` returns needs `floor + 1` closes, and `skip` more to drop
+        # the session under judgement from the newest end.
+        if len(series) < floor + 1 + skip:
+            unmeasured.append(sym)
+            continue
+        closes[sym] = series
+
+    if not closes:
+        return PortfolioVolEstimate(
+            None,
+            reason="no holding has enough price history to measure",
+            book_weight_pct=round(book_weight_pct, 4),
+            unmeasured_symbols=tuple(sorted(unmeasured)),
+        )
+
+    axis = sorted(set.intersection(*(set(s) for s in closes.values())))
+    if skip:
+        axis = axis[:-skip] if skip < len(axis) else []
+    # `window` returns needs `window + 1` dates.
+    axis = axis[-(window + 1):]
+    if len(axis) < floor + 1:
+        return PortfolioVolEstimate(
+            None,
+            reason=(
+                f"only {max(0, len(axis) - 1)} overlapping session(s) of "
+                f"price history across the holdings; {floor} needed"
+            ),
+            observations=max(0, len(axis) - 1),
+            book_weight_pct=round(book_weight_pct, 4),
+            unmeasured_symbols=tuple(sorted(unmeasured)),
+        )
+
+    returns: list = []
+    for i in range(1, len(axis)):
+        today, yesterday = axis[i], axis[i - 1]
+        basket = 0.0
+        for sym, series in closes.items():
+            prev = series[yesterday]
+            basket += clean[sym] * (series[today] - prev) / prev * 100.0
+        returns.append(basket)
+
     if len(returns) < floor:
-        return None
+        return PortfolioVolEstimate(
+            None,
+            reason="not enough basket returns to measure",
+            observations=len(returns),
+            book_weight_pct=round(book_weight_pct, 4),
+            unmeasured_symbols=tuple(sorted(unmeasured)),
+        )
     try:
-        sigma = statistics.stdev(returns) * 100.0
+        sigma = statistics.stdev(returns)
     except statistics.StatisticsError:
-        return None
-    if not math.isfinite(sigma) or sigma <= 0:
-        # A dead-flat equity curve (no trading since the reset) has zero
-        # measured volatility. Zero would collapse every threshold to zero
-        # and trip the alarm on the first cent lost, so this is treated as
-        # "no usable estimate" and falls back.
-        return None
-    return sigma
+        return PortfolioVolEstimate(
+            None, reason="volatility estimate failed",
+            observations=len(returns),
+            book_weight_pct=round(book_weight_pct, 4),
+        )
+    # A dead-flat basket — most realistically a perfectly offsetting
+    # long/short pair — has zero measured volatility. Zero would collapse
+    # every threshold to zero and trip the alarm on the first cent lost, so
+    # it is "no usable estimate" and falls back.
+    #
+    # The comparison is against a NUMERICAL NOISE FLOOR, not against 0.0,
+    # and the floor is DERIVED rather than picked. Each holding's daily
+    # return is `(p_t - p_prev) / p_prev`, a ratio of two nearly-equal
+    # IEEE-754 doubles, so its absolute error is on the order of machine
+    # epsilon — about `100 * epsilon` once expressed in percent. The basket
+    # return sums `len(closes)` such terms, each scaled by its weight, and
+    # the standard deviation of the series inherits that bound. A sigma
+    # below it is floating-point residue in the input prices, not a
+    # measurement of movement.
+    #
+    # Found by test, and it was a real gap: an exactly offsetting long/short
+    # pair measures 2.4e-15%/session, which a plain `sigma <= 0` check let
+    # straight through and which would have produced an alarm threshold of
+    # effectively 0% — tripping on the first cent lost. The floor lands
+    # ~1e-14%/session, so it can only ever reject arithmetic noise; any
+    # volatility a real instrument can exhibit is orders of magnitude above
+    # it and still measures normally.
+    noise_floor = (
+        len(closes) * sys.float_info.epsilon * 100.0
+        * max(abs(w) for w in clean.values())
+    )
+    if not math.isfinite(sigma) or sigma <= noise_floor:
+        return PortfolioVolEstimate(
+            None,
+            reason="the held book shows no measurable daily movement",
+            observations=len(returns),
+            book_weight_pct=round(book_weight_pct, 4),
+            unmeasured_symbols=tuple(sorted(unmeasured)),
+        )
+
+    if unmeasured:
+        logger.warning(
+            "drawdown alarms: %d holding(s) have too little price history to "
+            "measure (%s). The volatility yardstick covers %.1f%% of the "
+            "book's %.1f%% gross exposure, so it is a LOWER bound and the "
+            "thresholds come out tighter, not looser.",
+            len(unmeasured), ", ".join(sorted(unmeasured)),
+            sum(abs(clean[s]) for s in closes) * 100.0, book_weight_pct,
+        )
+    return PortfolioVolEstimate(
+        sigma,
+        reason="measured from current holdings' price history",
+        observations=len(returns),
+        measured_weight_pct=round(
+            sum(abs(clean[s]) for s in closes) * 100.0, 4,
+        ),
+        book_weight_pct=round(book_weight_pct, 4),
+        symbols_used=tuple(sorted(closes)),
+        unmeasured_symbols=tuple(sorted(unmeasured)),
+    )
+
+
+def portfolio_daily_vol_pct(weights, bars_by_symbol, **kwargs) -> float | None:
+    """`measure_portfolio_daily_vol(...).daily_vol_pct` — the number alone.
+
+    For callers that only want the yardstick and not the diagnostics.
+    """
+    return measure_portfolio_daily_vol(
+        weights, bars_by_symbol, **kwargs,
+    ).daily_vol_pct
 
 
 def vol_relative_drawdown_threshold_pct(
@@ -722,8 +992,8 @@ def vol_relative_drawdown_threshold_pct(
 ) -> float:
     """One loss-alarm threshold, as a negative percent of equity.
 
-    `daily_vol_pct` is the account's realized daily volatility from
-    `realized_daily_vol_pct`; None (not enough history) returns
+    `daily_vol_pct` is the held book's realized daily volatility from
+    `measure_portfolio_daily_vol`; None (nothing measurable) returns
     `fallback_pct` unchanged, which is the fixed-percentage threshold this
     design replaces — so a cold-started account behaves exactly as it did
     before this change and nothing has to guess.
@@ -1636,59 +1906,72 @@ class RiskRuleEngine:
         self,
         config: RiskConfig,
         *,
-        equity_history_provider=None,
+        portfolio_vol_provider=None,
     ):
         self.config = config
         # docs/WORK.md item 32 (owner call 2026-09-11). Optional zero-arg
-        # callable returning the account equity curve NEWEST-FIRST (the
-        # ordering `Database.get_daily_pnl` gives). Supplied, the daily
-        # circuit breaker measures a loss against the account's OWN recent
-        # realized volatility instead of a fixed percentage of equity; not
-        # supplied — every existing test fixture, and any caller with no
-        # database — it falls back to the fixed percentage exactly as
-        # before, so this is additive.
+        # callable returning the realized daily volatility, in percent per
+        # session, of THE BOOK CURRENTLY HELD — measured by
+        # `measure_portfolio_daily_vol` from the real market price history
+        # of the actual holdings at their actual weights — or None when
+        # nothing measurable exists. Supplied, the daily circuit breaker
+        # measures a loss against that; not supplied — every existing test
+        # fixture, and any caller with no market data — it falls back to the
+        # fixed percentage exactly as before, so this is additive.
+        #
+        # NOT the account's own equity curve. That was the first version of
+        # this change and the owner rejected it: the post-reset account
+        # spends its first sessions ramping from cash and a mostly-cash
+        # account barely moves, so the measurement would have been
+        # artificially low and the thresholds artificially tight — and the
+        # account's historical record is a record of malfunction anyway. See
+        # the module comment above `REALIZED_VOL_WINDOW_SESSIONS`.
         #
         # A PROVIDER rather than a value passed to `check_daily_loss`
         # deliberately: the breaker is called from six separate places in
-        # `src/pipeline.py`, not all of them after the session has computed
-        # rolling performance. Threading a value through would have left
-        # some of those call sites silently on the old basis, which is the
-        # exact class of half-applied fix item 32 already found twice.
-        self.equity_history_provider = equity_history_provider
+        # `src/pipeline.py`, not all of them holding a position list. And it
+        # returns the FINISHED number rather than raw bars so that this
+        # module keeps exactly one definition of "volatility" and the
+        # gathering of positions and prices stays with the caller that owns
+        # the broker and the market feed.
+        self.portfolio_vol_provider = portfolio_vol_provider
 
-    def realized_daily_vol_pct(self) -> float | None:
-        """The account's own realized daily volatility, or None.
+    def portfolio_daily_vol_pct(self) -> float | None:
+        """The held book's realized daily volatility, or None.
 
-        None means the history cannot support an estimate worth acting on
-        (see `MIN_REALIZED_VOL_RETURNS`) and the fixed-percentage fallback
-        governs. A provider that raises is treated the same way: a broken
+        None means no measurement worth acting on exists — an all-cash
+        book, or holdings without enough price history (see
+        `MIN_REALIZED_VOL_RETURNS`) — and the fixed-percentage fallback
+        governs. A provider that raises, or returns something that is not a
+        usable positive number, is treated the same way: a broken
         volatility read must never disable the circuit breaker, so it
         degrades to the old basis and logs.
         """
-        provider = self.equity_history_provider
+        provider = self.portfolio_vol_provider
         if provider is None:
             return None
         try:
-            values = provider()
+            sigma = provider()
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "RiskRuleEngine: equity-history provider failed (%s) — the "
-                "daily circuit breaker falls back to its fixed-percentage "
-                "threshold for this call.", exc,
+                "RiskRuleEngine: portfolio-volatility provider failed (%s) — "
+                "the daily circuit breaker falls back to its "
+                "fixed-percentage threshold for this call.", exc,
             )
             return None
-        try:
-            return realized_daily_vol_pct(
-                values,
-                window_sessions=REALIZED_VOL_WINDOW_SESSIONS,
-                min_returns=MIN_REALIZED_VOL_RETURNS,
-            )
-        except Exception as exc:  # noqa: BLE001
+        if sigma is None:
+            return None
+        if isinstance(sigma, bool) or not isinstance(sigma, (int, float)):
             logger.warning(
-                "RiskRuleEngine: realized-volatility estimate failed (%s) — "
-                "falling back to the fixed-percentage daily threshold.", exc,
+                "RiskRuleEngine: portfolio-volatility provider returned %r, "
+                "which is not a number — falling back to the "
+                "fixed-percentage daily threshold.", sigma,
             )
             return None
+        sigma = float(sigma)
+        if not math.isfinite(sigma) or sigma <= 0:
+            return None
+        return sigma
 
     @property
     def daily_loss_limit_pct(self) -> float:
@@ -1698,18 +1981,19 @@ class RiskRuleEngine:
 
           1. an explicit `max_daily_loss_pct` always wins (the override
              pattern ~50 fixtures in this repo rely on);
-          2. otherwise the volatility-relative threshold, if the account
-             has enough of its own history to measure one;
+          2. otherwise the volatility-relative threshold, measured from the
+             price history of what the desk is holding right now;
           3. otherwise `effective_max_daily_loss_pct`, the fixed percentage
-             derived from the real per-trade risk unit — the cold-start
-             fallback, and what this desk is actually on today.
+             derived from the real per-trade risk unit — used when there is
+             nothing to measure at all: an all-cash book, holdings without
+             enough price history, or no market-data provider wired in.
         """
         explicit = getattr(self.config, "max_daily_loss_pct", None)
         if isinstance(explicit, (int, float)) and not isinstance(explicit, bool):
             if math.isfinite(float(explicit)) and float(explicit) > 0:
                 return float(explicit)
         fallback = self.config.effective_max_daily_loss_pct
-        sigma = self.realized_daily_vol_pct()
+        sigma = self.portfolio_daily_vol_pct()
         if sigma is None:
             return fallback
         threshold = vol_relative_drawdown_threshold_pct(
@@ -2107,8 +2391,8 @@ class RiskRuleEngine:
         else:
             daily_loss_pct = abs(daily_pnl / baseline * 100) if daily_pnl < 0 else 0
             # docs/WORK.md item 32: `daily_loss_limit_pct` (not the raw
-            # field) so this measures the loss against the account's own
-            # recent realized volatility when that is measurable, and
+            # field) so this measures the loss against the normal daily
+            # move of the book actually held when that is measurable, and
             # against the risk-unit-derived fixed percentage when it is
             # not. Both beaten by an explicit `max_daily_loss_pct`.
             limit = self.daily_loss_limit_pct

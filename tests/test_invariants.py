@@ -153,14 +153,14 @@ def test_invariant_hard_risk_gate_unaffected_by_garbage_llm_config():
 #: invariant. Nothing reaches this list without being ACCOUNT STATE — never
 #: config, never anything an LLM authored or a provider supplied.
 #:
-#:   equity_history_provider — docs/WORK.md item 32, owner call 2026-09-11.
-#:     Supplies the account's own equity curve so the daily circuit breaker
-#:     can measure a loss against the account's recent realized volatility
-#:     instead of a frozen percentage of equity. Equity readings from this
-#:     desk's own `daily_pnl` table; no model output, no provider config,
-#:     and a failed read falls back to the fixed percentage rather than
-#:     disabling the breaker.
-_ENGINE_ALLOWED_KEYWORD_ARGS = {"equity_history_provider"}
+#:   portfolio_vol_provider — docs/WORK.md item 32, owner call 2026-09-11.
+#:     Supplies the realized daily volatility of the book the desk is
+#:     actually holding, so the daily circuit breaker can measure a loss
+#:     against that instead of a frozen percentage of equity. Derived from
+#:     the live position list and real market price history for those
+#:     symbols; no model output, no provider config, and a failed read falls
+#:     back to the fixed percentage rather than disabling the breaker.
+_ENGINE_ALLOWED_KEYWORD_ARGS = {"portfolio_vol_provider"}
 
 
 def test_invariant_risk_rule_engine_never_reads_llm_or_provider_config():
@@ -215,7 +215,7 @@ def test_invariant_risk_rule_engine_never_reads_llm_or_provider_config():
     forbidden = ("llm", "model", "provider_order", "api_key", "prompt")
     for name in params:
         if name in _ENGINE_ALLOWED_KEYWORD_ARGS:
-            # `equity_history_provider` contains "provider"; the check below
+            # `portfolio_vol_provider` contains "provider"; the check below
             # is about MODEL providers, so match on the narrower tokens.
             continue
         assert not any(token in name for token in forbidden), (

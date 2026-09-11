@@ -22,7 +22,7 @@ what would catch it next time.
 
 ---
 
-### 2026-09-11 — the desk's loss alarms assumed the future would look like the past
+### 2026-09-11 — the desk's loss alarms assumed the future would look like the past (and the first fix measured the wrong thing)
 
 **In plain words:** the desk had three alarms that say "we have lost too
 much, stop taking risk" — one for a single day, one for a week, one for a
@@ -32,9 +32,30 @@ is that it is only the right number for the kind of market it was chosen
 in. In a calm market 6.7% in one day is a catastrophe the alarm should
 have caught much earlier; in a violent one it is an ordinary Tuesday and
 the alarm shuts the desk down for no reason. The alarms now measure a loss
-against how much the account itself has actually been moving lately, and
+against how much **the things the desk is actually holding** normally move
+in a day, worked out from those holdings' real market price history, and
 that measurement is redone every day. Nothing about how big a position
 gets was touched.
+
+**Corrected the same day, and this is the more important half of the
+entry.** The first version of this fix measured *the account's own
+day-to-day movement* instead. The owner spotted why that was wrong before
+it shipped. Two reasons, and no amount of tuning fixes either:
+
+1. The account had just been reset and would spend its first couple of
+   weeks moving money from cash into positions. An account sitting mostly
+   in cash barely moves — so the "normal daily movement" it measured over
+   exactly those weeks would have been far too small, the alarms would
+   have been set far too tight, and they would then have gone off
+   constantly once the money was actually invested.
+2. This desk has never worked properly — that is the whole content of its
+   defect list. Setting a safety limit from a record of malfunction is not
+   sound, and waiting longer does not cure it.
+
+Measuring the holdings instead has none of those problems and is better on
+its own terms: it works from the first day (a share's price history is
+years long no matter when we bought it), and it automatically allows less
+loss when less money is invested, which is what it should do.
 
 **The owner's objection, and why the obvious fix was refused.** The
 previous round (2026-09-04, entry below) had already fixed two real bugs in
@@ -48,10 +69,26 @@ frozen number with the *identical* structural flaw. The basis had to
 change, not the calibration.
 
 **What the new basis is.** Each alarm trips at
-`sensitivity × (the account's own realized daily volatility) × √(window
-length)`. The volatility is the sample standard deviation of the account's
-daily equity returns over a rolling trailing 20 sessions, recomputed every
-session. One measurement, one definition, three alarms.
+`sensitivity × (the held book's realized daily volatility) × √(window
+length)`. The volatility is the sample standard deviation of the *current
+portfolio's* daily returns over a rolling trailing 20 sessions —
+reconstructed from the real market price history of the actual holdings at
+their actual weights — recomputed every session. One measurement, one
+definition, three alarms.
+
+**Why the portfolio's returns are rebuilt first, rather than combining the
+holdings' individual volatilities.** Combining them separately would
+ignore how they move together: it would overstate the normal move of a
+genuinely diversified book and understate a book that is really one bet
+wearing four tickers. Weighting the daily returns and then taking the
+standard deviation of the result handles correlation implicitly and
+exactly, and needs no correlation estimate of its own.
+
+**Weights are fractions of equity and are deliberately not rescaled to sum
+to 1.** A book that is 30% invested therefore reconstructs a normal daily
+move about 30% the size of the same basket fully invested, and its alarm
+tightens to match. That is intended, not a rounding artefact: a third of
+the book at risk should not be allowed the same loss as all of it.
 
 **What is genuinely research-grounded here, and what is not. This
 distinction is the point of the entry.**
@@ -74,39 +111,61 @@ distinction is the point of the entry.**
   labelled that way in `src/config.py`, `config/settings.yaml`,
   `docs/WORK.md` and the test module — not as a researched constant.
 
-**How the provisional sensitivity was set, and why that method was chosen.**
-Day-one continuity, deliberately not a severity opinion. The value (6.7) is
-the one that makes the new thresholds equal the ones already live at a
-documented reference volatility, so the only thing that changed on the day
-this landed is that the thresholds now MOVE. The reference — 1.0% per
-session — was measured from real market data over this desk's own
-configured 101-symbol universe: trailing-20-session realized daily
-volatility of equal-weight baskets the size this desk actually runs came in
-at a median of 1.04% (5 names), 0.86% (8) and 0.80% (12), spread roughly
-0.55%-1.7%. At 1.0% the arithmetic reproduces 6.70% for one day and 14.98%
-for five, against the 6.7% and 15% already shipped. One sensitivity covers
-both because those two shipped multiples were already √time-consistent
-with each other after the 2026-09-04 fix.
+**How the sensitivity was set: 6.7 first, then 3.0 by owner decision.**
+The first value, 6.7, was chosen purely for day-one continuity and
+deliberately not as a severity opinion — it is the number that makes the
+new thresholds equal the ones already live at a documented reference
+volatility, so the only thing that would change on the day it landed is
+that the thresholds now MOVE. The reference — ~1.0% per session — was
+measured from real market data over this desk's own configured 101-symbol
+universe: trailing-20-session realized daily volatility of equal-weight
+baskets the size this desk actually runs came in at a median of 1.04% (5
+names), 0.86% (8) and 0.80% (12), spread roughly 0.55%-1.7%. That proxy
+measurement is exactly what the live mechanism now does for real, against
+actual holdings and actual weights.
 
-**Why it could not be calibrated from the account's own record, stated
-plainly rather than glossed.** It should have been, and the attempt was
-made first. The live desk's `daily_pnl` table was read directly on
-2026-09-11 and holds **exactly one row** — 2026-09-02, the clean-slate
-reset day. There is no equity curve, so there is nothing to calibrate
-against. That is the same blocker the old anchor multiplier had, and this
-change inherits it rather than resolving it: the architecture is fixed, the
-sensitivity is not validated.
+**Making that measurement is what exposed the problem with 6.7, and it is
+worth recording as a finding in its own right.** Nobody had ever measured
+what the inherited setting meant in practice. It means the daily circuit
+breaker only fires on a **~6.7-standard-deviation session** — a
+crash-grade event. The daily brake was, in effect, dormant, and had been
+all along. That was not a property this change introduced; it was the
+first actual measurement of how loose the inherited number always was, and
+it says the breaker sat much further out than "3 losing max-size trades in
+a day" ever sounded.
 
-**One measured finding recorded here because it needs an owner's view, not
-an agent's.** 6.7 multiples of this desk's plausible daily volatility is a
-very remote daily event. That is not a property this change introduced — it
-is the first actual measurement of how loose the INHERITED setting always
-was, and it says the daily circuit breaker sits much further out than "3
-losing max-size trades in a day" ever sounded. Lowering it is a
-risk-appetite decision. It is on the dated decision list in
-`docs/WORK.md`, not silently applied.
+**The owner reviewed the measured numbers and set it to 3.0.** Roughly a
+3% daily loss on a book whose normal session is ~1% — a genuinely rough
+day rather than a crash. **This is a deliberate, reversible risk-appetite
+decision and it is NOT a researched, derived or validated number.** It is
+labelled provisional in `src/risk/constants.py`, `src/config.py`,
+`config/settings.yaml`, `docs/WORK.md` and the test module. Do not let a
+later pass present it as derived.
 
-**Two bugs found and fixed while building this, both real.**
+The thresholds it produces at a ~1%/session book, written down rather than
+assumed: **-3.0% for one day, -6.7% over five days, -13.4% over twenty**
+(previously -6.7%, -15.0%, -20.0%). These move with the real book; the
+figures above are illustration of scale, not configuration.
+
+**A consequence worth naming: at 3.0 the 20-day cap no longer binds.** The
+20-day threshold is capped at the de-levering ladder's -20% owner-alert
+point. At 6.7 that cap was active at any plausible volatility. At 3.0 it
+only engages above roughly 1.5%/session. It stays regardless, because it
+is the thing that guarantees this brake can never be asleep past the point
+the ladder halves the book and alerts the owner, whatever the regime.
+
+**Why the sensitivity is not, and cannot be, calibrated from the account's
+own record.** That was attempted first and is precisely what the owner
+rejected. The live desk's `daily_pnl` table was read directly on
+2026-09-11 and holds **exactly one row** — 2026-09-02, the reset day — but
+the deeper point is that even a full record would not do: it would be a
+record of malfunction, contaminated by the ramp from cash and by the open
+defect backlog. The architecture is fixed and no longer waits on the
+account for anything. The sensitivity remains a risk-appetite dial, to be
+revisited on the owner's appetite or on evidence from live operation that
+3.0 fires on days that turn out to be ordinary — not by fitting.
+
+**Three bugs found and fixed while building this, all real.**
 
 - **A violent session was widening its own alarm.** With the volatility
   window including the session being judged, a -6% day on a book that
@@ -122,6 +181,15 @@ risk-appetite decision. It is on the dated decision list in
   All three are capped at the ladder alert now, and the 5-day threshold is
   additionally clamped to the 20-day one, so
   `|1-day| ≤ |5-day| ≤ |20-day| ≤ 20%` always holds.
+- **A perfectly offsetting book produced an alarm threshold of almost
+  zero.** Found by test after the switch to holdings-based measurement. A
+  long and a short that cancel exactly measure not 0 but ~2e-15% per
+  session — floating-point residue — which sailed past a plain
+  "is the volatility zero?" check and would have set a threshold of
+  effectively 0%, tripping the alarm on the first cent lost. The check is
+  now against a noise floor *derived* from double-precision arithmetic on
+  the input prices (about 1e-14%/session), not a picked number, so it can
+  only ever reject arithmetic noise.
 
 **A trap that would have made the whole change inert, worth recording.**
 `config/settings.yaml` carried `max_daily_loss_pct: 6.7`. That field is an
@@ -137,21 +205,46 @@ portfolio-smoothness goal, which is not this desk's survival goal — see
 measures a loss against. A test asserts no sizing-shaped output leaks out
 of the drawdown-alarm path.
 
-**Behaviour today, and why nothing visibly changed.** With one row of
-history the volatility is unmeasurable, so all three alarms fall back to
-the previously-shipped fixed percentages. The fallback is deliberate and
-tested: a cold-started account behaves exactly as it did on main. The new
-basis engages once ~11 sessions of real history exist.
+**Behaviour today.** The alarms are live from the first session the desk
+holds anything, because the measurement no longer waits on the account.
+The fixed percentages survive only as the fallback for cases where there
+is genuinely nothing to measure, each tested: an entirely cash book (there
+is no portfolio to measure — treating it as "zero volatility" would trip
+the alarm on the first cent lost); a holding with no usable price history
+when it is the only holding; and any failure of the broker or market-data
+read. A holding with no usable history *alongside* measurable ones is
+dropped from the estimate and named in the logs rather than voiding it —
+that makes the measured volatility a lower bound, so the threshold comes
+out tighter and the alarm fires sooner rather than later, which is the safe
+direction for a brake and is arithmetically the same as that holding not
+being invested.
+
+**One residual behaviour, recorded rather than guarded.** A book held
+entirely in a cash-equivalent sweep vehicle has a real but tiny normal
+daily move, so it would get a correspondingly tiny threshold. No floor was
+invented to prevent that: a loss much larger than such a book's normal
+move genuinely is anomalous, and picking a minimum threshold would have
+meant inventing a number. Worth revisiting if the desk ever parks the
+whole book in a sweep vehicle with the brakes live.
 
 **What would catch a regression:**
-`tests/test_drawdown_vol_relative_brake.py` proves the same absolute loss
-trips the alarm on a calm book and does not on a volatile one; that
-doubling measured volatility doubles the alarm distance; that the √time
-relation and the severity ordering hold at every volatility tested; that a
-violent session cannot widen its own threshold; that too little history,
-a data gap, a flat curve and a failing database read all fall back to the
-fixed percentage rather than disabling the breaker; and that
-`settings.yaml` does not pin the breaker back to a literal.
+`tests/test_drawdown_vol_relative_brake.py` proves the measurement reports
+what the held book is actually doing; that a less-invested book gets a
+proportionally tighter threshold; that two holdings moving together are
+priced as one bet and an offsetting pair is not the sum of its parts; that
+a leveraged ETF's weight is not multiplied by its leverage a second time
+(its own price series already carries it); that the measurement's own
+signature cannot reach the account's performance record; that returns are
+keyed on dates rather than list position; that the same absolute loss trips
+the alarm on a calm book and not on a volatile one; that doubling measured
+volatility doubles the alarm distance; that the √time relation and the
+severity ordering hold at every volatility tested; that a violent session
+cannot widen its own threshold; that an all-cash book, a holding with no
+price history, a single-position book, junk bars, a broken market feed and
+a broken broker read all fall back to the fixed percentage rather than
+disabling the breaker; that the shipped sensitivity is 3.0 and the
+thresholds it produces are what is written above; and that `settings.yaml`
+does not pin the breaker back to a literal.
 `tests/test_drawdown_brake_rescale.py` still pins the fallback numbers
 unchanged.
 

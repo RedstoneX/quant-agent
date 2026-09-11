@@ -54,3 +54,28 @@ Consumers (must stay aligned — if you edit one, verify the others):
   - `RiskConfig.min_position_risk_pct`            (the budget floor)
   - `PortfolioManagerAgent.decide`                (the sub-floor cap default)
 """
+
+DEFAULT_DRAWDOWN_VOL_SENSITIVITY = 3.0
+"""How many multiples of the held book's own normal daily move trip a loss
+alarm, before sqrt(time) window scaling. docs/WORK.md item 32.
+
+PROVISIONAL AND REVERSIBLE — an owner risk-appetite decision made
+2026-09-11, NOT a researched or validated number. There is no citable
+industry-standard multiple for this; it was specifically researched and does
+not exist. It replaced an earlier 6.7, which existed only so behaviour would
+not jump when the alarms' basis changed, and which measurement then showed
+meant the daily breaker fired only on a ~6.7-sigma session — a crash-grade
+event, i.e. effectively dormant. 3.0 is roughly a 3% daily loss on a book
+whose normal session is ~1%: a rough day, not a crash.
+
+The sqrt(time) scaling this multiplies IS research-grounded and cited
+(Van Hemert/Ganz/Harvey, "Drawdowns", JPM 2020). The multiple is not. Keep
+that distinction in anything written about it.
+
+Consumers (must stay aligned — if you edit one, verify the others):
+  - `RiskConfig.drawdown_vol_sensitivity`         (the model default + full
+                                                   reasoning)
+  - `config/settings.yaml` (`risk.drawdown_vol_sensitivity`)
+  - `TradingPipeline._build_agents` / `_compute_recent_performance`
+    (the fallback used when settings cannot be read)
+"""

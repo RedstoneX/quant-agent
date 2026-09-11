@@ -849,7 +849,7 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             # force (`_compute_recent_performance`), not a hardcoded
             # "5d < -3% OR 20d < -8%" description. Since the 2026-09-11 basis
             # change these MOVE EVERY SESSION — they are a multiple of the
-            # account's own recent realized volatility, not a fixed
+            # normal daily move of the book actually held, not a fixed
             # percentage of equity — so any hand-typed copy here would be
             # wrong within days rather than merely going stale eventually.
             t5 = recent_perf.get("drawdown_5d_threshold_pct")

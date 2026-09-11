@@ -389,13 +389,22 @@ risk:
   #
   # With it unset the breaker trips at
   # `drawdown_vol_sensitivity x sigma_daily`, where sigma_daily is the
-  # account's OWN realized daily volatility over the trailing 20 sessions,
-  # recomputed every session. `daily_loss_risk_multiple` below survives as
-  # the COLD-START FALLBACK only — used while the account has too little
-  # history of its own to measure a volatility worth acting on, which is
-  # exactly this desk's state after the 2026-09-02 reset (verified
-  # 2026-09-11: `daily_pnl` holds one row). At the 5% risk unit that
-  # fallback is the same 6.7% as before, so nothing jumps on day one.
+  # realized daily volatility of THE BOOK THE DESK IS ACTUALLY HOLDING,
+  # reconstructed over the trailing 20 sessions from the real market price
+  # history of its current holdings at their current weights, recomputed
+  # every session.
+  #
+  # NOT the account's own equity curve — that was the first version of this
+  # change and the owner rejected it: the post-reset account spends its
+  # first sessions ramping from all-cash, a mostly-cash account barely
+  # moves, so the measurement would have come out artificially low and the
+  # alarms artificially tight; and the account's historical record is a
+  # record of malfunction anyway. Measuring the holdings works from day one
+  # because their price history is abundant regardless of ours.
+  #
+  # `daily_loss_risk_multiple` below survives as the fallback for when there
+  # is genuinely NOTHING to measure: an all-cash book, or holdings without
+  # enough price history.
   #
   # NOT volatility targeting. No position is resized by any of this; the
   # only thing that changed is the yardstick the ALARM measures a loss
@@ -404,31 +413,35 @@ risk:
   max_daily_loss_pct: null
   daily_loss_risk_multiple: 1.34
   # docs/WORK.md item 32, owner call 2026-09-11 — how many multiples of the
-  # account's own recent realized daily volatility trip a loss alarm, scaled
-  # to each window by sqrt(time).
+  # HELD BOOK's own normal daily move trip a loss alarm, scaled to each
+  # window by sqrt(time).
   #
   # PROVISIONAL, AND HONESTLY SO. The sqrt(time) window scaling IS real,
   # published research (Van Hemert/Ganz/Harvey, JPM 2020, cited above), and
   # measuring risk relative to recent realized volatility is standard
   # practice. The TRIGGER MULTIPLE is neither: researched 2026-09-11, there
   # is no citable industry-standard number for "how many multiples of
-  # recent volatility should trip a drawdown alarm".
+  # recent volatility should trip a drawdown alarm". Do not let a later
+  # pass present this as derived — it is a risk-appetite dial.
   #
-  # 6.7 is set by DAY-ONE CONTINUITY, not by a severity opinion — at a
-  # reference sigma_daily of 1.0%/session it reproduces the thresholds
-  # already shipped (6.7% daily, 15.0% over 5 days), so the only thing that
-  # changes on the day this lands is that they now MOVE with conditions.
-  # That 1.0% reference was measured 2026-09-11 from real market data over
-  # this desk's own configured universe (trailing-20-session realized daily
-  # volatility of equal-weight baskets the size this desk runs: median
-  # 1.04% at 5 names, 0.86% at 8, 0.80% at 12).
+  # 3.0 IS AN OWNER RISK-APPETITE DECISION, 2026-09-11, and is REVERSIBLE.
+  # It replaced 6.7, which existed only so behaviour would not jump when
+  # the basis changed (6.7 x a ~1%/session reference reproduced the old
+  # frozen -6.7% daily breaker). Measuring that for the first time is what
+  # exposed the problem: at 6.7 the daily breaker only fires on a
+  # ~6.7-sigma session — a crash-grade event, i.e. effectively dormant.
+  # 3.0 is roughly a 3% daily loss on a book whose normal session is ~1%: a
+  # genuinely rough day rather than a crash.
   #
-  # Recorded, not acted on: 6.7 sigma is a very remote daily event, which
-  # is the first real measurement of how loose the INHERITED anchor always
-  # was. Whether the sensitivity should come down is an owner call about
-  # risk appetite. Full reasoning: `RiskConfig.drawdown_vol_sensitivity`
-  # in src/config.py.
-  drawdown_vol_sensitivity: 6.7
+  # For scale, at a ~1.0%/session book (measured 2026-09-11 from real
+  # market data over this desk's own configured universe: equal-weight
+  # baskets the size this desk runs came in at a 0.80%-1.04% median):
+  #   daily -3.0%, 5-day -6.7%, 20-day -13.4%.
+  # Those MOVE with the real book; the 20-day cap at the ladder's -20%
+  # alert point no longer binds at that volatility but stays as a guarantee
+  # for violent regimes. Full reasoning:
+  # `RiskConfig.drawdown_vol_sensitivity` in src/config.py.
+  drawdown_vol_sensitivity: 3.0
   # docs/WORK.md item 32. Same derivation and same #258/#259 dependency as
   # `max_daily_loss_pct` above, for the two rolling-return "drawdown brake"
   # windows in src/pipeline.py::_compute_recent_performance
@@ -460,10 +473,11 @@ risk:
   # and an OWNER call — see docs/WORK.md item 32.
   #
   # BASIS CHANGED 2026-09-11 (see `drawdown_vol_sensitivity` above). These
-  # two multiples are now the COLD-START FALLBACK for the 5-day and 20-day
-  # brakes, not the live basis: with enough history the thresholds are
-  # `drawdown_vol_sensitivity x sigma_daily x sqrt(window)`, recomputed
-  # every session. Bug 2's constraint SURVIVES the change — the 20-day
+  # two multiples are now the FALLBACK for the 5-day and 20-day brakes,
+  # used only when there is nothing measurable at all: with real holdings
+  # the thresholds are `drawdown_vol_sensitivity x sigma_daily x
+  # sqrt(window)`, where sigma_daily is the held book's own normal daily
+  # move, recomputed every session. Bug 2's constraint SURVIVES — the 20-day
   # threshold is still capped at the ladder's -20% owner-alert point, so it
   # can never be asleep past the point the ladder escalates, and the 5-day
   # threshold is clamped to the 20-day one so a shorter window can never
@@ -483,10 +497,11 @@ risk:
   # this limit's ONLY remaining job is bounding correlated blow-up risk.
   #
   # THE COST, STATED PLAINLY: at 75% of equity in one sector, an ordinary
-  # 20% sector-wide drawdown costs 15% of equity — more than TWICE the 6.7%
-  # max_daily_loss_pct circuit breaker above, and it will trip the
-  # de-levering ladder. That is the accepted price of a concentrated
-  # trading desk, not an oversight.
+  # 20% sector-wide drawdown costs 15% of equity — several times the daily
+  # circuit breaker above, and it will trip the de-levering ladder. That is
+  # the accepted price of a concentrated trading desk, not an oversight.
+  # (Since 2026-09-11 that breaker is a multiple of the held book's own
+  # normal daily move, ~3% for a ~1%/session book, not a fixed 6.7%.)
   #
   # Spec §12.2: LONG and SHORT exposure in a sector are measured against
   # this limit INDEPENDENTLY. Neither offsets the other, and neither

@@ -143,9 +143,9 @@ class RiskLimits(BaseModel):
     # docs/WORK.md item 32 (owner call 2026-09-11): this is the CONFIGURED
     # fixed-percentage fallback, NOT the threshold necessarily in force.
     # Since that change the daily circuit breaker trips at a multiple of the
-    # account's own recent realized volatility whenever there is enough
-    # history to measure one, and that figure needs `src.risk.rules` +
-    # the equity curve — neither of which `src/api/` may reach
+    # held book's own normal daily move whenever that is measurable, and
+    # that figure needs `src.risk.rules` + the market price history of the
+    # current holdings — neither of which `src/api/` may reach
     # (tests/test_api_safety.py). Same deliberate omission, and same
     # reason, as `max_gross_exposure_x` below: the live number reaches the
     # operator on the session alert, not here. Do not "fix" this by

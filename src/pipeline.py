@@ -36,21 +36,22 @@ from src.agents.smart_money_analyst import SmartMoneyAnalystAgent
 from src.data.congressional_trading import CombinedSmartMoneyProvider, CongressionalTradingProvider
 from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
-from src.risk.constants import REWARD_RISK_FLOOR
+from src.risk.constants import (
+    DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
+    REWARD_RISK_FLOOR,
+)
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
     GROSS_LADDER,
     GROSS_LADDER_ALERT_PCT,
-    REALIZED_VOL_SKIP_NEWEST_SESSIONS,
-    REALIZED_VOL_WINDOW_SESSIONS,
     GrossCeiling,
+    PortfolioVolEstimate,
     RiskRuleEngine,
     apply_gross_ceiling,
     distance_to_forced_liquidation_pct,
     gross_exposure,
     peak_to_trough_pct,
     position_weight_pct,
-    realized_daily_vol_pct,
     resolve_gross_ceiling,
     vol_relative_drawdown_threshold_pct,
 )
@@ -614,12 +615,13 @@ class TradingPipeline:
                 getattr(config.risk, "daily_loss_risk_multiple", None), 3.0,
             ),
             # docs/WORK.md item 32 (owner call 2026-09-11): how many
-            # multiples of the account's OWN recent realized volatility trip
-            # the daily breaker. Threaded for the same reason as the two
-            # above — an unthreaded value would silently derive against this
-            # model's bare default rather than real settings.
+            # multiples of the HELD BOOK's own normal daily move trip the
+            # daily breaker. Threaded for the same reason as the two above —
+            # an unthreaded value would silently derive against this model's
+            # bare default rather than real settings.
             drawdown_vol_sensitivity=_risk_number(
-                getattr(config.risk, "drawdown_vol_sensitivity", None), 6.7,
+                getattr(config.risk, "drawdown_vol_sensitivity", None),
+                DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
             ),
             max_sector_pct=config.risk.max_sector_pct,
             # Spec §10.3 — the absolute ceiling behind the sector dial.
@@ -640,13 +642,15 @@ class TradingPipeline:
             # by a hard rule the agent didn't know was active.
             allow_margin=config.risk.allow_margin,
         # docs/WORK.md item 32 (owner call 2026-09-11). Lets the daily
-        # circuit breaker measure a loss against the account's OWN recent
-        # realized volatility rather than a frozen percentage of equity.
-        # Read lazily, at each check, because the breaker fires from six
-        # separate places in this file and not all of them run after the
-        # session has computed rolling performance. Returns None-safe
-        # values; a failing read falls back to the fixed percentage.
-        ), equity_history_provider=self._equity_curve_newest_first)
+        # circuit breaker measure a loss against the normal daily move of
+        # the book actually held — from its holdings' real market price
+        # history — rather than a frozen percentage of equity, and NOT
+        # against the account's own (ramp-contaminated, malfunction-era)
+        # equity curve. Read lazily, at each check, because the breaker
+        # fires from six separate places in this file and the book changes
+        # intraday. Returns None-safe values; a failing read falls back to
+        # the fixed percentage.
+        ), portfolio_vol_provider=self.held_book_daily_vol_pct)
         self.position_reviewer = PositionReviewerAgent(
             api_key=_key_for(config.llm.position_reviewer_model, config.llm.position_reviewer_provider),
             model=config.llm.position_reviewer_model,
@@ -7476,17 +7480,23 @@ class TradingPipeline:
         is doing. Independent of VIX / macro regime (which reflect market, not us).
 
         The two thresholds MOVE EVERY SESSION since the 2026-09-11 basis
-        change (docs/WORK.md item 32): they are a multiple of the account's
-        own realized daily volatility over the trailing window, not a fixed
-        percentage of equity. `realized_daily_vol_pct` carries the yardstick
-        they came from, and is None when there is too little history and the
-        fixed-percentage fallback is governing.
+        change (docs/WORK.md item 32): they are a multiple of the realized
+        daily volatility of THE BOOK CURRENTLY HELD, reconstructed from the
+        real market price history of its actual holdings at their actual
+        weights, not a fixed percentage of equity.
+        `held_book_daily_vol_pct` carries the yardstick they came from, and
+        is None when nothing is measurable (an all-cash book, or holdings
+        without enough price history) and the fixed-percentage fallback is
+        governing.
+
+        The ROLLING RETURNS are still the account's own — that is what the
+        brake is judging. Only the YARDSTICK moved off the equity curve.
 
         Returns e.g. {'rolling_5d_pct': -2.3, 'rolling_20d_pct': -6.1,
                       'in_drawdown': True, 'trailing_days': 18,
-                      'realized_daily_vol_pct': 0.94,
-                      'drawdown_5d_threshold_pct': -14.08,
-                      'drawdown_20d_threshold_pct': -20.0}
+                      'held_book_daily_vol_pct': 0.94,
+                      'drawdown_5d_threshold_pct': -6.3,
+                      'drawdown_20d_threshold_pct': -12.6}
         """
         try:
             rows = self.db.get_daily_pnl(limit=25)
@@ -7517,24 +7527,31 @@ class TradingPipeline:
 
         # docs/WORK.md item 32 (owner call 2026-09-11). These thresholds are
         # no longer a fixed percentage of equity at all — they are a multiple
-        # of the account's OWN realized daily volatility over the trailing
-        # window, scaled to each window by sqrt(time). A fixed percentage is
-        # only correct for the volatility regime it was chosen in, and
-        # markets are not stationary; the owner refused a recalibration of
-        # the fixed number for exactly that reason.
+        # of the realized daily volatility of THE BOOK CURRENTLY HELD,
+        # measured from the real market price history of its actual holdings
+        # at their actual weights, scaled to each window by sqrt(time). A
+        # fixed percentage is only correct for the volatility regime it was
+        # chosen in, and markets are not stationary; the owner refused a
+        # recalibration of the fixed number for exactly that reason.
+        #
+        # The yardstick is NOT this account's own equity curve. That was the
+        # first implementation and the owner rejected it: the post-reset
+        # account spends its first sessions ramping from all-cash, a
+        # mostly-cash account barely moves, and the measurement would have
+        # been artificially low — setting the alarms artificially tight so
+        # they fire on normal behaviour once the book is deployed. See
+        # `src/risk/rules.py::measure_portfolio_daily_vol`.
         #
         # `drawdown_5d_threshold_pct` / `drawdown_20d_threshold_pct` (the
-        # risk-unit-derived fixed percentages) survive as the COLD-START
-        # FALLBACK, used when the account has too little of its own history
-        # to measure a volatility worth acting on — which is the desk's real
-        # state after the 2026-09-02 reset. See
+        # risk-unit-derived fixed percentages) survive as the fallback for
+        # when there is genuinely NOTHING to measure — an all-cash book, or
+        # holdings with too little price history. See
         # `RiskConfig.drawdown_vol_sensitivity` for the sensitivity and,
         # honestly, for what about it is and is not research-grounded.
-        daily_vol = realized_daily_vol_pct(
-            [r.get("total_value") for r in rows],
-        )
+        daily_vol = self.held_book_daily_vol_pct()
         sensitivity = _risk_number(
-            getattr(self.config.risk, "drawdown_vol_sensitivity", None), 6.7,
+            getattr(self.config.risk, "drawdown_vol_sensitivity", None),
+            DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
         )
         threshold_5d = vol_relative_drawdown_threshold_pct(
             daily_vol_pct=daily_vol, window_sessions=5,
@@ -7597,48 +7614,107 @@ class TradingPipeline:
             "drawdown_20d_threshold_pct": threshold_20d,
             # docs/WORK.md item 32: the yardstick itself, surfaced so an
             # operator (and Mission Control) can see WHY a threshold sits
-            # where it does. None means "not enough history — the
-            # fixed-percentage fallback is governing".
-            "realized_daily_vol_pct": (
+            # where it does. None means "nothing measurable — the
+            # fixed-percentage fallback is governing". This is the normal
+            # daily move of the HELD BOOK, so it is already net of how
+            # deployed the book is: a third-deployed book reports roughly a
+            # third of the move the same basket fully deployed would.
+            "held_book_daily_vol_pct": (
                 None if daily_vol is None else round(daily_vol, 3)
             ),
             "trailing_days": len(rows),
             "peak_to_trough_pct": peak_to_trough,
         }
 
-    def _equity_curve_newest_first(self) -> list:
-        """The account equity curve, newest-first, for the risk engine.
+    def measure_held_book_daily_vol(self):
+        """`PortfolioVolEstimate` for the book the desk is holding right now.
 
-        docs/WORK.md item 32 (owner call 2026-09-11). Injected into
-        `RiskRuleEngine` as `equity_history_provider` so the daily circuit
-        breaker can measure a loss against the account's own recent realized
-        volatility. Kept deliberately dumb — one read, no derivation — so
-        the volatility definition lives in exactly one place
-        (`src/risk/rules.py::realized_daily_vol_pct`) rather than being
-        re-implemented per caller, which is how this desk ended up with two
-        unreconciled drawdown measures in the first place.
+        docs/WORK.md item 32 (owner call 2026-09-11). The single place the
+        drawdown alarms' volatility yardstick is produced. Gathers what only
+        the pipeline can reach — the live position list, live equity, and
+        real market price history for those exact symbols — and hands it to
+        `src/risk/rules.py::measure_portfolio_daily_vol`, which owns the
+        arithmetic. The volatility DEFINITION therefore lives in exactly one
+        place rather than being re-implemented per caller, which is how this
+        desk ended up with two unreconciled drawdown measures in the first
+        place.
 
-        Returns an empty list rather than raising: a failed read must fall
-        back to the fixed-percentage threshold, never disable the breaker.
+        Price history comes from `self.market.get_ohlcv` — the same market
+        feed (yfinance, with the Alpaca fallback already wired in
+        `set_fallback_bars`) that technical analysis, the correlation matrix
+        and the ATR reads all use. No second price path is introduced.
+
+        Never raises. Any failure returns an estimate whose `daily_vol_pct`
+        is None, which means "fall back to the fixed percentage" — a broken
+        read must never disable the circuit breaker.
         """
+        from src.risk.rules import (
+            measure_portfolio_daily_vol,
+            normalized_holding_weights,
+        )
         try:
-            rows = self.db.get_daily_pnl(
-                # +1 for the extra equity reading a window of returns needs,
-                # +`REALIZED_VOL_SKIP_NEWEST_SESSIONS` for the session under
-                # judgement, which is excluded from its own yardstick.
-                limit=(
-                    REALIZED_VOL_WINDOW_SESSIONS + 1
-                    + REALIZED_VOL_SKIP_NEWEST_SESSIONS
-                ),
+            account, positions, _ = self._refresh_account_state()
+            equity = float(
+                getattr(account, "portfolio_value", None)
+                or getattr(account, "equity", None)
+                or 0.0
             )
+            weights = normalized_holding_weights(positions, equity)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "Failed to read daily_pnl for the volatility-relative daily "
-                "circuit breaker; it falls back to its fixed-percentage "
-                "threshold: %s", exc,
+                "Could not read the held book for the volatility-relative "
+                "drawdown alarms; they fall back to their fixed-percentage "
+                "thresholds: %s", exc,
             )
-            return []
-        return [r.get("total_value") for r in (rows or [])]
+            return PortfolioVolEstimate(None, reason="held book unreadable")
+        if not weights:
+            return measure_portfolio_daily_vol({}, {})
+
+        # Session-scoped memo. The daily circuit breaker fires from six
+        # separate places in this file, and each measurement is one market
+        # fetch per holding — without this the same number would be bought
+        # six times a session. Keyed on the holdings and their weights (to
+        # 4dp) and on the latest bar date seen, so an intraday change in the
+        # book re-measures rather than serving a stale yardstick.
+        key = tuple(sorted((sym, round(w, 4)) for sym, w in weights.items()))
+        cached = getattr(self, "_held_book_vol_memo", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+
+        bars_by_symbol = {}
+        for symbol in weights:
+            try:
+                bars_by_symbol[symbol] = self.market.get_ohlcv(
+                    symbol, self.config.trading.lookback_days,
+                ) or []
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Price history fetch failed for %s while measuring the "
+                    "held book's volatility: %s", symbol, exc,
+                )
+                bars_by_symbol[symbol] = []
+
+        estimate = measure_portfolio_daily_vol(weights, bars_by_symbol)
+        self._held_book_vol_memo = (key, estimate)
+        return estimate
+
+    def held_book_daily_vol_pct(self) -> float | None:
+        """The held book's realized daily volatility in percent, or None.
+
+        docs/WORK.md item 32. Wired into `RiskRuleEngine` as
+        `portfolio_vol_provider`; also the yardstick
+        `_compute_recent_performance` reports and derives its two
+        rolling-return brakes from, so all three loss alarms read ONE
+        measurement rather than each making their own.
+        """
+        try:
+            return self.measure_held_book_daily_vol().daily_vol_pct
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Held-book volatility measurement failed (%s) — the drawdown "
+                "alarms fall back to their fixed-percentage thresholds.", exc,
+            )
+            return None
 
     def _refresh_account_state(self):
         account = self.broker.get_account()

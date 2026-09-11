@@ -425,8 +425,13 @@ confident number by the next session that looks at this.
 **Context.** The desk's three loss alarms (daily circuit breaker, 5-day and
 20-day rolling-return brakes) were each a fixed percentage of equity. That
 basis assumes stationarity, which markets do not have, so it was replaced
-with a basis relative to the account's own recent realized volatility. See
-`docs/INCIDENT_HISTORY.md`, 2026-09-11.
+with a basis relative to the recent realized volatility of the book the
+desk actually holds — measured from its holdings' real market price
+history. (An earlier version of the same change measured the ACCOUNT's own
+equity curve and was rejected the same day: a post-reset account ramping
+from cash barely moves, so it would have measured artificially low and set
+the alarms artificially tight.) See `docs/INCIDENT_HISTORY.md`,
+2026-09-11.
 
 ### What IS in the literature, and is used
 
@@ -451,12 +456,17 @@ circulate informally are not traceable to a result.
 
 Consequences, applied:
 
-- The sensitivity is shipped as an explicitly provisional value, labelled as
-  such in `src/config.py`, `config/settings.yaml`, `docs/WORK.md` and its
-  test module. It is NOT presented as researched.
-- It was set by day-one continuity against the previously-shipped
-  thresholds, so the change in basis did not smuggle in a change in
-  severity. Deciding the level is on `docs/WORK.md`'s dated decision list.
+- The sensitivity is shipped as an explicitly provisional value, labelled
+  as such in `src/risk/constants.py`, `src/config.py`,
+  `config/settings.yaml`, `docs/WORK.md` and its test module. It is NOT
+  presented as researched.
+- It was FIRST set to 6.7 by day-one continuity against the
+  previously-shipped thresholds, so the change in basis would not smuggle
+  in a change in severity. Making that measurement is what showed 6.7
+  meant the daily breaker only fired on a ~6.7-sigma session — a
+  crash-grade event, i.e. effectively dormant. **The owner then set it to
+  3.0 (2026-09-11): a risk-appetite decision, reversible, and still not a
+  researched number.** Roughly a 3% daily loss on a ~1%/session book.
 - **Do not "find" a citation for it later.** If a future session believes it
   has one, check that the source actually gives a trigger multiple for a
   drawdown alarm and is not a volatility-TARGETING paper (a different
@@ -464,11 +474,17 @@ Consequences, applied:
 
 ### One real measurement made in support of it
 
-The account's own equity curve could not supply a reference volatility: the
-live `daily_pnl` table was read on 2026-09-11 and holds exactly one row
-(the 2026-09-02 reset). A proxy was measured instead, from real market data
-over this desk's own configured 101-symbol universe — trailing-20-session
-realized daily volatility of equal-weight baskets the size this desk runs:
+The account's own equity curve could not supply a reference volatility (the
+live `daily_pnl` table was read on 2026-09-11 and holds exactly one row,
+the 2026-09-02 reset) — and, as above, it should not be asked to. This
+measurement was made over real market data from this desk's own configured
+101-symbol universe: trailing-20-session realized daily volatility of
+equal-weight baskets the size this desk runs.
+
+**It has since become the live mechanism, not a proxy for it.** The same
+measurement now runs against the ACTUAL current holdings at their ACTUAL
+weights, every session. The figures below are what generic baskets of this
+size look like, retained for scale:
 
 | Basket size | Median 20-session daily volatility | 60-session |
 |---|---|---|
@@ -477,10 +493,14 @@ realized daily volatility of equal-weight baskets the size this desk runs:
 | 12 names | 0.80% | 0.99% |
 
 Spread across draws was roughly 0.55%-1.7%. For scale, SPY over the same
-window measured 0.54% and the median single name 1.57%. 1.0% per session
-was taken as the reference. **This is a proxy for the account's book, not a
-measurement of it** — it is honest about the universe and the basket sizes,
-and it is not a substitute for the real equity curve once one exists.
+window measured 0.54% and the median single name 1.57%. ~1.0% per session
+is the figure the threshold illustrations elsewhere are quoted against.
+
+**Note what this means for a partly-invested book.** Weights are fractions
+of equity and are deliberately not rescaled to sum to 1, so a 30%-invested
+book measures roughly 30% of the figures above and gets a proportionally
+tighter alarm. That is intended: a third of the book at risk should not be
+allowed the same loss as all of it.
 
 ---
 
