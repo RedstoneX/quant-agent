@@ -1964,11 +1964,20 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             smart_money_findings=smart_money_findings or [],
             symbol_sectors=symbol_sectors or {},
         )
-        smart_money_eligible: dict[str, bool] = {}
+        # 2026-09-11 redesign: `support_eligible` is now purely STRUCTURAL
+        # (real, single-direction, legally-disclosed evidence) — it no
+        # longer expires on a calendar. Whether an aged smart-money finding
+        # may actually support a target is instead decided per-target,
+        # below, by whether it CORRELATES with at least one other CURRENT
+        # source's stance on the same symbol — one piece of information
+        # among several, weighted by agreement, never an island judged on
+        # its own age. See `SmartMoneyFinding.deterministic_eligibility`.
+        smart_money_structurally_eligible: dict[str, bool] = {}
         for finding in smart_money_findings or []:
             symbol = finding.symbol.upper()
-            smart_money_eligible[symbol] = (
-                smart_money_eligible.get(symbol, False) or finding.support_eligible
+            smart_money_structurally_eligible[symbol] = (
+                smart_money_structurally_eligible.get(symbol, False)
+                or finding.support_eligible
             )
         reasoning_text = "\n".join(
             str(value) for value in decision.reasoning_chain.model_dump().values()
@@ -2012,6 +2021,24 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         f"{symbol}: increase lacks a current-run Technical analysis"
                     )
             expected_sources = registry.get(symbol, {})
+            # Correlation, not calendar age: smart_money may support THIS
+            # target only if it is structurally real evidence AND at least
+            # one OTHER current source (technical/news/earnings/macro)
+            # already in the registry for this symbol independently points
+            # the same direction. An insider trade with nothing else
+            # backing it right now is still shown as context — it simply
+            # doesn't get to count as support on its own, regardless of
+            # whether it happened yesterday or three months ago.
+            smart_money_correlates = smart_money_structurally_eligible.get(
+                symbol, False,
+            ) and any(
+                stance_is_aligned(
+                    other_source, symbol, other_stance,
+                    wants_bullish=(intent == "buy"),
+                )
+                for other_source, other_stance in expected_sources.items()
+                if other_source != "smart_money"
+            )
             seen_sources: set[str] = set()
             supporting_sources: set[str] = set()
             for claim in target.provenance:
@@ -2044,8 +2071,12 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     source, symbol, stance, wants_bullish=(intent == "buy"),
                 )
                 if claim.relationship == "supports":
-                    if source == "smart_money" and not smart_money_eligible.get(symbol, False):
-                        errors.append(f"{symbol}: historical smart-money evidence cannot support a target; use context")
+                    if source == "smart_money" and not smart_money_correlates:
+                        errors.append(
+                            f"{symbol}: smart-money evidence with nothing else "
+                            "currently corroborating it cannot support a target "
+                            "on its own; use context"
+                        )
                         continue
                     if not polarity_supports:
                         errors.append(
@@ -2065,7 +2096,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     and source != "macro"
                     and not (
                         source == "smart_money"
-                        and not smart_money_eligible.get(symbol, False)
+                        and not smart_money_correlates
                     )
                 ):
                     errors.append(

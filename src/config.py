@@ -1060,7 +1060,38 @@ class SmartMoneyConfig(BaseModel):
     request_timeout_s: float = Field(default=15.0, ge=1, le=60)
     refresh_deadline_s: float = Field(default=180.0, ge=10, le=600)
     requests_per_second: float = Field(default=8.0, ge=0.5, le=10.0)
-    lookback_days: int = Field(default=7, ge=1, le=30)
+    # 7 -> 90 -> 365 on 2026-09-11. This bounds how far back an insider/SEC
+    # observation is FETCHED and RETAINED at full detail — a trade older
+    # than this is invisible to correlation entirely, not just discounted.
+    #
+    # 365 days is a real BEHAVIORAL bound, not a calendar guess: per the
+    # owner directly, someone acting on genuine inside information has no
+    # logical reason to sit on it for more than a year before trading —
+    # if they haven't acted within a year, the information itself either
+    # played out already or was never that actionable. That's what sets
+    # this number, not a storage/network cost tradeoff.
+    #
+    # (7 days matched nothing real to begin with: Seyhun (1986) found only
+    # ~1/4 of an insider purchase's eventual abnormal return realizes in
+    # the first 5 days and ~1/2 is still unrealized after a full month;
+    # real M&A run-ups start MONTHS before the announcement. 90 was an
+    # intermediate step, matching `EARNINGS_STANCE_MAX_AGE_DAYS`.)
+    #
+    # Neither real infra cost binds at 365: NETWORK cost is already
+    # bounded elsewhere — `refresh()` is accession-keyed and resumable, a
+    # filing already processed is never re-fetched, so this number only
+    # sets how many PAST DAYS get a "anything new here?" search query each
+    # refresh, with headroom left in this file's own rate/deadline budget.
+    # STORAGE cost is small: measured directly against the live server's
+    # actual cache 2026-09-11 — 4,324 records / 5.76 MB at the old 7-day
+    # window, roughly ~300 MB at 365 days on a straight scale-up — trivial
+    # for a server either way.
+    #
+    # This is a FETCH/RETENTION bound, not a support-eligibility gate —
+    # whether an old observation can actually support a target is decided
+    # by correlation with other current evidence (see
+    # `PortfolioManagerAgent`'s grounding validator), not by this number.
+    lookback_days: int = Field(default=365, ge=1, le=365)
     max_filings_per_refresh: int = Field(default=1000, ge=1, le=5000)
     max_observations: int = Field(default=40, ge=1, le=200)
     min_transaction_value_usd: float = Field(default=100_000, ge=1_000)

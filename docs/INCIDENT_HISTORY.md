@@ -5382,3 +5382,83 @@ the sizing arithmetic itself (`risk_pct x entry / |entry - stop|`,
 `allocate_risk_budget`, the cluster cap) is unchanged and already covered
 by `tests/test_risk_based_sizing.py`, `tests/test_portfolio_constructor.py`
 and `tests/test_risk_budget.py`.
+
+## 2026-09-11 — smart-money evidence was judged as an island on a calendar; it now has to correlate with something real
+
+**In plain words:** the desk watches insider and congressional stock trades
+as one piece of evidence toward a trade decision. Until now, if too many
+days passed since that trade was filed, the system stopped trusting it
+completely — it didn't just weigh it less, it actively relabeled the whole
+finding "historical" so it could never support a target again, no matter
+what else was happening with the stock. The owner pushed back hard on this,
+in his own words: insider information isn't always about tomorrow — someone
+can position months ahead of a known future event — and other evidence
+(a slow price drift, unusual accumulation, moving-average confirmation) can
+independently show whether the original information is still playing out.
+Treating the trade as an island judged only on its own age threw all of
+that away.
+
+**The owner's proposed fix, verbatim in spirit:** "this is one piece of
+information — if it doesn't correlate with anything else, that's fine, it
+just changes the decision matrix; if it does correlate, stronger weights."
+No decay curve, no better day-count — drop the calendar test entirely and
+let correlation with other CURRENT evidence decide whether it counts.
+
+**Why dropping the age gate outright is the right call, not just simpler.**
+Checked against real published research before building this, not just
+taking the intuition on faith:
+- Seyhun (1986), the foundational academic study on insider trading:
+  only about a quarter of the eventual abnormal return from an insider
+  purchase shows up in the first 5 days: **half of it is still unrealized
+  a full month later.** A 7-day cutoff was throwing away most of the real
+  signal before it had even played out.
+- Real M&A research shows target-company price run-ups beginning **months**
+  before the deal is ever announced, frequently alongside unusual trading
+  volume — exactly the kind of independent, current confirmation the owner
+  described technical analysis being able to catch.
+
+**What actually shipped.** `SmartMoneyFinding.support_eligible`
+(`src/models.py`) is now purely STRUCTURAL: is this real, single-direction,
+legally-disclosed evidence at all. It no longer references age or
+freshness in any way. Whether an eligible finding can actually be cited as
+`supports` on a target is decided separately, in
+`PortfolioManagerAgent`'s grounding validator, by a new correlation check:
+at least one OTHER current source (technical, news, earnings, macro)
+already covering that symbol must independently point the same direction.
+An insider trade with nothing else backing it right now is still shown to
+the PM as context — it simply doesn't get to count as support on its own,
+regardless of whether it happened yesterday or three months ago. This
+mirrors, deliberately, how the desk already treats aged EARNINGS evidence
+(`EARNINGS_STANCE_MAX_AGE_DAYS`, `src/risk/rules.py`) — a stale stance
+there was never deleted or relabeled either, it simply stopped counting
+toward the vote while remaining visible. Smart-money simply wasn't built
+the same way until now.
+
+**One distinction deliberately preserved, not touched by this change.**
+The STOCK Act's 45-day legal filing deadline for congressional disclosures
+(`lag_days <= 45`) is a check about whether a disclosure was filed on time,
+not about how old the underlying trade's information is — a member who
+discloses 90 days late broke the law regardless of how interesting the
+trade itself is. That check is untouched.
+
+**The fetch/retention window was also widened, separately, 7 -> 90 days**
+(`SmartMoneyConfig.lookback_days`) — a trade older than the old 7-day
+window was never even loaded for the analyst to see at all, regardless of
+this eligibility fix. 90 reuses the desk's own existing earnings-evidence
+precedent (`EARNINGS_STANCE_MAX_AGE_DAYS`) rather than inventing a new
+number. This is a practical fetch bound only, not a re-introduced
+staleness gate — real evidence older than 90 days still isn't loaded, a
+known, disclosed limit of this fix rather than a claim of solving the
+general case.
+
+**What would catch a regression:** `tests/test_smart_money.py` proves a
+60-day-old, single-actor, single-direction insider buy is still
+structurally eligible (age alone no longer disqualifies), and a genuinely
+contradictory (mixed buy/sell direction) finding is still correctly
+downgraded. `tests/test_congressional_trading.py` proves the same for
+congressional evidence, and separately proves the 45-day legal-disclosure
+check still binds regardless of this change. `tests/test_pm_grounding.py`
+proves the actual behavior change end to end: identical, equally-aged
+insider evidence is rejected as support when nothing else currently
+agrees with it, and accepted when a current technical read does — the
+correlation, not the calendar, is what decided the outcome in both cases.

@@ -118,38 +118,48 @@ def test_congressional_compatibility_remains_conservative():
     assert cluster.support_eligible is True
 
 
-def test_sec_insider_actionable_role_is_downgraded_when_evidence_is_thin():
+def test_sec_insider_actionable_role_is_downgraded_when_directions_conflict():
     """Mirror of `test_congressional_compatibility_remains_conservative`
     above, but for the SEC/insider branch of `deterministic_eligibility`.
 
     Before this fix, only the congressional branch force-downgraded
     `economic_role` to "historical" when `support_eligible` came back
     False. The SEC/insider branch computed `support_eligible` but never
-    applied the same downgrade, so a stale, single-observation insider
-    finding could still carry the model's self-reported
+    applied the same downgrade, so a genuinely contradictory (mixed-
+    direction) insider finding could still carry the model's self-reported
     economic_role="actionable" / stance="bullish" all the way to
     `to_verdict()` at full magnitude and "high" conviction -- exactly the
     "everything's good, just plain lying" case this seat must not allow.
+
+    2026-09-11: no longer built on AGE -- see
+    test_insider_age_alone_does_not_disqualify_support below for why. The
+    genuinely thin/contradictory case is mixed buy-and-sell direction,
+    which the SEC/insider branch has always required a single direction
+    to rule out.
     """
-    stale_obs = SmartMoneyObservation(
+    buy_obs = SmartMoneyObservation(
         symbol="NVDA", stream="insider", actor="Owner 1", actor_cik="1",
         actor_roles=["director"], direction="buy",
-        transaction_date=date.today() - timedelta(days=20),
-        disclosure_date=date.today() - timedelta(days=18),
+        transaction_date=date.today() - timedelta(days=5),
+        disclosure_date=date.today() - timedelta(days=3),
         source_url="https://www.sec.gov/0000000001-26-000001.txt",
         accession_number="0000000001-26-000001", filing_form="4",
         transaction_code="P", transaction_row=0, security_title="Common Stock",
         shares=3_000, price_per_share=100, transaction_value_usd=300_000,
         post_transaction_shares=10_000, ownership_nature="direct",
-        listed_exchange="Nasdaq", lag_days=2, disclosure_age_days=18,
-        freshness="stale", economic_role="confirmatory",
+        listed_exchange="Nasdaq", lag_days=2, disclosure_age_days=3,
+        freshness="fresh", economic_role="confirmatory",
     )
+    sell_obs = buy_obs.model_copy(update={
+        "actor": "Owner 2", "actor_cik": "2", "direction": "sell",
+        "transaction_code": "S", "accession_number": "0000000002-26-000001",
+    })
 
     finding = SmartMoneyFinding(
         symbol="NVDA", stance="bullish", economic_role="actionable",
-        summary="a lone stale insider purchase",
-        why_now="an insider bought weeks ago",
-        observations=[stale_obs],
+        summary="conflicting insider activity",
+        why_now="one insider bought, another sold, same week",
+        observations=[buy_obs, sell_obs],
     )
 
     assert finding.support_eligible is False
@@ -157,6 +167,42 @@ def test_sec_insider_actionable_role_is_downgraded_when_evidence_is_thin():
     verdict = finding.to_verdict()
     assert verdict.conviction == "low"
     assert verdict.magnitude < 1.0
+
+
+def test_insider_age_alone_does_not_disqualify_support():
+    """2026-09-11 owner redesign: a calendar-age cutoff no longer decides
+    whether smart-money evidence CAN support a thesis -- only structural
+    validity does (real, single-direction, legally-disclosed). Whether an
+    aged finding actually counts as support is decided downstream by
+    correlation with other current evidence
+    (`PortfolioManagerAgent`'s grounding validator), not by this model.
+
+    A single-actor, single-direction insider buy from 60 days ago -- well
+    past the old 7-day cutoff -- must still be structurally eligible.
+    """
+    old_obs = SmartMoneyObservation(
+        symbol="NVDA", stream="insider", actor="Owner 1", actor_cik="1",
+        actor_roles=["director"], direction="buy",
+        transaction_date=date.today() - timedelta(days=62),
+        disclosure_date=date.today() - timedelta(days=60),
+        source_url="https://www.sec.gov/0000000001-26-000001.txt",
+        accession_number="0000000001-26-000001", filing_form="4",
+        transaction_code="P", transaction_row=0, security_title="Common Stock",
+        shares=3_000, price_per_share=100, transaction_value_usd=300_000,
+        post_transaction_shares=10_000, ownership_nature="direct",
+        listed_exchange="Nasdaq", lag_days=2, disclosure_age_days=60,
+        freshness="stale", economic_role="confirmatory",
+    )
+
+    finding = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="actionable",
+        summary="an insider bought two months ago",
+        why_now="old but real, single-direction evidence",
+        observations=[old_obs],
+    )
+
+    assert finding.support_eligible is True
+    assert finding.economic_role == "actionable"
 
 
 def test_congressional_eligibility_boundary_is_the_stock_act_45_day_deadline():

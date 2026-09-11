@@ -379,13 +379,17 @@ def test_widening_congress_window_does_not_touch_the_sec_form4_window():
     window is deliberate and must NOT be harmonised with the congressional
     one."""
     cfg = SmartMoneyConfig()
-    assert cfg.lookback_days == 7
+    assert cfg.lookback_days == 365
     assert cfg.cluster_window_days == 2
     assert (
         inspect.signature(SECForm4Provider.__init__)
         .parameters["lookback_days"].default == 14
     )
-    assert cfg.lookback_days < cfg.congress_lookback_days
+    # No ordering requirement between these two: `lookback_days` (insider/SEC
+    # fetch+retention) and `congress_lookback_days` (congressional-provider
+    # search window) are independently grounded — a year of insider-behavior
+    # reasoning for one, an observed-in-the-wild coverage figure for the
+    # other. They are not meant to track each other.
 
 
 def test_a_disclosure_older_than_the_old_30_day_window_now_survives(tmp_path):
@@ -415,9 +419,18 @@ def test_a_disclosure_older_than_the_old_30_day_window_now_survives(tmp_path):
     assert narrow.fetch(["NVDA"])[0] == []
 
 
-def test_wider_window_does_not_make_stale_congressional_evidence_load_bearing():
-    """A 180-day COVERAGE window must not weaken the separate <=7-day
-    eligibility contract in models.py."""
+def test_real_old_congressional_evidence_is_now_genuinely_eligible():
+    """2026-09-11 owner redesign: the old <=7-day AGE cutoff on congressional
+    eligibility is gone -- see `SmartMoneyFinding.deterministic_eligibility`.
+    Real, structurally sound evidence (2+ actors, one direction, legally
+    disclosed within the STOCK Act's 45-day deadline) is eligible regardless
+    of how old the disclosure itself is; whether it actually counts as
+    SUPPORT for a target is decided downstream by correlation with other
+    current evidence, not by this age.
+
+    This replaces the old
+    test_wider_window_does_not_make_stale_congressional_evidence_load_bearing,
+    which asserted the opposite of the now-intended behavior."""
     old = [
         SmartMoneyObservation(
             symbol="NVDA", stream="congressional", actor=actor, actor_cik="",
@@ -437,11 +450,43 @@ def test_wider_window_does_not_make_stale_congressional_evidence_load_bearing():
     finding = SmartMoneyFinding(
         symbol="NVDA", stance="bullish", economic_role="confirmatory",
         summary="Two members bought, disclosed 90 days ago.",
-        why_now="Within the 180-day coverage window but far outside the "
-                "7-day eligibility contract.",
+        why_now="Real, structurally sound, legally-disclosed evidence -- "
+                "old, but not disqualified by age alone.",
         observations=old,
     )
+    assert finding.support_eligible is True
+
+
+def test_congressional_disclosure_past_the_legal_deadline_is_still_ineligible():
+    """The 45-day STOCK Act filing deadline is a LEGAL disclosure-timing
+    check, not an age-of-information check, and is unaffected by the
+    2026-09-11 redesign -- a disclosure filed too late to have been legally
+    on time still cannot support a target."""
+    late = [
+        SmartMoneyObservation(
+            symbol="NVDA", stream="congressional", actor=actor, actor_cik="",
+            direction="buy", amount_range="$15,001 - $50,000",
+            transaction_date=TODAY - timedelta(days=100),
+            disclosure_date=TODAY - timedelta(days=10),
+            known_at=datetime.combine(TODAY - timedelta(days=10), datetime.min.time()),
+            source_url="https://example.invalid/x",
+            transaction_value_usd=15001.0,
+            in_core_universe=True, in_trading_universe=True,
+            admission_eligible=False, transient_admission_eligible=False,
+            lag_days=90, disclosure_age_days=10, freshness="fresh",
+            economic_role="confirmatory",
+        )
+        for actor in ("Kevin Hern", "Jane Doe")
+    ]
+    finding = SmartMoneyFinding(
+        symbol="NVDA", stance="bullish", economic_role="confirmatory",
+        summary="Two members bought, filed 90 days late.",
+        why_now="Recently disclosed, but the disclosure itself broke the "
+                "45-day legal filing deadline.",
+        observations=late,
+    )
     assert finding.support_eligible is False
+    assert finding.economic_role == "historical"
 
 
 # ---------------------------------------------------------------------------
