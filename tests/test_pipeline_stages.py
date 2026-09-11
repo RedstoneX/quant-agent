@@ -1384,6 +1384,62 @@ def test_morning_research_stage_macro_high_confidence_full_coverage_stays_ok():
     assert result_ctx.data_status["macro"] == "ok"
 
 
+def test_morning_research_stage_macro_overdue_print_is_not_ok():
+    """Full coverage, clean parse, confident model — and one FRED series
+    sitting on a reading that should already have been superseded. That is
+    the real staleness that survived the removal of the calendar-day gate
+    (src/data/macro.py::SeriesFreshness): a publication or fetch failure,
+    not normal release timing. Reporting it as "ok" would be the same
+    "no data, but everything's fine!" gap every other seat's audit closed,
+    so it gets its own status value on the existing `macro` key."""
+    from datetime import date
+
+    from src.data.macro import MacroCoverage, SeriesFreshness
+
+    ma = _minimal_macro_analysis(confidence="high")
+    coverage = MacroCoverage(
+        configured=9, succeeded=9, failed=[],
+        overdue=[SeriesFreshness(
+            series_id="CPIAUCSL", status="overdue",
+            latest_observation=date(2026, 5, 1),
+            expected_next_by=date(2026, 7, 15),
+            detail="a newer print was due by 2026-07-15",
+        )],
+    )
+    stage = _macro_stage_with_coverage(ma, coverage)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["macro"] == "release_overdue"
+
+
+def test_morning_research_stage_macro_coverage_failure_beats_overdue_print():
+    """Precedence: a total FRED outage is still 'failed'. An overdue print
+    is a narrower fact and must not mask the wider one."""
+    from datetime import date
+
+    from src.data.macro import MacroCoverage, SeriesFailure, SeriesFreshness
+
+    ma = _minimal_macro_analysis(confidence="high")
+    coverage = MacroCoverage(
+        configured=9, succeeded=0,
+        failed=[SeriesFailure(series_id=f"S{i}", reason="timed out") for i in range(9)],
+        overdue=[SeriesFreshness(
+            series_id="CPIAUCSL", status="overdue",
+            latest_observation=date(2026, 5, 1),
+        )],
+    )
+    stage = _macro_stage_with_coverage(ma, coverage)
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["macro"] == "failed"
+
+
 def test_morning_research_stage_macro_low_confidence_does_not_override_coverage_failure():
     """Coverage-driven failure must still win over a confidence check — a
     total FRED outage is 'failed' regardless of what the model's own

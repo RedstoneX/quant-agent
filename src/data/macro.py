@@ -2,7 +2,8 @@ import logging
 import random
 import socket
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date, timedelta
 
 import pandas as pd
 from fredapi import Fred
@@ -62,6 +63,130 @@ class SeriesFailure:
     reason: str
 
 
+#: The four freshness states one FRED series can be in on a run. This is
+#: deliberately NOT a day count — see `SeriesFreshness` for why a calendar
+#: threshold is the wrong test for macro data.
+FRESHNESS_CURRENT = "current"
+FRESHNESS_OVERDUE = "overdue"
+FRESHNESS_UNKNOWN = "unknown"
+FRESHNESS_EMPTY = "empty"
+
+
+@dataclass
+class SeriesFreshness:
+    """Whether the value we hold for one FRED series is the latest reading
+    that EXISTS, and — separately — whether a newer reading should have
+    arrived by now and hasn't.
+
+    Why this replaced a day count (2026-09-11)
+    ------------------------------------------
+    Every freshness test on macro data used to be a calendar-day
+    threshold: `staleness_days <= 1` for the regime-shift gate, `> 3`
+    (daily) / `> 55` (monthly) for the confidence gate. Measured
+    consequence: the regime-shift gate fired on 14 of 27 retained
+    production runs (52%, 2026-08-17..09-02) because FRED's real
+    publication lag on its DAILY series is about 2 business days — six
+    independent production checkpoints show treasury and fed_funds_rate at
+    `staleness_days=2` in 6/6 samples, never 1. The gate demanded a print
+    that does not exist at the time of asking.
+
+    A day count is the wrong test in principle, not just mis-tuned. Macro
+    series are not published daily: CPI and the employment report are
+    monthly, FOMC decisions land roughly every six weeks, GDP is quarterly.
+    A CPI reading 20 days old is not stale — it IS the current reading,
+    because no newer one exists. Rejecting it for age throws away the only
+    number there is. A macro reading goes stale when a NEWER print
+    supersedes it (or should have and didn't), never when a calendar
+    threshold passes. Same correction the owner directed for smart-money
+    evidence, which shipped as PR #288 (age-based decay removed; structural
+    validity and corroboration kept).
+
+    What establishes each state, from real data only
+    -----------------------------------------------
+    * `current` — we hold FRED's latest published observation for the
+      series and no newer one is due yet. Use it however old it is.
+    * `overdue` — a newer print should have been published by now and we
+      do not have it: a publication failure, a fetch failure, a government
+      shutdown. A REAL problem, surfaced (see `MacroCoverage.overdue`,
+      `data_status["macro"] == "release_overdue"`).
+    * `unknown` — freshness could not be established because FRED's series
+      metadata did not come back this run. Honest third state: it does not
+      claim fresh and does not claim broken.
+    * `empty` — FRED returned no usable observation at all. Never passed
+      off downstream as a real reading.
+
+    The two real signals used, and the one approximation
+    ----------------------------------------------------
+    1. "Is this the latest available reading?" — answered structurally, not
+       by age. `_safe_get_series` queries FRED with an `observation_start`
+       and NO `observation_end`, so FRED returns everything it has
+       published; the last row IS its latest published observation by
+       construction. The metadata field `observation_end` is checked
+       against it as a cross-check, so a fetch that silently returned less
+       than FRED holds reads as `overdue`, not as fine.
+    2. "When is the next print due?" — derived per series, never from a
+       hardcoded per-series calendar table:
+         * cadence = the LONGEST gap that series itself shows between its
+           own consecutive observations in the window already fetched. Real
+           data, so weekends, market holidays, and 28-vs-31-day months are
+           covered by the series' own behaviour rather than by a constant.
+         * publication lag = FRED's own metadata pair, `last_updated`
+           minus `observation_end` — how far behind its own reference date
+           this series' current print actually published.
+       `expected_next_by = last_valued_observation + cadence + lag`. Past
+       that date with no newer print, a print is genuinely missing.
+
+    The approximation, stated rather than hidden: `last_updated` is the
+    last time FRED touched the series, which is normally the publication of
+    the current print but can also be a revision of older data, so the
+    derived lag can be shorter than the true release lag. Consequence is
+    bounded and one-directional — `expected_next_by` can land slightly
+    early, i.e. a genuinely-late release can be flagged `overdue` a day or
+    two before the agency's scheduled date. That direction is the safe one
+    (it over-reports a real problem rather than under-reporting it) and it
+    flags, never discards. The exact per-series release schedule is
+    knowable (FRED's `/fred/series/release` + `/fred/release/dates`, and
+    `src/data/event_calendar.py` already fetches release dates for seven
+    releases) but it would cost two extra API calls per series inside a
+    fetch path with a hard wall-clock ceiling; `get_series_vintage_dates`
+    would give real publication history but is unbounded in size (every
+    vintage ever, thousands of rows for a daily series). Both were
+    considered and rejected on cost, not because the day count was
+    defensible.
+    """
+
+    series_id: str
+    status: str
+    latest_observation: date | None = None
+    expected_next_by: date | None = None
+    detail: str = ""
+
+    @property
+    def usable(self) -> bool:
+        """True when the held reading is the latest that exists and nothing
+        newer is due — `unknown` counts as usable because the reading is
+        still FRED's latest published observation by construction of the
+        query (point 1 above); only the DUE-date half is unverifiable
+        without metadata, and refusing to use data on unverifiable metadata
+        is exactly how the old gate became unreachable."""
+        return self.status in (FRESHNESS_CURRENT, FRESHNESS_UNKNOWN)
+
+    def describe(self) -> str:
+        if self.status == FRESHNESS_OVERDUE:
+            return (
+                f"{self.series_id}: OVERDUE — {self.detail}"
+                if self.detail else f"{self.series_id}: OVERDUE"
+            )
+        if self.status == FRESHNESS_EMPTY:
+            return f"{self.series_id}: no observation returned"
+        if self.status == FRESHNESS_UNKNOWN:
+            return (
+                f"{self.series_id}: freshness UNVERIFIED ({self.detail})"
+                if self.detail else f"{self.series_id}: freshness UNVERIFIED"
+            )
+        return f"{self.series_id}: latest published reading"
+
+
 @dataclass
 class MacroCoverage:
     """How much of the configured FRED series set actually came back on one
@@ -87,10 +212,19 @@ class MacroCoverage:
     configured: int
     succeeded: int
     failed: list[SeriesFailure]
+    #: Series that DID return data, but whose next print is overdue (see
+    #: `SeriesFreshness`). A separate axis from `failed` on purpose: the
+    #: fetch worked, the publication did not. Keyword-defaulted so every
+    #: existing construction site and test double keeps working.
+    overdue: list[SeriesFreshness] = field(default_factory=list)
 
     @property
     def failed_count(self) -> int:
         return len(self.failed)
+
+    @property
+    def overdue_count(self) -> int:
+        return len(self.overdue)
 
     @property
     def complete(self) -> bool:
@@ -122,17 +256,27 @@ class MacroCoverage:
         indicator is calm right now"."""
         if self.configured == 0:
             return "Macro coverage: NO FRED series configured (misconfiguration)."
+        overdue_text = ""
+        if self.overdue:
+            overdue_text = (
+                " OVERDUE PRINTS: "
+                + "; ".join(f.describe() for f in self.overdue)
+                + ". These series returned their latest published reading, but "
+                "a NEWER print is past due by the series' own cadence and "
+                "publication lag — a publication or fetch failure, not normal "
+                "release timing. Do not read the held value as current."
+            )
         if not self.failed:
             return (
                 f"Macro coverage: {self.succeeded}/{self.configured} FRED "
-                f"series returned data. Full coverage."
+                f"series returned data. Full coverage." + overdue_text
             )
         names = ", ".join(f"{f.series_id} ({f.reason})" for f in self.failed)
         return (
             f"Macro coverage: {self.succeeded}/{self.configured} FRED series "
             f"returned data this run. FAILED: {names}. Treat this as a "
             f"coverage GAP, not a confirmed reading — a missing indicator is "
-            f"not evidence that indicator is calm."
+            f"not evidence that indicator is calm." + overdue_text
         )
 
 
@@ -209,6 +353,16 @@ class MacroDataProvider:
         self._run_configured = 0
         self._run_succeeded = 0
         self._run_failed: list[SeriesFailure] = []
+        # Per-series freshness for the CURRENT call, keyed by series id (see
+        # SeriesFreshness). Read back by the fetchers below so each
+        # indicator dict carries its own freshness state, and snapshotted
+        # into `last_coverage.overdue` at the end of get_macro_summary().
+        self._run_freshness: dict[str, SeriesFreshness] = {}
+        # FRED series metadata (`/fred/series`) for this call only. A series
+        # is fetched once per get_macro_summary(), so this exists for the
+        # benefit of direct single-indicator calls, and is cleared per call
+        # because the metadata changes the moment a new print lands.
+        self._series_info_cache: dict[str, dict[str, str] | None] = {}
         # Coverage snapshot from the most recent get_macro_summary() call —
         # the side channel pipeline_stages.py reads to set
         # data_status["macro"], deliberately NOT folded into
@@ -251,6 +405,232 @@ class MacroDataProvider:
                 reason=(reason or "unknown")[:_FAILURE_REASON_MAX_LEN],
             ))
 
+    # --- freshness: latest-available, not calendar age ---------------------
+
+    @staticmethod
+    def _as_date(value) -> date | None:
+        """Parse one FRED date/timestamp field into a date, or None.
+
+        Deliberately strict and total: FRED metadata arrives as strings
+        (`observation_end` = "2026-09-09", `last_updated` =
+        "2026-09-10 07:31:05-05"), and a test double or a redesigned
+        response can hand back anything at all. Anything unparseable
+        becomes None, which downstream reads as "freshness unverified" —
+        never as fresh.
+        """
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            parsed = pd.Timestamp(value)
+        except Exception:
+            return None
+        if parsed is None or pd.isna(parsed):
+            return None
+        try:
+            return parsed.date()
+        except Exception:
+            return None
+
+    def _series_info(self, series_id: str) -> dict[str, str] | None:
+        """FRED's own metadata for one series (`/fred/series`), or None.
+
+        One attempt, no retries: this is the DUE-date input, not the data
+        itself, and the wall-clock ceiling `get_macro_summary()` promises
+        its caller belongs to the observations. A miss degrades to
+        `freshness: unknown`, which is honest and costs nothing downstream.
+
+        Only the two fields the due-date derivation needs are kept, and
+        only when both parse as real dates — so a MagicMock or a
+        redesigned response cannot masquerade as metadata.
+        """
+        if series_id in self._series_info_cache:
+            return self._series_info_cache[series_id]
+        info: dict[str, str] | None = None
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            logger.debug(
+                "Skipping FRED metadata for %s — fetch deadline already "
+                "exceeded; freshness will report unknown", series_id,
+            )
+            self._series_info_cache[series_id] = None
+            return None
+        prev_timeout = socket.getdefaulttimeout()
+        try:
+            remaining = (
+                self._deadline - time.monotonic() if self._deadline is not None
+                else self.request_timeout_s
+            )
+            socket.setdefaulttimeout(min(self.request_timeout_s, max(1.0, remaining)))
+            raw = self.fred.get_series_info(series_id)
+            observation_end = None
+            last_updated = None
+            # pandas Series (fredapi's real return) and plain mappings both
+            # support .get(); anything else is not metadata.
+            getter = getattr(raw, "get", None)
+            if callable(getter):
+                observation_end = self._as_date(getter("observation_end"))
+                last_updated = self._as_date(getter("last_updated"))
+            if observation_end is not None and last_updated is not None:
+                info = {
+                    "observation_end": observation_end.isoformat(),
+                    "last_updated": last_updated.isoformat(),
+                }
+        except Exception as e:  # noqa: BLE001 — any shape degrades to unknown
+            logger.warning(
+                "FRED metadata unavailable for %s: %s — freshness for this "
+                "series will report unknown", series_id, e,
+            )
+        finally:
+            socket.setdefaulttimeout(prev_timeout)
+        self._series_info_cache[series_id] = info
+        return info
+
+    def _record_freshness(self, series_id: str, raw: pd.Series) -> SeriesFreshness:
+        """Classify one series as current / overdue / unknown / empty.
+
+        `raw` is the series exactly as FRED returned it — BEFORE `.dropna()`
+        — because the NaN rows are themselves information: FRED emits a row
+        with value "." for a market holiday on a daily series, so including
+        them is what lets `observation_end` be compared honestly, and
+        excluding them is what identifies the last reading that has an
+        actual value.
+
+        See `SeriesFreshness` for the full reasoning and for the one stated
+        approximation in the due-date derivation.
+        """
+        def _store(freshness: SeriesFreshness) -> SeriesFreshness:
+            self._run_freshness[series_id] = freshness
+            return freshness
+
+        valued = raw.dropna() if raw is not None and len(raw) else raw
+        if valued is None or len(valued) == 0:
+            return _store(SeriesFreshness(
+                series_id=series_id,
+                status=FRESHNESS_EMPTY,
+                detail="FRED returned no usable observation",
+            ))
+
+        try:
+            last_obs = pd.Timestamp(valued.index[-1]).date()
+        except Exception:
+            return _store(SeriesFreshness(
+                series_id=series_id,
+                status=FRESHNESS_UNKNOWN,
+                detail="observation dates unreadable",
+            ))
+
+        info = self._series_info(series_id)
+        if info is None:
+            return _store(SeriesFreshness(
+                series_id=series_id,
+                status=FRESHNESS_UNKNOWN,
+                latest_observation=last_obs,
+                detail="FRED series metadata did not come back this run",
+            ))
+        observation_end = date.fromisoformat(info["observation_end"])
+        last_updated = date.fromisoformat(info["last_updated"])
+
+        # Cross-check 1: FRED says it has published further than what we
+        # received. The query sets no observation_end, so this should be
+        # impossible — if it happens, our data is NOT the latest available
+        # and that is a real problem, not normal release timing. (Trailing
+        # NaN rows are not this case: they are in `raw` and are counted
+        # below via the cadence, because a holiday gap is normal and a long
+        # run of no-value rows is not.)
+        try:
+            last_row = pd.Timestamp(raw.index[-1]).date()
+        except Exception:
+            last_row = last_obs
+        if observation_end > last_row:
+            return _store(SeriesFreshness(
+                series_id=series_id,
+                status=FRESHNESS_OVERDUE,
+                latest_observation=last_obs,
+                detail=(
+                    f"FRED has published observations through "
+                    f"{observation_end.isoformat()} but this fetch returned "
+                    f"nothing after {last_row.isoformat()}"
+                ),
+            ))
+
+        # Cadence, from the series' own observed behaviour: the longest gap
+        # it showed between consecutive real readings in the window already
+        # fetched. No per-series calendar table, and weekends, market
+        # holidays and uneven month lengths are all covered by the data
+        # itself. Fewer than two readings means the window cannot show a
+        # cadence at all — unknown, not assumed.
+        try:
+            index = pd.DatetimeIndex(valued.index)
+            gaps = index.to_series().diff().dropna()
+            cadence_days = int(max(1, gaps.dt.days.max())) if len(gaps) else 0
+        except Exception:
+            cadence_days = 0
+        if cadence_days <= 0:
+            return _store(SeriesFreshness(
+                series_id=series_id,
+                status=FRESHNESS_UNKNOWN,
+                latest_observation=last_obs,
+                detail=(
+                    "fewer than two readings in the fetched window — this "
+                    "series' own publication cadence cannot be derived from it"
+                ),
+            ))
+
+        # Publication lag, from FRED's own metadata pair: how far behind its
+        # reference date this series' current print actually published.
+        lag_days = max(0, (last_updated - observation_end).days)
+        expected_next_by = last_obs + timedelta(days=cadence_days + lag_days)
+        today = et_today()
+        if today > expected_next_by:
+            return _store(SeriesFreshness(
+                series_id=series_id,
+                status=FRESHNESS_OVERDUE,
+                latest_observation=last_obs,
+                expected_next_by=expected_next_by,
+                detail=(
+                    f"latest reading is {last_obs.isoformat()}; on this "
+                    f"series' own cadence ({cadence_days}d between readings) "
+                    f"and its own publication lag ({lag_days}d) a newer print "
+                    f"was due by {expected_next_by.isoformat()}"
+                ),
+            ))
+        return _store(SeriesFreshness(
+            series_id=series_id,
+            status=FRESHNESS_CURRENT,
+            latest_observation=last_obs,
+            expected_next_by=expected_next_by,
+            detail=(
+                f"latest published reading ({last_obs.isoformat()}); next due "
+                f"by {expected_next_by.isoformat()}"
+            ),
+        ))
+
+    def _freshness_fields(self, *series_ids: str) -> dict:
+        """The freshness half of one indicator's payload.
+
+        Several indicators are built from more than one series (the yield
+        curve from DGS3MO/DGS2/DGS10, inflation from CPI/core/PCE). The
+        indicator is only as fresh as its WORST constituent: an overdue
+        leg anywhere means the indicator cannot be read as current, and an
+        unverified leg means it cannot be asserted current either. Ordered
+        worst-first below.
+        """
+        # getattr, not attribute access: a couple of existing tests build a
+        # provider with `__new__` and stub `_safe_get_series`, so the
+        # per-call state this reads may never have been initialised. An
+        # indicator whose freshness was never recorded reads as unverified,
+        # which is the honest answer in that case too.
+        recorded = getattr(self, "_run_freshness", None) or {}
+        found = [recorded[sid] for sid in series_ids if sid in recorded]
+        if not found:
+            return {"freshness": FRESHNESS_UNKNOWN, "freshness_detail": ""}
+        for wanted in (
+            FRESHNESS_OVERDUE, FRESHNESS_EMPTY, FRESHNESS_UNKNOWN, FRESHNESS_CURRENT,
+        ):
+            for f in found:
+                if f.status == wanted:
+                    return {"freshness": f.status, "freshness_detail": f.describe()}
+        return {"freshness": FRESHNESS_UNKNOWN, "freshness_detail": ""}
+
     def _safe_get_series(self, series_id: str, **kwargs) -> pd.Series:
         # Hard wall-clock ceiling check FIRST: if get_macro_summary()'s
         # total_fetch_deadline_s has already elapsed (e.g. earlier series in
@@ -265,6 +645,10 @@ class MacroDataProvider:
             )
             self._consecutive_failed_series += 1
             self._note_coverage(series_id, ok=False, reason="fetch_deadline_exceeded")
+            self._run_freshness[series_id] = SeriesFreshness(
+                series_id=series_id, status=FRESHNESS_EMPTY,
+                detail="not fetched — fetch deadline exceeded",
+            )
             return pd.Series(dtype=float)
 
         retries = (
@@ -318,6 +702,10 @@ class MacroDataProvider:
         if transport_failed:
             self._consecutive_failed_series += 1
             self._note_coverage(series_id, ok=False, reason=failure_reason)
+            self._run_freshness[series_id] = SeriesFreshness(
+                series_id=series_id, status=FRESHNESS_EMPTY,
+                detail="fetch failed — no observation returned",
+            )
             return pd.Series(dtype=float)
 
         # A response came back (possibly empty) without a transport
@@ -337,13 +725,31 @@ class MacroDataProvider:
                 series_id, kwargs,
             )
             self._note_coverage(series_id, ok=False, reason="zero_observations")
+            self._run_freshness[series_id] = SeriesFreshness(
+                series_id=series_id, status=FRESHNESS_EMPTY,
+                detail="FRED returned zero observations",
+            )
             return pd.Series(dtype=float)
         self._note_coverage(series_id, ok=True, reason="")
+        # Freshness is classified on the RAW series (NaN rows included) —
+        # see _record_freshness. Callers `.dropna()` for values afterwards;
+        # this must run before that, on what FRED actually sent.
+        self._record_freshness(series_id, result)
         return result
 
     @staticmethod
     def _staleness_days(series: pd.Series) -> int | None:
         """Business days between the latest observation and today. None if series empty.
+
+        DESCRIPTIVE ONLY as of 2026-09-11: this is how OLD the reading is,
+        and age is no longer a test of anything. No gate reads it — the
+        regime-shift and confidence gates in
+        `src/agents/macro_analyst.py::_apply_sanity_checks` now read
+        `freshness` (see `SeriesFreshness`), which asks whether the reading
+        is the latest that exists and whether a newer one is overdue. This
+        number is kept because it is genuinely informative context for the
+        seat's own reasoning ("the current CPI print is 36 days old" is a
+        fact worth stating); it must not become a threshold again.
 
         None always means "no data at all" (FRED returned 0 rows) — never
         means "data exists but freshness unknown". _safe_get_series logs
@@ -378,7 +784,11 @@ class MacroDataProvider:
         )
         series = series.dropna()
         if series.empty:
-            return {"current": None, "mean_5d": None, "trend": "unknown", "staleness_days": None}
+            return {
+                "current": None, "mean_5d": None, "trend": "unknown",
+                "staleness_days": None,
+                **self._freshness_fields("VIXCLS"),
+            }
         current = float(series.iloc[-1])
         mean_5d = float(series.tail(5).mean())
         if len(series) >= 5:
@@ -391,6 +801,7 @@ class MacroDataProvider:
             "mean_5d": mean_5d,
             "trend": trend,
             "staleness_days": self._staleness_days(series),
+            **self._freshness_fields("VIXCLS"),
         }
 
     def get_treasury_yields(self) -> dict:
@@ -432,6 +843,7 @@ class MacroDataProvider:
             "spread_3m_10y": round(spread_3m_10y, 4) if spread_3m_10y is not None else None,
             "inverted_3m_10y": spread_3m_10y < 0 if spread_3m_10y is not None else None,
             "staleness_days": staleness,
+            **self._freshness_fields("DGS10", "DGS2", "DGS3MO"),
         }
 
     def get_fed_funds_rate(self) -> dict:
@@ -445,13 +857,17 @@ class MacroDataProvider:
             observation_start=_et_lookback_start(30),
         ).dropna()
         if series.empty:
-            return {"current": None, "change_30d": None, "staleness_days": None}
+            return {
+                "current": None, "change_30d": None, "staleness_days": None,
+                **self._freshness_fields("DFF"),
+            }
         current = float(series.iloc[-1])
         change_30d = float(current - series.iloc[0]) if len(series) >= 2 else 0.0
         return {
             "current": current,
             "change_30d": round(change_30d, 4),
             "staleness_days": self._staleness_days(series),
+            **self._freshness_fields("DFF"),
         }
 
     def get_inflation(self) -> dict:
@@ -480,6 +896,7 @@ class MacroDataProvider:
             "core_cpi_mom": core_mom,
             "pce_yoy": pce_yoy,
             "staleness_days": self._staleness_days(headline_series),
+            **self._freshness_fields("CPIAUCSL", "CPILFESL", "PCEPI"),
         }
 
     def get_unemployment(self) -> dict:
@@ -493,7 +910,11 @@ class MacroDataProvider:
             observation_start=_et_lookback_start(500),
         ).dropna()
         if series.empty:
-            return {"current": None, "change_3m": None, "change_12m": None, "staleness_days": None}
+            return {
+                "current": None, "change_3m": None, "change_12m": None,
+                "staleness_days": None,
+                **self._freshness_fields("UNRATE"),
+            }
         current = float(series.iloc[-1])
         change_3m = float(current - series.iloc[-4]) if len(series) >= 4 else None
         change_12m = float(current - series.iloc[-13]) if len(series) >= 13 else None
@@ -502,6 +923,7 @@ class MacroDataProvider:
             "change_3m": round(change_3m, 2) if change_3m is not None else None,
             "change_12m": round(change_12m, 2) if change_12m is not None else None,
             "staleness_days": self._staleness_days(series),
+            **self._freshness_fields("UNRATE"),
         }
 
     def get_credit_spread(self) -> dict:
@@ -518,7 +940,10 @@ class MacroDataProvider:
             observation_start=_et_lookback_start(60),
         ).dropna()
         if series.empty:
-            return {"current_bps": None, "change_30d_bps": None, "staleness_days": None}
+            return {
+                "current_bps": None, "change_30d_bps": None, "staleness_days": None,
+                **self._freshness_fields("BAMLH0A0HYM2"),
+            }
         current = float(series.iloc[-1]) * 100  # FRED returns % — convert to bps
         # Anchor the reference to a DATE, not to the head of the window.
         #
@@ -539,6 +964,7 @@ class MacroDataProvider:
             "current_bps": round(current, 1),
             "change_30d_bps": round(current - prior_30d, 1),
             "staleness_days": self._staleness_days(series),
+            **self._freshness_fields("BAMLH0A0HYM2"),
         }
 
     # --- Phase 4.2 additions ------------------------------------------------
@@ -581,6 +1007,7 @@ class MacroDataProvider:
             "real_10y": round(real, 4) if real is not None else None,
             "breakeven_10y": round(breakeven, 4) if breakeven is not None else None,
             "staleness_days": staleness,
+            **self._freshness_fields("DFII10", "T10YIE"),
         }
 
     def get_dollar_index(self) -> dict:
@@ -603,7 +1030,10 @@ class MacroDataProvider:
             observation_start=_et_lookback_start(60),
         ).dropna()
         if series.empty:
-            return {"current": None, "change_30d": None, "staleness_days": None}
+            return {
+                "current": None, "change_30d": None, "staleness_days": None,
+                **self._freshness_fields("DTWEXBGS"),
+            }
         current = float(series.iloc[-1])
         # Same date-anchored-change fix as get_credit_spread (2026-07-16
         # audit) — anchor to a DATE at or before T-30d, not to the head of
@@ -619,6 +1049,7 @@ class MacroDataProvider:
             "current": round(current, 3),
             "change_30d": round(change_30d, 3),
             "staleness_days": self._staleness_days(series),
+            **self._freshness_fields("DTWEXBGS"),
         }
 
     def get_ig_credit_spread(self) -> dict:
@@ -638,7 +1069,10 @@ class MacroDataProvider:
             observation_start=_et_lookback_start(60),
         ).dropna()
         if series.empty:
-            return {"current_bps": None, "change_30d_bps": None, "staleness_days": None}
+            return {
+                "current_bps": None, "change_30d_bps": None, "staleness_days": None,
+                **self._freshness_fields("BAMLC0A0CM"),
+            }
         current = float(series.iloc[-1]) * 100  # FRED returns % — convert to bps
         prior_30d = current
         if len(series) >= 2:
@@ -649,6 +1083,7 @@ class MacroDataProvider:
             "current_bps": round(current, 1),
             "change_30d_bps": round(current - prior_30d, 1),
             "staleness_days": self._staleness_days(series),
+            **self._freshness_fields("BAMLC0A0CM"),
         }
 
     def get_jobless_claims(self) -> dict:
@@ -670,6 +1105,7 @@ class MacroDataProvider:
             return {
                 "current": None, "change_4w": None, "trend": "unknown",
                 "staleness_days": None,
+                **self._freshness_fields("ICSA"),
             }
         current = float(series.iloc[-1])
         change_4w = None
@@ -683,6 +1119,7 @@ class MacroDataProvider:
             "change_4w": round(change_4w, 0) if change_4w is not None else None,
             "trend": trend,
             "staleness_days": self._staleness_days(series),
+            **self._freshness_fields("ICSA"),
         }
 
     def get_macro_summary(self) -> dict:
@@ -701,6 +1138,10 @@ class MacroDataProvider:
         self._run_configured = 0
         self._run_succeeded = 0
         self._run_failed = []
+        self._run_freshness = {}
+        # Metadata is only valid until the next print lands, so it is never
+        # carried across calls.
+        self._series_info_cache = {}
         try:
             summary = {
                 "vix": self.get_vix(),
@@ -714,10 +1155,21 @@ class MacroDataProvider:
                 "ig_credit_spread": self.get_ig_credit_spread(),
                 "jobless_claims": self.get_jobless_claims(),
             }
+            overdue = [
+                f for f in self._run_freshness.values()
+                if f.status == FRESHNESS_OVERDUE
+            ]
+            if overdue:
+                logger.error(
+                    "FRED prints OVERDUE this run — a newer reading is past "
+                    "due by each series' own cadence and publication lag: %s",
+                    "; ".join(f.describe() for f in overdue),
+                )
             self.last_coverage = MacroCoverage(
                 configured=self._run_configured,
                 succeeded=self._run_succeeded,
                 failed=list(self._run_failed),
+                overdue=overdue,
             )
             return summary
         finally:
