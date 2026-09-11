@@ -143,6 +143,26 @@ This file records what is accepted and true **now**. Git history preserves imple
   miss and guidance cut); a non-matching reason is dropped and logged as
   `exit_blocked_no_named_trigger`, and the position is held, protected by its
   broker-resident stop.
+  **Extended 2026-09-11 — the named trigger is now FACT-CHECKED at midday and
+  close, not just named.** `_reason_cites_hard_trigger` is a substring match
+  and nothing more; the deterministic verifier built for exactly this problem
+  (`src/risk/exit_guard.holding_discipline_claim_check`, live on the morning
+  Portfolio-Manager path in `RiskStage` since 2026-09-03/04) was imported from
+  that one call site and nowhere else, so on the intraday surfaces a claimed
+  regime flip or bearish state change executed on the strength of the words
+  alone. `_midday_execute_llm_actions` now runs the same check, on the same
+  inputs, for every SELL/REDUCE/COVER — `run_position_review` backs both
+  midday and close, so one gate covers both. **The PROVABLY-FALSE /
+  UNVERIFIABLE split is unchanged and load-bearing:** only a claim real
+  same-day data CONTRADICTS drops the exit
+  (`exit_blocked_holding_discipline_claim_false`); a claim that merely cannot
+  be checked is recorded (`holding_discipline_claim_unverified`) and ALLOWED
+  through, because blocking an exit on absence of proof would strand the desk
+  in a losing position. No macro analyst runs intraday, so the regime input is
+  this morning's stored read via the already date-scoped
+  `_carry_forward_macro` (status `carried_from_morning`); when nothing is
+  stored for today the status is passed as None and the claim is unverifiable,
+  never defaulted into a value that could call it false.
 - **Phase 3 of the remediation spec is COMPLETE and DEPLOYED** at `058273f1`
   (rollback `9f77b03e`), live on the paper account since ~09:20 ET
   2026-08-27. §3.1 the `pace` feedback loop is cut — the horizon is pinned to
@@ -484,18 +504,25 @@ with nothing able to separate them. `scripts/alert_heartbeat.py` closes that:
 
 Paid model requests share one persistent SQLite authority across systemd
 processes. It fails closed before provider I/O on missing/corrupt accounting,
-unknown or stale pricing/cost, unresolved attempted requests, excessive provider
-attempts, retries, repeated paid sessions, projected exposure, session spend or
-ET-day spend. Current limits are
-**$0.90 per session**, **$1.50 per ET day**, two provider attempts per logical
-call, two retry/repair attempts per session and two paid sessions per mode/day.
+unknown or stale pricing/cost, unresolved attempted requests, excessive
+provider attempts, session call count, or session/ET-day spend. Current
+limits are **$0.90 per session** and **$2.75 per ET day**, checked against
+real settled spend only, plus `max_calls_per_session` (40, a runaway-loop
+backstop) and a provider-attempt cap per logical call computed in code
+(`provider_attempt_budget()`, `src/agents/base.py`) rather than pinned here.
+**2026-09-02 (item 14):** the per-mode session cap, the separate per-session
+retry/repair-attempt limit, and the cost-reservation layer they existed to
+manage were all deliberately deleted — see `docs/WORK.md` item 14.
 
-Expected budget exhaustion creates the narrowest applicable quota hold: current
-run for session spend/retry exposure, current mode/day for paid-session count,
-or the current ET day for aggregate spend. Session holds do not block later
-independent runs. Day and mode/day holds rearm only after the ET date advances,
-the new ledger seeds exactly, accounting invariants pass and no prior-day
-attempted reservation remains unresolved. Trip and successful rearm each send
+Expected budget exhaustion creates the narrowest applicable quota hold: the
+current run (`run_id`) for session cost, call-count or provider-attempt
+exposure, or the current ET day for aggregate spend. Session holds do not
+block later independent runs. Day holds rearm only after the ET date
+advances, the new ledger seeds exactly, accounting invariants pass and no
+prior-day attempted reservation remains unresolved. (A `mode_day` hold scope
+still exists in the schema/rearm logic purely to recognize pre-2026-09-02
+historical rows; nothing in the current code can create a new one — see
+`docs/WORK.md` item 14.) Trip and successful rearm each send
 one deduplicated Telegram alert. Missing/corrupt or inexact accounting, unknown
 pricing/cost, unresolved attempted requests, provider-attempt exhaustion and any
 unrecognized trigger remain a hard global latch requiring an auditable operator

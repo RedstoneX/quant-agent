@@ -404,12 +404,14 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   the OPERATIVE risk limit, not this 5% band.** `notional = risk_pct x
   entry / (entry - stop)`, so at this book's real stop distances
   (roughly 5-9% at the time, under the then-3.0 `risk.min_stop_atr_
-  multiple`; that floor is 1.5 since 2026-09-04, so real stops are now
-  roughly half those distances) a 20% ceiling capped
-  DELIVERED risk to `20% x stop_distance` — about 1.0-1.8% — regardless
-  of stated conviction; 6 of 13 real proposed orders pinned at exactly
-  20% notional, and a 2.8% and a 1.0% risk request both delivered ~1%
-  risk either way. The ceiling is now 100% (see `risk.max_position_pct`
+  multiple`) a 20% ceiling capped DELIVERED risk to `20% x stop_distance`
+  — about 1.0-1.8% — regardless of stated conviction; 6 of 13 real
+  proposed orders pinned at exactly 20% notional, and a 2.8% and a 1.0%
+  risk request both delivered ~1% risk either way. `min_stop_atr_multiple`
+  has since moved 3.0 -> 1.5 (2026-09-04) -> 2.5 (2026-09-10, current —
+  see that setting's own comment in settings.yaml for the derivation), so
+  real stops today are back close to that original 5-9% band, not
+  roughly half of it. The ceiling is now 100% (see `risk.max_position_pct`
   in settings.yaml for the full derivation) — at real stop distances
   the full 0.5-5% conviction range should now reach the risk it asks
   for, and this ceiling should only ever bind on a genuinely too-tight
