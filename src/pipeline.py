@@ -1873,14 +1873,18 @@ class TradingPipeline:
            governing the validation-failure branch below, and it does not
            require inventing a new rejection channel for something the
            schema already has one for.
-        2. **A stop/target edit cannot bypass the floors a fresh decision
-           would have to clear.** The constructor enforces `REWARD_RISK_FLOOR`
-           and a noise-band stop distance before a decision ever reaches the
-           Risk Manager; both checks compared a modified decision only
-           against itself, so an RM edit that widened a stop or pulled in a
-           target could ship a BUY/SHORT with a reward:risk the constructor
-           itself would have refused, or a stop resting inside the ATR noise
-           band. This reuses the SAME arithmetic (`TradeDecision.reward_risk`,
+        2. **A stop/target edit cannot bypass the checks a fresh decision
+           would have to clear.** The constructor measures reward:risk on a
+           range setup (refusing only an UNMEASURABLE ratio — a sub-floor one
+           is a ranking input, not a gate, since 2026-09-11, and a breakout
+           is never measured) and enforces a noise-band stop distance before
+           a decision ever reaches the Risk Manager; both checks compared a
+           modified decision only against itself, so an RM edit that widened
+           a stop or pulled in a target could ship a BUY/SHORT whose
+           reward:risk the constructor could not have measured, or a stop
+           resting inside the ATR noise band. `REWARD_RISK_FLOOR` is
+           consulted here only to LOG a range edit that lands under the
+           reference. This reuses the SAME arithmetic (`TradeDecision.reward_risk`,
            which is `models.reward_to_risk` — the one ratio definition every
            other gate in this codebase already shares) and the SAME
            configured floor (`RiskConfig.absolute_min_stop_atr_multiple`) the

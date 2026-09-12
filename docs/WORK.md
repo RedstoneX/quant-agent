@@ -605,11 +605,6 @@ Working as designed, but one quantity has two definitions with two different
 numbers, and neither is doctrinally grounded. Fold into item 1(b); do not
 resolve it separately.
 
-**6. No structural level from which to derive a target — 3 of 68 (4%). TOO NEW TO CLASSIFY.**
-
-All three are from 2026-09-02, i.e. one day old. Re-measure before acting;
-this may be a new regression from that day's ship.
-
 **7. AI Risk Manager vetoes the entire plan for incoherence — 2 of 68 (3%). TOO STRICT.**
 
 Notable because it is reproducing AFTER a fix intended to stop exactly this.
@@ -1019,7 +1014,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **52. Insider-cluster size should be relative to a filer's holdings, not an absolute dollar filter — OPEN, owner call, carried out of deleted item 38.** The paper item 38's window fix was taken from also says the size test should be relative to what the insider already holds. QAMC has no holdings-size data for filers, so this cannot simply be implemented — acquiring or approximating that data is the decision.
 
-**Retired item numbers — never reuse.** 2, 5, 9, 12, 16, 25, 29, 37, 38, 47, 48, 50 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
+**Retired item numbers — never reuse.** 2, 5, 6, 9, 12, 16, 25, 29, 37, 38, 47, 48, 50 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
 
 ## Evidence-only follow-ups
 
