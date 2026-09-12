@@ -89,14 +89,11 @@ if Telegram itself goes down, still a real gap, just not an urgent one.
 
 **Owner's framing: the PM model test means nothing until everything feeding
 the PM is clean.** Blocks the "which model runs the PM seat" decision above.
-Index into the audit below, for the board — struck-through = cleared.
+Index into the audit below, for the board. Cleared seats are deleted from
+here once written up in `docs/INCIDENT_HISTORY.md` — this list is what is
+still wrong, not a history of what was.
 
-**~~1. Earnings seat data quality — FIXED.~~**
-**~~2. Smart money seat data quality — FIXED.~~**
-**~~3. Tech analyst seat data quality — FIXED.~~**
 **4. News analyst seat data quality — PARTIALLY FIXED, one gap open.**
-**~~5. Evening analyst seat data quality — FIXED.~~**
-**~~6. Macro analyst seat data quality — RESOLVED 2026-09-11, see item 48.~~**
 **7. PM-input shape/volume redesign (bounded recommendation, not raw reasoning) — NOT STARTED.**
 **8. Every past model-comparison benchmark may be contaminated by bad seat data — OPEN, no re-run yet.** Same shape as the already-known spend-baseline contamination: a benchmark run before tonight's data-honesty fixes could have scored a model on how well it coped with (or quietly hid) empty/wrong input, not on real analytical quality. Combine with the PM model test itself — same re-run, same gate, not two separate jobs.
 
@@ -596,10 +593,6 @@ proposals accumulate. **The capability is shipped; the evidence it needs was
 erased hours later.** Do not read a quiet Proposal Conversion block as "no
 stuck loops" — read it as "no data yet".
 
-**~~2. Thirteen proposals died with no explanation anywhere — RESOLVED 2026-09-11.~~** The 9-item `order_not_placed` shape was investigated: not an interrupted run — 4 real, legitimate incidents (a malformed risk-check response, insufficient cash, a sector-concentration block, a symbol-guard block), each already writing a durable reason the reporting script just never read. Script fixed (PR #310). One correction to the original write-up: the cash cause is NOT settlement delay — it was a confirmed-vs-assumed-fill bug (already fixed 2026-08-25), never a multi-day settlement gate. Detail: `docs/INCIDENT_HISTORY.md`.
-
-**Still open, not fixed here:** the PM's own "Proposal Conversion" memory section mirrors this same classification independently and was not extended — it can still undercount the same 3 causes in what the PM itself sees. Flagged, not built.
-
 **3. Accepted by the broker, never filled, cancelled — 6 of 68 (9%). WORKING AS INTENDED.**
 
 Price protection behaving correctly, but it is a real cost: the slot was
@@ -611,8 +604,6 @@ repeg policy rather than the limit itself.
 Working as designed, but one quantity has two definitions with two different
 numbers, and neither is doctrinally grounded. Fold into item 1(b); do not
 resolve it separately.
-
-**~~5. Allocation rounds to zero shares — RESOLVED, not a live defect.~~** Fractional sizing already prevents this; the 3 historical hits predate it. Full reasoning + regression test: `docs/INCIDENT_HISTORY.md`.
 
 **6. No structural level from which to derive a target — 3 of 68 (4%). TOO NEW TO CLASSIFY.**
 
@@ -629,8 +620,6 @@ One veto discards every trade in the plan, so its cost is superlinear.
 Full reasoning + test: `docs/INCIDENT_HISTORY.md`. Stop is
 sided correctly at ingestion; the quote moves before construction —
 refusal stands.
-
-**~~9. Tail causes — WORKING AS INTENDED.~~** Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **10. Slots burned re-proposing names that never fill. PARTIALLY CLOSED,
 re-measured 2026-09-03 — see `docs/INCIDENT_HISTORY.md`.**
@@ -663,8 +652,6 @@ no bars at all, persists it, and pages the owner directly when the share
 crosses a threshold too high to be a coincidental quiet market. Full
 detail: `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 
-**~~12. The desk's own funnel reporting misattributes vetoes. FIXED 2026-09-03.~~** See `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
-
 **14. Replace the budget guard — SHIPPED on `feat/replace-budget-reservation`.**
 
 Per-call cost reservation deleted entirely (it held ~2.6x what it actually
@@ -691,8 +678,6 @@ historical bars the same way, which is what items 5/9/11 actually need:
 needs an owner decision between two competing `read_price_bars`
 implementations (`rescue/price-provenance` branch), a real architecture
 choice, not a mechanical merge.
-
-**~~16. The afternoon spending reserve — MOOT, deleted with item 14.~~** Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **17. The desk can switch itself off silently — DEFECT. Observed, not theorised.**
 
@@ -843,11 +828,7 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**~~25. "Don't sell a protected position without a named reason" — DONE 2026-09-04.~~** Detail: `INCIDENT_HISTORY.md`, 2026-09-04 "a sell whose stated reason is provably untrue now actually gets stopped", and 2026-09-03 "item 25."
-
 **28. The offline test that must reproduce a known real cost-limit failure can no longer reproduce it — STILL BROKEN, previously marked fixed in error.** `test_rehearsal_reproduces_cost_ceiling.py` marked FIXED 2026-09-04 (config keys the test forced no longer exist, after item 14's cost-circuit rewrite) but re-verified directly 2026-09-10, three separate times against a clean `origin/main` checkout: this test still fails, identically, every time. Whatever landed did not actually resolve it, and nobody re-checked the claim before writing FIXED. Needs someone to actually read the failure and re-diagnose it — not re-apply the same fix that already didn't work. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys" for the (incomplete) original diagnosis.
-
-**~~29. The analyst scorecard was already built and already live — item withdrawn 2026-09-03.~~** Corrected after being written up as new work in error. See `docs/INCIDENT_HISTORY.md`, 2026-09-03 "the analyst scorecard got written up as missing work; it already existed."
 
 **30. The sizing path still owes the same amendment the ranking path just
 got — deliberately NOT done yet, owner should decide scope first.**
@@ -1014,13 +995,6 @@ No DECIDE BY — revisit only if it recurs.
 
 **Still genuinely undecided:** `smart_money.congress_enabled` remains False (off) — flipping it to True has not been ratified.
 
-**~~37. Eleven separate pieces of finished work were all ready to merge on the same night — the order they went in mattered.~~** See `docs/INCIDENT_HISTORY.md`.
-
-**~~38. Insider cluster window was 7x the cited research — FIXED 2026-09-04.~~**
-Detail: `docs/INCIDENT_HISTORY.md`. Separate, NOT fixed here:
-the same paper says size should be relative to holdings, not an absolute
-dollar filter — needs holdings-size data QAMC doesn't have; owner call.
-
 **39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
 
 **41. A persistently broken ticker in the intraday scan could fail silently forever — FIXED 2026-09-10.** The BRK-B fix (item covered in `docs/INCIDENT_HISTORY.md`, "QAMC Pipeline Autopsy") stopped one bad symbol from crashing the whole 101-symbol scan, but a symbol Alpaca can't return snapshot data for was still indistinguishable from "this stock just didn't move today" — silently and permanently excluded from every scan, with zero owner visibility. New `intraday_symbol_health` table now counts consecutive misses per symbol (independent per symbol, reset on any successful tick) and fires a standalone owner alert at 3 consecutive misses (~90 minutes), re-alerting at most once every 24 hours while the symbol stays broken rather than paging every 30-minute tick for an already-known problem. Full derivation and test coverage: `docs/INCIDENT_HISTORY.md`, 2026-09-10.
@@ -1037,404 +1011,15 @@ dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 
 **47. `risk.max_position_pct`'s cash-only justification was already false when written — RESOLVED 2026-09-11, owner call.** 100's comment asserted `allow_margin: false` made >100% notional unreachable; `allow_margin` had been `true` since 2026-09-02, two days before that comment (PR #258, 2026-09-04). Derived replacement: 20 (ladder emergency rung) / 0.60 (median of 5 real dated single-session idiosyncratic collapses) = 33, the largest single bet where that median disaster stays under the ladder's -20% owner-alert rung. Owner reviewed and set **65** instead — his own risk-appetite call, not a data disagreement; rejected 33 as too tight for a desk that avoids penny/micro-cap names, correction on the table first (the 5 reference disasters were all liquid, non-penny names). At 65 the same median disaster costs ~39%, past the alert rung rather than under it — knowing trade-off, not an oversight. `max_position_pct: 65` in settings.yaml, `ConstructorConfig.max_position_pct` and `pipeline.py`'s wiring default kept in sync. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
-**~~48. Macro `regime_shift` freshness — RESOLVED 2026-09-11, decision superseded not answered.~~** The day-count was removed, not re-tuned. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
-
 **49. The risk budget is now the binding constraint on a full day's eligible set, and nothing decides how to ration it — OPEN, surfaced 2026-09-12 by item 1(d).** Measured on `run-64290730` after the reward:risk floor was removed by setup type: eligible names 12 -> 25, and the eligible set's total requested risk is **48% against a 25% `max_portfolio_risk_pct` budget**. The floor was previously doing the rationing by accident — refusing enough candidates that the budget rarely bound. It no longer refuses them, so the budget binds on a normal day and something must decide WHICH permitted trades get the capital. Today that is whatever order `allocate_risk_budget` happens to process in, which is not a decision anybody made. Real options, none costed yet: rank-ordered (best-scored first until exhausted), proportional scale-down (everyone sized smaller), conviction-tiered, or a hard cap on names per session. Each is a different desk, not a tuning knob — owner call. Do NOT resolve by re-tightening the floor that was just removed.
 
 **DECIDED 2026-09-12 by the owner: rank-ordered, best first.** His words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The budget is spent on the best-ranked eligible candidates until it is exhausted; the remainder are not taken, and are not silently shrunk to fit. Proportional scale-down was explicitly rejected in the recommendation he accepted, on the grounds that sizing everyone smaller turns every strong idea into a weak one. **Still to BUILD** — `allocate_risk_budget` today spends in whatever order it happens to process in, which is the defect; the decision above is not yet implemented. Whether a partially-affordable candidate at the cut line is taken at a reduced size or skipped entirely is the one sub-question the decision does not settle, and must be raised with the owner rather than assumed.
 
-**~~50. An entry order that did not fill was left in a state nobody was told the truth about — RESOLVED 2026-09-12 (PR #315, "Stalled entry: one reprice, only once the exchange has it, then cancelled with its session").~~** Three faults (the reprice ladder, replacing before the exchange had the order, an alert saying the opposite of what the code did), the research, and the owner's "not going with repeg" decision: `docs/INCIDENT_HISTORY.md`, 2026-09-12. Also: `repeg_max_attempts` is deleted from the schema and rejected loudly at config load. Open sub-question, deliberately not decided: whether a cancelled entry should be auto-resubmitted next session.
+**51. Rotation only ever pointed at the problem; it never acted — RESOLVED 2026-09-12 (PR #316), and ENABLED.** The desk now closes ONE held position per morning session, and only when all five of these hold, each measured from its own data: the book's existing risk leaves less headroom than the minimum tradeable size (a half-empty book never triggers it); the holding fails the desk's own entry rules TODAY, so the comparison is categorical rather than a rank wobble; its structural protection has ALREADY broken under the item-25 holding-discipline check, so a position whose thesis is intact is never rotated out; it was not bought today and has nothing in flight; and the PM itself asked to BUY the best-ranked new candidate this session — the desk never invents the buy leg. The close is an ordinary zero-size PM target through the SAME path as any PM exit, with nothing bypassed. Every execution alerts the owner; a SECOND alert fires if the sale happened and the buy leg then did not. `rotation_enabled: true` — owner enabled it rather than shipping it dark. **Never executed against a live broker**; the desk has been paused since ~2026-09-03, so the first real rotation is also its first end-to-end proof and should be watched.
 
----
+**52. Insider-cluster size should be relative to a filer's holdings, not an absolute dollar filter — OPEN, owner call, carried out of deleted item 38.** The paper item 38's window fix was taken from also says the size test should be relative to what the insider already holds. QAMC has no holdings-size data for filers, so this cannot simply be implemented — acquiring or approximating that data is the decision.
 
-### Re-measure gate — TWO different questions, two different costs
-
-**No item above may be struck through on a code review.** But do not confuse
-the fast question with the slow one. Owner's correction, 2026-09-02, and it
-is right: *"we only need maybe a couple of runs in the morning to determine
-if it's still not pulling the trigger on longs or shorts for no reason."*
-
-**THE FAST CHECK — one or two sessions. Use this for item 1.**
-"Is the desk still refusing trades for no good reason?" is BINARY and it is
-answerable the next morning the market is open. A session either produces
-entry proposals that survive to an order, or it kills them at the R/R gate
-again. One clean morning tells you whether the geometry fix worked; two tells
-you it was not a fluke. Do not wait two weeks to learn this.
-  - What to look at: the proposals that session, and for each one whether the
-    R/R gate blocked or halved it. If the gate is still doing the killing,
-    the fix did not work — that is the whole test.
-  - **A zero-proposal session does NOT answer this**, it only means nothing
-    got that far. Distinguish "refused" from "never offered", or you will
-    read item 11's silent-failure mode as a pass.
-
-**THE SLOW CHECK — weeks. Use this for the funnel percentages.**
-Re-running `scripts/blocked_proposals_census.py` and claiming the SHARES
-moved (25% → x%) needs a comparable window, and the book was wiped
-2026-09-02 so that window starts from empty. Until roughly two weeks of
-sessions exist, any restated percentage is an estimate. Say so when making
-one. This is a bookkeeping bar, not a gate on shipping the next fix.
-
-
-**~~A held SHORT makes its sector look SMALLER to the risk engine~~ — DECIDED
-AND BUILT 2026-09-01.** Long and short sector exposure are now tracked
-independently, each against the same limit, per spec §12.2 (build record in
-`docs/QAMC_REMEDIATION_SPEC.md` §12.2). Full decision record moved to
-`docs/INCIDENT_HISTORY.md`, 2026-09-11.
-
-Shipped alongside it, spec §12.3: the sector limit moved **40% → 75%**, with
-the absolute ceiling at 90%. **The 90 is not owner-ratified** — it was chosen
-at build time because 1.5x a 75 target gives a meaningless 112.5 — and is open
-for the owner to move.
-
-
-**Margin interest tracker — REQUIRED before Phase 11.2's margin goes on.**
-Owner asked for this directly on 2026-09-01: he wants to see, cumulatively,
-what leverage actually costs, "to see if it's worth it".
-
-The problem it solves: **paper will not teach this lesson by itself.** Alpaca's
-own docs confirm paper does NOT simulate short borrow fees (their comparison
-table lists it "Coming Soon"), and whether paper simulates MARGIN INTEREST is
-not documented either way. So a paper account run at 2x may show all of
-leverage's upside and none of its cost — the single most misleading thing this
-project could learn.
-
-Build our own, from the broker's own numbers:
-- Alpaca live rate **6.25%** non-elite / 4.75% elite, charged as
-  `(settlement-date overnight debit balance x rate) / 360`, **on the end-of-day
-  balance only — intraday leverage is free.**
-- Accrue daily, store it, and report it cumulatively. At a sustained 2x on
-  ~$9,800 equity that is ~$1.71/day, ~$614/yr — **6.25% of equity the book must
-  out-earn before leverage contributes anything.**
-- **Settle the open question empirically on the first night a debit balance is
-  carried:** check the account's `INT` activities. If Alpaca posts a real
-  charge, use theirs and stop estimating. If nothing appears, keep our estimate
-  and LABEL IT AS AN ESTIMATE everywhere it is shown.
-- Surface in the morning Telegram alert and on the dashboard, alongside
-  overnight gross exposure.
-
-**Status 2026-09-01: PARTIALLY SHIPPED.** `src/margin_interest.py` +
-wiring gives a live, read-time ESTIMATE — correct formula, correct
-end-of-day-debit-only balance, labelled `ESTIMATE` on every surface it
-reaches, plus the broker-`INT`-activity empirical check. Two spec bullets
-above are NOT done: it is not accrued daily into storage and reported as a
-**cumulative** total (every number is today's snapshot, recomputed fresh,
-nothing persisted); and it reaches the morning Telegram alert and
-`GET /account` only — no dashboard UI surfaces it yet, so "on the
-dashboard" is still open. Both remain before this item can be called
-complete.
-
-
-
-**Next, in order (set 2026-08-30) — start here**
-
-Two owner decisions ratified 2026-08-30 (inverse ETFs stay tradeable; paid
-news sources refused permanently) moved to `docs/INCIDENT_HISTORY.md`,
-2026-09-11.
-
-
-Single ordered list of outstanding work. A session resuming cold should start
-here. Items are ordered by dependency first, then by value per unit of effort.
-Rationale for the trading items is in `docs/QAMC_REMEDIATION_SPEC.md`; evidence
-for the analyst items is in `docs/AGENT_ROLE_AUDIT.md` and
-`docs/RESEARCH_FINDINGS.md`.
-
-**Landed (2026-08-27)** — cut 2026-08-31 to stay under the size cap that
-`tests/test_status_board.py::test_work_md_stays_under_a_hundred_thousand_bytes`
-enforces. It was ~21KB of PR-by-PR narrative for work merged and deployed four
-days earlier: Phase 0 (CI as a real gate), governance and document-authority
-tiers, branch hygiene 110->27, Phases 1/1b/2a/2b/3 and the Form 4 insider work.
-Every item is recorded with evidence and re-check commands in
-`docs/phases.yaml` — the authority for what shipped. The ratified owner
-decisions from that day are live, not finished, and stay below.
-
-**Owner decisions, 2026-08-27 (ratified in session, not inferred)**
-
-- **Phase 3-before-Phase-2 reorder, and the §3.5 reviewer-model question** —
-  both resolved this day, moved to `docs/INCIDENT_HISTORY.md`, 2026-09-11.
-- **Standing autonomy grant.** The owner instructed that work should not halt
-  at phase gates for approval. Proceed through this backlog — implement, test,
-  PR, merge, deploy to PAPER, verify — and interrupt only for something
-  unusually significant: live-capital activation, new paid dependencies,
-  secrets/credential redesign, destructive infrastructure, material
-  architecture outside current authority, or evidence that a ratified decision
-  was wrong.
-- **Market data stays on IEX; SIP is NOT authorized.** Alpaca's Algo Trader
-  Plus (~$99/mo) would give consolidated NBBO quotes. Verified 2026-08-27 that
-  this account is IEX-only (a SIP request returns "subscription does not
-  permit querying recent SIP data") and that IEX top-of-book is frequently
-  unusable — CCJ quoted bid $92.96 / ask $107.10, a 15% spread, mid-session —
-  while Alpaca fills against NBBO. Rex's decision: *"this is paper trading,
-  this is proof of concept. Slippage is not really a big concern... when we
-  move to real money that's something to look at again."* **Revisit before any
-  live-capital activation** — execution-quality numbers measured under IEX are
-  not trustworthy.
-- **Fractional shares are IN — reversed back in and built 2026-09-01**
-  (spec §11.1), behind `execution.fractional_enabled` (default on) — moved to
-  `docs/INCIDENT_HISTORY.md`, 2026-09-11.
-- **The desk must deliberate, not just filter** — see `Phase 9` in
-  `docs/QAMC_REMEDIATION_SPEC.md`. Rex: *"We have agents doing research and
-  analysis. If something has high conviction or strong candidacy it should be
-  debated amongst all the agents. We're trying to create a trading desk with
-  synergy, not a technical analysis trade bot."* Sequenced AFTER Phase 2b.
-- **The $1.50/day LLM budget is not a hard boundary.** Rex, 2026-08-27:
-  *"There is significant flexibility on the daily budget if the cost benefit
-  makes sense... throwing money at something is not the solution, it has to be
-  carefully weighed cost benefit. Also there are clever ways of solving
-  problems that don't always require more money."* Raised to **$2.75/day** on
-  the live box the same day (`llm_cost_circuit.daily_cost_limit_usd`, with
-  `daily_reserved_exposure_limit_usd` 1.90 -> 3.20) because a single
-  `intra_check` had consumed $0.43 of a $1.50 day by 10:02 ET and a second
-  would have starved the midday/close/evening sessions that carry every
-  Phase 3 exit fix. **Rebalance before increasing further** — see the measured
-  breakdown below.
-- **The per-trade risk ceiling is 5% of equity, confirmed.** Phase 2b raises it
-  from the constructor's current `risk_budget_pct = 0.5` default — a tenfold
-  increase in per-trade risk (~$50 → ~$500 at risk on a $9.9k book). The owner
-  confirmed 5% is the ratified envelope and that the 0.5% figure was a
-  constructor default nobody chose. Floor stays 0.5%; total stays 25%,
-  correlation-adjusted. **This envelope has since been implemented** as Phase
-  2b (`75c0233`, `feat/pm-flex-routing`, merged and deployed) — see the
-  landed section above.
-
-**Measured LLM spend (10 days to 2026-08-27) — read before proposing any budget change**
-
-**These figures predate the flex-routing and intra_check fixes below** (both
-merged and deployed as part of `feat/pm-flex-routing` / PR #113) — they are the
-baseline those changes were made against, not current production numbers.
-
-$6.73 total across 48 sessions. **$5.84 of it is the Portfolio Manager: 87%.**
-**This window is contaminated and is not a clean baseline.** It includes
-several runaway looping incidents that burned tokens — the reason the LLM
-cost circuit breaker was added — so the per-seat shares below are inflated
-by an unknown amount and should not be read as the PM's steady-state share
-of spend. A clean baseline needed re-measuring once the current tranche (flex
-routing, the `intra_check` fix) was deployed. **It has been — see immediately
-below; use those numbers, not these.**
-
-**CLEAN BASELINE, measured 2026-09-02 from `llm_budget_days` and `agent_logs`
-on the live desk.** Dates used: **2026-08-27 to 2026-09-02**, which is the
-whole post-contamination record. 2026-08-31 is included but its ledger is only
-meaningful after the operator's phantom-charge correction that afternoon;
-2026-09-02 is a partial day (through 14:01 ET). 2026-08-29/30 was a weekend.
-
-| Day | Settled spend | Note |
-|---|---:|---|
-| 2026-08-27 | $1.0200 | |
-| 2026-08-28 | $0.7394 | |
-| 2026-08-31 | $1.4578 | includes three operator-triggered morning re-runs |
-| 2026-09-01 | $0.7793 | |
-| 2026-09-02 | $0.8958 | partial, to 14:01 ET |
-
-**~$0.73–$1.14 on an ordinary day against a $2.75 ceiling — the desk is using
-about a third of its budget.** No trend: the range is flat across the five
-days and the variation is run-count, not per-call drift.
-
-**The concentration is confirmed, and it got MORE concentrated, not less.**
-Over 2026-08-27..09-02: **portfolio_manager is $4.2475 of $4.5646 — 93.0% of
-spend on 35 of 153 calls.** Every other seat combined is $0.3171. The eight
-seats that moved to Google-direct `gemini-3.5-flash-lite` on 2026-08-31 now
-cost **$0.00** (free tier) — 35 calls, zero dollars. So the *entire* remaining
-LLM bill is one seat's model choice plus two small OpenRouter stragglers
-(`tech_analyst` $0.209 pre-migration, `risk_manager` $0.023).
-
-**Do not re-litigate "the research desk is cheap" from this.** It is now
-cheap because it is free, which is a routing fact, not an efficiency one. The
-only lever that moves the bill is the PM seat: its input size, its cadence, or
-its endpoint. A weaker PM model is ruled out by the owner and that ruling
-stands.
-
-**One measurement to act on before any budget change.** Provider-reported cost
-for `openai/gpt-5.5` has been a **median 0.38x** of the pinned $5/$30 estimate
-across the 32 calls since 2026-08-28 (the flex endpoint plus cache reads).
-Reservations and the reserved-exposure ceilings are still sized off the pinned
-rate, so every PM reservation is ~2.7x what the seat is actually billed. That
-is what produced the 2026-08-28 hold at $1.9118 on a call that cost ~$0.25,
-and the response was to raise the ceiling 1.80 -> 2.60. **The ceiling is being
-loosened to accommodate a bad estimate.** Pricing reservations at the flex
-rate is NOT the fix — fallbacks are enabled, so a saturated flex tier lands on
-the $5/$30 endpoint and the reservation would then under-cover the dearest
-possible outcome. Owner decision, not a patch.
-
-| Mode | Runs | Avg/run | Dominated by |
-|---|---:|---:|---|
-| `morning` | 20 | $0.221 | PM $3.65 (83% of the mode) |
-| `intra_check` | 10 | **$0.222** | **PM $2.19 (99% of the mode)** |
-| `evening` | 7 | $0.004 | evening + news |
-| `close` | 7 | $0.003 | news + position_reviewer |
-| `earnings_preprocess` | 4 | $0.004 | earnings |
-| `midday` | 7 | $0.003 | news + position_reviewer |
-
-Two facts worth acting on:
-
-1. **`intra_check` cost the same as a full morning run** ($0.222 vs $0.221)
-   while doing almost none of the work — $0.003/run on research, $0.219 on the
-   PM call — and it was also the session the PM was *deliberately blindfolded*
-   in (`portfolio_manager.py` returned a technical-only evidence registry when
-   `session_type == "intra_check"`, though macro and news were already in
-   memory). 33% of all spend, on blindfolded scanning. **Fixed** — `fb88e08`
-   carries the morning's macro/news forward instead; nothing is re-fetched, so
-   the per-run cost this table shows should not change materially, but the PM
-   is no longer deciding on a technical-only slice of the evidence.
-2. **The whole research desk costs 5.5%.** Technical — the *only* source of
-   trade discovery today — is 4.6% of spend. The inference that "the system
-   pays 87% to arbitrate a shortlist produced by its cheapest component, so
-   fix the allocation before raising the ceiling" rests on the contaminated
-   window above and is **not established** — it may still be roughly true,
-   but it cannot be asserted as a finding until it's checked against a clean
-   measurement. `16f6535` routes the PM's `openai/gpt-5.5` calls through
-   OpenRouter's `openai/flex` endpoint at half the per-token price (same
-   model weights), so the PM's per-run cost should roughly halve (~$0.22 →
-   ~$0.11 on `morning`, ~$0.22 → ~$0.11 on `intra_check`) once this merges
-   and deploys — that decision is correct regardless of the PM's exact share,
-   since it's the same model at half price. Whether the research desk still
-   needs to cost more of the total is a separate question that a clean
-   baseline, not this one, has to answer.
-
-1. **Execution: bounded re-peg — SUPERSEDED 2026-09-12 by item 50 (PR #315).
-   The ladder described below no longer exists and `repeg_max_attempts` is now
-   rejected at config load. `execution.repeg_enabled` stays `false` by owner
-   decision and is not to be re-proposed. Kept only because the paragraph
-   beginning "Read this before enabling it" records the still-true reason the
-   whole feature has almost nothing to act on.** Original entry, merged
-   from `feat/bounded-repeg` (PR #144 opened against `main`, 2026-08-29):
-   `execution.repeg_enabled` (default **false**), `repeg_max_attempts`
-   (default 2, schema-capped at 5), the `pending_repegs` write-ahead queue and
-   its session-start drain, `broker.replace_entry_limit` /
-   `resolve_replacement_chain`, and
-   `place_entry_protection(superseded_filled_qty=...)` so a fill that landed
-   under a superseded order id still gets a stop. A partially filled order is
-   NEVER replaced (that is how one idea gets bought twice), a rejected
-   replacement means the order filled and the chase stops, and every
-   ambiguous branch leaves the order working.
-
-   **Read this before enabling it.** Since PR #111 a BUY limit is submitted
-   AT the slippage ceiling whenever a quote is available, so there is nothing
-   to walk toward and the re-peg is a no-op by construction for those
-   entries. It only has room where the limit was set BELOW the ceiling —
-   today that means the quote was unavailable at submission and the analyst's
-   entry price was used. Turning the flag on will therefore do approximately
-   nothing until the entry pricing policy changes. Deciding whether entries
-   should peg tighter than the ceiling (and then be walked up) is a policy
-   question that reverses part of #111's reasoning and was deliberately NOT
-   taken here.
-2. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
-   filings are already downloaded and stored.
-
-3. **Phase 7 — measurement.** Backtester and conviction calibration. Must enforce
-   post-training-cutoff evaluation windows for any LLM signal — contamination is
-   the dominant failure mode in this literature. **Correction 2026-08-29: the
-   backtester landed; conviction calibration (whether the AI's stated
-   conviction predicts outcome) did not** — see "Landed (2026-08-29)" in
-   `docs/INCIDENT_HISTORY.md`.
-4. **Analyst upgrades.** News cascade — **stage 1 (dedup) is DONE**
-   (`src/data/news_dedup.py`); stage 2 (novelty scoring against a rolling
-   48–72h per-ticker buffer) and stage 3 (a model on the residual only) remain,
-   and the seam for them is `NewsCluster.novelty`. Also: deterministic macro
-   regime with the model confined to FOMC text; earnings multi-quarter trends.
-   Several need new data sources and an owner decision first.
-
-   Note for whoever picks up stage 2: the measured duplication rate is small.
-   Across 589 archived articles the old stage removed 4.2% and the new one
-   removes a further 1.2% — so dedup is a correctness fix (it stops one story
-   reading as N confirmations), **not** a cost saving. Two of nine feeds
-   (Reuters, AP) are dead, which suppresses exactly the wire-syndication case
-   dedup targets; the true rate is unknown until those are fixed.
-
-**Identified 2026-08-28, not yet fixed**
-
-**Found and reported, NOT fixed here (out of this task's scope, real defects/gaps for someone to pick up):**
-
-- **`NewsIntelligenceReport.market_sentiment` (`src/models.py`) rejects a value the real news analyst LLM uses regularly, and silently discards the entire news report when it does.** It's `Literal["bullish","bearish","neutral"]` with only case normalization, no vocabulary mapping. Measured against the full retained `agent_logs` history: **9 of 54 real news_analyst responses (16.7%) used a non-enum value** — `mixed` (7x), `mixed-to-bearish` (1x), `risk-off` (1x). Each one makes `NewsAnalystAgent.analyze()`'s `NewsIntelligenceReport(**parsed)` raise, caught generically, discarding macro_narrative, pm_briefing, state_changes and stock_news for that entire session — even though the same method has explicit, deliberate per-entry isolation for `state_changes` and `stock_news` specifically so one bad entry can't take down the whole report (see its own docstring). That protection was never extended to the top-level `market_sentiment`/`confidence` fields. Roughly one in six real news-analyst sessions in the retained history lost its entire news product to this.
-- **The rig cannot rehearse `earnings_preprocess` at all.** `ops/rehearsal/runner.py`'s `SESSIONS` mapping and `run.py`'s `--session` choices list only `morning`/`midday`/`close`/`evening`/`intra_check`. `TradingPipeline.run_earnings_preprocess()` is a real, scheduled (08:00 ET), LLM-calling session — the *only* place 10-Q/10-K filings get analyzed — with the same structural shape (RunContext, trading-day gate, cost-session activation, protection-restore drain) as the five modes the rig supports. This is undocumented anywhere in the rig's code, tests or docs; it appears to be an oversight, not a deliberate scope cut. Consequence: a defect specific to earnings preprocessing — like the earnings-extraction bug fixed in PR #115 the same week — would be invisible to this harness.
-- **A failed broker read cannot be rehearsed.** `RehearsalTradingClient`/`RehearsalDataClient` never raise on `get_account()`/`get_positions()`; only `get_asset()` and `close_position()` are wired to fail. Production's `except Exception: return {"status": "broker_error", ...}` path in `run_morning`/`run_intra_check` is therefore completely untested by this harness. Consistent with the module's own documented scope, but worth naming since "a broker read that fails" is exactly the kind of resilience case this rig should be able to exercise.
-
-Two rehearsal-rig behaviors checked and confirmed as non-defects (offline
-`--source-data`-less runs fail closed at the pricing gate; a flattened
-sandbox book correctly makes the reconciler decline to guess) moved to
-`docs/INCIDENT_HISTORY.md`, 2026-09-11.
-
-#### SMALLER, RECORDED
-- OneCLI: OpenRouter spend from a live rehearsal would be real money on the same account, but the rehearsal runs its own cost-circuit database, so production would under-count the true daily bill.
-- OneCLI: production's Alpaca secret matches `*.alpaca.markets`, which also covers the paper host, so both credential sets match the same address. The gateway fails closed on the ambiguity. Narrowing the production pattern risks breaking live credential resolution and was deliberately left for the owner.
-
-- `feat/news-dedup` — still unmerged; disposition being decided separately.
-
-#### THE NEW STOP RULE REJECTED FOUR BUYS ON ITS FIRST DAY — RESOLVED 2026-09-01
-Moved to `docs/INCIDENT_HISTORY.md` (2026-08-28 four-candidate reward:risk
-rejection; answer was that the targets were never real measurements).
-
-#### RECURSION FAULT IN THE BAR FETCH
-`broker.get_bars failed for DSPC: maximum recursion depth exceeded` — 14 times on 2026-08-28, all for the same symbol. Contained (the call returns an empty list rather than crashing the session) but it is a real fault, not noise. DSPC is a delisted warrant, so the trigger appears to be the fallback path handling a symbol with no data.
-
-#### DELISTED WARRANTS REACHING THE DATA LAYER
-Five symbols returned "possibly delisted; no price data found" on 2026-08-28: DSPC, SXTPW, NRSNW, LIMNW, ERNAW. All are warrants. They should not be reaching a bar fetch at all — this is universe/admission hygiene, and it is also what triggers the recursion fault above.
-
-**Set aside — small, easily forgotten**
-
-- `db_reads.get_recent_agent_logs` uses `SELECT *`, and `GET /agents/{agent_name}`
-  returns 20 rows as `recent_calls`. PM prompts run 13KB-190KB, so that response
-  could reach several MB. Harmless today because nothing in `frontend/src/`
-  calls the route — fix before anything does, by trimming the large columns
-  from the LIST query and keeping them on the detail route.
-- `docs/architecture/MODEL_ROUTING_POLICY.md` carries a token-count figure that
-  is stale since the Tech Analyst prompt grew. Annotated with a measured
-  estimate; not re-derived with `ops/model_policy/project_session_cost.py`.
-- Re-examine whether the LLM Risk Manager seat is additive once the drawdown gate
-  is deterministic — see `docs/AGENT_ROLE_AUDIT.md`.
-
-### Natural Alpaca Paper validation
-
-Natural validation continues in parallel. The substantive acceptance item remains evidence that QAMC behaves coherently in ordinary Alpaca Paper markets:
-
-**opportunity discovered → evaluated → defensible bullish/bearish/neutral decision → executed when eligible → managed/exited → measured**.
-
-Success is not a target number of trades. Do not manufacture opportunities, force orders, weaken risk controls, or hindsight-tune the system to create evidence.
-
-Use the existing Mission Control, journal and Telegram read-side evidence to determine:
-
-- what opportunity was discovered;
-- what the specialists, Portfolio Manager and AI Risk Manager concluded;
-- what deterministic risk/funding/execution did;
-- why an eligible trade did or did not execute;
-- how any resulting position was managed/exited;
-- what the measured result and missed-opportunity evidence show.
-
-When QAMC does not trade, the reason should be specific and defensible rather than an unexplained absence of activity.
-
-### Future — portfolio hedging (not scheduled, do not start yet)
-
-Owner asked on 2026-09-01 for this to be written down so it is not lost. It is
-NOT approved work.
-
-**Prerequisite: the desk must be stable and actually trading first.** On
-2026-09-01 it found 38 actionable signals and placed zero orders. Hedging a
-book that will not trade is the wrong problem in the wrong order.
-
-**No hedging logic exists anywhere in QAMC.** Verified 2026-09-01 — every
-occurrence of "hedge" in `src/` and `config/prompts/` is incidental prose or
-the `is_bearish_hedge` flag, which labels a bearish idea and sizes nothing.
-
-**Why the inverse ETFs stay** (owner reconfirmed 2026-09-01, "that could be
-utilized as a hedge"): none of `SH`/`SDS`/`PSQ`/`SQQQ` is shortable at the
-broker, so they are only usable as longs — exactly what a hedge sleeve wants —
-and shorting has never once executed (45 trades in the ledger, zero
-`SHORT`/`COVER`). They are the only bearish tool that has ever worked. Revisit
-removing them only after a real short fills and exits cleanly.
-
-**Options, cheapest first, none decided:** an index hedge sleeve sized off
-measured book beta; net long-minus-short as an explicit sized output of the
-macro read (the natural continuation of spec Phase 10.2); hedging the dominant
-correlation cluster using the measurement `src/data/correlation.py` already
-computes for the cluster risk budget; bounded protection into a known binary
-event (FOMC/CPI/earnings), whose calendars already exist.
-
-**Traps to design around:** a hedge is a position, not an exemption — it
-carries a stop and appears in exposure maths like anything else. Inverse and
-leveraged ETFs decay through daily rebalancing, so any sleeve needs a maximum
-holding period. Under spec Phase 11.2's margin cap a hedge consumes gross
-exposure, competing with what it protects — decide deliberately whether it
-counts. And do not let a hedge become a way to avoid selling a loser; that is
-the failure mode this invites.
+**Retired item numbers — never reuse.** 2, 5, 9, 12, 16, 25, 29, 37, 38, 47, 48, 50 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
 
 ## Evidence-only follow-ups
 
