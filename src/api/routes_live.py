@@ -615,6 +615,9 @@ def get_symbol_events(
         result = _market_data.get_price_chart_events(symbol, lookback_days=lookback_days)
         dividends = [DividendEvent(**d) for d in result.get("dividends", [])]
         earnings = [EarningsEvent(**e) for e in result.get("earnings", [])]
-        return SymbolEventsResponse(symbol=symbol, dividends=dividends, earnings=earnings)
+        return SymbolEventsResponse(
+            symbol=symbol, dividends=dividends, earnings=earnings,
+            earnings_degraded=result.get("earnings_degraded"),
+        )
     except Exception as exc:
         return SymbolEventsResponse(symbol=symbol, error=str(exc))
