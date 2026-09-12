@@ -32,6 +32,34 @@ def _mock_stop_seam(broker, *, specs=(), snapshot_ok=True, cancel_ok=True):
     )
 
 
+def _partial_trim(pipeline, position, *, qty, run_id, label="REDUCE"):
+    """Drive the shared partial-exit path exactly as a reviewer trim does:
+    protected SELL, then finalize protection on the ACTUAL residual.
+
+    The tests below used to ride on the midday auto take-profit (deleted
+    2026-09-12, owner decision — the trailing stop is the only exit rule).
+    The invariant they pin — cancelled stops are restored when the sell
+    fails, or re-placed on the true residual when it fills — belongs to
+    `_submit_protected_sell` / `_finalize_pending_protections`, not to the
+    deleted trigger, so the tests keep the invariant and lose the trigger.
+    """
+    del run_id  # the deleted trigger wrote its own audit row; a trim here does not
+    orders: list[dict] = []
+    pending: list[dict] = []
+    sale = pipeline._submit_protected_sell(
+        symbol=position.symbol, qty=qty,
+        limit_price=round(position.current_price * 0.995, 2),
+        reference_price=position.current_price,
+        position_qty_before_sell=position.qty, label=label,
+    )
+    if sale is not None:
+        order, prot = sale
+        orders.append(order)
+        pending.append(prot)
+    pipeline._finalize_pending_protections(pending, context="test_partial_trim")
+    return orders
+
+
 def _mock_stage_seam(pipeline, *, specs=(), ok=True, wal_row_id=None):
     """For tests where the WHOLE pipeline is a MagicMock: ExecutionStage
     (and the other SELL paths) now obtain stops via
@@ -893,7 +921,6 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     forced = {"id": "forced", "status": "accepted"}
     exdiv = {"id": "exdiv", "status": "accepted"}
     pipeline._force_delever = MagicMock(return_value=[forced])
-    pipeline._auto_take_profit = MagicMock(return_value=[])
     pipeline._handle_ex_dividends = MagicMock(return_value=[exdiv])
     pipeline._reconcile_fills = MagicMock()
     pipeline._check_late_breach_and_emergency_liquidate = MagicMock(return_value=None)
@@ -915,10 +942,6 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline._reconcile_stop_coverage.assert_called_once()
     pipeline._force_delever.assert_called_once()
     pipeline._handle_ex_dividends.assert_called_once()
-    if session_type == "midday":
-        pipeline._auto_take_profit.assert_called_once()
-    else:
-        pipeline._auto_take_profit.assert_not_called()
     pipeline._run_news_update.assert_not_called()
     pipeline._load_earnings_analyses.assert_not_called()
     pipeline.position_reviewer.review.assert_not_called()
@@ -1152,7 +1175,7 @@ def test_reprotect_residual_swallows_submit_failure_with_loud_warning(caplog):
     )
 
 
-def test_take_profit_restores_stops_when_sell_rejected(tmp_path):
+def test_partial_trim_restores_stops_when_sell_rejected(tmp_path):
     """If the partial-trim SELL is rejected by the broker, we already
     cancelled the protective stops to clear held_for_orders — and now
     we have NO sell going through AND no protection. Restore the
@@ -1180,7 +1203,7 @@ def test_take_profit_restores_stops_when_sell_rejected(tmp_path):
         market_value=13500, unrealized_pnl=3500, sector="Technology",
     )
 
-    orders = pipeline._auto_take_profit([winner], run_id="r2")
+    orders = _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
     assert orders == [], "rejected SELL should not be in orders list"
     # Critical: the cancelled stop must be restored (not re-protected on
@@ -1261,8 +1284,8 @@ def test_full_sell_skips_residual_reprotect(tmp_path):
     pipeline._reprotect_residual_after_partial_sell.assert_not_called()
 
 
-def test_take_profit_reprotects_residual_after_partial_trim_fills(tmp_path):
-    """End-to-end happy path: TAKE_PROFIT trims 15 of 100 NVDA, the limit
+def test_partial_trim_reprotects_residual_after_partial_trim_fills(tmp_path):
+    """End-to-end happy path: a REDUCE trims 15 of 100 NVDA, the limit
     fills cleanly, and the remaining 85 shares get a fresh stop at the
     most-protective pre-existing price (95.0). PR J defers this to AFTER
     wait_for_order_terminal — so the broker's terminal fill_qty must
@@ -1296,7 +1319,7 @@ def test_take_profit_reprotects_residual_after_partial_trim_fills(tmp_path):
         market_value=13500, unrealized_pnl=3500, sector="Technology",
     )
 
-    orders = pipeline._auto_take_profit([winner], run_id="r2")
+    orders = _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
     assert len(orders) == 1
     pipeline.broker._submit_stop_limit_order.assert_called_once_with(
@@ -1305,7 +1328,7 @@ def test_take_profit_reprotects_residual_after_partial_trim_fills(tmp_path):
     db.close()
 
 
-def test_take_profit_restores_originals_when_limit_does_not_fill(tmp_path):
+def test_partial_trim_restores_originals_when_limit_does_not_fill(tmp_path):
     """The bug PR J was filed for: an accepted partial limit can later
     cancel/expire without filling. If we'd reprotected on residual at
     accept-time, the stop would cover only 85 shares of an unchanged
@@ -1340,7 +1363,7 @@ def test_take_profit_restores_originals_when_limit_does_not_fill(tmp_path):
         market_value=13500, unrealized_pnl=3500, sector="Technology",
     )
 
-    pipeline._auto_take_profit([winner], run_id="r2")
+    _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
     # Original full-position stops restored — NOT a 67-share residual stop.
     # Non-drain finalize → check_idempotency=False (recent self-cancel).
@@ -2238,7 +2261,7 @@ def test_finalize_protection_bails_when_lingering_cancel_fails():
     pipeline._reprotect_residual_after_partial_sell.assert_not_called()
 
 
-def test_take_profit_reprotects_actual_residual_on_partial_fill(tmp_path):
+def test_partial_trim_reprotects_actual_residual_on_partial_fill(tmp_path):
     """If the limit only partially fills (e.g., 12 of 15), the residual is
     100 - 12 = 88, NOT 100 - 15 = 85. Pin the broker.fill_qty as the
     source of truth, not the originally-submitted qty."""
@@ -2268,7 +2291,7 @@ def test_take_profit_reprotects_actual_residual_on_partial_fill(tmp_path):
         market_value=13500, unrealized_pnl=3500, sector="Technology",
     )
 
-    pipeline._auto_take_profit([winner], run_id="r2")
+    _partial_trim(pipeline, winner, qty=15.0, run_id="r2")
 
     # Actual residual = 100 - 12 = 88 (NOT 100 - 15 = 85).
     pipeline.broker._submit_stop_limit_order.assert_called_once_with(
@@ -2583,7 +2606,6 @@ def test_pipeline_midday_reconciles_fills_before_reviewer_prompt(tmp_path):
     pipeline.macro.get_macro_summary.return_value = {}
     pipeline.config = MagicMock()
     pipeline.config.llm.position_reviewer_model = "test-model"
-    pipeline._auto_take_profit = MagicMock(return_value=[])
     pipeline._handle_ex_dividends = MagicMock(return_value=[])
     pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
@@ -2634,7 +2656,6 @@ def test_pipeline_midday_fetches_only_executed_morning_trades():
     pipeline.db.get_trades.return_value = []
     pipeline.config = MagicMock()
     pipeline.config.llm.position_reviewer_model = "test-model"
-    pipeline._auto_take_profit = MagicMock(return_value=[])
     pipeline._handle_ex_dividends = MagicMock(return_value=[])
     pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
@@ -2669,36 +2690,73 @@ def test_pipeline_midday_fetches_only_executed_morning_trades():
     )
 
 
-def test_pipeline_midday_blocks_llm_sells_while_auto_take_profit_pending():
+def test_no_fixed_gain_automatic_profit_trim_exists():
+    """Doctrine, mechanically enforced (owner decision 2026-09-12): the ONLY
+    exit rule is the trailing stop. A preset profit target — sell a fixed
+    fraction at a fixed gain, decided in advance — is rejected outright,
+    the same way reward:risk was removed as a universal gate: the reward
+    side of a trade cannot be predetermined because the holding period is
+    unknown. The deleted `_auto_take_profit` (15% off at +30%, tuned on ONE
+    GOOGL trade) is the shape this test exists to keep out.
+
+    Static checks so a re-introduction fails at import-free test time:
+      1. no TradingPipeline method named like the deleted rule;
+      2. nothing under src/ submits a sell or writes a trade labelled
+         TAKE_PROFIT (the label survives only on historical DB rows);
+      3. no function under src/ takes a profit-trigger / trim-fraction
+         parameter.
+    """
+    import pathlib
+    import re
+
+    names = sorted(
+        n for n in dir(TradingPipeline)
+        if re.search(r"take_profit|auto_tp|profit_trim|profit_target", n)
+    )
+    assert names == [], f"preset profit-target hook(s) on TradingPipeline: {names}"
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "src"
+    offenders: list[str] = []
+    label_re = re.compile(r"""(?:label|action)\s*=\s*["']TAKE_PROFIT["']""")
+    param_re = re.compile(
+        r"def\s+\w+\s*\([^)]*\b(?:profit_pct_trigger|profit_trigger_pct|"
+        r"trim_fraction|take_profit_pct|profit_take_pct)\b",
+        re.S,
+    )
+    for path in sorted(src.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(src.parent)
+        for m in label_re.finditer(text):
+            offenders.append(f"{rel}: {m.group(0)}")
+        for m in param_re.finditer(text):
+            offenders.append(f"{rel}: {m.group(0)[:80]}")
+    assert offenders == [], (
+        "a fixed-gain automatic profit trim has been reintroduced — the only "
+        f"exit rule is the trailing stop (owner, 2026-09-12): {offenders}"
+    )
+
+
+def test_midday_does_not_trim_a_big_winner_on_gain_alone():
+    """Behavioural twin of the static doctrine test: a position up +60% with
+    a HOLD-only review must leave the book untouched at midday. Under the
+    deleted rule this position would have been trimmed 15% before the
+    reviewer ever saw it."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.broker = MagicMock()
     pipeline.broker.is_trading_day.return_value = True
-    pipeline.broker.get_account.side_effect = [
-        {"cash": 1000.0, "portfolio_value": 5000.0},
-        {"cash": 1200.0, "portfolio_value": 5050.0},
+    pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 17000.0}
+    pipeline.broker.get_positions.return_value = [
+        Position(
+            symbol="NVDA", qty=100.0, avg_entry=100.0, current_price=160.0,
+            market_value=16000.0, unrealized_pnl=6000.0, sector="Technology",
+        )
     ]
-    position = Position(
-        symbol="SPY", qty=10.0, avg_entry=500.0, current_price=505.0,
-        market_value=5050.0, unrealized_pnl=50.0, sector="ETF",
-    )
-    # First entry feeds the session-entry broker-truth coverage reconciler;
-    # the second feeds the stop-out reconciler (2026-08-28 ONDS/CCJ —
-    # _reconcile_stop_out_fills also reads broker.get_positions() to diff
-    # against the ledger); the remaining entries feed the session's own
-    # position reads (including the auto-TP refresh re-read).
-    pipeline.broker.get_positions.side_effect = [
-        [position], [position], [position], [position],
-    ]
-    pipeline.broker.wait_for_order_terminal.return_value = "accepted"
     pipeline.macro = MagicMock()
     pipeline.macro.get_macro_summary.return_value = {}
     pipeline.db = MagicMock()
     pipeline.db.get_trades.return_value = []
     pipeline.config = MagicMock()
     pipeline.config.llm.position_reviewer_model = "test-model"
-    pipeline._auto_take_profit = MagicMock(return_value=[
-        {"id": "tp-1", "status": "accepted", "symbol": "SPY"}
-    ])
     pipeline._handle_ex_dividends = MagicMock(return_value=[])
     pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
@@ -2707,20 +2765,18 @@ def test_pipeline_midday_blocks_llm_sells_while_auto_take_profit_pending():
     pipeline.risk_engine.check_daily_loss.return_value = None
     pipeline.position_reviewer = MagicMock()
     pipeline.position_reviewer.review.return_value = (
-        PositionReview(
-            reasoning_chain=_review_rc(),
-            actions=[{"action": "SELL", "symbol": "SPY", "reason": "cut it"}],
-            overall_assessment="take the win",
-            risk_level="moderate",
-        ),
+        PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
         _mock_agent_result(),
     )
 
     result = pipeline.run_midday()
 
     assert result["status"] == "reviewed"
-    pipeline.broker.wait_for_order_terminal.assert_called_once_with("tp-1")
+    assert result["orders"] == []
     pipeline.broker.submit_order.assert_not_called()
+    assert not any(
+        "TAKE_PROFIT" in str(c) for c in pipeline.db.insert_trade.call_args_list
+    ), "a TAKE_PROFIT trade row was written by a rule that no longer exists"
 
 
 def test_pipeline_evening_skips_non_trading_day():
@@ -3677,8 +3733,8 @@ def test_submit_protected_sell_restores_stops_on_reject():
 
 def test_submit_protected_sell_restores_stops_on_submit_throw():
     """Unified behavior: a submit that raises leaves the position intact with
-    stops cancelled — restore them in-session (previously only auto_take_profit
-    did; the other paths rode naked until next drain)."""
+    stops cancelled — restore them in-session (previously only the since-deleted
+    auto take-profit did; the other paths rode naked until next drain)."""
     pipe = _protected_sell_pipe(submit_raises=True)
     out = pipe._submit_protected_sell(
         symbol="NVDA", qty=5, limit_price=99.0, reference_price=100.0,

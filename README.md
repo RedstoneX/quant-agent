@@ -77,14 +77,14 @@ session lock. Each session has its own cadence + scope:
 
 13:00-14:30  midday               (once/day, sell-only)
              ├─ Force-delever
-             ├─ Auto take-profit (≥30% gain → trim 15%; give-back guardrail only)
              ├─ Ex-dividend stop adjustment for held names
              ▼
           Position Reviewer (6-step CoT, session_type="midday" = patient)
              │  Default: HOLD unless named thesis trigger fires
-             │  3-8% profit → consider trail to breakeven
-             │  8-15% profit → consider trail to halfway
-             │  > 15% profit → consider trail to 70% of move
+             │  Stops move by structure, not by a profit ladder: the
+             │  deterministic trail (src/risk/trailing.py) ratchets on
+             │  swing lows / chandelier / +1R breakeven; a reviewer
+             │  TRAIL_STOP must clear the ratchet cooldown + ATR noise band
              │
              └─ SELL / REDUCE / TRAIL_STOP only on trigger (thesis_invalid_if
                 / HIGH state_change reversal / bearish earnings / cluster
@@ -167,7 +167,7 @@ As of remediation-spec Phase 2b, that ceiling is enforced, not just reported: th
 - SELL uses limit price (0.5% below market for slippage protection); midday emergency sells use a wider 1% buffer to ensure fill during cascades
 - BUY limit price auto-raised to market if below (prevents unfilled orders)
 - BUY attaches OTO stop-loss via Alpaca (broker-enforced)
-- No hard take-profit — profit managed by midday reviewer's trailing stop logic
+- No take-profit of any kind — no bracket leg, and no automatic fixed-gain trim (the 30%/15% auto trim was deleted 2026-09-12). The trailing stop is the only exit rule; the reviewer may tighten it or exit on a named trigger
 - Partial sell via `allocation_pct` (1–99 = partial, 100 = full exit; 0 is treated as a no-op)
 - **Order-status gating**: every broker submission runs through `_order_accepted()` before the audit log is written — Alpaca error payloads (missing id, status rejected/expired/canceled) are refused so the trades table never records a phantom fill
 - **No-price BUY skip**: if neither the broker nor in-memory OHLCV bars can sanity-check the LLM's `entry_price`, the BUY is skipped rather than submitted as a stale limit
