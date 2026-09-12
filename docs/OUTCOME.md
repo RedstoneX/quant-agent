@@ -121,7 +121,10 @@ defending any threshold, cap, or rule in this codebase.** See
 is the fuller statement of the same principle.
 
 Every constant that governs a real trade decision — a stop distance, a
-holding period, a risk percentage, a reward:risk floor, a tolerance band —
+holding period, a risk percentage, a tolerance band, the reward:risk
+reference under which a range trade is capped at starter size (no longer a
+gate anywhere, never applied to a breakout, and self-flagged in
+`src/risk/constants.py` as the last flat number still standing) —
 must be derived from real market data (volatility, structure, confirmed
 price action) or from this desk's own measured track record. It must
 never be a flat calendar count, a round percentage, or a number chosen
