@@ -21,6 +21,13 @@ dependencies = [
     "feedparser>=6.0",
     "beautifulsoup4>=4.12.0",
     "openai>=1.30.0",
+    # yfinance's `Ticker.earnings_dates` (past + upcoming earnings-report
+    # dates, used by the cockpit chart's earnings markers) needs lxml as an
+    # HTML-parsing backend but does not declare it as a hard dependency —
+    # without it the call silently returns nothing rather than raising, so
+    # every PAST earnings marker was invisible in production until this was
+    # added (2026-09-12 incident, see docs/INCIDENT_HISTORY.md).
+    "lxml>=5.0.0",
     # `requests` is already pulled in transitively by alpaca-py / yfinance /
     # anthropic, but src/notifier.py (Telegram push) uses it directly, so
     # declare it explicitly to avoid silent breakage if those upstreams

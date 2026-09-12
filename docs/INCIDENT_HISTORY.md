@@ -6134,3 +6134,36 @@ it is not re-derived:
 *"we're not going with repeg"* — and independently has little to act on,
 since PR #111 already submits entries at the slippage ceiling whenever a
 quote exists.
+
+### 2026-09-12 — every PAST earnings marker was invisible, for every symbol
+
+**In plain words:** the cockpit price chart is supposed to show a purple "E"
+marker for each earnings report, past and upcoming. Only upcoming ones ever
+showed up. Oracle reported on 2026-09-10 and the chart showed nothing for it
+— the only marker ORCL had was a future date in December.
+
+**How it happened.** The past-earnings source (`yfinance`'s
+`Ticker.earnings_dates`) needs the optional `lxml` package to parse the page
+it reads. Production never had `lxml` installed. The call failed with
+`ImportError` every time, and the code caught that exception and logged it
+at DEBUG level, returning an empty result — the exact same empty result a
+symbol with genuinely no earnings history would produce. A separate,
+lxml-free source (`Ticker.calendar`) still supplied the single next
+scheduled date, so the endpoint always returned *something*, which is why
+the feature looked like it was working: every symbol had an "upcoming"
+marker, and nobody was checking whether the "past" ones were real absences
+or a broken fetch. A code comment already admitted the missing dependency,
+but nothing made the resulting emptiness distinguishable from real data, so
+it was never escalated.
+
+**Fixed** by declaring `lxml` as a proper dependency in `pyproject.toml` (not
+just installing it by hand in production — that would not have survived a
+redeploy), and by making the failure loud: a fetch failure on the
+past-earnings path now sets a distinct `earnings_degraded` field (with the
+exception type and message) on `MarketDataProvider.get_price_chart_events`'s
+result and the `/api/live/events/{symbol}` response, logged at WARNING, so a
+missing-dependency-style failure can never again present as "this symbol has
+no earnings history." Modelled on the existing `SeriesFreshness`
+(`src/data/macro.py`) / `FeedFailure` (`src/data/news.py`) convention: a
+degraded source must be a distinguishable signal, never a silent collapse
+into the same shape as a genuine empty result.
