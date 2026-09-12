@@ -1041,6 +1041,10 @@ dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 
 **49. The risk budget is now the binding constraint on a full day's eligible set, and nothing decides how to ration it — OPEN, surfaced 2026-09-12 by item 1(d).** Measured on `run-64290730` after the reward:risk floor was removed by setup type: eligible names 12 -> 25, and the eligible set's total requested risk is **48% against a 25% `max_portfolio_risk_pct` budget**. The floor was previously doing the rationing by accident — refusing enough candidates that the budget rarely bound. It no longer refuses them, so the budget binds on a normal day and something must decide WHICH permitted trades get the capital. Today that is whatever order `allocate_risk_budget` happens to process in, which is not a decision anybody made. Real options, none costed yet: rank-ordered (best-scored first until exhausted), proportional scale-down (everyone sized smaller), conviction-tiered, or a hard cap on names per session. Each is a different desk, not a tuning knob — owner call. Do NOT resolve by re-tightening the floor that was just removed.
 
+**DECIDED 2026-09-12 by the owner: rank-ordered, best first.** His words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The budget is spent on the best-ranked eligible candidates until it is exhausted; the remainder are not taken, and are not silently shrunk to fit. Proportional scale-down was explicitly rejected in the recommendation he accepted, on the grounds that sizing everyone smaller turns every strong idea into a weak one. **Still to BUILD** — `allocate_risk_budget` today spends in whatever order it happens to process in, which is the defect; the decision above is not yet implemented. Whether a partially-affordable candidate at the cut line is taken at a reduced size or skipped entirely is the one sub-question the decision does not settle, and must be raised with the owner rather than assumed.
+
+**50. An entry order that did not fill was left in a state nobody was told the truth about — RESOLVED 2026-09-12 (PR #315, "Stalled entry: one reprice, only once the exchange has it, then cancelled with its session").** Three separate faults. (a) The re-peg built in PR #144 walked a ladder of small price nudges; Alpaca's own community practice for a fast market is ONE decisive market-crossing replace, and every extra replace is another `pending_replace` window to get stuck in. Ladder removed, `repeg_max_attempts` deleted from the schema and rejected loudly at config load. (b) The replace was attempted before the exchange had the order. Verified against alpaca-py 0.44.0's `OrderStatus` enum and Alpaca's published lifecycle: `accepted` and `pending_new` are pre-venue and a replace on them is rejected, `new` is at the venue. Replace is now gated on positive evidence of `new`; unknown status counts as not-at-exchange. (c) **The owner was being told the opposite of what happened.** PR #311's exhaustion alert said the order was "LEFT WORKING … expires with the trading day"; on `main`, `place_entry_protection` had always cancelled a still-working entry ~90s later, silently. README and settings.yaml repeated the false claim. The alert now says what actually occurs: cancelled at the end of its session, prices tried, nothing resubmitted. The cancel and the alert are unconditional — they do not depend on `repeg_enabled`. **`execution.repeg_enabled` stays `false` and is not to be re-proposed** — owner decision 2026-09-12, *"we're not going with repeg"* — and independently it has little to act on, since PR #111 already submits entries AT the slippage ceiling whenever a quote exists, leaving no legal price to reprice to (the `no_room` outcome). Open sub-question, deliberately not decided: whether a cancelled entry should be auto-resubmitted next session. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-12.
+
 ---
 
 ### Re-measure gate — TWO different questions, two different costs
@@ -1286,8 +1290,13 @@ Two facts worth acting on:
    needs to cost more of the total is a separate question that a clean
    baseline, not this one, has to answer.
 
-1. **Execution: bounded re-peg — BUILT, SHIPPED DARK, AND MOSTLY INERT, merged
-   from `feat/bounded-repeg` (PR #144 opened against `main`, 2026-08-29).**
+1. **Execution: bounded re-peg — SUPERSEDED 2026-09-12 by item 50 (PR #315).
+   The ladder described below no longer exists and `repeg_max_attempts` is now
+   rejected at config load. `execution.repeg_enabled` stays `false` by owner
+   decision and is not to be re-proposed. Kept only because the paragraph
+   beginning "Read this before enabling it" records the still-true reason the
+   whole feature has almost nothing to act on.** Original entry, merged
+   from `feat/bounded-repeg` (PR #144 opened against `main`, 2026-08-29):
    `execution.repeg_enabled` (default **false**), `repeg_max_attempts`
    (default 2, schema-capped at 5), the `pending_repegs` write-ahead queue and
    its session-start drain, `broker.replace_entry_limit` /
