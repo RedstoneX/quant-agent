@@ -28,7 +28,11 @@ import logging
 import re
 from dataclasses import dataclass
 
-from src.data.levels import TargetDerivation, derive_structural_target
+from src.data.levels import (
+    TargetDerivation,
+    derive_structural_target,
+    horizon_reach,
+)
 from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision, reward_to_risk,
@@ -121,26 +125,30 @@ STOP_REFUSAL_WRONG_SIDE = "stop_on_wrong_side_of_entry"
 #: the noise band, i.e. a climactic bar.
 STOP_RULE_SIGNAL_BAR = "stop_placed_past_signal_bar"
 #: 2026-09-12 (second ruling of the day — see docs/WORK.md item 54). The
-#: stop this trade REQUIRES is wider than the instrument's own noise band.
-#: Kullamägi's actual constraint, in his own words: "stop should not be
-#: wider than the ATR or ADR of the stock" (https://qullamaggie.com/
-#: my-3-timeless-setups-that-have-made-me-tens-of-millions/). What is
-#: adopted is the SHAPE — cap the stop's width in units of the stock's own
-#: daily range, and refuse past the cap — not his constant. The cap here is
-#: the band the desk already reads from the instrument for an unbacked
-#: stop (`_stop_atr_multiple` x ATR: 2.5 base, scaled by setup and tape —
-#: a doctrine-grounded CONVENTION, see `ConstructorConfig.
-#: min_stop_atr_multiple`), because that band is also the desk's fallback
-#: stop: at his literal 1 x range, the fallback would refuse itself and no
-#: unbacked stop could ever ship. Substitution stated plainly: the desk
-#: computes ATR(14), not ADR; ATR includes the overnight gap and so runs a
-#: little wider than ADR on the same stock. The width test is on WHATEVER
-#: stop would ship — an honoured level, the absolute floor, the band, or
-#: the signal bar — so an analyst stop placed at a real but distant level
-#: is refused here rather than kept. Below the cap the response to a wide
-#: stop is a SMALLER position (`_plan_risk_targets`: shares = risk budget
-#: / distance to stop), never a refusal.
-STOP_REFUSAL_WIDER_THAN_NOISE_BAND = "stop_wider_than_instrument_noise_band"
+#: stop this trade REQUIRES is wider than the instrument can plausibly
+#: travel inside the trade's own horizon. The published constraint on a
+#: stop is its WIDTH, not whether a level exists under it — Kristjan
+#: Kullamägi, in his own words: "stop should not be wider than the ATR or
+#: ADR of the stock" (https://qullamaggie.com/my-3-timeless-setups-that-
+#: have-made-me-tens-of-millions/). What is adopted is the SHAPE — width
+#: measured in the stock's own volatility units, refused past a cap — and
+#: NOT his unit, for a reason that is arithmetic, not taste: this desk's
+#: own fallback for an unbacked stop is the 2.5 x ATR noise band
+#: (`ConstructorConfig.min_stop_atr_multiple`, a doctrine-grounded
+#: convention for a days-to-weeks hold; his rule is for an entry timed
+#: intraday with the stop under the day's low), so at his 1 x daily range
+#: the fallback would refuse itself. Nor can the band be the cap: the
+#: ratified sizing rule (§2.1, `_plan_risk_targets`) answers a wide stop
+#: with a SMALLER position, never a refusal, and is pinned by tests. The
+#: only instrument-read width the desk already has that sits past both is
+#: `horizon_reach` — ATR x sqrt(horizon) x the same reach multiple the
+#: target derivation and the level scan use. A stop beyond it cannot be
+#: hit inside the trade, so the risk-based size computed from it is
+#: fiction. Substitution stated plainly: the desk computes ATR(14), not
+#: ADR; ATR includes the overnight gap and runs a little wider than ADR on
+#: the same stock. The width test is on WHATEVER stop would ship — an
+#: honoured level, the absolute floor, the band, or the signal bar.
+STOP_REFUSAL_WIDER_THAN_REACH = "stop_wider_than_instrument_reach"
 #: The instrument has fewer completed sessions than the LONGEST indicator
 #: window the analyst is briefed with (`src/data/technical.py::
 #: LONGEST_INDICATOR_WINDOW`, the 200-session moving average). The 2026-
@@ -534,7 +542,7 @@ class PortfolioConstructor:
         self.last_drop_reasons: dict[str, str] = {}
         # STRUCTURED refusals (2026-09-12): {SYMBOL: {"refusal", "detail",
         # "direction"}} for every trade this instance refused BY NAME —
-        # today STOP_REFUSAL_WIDER_THAN_NOISE_BAND and
+        # today STOP_REFUSAL_WIDER_THAN_REACH and
         # STOP_REFUSAL_INSUFFICIENT_HISTORY. Written directly, never
         # recovered from log text: `last_drop_reasons`
         # is a regex over the constructor's own log lines and several
@@ -596,7 +604,10 @@ class PortfolioConstructor:
         briefed with (`LONGEST_INDICATOR_WINDOW`, the 200-session moving
         average) is refused by name, on both setup types, from the ONE
         funnel `real_reward_risk_preview` and `_resolve_entry_and_stop`
-        share. Nothing about the chart's SHAPE is judged here — absent
+        share — FIRST, before the target derivation, because a listing this
+        young usually yields no levels either and the honest name for that
+        is this one, not the derivation's `no_structural_levels`. Nothing
+        about the chart's SHAPE is judged here — absent
         structure is not a reason (no published method refuses a trade for
         lack of support below); an unmeasurable instrument is.
 
@@ -1353,6 +1364,16 @@ class PortfolioConstructor:
         # `stop_loss < entry_price` check (e.g. entry $10.00, stop $9.999 →
         # ships $10.00 == entry → risk_per_share = 0, and a stop at the entry
         # fires on the first tick down). 2026-07-16 audit.
+        # Too young to measure (item 54, 2026-09-12). Checked FIRST, before
+        # the target derivation: a listing with too few sessions usually
+        # also yields no levels, and "insufficient history" is the true
+        # name for that, not `no_structural_levels` (which PR #326 reads
+        # as a feed fault).
+        if not self._require_sufficient_history(
+            target.symbol, analysis, target.direction,
+        ):
+            return (None, None)
+
         # The target is derived BEFORE the stop is finalised, because the
         # reward:risk check inside `_widen_stop_past_noise` needs a real
         # target to measure against. It depends only on entry, direction and
@@ -1367,14 +1388,6 @@ class PortfolioConstructor:
                 "SHORT" if is_short else "BUY", target.symbol,
                 derivation.refusal, derivation.detail,
             )
-            return (None, None)
-
-        # Too young to measure (item 54, 2026-09-12). Checked AFTER target
-        # derivation so a chart that could not be measured at all is already
-        # filed under its own name, and BEFORE the stop is resolved.
-        if not self._require_sufficient_history(
-            target.symbol, analysis, target.direction,
-        ):
             return (None, None)
 
         stop_loss = self._resolve_stop(target, analysis, entry_price)
@@ -1603,17 +1616,18 @@ class PortfolioConstructor:
         entry_price = float(entry_price)
         is_short = direction == "short"
 
-        derivation = self._derive_target(
-            analysis.symbol, analysis, entry_price, direction,
-        )
-        if derivation.price is None:
-            return None
         # Too young to measure — same check, same place in the funnel, as
         # `_resolve_entry_and_stop`, so the PM is not shown a candidate the
         # constructor would refuse one stage later.
         if not self._require_sufficient_history(
             analysis.symbol, analysis, direction,
         ):
+            return None
+
+        derivation = self._derive_target(
+            analysis.symbol, analysis, entry_price, direction,
+        )
+        if derivation.price is None:
             return None
 
         raw_stop = getattr(analysis, "stop_loss", None)
@@ -1793,13 +1807,11 @@ class PortfolioConstructor:
         at the wider of the noise band and the signal bar's far edge, both
         read from the instrument; (2) a missing stop is placed the same way
         rather than refused; (3) whatever placed the stop, a width past the
-        noise band (`_stop_atr_multiple` x ATR) is REFUSED by code
-        (`STOP_REFUSAL_WIDER_THAN_NOISE_BAND`) — the only place this
-        function refuses on distance, and the only refusal the band ever
-        produces. A level-backed stop wider than the band, which
-        `STOP_RULE_OUTSIDE_BAND` used to keep silently, is now refused too.
-        Under the cap, width is answered by `_plan_risk_targets` sizing
-        down, never by refusal.
+        instrument's own reach over the trade's horizon (`horizon_reach`)
+        is REFUSED by code (`STOP_REFUSAL_WIDER_THAN_REACH`) — the only
+        place this function refuses on distance. Under the cap, width is
+        answered by `_plan_risk_targets` sizing down (§2.1), never by
+        refusal; `STOP_RULE_OUTSIDE_BAND` still keeps a wide typed stop.
 
         **2026-09-02 — the reward:risk floor now runs on EVERY path, not
         only when this function moved the stop.** It previously lived
@@ -2070,28 +2082,45 @@ class PortfolioConstructor:
 
         # -------------------------------------------------------------
         # The WIDTH gate (item 54, 2026-09-12): whatever placed the stop,
-        # it must not be wider than the instrument's own noise band.
+        # it must sit within the instrument's own REACH over this trade's
+        # horizon.
         # -------------------------------------------------------------
-        # Kullamägi's constraint in shape ("stop should not be wider than
-        # the ATR or ADR of the stock"); the cap is the desk's existing
-        # band, `multiple x ATR`, and the reasons it is that number and not
-        # his are on STOP_REFUSAL_WIDER_THAN_NOISE_BAND. Under the cap a
-        # wide stop is answered by a smaller position, never by refusal.
-        # A stop the band itself placed is at the cap by construction;
-        # `isclose` keeps float noise from refusing it.
-        if atr is not None and band_edge is not None and band_edge > 0:
+        # Kullamägi's constraint in SHAPE — the stop's width is measured in
+        # the stock's own volatility units and refused past a cap — and
+        # deliberately not his unit. See STOP_REFUSAL_WIDER_THAN_REACH for
+        # why neither his 1 x daily range nor the desk's 2.5 x ATR band can
+        # be the cap on this desk. The cap is `horizon_reach`: ATR x
+        # sqrt(horizon) x the reach multiple the target derivation and the
+        # level scan already use — the furthest price plausibly travels
+        # inside the trade. A stop past it cannot be hit inside the trade,
+        # so it is not a stop, and the risk-based size computed from it
+        # is fiction. Under the cap, width is answered by `_plan_risk_
+        # targets` sizing down — the ratified §2.1 invariant — never here.
+        # No horizon means no reach and no gate: `_derive_target` has
+        # already refused such a trade by name on both live paths, so this
+        # only ever passes a hand-built shim (the backtest engine).
+        if atr is not None:
+            reach = horizon_reach(
+                atr, getattr(analysis, "expected_horizon_sessions", None),
+                max_reach_atr_multiple=self.cfg.max_target_reach_atr_multiple,
+                max_horizon_sessions=self.cfg.max_target_horizon_sessions,
+            )
             width = abs(entry_price - honoured)
-            cap = abs(entry_price - band_edge)
-            if width > cap and not math.isclose(width, cap, rel_tol=1e-9):
+            if reach is not None and width > reach and not math.isclose(
+                width, reach, rel_tol=1e-9,
+            ):
                 self._note_refusal(
-                    symbol, direction, STOP_REFUSAL_WIDER_THAN_NOISE_BAND,
+                    symbol, direction, STOP_REFUSAL_WIDER_THAN_REACH,
                     f"the stop this trade needs sits ${honoured:,.2f} "
                     f"[{rule}], {width / atr:.2f} x ATR {side_word} the "
-                    f"${entry_price:,.2f} entry — wider than the "
-                    f"{multiple:.2f} x ATR (${cap:,.2f}) noise band read from "
-                    f"the instrument. A stop wider than the stock's own "
-                    f"range is refused, not sized down (Kullamägi's width "
-                    f"rule in shape; the cap is the desk's own band).",
+                    f"${entry_price:,.2f} entry — past the ${reach:,.2f} "
+                    f"({reach / atr:.2f} x ATR) the instrument can plausibly "
+                    f"travel inside this trade's "
+                    f"{getattr(analysis, 'expected_horizon_sessions', None)}-"
+                    f"session horizon. A stop price cannot reach is not a "
+                    f"stop, and the size computed from it would be fiction "
+                    f"(Kullamägi's width rule in shape, the desk's own reach "
+                    f"as the unit).",
                 )
                 return None
 
