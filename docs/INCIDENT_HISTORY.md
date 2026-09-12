@@ -114,6 +114,100 @@ gained a distant floor so they still test widening rather than the new
 refusal, and the backtest's hand-computed series gained a realistic daily
 range so its $125 shelf is within the instrument's own reach.
 
+||||||| c929e5d
+
+### 2026-09-12 — a paused desk left part of a real position with no stop for six sessions, and every record called it "expected"
+
+**In plain words:** the desk owns 5.3089 shares of Oracle. The broker will
+only keep a lasting protective stop on whole shares, so the 5 whole shares
+have a stop that survives the close and the 0.3089-share slice gets a
+one-day stop that the desk puts back every morning. The desk was switched
+off on 3 September and stayed off. Nobody connected "switched off" with
+"nothing puts the morning stop back", so from 3 to 11 September the slice
+(about $46 of a $798 position) had no stop at all, while the last report
+ever written about it — the evening of 2 September — correctly called the
+lapse an expected overnight state. No report came after that, because
+reports come from sessions and there were no sessions. Nothing was lost;
+Oracle rose. The blindness is the defect.
+
+**What was actually true at the broker, checked 2026-09-12 (read-only):**
+position ORCL 5.3089 @ $146.27 average, one open stop-limit SELL for 5.0
+(stop $137.53, limit $133.40) submitted 2026-09-02 18:32:47 UTC. Nothing
+else open.
+
+**The real cause, from the desk's own log, not inferred.** At 18:32:47 UTC
+on 09-02 the entry protection logged the hybrid split — "GTC over 5 whole
+share(s) + DAY over 0.3089 sub-share remainder" — and BOTH legs landed
+("[GTC whole-share] ... qty=5.0000", "[DAY fractional] ... qty=0.3089").
+At 00:00:42 UTC on 09-03 the evening run's coverage sweep logged
+"FRACTIONAL DAY STOP LAPSED (expected)" and put `unprotected_value: 45.18`
+in its result. The six trading-mode timers last fired at 13:00 UTC on
+09-03 — before the 09:30 ET open — and have not fired since (the daily
+P&L export and the alert heartbeat kept running). So: not an `int()`,
+not a floor bug, not a silent retry at a smaller size. `_split_protective_qty`
+did exactly what spec §11.1 says. The design's precondition — "re-placed
+by the next session's coverage sweep" — was simply false for nine days,
+and no code checked the precondition.
+
+**What the broker permits, and how we know.** Fractional orders must be
+DAY; a fractional GTC is refused outright (code 42210000, "fractional
+orders must be DAY orders"); fractional trailing stops are refused at any
+tif; STOP/DAY, STOP_LIMIT/DAY and LIMIT/DAY are accepted. Source: the
+repo's own probe against the live paper account on 2026-09-01 (recorded in
+`src/execution/broker.py`, `config/settings.yaml` and the owner's notes),
+cross-checked today against Alpaca's published fractional-trading page,
+which says the same: market, limit, stop and stop-limit "with a time in
+force = Day", no other tif. I did not re-probe live — the brief was
+read-only and the measurement is eleven days old with a documented error
+code. Conclusion: **a 5.3089-share stop CAN be placed, as a DAY order, and
+it dies at 16:00 ET; there is no order the broker will hold overnight on a
+fractional quantity.** This is a platform limit, not a bug we own.
+
+**What was ruled out.** (1) A flooring bug — the 5.0 is the deliberate GTC
+leg, and the DAY leg was placed. (2) A broker rejection retried smaller —
+both legs were accepted on the first attempt; the log shows no retry. (3)
+The cockpit misreporting — the API's positions/orders match the log
+exactly. (4) "It's under one share so it's negligible" — already found
+wrong on 2026-09-02 and stays wrong: a sub-one-share position lapses in
+full, and a gap moves the whole slice.
+
+**What shipped.** `src/coverage_watchdog.py`, called from
+`scripts/alert_heartbeat.py` after its channel probe. That unit fires at
+06:15 ET seven days a week regardless of the trading timers — the one thing
+proven to still run while the desk is paused, which is exactly when this
+matters. It reads positions and open stops from the broker, and session
+evidence from `alert_channel_checks` (the same rows the silence watchdog
+reads), and sends one owner alert — with the dollar amount — when (a)
+coverage is short of held and (b) no scheduled session completed during
+the most recent trading session's cash hours. (b) is the design's own
+precondition stated as a test, so no number was introduced; the
+session-hours window is the existing `intra_check` window plus the silence
+watchdog's existing timer-cadence slack. It re-alerts at most once per
+trading day while the condition holds (item 41's existing ruling for a
+persistent fault), never on a healthy morning (the owner ratified that a
+nightly lapse must not page), and it never places, changes or cancels an
+order. The heartbeat's own exit code is untouched — it still means only
+"can the desk reach the owner". Tests reproduce the real ORCL state and
+assert the healthy morning stays silent.
+
+**What did NOT ship, on purpose.** No workaround for the broker limit. A
+"stop for the remainder that survives the close" cannot be built; anything
+that looked like one would be a lie in the order book. The remainder is an
+owner decision — WORK.md item 53 / BOARD_NOTES 53: close it while paused,
+accept it with the alert, or go whole-share (declined 2026-09-02).
+
+**Found in passing, NOT fixed (pre-existing).** The desk-wide silence
+watchdog (item 17c) ships a systemd timer under `scripts/systemd/` but that
+timer is not installed on the box: it is absent from the qamc timer list
+and its state file has never been written. So the alarm built to fire on
+"no session ran" has never run in production — which is also why nine
+days of silence produced no message. Installing units on the box is an
+operator action outside a PR; flagged for the owner.
+
+**What would catch it next time.** The watchdog above, by construction.
+And the general shape to remember: any protection whose design says
+"re-placed by the next run" needs a check that lives OUTSIDE the runs.
+
 ### 2026-09-12 — funnel item 6 ("no structural level to derive a target from") retired: the refusal cannot fire any more, and the question it asked no longer exists
 
 **In plain words:** the census once counted 3 of 68 trade ideas (all on
