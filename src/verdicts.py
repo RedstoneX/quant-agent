@@ -114,6 +114,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from src.models import AnalystVerdict
+from src.risk.constants import reward_risk_floor_applies
 
 __all__ = [
     "CONVICTION_SCORE",
@@ -196,8 +197,33 @@ class RankedCandidate:
         return [v.seat for v in self.verdicts]
 
 
-def rank_verdicts(verdicts: list[AnalystVerdict]) -> list[RankedCandidate]:
+def rank_verdicts(
+    verdicts: list[AnalystVerdict],
+    *,
+    real_reward_risk: dict[str, float | None] | None = None,
+    setup_types: dict[str, str | None] | None = None,
+) -> list[RankedCandidate]:
     """Order candidates highest composite first; ties on symbol.
+
+    **2026-09-11, docs/WORK.md item 1(d).** Two changes to the reward:risk
+    ordering key, both about making it carry a REAL number or none at all:
+
+    `real_reward_risk` (keyed by upper-case symbol) is
+    `PortfolioConstructor.real_reward_risk_preview`'s output — the ratio
+    measured from this specific trade's own real support (the stop that will
+    actually ship) and its own real resistance (the derived structural
+    target). Supplied, it replaces the analyst's guessed figure carried on
+    the verdict. This is where the removed hard floor went: a weak range
+    payoff is no longer refused, it is ranked below a better one on its own
+    real number.
+
+    `setup_types` (same keying) marks Type B / breakout candidates, whose
+    reward:risk key is dropped entirely rather than set to anything. A
+    breakout has no overhead level to measure a reward against, so it has no
+    comparable number — and being scored 0 for not having one would
+    reintroduce the same penalty at the ranking level that item 1(d) just
+    removed at the gate. See `_reward_risk_sort_values` for how an absent
+    key is placed neutrally instead.
 
     Neutral verdicts are not candidates for anything and are skipped. A
     symbol whose seats disagree on direction is NOT ranked here — that is
@@ -242,18 +268,36 @@ def rank_verdicts(verdicts: list[AnalystVerdict]) -> list[RankedCandidate]:
             "magnitude": round(magnitude, 4),
             "conviction_score": round(conviction, 4),
         }
-        # Tiebreak signal only — never added into `score` itself, so it
-        # changes ORDER among ties without changing the composite any
-        # existing caller/test reads. Weighted the same way as the score's
-        # own inputs; a seat with no risk_reward evidence contributes 0.
-        rr_values = [risk_reward_of(v) for v in group]
-        rr_total_weight = sum(w for w, rr in zip(weights, rr_values) if rr is not None)
-        risk_reward = (
-            sum(rr * w for w, rr in zip(weights, rr_values) if rr is not None) / rr_total_weight
-            if rr_total_weight > 0
-            else 0.0
-        )
-        components["risk_reward_tiebreak"] = round(risk_reward, 4)
+        # Ordering signal, never added into `score` itself, so it changes
+        # ORDER among ties without changing the composite any existing
+        # caller/test reads. Weighted the same way as the score's own
+        # inputs.
+        #
+        # Which number: the desk's own REAL, structure-derived ratio when
+        # the caller supplies one (item 1(d)), otherwise the figure each
+        # seat attached to its verdict. None — a breakout, or a candidate
+        # with no measurable geometry — means the key is ABSENT, which is
+        # different from zero. See `_reward_risk_sort_values`.
+        if setup_types is not None and not reward_risk_floor_applies(
+            setup_types.get(symbol)
+        ):
+            risk_reward: float | None = None
+        elif real_reward_risk is not None and symbol in real_reward_risk:
+            raw = real_reward_risk.get(symbol)
+            risk_reward = None if raw is None else float(raw)
+        else:
+            rr_values = [risk_reward_of(v) for v in group]
+            rr_total_weight = sum(
+                w for w, rr in zip(weights, rr_values) if rr is not None
+            )
+            risk_reward = (
+                sum(rr * w for w, rr in zip(weights, rr_values) if rr is not None)
+                / rr_total_weight
+                if rr_total_weight > 0
+                else None
+            )
+        if risk_reward is not None:
+            components["risk_reward_tiebreak"] = round(risk_reward, 4)
         ranked.append(RankedCandidate(
             symbol=symbol,
             direction=directions.pop(),
@@ -261,9 +305,49 @@ def rank_verdicts(verdicts: list[AnalystVerdict]) -> list[RankedCandidate]:
             verdicts=sorted(group, key=lambda v: v.seat),
             components=components,
         ))
-    # Highest composite first; on a tie, highest risk_reward next (real
-    # information already on the verdict, see module docstring fix #2);
-    # `symbol` is the final, deterministic-but-arbitrary stabiliser only
-    # reached once both real signals are equal.
-    ranked.sort(key=lambda c: (-c.score, -c.components.get("risk_reward_tiebreak", 0.0), c.symbol))
+    # Highest composite first; on a tie, highest reward:risk next (real
+    # information about the candidate, see module docstring fix #2 and the
+    # 2026-09-11 note above); `symbol` is the final,
+    # deterministic-but-arbitrary stabiliser only reached once both real
+    # signals are equal.
+    rr_sort = _reward_risk_sort_values(ranked)
+    ranked.sort(key=lambda c: (-c.score, -rr_sort[c.symbol], c.symbol))
     return ranked
+
+
+def _reward_risk_sort_values(
+    ranked: list[RankedCandidate],
+) -> dict[str, float]:
+    """The reward:risk value each candidate sorts on, placing a candidate
+    that HAS no such number neutrally rather than last.
+
+    2026-09-11 (docs/WORK.md item 1(d)). An absent ratio used to be 0.0,
+    which sorted every trend/breakout candidate — which by design has no
+    overhead level and therefore no comparable reward figure — behind every
+    range candidate it tied with on the composite score. That is the exact
+    penalty item 1(d) removed at the entry gate, reappearing one level up in
+    the ordering.
+
+    A candidate with no ratio is placed at the MEAN of the ratios its own
+    score-tier peers do have: neither advantaged nor disadvantaged by the
+    absence, and ordered against them on `symbol` as it was before the
+    tiebreak existed. The value is derived entirely from the candidates
+    present in the run — no constant is introduced. When nobody in the tier
+    has a ratio, everyone in it shares one value and the tier falls through
+    to `symbol` exactly as it did before this key existed.
+    """
+    values: dict[str, float] = {}
+    tiers: dict[float, list[RankedCandidate]] = {}
+    for candidate in ranked:
+        tiers.setdefault(candidate.score, []).append(candidate)
+    for tier in tiers.values():
+        present = [
+            c.components["risk_reward_tiebreak"] for c in tier
+            if "risk_reward_tiebreak" in c.components
+        ]
+        neutral = sum(present) / len(present) if present else 0.0
+        for candidate in tier:
+            values[candidate.symbol] = candidate.components.get(
+                "risk_reward_tiebreak", neutral,
+            )
+    return values

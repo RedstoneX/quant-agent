@@ -32,6 +32,7 @@ from src.data.levels import TargetDerivation, derive_structural_target
 from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision, reward_to_risk,
 )
+from src.risk.constants import reward_risk_floor_applies
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,15 @@ STOP_RULE_ATR_BAND = "stop_widened_to_atr_noise_band"
 STOP_RULE_OUTSIDE_BAND = "stop_kept_already_outside_atr_band"
 STOP_RULE_NO_VOLATILITY = "stop_kept_no_atr_reading"
 STOP_REFUSAL_WRONG_SIDE = "stop_on_wrong_side_of_entry"
+# DEAD AS OF 2026-09-11 (docs/WORK.md item 1(d)) — the three
+# below-floor refusal codes and the PERMIT code below them. Nothing in this
+# module refuses a trade on a reward:risk floor any more: a breakout is not
+# measured against one at all, and a range trade's real ratio became a
+# ranking input instead of a cutoff. Kept, not deleted, because they are
+# greppable keys that appear in historical production logs and in
+# `docs/INCIDENT_HISTORY.md`, and because whether the sub-floor catalyst
+# machinery is retired is an owner call that has not been made. Flagged
+# rather than quietly removed.
 STOP_REFUSAL_GEOMETRY_AT_BAND = "reward_risk_below_floor_at_widened_stop"
 STOP_REFUSAL_GEOMETRY_AT_LEVEL = "reward_risk_below_floor_at_honoured_stop"
 STOP_REFUSAL_GEOMETRY_AT_KEPT = "reward_risk_below_floor_at_kept_stop"
@@ -1216,6 +1226,14 @@ class PortfolioConstructor:
             subfloor_catalyst_exception=bool(
                 getattr(target, "subfloor_catalyst_verified", False)
             ),
+            # The MEASURED half of the trend-trade test (2026-09-11, funnel
+            # item 6 + item 1(d)): `_derive_target` has just run the desk's
+            # own level computation for this exact trade, and
+            # `level_used is None` means it found nothing in the trade's
+            # direction — a computed absence of a ceiling, not a label.
+            # `src.risk.constants.is_trend_trade` is the one definition both
+            # this and `derive_structural_target` consume.
+            structural_ceiling=(derivation.level_used is not None),
         )
         if stop_loss is not None:
             stop_loss = round(stop_loss, 2)
@@ -1406,8 +1424,13 @@ class PortfolioConstructor:
         derived target and the noise-floor stop widening were never
         applied before the PM's gate at all.
 
-        None means "cannot judge, or under this desk's floor" — the same
-        fail-closed contract as `_widen_stop_past_noise`, which this calls.
+        None means "cannot judge" — the same fail-closed contract as
+        `_widen_stop_past_noise`, which this calls. As of 2026-09-11
+        (docs/WORK.md item 1(d)) it no longer ALSO means "under this desk's
+        floor": a real but weak range payoff returns its real number, and a
+        breakout returns its number without any floor having been consulted.
+        Callers must not read a returned number as "eligible" or a None as
+        "sub-floor" — see `PortfolioManagerAgent.candidate_eligibility`.
         """
         if analysis is None:
             return None
@@ -1439,11 +1462,16 @@ class PortfolioConstructor:
         honoured_stop = self._widen_stop_past_noise(
             analysis.symbol, analysis, entry_price, raw_stop, regime=regime,
             direction=direction, target_price=derivation.price,
+            structural_ceiling=(derivation.level_used is not None),
         )
         if honoured_stop is None:
-            # Either ungeometric or under `min_reward_risk_after_widening`
-            # against the real target and the stop that would actually
-            # ship — `_widen_stop_past_noise` already fails closed here.
+            # Ungeometric, or (Type A only) an unmeasurable ratio against the
+            # real target and the stop that would actually ship —
+            # `_widen_stop_past_noise` fails closed on both. As of item 1(d)
+            # it no longer returns None merely for a sub-floor ratio, so a
+            # weak-but-real range payoff now yields a NUMBER here (which the
+            # ranking consumes) rather than a None the gate reads as
+            # "ineligible".
             return None
         ratio = self._reward_risk_at(
             entry_price, honoured_stop, derivation.price, is_short,
@@ -1460,6 +1488,7 @@ class PortfolioConstructor:
         direction: str = "long",
         target_price: float | None = None,
         subfloor_catalyst_exception: bool = False,
+        structural_ceiling: bool | None = None,
     ) -> float | None:
         """Decide the stop that will actually ship, and say which rule did it.
 
@@ -1516,13 +1545,42 @@ class PortfolioConstructor:
         short: a widened short stop that drops reward:risk below the floor
         rejects the trade exactly as it would for a long.
 
-        Returns None when widening would leave a reward:risk the trade cannot
-        justify. That is deliberate: a trade that only cleared the bar on a
-        stop too tight to survive was never the trade it appeared to be.
+        **2026-09-11, docs/WORK.md item 1 part (d) — this function no longer
+        REFUSES anything on reward:risk.** Owner decision, by setup type:
+
+          * **Type B / trend** — no reward:risk comparison runs at all.
+            Nothing overhead is expected to stop the stock; the position is
+            managed by a trailing stop with no fixed target
+            (`src/risk/trailing.py`), so the only number available to put in
+            the numerator is invented to make the ratio computable. Decided
+            by `src.risk.constants.is_trend_trade`, which accepts EITHER the
+            analyst's `setup_type="breakout"` label OR
+            `structural_ceiling=False` — the desk's own level computation
+            having found nothing in this trade's direction. The caller
+            supplies that measured fact from the same `_derive_target`
+            derivation it already ran, so this exemption and
+            `derive_structural_target`'s measured-move projection turn on one
+            shared definition rather than two that can drift.
+          * **Type A / range** — the ratio is still computed from this
+            trade's own real support (the shipping stop) and real resistance
+            (`_derive_target`), and it is still logged, but a sub-floor
+            result is no longer a refusal. It reaches the ranking as a real
+            ordering signal instead (`real_reward_risk_preview` ->
+            `src/verdicts.py::rank_verdicts`), and a sub-floor range target
+            has already been capped at starter size by the PM gate.
+
+        What still refuses, unchanged: every RISK-side check above — a
+        wrong-side stop, a non-finite stop or entry — and, for Type A only,
+        an UNMEASURABLE ratio when a target was supplied. Unmeasurable is
+        not "poor payoff", it is "no payoff arithmetic at all", and this
+        codebase fails closed on unknown geometry everywhere else.
 
         `subfloor_catalyst_exception` (2026-09-11, docs/WORK.md item 1 parts
-        (b)+(c)) is the ONE exemption from that last refusal, and only from
-        that one. True means
+        (b)+(c)) **is now inert on this path** and is kept only as a record
+        that the PM gate verified and capped the target — there is no
+        below-floor refusal left for it to exempt anything from. Whether the
+        whole catalyst mechanism should be retired is an owner call, so it is
+        flagged here rather than removed. Its original meaning: True means
         `PortfolioManagerAgent._apply_subfloor_catalyst_rule` already
         verified this target's catalyst against a real dated
         `active_state_changes` row naming this symbol in this direction, and
@@ -1765,6 +1823,31 @@ class PortfolioConstructor:
         # price travels (`_derive_target`). The refusal is about GEOMETRY
         # and says so — this entry does not support this trade — not about
         # a model having guessed a poor target.
+        setup_type = getattr(analysis, "setup_type", None) if analysis else None
+        if not reward_risk_floor_applies(
+            setup_type, structural_ceiling=structural_ceiling,
+        ):
+            # TYPE B / BREAKOUT — no reward:risk comparison runs here at all
+            # (docs/WORK.md item 1(d), owner decision 2026-09-11). Nothing
+            # overhead is expected to stop this stock, the position is
+            # managed by a trailing stop with no fixed target
+            # (`src/risk/trailing.py`), and the only "target" available to
+            # divide by is a measured-move reference invented to make the
+            # ratio computable. Refusing on it — or on its being
+            # unmeasurable — judged the trade against a price its own exit
+            # management never intended to reach. The RISK side is
+            # unchanged and has already run above: wrong-side stop, NaN
+            # stop, the noise band, the level-honouring rule and the
+            # absolute ATR floor all still decided `honoured`.
+            logger.info(
+                "Constructor: %s %s stop $%.2f [%s] shipped with NO "
+                "reward:risk check — breakout setup. There is no overhead "
+                "level to measure a reward against and the position is "
+                "managed by trailing, so approval rests on the risk side "
+                "alone (item 1(d)).",
+                side_label, symbol, honoured, rule,
+            )
+            return honoured
         floor = self.cfg.min_reward_risk_after_widening
         reward_risk = self._reward_risk_at(
             entry_price, honoured, target_price, is_short,
@@ -1786,40 +1869,36 @@ class PortfolioConstructor:
                     target_price, honoured, rule, entry_price,
                 )
                 return None
-        elif reward_risk < floor and subfloor_catalyst_exception:
-            # Verified sub-floor catalyst. The payoff geometry is exactly as
-            # poor as the number says — nothing here improves it — so this
-            # permits the trade at the starter size the PM gate already
-            # capped it to, and says so in the log rather than looking like
-            # the floor silently stopped working.
+        elif reward_risk < floor:
+            # TYPE A / RANGE, sub-floor. **No longer a refusal**
+            # (docs/WORK.md item 1(d), owner decision 2026-09-11). Both
+            # numbers are real — this trade's own support sets the risk and
+            # its own resistance sets the reward — and a real per-trade
+            # signal is exactly what a weighted score should consume, not
+            # what a single universal cutoff should veto. The ratio reaches
+            # `src/verdicts.py::rank_verdicts` as a real ordering input via
+            # `real_reward_risk_preview`, and a sub-floor range target is
+            # still capped at starter size by
+            # `PortfolioManagerAgent._apply_subfloor_catalyst_rule` before
+            # it ever gets here. Logged, never refused.
+            #
+            # `subfloor_catalyst_exception` no longer changes the outcome on
+            # this path — see that parameter's note in the docstring. It is
+            # still reported because the flag remains the record of a
+            # verified, capped, deliberately-permitted sub-floor pick.
             logger.info(
-                "Constructor: %s %s permitted BELOW the %.2f floor at "
-                "reward:risk %.2f [%s] — its catalyst resolved to a real "
-                "dated state-change row naming the symbol in this trade's "
-                "direction, and the PM gate has already capped it to starter "
-                "size. Stop $%.2f placed by %s; target $%.2f. The payoff is "
-                "unchanged and still poor: this is permission, not approval.",
-                side_label, symbol, floor, reward_risk,
-                STOP_PERMIT_SUBFLOOR_CATALYST, honoured, rule,
+                "Constructor: %s %s shipped at reward:risk %.2f, under the "
+                "%.2f reference (range setup) — stop $%.2f placed by %s%s, "
+                "target $%.2f. NOT a refusal: item 1(d) replaced the fixed "
+                "floor with the real ratio as a ranking input%s.",
+                side_label, symbol, reward_risk, floor, honoured, rule,
+                f" at the computed level ${level:.2f}" if level is not None else "",
                 target_price,
+                "; this order also carries a verified sub-floor catalyst "
+                "exception and was capped at starter size"
+                if subfloor_catalyst_exception else "",
             )
             return honoured
-        elif reward_risk < floor:
-            logger.info(
-                "Constructor: %s %s refused [%s] — against the stop it will "
-                "actually use ($%.2f, placed by %s%s) the computed target "
-                "$%.2f is reward:risk %.2f, under the %.2f minimum. Both "
-                "numbers are measured, and this is the real geometry of the "
-                "trade — the entry does not support it.",
-                side_label, symbol,
-                _GEOMETRY_REFUSAL_BY_RULE.get(
-                    rule, STOP_REFUSAL_GEOMETRY_AT_KEPT,
-                ),
-                honoured, rule,
-                f" at the computed level ${level:.2f}" if level is not None else "",
-                target_price, reward_risk, floor,
-            )
-            return None
         return honoured
 
     def shipped_stop_rule(
@@ -2389,6 +2468,10 @@ class PortfolioConstructor:
             subfloor_catalyst_exception=bool(
                 getattr(target, "subfloor_catalyst_verified", False)
             ),
+            # Carried for the SAME reason as stop_rule: how this position is
+            # MANAGED decides whether a reward:risk figure means anything at
+            # all downstream. See TradeDecision.setup_type.
+            setup_type=getattr(analysis, "setup_type", None),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
             thesis_invalid_if=target.thesis_invalid_if or None,
@@ -2562,6 +2645,10 @@ class PortfolioConstructor:
             subfloor_catalyst_exception=bool(
                 getattr(target, "subfloor_catalyst_verified", False)
             ),
+            # Carried for the SAME reason as stop_rule: how this position is
+            # MANAGED decides whether a reward:risk figure means anything at
+            # all downstream. See TradeDecision.setup_type.
+            setup_type=getattr(analysis, "setup_type", None),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
             thesis_invalid_if=target.thesis_invalid_if or None,

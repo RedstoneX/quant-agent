@@ -267,7 +267,21 @@ def _resolve_stop_for_signal(
     `computed_level_touches` is the touch count behind each of those prices
     (2026-09-03) — without it `_level_backing_stop` would honour every
     level regardless of `risk.min_level_touches_for_stop_honor`, which is
-    not the rule the live path runs."""
+    not the rule the live path runs.
+
+    `setup_type` (already on the shim, and already required by the stop
+    scaling in `_stop_atr_multiple`) is what carries docs/WORK.md item
+    1(d) into the backtest for free, 2026-09-11: `_widen_stop_past_noise`
+    reads it off this same shim, so a backtested breakout skips the
+    reward:risk floor and a backtested range trade is no longer refused by
+    it — the same rule live trading runs, from the same function, with no
+    second copy. **One real caveat, and it is a parity gap that predates
+    this change:** live, `setup_type` is the Technical Analyst's own chart
+    read; here it is `_setup_type_for`'s deterministic
+    `is_consolidating` proxy (see that function and the module docstring).
+    The engine has no ranking stage at all — no PM, no verdicts — so the
+    other half of item 1(d), feeding the real ratio into the weighted
+    ranking, has no analogue to apply here."""
     analysis = SimpleNamespace(
         stop_loss=structural_stop, atr_14=atr_14,
         setup_type=setup_type, reference_target=target,

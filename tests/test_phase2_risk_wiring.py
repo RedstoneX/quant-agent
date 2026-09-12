@@ -443,12 +443,13 @@ def test_reviewer_prompt_documents_r_before_thesis_progress():
 # RM prompt, assert the ratio is present and correct — had NO test at all.
 # ===========================================================================
 
-def _decision(action="BUY", entry=221.14, stop=207.90, target=242.96):
+def _decision(action="BUY", entry=221.14, stop=207.90, target=242.96,
+              setup_type=None):
     from src.models import TradeDecision
     return TradeDecision(
         action=action, symbol="RSG", allocation_pct=5.0,
         entry_price=entry, stop_loss=stop, take_profit=target,
-        reasoning="constructed order under test",
+        reasoning="constructed order under test", setup_type=setup_type,
     )
 
 
@@ -517,6 +518,35 @@ def test_rm_prompt_omits_reward_risk_where_none_exists():
     )
     msg = _rm_message(portfolio_decision=decision)
     assert "R/R None" not in msg
+
+
+def test_rm_prompt_shows_no_ratio_for_a_breakout_and_says_why():
+    """2026-09-11, docs/WORK.md item 1(d). The arithmetic would still divide
+    for a breakout — `take_profit` carries a measured-move reference — but no
+    gate in the pipeline consults that number for this setup type any more.
+    Showing it to a seat whose prompt calls R/R discipline non-negotiable
+    invited exactly the refusal the change removes. Silence would be worse
+    than a bad number (the RM would read it as a missing field), so the line
+    says what the trade is and what to judge it on instead."""
+    from src.models import PortfolioDecision, ReasoningChain
+
+    decision = PortfolioDecision(
+        reasoning_chain=ReasoningChain(
+            macro_filter="risk-on", news_check="quiet", earnings_check="none",
+            signal_conflicts="none", sizing_logic="per conviction",
+            portfolio_balance="within caps", cash_target="10%",
+        ),
+        decisions=[_decision(setup_type="breakout")],
+        portfolio_view="constructive",
+    )
+    msg = _rm_message(portfolio_decision=decision)
+    assert "R/R 1.65:1" not in msg
+    assert "R/R n/a — BREAKOUT setup" in msg
+    assert "do NOT refuse or resize it on a reward:risk figure" in msg
+
+    # A range order on the identical geometry still shows its real ratio.
+    decision.decisions = [_decision(setup_type="range")]
+    assert "R/R 1.65:1" in _rm_message(portfolio_decision=decision)
 
 
 # ===========================================================================

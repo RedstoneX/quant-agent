@@ -32,6 +32,7 @@ from dataclasses import dataclass, asdict
 import numpy as np
 
 from src.models import OHLCV
+from src.risk.constants import is_trend_trade
 
 # A pivot is a bar whose high (or low) is the most extreme within this many
 # bars either side. 5 keeps genuine swing structure while ignoring single-bar
@@ -350,11 +351,18 @@ def format_levels_block(
 #                                   intended hold, so structure does not
 #                                   bound this trade. Target = measured move.
 #
-#   no level in the direction   ->  ambiguous: either a genuine breakout to
-#                                   highs, or a chart nothing can be read
-#                                   from. `setup_type` is the only thing that
-#                                   distinguishes them, so "breakout" earns a
-#                                   measured move and anything else REFUSES.
+#   no level in the direction   ->  nothing overhead is expected to stop this
+#                                   trade. Target = measured move.
+#                                   (2026-09-11, funnel item 6: this used to
+#                                   REFUSE unless `setup_type` separately said
+#                                   "breakout". The other reading of an empty
+#                                   direction — a chart nothing can be read
+#                                   from — is already caught one branch
+#                                   earlier as REFUSAL_NO_STRUCTURE, so the
+#                                   label was adding nothing but refusals.
+#                                   `risk.constants.is_trend_trade` now owns
+#                                   this condition, shared with the
+#                                   reward:risk exemption.)
 #
 # "Reach" and the measured move are the same estimate of travel:
 # `ATR * sqrt(sessions) * multiple`. Square-root scaling, not linear: daily
@@ -579,12 +587,28 @@ def derive_structural_target(
             divergence_pct=_divergence(price),
         )
 
-    # Past this point no level stands in the way within the horizon. Only two
-    # situations licence a measured move, and both are stated, not assumed.
-    if nearest is None and setup != "breakout":
-        # Structure exists on the chart but none of it sits in the trade's
-        # direction, and the analyst did NOT call this a breakout. That is a
-        # disagreement between the chart and the read, not a clear runway.
+    # Past this point no level stands in the way within the horizon.
+    #
+    # **2026-09-11, docs/WORK.md funnel item 6.** This used to refuse when
+    # `nearest is None` unless the analyst had separately typed
+    # `setup_type="breakout"`, on the reasoning that no-level-in-direction is
+    # ambiguous between a genuine breakout and a chart nothing can be read
+    # from. That second possibility is ALREADY excluded above: a chart
+    # nothing can be read from yields no `usable` levels at all and is
+    # refused as REFUSAL_NO_STRUCTURE. So by the time we get here, the desk's
+    # own level computation succeeded AND found nothing in the trade's
+    # direction — a measured absence of a ceiling, which is exactly the
+    # condition the ATR projection below is for. Requiring a label on top of
+    # it refused real trades (funnel item 6) for a wording, while the correct
+    # projection sat in this same function unreachable.
+    #
+    # `is_trend_trade` is the SINGLE definition of that condition, shared
+    # with the reward:risk exemption in `PortfolioConstructor.
+    # _widen_stop_past_noise` — the two agree by construction rather than by
+    # coincidence. Passing the measured fact means this is now always True
+    # here and REFUSAL_NO_LEVEL_IN_DIRECTION is unreachable; the constant is
+    # kept because it appears in historical logs and in the census.
+    if nearest is None and not is_trend_trade(setup_type, structural_ceiling=False):
         return _refused(
             REFUSAL_NO_LEVEL_IN_DIRECTION,
             f"no structural level {'below' if is_short else 'above'} entry "
@@ -615,8 +639,10 @@ def derive_structural_target(
     price = round(raw, 2)
     if nearest is None:
         why = (
-            f"no structural level {'below' if is_short else 'above'} entry — "
-            "setup_type='breakout'"
+            f"no structural level {'below' if is_short else 'above'} entry on "
+            f"a chart that yielded {len(usable)} level(s) elsewhere, so "
+            f"nothing overhead is expected to stop this trade "
+            f"(setup_type={setup or 'unset'!r})"
         )
     else:
         why = (

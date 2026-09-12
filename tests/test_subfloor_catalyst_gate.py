@@ -35,6 +35,23 @@ improves outcomes when it carries a real quality bar.
 
 These tests pin all three layers — existence, direction, and the
 exemptions/bypasses that were deliberately closed.
+
+**REWRITTEN 2026-09-11 — docs/WORK.md item 1(d), owner decision.** The floor
+this gate was the exception to is gone, and the gate changed shape with it:
+
+  * a Type B / breakout target never reaches this gate at all;
+  * a Type A / range target with a MEASURABLE but weak ratio is now KEPT and
+    capped at starter size — it used to be dropped unless a catalyst
+    resolved, and the catalyst is no longer consulted for it. Every test
+    below that used to assert a drop on that path now asserts the cap;
+  * a Type A target with an UNMEASURABLE ratio is still dropped unless the
+    catalyst resolves, direction and all. **That is the only path on which
+    the catalyst machinery still binds**, so the existence/direction/recency
+    tests are pinned there — they exercise exactly the same code, on the
+    only case that can still reach it.
+
+That leaves the catalyst mechanism redundant for the case it was actually
+built for (a thin-but-real payoff). Flagged for the owner, not removed.
 """
 
 import json
@@ -162,6 +179,20 @@ def _target(
     if weight is not None:
         row["target_weight_pct"] = weight
     return row
+
+
+def _unmeasurable(*symbols: str) -> dict[str, float | None]:
+    """The real-reward:risk map production supplies, with no computable ratio
+    for these symbols.
+
+    Post item 1(d) this is the ONLY state in which the catalyst gate still
+    decides anything: a measurable-but-weak range payoff is kept and capped
+    without consulting a catalyst at all, so the existence/direction/recency
+    checks can only be exercised on unmeasurable geometry. Same production
+    shape as before — `PortfolioConstructor.real_reward_risk_preview`
+    returning None for a name whose payoff arithmetic does not resolve.
+    """
+    return {s.upper(): None for s in symbols}
 
 
 def _apply(
@@ -321,7 +352,10 @@ def test_the_live_2026_09_01_nvda_catalyst_does_not_resolve():
     """THE regression this whole gate exists for, using the exact text the
     production desk recorded rather than a paraphrase of it."""
     decision = _decision([_target("NVDA", risk=0.75, catalyst=LIVE_NVDA_CATALYST)])
-    result = _apply(decision, [_analysis("NVDA", target=104.0)])
+    result = _apply(
+        decision, [_analysis("NVDA", target=104.0)],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    )
     assert [t.symbol for t in result.targets] == []
 
 
@@ -339,6 +373,7 @@ def test_subfloor_pick_with_unverifiable_catalyst_is_dropped_alone():
     result = _apply(
         decision,
         [_analysis("NVDA", target=104.0), _analysis("GEV", target=112.0)],
+        real_reward_risk_by_symbol={"NVDA": None, "GEV": 2.4},
     )
     assert {t.symbol for t in result.targets} == {"GEV"}
     assert result.targets[0].risk_allocation_pct == 2.0, (
@@ -348,7 +383,10 @@ def test_subfloor_pick_with_unverifiable_catalyst_is_dropped_alone():
 
 def test_subfloor_pick_with_no_catalyst_at_all_is_dropped():
     decision = _decision([_target("NVDA", catalyst="")])
-    result = _apply(decision, [_analysis("NVDA", target=104.0)])
+    result = _apply(
+        decision, [_analysis("NVDA", target=104.0)],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    )
     assert result.targets == []
 
 
@@ -358,7 +396,10 @@ def test_subfloor_long_citing_a_genuinely_bullish_catalyst_survives_capped():
     decision = _decision([
         _target("NVDA", risk=3.0, catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
-    result = _apply(decision, [_analysis("NVDA", target=104.0)])
+    result = _apply(
+        decision, [_analysis("NVDA", target=104.0)],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    )
     assert [t.symbol for t in result.targets] == ["NVDA"]
     assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
 
@@ -371,7 +412,10 @@ def test_subfloor_long_citing_a_bearish_catalyst_for_the_same_symbol_is_refused(
     decision = _decision([
         _target("NVDA", risk=3.0, catalyst="2026-09-01 bond selloff pressure"),
     ])
-    result = _apply(decision, [_analysis("NVDA", target=104.0)])
+    result = _apply(
+        decision, [_analysis("NVDA", target=104.0)],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    )
     assert result.targets == []
 
 
@@ -382,6 +426,7 @@ def test_subfloor_long_citing_a_neutral_catalyst_is_refused():
     result = _apply(
         decision, [_analysis("ZZZZ", target=104.0)],
         asc="- [2026-08-20] Mixed signals, no clear read → ZZZZ(neutral)",
+        real_reward_risk_by_symbol=_unmeasurable("ZZZZ"),
     )
     assert result.targets == []
 
@@ -393,7 +438,10 @@ def test_subfloor_short_citing_a_genuinely_bearish_catalyst_survives_capped():
         _target("NVDA", direction="short", risk=3.0,
                 catalyst="2026-09-01 bond selloff pressure"),
     ])
-    result = _apply(decision, [_analysis("NVDA", rating="sell", target=96.0)])
+    result = _apply(
+        decision, [_analysis("NVDA", rating="sell", target=96.0)],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    )
     assert [t.symbol for t in result.targets] == ["NVDA"]
     assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
 
@@ -406,7 +454,10 @@ def test_subfloor_short_citing_a_bullish_catalyst_for_the_same_symbol_is_refused
         _target("NVDA", direction="short", risk=3.0,
                 catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
-    result = _apply(decision, [_analysis("NVDA", rating="sell", target=96.0)])
+    result = _apply(
+        decision, [_analysis("NVDA", rating="sell", target=96.0)],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    )
     assert result.targets == []
 
 
@@ -418,6 +469,7 @@ def test_subfloor_short_citing_a_neutral_catalyst_is_refused():
     result = _apply(
         decision, [_analysis("ZZZZ", rating="sell", target=96.0)],
         asc="- [2026-08-20] Mixed signals, no clear read → ZZZZ(neutral)",
+        real_reward_risk_by_symbol=_unmeasurable("ZZZZ"),
     )
     assert result.targets == []
 
@@ -428,7 +480,10 @@ def test_the_cap_only_ever_reduces():
     decision = _decision([
         _target("NVDA", risk=0.25, catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
-    result = _apply(decision, [_analysis("NVDA", target=104.0)])
+    result = _apply(
+        decision, [_analysis("NVDA", target=104.0)],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    )
     assert result.targets[0].risk_allocation_pct == 0.25
 
 
@@ -489,12 +544,19 @@ def test_real_reward_risk_by_symbol_overrides_the_self_reported_figure():
     assert [t.symbol for t in old.targets] == ["NVDA"]
     assert old.targets[0].risk_allocation_pct == 4.0
 
-    # NEW behaviour: the real map says 0.4 — under floor, no catalyst.
+    # NEW behaviour: the real map says 0.4 — under floor, no catalyst. Item
+    # 1(d) made that a CAP, not a drop: the ratio is real (the trade's own
+    # support against its own resistance), so it sizes the trade down and
+    # ranks it below better payoffs instead of refusing it.
     new = _apply(
         _decision([_target("NVDA", risk=4.0, catalyst="")]), [analysis],
         real_reward_risk_by_symbol={"NVDA": 0.4},
     )
-    assert new.targets == []
+    assert [t.symbol for t in new.targets] == ["NVDA"]
+    assert new.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+    assert new.targets[0].subfloor_catalyst_verified is False, (
+        "no catalyst was cited or checked — the flag must not claim one was"
+    )
 
 
 def test_real_reward_risk_by_symbol_rescues_an_understated_candidate():
@@ -507,10 +569,13 @@ def test_real_reward_risk_by_symbol_rescues_an_understated_candidate():
 
     # `_apply_subfloor_catalyst_rule` mutates `decision.targets` in place,
     # so each call needs its own fresh decision object.
+    # Sub-floor on the self-reported figure: kept, but capped (item 1(d) —
+    # this used to be a drop).
     old = _apply(
         _decision([_target("GEV", risk=4.0, catalyst="")]), [analysis],
     )
-    assert old.targets == []
+    assert [t.symbol for t in old.targets] == ["GEV"]
+    assert old.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
 
     new = _apply(
         _decision([_target("GEV", risk=4.0, catalyst="")]), [analysis],
@@ -529,7 +594,10 @@ def test_a_symbol_missing_from_a_supplied_real_map_fails_closed():
     assert analysis.risk_reward == 10.0
     decision = _decision([_target("NVDA", risk=4.0, catalyst="")])
     result = _apply(decision, [analysis], real_reward_risk_by_symbol={})
-    assert result.targets == []
+    assert result.targets == [], (
+        "an absent entry means the real ratio could not be computed — "
+        "unmeasurable, which item 1(d) still drops without a catalyst"
+    )
 
 
 def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
@@ -538,7 +606,14 @@ def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
     R/R 0.60, computed from a $103 real level vs. its $150 guess); GEV
     understates (real R/R 1.60, computed from a $108 real level vs. its
     $104 guess). One test, both directions of the fix, no arithmetic
-    duplicated from `test_portfolio_constructor.py`."""
+    duplicated from `test_portfolio_constructor.py`.
+
+    **Updated 2026-09-11 (item 1(d)).** The preview used to return None for
+    NVDA — not because the ratio was unmeasurable but because the preview
+    itself refused anything under the floor. It now returns the real 0.60,
+    which is the point: a weak payoff is a NUMBER the ranking can use, not
+    an absence the gate reads as ineligible. NVDA is therefore kept and
+    capped rather than dropped."""
     from src.portfolio_constructor import PortfolioConstructor
 
     def _structured(symbol, *, model_target, computed_levels):
@@ -561,7 +636,7 @@ def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
         "NVDA": constructor.real_reward_risk_preview(overstated, "long"),
         "GEV": constructor.real_reward_risk_preview(understated, "long"),
     }
-    assert real_map == {"NVDA": None, "GEV": 1.6}
+    assert real_map == {"NVDA": 0.6, "GEV": 1.6}
 
     decision = _decision([
         _target("NVDA", risk=4.0, catalyst=""),
@@ -571,8 +646,13 @@ def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
         decision, [overstated, understated],
         real_reward_risk_by_symbol=real_map,
     )
-    assert {t.symbol for t in result.targets} == {"GEV"}
-    assert result.targets[0].risk_allocation_pct == 4.0
+    # Both survive now. NVDA's real 0.60 is thin but real: capped at the
+    # starter size and ranked on that number. GEV's real 1.60 clears the
+    # reference and keeps full size.
+    by_symbol = {t.symbol: t for t in result.targets}
+    assert set(by_symbol) == {"NVDA", "GEV"}
+    assert by_symbol["NVDA"].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+    assert by_symbol["GEV"].risk_allocation_pct == 4.0
 
 
 def test_shorts_are_gated_on_the_same_terms_as_longs():
@@ -595,6 +675,7 @@ def test_shorts_are_gated_on_the_same_terms_as_longs():
         decision, analyses,
         asc="- [2026-08-27] Salesforce cuts cloud spending guidance on "
             "slowdown → CRM(bearish)",
+        real_reward_risk_by_symbol=_unmeasurable("MSFT", "CRM"),
     )
     assert {t.symbol for t in result.targets} == {"CRM"}
     assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
@@ -608,7 +689,10 @@ def test_a_short_citing_the_fixtures_bullish_crm_row_does_not_qualify():
         _target("CRM", direction="short", risk=3.0,
                 catalyst="2026-08-27 Salesforce Q2 beat"),
     ])
-    result = _apply(decision, [_analysis("CRM", rating="sell", target=96.0)])
+    result = _apply(
+        decision, [_analysis("CRM", rating="sell", target=96.0)],
+        real_reward_risk_by_symbol=_unmeasurable("CRM"),
+    )
     assert result.targets == []
 
 
@@ -631,7 +715,10 @@ def test_an_empty_state_change_block_makes_the_exception_unavailable():
     decision = _decision([
         _target("NVDA", catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
-    result = _apply(decision, [_analysis("NVDA", target=104.0)], asc="")
+    result = _apply(
+        decision, [_analysis("NVDA", target=104.0)], asc="",
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    )
     assert result.targets == []
 
 
@@ -645,7 +732,10 @@ def test_legacy_notional_target_cannot_bypass_the_cap():
         _target("NVDA", risk=None, weight=8.0,
                 catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
-    result = _apply(decision, [_analysis("NVDA", target=104.0)])
+    result = _apply(
+        decision, [_analysis("NVDA", target=104.0)],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    )
     assert [t.symbol for t in result.targets] == ["NVDA"]
     assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
 
@@ -697,7 +787,10 @@ def test_decide_drops_the_live_nvda_pick_and_keeps_the_qualifying_one(mock_cls):
         _target("GEV", risk=2.0),
     ]))
     decision, result = agent.decide(
-        analyses=[_analysis("NVDA", target=104.0), _analysis("GEV", target=112.0)],
+        # NaN target => `risk_reward` is None => unmeasurable, which is the
+        # only state the catalyst gate still drops on after item 1(d).
+        analyses=[_analysis("NVDA", target=float("nan")),
+                  _analysis("GEV", target=112.0)],
         positions=[], macro_analysis=None, cash_balance=50_000,
         total_value=100_000,
         active_state_changes=ACTIVE_STATE_CHANGES,
@@ -718,7 +811,7 @@ def test_decide_caps_a_verified_subfloor_pick_rather_than_dropping_it(mock_cls):
                 catalyst="2026-08-31: Anthropic/Lambda $35bn cloud deal"),
     ]))
     decision, _ = agent.decide(
-        analyses=[_analysis("NVDA", target=104.0)],
+        analyses=[_analysis("NVDA", target=float("nan"))],
         positions=[], macro_analysis=None, cash_balance=50_000,
         total_value=100_000,
         active_state_changes=ACTIVE_STATE_CHANGES,
@@ -738,7 +831,7 @@ def test_decide_drops_a_subfloor_pick_whose_citation_is_the_wrong_direction(mock
         _target("NVDA", risk=3.0, catalyst="2026-09-01: bond selloff pressure"),
     ]))
     decision, _ = agent.decide(
-        analyses=[_analysis("NVDA", target=104.0)],
+        analyses=[_analysis("NVDA", target=float("nan"))],
         positions=[], macro_analysis=None, cash_balance=50_000,
         total_value=100_000,
         active_state_changes=ACTIVE_STATE_CHANGES,
@@ -757,7 +850,7 @@ def test_decide_defaults_to_the_production_thresholds(mock_cls):
         _target("NVDA", risk=3.0, catalyst=LIVE_NVDA_CATALYST),
     ]))
     decision, _ = agent.decide(
-        analyses=[_analysis("NVDA", target=104.0)],
+        analyses=[_analysis("NVDA", target=float("nan"))],
         positions=[], macro_analysis=None, cash_balance=50_000,
         total_value=100_000,
         active_state_changes=ACTIVE_STATE_CHANGES,
@@ -821,6 +914,7 @@ def test_a_subfloor_pick_citing_a_stale_row_is_dropped():
     result = _apply(
         decision, [_analysis("NVDA", target=104.0)],
         asc=f"- [{stale}] The old deal → NVDA(bullish)",
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert result.targets == [], "a stale catalyst is not a catalyst"
 
@@ -834,6 +928,7 @@ def test_a_future_dated_row_cannot_back_a_trade_taken_today():
     result = _apply(
         decision, [_analysis("NVDA", target=104.0)],
         asc=f"- [{ahead}] Tomorrow's news → NVDA(bullish)",
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert result.targets == []
 
@@ -913,6 +1008,7 @@ def test_refusing_to_add_to_a_held_name_drops_it_and_never_zeroes_it():
     result = _apply(
         decision, [_analysis("NVDA", target=104.0)],
         positions=[_held("NVDA", qty=10.0)],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert result.targets == [], "the target must be removed outright"
     assert not any(
@@ -965,7 +1061,14 @@ def _verified_nvda_decision():
     decision = _decision([
         _target("NVDA", risk=4.0, catalyst="2026-08-31: Lambda cloud deal"),
     ])
-    return _apply(decision, [analysis]), analysis
+    # Unmeasurable is the only state that still routes through the catalyst
+    # check after item 1(d) — a measurable-but-thin payoff is now kept and
+    # capped without one, and marking THAT verified would record a check
+    # that never ran.
+    return _apply(
+        decision, [analysis],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    ), analysis
 
 
 def test_the_verified_flag_is_set_by_the_gate_and_travels_with_the_target():
@@ -1004,7 +1107,10 @@ def test_the_flag_cannot_be_asserted_by_the_model():
     row = _target("NVDA", risk=4.0, catalyst=LIVE_NVDA_CATALYST)
     row["subfloor_catalyst_verified"] = True
 
-    result = _apply(_decision([row]), [_subfloor_analysis("NVDA")])
+    result = _apply(
+        _decision([row]), [_subfloor_analysis("NVDA")],
+        real_reward_risk_by_symbol=_unmeasurable("NVDA"),
+    )
     assert result.targets == [], (
         "a self-asserted flag must not survive parsing, and the unverifiable "
         "catalyst must still drop the target"
@@ -1022,10 +1128,16 @@ def test_a_replayed_historical_row_cannot_claim_a_check_that_never_ran():
     assert TargetPosition.model_validate(row).subfloor_catalyst_verified is False
 
 
-def test_an_unflagged_subfloor_target_is_still_refused_by_the_constructor():
-    """The ordinary floor path, unchanged. This is the behaviour that was
-    correct all along and must stay correct: a thin payoff with no verified
-    catalyst does not get an order."""
+def test_an_unflagged_subfloor_range_target_is_no_longer_refused():
+    """**Inverted 2026-09-11 by docs/WORK.md item 1(d).** This used to assert
+    the constructor refused a thin-but-real range payoff that carried no
+    verified catalyst. It no longer does: the ratio is measured from this
+    trade's own real support and its own real resistance, and a real
+    per-trade signal is a ranking input, not a veto. The trade is built; the
+    PM gate has already capped it at starter size, and
+    `rank_candidates` ranks it below better payoffs.
+
+    The stop is unchanged — item 1(d) touched no risk-side rule."""
     from src.portfolio_constructor import PortfolioConstructor
     from src.models import TargetPosition
 
@@ -1038,7 +1150,7 @@ def test_an_unflagged_subfloor_target_is_still_refused_by_the_constructor():
     )
     assert target.subfloor_catalyst_verified is False
     assert constructor._resolve_entry_and_stop(target, analysis, 100.0) == (
-        None, None,
+        100.0, 95.0,
     )
 
 
@@ -1070,7 +1182,7 @@ def test_the_exception_lifts_only_the_floor_never_unmeasurable_geometry():
     assert constructor._widen_stop_past_noise(
         "AAA", analysis, 100.0, 95.0, direction="long",
         target_price=float("nan"), subfloor_catalyst_exception=True,
-    ) is None
+    ) is None, "a RANGE trade still fails closed on unmeasurable geometry"
 
 
 def test_the_exception_does_not_rescue_a_stop_on_the_wrong_side_of_entry():

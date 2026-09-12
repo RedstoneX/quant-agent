@@ -36,6 +36,7 @@ import logging
 import math
 import re
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
@@ -57,7 +58,11 @@ from src.models import (
 from src.nominations import select_nominations
 from src.portfolio_constructor import LEVEL_BACKED_STOP_RULES
 from src.pipeline_context import RunContext
-from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
+from src.risk.constants import (
+    REWARD_RISK_FLOOR,
+    STARTER_POSITION_RISK_PCT,
+    reward_risk_floor_applies,
+)
 
 if TYPE_CHECKING:
     from src.agents.earnings_analyst import EarningsAnalystAgent
@@ -252,7 +257,7 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
 
     Returns ``(order_id_to_protect, shares_filled_under_superseded_ids)``.
 
-    THE TWO BOUNDS, both hard:
+    THE THREE BOUNDS, all hard:
       * **Price** — the limit never goes above the slippage ceiling the entry
         was already gated on: ``reference * (1 + max_entry_slippage_bps)``.
         The ceiling is computed from the reference captured at submission, NOT
@@ -260,6 +265,26 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
         market is not a ceiling.
       * **Count** — at most `repeg_max_attempts` replacements. A replacement
         mints a new order id; an unbounded loop is an unbounded chain.
+      * **Wall clock** — `repeg_max_attempts * repeg_poll_seconds`, checked
+        against a monotonic deadline at the top of every attempt and used to
+        shorten the last wait so it cannot overrun. This number is NOT a new
+        invented constant: it is the latency budget `ExecutionConfig`'s own
+        docstring has always CLAIMED this function is bounded by
+        ("Total added latency per entry is bounded by `repeg_max_attempts *
+        repeg_poll_seconds`"). That claim was previously false — a wait that
+        overran, a slow quote or a slow replace round-trip could push the
+        real elapsed time past it without limit, because nothing measured
+        it. The deadline makes the documented bound the enforced one.
+        Deliberately no new config knob: a second, differently-derived
+        number would just be one more thing to keep consistent.
+
+    WHEN THE CHASE ENDS WITHOUT A FILL, THE OWNER IS TOLD. An entry that is
+    walked to its ceiling and still does not fill used to leave nothing but a
+    log line and a pipeline-event row — the order simply stopped being chased
+    and nobody was told. That is the exact "an order must never simply die
+    with no trace" case: it is a lost opportunity the desk chose, silently.
+    `_alert_owner_repeg_exhausted` now fires a STANDALONE Telegram alert (see
+    that function for which endings do and do not page).
 
     THE FOOTGUN. Alpaca does not edit an order in place. It cancels the old
     one and creates a NEW one with a NEW id, and the old id is dead the
@@ -317,13 +342,40 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
         return order_id, 0.0
 
     carried_fill = 0.0
+    attempted_prices: list[float] = []
+    attempts_made = 0
+    # The wall-clock bound. Monotonic, so a clock adjustment mid-session
+    # cannot extend or collapse it.
+    deadline = time.monotonic() + max_attempts * poll_seconds
     for attempt in range(1, max_attempts + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.info(
+                "re-peg %s: %.1fs wall-clock budget spent after %d attempt(s) "
+                "— order %s left working at its last price",
+                symbol, max_attempts * poll_seconds, attempts_made, order_id,
+            )
+            _record_pipeline_event(
+                pipeline, ctx, symbol, "repeg", "time_budget_exhausted",
+                "repeg_time_budget", broker_order_id=order_id,
+                attempts=attempts_made,
+                budget_seconds=max_attempts * poll_seconds,
+            )
+            _alert_owner_repeg_exhausted(
+                pipeline, symbol=symbol, order_id=order_id,
+                attempts=attempts_made, attempted_prices=attempted_prices,
+                ceiling=ceiling, reason="time_budget",
+            )
+            return order_id, carried_fill
+
         # Let it work first. A marketable limit usually fills here and the
-        # cheapest re-peg is the one never sent.
+        # cheapest re-peg is the one never sent. The wait is clipped to what
+        # is left of the budget so the last attempt cannot overrun it.
         try:
+            wait_seconds = min(poll_seconds, remaining)
             status = pipeline.broker.wait_for_order_terminal(
-                order_id, timeout_seconds=poll_seconds,
-                poll_interval=min(1.0, poll_seconds),
+                order_id, timeout_seconds=wait_seconds,
+                poll_interval=min(1.0, wait_seconds),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("re-peg %s: wait failed (%s) — leaving the order "
@@ -385,13 +437,38 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
                 "repeg_no_room", broker_order_id=order_id, ask=float(ask),
                 limit_price=limit_price, ceiling=ceiling, attempt=attempt,
             )
+            if attempts_made:
+                # We DID chase — walked the limit up one or more times, and
+                # the market still ran away faster than the ceiling allows.
+                # That is repricing exhausted by the price bound rather than
+                # the count bound, and it ends the same way: an unfilled
+                # order the desk has stopped working on. It pages.
+                #
+                # When `attempts_made` is zero this is the market simply
+                # never moving against us on the first look — nothing was
+                # tried, nothing is exhausted, and the order is still
+                # perfectly likely to fill on its own. Paging there would
+                # page on almost every ordinary entry.
+                _alert_owner_repeg_exhausted(
+                    pipeline, symbol=symbol, order_id=order_id,
+                    attempts=attempts_made, attempted_prices=attempted_prices,
+                    ceiling=ceiling, reason="price_ceiling",
+                )
             return order_id, carried_fill
 
+        attempts_made = attempt
+        attempted_prices.append(target)
         new_id, carried_fill, keep_going = _apply_repeg(
             pipeline, ctx, symbol=symbol, order_id=order_id,
             trade_row_id=trade_row_id, target=target,
             requested_qty=requested_qty, attempt=attempt,
             ceiling=ceiling,
+            # Confirming the swap is itself part of the same latency budget,
+            # so it is clipped to whatever is left of it.
+            confirm_seconds=max(
+                0.1, min(poll_seconds, deadline - time.monotonic()),
+            ),
+            is_last_attempt=(attempt >= max_attempts),
         )
         order_id = new_id
         if not keep_going:
@@ -406,12 +483,126 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
         pipeline, ctx, symbol, "repeg", "attempt_cap_reached",
         "repeg_attempt_cap", broker_order_id=order_id, attempts=max_attempts,
     )
+    _alert_owner_repeg_exhausted(
+        pipeline, symbol=symbol, order_id=order_id, attempts=attempts_made,
+        attempted_prices=attempted_prices, ceiling=ceiling,
+        reason="attempt_cap",
+    )
     return order_id, carried_fill
+
+
+# AUTO-RESUBMISSION IS DELIBERATELY NOT IMPLEMENTED — a live owner decision,
+# not an oversight. The owner raised it as a possibility ("maybe there's
+# other options like just wait again and resubmit... it could all be
+# automatic"), which is a possibility to consider, not a ratified
+# instruction, so the safe half is what ships: bounded automatic repricing
+# with no human in the loop, then an alert.
+#
+# Why the line is drawn exactly there. Repricing an EXISTING order is bounded
+# by construction — one order stays one order, it can never cross the
+# slippage ceiling the entry was approved against, and Alpaca's own replace
+# semantics cap the blast radius. Submitting a BRAND NEW order after the
+# original is gone is a different act with different failure modes: the
+# original may fill a moment later (now two positions in one idea), the
+# analysis the entry was approved on is by then minutes stale, and the
+# resubmission is not covered by any budget the session already counted.
+# Getting that wrong buys the same idea twice, which is the one failure this
+# whole module is written to avoid.
+#
+# What it would need before shipping: an owner decision on whether a stale
+# entry thesis may be re-entered at all without fresh analysis, and an
+# idempotency key or equivalent so a resubmission cannot race the original.
+# Neither exists today. Left as a follow-up.
+
+
+#: Human-readable ending for each way the chase can run out. Text, never
+#: colour or an emoji standing alone — the owner is red/green colour blind
+#: and severity must survive being read as plain words.
+_REPEG_EXHAUSTION_REASONS = {
+    "attempt_cap": (
+        "the re-peg attempt cap was reached and it still had not filled"
+    ),
+    "price_ceiling": (
+        "the market ran past the slippage ceiling this entry was approved "
+        "against, so there was no legal price left to chase"
+    ),
+    "time_budget": (
+        "the re-peg time budget was spent and it still had not filled"
+    ),
+}
+
+
+def _alert_owner_repeg_exhausted(
+    pipeline, *, symbol, order_id: str, attempts: int,
+    attempted_prices: list[float], ceiling: float, reason: str,
+) -> None:
+    """The entry was chased, it did not fill, and the desk has stopped. PAGE.
+
+    The owner's requirement in his own words: an order must never simply die
+    with no trace, and if the automatic attempts are exhausted he wants to be
+    told so he has a choice. Everything up to this point is deliberately
+    hands-off — the ordinary stalling entry is repriced and filled with no
+    human involved. This fires only once that automatic path is out of road.
+
+    A SEPARATE Telegram message via `send_owner_alert`, never a line inside
+    the session summary, per this desk's standing alert-design rule (see
+    `src/notifier.py`'s data-quality alert comment: "alerts get their OWN
+    Telegram message, never bundled into a run summary"). Same path already
+    used for a naked position with no stop and for a failed protective stop.
+
+    WHAT DOES NOT PAGE, on purpose — each of these is a non-event, and an
+    alert channel that fires on non-events is one the owner learns to swipe
+    away:
+      * the order FILLED (the whole point) — including a fill that landed
+        mid-replace and a replacement the broker refused because it filled;
+      * a PARTIAL fill — shares were acquired and the stop covers them;
+      * re-peg switched off, or an order already sitting at its ceiling with
+        nothing to chase (the post-PR-#111 normal case);
+      * the market coming back to us before any replacement was attempted.
+
+    NOT deduplicated, matching the data-quality alert's stated reasoning: if
+    the same symbol stalls again tomorrow that is a real repeated event, not
+    noise.
+
+    Never raises. An alerting bug must not break the execution path it is
+    reporting on.
+    """
+    try:
+        tried = (
+            " → ".join(f"${p:,.2f}" for p in attempted_prices)
+            if attempted_prices else "no price change was accepted"
+        )
+        ending = _REPEG_EXHAUSTION_REASONS.get(
+            reason, "the automatic re-peg path ended"
+        )
+        body = (
+            "ENTRY DID NOT FILL — automatic repricing exhausted\n"
+            f"{symbol}: the buy limit was repriced {attempts} time(s) toward "
+            f"the market and {ending}.\n"
+            f"Prices tried: {tried}\n"
+            f"Ceiling it may not cross: ${ceiling:,.2f}\n"
+            f"Broker order still working: {order_id}\n"
+            "\n"
+            "OUTCOME: the order has been LEFT WORKING at the broker at its "
+            "last price — it was not cancelled, so it can still fill on its "
+            "own, and it expires with the trading day like any other DAY "
+            "order. Nothing new was submitted automatically.\n"
+            "YOUR CHOICE: leave it (it may still fill), cancel it, or place "
+            "a fresh entry at a price you are willing to pay. The desk will "
+            "not resubmit this one by itself."
+        )
+        from src import notifier as _notifier
+        _notifier.send_owner_alert(body, symbols=[str(symbol)])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "re-peg %s: exhaustion alert could not be sent: %s", symbol, exc,
+        )
 
 
 def _apply_repeg(
     pipeline, ctx, *, symbol, order_id: str, trade_row_id, target: float,
     requested_qty, attempt: int, ceiling: float,
+    confirm_seconds: float = 5.0, is_last_attempt: bool = True,
 ) -> tuple[str, float, bool]:
     """One write-ahead-logged replacement.
 
@@ -533,6 +724,56 @@ def _apply_repeg(
             attempt=attempt,
         )
         return str(new_id), ancestor_filled, False
+
+    if not is_last_attempt:
+        # ONE REPLACE AT A TIME — a hard Alpaca constraint, not a courtesy.
+        # Alpaca refuses to replace an order whose status is `accepted`,
+        # `pending_new`, `pending_cancel` or `pending_replace` (its own
+        # Replace-Order reference). A replacement therefore has a window in
+        # which the order is NOT replaceable, and a second PATCH fired into
+        # that window is rejected. Before this gate the loop went straight
+        # back round on the freshly-minted id, so every chase past the first
+        # attempt was racing broker timing for no reason.
+        #
+        # `await_replacement_confirmed` watches the OLD order reach the
+        # terminal status `replaced` on the real-time `trade_updates`
+        # websocket (PR #287), so the ordinary confirmation costs
+        # milliseconds, not the timeout — and a websocket outage degrades to
+        # that method's REST fallback rather than to no confirmation.
+        #
+        # Skipped on the LAST attempt only because there is no second
+        # replace to protect: nothing is sent after it either way, so paying
+        # the wait would add latency to every chase and buy nothing.
+        #
+        # Unconfirmed ⇒ STOP, and deliberately do NOT page: the broker
+        # returned an id, so the swap did land; the order is working at a
+        # better price with the trades row already repointed. That is a
+        # successful re-peg we merely stopped building on, not an entry that
+        # died — which is why this is a log-and-event, while genuine
+        # exhaustion (`_alert_owner_repeg_exhausted`) is a Telegram alert.
+        try:
+            confirmed = pipeline.broker.await_replacement_confirmed(
+                order_id, str(new_id), timeout_seconds=confirm_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "re-peg %s: confirmation of %s → %s raised (%s) — stopping "
+                "the chase rather than replacing an unconfirmed order",
+                symbol, order_id, new_id, exc,
+            )
+            confirmed = False
+        if not confirmed:
+            logger.info(
+                "re-peg %s: replacement %s → %s not confirmed within %.1fs — "
+                "chase stops here; the order is working at $%.4f",
+                symbol, order_id, new_id, confirm_seconds, target,
+            )
+            _record_pipeline_event(
+                pipeline, ctx, symbol, "repeg", "replace_unconfirmed",
+                "repeg_replace_unconfirmed", broker_order_id=str(new_id),
+                replaces_order_id=order_id, attempt=attempt,
+            )
+            return str(new_id), 0.0, False
 
     return str(new_id), 0.0, True
 
@@ -1233,30 +1474,54 @@ def _min_order_usd(pipeline) -> float:
 EXECUTION_REWARD_RISK_BELT = 1.2
 
 
-def _execution_rr_floor(decision) -> float:
-    """The reward:risk bar THIS order must clear at execution time.
+def _execution_rr_floor(decision) -> float | None:
+    """The reward:risk bar THIS order must clear at execution time, or None
+    when no reward:risk bar applies to it at all.
 
-    Ordinarily `EXECUTION_REWARD_RISK_BELT`. For an order carrying a
-    verified sub-floor catalyst exception (2026-09-11, docs/WORK.md item 1
-    parts (b)+(c), folding in funnel item 4) the flat belt is the wrong
-    question: that order was deliberately permitted below the 1.5 floor and
-    is therefore very likely below 1.2 as well, so the belt killed every one
-    of them the instant execution moved anything — not because execution had
-    degraded the trade, but because of the sub-floor payoff it was granted
-    permission for. For those the bar becomes the approved geometry's OWN
-    ratio: execution may not make it worse than what the Risk Manager
-    reviewed.
+    **None for a Type B / breakout order (2026-09-11, docs/WORK.md item
+    1(d), owner decision).** Nothing overhead is expected to stop the stock
+    and the position is managed by a trailing stop with no fixed target
+    (`src/risk/trailing.py`), so `take_profit` is a measured-move reference
+    rather than a price the desk trades toward — a belt measured against it
+    would be judging execution drift against an invented number. The entry
+    gates upstream no longer apply any reward:risk test to this setup type
+    either; leaving this one running would have reinstated the floor at the
+    last possible moment. Every RISK-side execution check around it is
+    unchanged, including the 1x ATR stop floor immediately above the call
+    site and the unmeasurable-geometry refusal at it.
+
+    For a Type A / range order the bar is
+    `min(EXECUTION_REWARD_RISK_BELT, the approved geometry's own ratio)`.
+
+    That `min` was introduced 2026-09-11 for verified sub-floor catalyst
+    orders only (item 1 parts (b)+(c), folding in funnel item 4): such an
+    order was deliberately permitted below 1.5 and is therefore very likely
+    below 1.2 too, so the flat belt killed every one of them the instant
+    execution moved anything — not because execution had degraded the trade,
+    but because of the payoff it had been granted permission for. **Item
+    1(d) generalises that to every range order, because the same thing is
+    now true of every range order:** the entry gates no longer refuse a
+    sub-floor payoff at all, so a flat 1.2 here would be the removed floor
+    reappearing at the last possible moment, on a different number, for
+    exactly the trades the change exists to allow. This belt's own stated
+    question is "did EXECUTION degrade the trade the Risk Manager audited?"
+    and `min(belt, approved)` is that question asked exactly.
 
     `min` is load-bearing. The returned bar can only ever be LOWER than the
-    ordinary belt, never higher, so an exception can never loosen the check
-    for an order whose approved geometry already cleared 1.2 — and an
-    approved geometry that is itself unmeasurable buys no leniency at all.
-    The caller's own unmeasurable-executed-geometry refusal is unchanged and
-    is never exempted: permission to take a poor payoff is not permission to
+    ordinary belt, never higher, so this can never loosen the check for an
+    order whose approved geometry already cleared 1.2 — and an approved
+    geometry that is itself unmeasurable buys no leniency at all. The
+    caller's own unmeasurable-EXECUTED-geometry refusal is unchanged and is
+    never exempted: permission to take a poor payoff is not permission to
     take an unknown one.
+
+    `subfloor_catalyst_exception` no longer changes anything here — its
+    behaviour is what every range order now gets. The flag is still carried
+    and still logged. Whether the catalyst mechanism should be retired is an
+    owner call; it is flagged, not removed.
     """
-    if not getattr(decision, "subfloor_catalyst_exception", False):
-        return EXECUTION_REWARD_RISK_BELT
+    if not reward_risk_floor_applies(getattr(decision, "setup_type", None)):
+        return None
     approved_rr = reward_to_risk(
         decision.entry_price, decision.stop_loss, decision.take_profit,
         is_short=(decision.action == "SHORT"),
@@ -5134,7 +5399,30 @@ class ExecutionStage:
                     stop_price != decision.stop_loss
                     or (decision.entry_price > 0 and sizing_price > decision.entry_price)
                 )
-                if not is_short and geometry_changed and decision.take_profit > 0:
+                # `_execution_rr_floor` returns None for a Type B / breakout
+                # order — no reward:risk bar applies to it at all (item
+                # 1(d)) — so the whole check, including its fail-closed
+                # unmeasurable half, is skipped for those. That half is a
+                # reward-side refusal too, and the owner decision is that no
+                # reward-side computation may block a trend trade. The
+                # risk-side execution checks above and below are untouched.
+                rr_belt = _execution_rr_floor(decision)
+                if (
+                    not is_short and geometry_changed
+                    and decision.take_profit > 0 and rr_belt is None
+                ):
+                    logger.info(
+                        "BUY %s: execution moved the geometry (entry $%.2f -> "
+                        "$%.2f, stop $%.2f -> $%.2f) but NO reward:risk belt "
+                        "applies — breakout setup, managed by trailing with "
+                        "no fixed target (item 1(d)).",
+                        decision.symbol, decision.entry_price, sizing_price,
+                        decision.stop_loss, stop_price,
+                    )
+                if (
+                    not is_short and geometry_changed
+                    and decision.take_profit > 0 and rr_belt is not None
+                ):
                     executed_rr = reward_to_risk(
                         sizing_price, stop_price, decision.take_profit,
                         is_short=False,
@@ -5153,7 +5441,7 @@ class ExecutionStage:
                     # than the approved geometry's own ratio. It can only
                     # ever be LOWER than 1.2, never higher — `min` — so no
                     # ordinary order gets a looser bar out of this.
-                    floor_rr = _execution_rr_floor(decision)
+                    floor_rr = rr_belt
                     # FAIL CLOSED. None means the executed geometry is not
                     # measurable at all — a non-finite price, a stop at or
                     # above the entry, a target below it. That is strictly

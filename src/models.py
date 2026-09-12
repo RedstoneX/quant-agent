@@ -1035,6 +1035,23 @@ class TradeDecision(LLMOutputModel):
     # the flag set, the belt checks for DEGRADATION instead: execution may
     # not make the ratio worse than the geometry the RM approved.
     subfloor_catalyst_exception: bool = False
+    # --- How this position is MANAGED (2026-09-11, WORK.md item 1(d)) -----
+    # `TechAnalysisResult.setup_type` for the analysis this order was built
+    # from — "range" (Type A) or "breakout" (Type B) — or None for
+    # SELL/COVER/HOLD, a legacy caller, or a target with no analysis.
+    #
+    # Carried for exactly the same reason as `stop_rule` and
+    # `subfloor_catalyst_exception` above: a fact the constructor knows and
+    # the execution stage cannot re-derive without building a second copy of
+    # it. Two consumers:
+    #   - `src/pipeline_stages.py`'s execution-time reward:risk belt, which
+    #     must not run at all for a breakout (no overhead level exists to
+    #     measure a reward against — see
+    #     `src.risk.constants.reward_risk_floor_applies`);
+    #   - `src/agents/risk_manager.py`'s rendering of the order, which must
+    #     not show a Risk Manager an "R/R x:1" figure for a trade whose
+    #     approval never depended on one.
+    setup_type: str | None = None
     # --- Thesis invalidation, as a real field (2026-09-03) ----------------
     # Mirrors the conviction-ledger fields above: pinned at ENTRY (BUY/
     # SHORT) only, default None so every pre-existing construction site

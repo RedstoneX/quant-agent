@@ -491,16 +491,72 @@ def test_tied_score_breaks_on_risk_reward_not_alphabet():
     assert ranked[0].components["risk_reward_tiebreak"] > ranked[1].components["risk_reward_tiebreak"]
 
 
-def test_risk_reward_tiebreak_defaults_to_zero_without_evidence():
-    """A verdict with no `risk_reward` evidence (e.g. missing target/stop
-    geometry) must never crash the ranking or silently win a tie it has no
-    supporting evidence for — it sorts as if its tiebreak signal were 0."""
+def test_a_verdict_without_risk_reward_evidence_carries_no_tiebreak_key():
+    """**Changed 2026-09-11, docs/WORK.md item 1(d).** An absent reward:risk
+    used to be recorded as 0.0, which sorted such a candidate behind every
+    peer it tied with. Absent is not zero: the key is simply not there, and
+    `_reward_risk_sort_values` places the candidate neutrally instead. It
+    must still never crash the ranking."""
     v = AnalystVerdict(
         seat="news", symbol="AAA", direction="bullish", magnitude=0.5,
         conviction="medium", evidence=_evidence(), invalidation="x",
     )
     [c] = rank_verdicts([v])
-    assert c.components["risk_reward_tiebreak"] == 0.0
+    assert "risk_reward_tiebreak" not in c.components
+
+
+def test_a_candidate_with_no_ratio_is_placed_neutrally_among_its_tie_group():
+    """The unfairness item 1(d) had to avoid reintroducing one level up. A
+    trend/breakout candidate has no comparable reward:risk by design. Scored
+    0 for the absence it would lose every tie to a range peer; here it sits
+    at the mean of the ratios its tie-group peers do have, so it beats the
+    weaker one and loses to the stronger one."""
+    def _v(symbol: str, rr: float | None) -> AnalystVerdict:
+        evidence = list(_evidence())
+        if rr is not None:
+            evidence.append(VerdictEvidence(label="risk_reward", value=rr))
+        return AnalystVerdict(
+            seat="technical", symbol=symbol, direction="bullish",
+            magnitude=0.5, conviction="medium", evidence=evidence,
+            invalidation="x",
+        )
+
+    order = [
+        c.symbol for c in rank_verdicts([_v("WEAK", 0.5), _v("NONE", None),
+                                         _v("STRONG", 3.0)])
+    ]
+    assert order == ["STRONG", "NONE", "WEAK"]
+
+
+def test_a_breakout_candidate_carries_no_reward_risk_key_at_all():
+    """Item 1(d): a Type B candidate's reward:risk is dropped from the
+    ranking outright, whatever figure its seat happened to attach — there is
+    no overhead level for it to mean anything against."""
+    v = AnalystVerdict(
+        seat="technical", symbol="AAA", direction="bullish", magnitude=0.5,
+        conviction="medium",
+        evidence=[*_evidence(), VerdictEvidence(label="risk_reward", value=0.4)],
+        invalidation="x",
+    )
+    [c] = rank_verdicts([v], setup_types={"AAA": "breakout"})
+    assert "risk_reward_tiebreak" not in c.components
+    [c] = rank_verdicts([v], setup_types={"AAA": "range"})
+    assert c.components["risk_reward_tiebreak"] == 0.4
+
+
+def test_the_real_structural_ratio_replaces_the_analysts_guess_in_ranking():
+    """The substantive half of item 1(d): where the removed hard floor's
+    information went. The verdict carries the analyst's own guessed 0.4; the
+    desk's real, structure-derived preview says 2.2, and THAT is what orders
+    the candidate."""
+    v = AnalystVerdict(
+        seat="technical", symbol="AAA", direction="bullish", magnitude=0.5,
+        conviction="medium",
+        evidence=[*_evidence(), VerdictEvidence(label="risk_reward", value=0.4)],
+        invalidation="x",
+    )
+    [c] = rank_verdicts([v], real_reward_risk={"AAA": 2.2})
+    assert c.components["risk_reward_tiebreak"] == 2.2
 
 
 # --- eligibility + ranking through the PM -----------------------------------
@@ -538,16 +594,17 @@ def test_pm_ranks_equally_eligible_candidates_deterministically():
     assert [c.score for c in ranked] == [2.0, 1.5, 1.0, 0.5]
 
 
-def test_eligibility_agrees_with_the_constructors_real_gate_once_wired():
-    """2026-09-04 fix, case (a). Without `real_reward_risk_by_symbol`, the
-    PM's eligibility gate and `PortfolioConstructor`'s real gate can pass
-    DISJOINT sets on the same candidates — that was the audit finding.
-    With it wired, `candidate_eligibility`'s admitted set matches the
-    constructor's real one on the SAME candidate data: NVDA overstates
-    (self-reported R/R 10.0, real 0.60 — the constructor would refuse it)
-    and GEV understates (self-reported 0.8, real 1.60 — the constructor
-    would take it). Both directions of the disagreement are covered in one
-    place, on real production geometry, not a hand-picked ratio."""
+def test_the_real_ratio_orders_candidates_instead_of_admitting_them():
+    """**Rewritten 2026-09-11, docs/WORK.md item 1(d).** This test used to
+    assert that eligibility and the constructor's real gate REFUSED the same
+    names (the 2026-09-04 disjoint-sets fix). Neither refuses on a reward:risk
+    floor any more, so the property worth pinning is the replacement one: the
+    same real, structure-derived numbers now decide the ORDER instead.
+
+    Same production geometry as before. NVDA overstates (self-reported R/R
+    10.0, real 0.60) and GEV understates (self-reported 0.8, real 1.60).
+    Both are admitted; the real numbers put GEV ahead of NVDA, which is the
+    exact reversal of what the analysts' own guesses would have produced."""
     from src.portfolio_constructor import PortfolioConstructor
 
     def _structured(symbol, *, model_target, computed_levels):
@@ -570,27 +627,35 @@ def test_eligibility_agrees_with_the_constructors_real_gate_once_wired():
         a.symbol: constructor.real_reward_risk_preview(a, "long")
         for a in analyses
     }
-    real_eligible = {sym for sym, rr in real_map.items() if (rr or 0.0) >= REWARD_RISK_FLOOR}
-    assert real_eligible == {"GEV"}  # the constructor's own real answer
+    # Both are real, measurable numbers now — the preview no longer returns
+    # None for a payoff that merely fails a floor.
+    assert real_map == {"NVDA": 0.6, "GEV": 1.6}
 
-    # OLD path (no real map): eligibility keys off the self-reported ratio
-    # and DISAGREES with the constructor on BOTH names.
-    old = PortfolioManagerAgent.candidate_eligibility(
-        analyses=analyses, evidence_registry=_registry(analyses),
-        allowed_buy_symbols=allowed, active_state_changes="", asof=SESSION,
-    )
-    old_eligible = {sym for sym, why in old.items() if not why}
-    assert old_eligible == {"NVDA"}
-    assert old_eligible != real_eligible
-
-    # NEW path: eligibility matches the constructor's real gate exactly.
-    new = PortfolioManagerAgent.candidate_eligibility(
+    # Neither the size of the ratio nor the disagreement between the two
+    # readings blocks anything any more.
+    verdicts = PortfolioManagerAgent.candidate_eligibility(
         analyses=analyses, evidence_registry=_registry(analyses),
         allowed_buy_symbols=allowed, active_state_changes="", asof=SESSION,
         real_reward_risk_by_symbol=real_map,
     )
-    new_eligible = {sym for sym, why in new.items() if not why}
-    assert new_eligible == real_eligible == {"GEV"}
+    assert {sym for sym, why in verdicts.items() if not why} == {"NVDA", "GEV"}
+
+    # It decides the ORDER instead. The two names tie on the composite score
+    # (identical rating and conviction), so the real ratio is what separates
+    # them — and it puts the honestly-better payoff first.
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols=allowed, active_state_changes="", asof=SESSION,
+        real_reward_risk_by_symbol=real_map,
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["GEV", "NVDA"]
+    assert [c.score for c in ranked] == [ranked[0].score] * 2, (
+        "the two must genuinely tie on the composite — otherwise this is "
+        "not testing the reward:risk key at all"
+    )
+    assert ranked[0].components["risk_reward_tiebreak"] == 1.6
+    assert ranked[1].components["risk_reward_tiebreak"] == 0.6
 
 
 # ==========================================================================
@@ -747,8 +812,11 @@ def test_pm_never_orders_a_name_a_gate_refused():
         _tech("GOOD", "buy", "medium"),
         _tech("NEUT", "neutral", "high", invalid_if=""),          # R2
         _tech("NOTU", "strong_buy", "high"),                      # R3 — not BUY-eligible
-        _tech("SUBF", "strong_buy", "high", target=104),          # R4 — R/R 0.8, no row
-        _tech("NVDA", "strong_buy", "high", target=104),          # R4 door — row names it
+        # R/R 0.8 — thin but REAL. Item 1(d): no longer an R4 block, it is
+        # ranked on that number instead (below NVDA, which shares its score
+        # but has the same thin payoff, so `symbol` separates them).
+        _tech("SUBF", "strong_buy", "high", target=104),
+        _tech("NVDA", "strong_buy", "high", target=104),
         _tech("OPPO", "strong_buy", "high"),                      # R5 — net 0
     ]
     registry = _registry(analyses, extra={"OPPO": {"macro": "bearish"}})
@@ -757,25 +825,67 @@ def test_pm_never_orders_a_name_a_gate_refused():
         allowed_buy_symbols={"GOOD", "NEUT", "SUBF", "NVDA", "OPPO"},
         active_state_changes=STATE_CHANGES, asof=SESSION,
     )
-    # Every refused name would have OUTSCORED GOOD (2.0 vs 1.0) — none is ranked.
-    assert [c.symbol for c in ranked] == ["NVDA", "GOOD"]
-    assert set(blocked) == {"NEUT", "NOTU", "SUBF", "OPPO"}
+    # Every name a gate REFUSED is still absent from the order. What changed
+    # 2026-09-11 (item 1(d)) is which gates refuse: a weak-but-measurable
+    # payoff is not one of them any more.
+    assert [c.symbol for c in ranked] == ["NVDA", "SUBF", "GOOD"]
+    assert set(blocked) == {"NEUT", "NOTU", "OPPO"}
     assert blocked["NEUT"] == ["R2 neutral rating"]
     assert blocked["NOTU"] == ["R3 not BUY-eligible"]
-    assert blocked["SUBF"][0].startswith("R4 R/R 0.80 under the 1.50 floor")
     assert blocked["OPPO"] == ["R5 net evidence +0 if long — no rung"]
 
 
-def test_the_rr_floor_used_for_ranking_is_the_one_threaded_in():
+def test_an_unmeasurable_payoff_is_still_refused_by_r4():
+    """The half of R4 that survives item 1(d). A candidate whose payoff
+    arithmetic does not resolve at all has nothing for the ranking to
+    consume, and this codebase fails closed on unknown geometry."""
+    analyses = [_tech("AAA", "buy", "medium")]
+    _, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=analyses, evidence_registry=_registry(analyses),
+        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        real_reward_risk_by_symbol={"AAA": None},
+    )
+    assert blocked["AAA"] == [
+        "R4 R/R unmeasurable (no computable payoff geometry) and no current "
+        "state-change row names it"
+    ]
+
+
+def test_r4_does_not_run_at_all_for_a_breakout_candidate():
+    """Item 1(d): a Type B candidate is admitted on its risk side and its
+    evidence, with no reward:risk test of any kind — including the
+    unmeasurable one, which is still a reward-side refusal."""
+    analysis = _tech("AAA", "buy", "medium")
+    analysis.setup_type = "breakout"
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
+        analyses=[analysis], evidence_registry=_registry([analysis]),
+        allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
+        real_reward_risk_by_symbol={"AAA": None},
+    )
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["AAA"]
+    assert "risk_reward_tiebreak" not in ranked[0].components
+
+
+def test_the_rr_floor_no_longer_decides_eligibility_at_any_value():
+    """**Inverted 2026-09-11, docs/WORK.md item 1(d).** This used to prove
+    the threaded floor was the one that decided eligibility, by moving it
+    from 1.5 to 2.0 and watching a 1.6 candidate disappear. Nothing about
+    the ratio's SIZE decides eligibility any more, at any threaded value —
+    `rr_floor` survives only as the starter-size cap's threshold in
+    `_apply_subfloor_catalyst_rule`, which runs after the PM decides, not
+    here."""
     analyses = [_tech("AAA", "buy", "high", target=108)]  # R/R 1.6
     kwargs = dict(
         analyses=analyses, evidence_registry=_registry(analyses),
         allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
     )
-    ranked, _ = PortfolioManagerAgent.rank_candidates(rr_floor=REWARD_RISK_FLOOR, **kwargs)
-    assert [c.symbol for c in ranked] == ["AAA"]
-    ranked, blocked = PortfolioManagerAgent.rank_candidates(rr_floor=2.0, **kwargs)
-    assert ranked == [] and "AAA" in blocked
+    for floor in (REWARD_RISK_FLOOR, 2.0, 99.0):
+        ranked, blocked = PortfolioManagerAgent.rank_candidates(
+            rr_floor=floor, **kwargs,
+        )
+        assert [c.symbol for c in ranked] == ["AAA"], floor
+        assert blocked == {}, floor
 
 
 def test_shorts_are_not_subject_to_the_buy_eligibility_gate():
@@ -810,7 +920,12 @@ def test_production_eligibility_matches_the_item_18_audit_on_the_real_day():
         active_state_changes=sel["memory"]["active_state_changes"], asof=SESSION,
     )
     assert sorted(c.symbol for c in ranked) == audit
-    assert len(audit) == 12
+    # **12 -> 25, 2026-09-11 (docs/WORK.md item 1(d)).** Removing the
+    # reward:risk floor from R4 more than doubles the eligible set on this
+    # exact real production day: 13 of these 25 names were being refused for
+    # a thin-but-real payoff alone. That is the measured size of the change
+    # on the day item 1 was originally written about.
+    assert len(audit) == 25
     assert not (set(blocked) & set(audit))
     # The pinned order at equal weight over Technical's verdicts alone. Nine
     # of the twelve tie at 1.00 (all `buy`/`sell` at `medium`) and two more
@@ -822,8 +937,9 @@ def test_production_eligibility_matches_the_item_18_audit_on_the_real_day():
     # of these 12 names tied on score), and the order below is no longer
     # alphabetical within either tied group; it is ordered by R/R quality.
     assert [c.symbol for c in ranked] == [
-        "XLE", "NKE", "FLNC", "PFE", "PATH", "NVDA", "MSFT", "TSM", "COP",
-        "CVX", "CHPX", "CRM",
+        "SLB", "VLO", "XLE", "NKE", "FLNC", "NUE", "RSG", "V", "DIS", "COP",
+        "CVX", "DE", "KO", "MU", "NVDA", "PATH", "PFE", "CMCSA", "AAPL",
+        "MSFT", "TSM", "JPM", "JNJ", "CHPX", "CRM",
     ]
 
 

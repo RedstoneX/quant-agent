@@ -596,16 +596,9 @@ proposals accumulate. **The capability is shipped; the evidence it needs was
 erased hours later.** Do not read a quiet Proposal Conversion block as "no
 stuck loops" — read it as "no data yet".
 
-**2. Thirteen proposals died with no explanation anywhere — 13 of 68 (19%). PARTIALLY FIXED.**
+**~~2. Thirteen proposals died with no explanation anywhere — RESOLVED 2026-09-11.~~** The 9-item `order_not_placed` shape was investigated: not an interrupted run — 4 real, legitimate incidents (a malformed risk-check response, insufficient cash, a sector-concentration block, a symbol-guard block), each already writing a durable reason the reporting script just never read. Script fixed (PR #310). One correction to the original write-up: the cash cause is NOT settlement delay — it was a confirmed-vs-assumed-fill bug (already fixed 2026-08-25), never a multi-day settlement gate. Detail: `docs/INCIDENT_HISTORY.md`.
 
-The constructor-dropped share of this bucket is FIXED (the reason always
-existed as a log line, now persisted — going forward only). Full reasoning:
-`docs/INCIDENT_HISTORY.md` ("funnel item 2").
-
-**Still open:** the separate 9-item `order_not_placed` shape (an order was
-built and then nothing else appears in any record) — structurally different,
-looks like an interrupted run, not investigated yet. Until both are closed,
-treat this page's percentages as having a residual blind spot.
+**Still open, not fixed here:** the PM's own "Proposal Conversion" memory section mirrors this same classification independently and was not extended — it can still undercount the same 3 causes in what the PM itself sees. Flagged, not built.
 
 **3. Accepted by the broker, never filled, cancelled — 6 of 68 (9%). WORKING AS INTENDED.**
 
@@ -1045,6 +1038,8 @@ dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 **47. `risk.max_position_pct`'s cash-only justification was already false when written — RESOLVED 2026-09-11, owner call.** 100's comment asserted `allow_margin: false` made >100% notional unreachable; `allow_margin` had been `true` since 2026-09-02, two days before that comment (PR #258, 2026-09-04). Derived replacement: 20 (ladder emergency rung) / 0.60 (median of 5 real dated single-session idiosyncratic collapses) = 33, the largest single bet where that median disaster stays under the ladder's -20% owner-alert rung. Owner reviewed and set **65** instead — his own risk-appetite call, not a data disagreement; rejected 33 as too tight for a desk that avoids penny/micro-cap names, correction on the table first (the 5 reference disasters were all liquid, non-penny names). At 65 the same median disaster costs ~39%, past the alert rung rather than under it — knowing trade-off, not an oversight. `max_position_pct: 65` in settings.yaml, `ConstructorConfig.max_position_pct` and `pipeline.py`'s wiring default kept in sync. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **48. Macro `regime_shift` freshness — RESOLVED 2026-09-11, decision superseded not answered.** The DECIDE-BY question (loosen the `staleness_days<=1` bar, keep it strict, or source VIX same-day) assumed a calendar-day test was the right shape. None of its 3 options was taken: the day-count was removed entirely, replaced by `SeriesFreshness` — "is this the latest published reading" plus a separate "is a newer one overdue" signal, per-series cadence derived from the series' own observed gaps rather than a fixed number. Fixes the 52%-of-runs sanity-check-clears-regime_shift measured 2026-09-03. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
+
+**49. The risk budget is now the binding constraint on a full day's eligible set, and nothing decides how to ration it — OPEN, surfaced 2026-09-12 by item 1(d).** Measured on `run-64290730` after the reward:risk floor was removed by setup type: eligible names 12 -> 25, and the eligible set's total requested risk is **48% against a 25% `max_portfolio_risk_pct` budget**. The floor was previously doing the rationing by accident — refusing enough candidates that the budget rarely bound. It no longer refuses them, so the budget binds on a normal day and something must decide WHICH permitted trades get the capital. Today that is whatever order `allocate_risk_budget` happens to process in, which is not a decision anybody made. Real options, none costed yet: rank-ordered (best-scored first until exhausted), proportional scale-down (everyone sized smaller), conviction-tiered, or a hard cap on names per session. Each is a different desk, not a tuning knob — owner call. Do NOT resolve by re-tightening the floor that was just removed.
 
 ---
 
