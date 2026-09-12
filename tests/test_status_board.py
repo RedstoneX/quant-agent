@@ -2295,13 +2295,15 @@ def test_every_text_pairing_on_the_board_clears_wcag_aa(theme):
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_the_two_accent_hues_are_blue_and_orange_never_red_or_green(theme):
-    """The owner set the palette direction himself on 2026-09-12: indigo
-    against cyan, dropping the earlier blue/orange accessibility framing
-    (he disliked how it looked, and read the warm accent as pink). The
-    no-red, no-green half of the rule is kept — not as an accessibility
-    argument any more, simply because he is red-green colour blind and a
-    red or green accent would still land on him as grey. Meaning is carried
-    by text and edge shape regardless of hue; see the sibling tests."""
+    """The owner set the palette himself on 2026-09-12: violet against blue,
+    the conventional modern-web scheme, asked for explicitly and asked for
+    STRONG. The earlier blue/orange palette was chosen on colour-blindness
+    grounds and he rejected both the look and the reasoning — "forget that
+    I'm colourblind". So this test no longer makes an accessibility
+    argument. What it still pins is his two stated dislikes: nothing pink,
+    and nothing washed out. Meaning is carried by text and edge shape
+    rather than hue anyway — see the sibling tests — so the palette is free
+    to be a preference."""
     def hue(h):
         r, g, b = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
         mx, mn = max(r, g, b), min(r, g, b)
@@ -2317,26 +2319,23 @@ def test_the_two_accent_hues_are_blue_and_orange_never_red_or_green(theme):
         return (deg * 60) % 360
     pal = _palettes()[theme]
     for name in ("accent", "strong", "strong-edge"):
-        assert 225 <= hue(pal[name]) <= 255, f"{theme}: {name} is not indigo"
+        assert 248 <= hue(pal[name]) <= 268, f"{theme}: {name} is not violet"
     for name in ("flag", "flag-edge"):
-        assert 180 <= hue(pal[name]) <= 200, f"{theme}: {name} is not cyan"
-    # No red and no green anywhere, in any role. Stated as an explicit
-    # exclusion rather than inferred from the two ranges above, so a future
-    # third accent cannot quietly land in a hue he cannot separate. Magenta
-    # and pink are excluded on the same line: he named the old warm accent
-    # as reading pink, and asked for it gone.
+        assert 205 <= hue(pal[name]) <= 232, f"{theme}: {name} is not blue"
+    # Nothing pink, and nothing warm, in ANY role. He named the previous
+    # palette's warm accent as reading pink and asked for it gone; violet
+    # sits next door to magenta, so the exclusion is stated rather than
+    # left implied by the ranges above.
     for name, h in pal.items():
         deg = hue(h)
         if deg is None:
             continue
-        assert not (deg < 15 or deg > 330), f"{theme}: {name} is red/pink"
-        assert not (75 <= deg <= 165), f"{theme}: {name} is green"
-        assert not (270 <= deg <= 330), f"{theme}: {name} is magenta"
-    # The neutrals may carry a faint cool tint (slate), but never a warm or
-    # green one — a warm grey is what made the previous page read as pink.
+        assert not (deg < 195 or deg > 275), f"{theme}: {name} is warm or pink"
+    # Neutrals may carry the cool tint the scheme is built on, never a warm
+    # one — a warm grey is what made the previous page read as pink.
     for name in ("ink", "muted", "faint", "rule", "paper", "quiet-bg"):
         deg = hue(pal[name])
-        assert deg is None or 195 <= deg <= 260, f"{theme}: {name} is warm-tinted"
+        assert deg is None or 205 <= deg <= 255, f"{theme}: {name} is warm-tinted"
 
 
 def test_every_nothing_needed_state_has_its_own_edge_shape():
