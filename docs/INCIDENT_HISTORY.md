@@ -22,6 +22,100 @@ what would catch it next time.
 
 ---
 
+### 2026-09-12 — "no floor, no trade" shipped in the morning and was falsified by sourced research within hours; replaced by a stop-width gate the same day
+
+**In plain words:** the desk had just been told to refuse any trade with no
+support level beneath the entry, and to ignore a level sitting on the far
+side of an unfilled gap. Both ideas sounded like discipline. Neither
+survived contact with the published record, and the owner approved
+replacing them before the rule had run a single live session.
+
+**What the sources say, and where.** No published stop method refuses a
+trade for lack of a level below: Chandelier (highest high minus 3 ATR),
+Parabolic SAR, the Darvas box bottom and the entry-bar low all place a
+stop with no level at all, and Darvas only bought stocks at new highs
+(Kristjan Kullamägi, in his own words,
+https://qullamaggie.com/my-3-timeless-setups-that-have-made-me-tens-of-millions/).
+The gap branch was not merely unsupported but backwards, and this is
+measured: Thomas Bulkowski finds a rising window supports price only 20%
+of the time (16% in a bear market) and says outright that gaps do not
+work well as support or resistance
+(https://thepatternsite.com/SAR.html,
+https://thepatternsite.com/GaugingGaps.html). Price passes through the gap
+four times in five, which makes the pre-gap level more reachable, not
+void; no source anywhere treats a pre-gap level as void — that premise
+was this desk's own invention. Worst, the rule was adversely selected:
+George and Hwang (2004, Journal of Finance) show that nearness to the
+52-week high forecasts returns and dominates past returns as a predictor,
+robust in 18 of 20 international markets
+(https://www.bauer.uh.edu/tgeorge/papers/gh4-paper.pdf) — and a stock near
+its high is exactly the stock with nothing computed beneath it. Measured
+against the real universe the morning rule refused nine names, six of
+them for the gap reason alone.
+
+**What published practice constrains instead is the stop's width.**
+Kullamägi: "stop should not be wider than the ATR or ADR of the stock".
+The response to a wide stop is a smaller position — Van Tharp's sizing,
+position = risk budget divided by distance to stop, which is arithmetic
+rather than an empirical claim — not a refusal.
+
+**What was done.** The floor requirement, its two refusal codes, the
+PM-eligibility mirror and the gap-edge plumbing were deleted; the gap
+detector stays as analyst context and nothing reads it as a rule. The
+structured-refusal record the morning PR built (a refusal written as data
+with its code, drained once per session, read by the census and the PM
+digest as its own bucket) was kept and reused. A stop is now always
+derivable, with no new mechanism: the ATR noise band that already widened
+an unbacked stop now also places a missing one, and the wider of that
+band and the signal bar's far edge is the fallback. The gate is on width,
+refused by code. **The cap had to be chosen honestly, and it is not
+Kullamägi's.** His one-day range would refuse this desk's own ratified
+2.5-ATR fallback; the fallback band as cap would refuse every "wider stop,
+smaller position" trade the ratified sizing rule requires (38 pinned tests
+failed when that was tried). The only instrument-read width the desk
+already had past both is the reach — ATR times the square root of the
+horizon times the same 1.5 the target derivation and the level scan use —
+the furthest price plausibly travels inside the trade. A stop past it
+cannot be hit inside the trade, so the size computed from it is fiction.
+The desk computes ATR, not ADR; the substitution is stated in the code.
+One narrow refusal survives on different grounds: a listing with fewer
+completed sessions than the analyst's own 200-session trend reference is
+refused as too young to measure, checked first so it is named as such and
+not filed as a dead-feed fault by PR #326's classification, which would
+not have caught it (its own floor is 11 bars).
+
+**Verified, not assumed: sizing already shrinks as the stop widens.** The
+risk-based path divides a fixed risk budget by the stop distance on every
+risk-sized target. What clamps it afterwards is the 20% single-name
+notional ceiling — a tight stop stops growing the position there, and the
+risk actually taken is then below the budget, which the order note says.
+That is a pre-existing finding already on the board, not something this
+change introduced or fixed.
+
+**Measured after the change,** same method as the morning (real universe,
+real daily bars through the desk's own data path, the shipped code
+imported): at a 20-session horizon 95 of 101 pass, 4 are refused on width
+(MRVL, VLO, OKLO, NUE — a stop leaned on a floor 7.8 to 9.5 ATR away,
+past the 6.7-ATR reach), 2 on history (DRAM at 112 bars, CBRS at 83), 0
+data faults; at the 60-session cap 99 pass and only the 2 history
+refusals remain. Flagged and not fixed: SNDK's series shows a $27.89 low
+and a $1,633 close inside eighteen months — a corporate action or a data
+error, not a market fact — and the rehearsal engine still declines a
+trade with no level beneath it, a pre-existing divergence from the live
+desk now stated in its code.
+
+**What would catch it next time.** The morning rule went from owner
+sentence to shipped code in one pass with no literature check. The desk's
+standing rule that technical questions go to published doctrine, never to
+training recall or to the owner's instinct, existed and was not applied.
+`tests/test_stop_width_gate.py` pins the replacement: nothing refuses for
+absent structure, the gap branch cannot be re-imported, a missing stop is
+read from the instrument, the width refusal fires past the reach and is
+recorded, a wider stop under the cap halves the shares at the same
+dollars of risk, and a young listing is refused first under its own name.
+
+---
+
 ### 2026-09-12 — the "is this price level relevant" window was a flat 40% nobody derived; it is now read from the stock's own volatility, and "no floor, no trade" is enforced on top of it
 
 **In plain words:** when the desk scans a stock's history for prices it has
@@ -113,8 +207,6 @@ re-qualifying the day the gap fills). Three fixture families that deliberately k
 gained a distant floor so they still test widening rather than the new
 refusal, and the backtest's hand-computed series gained a realistic daily
 range so its $125 shelf is within the instrument's own reach.
-
-||||||| c929e5d
 
 ### 2026-09-12 — a paused desk left part of a real position with no stop for six sessions, and every record called it "expected"
 
