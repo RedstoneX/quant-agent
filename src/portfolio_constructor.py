@@ -1926,9 +1926,12 @@ class PortfolioConstructor:
 
         # -------------------------------------------------------------
         # Decide the shipping stop, and name the rule that placed it.
-        # Exactly one of these five branches runs. `honoured` is what
-        # ships; `rule` is why; the single reward:risk gate at the bottom
-        # judges the geometry that results, whichever branch produced it.
+        # Exactly one of these branches runs (no ATR; nothing typed, read
+        # from the instrument; outside the band; level-honoured; absolute
+        # floor; widened to the band or the signal bar). `honoured` is what
+        # ships; `rule` is why; the width gate and then the single
+        # reward:risk gate at the bottom judge the geometry that results,
+        # whichever branch produced it.
         # -------------------------------------------------------------
         if atr is None:
             # No volatility reading — leave structure alone, as always. The
