@@ -45,7 +45,7 @@ def db(tmp_path):
 def _exec_cfg(**overrides) -> ExecutionConfig:
     base = dict(
         max_entry_slippage_bps=40.0, repeg_enabled=True,
-        repeg_max_attempts=2, repeg_poll_seconds=1.0,
+        repeg_poll_seconds=1.0,
     )
     base.update(overrides)
     return ExecutionConfig(**base)
@@ -61,9 +61,15 @@ def _pipeline(db, cfg: ExecutionConfig | None = None):
     # would make every `in` check raise.
     from src.execution.broker import AlpacaBroker
     broker._TERMINAL_ORDER_STATES = AlpacaBroker._TERMINAL_ORDER_STATES
-    broker.wait_for_order_terminal.return_value = "accepted"
+    broker._ORDER_REPLACEABLE_STATES = AlpacaBroker._ORDER_REPLACEABLE_STATES
+    broker._ORDER_PRE_EXCHANGE_STATES = AlpacaBroker._ORDER_PRE_EXCHANGE_STATES
+    # Default: the venue has acknowledged the order (`new`) by the time the
+    # rest window ends, so the reprice gate is open. Tests of the gate
+    # itself override both of these.
+    broker.wait_for_order_terminal.return_value = "new"
+    broker.wait_for_order_at_exchange.return_value = "new"
     broker.get_order_fill_info.return_value = {
-        "status": "accepted", "filled_qty": 0.0, "filled_avg_price": 0.0,
+        "status": "new", "filled_qty": 0.0, "filled_avg_price": 0.0,
     }
     broker.get_latest_quote.return_value = {"ask_price": 100.30, "bid_price": 100.20}
     broker.cancel_entry_order.return_value = True
@@ -135,13 +141,19 @@ def test_settings_fall_back_to_safe_values_on_garbage(db):
     pipeline = _pipeline(db)
     pipeline.config.execution = MagicMock()
     pipeline.config.execution.repeg_enabled = True
-    pipeline.config.execution.repeg_max_attempts = "lots"
     pipeline.config.execution.repeg_poll_seconds = None
     pipeline.config.execution.max_entry_slippage_bps = -3
 
-    attempts, poll, bps = _repeg_settings(pipeline)
+    poll, bps = _repeg_settings(pipeline)
 
-    assert attempts == 2 and poll == 5.0 and bps == 40.0
+    assert poll == 5.0 and bps == 40.0
+
+
+def test_the_deleted_attempt_cap_key_is_rejected_loudly():
+    """`repeg_max_attempts` is gone. A settings file still carrying it must
+    fail at load, not silently load a ladder length nothing reads."""
+    with pytest.raises(ValueError, match="repeg_max_attempts"):
+        ExecutionConfig(repeg_enabled=True, repeg_max_attempts=3)
 
 
 # --------------------------------------------------------------------------
@@ -149,7 +161,7 @@ def test_settings_fall_back_to_safe_values_on_garbage(db):
 # --------------------------------------------------------------------------
 
 def test_clean_repeg_to_fill(db):
-    """Limit below the ceiling, market away, one replacement, then a fill."""
+    """Limit below the ceiling, market away, ONE replacement, then a fill."""
     pipeline = _pipeline(db)
     spec = _spec(db, limit_price=100.10)
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
@@ -163,7 +175,8 @@ def test_clean_repeg_to_fill(db):
     pipeline.broker.replace_entry_limit.assert_called_once()
     args, kwargs = pipeline.broker.replace_entry_limit.call_args
     assert args[0] == "ord-1"
-    assert args[1] == pytest.approx(100.30)   # walked to the ask
+    # Straight to the ceiling — the decisive price, crossing the 100.30 ask.
+    assert args[1] == pytest.approx(CEILING_40BPS)
     assert kwargs["qty"] == 10                # explicit, not defaulted
 
 
@@ -202,34 +215,47 @@ def test_order_that_fills_before_the_first_attempt_is_never_replaced(db):
 
 
 # --------------------------------------------------------------------------
-# bound 1: the attempt cap
+# ONE reprice — not a ladder (2026-09-12 rebuild)
 # --------------------------------------------------------------------------
 
-def test_attempt_cap_is_hard(db):
-    """A market that keeps running must not produce an unbounded id chain."""
-    pipeline = _pipeline(db, _exec_cfg(repeg_max_attempts=2))
+def test_a_stalling_order_gets_exactly_one_reprice(db):
+    """A market that keeps running must produce ONE replace, not a chain —
+    Alpaca's community practice is a single decisive replace, and every
+    extra one is another `pending_replace` window to get stuck in."""
+    pipeline = _pipeline(db)
     spec = _spec(db, limit_price=100.00)
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2", "ord-3", "ord-4")
-    # Ask climbs but stays under the ceiling so price never binds first.
     pipeline.broker.get_latest_quote.side_effect = [
         {"ask_price": 100.10}, {"ask_price": 100.20}, {"ask_price": 100.30},
     ]
+    # Still working after the reprice — a ladder would go round again.
+    pipeline.broker.wait_for_order_terminal.return_value = "new"
 
     order_id, _ = _repeg_entry_order(pipeline, _ctx(), spec)
 
-    assert pipeline.broker.replace_entry_limit.call_count == 2
-    assert order_id == "ord-3"
-    assert _tracked_order_id(db, spec["trade_row_id"]) == "ord-3"
+    assert pipeline.broker.replace_entry_limit.call_count == 1
+    assert order_id == "ord-2"
+    assert _tracked_order_id(db, spec["trade_row_id"]) == "ord-2"
+    assert spec["attempted_prices"] == [pytest.approx(CEILING_40BPS)]
+    assert spec["repeg_outcome"] == "replaced"
+    # No second replace means nothing to sequence: the old confirm gate is
+    # not on the path at all.
+    pipeline.broker.await_replacement_confirmed.assert_not_called()
 
 
-def test_attempt_cap_of_one_replaces_exactly_once(db):
-    pipeline = _pipeline(db, _exec_cfg(repeg_max_attempts=1))
+def test_the_one_reprice_crosses_the_market(db):
+    """Priced THROUGH the ask, not a small increment above the old limit."""
+    pipeline = _pipeline(db)
     spec = _spec(db, limit_price=100.00)
+    pipeline.broker.get_latest_quote.return_value = {"ask_price": 100.25}
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
 
     _repeg_entry_order(pipeline, _ctx(), spec)
 
-    assert pipeline.broker.replace_entry_limit.call_count == 1
+    price = pipeline.broker.replace_entry_limit.call_args[0][1]
+    assert price >= 100.25, "did not cross the ask"
+    assert price > 100.00 + 0.01, "a one-cent nudge is the ladder we retired"
+    assert price <= CEILING_40BPS + 1e-9
 
 
 # --------------------------------------------------------------------------
@@ -237,16 +263,16 @@ def test_attempt_cap_of_one_replaces_exactly_once(db):
 # --------------------------------------------------------------------------
 
 def test_ceiling_clamps_the_repeg_price(db):
-    """The ask is beyond the ceiling; we walk to the ceiling and no further."""
-    pipeline = _pipeline(db, _exec_cfg(repeg_max_attempts=3))
+    """The ask is beyond the ceiling; the one reprice goes to the ceiling and
+    NOT past it — the ceiling is absolute, never exceeded to force a fill."""
+    pipeline = _pipeline(db, _exec_cfg())
     spec = _spec(db, limit_price=100.10)
     pipeline.broker.get_latest_quote.return_value = {"ask_price": 105.00}
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
 
     order_id, _ = _repeg_entry_order(pipeline, _ctx(), spec)
 
-    # One replacement, priced AT the ceiling — then no room left, so the
-    # remaining attempts are not spent.
+    # One replacement, priced AT the ceiling — and never a second.
     assert pipeline.broker.replace_entry_limit.call_count == 1
     assert pipeline.broker.replace_entry_limit.call_args[0][1] == pytest.approx(
         CEILING_40BPS
@@ -254,21 +280,18 @@ def test_ceiling_clamps_the_repeg_price(db):
     assert order_id == "ord-2"
 
 
-def test_never_prices_above_the_ceiling_across_every_attempt(db):
-    pipeline = _pipeline(db, _exec_cfg(repeg_max_attempts=5))
+@pytest.mark.parametrize("ask", [100.05, 100.20, 100.39, 100.40, 100.41, 180.00])
+def test_never_prices_above_the_ceiling_whatever_the_ask(db, ask):
+    pipeline = _pipeline(db)
     spec = _spec(db, limit_price=100.00)
-    pipeline.broker.get_latest_quote.side_effect = [
-        {"ask_price": 100.20}, {"ask_price": 100.35},
-        {"ask_price": 180.00}, {"ask_price": 180.00}, {"ask_price": 180.00},
-    ]
-    pipeline.broker.replace_entry_limit = _replace_returns(
-        "ord-2", "ord-3", "ord-4", "ord-5", "ord-6",
-    )
+    pipeline.broker.get_latest_quote.return_value = {"ask_price": ask}
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
 
     _repeg_entry_order(pipeline, _ctx(), spec)
 
     prices = [c[0][1] for c in pipeline.broker.replace_entry_limit.call_args_list]
-    assert prices and max(prices) <= CEILING_40BPS + 1e-9
+    assert len(prices) == 1
+    assert prices[0] <= CEILING_40BPS + 1e-9
 
 
 def test_an_order_already_at_the_ceiling_is_left_alone(db):
@@ -292,6 +315,7 @@ def test_market_that_came_back_to_us_is_not_chased(db):
 
     assert order_id == "ord-1"
     pipeline.broker.replace_entry_limit.assert_not_called()
+    assert spec["repeg_outcome"] == "market_within_limit"
 
 
 def test_market_order_has_no_limit_to_walk(db):
@@ -333,32 +357,15 @@ def test_partially_filled_order_is_never_replaced(db):
     assert db.get_pending_repegs() == []
 
 
-def test_partial_fill_on_a_later_attempt_stops_the_chase(db):
-    pipeline = _pipeline(db, _exec_cfg(repeg_max_attempts=3))
-    spec = _spec(db, limit_price=100.00)
-    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
-    pipeline.broker.get_order_fill_info.side_effect = [
-        {"status": "accepted", "filled_qty": 0.0},        # pre-replace check
-        {"status": "accepted", "filled_qty": 0.0},        # ancestor race check
-        {"status": "partially_filled", "filled_qty": 3.0},  # attempt 2
-    ]
-
-    order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
-
-    assert pipeline.broker.replace_entry_limit.call_count == 1
-    assert order_id == "ord-2"
-    assert carried == 0.0
-
-
 def test_fill_landing_inside_the_replace_window_cancels_the_replacement(db):
     """THE RACE: zero fill when we looked, a fill by the time the PATCH
     applied. The ancestor's shares are real and invisible to the new order,
     so the replacement is killed and the fill is carried into the stop."""
-    pipeline = _pipeline(db, _exec_cfg(repeg_max_attempts=3))
+    pipeline = _pipeline(db, _exec_cfg())
     spec = _spec(db, limit_price=100.00, qty=10)
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
     pipeline.broker.get_order_fill_info.side_effect = [
-        {"status": "accepted", "filled_qty": 0.0},           # pre-replace
+        {"status": "new", "filled_qty": 0.0},                # pre-replace
         {"status": "partially_filled", "filled_qty": 6.0},   # ancestor, after
     ]
 
@@ -376,7 +383,7 @@ def test_raced_fill_still_repoints_the_trades_row(db):
     spec = _spec(db, limit_price=100.00)
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
     pipeline.broker.get_order_fill_info.side_effect = [
-        {"status": "accepted", "filled_qty": 0.0},
+        {"status": "new", "filled_qty": 0.0},
         {"status": "partially_filled", "filled_qty": 6.0},
     ]
 
@@ -392,7 +399,7 @@ def test_raced_fill_still_repoints_the_trades_row(db):
 
 def test_replacement_rejected_because_the_order_already_filled(db):
     """The broker refuses; the ORIGINAL id stays authoritative and we stop."""
-    pipeline = _pipeline(db, _exec_cfg(repeg_max_attempts=3))
+    pipeline = _pipeline(db, _exec_cfg())
     spec = _spec(db, limit_price=100.00)
     pipeline.broker.replace_entry_limit.return_value = {
         "id": None, "status": "replace_rejected", "detail": "order is not cancelable",
@@ -415,7 +422,6 @@ def test_lost_response_whose_patch_actually_landed_adopts_the_real_id(db):
         "id": None, "status": "replace_rejected", "detail": "read timeout",
     }
     pipeline.broker.resolve_replacement_chain.return_value = "ord-99"
-    pipeline.broker.wait_for_order_terminal.side_effect = ["accepted", "filled"]
 
     order_id, _ = _repeg_entry_order(pipeline, _ctx(), spec)
 
@@ -457,11 +463,14 @@ def test_a_wal_write_failure_forbids_the_replacement(db):
 # --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("attr", [
-    "wait_for_order_terminal", "get_order_fill_info", "get_latest_quote",
+    "wait_for_order_terminal", "wait_for_order_at_exchange",
+    "get_order_fill_info", "get_latest_quote",
 ])
 def test_a_raising_broker_read_leaves_the_order_working(db, attr):
     pipeline = _pipeline(db)
     spec = _spec(db, limit_price=100.00)
+    # Make the exchange-ack wait reachable: the rest window ends pre-venue.
+    pipeline.broker.wait_for_order_terminal.return_value = "accepted"
     getattr(pipeline.broker, attr).side_effect = RuntimeError("alpaca 500")
 
     assert _repeg_entry_order(pipeline, _ctx(), spec) == ("ord-1", 0.0)
@@ -826,6 +835,9 @@ def _stage_pipeline(db, cfg):
     pipeline.risk_engine.check_daily_loss.return_value = None
     from src.execution.broker import AlpacaBroker
     pipeline.broker._TERMINAL_ORDER_STATES = AlpacaBroker._TERMINAL_ORDER_STATES
+    pipeline.broker._ORDER_REPLACEABLE_STATES = AlpacaBroker._ORDER_REPLACEABLE_STATES
+    pipeline.broker._ORDER_PRE_EXCHANGE_STATES = AlpacaBroker._ORDER_PRE_EXCHANGE_STATES
+    pipeline.broker.wait_for_order_at_exchange.return_value = "new"
     return pipeline
 
 
@@ -850,7 +862,7 @@ def _stage_ctx():
 
 def test_execution_stage_protects_the_repegged_order_id(db):
     """The stage must hand the FINAL id — not the dead one — to protection."""
-    pipeline = _stage_pipeline(db, _exec_cfg(repeg_max_attempts=1))
+    pipeline = _stage_pipeline(db, _exec_cfg())
     # Force room to chase: submitted limit below the ceiling.
     pipeline.broker.get_latest_quote.side_effect = [
         {"ask_price": None},              # submission: no usable ask
@@ -939,7 +951,7 @@ def alerts(monkeypatch):
 
 def test_the_order_is_left_to_work_before_any_reprice(db, alerts):
     """The cheapest re-peg is the one never sent: rest first, replace after."""
-    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=1))
+    pipeline = _alerting_pipeline(db, _exec_cfg())
     spec = _spec(db, limit_price=100.00)
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
 
@@ -969,174 +981,137 @@ def test_a_fast_filling_order_triggers_none_of_this(db, alerts):
 
 
 # --------------------------------------------------------------------------
-# ONE REPLACE AT A TIME — Alpaca will not replace a `pending_replace` order
+# (b) the exchange must have the order before a replace is attempted
 # --------------------------------------------------------------------------
 
-def test_a_second_replace_waits_for_the_first_to_be_confirmed(db, alerts):
-    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=2))
+@pytest.mark.parametrize("stuck_status", ["accepted", "pending_new"])
+def test_an_order_the_exchange_has_not_acknowledged_is_not_repriced(
+    db, alerts, stuck_status,
+):
+    """Alpaca rejects a replace on an order it has accepted but the venue
+    has not ("order isn't sent to exchange yet"). Sending one anyway is the
+    open-market defect this rebuild removes: no replace, reason recorded."""
+    pipeline = _alerting_pipeline(db)
     spec = _spec(db, limit_price=100.00)
-    pipeline.broker.replace_entry_limit = _replace_returns("ord-2", "ord-3")
-    pipeline.broker.get_latest_quote.side_effect = [
-        {"ask_price": 100.10}, {"ask_price": 100.20},
-    ]
-
-    _repeg_entry_order(pipeline, _ctx(), spec)
-
-    assert pipeline.broker.replace_entry_limit.call_count == 2
-    # The first swap was confirmed, naming BOTH ids, before the second went.
-    pipeline.broker.await_replacement_confirmed.assert_called_once()
-    args = pipeline.broker.await_replacement_confirmed.call_args[0]
-    assert args[0] == "ord-1" and args[1] == "ord-2"
-
-    names = [c[0] for c in pipeline.broker.mock_calls]
-    confirm_at = names.index("await_replacement_confirmed")
-    replace_positions = [
-        i for i, n in enumerate(names) if n == "replace_entry_limit"
-    ]
-    assert replace_positions[0] < confirm_at < replace_positions[1], (
-        "the second replace was fired without confirming the first"
-    )
-
-
-def test_an_unconfirmed_replacement_stops_the_chase(db, alerts):
-    """Cannot confirm is not the same as safe to send another one."""
-    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=3))
-    spec = _spec(db, limit_price=100.00)
-    pipeline.broker.replace_entry_limit = _replace_returns("ord-2", "ord-3")
-    pipeline.broker.await_replacement_confirmed.return_value = False
+    pipeline.broker.wait_for_order_terminal.return_value = stuck_status
+    pipeline.broker.wait_for_order_at_exchange.return_value = stuck_status
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
 
     order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
 
-    assert pipeline.broker.replace_entry_limit.call_count == 1
-    assert order_id == "ord-2"          # the replacement IS authoritative
-    assert carried == 0.0
-    assert _tracked_order_id(db, spec["trade_row_id"]) == "ord-2"
-    # A landed-but-unconfirmed swap is a successful re-peg we stopped
-    # building on, not an entry that died — it does not page.
+    assert (order_id, carried) == ("ord-1", 0.0)
+    pipeline.broker.replace_entry_limit.assert_not_called()
+    assert db.get_pending_repegs() == []          # no WAL row was even opened
+    assert spec["repeg_outcome"] == "not_at_exchange"
+    assert spec["attempted_prices"] == []
+    # The honest reason is on the evidence stream, not just in a log line.
+    rows = db.execute(
+        "SELECT evidence_json FROM specialist_evidence WHERE symbol = 'NVDA'"
+    ).fetchall()
+    assert any("repeg_not_at_exchange" in r[0] and stuck_status in r[0]
+               for r in rows)
+    # The reprice function itself never pages — the end-of-session cancel
+    # alert (with this reason in it) is the single message the owner gets.
     assert alerts == []
 
 
-def test_a_confirmation_that_raises_stops_the_chase(db, alerts):
-    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=3))
+def test_an_unknown_status_is_treated_as_not_at_exchange(db, alerts):
+    """No positive evidence the venue has it ⇒ no replace. Silence and a
+    None read are not 'safe to send'."""
+    pipeline = _alerting_pipeline(db)
     spec = _spec(db, limit_price=100.00)
-    pipeline.broker.replace_entry_limit = _replace_returns("ord-2", "ord-3")
-    pipeline.broker.await_replacement_confirmed.side_effect = RuntimeError(
-        "websocket gone")
+    pipeline.broker.wait_for_order_terminal.return_value = None
+    pipeline.broker.wait_for_order_at_exchange.return_value = None
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    pipeline.broker.replace_entry_limit.assert_not_called()
+    assert spec["repeg_outcome"] == "not_at_exchange"
+
+
+def test_an_order_acknowledged_late_but_inside_the_window_is_repriced(db, alerts):
+    """The rest window ends with the order still `accepted`; the exchange
+    then acknowledges it inside the ack window. It gets its single reprice."""
+    pipeline = _alerting_pipeline(db)
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.wait_for_order_terminal.return_value = "accepted"
+    pipeline.broker.wait_for_order_at_exchange.return_value = "new"
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
 
     order_id, _ = _repeg_entry_order(pipeline, _ctx(), spec)
 
-    assert pipeline.broker.replace_entry_limit.call_count == 1
     assert order_id == "ord-2"
+    assert pipeline.broker.replace_entry_limit.call_count == 1
+    pipeline.broker.wait_for_order_at_exchange.assert_called_once()
+    names = [c[0] for c in pipeline.broker.mock_calls]
+    assert names.index("wait_for_order_at_exchange") < names.index(
+        "replace_entry_limit"
+    )
 
 
-def test_the_last_attempt_does_not_pay_the_confirmation_wait(db, alerts):
-    """Nothing is sent after the final replace, so confirming it buys
-    nothing and would add latency to every chase."""
-    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=1))
+def test_the_ack_window_is_not_paid_when_the_venue_already_has_it(db, alerts):
+    """`new` at the end of the rest window ⇒ straight to the reprice; the
+    second window exists only for the pre-venue case."""
+    pipeline = _alerting_pipeline(db)
     spec = _spec(db, limit_price=100.00)
+    pipeline.broker.wait_for_order_terminal.return_value = "new"
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
 
     _repeg_entry_order(pipeline, _ctx(), spec)
 
+    pipeline.broker.wait_for_order_at_exchange.assert_not_called()
     assert pipeline.broker.replace_entry_limit.call_count == 1
-    pipeline.broker.await_replacement_confirmed.assert_not_called()
 
 
-# --------------------------------------------------------------------------
-# bound 3: the wall clock
-# --------------------------------------------------------------------------
-
-def test_the_wall_clock_budget_ends_the_chase(db, alerts, monkeypatch):
-    """A chase whose broker calls are slow must stop at the documented
-    `max_attempts * poll_seconds` budget, not run on to the attempt cap."""
-    import src.pipeline_stages as stages
-
-    clock = {"t": 0.0}
-    monkeypatch.setattr(stages.time, "monotonic", lambda: clock["t"])
-
-    pipeline = _alerting_pipeline(
-        db, _exec_cfg(repeg_max_attempts=3, repeg_poll_seconds=2.0),
-    )
+def test_a_fill_that_lands_during_the_ack_wait_is_not_repriced(db, alerts):
+    pipeline = _alerting_pipeline(db)
     spec = _spec(db, limit_price=100.00)
+    pipeline.broker.wait_for_order_terminal.return_value = "accepted"
+    pipeline.broker.wait_for_order_at_exchange.return_value = "filled"
 
-    def _slow_replace(*a, **k):
-        clock["t"] += 5.0          # each round-trip burns 5s of a 6s budget
-        return {"id": "ord-2", "status": "accepted"}
+    order_id, _ = _repeg_entry_order(pipeline, _ctx(), spec)
 
-    pipeline.broker.replace_entry_limit = MagicMock(side_effect=_slow_replace)
+    assert order_id == "ord-1"
+    pipeline.broker.replace_entry_limit.assert_not_called()
+    assert alerts == []
+
+
+def test_the_ack_wait_is_bounded_by_the_configured_window(db, alerts):
+    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_poll_seconds=2.5))
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.wait_for_order_terminal.return_value = "accepted"
+    pipeline.broker.wait_for_order_at_exchange.return_value = "accepted"
 
     _repeg_entry_order(pipeline, _ctx(), spec)
 
-    # Budget is 3 * 2.0 = 6.0s; one 5s replace leaves no room for a second.
-    assert pipeline.broker.replace_entry_limit.call_count == 1
-    assert len(alerts) == 1
-    assert "did not fill" in alerts[0].lower()
-
-
-def test_the_chase_cannot_loop_unboundedly(db, alerts):
-    """Belt and braces on the count bound: a market that keeps running and a
-    broker that keeps accepting must still stop at the cap."""
-    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=3))
-    spec = _spec(db, limit_price=100.00)
-    pipeline.broker.replace_entry_limit = MagicMock(
-        side_effect=lambda *a, **k: {"id": "ord-x", "status": "accepted"}
-    )
-    pipeline.broker.get_latest_quote.side_effect = [
-        {"ask_price": 100.10}, {"ask_price": 100.20},
-        {"ask_price": 100.30}, {"ask_price": 100.35},
-    ]
-
-    _repeg_entry_order(pipeline, _ctx(), spec)
-
-    assert pipeline.broker.replace_entry_limit.call_count == 3
+    kwargs = pipeline.broker.wait_for_order_at_exchange.call_args.kwargs
+    assert kwargs["timeout_seconds"] == pytest.approx(2.5)
 
 
 # --------------------------------------------------------------------------
-# the alert
+# the reprice function never pages by itself any more
 # --------------------------------------------------------------------------
 
-def test_exhausting_the_attempt_cap_alerts_the_owner(db, alerts):
-    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=2))
+def test_a_replaced_but_still_unfilled_order_does_not_page_here(db, alerts):
+    """"Repricing exhausted" and "cancelled at end of session" are the same
+    event now, and the cancel path owns the one alert. Paging here as well
+    would send two messages for one dead order."""
+    pipeline = _alerting_pipeline(db)
     spec = _spec(db, limit_price=100.00)
-    pipeline.broker.replace_entry_limit = _replace_returns("ord-2", "ord-3")
-    pipeline.broker.get_latest_quote.side_effect = [
-        {"ask_price": 100.10}, {"ask_price": 100.20},
-    ]
-
-    _repeg_entry_order(pipeline, _ctx(), spec)
-
-    assert len(alerts) == 1, "exactly one standalone alert, not bundled"
-    text = alerts[0]
-    assert "NVDA" in text
-    assert "2 time(s)" in text          # how many attempts were made
-    assert "$100.10" in text and "$100.20" in text   # what was tried
-    assert "ord-3" in text              # the order still working
-    assert "LEFT WORKING" in text       # the final outcome
-    assert "will not resubmit" in text  # no auto-resubmission, stated
-    # Severity carried in words, not colour (the owner is red/green
-    # colour blind).
-    assert "ENTRY DID NOT FILL" in text
-
-
-def test_running_out_of_price_room_after_a_chase_alerts(db, alerts):
-    """Repricing exhausted by the ceiling rather than the count — same
-    ending: an unfilled order the desk has stopped working on."""
-    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=3))
-    spec = _spec(db, limit_price=100.10)
-    pipeline.broker.get_latest_quote.return_value = {"ask_price": 105.00}
     pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
+    pipeline.broker.wait_for_order_terminal.return_value = "new"
 
     _repeg_entry_order(pipeline, _ctx(), spec)
 
-    assert pipeline.broker.replace_entry_limit.call_count == 1
-    assert len(alerts) == 1
-    assert "slippage ceiling" in alerts[0]
-    assert f"${CEILING_40BPS:,.2f}" in alerts[0]
+    assert alerts == []
+    # ...but everything the alert will need is on the spec.
+    assert spec["attempted_prices"] == [pytest.approx(CEILING_40BPS)]
+    assert spec["ceiling"] == pytest.approx(CEILING_40BPS)
+    assert spec["repeg_outcome"] == "replaced"
 
 
 def test_a_market_that_never_moved_against_us_does_not_alert(db, alerts):
-    """Nothing was tried, so nothing is exhausted. Paging here would page on
-    almost every ordinary entry."""
+    """Nothing was tried, so nothing is exhausted."""
     pipeline = _alerting_pipeline(db)
     spec = _spec(db, limit_price=100.30)
     pipeline.broker.get_latest_quote.return_value = {"ask_price": 100.05}
@@ -1169,20 +1144,22 @@ def test_an_order_already_at_its_ceiling_does_not_alert(db, alerts):
     assert alerts == []
 
 
-def test_a_broken_alert_channel_cannot_break_the_chase(db, monkeypatch):
+def test_a_broken_alert_channel_cannot_break_the_cancel_path(db, monkeypatch):
     """An alerting bug must not break the execution path it reports on."""
     import src.notifier as notifier
+    from src.pipeline_stages import _alert_owner_entry_cancelled
     monkeypatch.setattr(
         notifier, "send_owner_alert",
         MagicMock(side_effect=RuntimeError("telegram down")),
     )
-    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=1))
+    pipeline = _alerting_pipeline(db, _exec_cfg())
     spec = _spec(db, limit_price=100.00)
-    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
+    spec["attempted_prices"] = [CEILING_40BPS]
+    spec["repeg_outcome"] = "replaced"
 
-    order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
-
-    assert (order_id, carried) == ("ord-2", 0.0)
+    _alert_owner_entry_cancelled(
+        pipeline, spec, {"order_id": "ord-2", "status": "canceled"},
+    )  # must not raise
 
 
 # --------------------------------------------------------------------------
@@ -1202,3 +1179,267 @@ def test_a_dead_stream_during_the_wait_places_nothing(db, alerts):
     assert (order_id, carried) == ("ord-1", 0.0)
     pipeline.broker.replace_entry_limit.assert_not_called()
     assert alerts == []
+
+
+# ==========================================================================
+# 2026-09-12 — (c) an unfilled entry is cancelled at the END OF ITS SESSION,
+# not left resting until 16:00 ET, and the owner is told, once, with the
+# prices that were tried.
+# ==========================================================================
+
+def _cancel_broker(*, statuses, filled_qty, cancel_raises=None):
+    """A REAL AlpacaBroker with a mocked client: the terminal wait answers
+    `statuses` in order (pre-cancel wait, then post-cancel wait)."""
+    b = _broker()
+    b.wait_for_order_terminal = MagicMock(side_effect=list(statuses))
+    b.get_order_fill_info = MagicMock(return_value={
+        "status": statuses[-1], "filled_qty": filled_qty,
+        "filled_avg_price": 100.0,
+    })
+    b._submit_stop_limit_order = MagicMock(return_value={"id": "stop-1"})
+    if cancel_raises is not None:
+        b.client.cancel_order_by_id.side_effect = cancel_raises
+    return b
+
+
+def test_an_unfilled_entry_is_cancelled_at_the_end_of_its_session():
+    b = _cancel_broker(statuses=["new", "canceled"], filled_qty=0.0)
+    seen = []
+
+    out = b.place_entry_protection(
+        "NVDA", "ord-1", 95.0, requested_qty=10,
+        on_unfilled_cancel=seen.append,
+    )
+
+    assert out is None
+    b.client.cancel_order_by_id.assert_called_once_with("ord-1")
+    assert seen == [{"order_id": "ord-1", "status": "canceled", "filled_qty": 0.0}]
+    b._submit_stop_limit_order.assert_not_called()
+
+
+def test_the_cancel_is_reported_even_when_the_last_status_was_pre_exchange():
+    """The open-market case: never acknowledged, never repriced, cancelled."""
+    b = _cancel_broker(statuses=["accepted", "canceled"], filled_qty=0.0)
+    seen = []
+
+    b.place_entry_protection(
+        "NVDA", "ord-1", 95.0, requested_qty=10, on_unfilled_cancel=seen.append,
+    )
+
+    assert len(seen) == 1 and seen[0]["order_id"] == "ord-1"
+
+
+def test_a_partial_fill_is_protected_and_does_not_page_as_cancelled():
+    """Shares were acquired: the stop covers them and the remainder is
+    converged exactly as before. Not a dead order — no cancel alert."""
+    b = _cancel_broker(statuses=["partially_filled", "canceled"], filled_qty=4.0)
+    seen = []
+
+    out = b.place_entry_protection(
+        "NVDA", "ord-1", 95.0, requested_qty=10, on_unfilled_cancel=seen.append,
+    )
+
+    assert out == {"id": "stop-1"}
+    assert b._submit_stop_limit_order.call_args.kwargs["qty"] == 4.0
+    assert seen == []
+
+
+def test_a_fill_under_a_superseded_id_is_not_reported_as_unfilled():
+    """The raced-partial case: the replacement filled nothing but the
+    ancestor did. That is a position with a stop, not a cancelled entry."""
+    b = _cancel_broker(statuses=["new", "canceled"], filled_qty=0.0)
+    seen = []
+
+    out = b.place_entry_protection(
+        "NVDA", "ord-2", 95.0, requested_qty=10, superseded_filled_qty=6.0,
+        on_unfilled_cancel=seen.append,
+    )
+
+    assert out == {"id": "stop-1"}
+    assert seen == []
+
+
+def test_a_normal_fast_fill_cancels_nothing_and_pages_nothing():
+    b = _cancel_broker(statuses=["filled"], filled_qty=10.0)
+    seen = []
+
+    b.place_entry_protection(
+        "NVDA", "ord-1", 95.0, requested_qty=10, on_unfilled_cancel=seen.append,
+    )
+
+    b.client.cancel_order_by_id.assert_not_called()
+    assert seen == []
+    assert b._submit_stop_limit_order.call_args.kwargs["qty"] == 10.0
+
+
+def test_a_cancel_the_broker_refused_is_not_reported_as_cancelled():
+    """Honesty: if the cancel did not land the order may still be working,
+    and telling the owner it was cancelled would be a lie."""
+    b = _cancel_broker(
+        statuses=["new", "new"], filled_qty=0.0,
+        cancel_raises=RuntimeError("alpaca 500"),
+    )
+    seen = []
+
+    b.place_entry_protection(
+        "NVDA", "ord-1", 95.0, requested_qty=10, on_unfilled_cancel=seen.append,
+    )
+
+    assert seen == []
+
+
+def test_a_raising_cancel_callback_cannot_break_protection():
+    b = _cancel_broker(statuses=["new", "canceled"], filled_qty=0.0)
+
+    out = b.place_entry_protection(
+        "NVDA", "ord-1", 95.0, requested_qty=10,
+        on_unfilled_cancel=MagicMock(side_effect=RuntimeError("boom")),
+    )
+
+    assert out is None
+
+
+def test_the_cancel_is_never_sent_twice():
+    """One cancel, then a wait for it to land — never a second cancel on
+    the same id, whatever the post-cancel status read says."""
+    b = _cancel_broker(statuses=["new", "pending_cancel"], filled_qty=0.0)
+
+    b.place_entry_protection("NVDA", "ord-1", 95.0, requested_qty=10)
+
+    assert b.client.cancel_order_by_id.call_count == 1
+
+
+# --------------------------------------------------------------------------
+# the alert: content, and the whole thing end to end through the stage
+# --------------------------------------------------------------------------
+
+def _stage_with_cancelling_protection(db, cfg, *, info):
+    """The stage pipeline, with `place_entry_protection` standing in for the
+    real one by invoking the cancel callback the way the real one does."""
+    pipeline = _stage_pipeline(db, cfg)
+
+    def _protect(**kwargs):
+        cb = kwargs.get("on_unfilled_cancel")
+        if cb is not None:
+            cb(info)
+        return None
+
+    pipeline.broker.place_entry_protection = MagicMock(side_effect=_protect)
+    # A zero-fill read, as the real broker would report after the cancel —
+    # otherwise the auto-MagicMock reads as "shares filled, no stop" and the
+    # separate naked-position alert fires too.
+    pipeline.broker.get_order_fill_info.return_value = {
+        "status": "canceled", "filled_qty": 0.0,
+    }
+    return pipeline
+
+
+def test_the_cycle_end_cancel_pages_the_owner_with_what_was_tried(db, alerts):
+    """The full story in one message: repriced once to the ceiling, still
+    unfilled, CANCELLED (not left working), nothing resubmitted."""
+    pipeline = _stage_with_cancelling_protection(
+        db, _exec_cfg(), info={"order_id": "ord-2", "status": "canceled",
+                              "filled_qty": 0.0},
+    )
+    pipeline.broker.get_latest_quote.side_effect = [
+        {"ask_price": None},              # submission: no usable ask
+        {"ask_price": 100.30},            # reprice: market has moved away
+    ]
+    pipeline.broker.wait_for_order_terminal.return_value = "new"
+    pipeline.broker.get_order_fill_info.return_value = {
+        "status": "new", "filled_qty": 0.0,     # working, unfilled, at the venue
+    }
+    pipeline.broker.replace_entry_limit.return_value = {
+        "id": "ord-2", "status": "accepted",
+    }
+
+    ExecutionStage(pipeline=pipeline).run(_stage_ctx())
+
+    assert len(alerts) == 1, "exactly one standalone alert, not two"
+    text = alerts[0]
+    assert "NVDA" in text
+    assert "ENTRY DID NOT FILL" in text
+    assert "cancelled at the end of its session" in text
+    assert "repriced ONCE" in text
+    assert "$100.00 → $100.40" in text          # submitted limit → the one reprice
+    assert "$100.40" in text                    # the ceiling
+    assert "ord-2" in text and "CANCELLED" in text
+    assert "NOT left working" in text
+    assert "will not resubmit" in text
+    assert "next session" in text               # the derivation, in plain words
+    # The reprice function itself did not also page.
+    assert pipeline.broker.replace_entry_limit.call_count == 1
+
+
+def test_the_cycle_end_cancel_pages_even_with_repricing_off(db, alerts):
+    """Production today: repeg off. The cancel still fires and the owner is
+    still told — and told that no reprice was attempted, and why."""
+    pipeline = _stage_with_cancelling_protection(
+        db, _exec_cfg(repeg_enabled=False),
+        info={"order_id": "ord-1", "status": "canceled", "filled_qty": 0.0},
+    )
+
+    ExecutionStage(pipeline=pipeline).run(_stage_ctx())
+
+    assert len(alerts) == 1
+    assert "switched off" in alerts[0]
+    assert "ord-1" in alerts[0] and "CANCELLED" in alerts[0]
+    pipeline.broker.replace_entry_limit.assert_not_called()
+
+
+def test_the_cancel_alert_names_the_unacknowledged_reason(db, alerts):
+    """Open-market case end to end: the venue never acknowledged the order,
+    so no reprice went out, and the alert says exactly that."""
+    pipeline = _stage_with_cancelling_protection(
+        db, _exec_cfg(),
+        info={"order_id": "ord-1", "status": "canceled", "filled_qty": 0.0},
+    )
+    pipeline.broker.get_latest_quote.side_effect = [
+        {"ask_price": None}, {"ask_price": 100.30},
+    ]
+    pipeline.broker.wait_for_order_terminal.return_value = "pending_new"
+    pipeline.broker.wait_for_order_at_exchange.return_value = "pending_new"
+
+    ExecutionStage(pipeline=pipeline).run(_stage_ctx())
+
+    pipeline.broker.replace_entry_limit.assert_not_called()
+    assert len(alerts) == 1
+    assert "had not acknowledged" in alerts[0]
+    assert "NOT attempted" in alerts[0]
+    assert "$100.00" in alerts[0]              # the only price ever on the book
+
+
+def test_a_stage_with_a_filled_entry_pages_nothing(db, alerts):
+    pipeline = _stage_pipeline(db, _exec_cfg())
+    pipeline.broker.place_entry_protection.return_value = {"id": "stop-1"}
+    pipeline.broker.wait_for_order_terminal.return_value = "filled"
+
+    ExecutionStage(pipeline=pipeline).run(_stage_ctx())
+
+    assert alerts == []
+
+
+# --------------------------------------------------------------------------
+# a websocket outage degrades to the fallback — never a double action
+# --------------------------------------------------------------------------
+
+def test_a_dead_stream_and_dead_rest_places_nothing_and_cancels_nothing(db, alerts):
+    """If even the REST fallback inside the waits raises, the reprice stops
+    without sending anything, protection is still called exactly once, and
+    the reprice path issues no cancel of its own."""
+    pipeline = _stage_pipeline(db, _exec_cfg())
+    pipeline.broker.get_latest_quote.side_effect = [
+        {"ask_price": None}, {"ask_price": 100.30},
+    ]
+    pipeline.broker.wait_for_order_terminal.side_effect = RuntimeError(
+        "stream and REST both gone")
+    pipeline.broker.wait_for_order_at_exchange.side_effect = RuntimeError(
+        "stream and REST both gone")
+
+    ExecutionStage(pipeline=pipeline).run(_stage_ctx())
+
+    pipeline.broker.replace_entry_limit.assert_not_called()
+    pipeline.broker.cancel_entry_order.assert_not_called()
+    pipeline.broker.submit_order.assert_called_once()
+    pipeline.broker.place_entry_protection.assert_called_once()
+    assert pipeline.broker.place_entry_protection.call_args.kwargs["order_id"] == "ord-1"

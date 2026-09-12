@@ -200,25 +200,30 @@ llm:
 # offer, and the order could never fill.
 execution:
   max_entry_slippage_bps: 40
-  # Bounded re-peg: when a working entry limit sits below the slippage
-  # ceiling and the market has moved away, walk the limit UP toward the
-  # market — never past `max_entry_slippage_bps`, and never more than
-  # `repeg_max_attempts` times, and never for longer in total than
-  # `repeg_max_attempts * repeg_poll_seconds` (a real, enforced deadline).
-  # Replaces are issued strictly ONE AT A TIME: Alpaca refuses to replace an
-  # order that is still `pending_replace`, so each swap is confirmed on the
-  # trade_updates websocket before the next is sent.
-  # If the chase runs out of attempts, out of time, or out of price room and
-  # the entry still has not filled, the owner gets a STANDALONE Telegram
-  # alert naming the symbol, the prices tried and the outcome. The order is
-  # left working — nothing is auto-resubmitted (see the comment above
-  # `_alert_owner_repeg_exhausted` in src/pipeline_stages.py for why that
-  # half is a deferred owner decision, not an omission).
-  # OFF by default: an Alpaca replacement mints
-  # a NEW order id, and getting that wrong is how you end up with an
-  # untracked working order or a double position. Enable deliberately.
+  # Single-shot reprice (rebuilt 2026-09-12): when a working entry limit
+  # sits below the slippage ceiling and the market has moved away, the
+  # order is let work for `repeg_poll_seconds`, then repriced ONCE, straight
+  # to the ceiling (`max_entry_slippage_bps` above the reference captured at
+  # submission — the price the entry was already approved to pay). Never
+  # above it, and never a second time: Alpaca's own community practice for a
+  # fast market is one decisive market-crossing replace, not a ladder of
+  # nudges, and every extra replace is another `pending_replace` window to
+  # get stuck in. The reprice is only sent once the exchange has
+  # acknowledged the order (status `new`; a replace on an `accepted` /
+  # `pending_new` order is rejected by Alpaca, and at the open that can
+  # take seconds) — if it never gets there within the window, no reprice.
+  # An entry still unfilled at the end of its session is CANCELLED, not
+  # left resting until 16:00 ET (a resting order holds buying power all
+  # day, and the next session re-analyses from scratch anyway), and the
+  # owner gets a STANDALONE Telegram alert naming the symbol, the prices
+  # tried and that it was cancelled. Nothing is auto-resubmitted (see the
+  # comment above `_alert_owner_entry_cancelled` in src/pipeline_stages.py
+  # for why that half is a deferred owner decision, not an omission).
+  # OFF by default: an Alpaca replacement mints a NEW order id, and getting
+  # that wrong is how you end up with an untracked working order or a
+  # double position. The owner flips this deliberately.
+  # (`repeg_max_attempts` was removed; the config loader rejects it.)
   repeg_enabled: false
-  repeg_max_attempts: 2
   repeg_poll_seconds: 5
   # Spec §11.1 (owner-ratified 2026-09-01). Exact position sizing: the share
   # count the risk math produced is used as-is instead of being floored to a

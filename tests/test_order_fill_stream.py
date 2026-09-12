@@ -277,3 +277,95 @@ def test_replaced_is_a_terminal_state_the_stream_actually_reports():
     """The gate depends on this: if `replaced` were not in the terminal set
     the stream handler would ignore the very event being waited for."""
     assert "replaced" in AlpacaBroker._ORDER_TERMINAL_STATES
+
+
+# ---------- 2026-09-12: "has the exchange got it yet?" on the same stream ----------
+# The single-shot entry reprice may only be sent once the order has left
+# Alpaca's not-yet-at-exchange statuses (`accepted`, `pending_new` — its own
+# lifecycle reference). Same websocket, same fallback shape as the fill wait.
+
+def test_pre_exchange_states_are_the_documented_ones():
+    assert AlpacaBroker._ORDER_PRE_EXCHANGE_STATES == frozenset({"accepted", "pending_new"})
+    assert AlpacaBroker._ORDER_REPLACEABLE_STATES == frozenset({"new"})
+    assert not (AlpacaBroker._ORDER_PRE_EXCHANGE_STATES & AlpacaBroker._ORDER_TERMINAL_STATES)
+
+
+@patch("src.execution.broker.TradingStream")
+def test_at_exchange_wait_returns_new_the_instant_the_stream_says_so(mock_stream_cls):
+    mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+        updates=[
+            _FakeUpdate("other", "new"),           # someone else's order
+            _FakeUpdate("ord-1", "pending_new"),   # ours, still pre-venue
+            _FakeUpdate("ord-1", "new"),           # ours, acknowledged
+        ],
+    )
+    b = _broker()
+
+    t0 = time.monotonic()
+    status = b.wait_for_order_at_exchange("ord-1", timeout_seconds=5.0)
+
+    assert status == "new"
+    assert time.monotonic() - t0 < 2.0, "should not have waited out the window"
+    b.client.get_order_by_id.assert_not_called()
+
+
+@patch("src.execution.broker.TradingStream")
+def test_at_exchange_wait_reports_a_fill_that_arrives_instead(mock_stream_cls):
+    mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+        updates=[_FakeUpdate("ord-1", "filled")],
+    )
+    assert _broker().wait_for_order_at_exchange("ord-1", timeout_seconds=2.0) == "filled"
+
+
+@patch("src.execution.broker.TradingStream")
+def test_at_exchange_wait_does_a_single_rest_read_when_nothing_arrives(mock_stream_cls):
+    mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+        updates=[_FakeUpdate("ord-1", "accepted")], hang=True,
+    )
+    b = _broker()
+    b.client.get_order_by_id.return_value = MagicMock(status=MagicMock(value="accepted"))
+
+    status = b.wait_for_order_at_exchange("ord-1", timeout_seconds=0.3)
+
+    assert status == "accepted"                       # honest: still pre-venue
+    assert b.client.get_order_by_id.call_count == 1   # one read, not a poll loop
+
+
+def test_at_exchange_wait_falls_back_to_rest_polling_without_the_stream():
+    b = _broker()
+    b.client.get_order_by_id.side_effect = [
+        MagicMock(status=MagicMock(value="accepted")),
+        MagicMock(status=MagicMock(value="pending_new")),
+        MagicMock(status=MagicMock(value="new")),
+    ]
+    with patch("src.execution.broker.TradingStream", None):
+        status = b.wait_for_order_at_exchange(
+            "ord-1", timeout_seconds=3.0, poll_interval=0.01,
+        )
+
+    assert status == "new"
+    assert b.client.get_order_by_id.call_count == 3
+
+
+def test_at_exchange_wait_reports_last_known_when_polling_times_out():
+    b = _broker()
+    b.client.get_order_by_id.return_value = MagicMock(status=MagicMock(value="accepted"))
+    with patch("src.execution.broker.TradingStream", None):
+        status = b.wait_for_order_at_exchange(
+            "ord-1", timeout_seconds=0.05, poll_interval=0.01,
+        )
+    assert status == "accepted"
+
+
+def test_the_terminal_wait_still_ignores_a_mere_new_event():
+    """Sharing the stream primitive must not have changed the fill wait:
+    `new` is not terminal for it."""
+    with patch("src.execution.broker.TradingStream") as mock_stream_cls:
+        mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+            updates=[_FakeUpdate("ord-1", "new")], hang=True,
+        )
+        b = _broker()
+        b.client.get_order_by_id.return_value = MagicMock(status=MagicMock(value="new"))
+        status = b.wait_for_order_terminal("ord-1", timeout_seconds=0.2)
+    assert status == "new"
+    assert b.client.get_order_by_id.call_count == 1
