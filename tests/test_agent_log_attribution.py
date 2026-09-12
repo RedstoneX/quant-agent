@@ -457,7 +457,6 @@ def test_position_reviewer_persists_actual_model_on_failover():
     pipeline.db = MagicMock()
     pipeline.db.get_trades.return_value = []
     pipeline.config = _mock_config()
-    pipeline._auto_take_profit = MagicMock(return_value=[])
     pipeline._handle_ex_dividends = MagicMock(return_value=[])
     pipeline._run_news_update = MagicMock(return_value=(None, None))
     pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
