@@ -402,25 +402,24 @@ def test_short_stop_inside_noise_band_is_widened_upward():
     assert widened > 250.0
 
 
-def test_short_widened_stop_failing_reward_risk_floor_is_rejected():
-    """D5: when widening a short's stop to the noise-band edge collapses
-    reward:risk below `min_reward_risk_after_widening` (default 1.5), the
-    trade is rejected outright rather than taken at a worse payoff. Band
-    edge = 261.25 (entry 250 + 2.25 x 5 ATR = 11.25 of risk); target 241 →
-    reward 9.00, risk 11.25 → R:R 0.80 < 1.5.
+def test_short_widened_stop_below_the_reward_risk_floor_is_no_longer_rejected():
+    """**Inverted 2026-09-11, docs/WORK.md item 1(d).** D5's mirroring is
+    unchanged and is still what this test protects: widening a short's stop
+    pushes it UP, away from entry, to the noise-band edge — 261.25 (entry
+    250 + 2.25 x 5 ATR = 11.25 of risk). Against a 241 target that is reward
+    9.00 / risk 11.25 = R:R 0.80.
 
-    The target moved 235 -> 241 with the 2026-09-04 floor change, because
-    against the 1.35-ATR band a $15 reward scored 2.22 and TRADED. It does
-    NOT need to move again for the 2026-09-10 change: a wider band is a
-    larger denominator, so $9.00 of reward fails by more than it did (0.80
-    where it was 1.33), not less."""
+    That 0.80 used to reject the trade. It does not any more: for a range
+    setup the real ratio is a ranking signal and a starter-size cap, never a
+    refusal, and it is mirrored for a short exactly as it is for a long. The
+    STOP the function returns is the assertion now."""
     constructor = PortfolioConstructor()
     widened = constructor._widen_stop_past_noise(
         "TSLA",
         _short_analysis(entry=250.0, stop=252.0, target=241.0, atr_14=5.0),
         entry_price=250.0, stop_loss=252.0, direction="short",
     )
-    assert widened is None
+    assert widened == 261.25
 
 
 # ==========================================================================

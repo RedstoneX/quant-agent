@@ -711,6 +711,20 @@ risk:
   # that was already wide enough was never checked at all — 14 of 49 orders in
   # the pre-reset production database shipped under this floor, and one filled
   # at 0.81. The number did not change; where it is applied did.
+  #
+  # **2026-09-11 — THIS IS NO LONGER A GATE ANYWHERE** (docs/WORK.md item 1
+  # part (d), owner decision). It refuses nothing:
+  #   * a BREAKOUT / trend setup is not measured against it at all — there is
+  #     no overhead level to measure a reward against, and the position is
+  #     managed by a trailing stop with no fixed target;
+  #   * a RANGE setup's real ratio is still computed from its own real support
+  #     and resistance, and now feeds src/verdicts.py::rank_verdicts as an
+  #     ordering signal instead of a pass/fail cutoff.
+  # What the number still does: it is the threshold below which the PM's
+  # post-decision gate caps a range target at the smallest starter size. That
+  # cap is the last place one fixed ratio is applied identically to every
+  # range trade — flagged deliberately, since it is the pattern
+  # docs/OUTCOME.md's "no arbitrary numbers, ever" principle warns about.
   min_reward_risk_after_widening: 1.5
   # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------------
   # The floor above used to OVERWRITE the structural stop whenever the level
@@ -775,7 +789,16 @@ risk:
   # by arithmetic, whatever it was worth. Measured: 0 of 222 real signals.
   #
   # Raising this is the lever if the desk decides too much is being refused.
-  # Lowering min_reward_risk_after_widening is NOT.
+  # Lowering min_reward_risk_after_widening is NOT — and as of 2026-09-11 it
+  # would do nothing anyway: that key no longer refuses anything (see its own
+  # note above).
+  #
+  # 2026-09-11, funnel item 6: this projection now also covers the case where
+  # the chart yielded levels but NONE of them sit in the trade's direction. It
+  # used to require setup_type == "breakout" on top of that measured fact, so
+  # real trades with genuinely nothing overhead were refused for a wording.
+  # src/risk/constants.py::is_trend_trade owns that condition and is shared
+  # with the reward:risk exemption above, so the two cannot drift apart.
   breakout_projection_atr_multiple: 1.0
   # How far price can plausibly get inside the horizon, same units. Looser than
   # the projection on purpose: a trade that works is an above-typical move, so

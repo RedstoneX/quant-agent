@@ -12,7 +12,9 @@ The rules replayed here, and where each one is stated:
   R1  current technical coverage         `portfolio_manager.md` "What to trade"
   R2  rating is actionable (not neutral) same
   R3  longs must be BUY-eligible         "Deterministic BUY Eligibility" block
-  R4  computed R/R >= 1.5, OR a catalyst resolving to a dated Active News
+  R4  (range setups only, 2026-09-11 item 1(d)) computed R/R must be
+      MEASURABLE — its SIZE no longer gates — OR a catalyst resolving to a
+      dated Active News
       State Change row naming the symbol (then capped 0.5% risk)
                                          Rule Priority row 7 / Step 5
   R5  net independent source score >= 1  Step 5 agreement ceiling (§9.4);
@@ -35,6 +37,7 @@ if str(_REPO) not in sys.path:  # pragma: no cover - import convenience
 
 from src.agents.portfolio_manager import PortfolioManagerAgent  # noqa: E402
 from src.portfolio_constructor import PortfolioConstructor  # noqa: E402
+from src.risk.constants import reward_risk_floor_applies  # noqa: E402
 from src.risk.rules import (  # noqa: E402
     agreement_ceiling_for_score,
     count_aligned_sources,
@@ -123,12 +126,26 @@ def evaluate(selection: dict, analyses, positions, news_intel) -> list[dict]:
         if direction == "long" and symbol.upper() not in allowed:  # R3
             blocked.append("R3 not BUY-eligible")
 
-        subfloor_catalyst = False  # R4
-        if (rr or 0.0) < RR_FLOOR:
-            if symbol.upper() in catalysts:
+        # R4. **Rewritten 2026-09-11, docs/WORK.md item 1(d)** — kept in step
+        # with `PortfolioManagerAgent.candidate_eligibility`, which this
+        # script exists to shadow. It no longer blocks on the SIZE of the
+        # ratio, only on its ABSENCE, and it does not run at all for a Type B
+        # / breakout candidate (no overhead level to measure a reward
+        # against; see `src.risk.constants.reward_risk_floor_applies`).
+        # `rr` is still reported per row, and `RR_FLOOR` still names the
+        # size below which the PM's post-decision gate caps a range target at
+        # starter size.
+        subfloor_catalyst = False
+        if reward_risk_floor_applies(a.setup_type):
+            if rr is None:
+                if symbol.upper() in catalysts:
+                    subfloor_catalyst = True
+                else:
+                    blocked.append(
+                        "R4 R/R unmeasurable, no dated catalyst row"
+                    )
+            elif rr < RR_FLOOR and symbol.upper() in catalysts:
                 subfloor_catalyst = True
-            else:
-                blocked.append(f"R4 R/R {rr} < {RR_FLOOR}, no dated catalyst row")
 
         sources = registry.get(symbol, {})  # R5
         ignored = stale.get(symbol)

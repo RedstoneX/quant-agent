@@ -1155,6 +1155,29 @@ smaller. Same defect as 10.2: a dial wired as a gate.
 **Do NOT simply lower the 1.5 floor.** The floor is not the defect; its inputs
 are.
 
+> **RESOLVED, 2026-09-11 — docs/WORK.md item 1 part (d), owner decision.**
+> The gate was replaced rather than relaxed, exactly as this section
+> required, and by SETUP TYPE because the two archetypes this desk already
+> distinguishes (`src/risk/trailing.py`) need different answers:
+>
+> * **Type B / trend (breakout).** No reward:risk comparison applies at any
+>   stage — PM eligibility, the PM sub-floor gate, the constructor, the
+>   execution belt, or the Risk Manager's prompt. There is no overhead level
+>   to measure a reward against, and the position is exited by a trailing
+>   stop with no fixed target, so every ratio computed for one divided by an
+>   invented number. Approval rests on the risk side and on the multi-agent
+>   conviction/evidence checks.
+> * **Type A / range.** The real ratio — this trade's own support against its
+>   own resistance — is still computed and now feeds the ratified weighted
+>   ranking (§13.3, `src/verdicts.py::rank_verdicts`) as an ordering signal
+>   rather than a cutoff. A sub-floor range target is still capped at the
+>   smallest starter size; it is no longer refused.
+>
+> No new fixed number was introduced. `src/risk/constants.py::is_trend_trade`
+> is the single definition of "no ceiling", shared with
+> `derive_structural_target`'s measured-move projection (funnel item 6) so
+> the two cannot drift apart.
+
 The stop is already derived in code from measured volatility
 (`min_stop_atr_multiple: 3.0`). The **target is the model's guess**.
 

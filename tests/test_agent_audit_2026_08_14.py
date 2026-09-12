@@ -414,7 +414,14 @@ def test_f5_independence_is_not_framed_as_disagreeing_more() -> None:
 @pytest.mark.parametrize("anchor", (
     "**Veto is nuclear.**",
     "≥ 5 separate `modifications`",
-    "R/R discipline is non-negotiable",
+    # "R/R discipline is non-negotiable" was an anchor here until
+    # 2026-09-11. It was REMOVED deliberately, by owner decision
+    # (docs/WORK.md item 1(d)): a flat reward:risk bar applied to every
+    # setup type was the largest measured cause of proposals that never
+    # became trades, and it is meaningless on a trend trade with no
+    # overhead level. What replaces it is anchored below — the veto
+    # framing this test protects is otherwise untouched.
+    "R/R discipline is by SETUP TYPE, not universal",
     "Err on the side of capital preservation",
 ))
 def test_f5_veto_hierarchy_is_unchanged(anchor: str) -> None:

@@ -747,11 +747,16 @@ def _structured_analysis(
     )
 
 
-def test_real_preview_excludes_a_candidate_the_model_overstates():
+def test_real_preview_reports_the_real_number_the_model_overstates():
     """Model claims R/R 10.0 (target $150 off a $5 stop). The nearest REAL
-    structural level above entry is $103 — reward $3 / risk $5 = 0.60,
-    under the 1.5 floor. The self-reported number would have passed the
-    OLD gate; the real one must not."""
+    structural level above entry is $103 — reward $3 / risk $5 = 0.60.
+
+    **Changed 2026-09-11 (docs/WORK.md item 1(d)).** The preview used to
+    return None here — not because 0.60 was unmeasurable but because the
+    preview itself refused anything under the floor, so "thin payoff" and
+    "no payoff arithmetic" arrived at the caller as the same answer. They
+    are now distinguished: the real 0.60 comes back and does its work in
+    the ranking, and only a genuinely unmeasurable geometry returns None."""
     analysis = _structured_analysis(
         "NVDA", entry=100.0, stop=95.0, model_target=150.0,
         computed_levels=[95.0, 103.0],
@@ -759,7 +764,7 @@ def test_real_preview_excludes_a_candidate_the_model_overstates():
     assert analysis.risk_reward == 10.0  # the self-reported figure — overstated
     constructor = PortfolioConstructor()
     real_rr = constructor.real_reward_risk_preview(analysis, "long")
-    assert real_rr is None  # unmeasurable-or-under-floor, same contract as _widen_stop_past_noise
+    assert real_rr == 0.6
 
 
 def test_real_preview_includes_a_candidate_the_model_understates():
