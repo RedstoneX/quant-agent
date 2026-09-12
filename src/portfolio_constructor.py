@@ -824,6 +824,23 @@ class PortfolioConstructor:
                 # through the pricing checks below would let a missing quote
                 # silently cancel an exit PM had decided on.
                 closes.add(sym)
+                # 2026-09-12: the close IS handed to the allocator, as the
+                # zero request `allocate_risk_budget` already documents
+                # ("a zero request is PM closing the name. It consumes no
+                # budget"). Before this, a full close never reached the
+                # allocator at all, so the closed name's EXISTING risk kept
+                # counting as committed and a same-session "close X, open
+                # Y" plan had Y rationed against a book that still held X —
+                # denied for "no room" the sale was about to create.
+                # Measured: OLD at 24.8% of a 25% ceiling, NEW asking 2%:
+                # without this, NEW granted 0.00% (below_floor); with it,
+                # 2.00%. Partial trims never had this problem because they
+                # are requests already. Whether the sale then FILLS is
+                # ExecutionStage's question, answered there (it sells,
+                # waits for terminal, and re-reads the account before any
+                # BUY); a granted size on an unfilled close is the same
+                # exposure a trim-then-add plan has always carried.
+                requests.append(RiskRequest(sym, 0.0))
                 continue
             analysis = analyses_by_sym.get(sym)
             entry, stop = self._resolve_entry_and_stop(
