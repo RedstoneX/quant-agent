@@ -2478,6 +2478,77 @@ class AlpacaBroker:
             "limit_price": price, "replaces": str(order_id),
         }
 
+    def await_replacement_confirmed(
+        self, old_order_id: str, new_order_id: str,
+        timeout_seconds: float = 5.0,
+    ) -> bool:
+        """Block until Alpaca has FINISHED replacing `old_order_id`.
+
+        Why this exists as a hard gate rather than an optimistic assumption:
+        Alpaca refuses to replace an order whose status is `accepted`,
+        `pending_new`, `pending_cancel` **or `pending_replace`** (its own
+        Replace-Order reference). A replace is therefore not an instant
+        edit — the order sits in `pending_replace` while the broker works,
+        and a SECOND replace fired into that window is rejected outright.
+        Chasing a running market means issuing several replaces in a row, so
+        the sequencing is not a nicety: without this gate the second re-peg
+        of any chase is a coin flip on broker timing.
+
+        The confirmation signal is the OLD order reaching the terminal
+        status `replaced` — which is exactly when Alpaca has completed the
+        swap. That is read from the real-time `trade_updates` websocket
+        first via `wait_for_order_terminal` (PR #287), so the ordinary case
+        costs a few milliseconds rather than the whole timeout, and a
+        websocket outage degrades to that method's own REST fallback rather
+        than to no confirmation at all.
+
+        Returns True only on positive evidence the swap completed:
+          * the old order reports `replaced`, or
+          * `resolve_replacement_chain` independently shows the old id now
+            points at `new_order_id`.
+
+        Anything else — timeout, an unreadable broker, a status that never
+        settles — returns False, and the caller MUST stop chasing. "I could
+        not confirm" and "it is safe to send another replace" are different
+        statements, and conflating them is the whole failure mode this
+        guards. Never raises.
+        """
+        if not old_order_id or not new_order_id:
+            return False
+        try:
+            status = self.wait_for_order_terminal(
+                str(old_order_id), timeout_seconds=timeout_seconds,
+                poll_interval=min(1.0, max(0.1, timeout_seconds)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "replace confirmation: wait on %s failed (%s) — treating the "
+                "replacement as UNCONFIRMED", old_order_id, exc,
+            )
+            return False
+        if str(status or "").lower() == "replaced":
+            return True
+
+        # No `replaced` event inside the window. Ask the broker directly
+        # rather than concluding either way from silence.
+        try:
+            resolved = self.resolve_replacement_chain(str(old_order_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "replace confirmation: chain re-read for %s failed: %s",
+                old_order_id, exc,
+            )
+            return False
+        if resolved is not None and str(resolved) == str(new_order_id):
+            return True
+        logger.warning(
+            "replace confirmation: %s → %s could not be confirmed within "
+            "%.1fs (last status %r, chain %r) — the chase stops here rather "
+            "than firing a second replace into a pending_replace window",
+            old_order_id, new_order_id, timeout_seconds, status, resolved,
+        )
+        return False
+
     def place_entry_protection(
         self, symbol: str, order_id: str, stop_price: float,
         *, requested_qty: float | None = None, side: str = "buy",

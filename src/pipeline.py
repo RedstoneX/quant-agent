@@ -6434,7 +6434,12 @@ class TradingPipeline:
                 # target before it ever became a `proposed_order` row (see
                 # `pipeline_stages.DecisionStage`, which persists this via
                 # `PortfolioConstructor.last_drop_reasons`). Mirrors
-                # `scripts/blocked_proposals_census.py::_load_constructor_drops`
+                # `scripts/blocked_proposals_census.py::_load_recorded_reasons`
+                # (renamed 2026-09-11 when that script started reading three
+                # more durable reason kinds the same way — symbol_guard,
+                # hard_risk, risk_manager_unparseable_output — this PM-facing
+                # helper does NOT read those three yet, only
+                # `constructor_dropped`)
                 # — without it, a constructor drop falls through to the
                 # generic `no_order_built` bucket below with no explanation,
                 # even though the real reason was captured at drop time.

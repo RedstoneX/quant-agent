@@ -896,3 +896,309 @@ def test_a_repeg_that_explodes_still_protects_the_original_order(db):
 
     kwargs = pipeline.broker.place_entry_protection.call_args.kwargs
     assert kwargs["order_id"] == "ord-1"
+
+
+# ==========================================================================
+# 2026-09-11 — the stalling entry: reprice, sequence, bound, then TELL HIM
+#
+# docs/WORK.md funnel item 3: 6 of 68 historical proposals were limit orders
+# that never filled because price drifted away, and were correctly cancelled
+# by price protection. Working as designed, and a lost opportunity every
+# time — the owner's requirement is that such an order never simply dies
+# with no trace. These tests cover the three things that changed: the
+# one-replace-at-a-time gate Alpaca actually requires, the wall-clock bound,
+# and the exhaustion alert.
+# ==========================================================================
+
+def _alerting_pipeline(db, cfg=None):
+    """A pipeline whose replacement confirmations succeed, as a live broker's
+    would. `await_replacement_confirmed` is set EXPLICITLY rather than left
+    as an auto-MagicMock so a reader can see which way it is answering."""
+    pipeline = _pipeline(db, cfg)
+    pipeline.broker.await_replacement_confirmed.return_value = True
+    return pipeline
+
+
+@pytest.fixture
+def alerts(monkeypatch):
+    """Capture owner alerts instead of sending them."""
+    sent: list[str] = []
+
+    def _capture(text, **kwargs):
+        sent.append(text)
+        return True
+
+    import src.notifier as notifier
+    monkeypatch.setattr(notifier, "send_owner_alert", _capture)
+    return sent
+
+
+# --------------------------------------------------------------------------
+# the reprice happens AFTER the wait, never before
+# --------------------------------------------------------------------------
+
+def test_the_order_is_left_to_work_before_any_reprice(db, alerts):
+    """The cheapest re-peg is the one never sent: rest first, replace after."""
+    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=1))
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    names = [c[0] for c in pipeline.broker.mock_calls]
+    assert "wait_for_order_terminal" in names
+    assert "replace_entry_limit" in names
+    assert names.index("wait_for_order_terminal") < names.index(
+        "replace_entry_limit"
+    ), "replaced the order before letting it work"
+
+
+def test_a_fast_filling_order_triggers_none_of_this(db, alerts):
+    """The overwhelmingly common case: it fills in the wait. No replacement,
+    no quote call, no alert."""
+    pipeline = _alerting_pipeline(db)
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.wait_for_order_terminal.return_value = "filled"
+
+    order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert (order_id, carried) == ("ord-1", 0.0)
+    pipeline.broker.replace_entry_limit.assert_not_called()
+    pipeline.broker.await_replacement_confirmed.assert_not_called()
+    assert alerts == []
+
+
+# --------------------------------------------------------------------------
+# ONE REPLACE AT A TIME — Alpaca will not replace a `pending_replace` order
+# --------------------------------------------------------------------------
+
+def test_a_second_replace_waits_for_the_first_to_be_confirmed(db, alerts):
+    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=2))
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2", "ord-3")
+    pipeline.broker.get_latest_quote.side_effect = [
+        {"ask_price": 100.10}, {"ask_price": 100.20},
+    ]
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert pipeline.broker.replace_entry_limit.call_count == 2
+    # The first swap was confirmed, naming BOTH ids, before the second went.
+    pipeline.broker.await_replacement_confirmed.assert_called_once()
+    args = pipeline.broker.await_replacement_confirmed.call_args[0]
+    assert args[0] == "ord-1" and args[1] == "ord-2"
+
+    names = [c[0] for c in pipeline.broker.mock_calls]
+    confirm_at = names.index("await_replacement_confirmed")
+    replace_positions = [
+        i for i, n in enumerate(names) if n == "replace_entry_limit"
+    ]
+    assert replace_positions[0] < confirm_at < replace_positions[1], (
+        "the second replace was fired without confirming the first"
+    )
+
+
+def test_an_unconfirmed_replacement_stops_the_chase(db, alerts):
+    """Cannot confirm is not the same as safe to send another one."""
+    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=3))
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2", "ord-3")
+    pipeline.broker.await_replacement_confirmed.return_value = False
+
+    order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert pipeline.broker.replace_entry_limit.call_count == 1
+    assert order_id == "ord-2"          # the replacement IS authoritative
+    assert carried == 0.0
+    assert _tracked_order_id(db, spec["trade_row_id"]) == "ord-2"
+    # A landed-but-unconfirmed swap is a successful re-peg we stopped
+    # building on, not an entry that died — it does not page.
+    assert alerts == []
+
+
+def test_a_confirmation_that_raises_stops_the_chase(db, alerts):
+    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=3))
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2", "ord-3")
+    pipeline.broker.await_replacement_confirmed.side_effect = RuntimeError(
+        "websocket gone")
+
+    order_id, _ = _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert pipeline.broker.replace_entry_limit.call_count == 1
+    assert order_id == "ord-2"
+
+
+def test_the_last_attempt_does_not_pay_the_confirmation_wait(db, alerts):
+    """Nothing is sent after the final replace, so confirming it buys
+    nothing and would add latency to every chase."""
+    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=1))
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert pipeline.broker.replace_entry_limit.call_count == 1
+    pipeline.broker.await_replacement_confirmed.assert_not_called()
+
+
+# --------------------------------------------------------------------------
+# bound 3: the wall clock
+# --------------------------------------------------------------------------
+
+def test_the_wall_clock_budget_ends_the_chase(db, alerts, monkeypatch):
+    """A chase whose broker calls are slow must stop at the documented
+    `max_attempts * poll_seconds` budget, not run on to the attempt cap."""
+    import src.pipeline_stages as stages
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(stages.time, "monotonic", lambda: clock["t"])
+
+    pipeline = _alerting_pipeline(
+        db, _exec_cfg(repeg_max_attempts=3, repeg_poll_seconds=2.0),
+    )
+    spec = _spec(db, limit_price=100.00)
+
+    def _slow_replace(*a, **k):
+        clock["t"] += 5.0          # each round-trip burns 5s of a 6s budget
+        return {"id": "ord-2", "status": "accepted"}
+
+    pipeline.broker.replace_entry_limit = MagicMock(side_effect=_slow_replace)
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    # Budget is 3 * 2.0 = 6.0s; one 5s replace leaves no room for a second.
+    assert pipeline.broker.replace_entry_limit.call_count == 1
+    assert len(alerts) == 1
+    assert "did not fill" in alerts[0].lower()
+
+
+def test_the_chase_cannot_loop_unboundedly(db, alerts):
+    """Belt and braces on the count bound: a market that keeps running and a
+    broker that keeps accepting must still stop at the cap."""
+    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=3))
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.replace_entry_limit = MagicMock(
+        side_effect=lambda *a, **k: {"id": "ord-x", "status": "accepted"}
+    )
+    pipeline.broker.get_latest_quote.side_effect = [
+        {"ask_price": 100.10}, {"ask_price": 100.20},
+        {"ask_price": 100.30}, {"ask_price": 100.35},
+    ]
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert pipeline.broker.replace_entry_limit.call_count == 3
+
+
+# --------------------------------------------------------------------------
+# the alert
+# --------------------------------------------------------------------------
+
+def test_exhausting_the_attempt_cap_alerts_the_owner(db, alerts):
+    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=2))
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2", "ord-3")
+    pipeline.broker.get_latest_quote.side_effect = [
+        {"ask_price": 100.10}, {"ask_price": 100.20},
+    ]
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert len(alerts) == 1, "exactly one standalone alert, not bundled"
+    text = alerts[0]
+    assert "NVDA" in text
+    assert "2 time(s)" in text          # how many attempts were made
+    assert "$100.10" in text and "$100.20" in text   # what was tried
+    assert "ord-3" in text              # the order still working
+    assert "LEFT WORKING" in text       # the final outcome
+    assert "will not resubmit" in text  # no auto-resubmission, stated
+    # Severity carried in words, not colour (the owner is red/green
+    # colour blind).
+    assert "ENTRY DID NOT FILL" in text
+
+
+def test_running_out_of_price_room_after_a_chase_alerts(db, alerts):
+    """Repricing exhausted by the ceiling rather than the count — same
+    ending: an unfilled order the desk has stopped working on."""
+    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=3))
+    spec = _spec(db, limit_price=100.10)
+    pipeline.broker.get_latest_quote.return_value = {"ask_price": 105.00}
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert pipeline.broker.replace_entry_limit.call_count == 1
+    assert len(alerts) == 1
+    assert "slippage ceiling" in alerts[0]
+    assert f"${CEILING_40BPS:,.2f}" in alerts[0]
+
+
+def test_a_market_that_never_moved_against_us_does_not_alert(db, alerts):
+    """Nothing was tried, so nothing is exhausted. Paging here would page on
+    almost every ordinary entry."""
+    pipeline = _alerting_pipeline(db)
+    spec = _spec(db, limit_price=100.30)
+    pipeline.broker.get_latest_quote.return_value = {"ask_price": 100.05}
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    pipeline.broker.replace_entry_limit.assert_not_called()
+    assert alerts == []
+
+
+def test_a_partial_fill_does_not_alert(db, alerts):
+    """Shares were acquired and the stop covers them. Not a dead order."""
+    pipeline = _alerting_pipeline(db)
+    spec = _spec(db, qty=10)
+    pipeline.broker.get_order_fill_info.return_value = {
+        "status": "partially_filled", "filled_qty": 4.0,
+    }
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert alerts == []
+
+
+def test_an_order_already_at_its_ceiling_does_not_alert(db, alerts):
+    pipeline = _alerting_pipeline(db)
+    spec = _spec(db, limit_price=CEILING_40BPS)
+
+    _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert alerts == []
+
+
+def test_a_broken_alert_channel_cannot_break_the_chase(db, monkeypatch):
+    """An alerting bug must not break the execution path it reports on."""
+    import src.notifier as notifier
+    monkeypatch.setattr(
+        notifier, "send_owner_alert",
+        MagicMock(side_effect=RuntimeError("telegram down")),
+    )
+    pipeline = _alerting_pipeline(db, _exec_cfg(repeg_max_attempts=1))
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.replace_entry_limit = _replace_returns("ord-2")
+
+    order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert (order_id, carried) == ("ord-2", 0.0)
+
+
+# --------------------------------------------------------------------------
+# stream trouble must not double-place
+# --------------------------------------------------------------------------
+
+def test_a_dead_stream_during_the_wait_places_nothing(db, alerts):
+    """PR #287's own fallback is inside `wait_for_order_terminal`; if even
+    that raises, the chase stops without sending anything."""
+    pipeline = _alerting_pipeline(db)
+    spec = _spec(db, limit_price=100.00)
+    pipeline.broker.wait_for_order_terminal.side_effect = RuntimeError(
+        "stream and REST both gone")
+
+    order_id, carried = _repeg_entry_order(pipeline, _ctx(), spec)
+
+    assert (order_id, carried) == ("ord-1", 0.0)
+    pipeline.broker.replace_entry_limit.assert_not_called()
+    assert alerts == []

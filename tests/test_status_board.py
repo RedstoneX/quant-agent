@@ -1739,8 +1739,10 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # "FIXED, pending review" — finished, review still owed, its own section.
     for rank in (33, 34):
         assert by_rank[rank].bucket == "review_owed", rank
+    # RESOLVED 2026-09-11 — genuinely closed, struck through, no longer live.
+    assert by_rank[2].bucket == "resolved"
     # Genuinely partial work stays where he can see it.
-    for rank in (2, 18, 32):
+    for rank in (18, 32):
         assert by_rank[rank].bucket == "open", rank
         assert by_rank[rank].part_done is True, rank
     # And the negated lines stay open, as they always did.
