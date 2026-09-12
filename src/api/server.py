@@ -46,6 +46,7 @@ from src.api.routes_journal import router as journal_router
 from src.api.routes_live import router as live_router
 from src.api.routes_research import router as research_router
 from src.api.routes_scorecard import router as scorecard_router
+from src import inflight
 
 _STATIC_DIR = Path(__file__).parent / "static"
 # Stage 6 — the richer cockpit (docs/visual/MISSION_CONTROL_VISION_BOARD.png
@@ -182,6 +183,44 @@ def _inject_banner(board_html: str, banner: str) -> str:
     return board_html[:at] + banner + board_html[at:]
 
 
+#: The most recent SUCCESSFUL read of what is in flight, kept so a failed
+#: re-read can show a dated list rather than nothing. Process-local, like
+#: the ETag cache it sits beside.
+_last_good_in_flight: inflight.InFlight | None = None
+
+
+def _refresh_in_flight(board_html: str) -> str:
+    """Re-read what is being built, right now, and swap it into the page.
+
+    The board file is rebuilt when the backlog, the plan or the deployed
+    commit changes. An open pull request changing does none of those \u2014 it
+    happens on GitHub, not on this box \u2014 so a build-time copy of that
+    section goes stale between rebuilds with nothing to trigger a new one.
+    Rather than add a clock (retired once already; any interval would be a
+    number nobody can justify), the section is re-read when the page is
+    asked for. Conditional requests make an unchanged re-read free, so
+    opening the page repeatedly costs nothing against GitHub's limit.
+
+    Degrades the same way the rest of the page does: a failed read renders
+    as "could not read", with the last successful read shown, dated, under
+    it if this process has one \u2014 never as an empty list, and never as the
+    build-time copy passing for current. A page with no fenced section (an
+    older build) is returned untouched. Never raises.
+    """
+    global _last_good_in_flight
+    if inflight.START_MARK not in board_html:
+        return board_html
+    try:
+        now_read = inflight.read_in_flight()
+        if now_read.readable:
+            _last_good_in_flight = now_read
+        fresh = inflight.render_in_flight(now_read, last_good=_last_good_in_flight)
+        return inflight.refresh_in_flight_html(board_html, fresh)
+    except Exception as exc:  # noqa: BLE001 - the page must still be served
+        logger.warning("in-flight refresh failed: %s", exc)
+        return board_html
+
+
 def _render_board() -> HTMLResponse:
     if not _BOARD_FILE.is_file():
         return HTMLResponse(
@@ -190,7 +229,7 @@ def _render_board() -> HTMLResponse:
             "work backlog or the plan changes \u2014 check back shortly.</p>",
             status_code=200,
         )
-    board_html = _BOARD_FILE.read_text()
+    board_html = _refresh_in_flight(_BOARD_FILE.read_text())
     banner = _freshness_banner(_board_built_sha(board_html), _board_live_sha())
     return HTMLResponse(_inject_banner(board_html, banner))
 
