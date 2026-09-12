@@ -6081,3 +6081,56 @@ line underneath the real reason. Harmless, low priority, recorded so it
 isn't rediscovered as new.
 
 - After the constructor rejects a BUY for reward:risk, it logs a second confusing line — "no valid stop below entry (stop=None)" — because the None propagates. Cosmetic.
+
+### 2026-09-12 — the unfilled-entry alert told the owner the opposite of what the code did
+
+**In plain words:** when a buy order failed to fill, the desk sent a message
+saying the order had been left working until the market closed. It had not.
+The desk had already cancelled it about ninety seconds later, silently. The
+README and `config/settings.yaml` repeated the same false claim.
+
+**How it happened.** PR #311 added an "exhaustion" alert on the re-peg path
+and described the resting behaviour it *expected*. It never checked
+`place_entry_protection`, which had cancelled a still-working entry after
+`_ENTRY_FILL_TIMEOUT_S` (90 s) since well before that PR. Nothing tested the
+alert's wording against the actual code path, so the two drifted apart with
+no failure to notice.
+
+**Fixed in PR #315** ("Stalled entry: one reprice, only once the exchange has
+it, then cancelled with its session"). The alert now describes what happens:
+the entry is cancelled at the end of its session, the message names the
+symbol, the prices tried, the ceiling, and states plainly that nothing was
+resubmitted. It fires whether or not repricing is enabled, with the text
+saying which was attempted.
+
+**The Alpaca order-execution research behind the rebuild**, preserved here so
+it is not re-derived:
+
+- Community practice for a fast market is ONE decisive reprice priced through
+  the market — not a ladder of small nudges. Each additional replace is
+  another `pending_replace` window; one reported case left a position
+  unmanageable.
+- An order **cannot** be replaced until it has reached the exchange. Verified
+  against alpaca-py 0.44.0's `OrderStatus` enum and Alpaca's published order
+  lifecycle: `accepted` = at Alpaca, not yet routed; `pending_new` = routed,
+  not yet accepted by the venue; `new` = at the venue. At the open —
+  precisely when a chase is most wanted — acknowledgement is slowest, so an
+  early replace is the most likely to be rejected. This was a real defect in
+  the first build.
+- **No community convention exists for a maximum resting time.** The only
+  hard sourced argument is Alpaca's own: a resting DAY order consumes buying
+  power for as long as it rests. The cancel boundary was therefore derived
+  from the desk's own structure — the session process itself — rather than
+  invented as a timeout literal.
+- **No evidence anywhere of time-of-day-varying chase parameters.** Not
+  invented here.
+- Correction to a belief held while scoping this: the desk does **not**
+  re-scan every 30 minutes. The systemd/launchd tick is every 30 minutes, but
+  it only asks whether an ET session is due. Only `intra_check` runs each
+  tick, and it places no entries. New entries come only from the morning
+  session (09:30–12:00 ET); midday and close sessions review positions.
+
+**`execution.repeg_enabled` stays `false`** — owner decision 2026-09-12,
+*"we're not going with repeg"* — and independently has little to act on,
+since PR #111 already submits entries at the slippage ceiling whenever a
+quote exists.
