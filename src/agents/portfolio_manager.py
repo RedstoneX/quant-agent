@@ -33,7 +33,9 @@ from src.risk.rules import (
     stance_is_aligned,
     weight_pct_of,
 )
-from src.rotation import RotationOpportunity, evaluate_rotation_opportunity
+from src.rotation import (
+    RotationOpportunity, RotationPrecheck, evaluate_rotation_opportunity,
+)
 from src.trading_calendar import et_today
 from src.verdicts import RankedCandidate, rank_verdicts
 
@@ -75,6 +77,12 @@ _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 class PortfolioManagerAgent(BaseAgent):
+    #: Phase 14b. The rotation comparison this agent's LAST prompt was
+    #: rendered from (`rotation_precheck`), reset at the top of every
+    #: `build_user_message`. `DecisionStage._apply_rotation_execution`
+    #: reads it so the desk acts on exactly what the model was shown.
+    last_rotation_precheck: RotationPrecheck | None = None
+
     @property
     def name(self) -> str:
         return "portfolio_manager"
@@ -546,10 +554,24 @@ class PortfolioManagerAgent(BaseAgent):
         held_symbols = {
             p.symbol.upper() for p in positions if getattr(p, "qty", 0)
         }
+        # Phase 14b: the precheck is computed ONCE and kept on the agent so
+        # `DecisionStage._apply_rotation_execution` acts on exactly the
+        # numbers the model was shown — never a second evaluation against
+        # inputs that may have moved in between. Reset first so a stale
+        # value from a previous session can never leak into this one.
+        self.last_rotation_precheck = None
+        rotation_precheck = self.rotation_precheck(
+            ranked=ranked, blocked=blocked, held_symbols=held_symbols,
+            existing_risk_pct=existing_risk_pct,
+            ceiling_pct=max_portfolio_risk_pct,
+        )
+        self.last_rotation_precheck = rotation_precheck
         rotation_section = self._render_rotation_section(
             ranked=ranked, blocked=blocked, held_symbols=held_symbols,
             existing_risk_pct=existing_risk_pct,
             ceiling_pct=max_portfolio_risk_pct,
+            precheck=rotation_precheck,
+            execute_enabled=bool(kwargs.get("rotation_execute_enabled", False)),
         )
 
         # L2 memory: each position line also gets entry context + Tech rating trajectory
@@ -1556,17 +1578,18 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         return "\n".join(lines)
 
     @staticmethod
-    def _render_rotation_section(
+    def rotation_precheck(
         *,
         ranked: list[RankedCandidate],
         blocked: dict[str, list[str]],
         held_symbols: set[str],
         existing_risk_pct: dict[str, float] | None,
         ceiling_pct: float,
-    ) -> str:
-        """Phase 14 — the opportunity-cost comparison, surfaced as
-        information, never as an instruction. See `src/rotation.py` for the
-        rule, the margin and the citations behind it.
+    ) -> RotationPrecheck:
+        """Phase 14 — run the opportunity-cost comparison once and keep its
+        inputs. `_render_rotation_section` renders this for the prompt;
+        `DecisionStage` reads the same object to decide whether to act
+        (Phase 14b). See `src/rotation.py`.
 
         `existing_risk_pct` is the book's risk BEFORE anything this session
         proposes — the same map `PortfolioConstructor` rations against
@@ -1576,12 +1599,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         empty" view, the same fail-open posture `allocate_risk_budget`
         itself already requires of every caller.
         """
-        header = "## Opportunity Rotation (deterministic pre-check, Phase 14)"
         if existing_risk_pct is None:
-            return (
-                f"{header}\n"
-                "(book risk telemetry unavailable this session — rotation "
-                "check skipped, same as every other consumer of this data)"
+            return RotationPrecheck(
+                opportunity=None, headroom_pct=0.0, ceiling_pct=ceiling_pct,
+                floor_pct=STARTER_POSITION_RISK_PCT, telemetry_available=False,
             )
         headroom_pct = allocate_risk_budget(
             [], existing_pct=existing_risk_pct, clusters=None,
@@ -1591,6 +1612,48 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             ranked=ranked, blocked=blocked, held_symbols=held_symbols,
             headroom_pct=headroom_pct, floor_pct=STARTER_POSITION_RISK_PCT,
         )
+        return RotationPrecheck(
+            opportunity=opportunity, headroom_pct=headroom_pct,
+            ceiling_pct=ceiling_pct, floor_pct=STARTER_POSITION_RISK_PCT,
+        )
+
+    @classmethod
+    def _render_rotation_section(
+        cls,
+        *,
+        ranked: list[RankedCandidate],
+        blocked: dict[str, list[str]],
+        held_symbols: set[str],
+        existing_risk_pct: dict[str, float] | None,
+        ceiling_pct: float,
+        precheck: RotationPrecheck | None = None,
+        execute_enabled: bool = False,
+    ) -> str:
+        """Phase 14 — the opportunity-cost comparison, surfaced as
+        information. See `src/rotation.py` for the rule, the margin and the
+        citations behind it.
+
+        `precheck` is the already-computed comparison (`rotation_precheck`);
+        omitted, it is computed here from the same inputs. `execute_enabled`
+        (Phase 14b, `execution.rotation_enabled`) only changes the WORDING:
+        when the desk itself may act on the categorical tier, the model is
+        told so, so its own plan can account for it — the decision to act is
+        made in `DecisionStage`, never here.
+        """
+        header = "## Opportunity Rotation (deterministic pre-check, Phase 14)"
+        if precheck is None:
+            precheck = cls.rotation_precheck(
+                ranked=ranked, blocked=blocked, held_symbols=held_symbols,
+                existing_risk_pct=existing_risk_pct, ceiling_pct=ceiling_pct,
+            )
+        if not precheck.telemetry_available:
+            return (
+                f"{header}\n"
+                "(book risk telemetry unavailable this session — rotation "
+                "check skipped, same as every other consumer of this data)"
+            )
+        headroom_pct = precheck.headroom_pct
+        opportunity = precheck.opportunity
         if opportunity is None:
             if headroom_pct < STARTER_POSITION_RISK_PCT:
                 return (
@@ -1645,6 +1708,22 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             "edit to a held position needs the same substantive "
             "justification any other exit does — this note is not one."
         )
+        if execute_enabled and opportunity.tier == "ineligible_hold":
+            # Phase 14b. Wording only — the act itself is decided in
+            # `DecisionStage._apply_rotation_execution` from the desk's own
+            # data, after this prompt returns.
+            lines.append(
+                "AUTOMATIC ROTATION IS ENABLED for this categorical case: "
+                f"if you include a BUY target for {opportunity.new_symbol} "
+                f"and do not yourself close {opportunity.held_symbol}, the "
+                f"desk will propose a full close of {opportunity.held_symbol} "
+                "on its own — but ONLY if its structural protection has "
+                "already broken under the holding-discipline check, it was "
+                "not bought today and nothing is in flight on it. That "
+                "proposal then goes through the Risk Manager like any other "
+                "exit. Size your plan for the room it would free; do not "
+                "assume it will happen."
+            )
         return "\n".join(lines)
 
     @staticmethod
@@ -1697,6 +1776,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # "book is empty" view — see `_render_rotation_section`.
                existing_risk_pct: dict[str, float] | None = None,
                max_portfolio_risk_pct: float = 25.0,
+               # Phase 14b: whether `execution.rotation_enabled` is on.
+               # Wording only — tells the model the desk may itself close
+               # a categorically-ineligible holding this session; the act
+               # is decided in `DecisionStage`, never in this prompt.
+               rotation_execute_enabled: bool = False,
                # 2026-09-04 fix: the SAME real derived reward:risk
                # `PortfolioConstructor.construct_orders` gates on,
                # keyed by upper-case symbol — see `candidate_eligibility`
@@ -1743,6 +1827,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # Phase 14: opportunity-cost rotation pre-check inputs.
             existing_risk_pct=existing_risk_pct,
             max_portfolio_risk_pct=max_portfolio_risk_pct,
+            rotation_execute_enabled=rotation_execute_enabled,
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
         )
         parsed = result.parse_json()

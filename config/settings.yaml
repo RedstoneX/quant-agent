@@ -225,6 +225,38 @@ execution:
   # (`repeg_max_attempts` was removed; the config loader rejects it.)
   repeg_enabled: false
   repeg_poll_seconds: 5
+  # Automatic opportunity-cost rotation (Phase 14b, src/rotation.py). With
+  # this OFF the desk still computes the comparison every morning and shows
+  # it to the Portfolio Manager as information — the Phase 14 behaviour,
+  # unchanged. With it ON, the desk will itself CLOSE one held position per
+  # morning session when ALL of the following are true, measured from its
+  # own data and never from a model's opinion:
+  #   * the book's existing risk leaves less headroom than the minimum
+  #     tradeable size (capital is genuinely constrained);
+  #   * the held position fails the desk's OWN entry rules today (it would
+  #     not be bought now — R2/R4/R5 in candidate_eligibility), so the
+  #     comparison is categorical, not a rank wobble;
+  #   * its structural protection has ALREADY broken under the item-25
+  #     holding-discipline check (thesis level or stop level broken on two
+  #     consecutive closes, or no level and outside the noise band) — a
+  #     position whose thesis is still intact is never rotated out;
+  #   * it was not bought today and has no order or protection-restore
+  #     in flight;
+  #   * the Portfolio Manager itself asked to BUY the best-ranked new
+  #     candidate this session — the desk never invents the buy leg.
+  # The close is proposed as an ordinary zero-size PM target and goes
+  # through the SAME path as any PM-decided exit: constructor, hard risk
+  # rules, AI Risk Manager review (which can refuse it), the holding-
+  # discipline claim check, and the protected-sell discipline (stops are
+  # cancelled write-ahead and restored if the sale never reaches the
+  # broker). Nothing is bypassed and no new exemption exists.
+  # A rotation that executes ALWAYS sends a standalone Telegram alert
+  # naming what was sold, what it was sold to make room for, and the
+  # measured reason; a second alert fires if the buy leg then did not
+  # happen. Everything is written to the pipeline_event audit stream.
+  # OFF by default: this is the desk selling a position without a human or
+  # a model deciding to. Enable deliberately.
+  rotation_enabled: false
   # Spec §11.1 (owner-ratified 2026-09-01). Exact position sizing: the share
   # count the risk math produced is used as-is instead of being floored to a
   # whole number. Whole-share rounding is a silent, constant tax — V wanted

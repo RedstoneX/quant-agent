@@ -178,18 +178,19 @@ def test_a_held_name_that_is_itself_the_best_ranked_candidate_is_not_compared_ag
     assert opp is None
 
 
-# --- (b) information-only regression guard ---------------------------------
+# --- (b) "no private execution path" regression guard ----------------------
 #
-# `RotationOpportunity` is currently wired into exactly one place:
-# `PortfolioManagerAgent._render_rotation_section`, which folds it into
-# plain prompt TEXT for the LLM to read — never into `PortfolioDecision`,
-# never into `TradeDecision`/order construction, and `PortfolioConstructor`
-# (the actual execution path, `src/portfolio_constructor.py`) never imports
-# this module at all. That is the whole "information only, never automatic"
-# property this feature is supposed to have. The tests above only exercise
-# `evaluate_rotation_opportunity()` in isolation and would keep passing even
-# if someone later wired `RotationOpportunity` into an order-construction
-# path — these guard against exactly that regression.
+# Phase 14b (2026-09-12) lets the desk ACT on the categorical tier behind
+# `execution.rotation_enabled` — but only by appending an ordinary zero-size
+# `TargetPosition` to the PM's plan in `DecisionStage`
+# (`pipeline_stages._apply_rotation_execution`, tested in
+# `tests/test_rotation_execute.py`). Everything downstream of that stays
+# rotation-blind on purpose: `PortfolioConstructor` never imports or names
+# this module, and `PortfolioDecision` / `TradeDecision` carry no rotation
+# field, so a rotation close is built, risk-checked, reviewed and executed
+# by EXACTLY the code a PM-authored close goes through. These tests pin that
+# there is no second, rotation-specific route into order construction — if
+# one is ever added, it starts by failing here.
 
 import ast
 import inspect
@@ -220,14 +221,15 @@ def _imports_rotation(source: str) -> bool:
 
 
 def test_portfolio_constructor_module_never_imports_rotation():
-    """The execution path must never even import `src.rotation` — a future
-    PR wiring rotation into order construction would start here, and this
-    fails the moment it does, independent of what it does with the import."""
+    """The order-construction path must never even import `src.rotation` —
+    a rotation close must reach it as a plain target, indistinguishable
+    from a PM-authored one. A PR wiring rotation INTO construction would
+    start here, and this fails the moment it does."""
     source = _module_source_path(portfolio_constructor_module).read_text()
     assert not _imports_rotation(source), (
-        "src/portfolio_constructor.py must not import src.rotation — "
-        "RotationOpportunity is information for the PM's prompt only and "
-        "must never reach the order-construction path"
+        "src/portfolio_constructor.py must not import src.rotation — a "
+        "rotation close is an ordinary zero-size target and the constructor "
+        "must stay unable to tell it apart from a PM-authored one"
     )
 
 
@@ -239,16 +241,18 @@ def test_portfolio_constructor_construct_orders_never_references_rotation_by_nam
     source = _module_source_path(portfolio_constructor_module).read_text()
     assert "rotation" not in source.lower(), (
         "src/portfolio_constructor.py source must not mention rotation at "
-        "all — the constructor is the real order-execution path, and this "
-        "feature is documented as information-only, never automatic"
+        "all — the constructor is the real order-execution path and must "
+        "have no rotation-specific branch; a rotation close is built by the "
+        "same code as any PM close"
     )
 
 
 def test_portfolio_decision_and_trade_decision_carry_no_rotation_field():
     """The two data structures that actually reach execution/RM review must
-    never carry a `RotationOpportunity` (or any rotation-named) field. If
-    someone ever adds one to make rotation "automatic", this fails instead
-    of silently starting to flow through the decision pipeline."""
+    never carry a `RotationOpportunity` (or any rotation-named) field. The
+    rotation close rides as an ordinary `TargetPosition`; its bookkeeping
+    lives on `RunContext.rotation`, outside the decision objects, so the
+    Risk Manager and the executor see a SELL like any other."""
     for model in (PortfolioDecision, TradeDecision):
         field_names = set(model.model_fields.keys())
         rotation_fields = {f for f in field_names if "rotation" in f.lower()}
