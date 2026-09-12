@@ -86,11 +86,11 @@ not have caught it (its own floor is 11 bars).
 
 **Verified, not assumed: sizing already shrinks as the stop widens.** The
 risk-based path divides a fixed risk budget by the stop distance on every
-risk-sized target. What clamps it afterwards is the 20% single-name
-notional ceiling — a tight stop stops growing the position there, and the
-risk actually taken is then below the budget, which the order note says.
-That is a pre-existing finding already on the board, not something this
-change introduced or fixed.
+risk-sized target. What clamps it afterwards is the single-name notional
+ceiling (65% of equity, the owner's own setting — docs/WORK.md item 47):
+a tight stop stops growing the position there, and the risk actually
+taken is then below the budget, which the order note says. Pre-existing
+and recorded, not something this change introduced or fixed.
 
 **Measured after the change,** same method as the morning (real universe,
 real daily bars through the desk's own data path, the shipped code
