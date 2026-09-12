@@ -630,8 +630,7 @@ Full reasoning + test: `docs/INCIDENT_HISTORY.md`. Stop is
 sided correctly at ingestion; the quote moves before construction —
 refusal stands.
 
-**9. Tail causes — 3 of 68 combined. WORKING AS INTENDED.** Moved to
-`docs/INCIDENT_HISTORY.md`, 2026-09-11.
+**~~9. Tail causes — WORKING AS INTENDED.~~** Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **10. Slots burned re-proposing names that never fill. PARTIALLY CLOSED,
 re-measured 2026-09-03 — see `docs/INCIDENT_HISTORY.md`.**
@@ -693,8 +692,7 @@ needs an owner decision between two competing `read_price_bars`
 implementations (`rescue/price-provenance` branch), a real architecture
 choice, not a mechanical merge.
 
-**16. The afternoon spending reserve — MOOT, deleted with item 14.** Moved to
-`docs/INCIDENT_HISTORY.md`, 2026-09-11.
+**~~16. The afternoon spending reserve — MOOT, deleted with item 14.~~** Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **17. The desk can switch itself off silently — DEFECT. Observed, not theorised.**
 
@@ -845,11 +843,11 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**25. "Don't sell a protected position without a named reason" is prompt-only, same shape as the PM's catalyst gap — DONE 2026-09-04.** Nothing open. Detail: `INCIDENT_HISTORY.md`, 2026-09-04 "a sell whose stated reason is provably untrue now actually gets stopped", and 2026-09-03 "item 25."
+**~~25. "Don't sell a protected position without a named reason" — DONE 2026-09-04.~~** Detail: `INCIDENT_HISTORY.md`, 2026-09-04 "a sell whose stated reason is provably untrue now actually gets stopped", and 2026-09-03 "item 25."
 
 **28. The offline test that must reproduce a known real cost-limit failure can no longer reproduce it — STILL BROKEN, previously marked fixed in error.** `test_rehearsal_reproduces_cost_ceiling.py` marked FIXED 2026-09-04 (config keys the test forced no longer exist, after item 14's cost-circuit rewrite) but re-verified directly 2026-09-10, three separate times against a clean `origin/main` checkout: this test still fails, identically, every time. Whatever landed did not actually resolve it, and nobody re-checked the claim before writing FIXED. Needs someone to actually read the failure and re-diagnose it — not re-apply the same fix that already didn't work. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys" for the (incomplete) original diagnosis.
 
-**29. The analyst scorecard was already built and is already live — item withdrawn 2026-09-03, corrected after being written up as new work in error.** See `docs/INCIDENT_HISTORY.md`, 2026-09-03 "the analyst scorecard got written up as missing work; it already existed."
+**~~29. The analyst scorecard was already built and already live — item withdrawn 2026-09-03.~~** Corrected after being written up as new work in error. See `docs/INCIDENT_HISTORY.md`, 2026-09-03 "the analyst scorecard got written up as missing work; it already existed."
 
 **30. The sizing path still owes the same amendment the ranking path just
 got — deliberately NOT done yet, owner should decide scope first.**
@@ -1016,7 +1014,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **Still genuinely undecided:** `smart_money.congress_enabled` remains False (off) — flipping it to True has not been ratified.
 
-**37. Eleven separate pieces of finished work were all ready to merge on the same night — the order they went in mattered.** See `docs/INCIDENT_HISTORY.md`.
+**~~37. Eleven separate pieces of finished work were all ready to merge on the same night — the order they went in mattered.~~** See `docs/INCIDENT_HISTORY.md`.
 
 **~~38. Insider cluster window was 7x the cited research — FIXED 2026-09-04.~~**
 Detail: `docs/INCIDENT_HISTORY.md`. Separate, NOT fixed here:
