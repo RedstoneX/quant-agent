@@ -338,6 +338,51 @@ def run_status() -> tuple[int, str]:
     return 0, "\n".join(lines)
 
 
+def _build_broker():
+    """Read-only broker handle, built the narrow way `src/api/broker_reads.py`
+    does — two strings, never the whole config object."""
+    from src.api.deps import get_alpaca_credentials, get_alpaca_paper
+    from src.execution.broker import AlpacaBroker
+
+    key, secret = get_alpaca_credentials()
+    return AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
+
+
+def _cash_sweep_symbol() -> str:
+    """The stopless cash vehicle to skip. Falls back to the schema default
+    rather than to None: an unreadable config must not turn SGOV into a
+    daily false alarm."""
+    try:
+        from src.api.deps import get_cash_sweep_symbol
+
+        return str(get_cash_sweep_symbol())
+    except Exception:  # noqa: BLE001
+        from src.config import CashSweepConfig
+
+        return str(CashSweepConfig().symbol)
+
+
+def run_coverage_check(now: datetime | None = None) -> str:
+    """Stop-coverage watchdog for a desk that is not running sessions — see
+    `src/coverage_watchdog.py`. Reads the broker and the session record,
+    sends one owner alert when held shares have no stop AND no session ran
+    during the last trading session to put one back. Never places, changes
+    or cancels an order. Returns the journal line; raises only if the
+    broker cannot be built, and `main` contains that."""
+    from src.coverage_watchdog import alert_text, check_coverage, status_line
+
+    status = check_coverage(_build_broker(), now=now, sweep_symbol=_cash_sweep_symbol())
+    line = status_line(status)
+    if not status.should_alert:
+        return line
+    from src.notifier import send_owner_alert
+
+    text = alert_text(status)
+    print(text, file=sys.stderr)
+    delivered = bool(send_owner_alert(text, symbols=[g.symbol for g in status.gaps]))
+    return f"{line}; alert {'delivered' if delivered else 'could NOT be delivered'}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Prove the operator alert channel still works.",
@@ -354,6 +399,16 @@ def main(argv: list[str] | None = None) -> int:
         code, line = run_probe()
 
     print(line)
+
+    if not args.status:
+        # The coverage watchdog rides on this unit because it is the one
+        # thing that still runs while the trading timers are off. It must
+        # never change the probe's verdict: this unit's exit code means
+        # "can the desk reach the owner", nothing else.
+        try:
+            print(run_coverage_check())
+        except Exception as exc:  # noqa: BLE001
+            print(f"coverage_watchdog: could NOT run ({exc})", file=sys.stderr)
     return code
 
 

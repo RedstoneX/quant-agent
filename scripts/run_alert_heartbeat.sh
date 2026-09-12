@@ -31,6 +31,8 @@ if [[ -f "${PROJECT_ROOT}/.env" ]]; then
     set +a
 fi
 
-# 60s is generous for at most three short HTTPS calls, each carrying the
-# notifier's own 5s client timeout.
+# 60s is generous: the probe is at most three short HTTPS calls, each
+# carrying the notifier's own 5s client timeout, and the coverage watchdog
+# that follows it (src/coverage_watchdog.py) adds a handful of read-only
+# broker calls — positions, open stops per position, one calendar lookup.
 exec "$TIMEOUT" --kill-after=15 60 "$PYTHON" scripts/alert_heartbeat.py "$@"

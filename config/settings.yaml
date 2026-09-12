@@ -330,6 +330,15 @@ execution:
   # re-placed DURING MARKET HOURS alerts exactly as guard 2 always has, and a
   # missing whole-share GTC leg alerts at any hour. See
   # `_classify_coverage_gap` and `_reconcile_stop_coverage` in src/pipeline.py.
+  #
+  # THE PRECONDITION ABOVE IS NOW CHECKED. "Re-placed by the next session"
+  # assumes a next session. When the trading timers were paused (2026-09-03)
+  # the sweep stopped with them and ORCL's 0.3089-share remainder sat with
+  # no stop through six full sessions, unreported. `src/coverage_watchdog.py`
+  # (run from the daily 06:15 ET alert heartbeat, which fires whether or not
+  # the trading timers are on) alerts the owner when broker coverage is short
+  # of held AND no session ran during the last trading session — once per
+  # trading day while it holds. Read-only; it never places an order.
   fractional_enabled: true
   fractional_share_decimals: 4
 
