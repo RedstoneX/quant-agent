@@ -161,12 +161,20 @@ def _ma_slope(closes: np.ndarray, period: int, lookback: int) -> float | None:
     return round((float(ma[-1]) - past) / past * 100.0, 2)
 
 
-def _find_unfilled_gaps(bars: list[OHLCV], limit: int) -> list[Gap]:
+def find_unfilled_gaps(bars: list[OHLCV], limit: int) -> list[Gap]:
     """Gaps that price has not since traded back through.
 
     Walks backwards from the most recent bar so the nearest gaps are found
     first, and stops once `limit` are collected — older gaps matter less and
     the list is meant to be read, not exhaustive.
+
+    THE one gap detector (2026-09-12). `src/data/levels.py::
+    unfilled_gap_edge` reuses it for the owner's ruling that a structural
+    level on the far side of an unfilled gap is not a floor — rather than
+    writing a second, subtly different definition of "gap". Note what that
+    reuse inherits: `_MIN_GAP_PCT` (2%), the pre-existing "worth noting"
+    threshold below which a gap is treated as noise. It was not derived for
+    the floor rule and is flagged as such there.
     """
     out: list[Gap] = []
     n = len(bars)
@@ -345,7 +353,7 @@ def compute_market_context(
         sessions_in_range=sessions_in_range,
         avg_dollar_volume_20d=avg_dollar_volume_20d_usd,
         up_down_volume_ratio=up_down_ratio,
-        unfilled_gaps=_find_unfilled_gaps(bars, _MAX_GAPS_REPORTED),
+        unfilled_gaps=find_unfilled_gaps(bars, _MAX_GAPS_REPORTED),
     )
 
 

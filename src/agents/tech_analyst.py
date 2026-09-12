@@ -5,7 +5,11 @@ from pathlib import Path
 from src.agents.base import BaseAgent, AgentResult
 from src.cost_circuit import OptionalPaidAnalysisRetrySkipped, PaidAnalysisSuspended
 from src.data.context import compute_market_context, format_context_block
-from src.data.levels import find_structural_levels, format_levels_block
+from src.data.levels import (
+    find_structural_levels,
+    format_levels_block,
+    unfilled_gap_edge,
+)
 from src.models import TechAnalysisResult, parse_telemetry
 from src.token_budget import pack_to_budget, size_model_for_agent
 
@@ -647,6 +651,10 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # `TechAnalysisResult.computed_level_touches` and
         # docs/RESEARCH_FINDINGS.md §7.
         computed_level_touches_by_sym: dict[str, dict[float, int]] = {}
+        # The binding unfilled-gap edge on each side (2026-09-12, owner
+        # ruling: a level on the far side of an unfilled gap is not a
+        # floor). Same bars, same Python-set discipline as the levels.
+        gap_edges_by_sym: dict[str, tuple[float | None, float | None]] = {}
         for s in symbols_data:
             if not isinstance(s, dict):
                 continue
@@ -662,6 +670,10 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 computed_level_touches_by_sym[sym] = {
                     lv.price: lv.touches for lv in all_levels
                 }
+                gap_edges_by_sym[sym] = (
+                    unfilled_gap_edge(bars, "long"),
+                    unfilled_gap_edge(bars, "short"),
+                )
 
         analyses: dict[str, TechAnalysisResult] = {}
         failed_symbols: list[str] = []
@@ -697,6 +709,11 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     analysis.computed_level_touches = (
                         computed_level_touches_by_sym.get(analysis.symbol, {})
                     )
+                    up_edge, down_edge = gap_edges_by_sym.get(
+                        analysis.symbol, (None, None),
+                    )
+                    analysis.unfilled_up_gap_edge = up_edge
+                    analysis.unfilled_down_gap_edge = down_edge
                     analyses[analysis.symbol] = analysis
                 except Exception as e:
                     bad_symbol = str((item or {}).get("symbol", "?")) if isinstance(item, dict) else "?"

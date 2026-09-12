@@ -864,7 +864,15 @@ def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
     the gate itself.
     """
     from src.models import TechReasoningChain
-    levels = [target] if computed is None else computed
+    levels = list([target] if computed is None else computed)
+    # 2026-09-12, "no floor, no trade": the constructor now refuses a long
+    # with NO computed level below its entry. These fixtures deliberately
+    # keep the stop unbacked, so the floor is a DISTANT shelf at half the
+    # entry — far outside `level_match_atr_tolerance` of any stop here, so
+    # it satisfies the floor requirement without backing the stop, and the
+    # widening tests still test widening.
+    if not any(0 < float(p) < float(entry) for p in levels):
+        levels.append(round(float(entry) * 0.5, 2))
     default_touches = {price: 5 for price in levels}
     return TechAnalysisResult(
         symbol=symbol, rating="buy", entry_price=entry, stop_loss=stop,

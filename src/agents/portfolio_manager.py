@@ -13,6 +13,7 @@ from src.models import (
     SmartMoneyFinding, news_verdict_for_symbol, normalize_sector_stance,
     parse_telemetry,
 )
+from src.data.levels import structural_floor
 from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
 from src.quantities import collapse_stances
 from src.risk.constants import (
@@ -1251,6 +1252,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
               (`signed_source_score`; §9.4 refuses net ≤ 0 outright —
               `agreement_ceiling_for_score` is 0.0 for any score ≤ 0
               whatever the schedule, so no config is needed here)
+          R6  **"No floor, no trade"** (owner decision 2026-09-12, BOTH
+              setup types) — the desk's own level scan found structure on
+              this chart but none on the STOP side of entry (below a long,
+              above a short). Nothing overhead is required: a breakout at
+              new highs has no ceiling by definition. Mirrors
+              `PortfolioConstructor._require_structural_floor`, the
+              enforcing check one stage later.
 
         R1 (current technical coverage) is implied: only symbols with an
         analysis in `analyses` are considered at all. Nothing here removes or
@@ -1317,6 +1325,32 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             ) if sources else 0
             if net <= 0:
                 blocked.append(f"R5 net evidence {net:+d} if {direction} — no rung")
+            # R6 — "No floor, no trade" (owner decision 2026-09-12), BOTH
+            # setup types. Only judged on a chart the desk's own scan
+            # measured and found structure on (`computed_levels` non-empty):
+            # an empty list is either a data fault or a structureless chart,
+            # and both are already refused by name one stage later via
+            # `_derive_target` (and, for a range trade, by R4 here). What
+            # R6 adds is the case R4 cannot see and a breakout label used to
+            # skip entirely: levels exist, none is on the stop side.
+            computed = getattr(analysis, "computed_levels", None) or []
+            # A level on the far side of an unfilled gap is not a floor
+            # (owner ruling, same day) — same edge the constructor reads.
+            gap_edge = getattr(
+                analysis,
+                "unfilled_down_gap_edge" if direction == "short" else "unfilled_up_gap_edge",
+                None,
+            )
+            if computed and structural_floor(
+                computed, analysis.entry_price, direction, gap_edge=gap_edge,
+            ) is None:
+                beyond_gap = structural_floor(computed, analysis.entry_price, direction) is not None
+                blocked.append(
+                    f"R6 no structural {'ceiling above' if direction == 'short' else 'floor below'} "
+                    f"entry"
+                    + (" this side of an unfilled gap" if beyond_gap else "")
+                    + " — nothing for a stop to sit on (no floor, no trade)"
+                )
             verdicts[symbol] = blocked
         return verdicts
 

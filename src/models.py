@@ -727,6 +727,18 @@ class TechAnalysisResult(LLMOutputModel):
     # docs/RESEARCH_FINDINGS.md §7 for the touch-count evidence and the
     # threshold derived from it.
     computed_level_touches: dict[float, int] = Field(default_factory=dict)
+    # PYTHON-SET (2026-09-12), same pattern as the two above: the near edge
+    # of the binding UNFILLED gap on each side of price, from
+    # `src/data/levels.py::unfilled_gap_edge` over the same bars. Owner
+    # ruling: a structural level on the far side of a gap the market has
+    # repriced through is not support anyone is defending, so it cannot be
+    # a floor while the gap is unfilled. `unfilled_up_gap_edge` is the
+    # bottom of the highest unfilled up-gap below price (bounds a LONG's
+    # floor); `unfilled_down_gap_edge` is the top of the lowest unfilled
+    # down-gap above price (bounds a SHORT's). None = no such gap, or not
+    # recorded (older row / hand-built object) — no gap is then assumed.
+    unfilled_up_gap_edge: float | None = None
+    unfilled_down_gap_edge: float | None = None
     # How the position must be MANAGED, decided at entry from the chart:
     #   "range"    — clear structure on both sides. Fixed target is meaningful;
     #                thesis_progress and pace are valid measurements.

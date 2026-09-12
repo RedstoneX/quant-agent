@@ -654,8 +654,11 @@ def test_short_thesis_invalid_if_survives_full_length_unlike_embedded_reasoning(
         symbol="TSLA", rating="sell", entry_price=250.0, stop_loss=262.5,
         reference_target=200.0, reasoning="test",
         support_levels=[200.0], resistance_levels=[262.5],
-        computed_levels=[200.0],
-        computed_level_touches={200.0: 5},
+        # 375 is a distant computed ceiling: a short needs a level ABOVE
+        # entry to have a stop rest on ("no floor, no trade", 2026-09-12);
+        # it is nowhere near the 262.5 stop, so the stop stays unbacked.
+        computed_levels=[200.0, 375.0],
+        computed_level_touches={200.0: 5, 375.0: 5},
         setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=_tech_rc(),
         atr_14=(262.5 - 250.0) / 3.5,

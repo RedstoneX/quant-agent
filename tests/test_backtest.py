@@ -132,11 +132,19 @@ def _build_long_win_series() -> list[OHLCV]:
     for i in range(n_pad):
         drift = 0.0002 * i  # negligible (<= ~$0.04 over the whole window)
         if i in dip_indices:
-            o, h, l, c = 99.8 + drift, 100.0 + drift, 95.00, 99.5 + drift
+            o, h, l, c = 99.8 + drift, 101.5 + drift, 95.00, 99.5 + drift
         elif i in spike_indices:
-            o, h, l, c = 100.2 + drift, 125.00, 100.0 + drift, 100.5 + drift
+            o, h, l, c = 100.2 + drift, 125.00, 98.5 + drift, 100.5 + drift
         else:
-            o, h, l, c = 99.9 + drift, 100.2 + drift, 99.8 + drift, 100.0 + drift
+            # A $3 daily range (ATR ~3) — a real instrument's, not a
+            # hairline. Since 2026-09-12 the level scan's relevance window
+            # is read from ATR (`horizon_reach` at the 60-session cap, ~11.6
+            # ATR), so a $0.40-range series would put the $125 shelf 60+ ATR
+            # away: correctly irrelevant on any real chart, and the trade
+            # this test hand-computes would never exist. At ATR ~3 the
+            # $25 distance is ~8 ATR, inside reach, and the stop arithmetic
+            # below is unchanged (2.5 x 3 = 7.5 < the $10 structural stop).
+            o, h, l, c = 99.9 + drift, 101.5 + drift, 98.5 + drift, 100.0 + drift
         vol = 5_000_000 if i >= n_pad - 5 else 1_000_000
         bars.append(OHLCV(date=d, open=round(o, 4), high=round(h, 4),
                            low=round(l, 4), close=round(c, 4), volume=vol))
@@ -144,8 +152,8 @@ def _build_long_win_series() -> list[OHLCV]:
 
     drift = 0.0002 * n_pad
     bars.append(OHLCV(  # bar 209: signal day
-        date=d, open=round(99.9 + drift, 4), high=round(100.2 + drift, 4),
-        low=round(99.8 + drift, 4), close=round(100.0 + drift, 4), volume=5_000_000,
+        date=d, open=round(99.9 + drift, 4), high=round(101.5 + drift, 4),
+        low=round(98.5 + drift, 4), close=round(100.0 + drift, 4), volume=5_000_000,
     ))
     d += timedelta(days=1)
 
