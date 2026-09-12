@@ -1978,6 +1978,77 @@ class AlpacaBroker:
         "done_for_day", "replaced",
     })
 
+    #: Statuses in which Alpaca has the order but the EXECUTION VENUE does
+    #: not yet. Source: Alpaca's own order-lifecycle reference
+    #: (docs.alpaca.markets/docs/orders-at-alpaca, "Order Lifecycle"):
+    #:   accepted    — "received by Alpaca, but hasn't yet been routed to the
+    #:                  execution venue"
+    #:   pending_new — "received by Alpaca, and routed to the exchanges, but
+    #:                  has not yet been accepted"
+    #: `new` is the first status that means "routed to exchanges for
+    #: execution". A replace PATCH against an order still in one of these
+    #: states is rejected by the broker ("unable to replace order, order
+    #: isn't sent to exchange yet" / "cannot replace order in accepted
+    #: status" in Alpaca's own community forum) — and the two transitional
+    #: statuses `pending_cancel`/`pending_replace` are likewise listed by
+    #: Alpaca's Replace-Order reference as non-replaceable. These are a
+    #: distinct set from `_ORDER_TERMINAL_STATES`: not "done", just "not
+    #: there yet". At the market open — the slowest acknowledgement and the
+    #: time this desk trades most — an order can sit here for seconds.
+    _ORDER_PRE_EXCHANGE_STATES = frozenset({"accepted", "pending_new"})
+
+    #: The only working status a replace is documented AND observed to
+    #: succeed against. `partially_filled` is deliberately excluded: it is
+    #: replaceable at the broker, but this desk never replaces a partially
+    #: filled order (see `_repeg_entry_order`'s partial-fill guard).
+    _ORDER_REPLACEABLE_STATES = frozenset({"new"})
+
+    def wait_for_order_at_exchange(
+        self,
+        order_id: str,
+        timeout_seconds: float = 5.0,
+        poll_interval: float = 1.0,
+        use_stream: bool = True,
+    ) -> str | None:
+        """Wait until the order has LEFT the not-yet-at-exchange states.
+
+        Returns the last known status (lowercased) or None when nothing could
+        be read. The status returned may be:
+          * terminal (`_ORDER_TERMINAL_STATES`) — it filled/cancelled/etc.
+            while we waited; the caller has nothing to reprice;
+          * `new` / `partially_filled` — at the venue, working;
+          * still `accepted` / `pending_new` — the window ran out before the
+            venue acknowledged it. The caller MUST NOT attempt a replace on
+            this outcome: the broker would reject it anyway.
+
+        Same shape as `wait_for_order_terminal`: the real-time `trade_updates`
+        websocket first (the stream emits an update the instant the status
+        changes, so an ordinary open-time acknowledgement costs milliseconds,
+        not the whole window), then one REST read to report the last known
+        status if nothing arrived, and the full REST polling loop only when
+        the stream could not be used at all. No new polling machinery.
+        """
+        stop_states = (
+            self._ORDER_TERMINAL_STATES
+            | self._ORDER_REPLACEABLE_STATES
+            | frozenset({"partially_filled"})
+        )
+        if use_stream:
+            status, connected = self._wait_for_order_status_via_stream(
+                order_id, timeout_seconds, stop_states=stop_states,
+            )
+            if status is not None:
+                return status
+            if connected:
+                return self._get_order_status_once(order_id)
+            logger.warning(
+                "order-status stream unavailable for %s — falling back to "
+                "REST polling for exchange acknowledgement", order_id,
+            )
+        return self._wait_for_order_status_via_polling(
+            order_id, timeout_seconds, poll_interval, stop_states=stop_states,
+        )
+
     def wait_for_order_terminal(
         self,
         order_id: str,
@@ -2048,8 +2119,24 @@ class AlpacaBroker:
     def _wait_for_order_terminal_via_stream(
         self, order_id: str, timeout_seconds: float,
     ) -> tuple[str | None, bool]:
-        """Block until Alpaca's `trade_updates` websocket reports a terminal
-        event for `order_id`, or `timeout_seconds` elapses.
+        """Terminal-state wait on the websocket. See
+        `_wait_for_order_status_via_stream` — this is that method with the
+        stop set fixed to `_ORDER_TERMINAL_STATES`, kept under its original
+        name because the polling/stream tests and `wait_for_order_terminal`
+        address it directly."""
+        return self._wait_for_order_status_via_stream(
+            order_id, timeout_seconds, stop_states=self._ORDER_TERMINAL_STATES,
+        )
+
+    def _wait_for_order_status_via_stream(
+        self, order_id: str, timeout_seconds: float, *,
+        stop_states: frozenset,
+    ) -> tuple[str | None, bool]:
+        """Block until Alpaca's `trade_updates` websocket reports an event
+        for `order_id` whose status is in `stop_states`, or `timeout_seconds`
+        elapses. With `stop_states=_ORDER_TERMINAL_STATES` this is the
+        original fill wait (PR #287); with the terminal set plus `new`, it
+        is the "has the venue acknowledged it yet" wait that gates a replace.
 
         Returns `(status, connected)`:
           - `(status, True)` — a terminal event for this order arrived;
@@ -2089,7 +2176,7 @@ class AlpacaBroker:
                     return
                 status = str(getattr(getattr(order, "status", None), "value",
                                      getattr(order, "status", ""))).lower()
-                if status in self._ORDER_TERMINAL_STATES:
+                if status in stop_states:
                     result["status"] = status
                     matched.set()
                     await stream.stop_ws()
@@ -2134,8 +2221,23 @@ class AlpacaBroker:
         timeout_seconds: float,
         poll_interval: float,
     ) -> str | None:
-        """The original REST-polling implementation, unchanged, kept as the
-        fallback path for when the real-time stream cannot be used at all."""
+        """The original REST-polling implementation, kept as the fallback
+        path for when the real-time stream cannot be used at all."""
+        return self._wait_for_order_status_via_polling(
+            order_id, timeout_seconds, poll_interval,
+            stop_states=self._ORDER_TERMINAL_STATES,
+        )
+
+    def _wait_for_order_status_via_polling(
+        self,
+        order_id: str,
+        timeout_seconds: float,
+        poll_interval: float,
+        *,
+        stop_states: frozenset,
+    ) -> str | None:
+        """REST polling until the status is in `stop_states`, or the window
+        ends. Returns the last known status (possibly one outside the set)."""
         deadline = time.monotonic() + timeout_seconds
         last_status = None
 
@@ -2149,7 +2251,7 @@ class AlpacaBroker:
                 return last_status
 
             last_status = status or last_status
-            if status in self._ORDER_TERMINAL_STATES:
+            if status in stop_states:
                 return status
             time.sleep(poll_interval)
 
@@ -2484,6 +2586,13 @@ class AlpacaBroker:
     ) -> bool:
         """Block until Alpaca has FINISHED replacing `old_order_id`.
 
+        2026-09-12: the entry chase is now a SINGLE decisive reprice (see
+        `_repeg_entry_order`), so there is no second replace to sequence and
+        this is no longer on the entry hot path. Kept because it is the
+        correct primitive if a second replace is ever needed again, and the
+        reasoning below is the reason a ladder was retired: every extra
+        replace is another `pending_replace` window to get stuck in.
+
         Why this exists as a hard gate rather than an optimistic assumption:
         Alpaca refuses to replace an order whose status is `accepted`,
         `pending_new`, `pending_cancel` **or `pending_replace`** (its own
@@ -2553,6 +2662,7 @@ class AlpacaBroker:
         self, symbol: str, order_id: str, stop_price: float,
         *, requested_qty: float | None = None, side: str = "buy",
         superseded_filled_qty: float = 0.0,
+        on_unfilled_cancel=None,
     ) -> dict | None:
         """Wait for an entry order to reach terminal, then place a GTC
         protective stop-limit for the ACTUAL filled qty.
@@ -2565,6 +2675,39 @@ class AlpacaBroker:
         emergency liquidation). Cancelling converges the order; whatever DID
         fill by then gets its stop from the post-cancel re-read. Losing the
         unfilled remainder is the accepted cost of protection-first.
+
+        THIS CANCEL IS THE END-OF-CYCLE CANCEL (owner-approved 2026-09-12),
+        and its timing is derived, not chosen. This desk does not run
+        continuously: it runs as separate scheduled SESSIONS — see
+        `SESSION_WINDOWS` in `src/trading_calendar.py` — each a single
+        process that analyses at the prices and levels of that moment,
+        proposes entries, submits them, protects the fills, and EXITS. New
+        entries come only from the morning session; the midday and close
+        sessions review positions. (The systemd/launchd timer ticks every 30
+        minutes, but that tick only asks `scripts/run_if_et_window.sh`
+        whether a session is due; it is not a re-scan.) So "the decision
+        cycle that created the order" is this very process, and its boundary
+        is the point where this process stops waiting for the fill and moves
+        on — which is exactly here. An entry that outlived its own session
+        would be resting on a thesis nobody is still holding: the next
+        session re-analyses from scratch at real current prices and will
+        re-propose the trade if it still wants it. Cancelling here — rather
+        than leaving a DAY order resting until 16:00 ET — is therefore
+        binding the order's life to the desk's own heartbeat, not to a
+        timeout somebody picked. There is deliberately no separate "cancel
+        after N minutes" constant: the boundary IS the end of this stage, and
+        stays correct if the session schedule ever changes. The only number
+        in play is `_ENTRY_FILL_TIMEOUT_S`, the in-cycle patience for a fill,
+        which predates this and is unchanged.
+
+        `on_unfilled_cancel`, when given, is called with a small dict
+        (`order_id`, `status`, `filled_qty`) after a still-working entry was
+        cancelled here and the post-cancel re-read shows NOTHING filled under
+        any id in its chain. The caller uses it to page the owner with the
+        prices that were tried — this method does not know them. Not invoked
+        for a partial fill (shares were acquired and the stop covers them)
+        or for an order that reached terminal on its own. Never allowed to
+        raise into this method.
 
         `side` is the ENTRY order's own side — "buy" opens or adds to a long
         (the only side any order path in this repo has ever submitted, hence
@@ -2625,18 +2768,23 @@ class AlpacaBroker:
                            symbol, order_id, exc)
             status = None
 
+        cancelled_here = False
         if (status or "").lower() not in self._TERMINAL_ORDER_STATES:
-            # Still working — cancel the remainder so it can't fill unwatched.
+            # Still working at the end of its cycle — cancel the remainder so
+            # it can't fill unwatched and so it stops resting on a thesis
+            # this session is about to walk away from (see the docstring).
             # A fill can land during cancel propagation; the post-cancel
             # re-read below protects whatever landed.
             logger.warning(
-                "entry protection: %s entry %s still working after wait "
-                "(status=%s) — cancelling the unfilled remainder so no share "
-                "can fill without a stop watching it",
+                "entry protection: %s entry %s still working at the end of "
+                "its session (status=%s) — cancelling the unfilled remainder "
+                "so no share can fill without a stop watching it and no "
+                "order outlives the analysis that created it",
                 symbol, order_id, status or "unknown",
             )
             try:
                 self.client.cancel_order_by_id(order_id)
+                cancelled_here = True
             except Exception as exc:  # noqa: BLE001
                 logger.error(
                     "entry protection: cancel of still-working entry %s (%s) "
@@ -2644,7 +2792,9 @@ class AlpacaBroker:
                     "next coverage reconcile", symbol, order_id, exc,
                 )
             try:
-                self.wait_for_order_terminal(order_id, timeout_seconds=10.0)
+                status = self.wait_for_order_terminal(
+                    order_id, timeout_seconds=10.0,
+                ) or status
             except Exception:  # noqa: BLE001
                 pass
 
@@ -2673,6 +2823,18 @@ class AlpacaBroker:
                 "entry protection: %s entry %s filled 0 (status=%s) — no stop "
                 "placed (nothing to protect)", symbol, order_id, status or "unknown",
             )
+            if cancelled_here and on_unfilled_cancel is not None:
+                try:
+                    on_unfilled_cancel({
+                        "order_id": order_id,
+                        "status": (status or "").lower() or "unknown",
+                        "filled_qty": 0.0,
+                    })
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "entry protection: unfilled-cancel callback for %s "
+                        "raised: %s", symbol, exc,
+                    )
             return None
         if requested_qty and filled_qty < requested_qty:
             logger.warning(

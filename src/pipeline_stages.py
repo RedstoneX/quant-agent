@@ -36,7 +36,6 @@ import logging
 import math
 import re
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
@@ -215,8 +214,8 @@ def _book_risk_inputs(ctx, total_value: float):
 _WAL_REPEG_SENTINEL = "__WAL_REPEG_PENDING__"
 
 
-def _repeg_settings(pipeline) -> tuple[int, float, float] | None:
-    """(max_attempts, poll_seconds, slippage_bps), or None when re-peg is off.
+def _repeg_settings(pipeline) -> tuple[float, float] | None:
+    """(poll_seconds, slippage_bps), or None when re-peg is off.
 
     Returns None — feature disabled — for anything other than an explicit
     `repeg_enabled is True`. The isinstance guards are the same convention as
@@ -228,13 +227,6 @@ def _repeg_settings(pipeline) -> tuple[int, float, float] | None:
     if getattr(execution_cfg, "repeg_enabled", None) is not True:
         return None
 
-    raw_attempts = getattr(execution_cfg, "repeg_max_attempts", None)
-    attempts = (
-        int(raw_attempts)
-        if isinstance(raw_attempts, int) and not isinstance(raw_attempts, bool)
-        and 1 <= raw_attempts <= 5
-        else 2
-    )
     raw_poll = getattr(execution_cfg, "repeg_poll_seconds", None)
     poll = (
         float(raw_poll)
@@ -249,73 +241,115 @@ def _repeg_settings(pipeline) -> tuple[int, float, float] | None:
         and raw_bps > 0
         else MAX_ENTRY_SLIPPAGE_BPS
     )
-    return attempts, poll, bps
+    return poll, bps
+
+
+#: Plain-language endings for the single-shot reprice, keyed by the
+#: `repeg_outcome` written into the entry spec. Read by the end-of-session
+#: cancel alert so the owner is told what WAS and WAS NOT tried, in words —
+#: never colour or an emoji standing alone (the owner is red/green colour
+#: blind and severity must survive being read as plain text).
+_REPEG_OUTCOME_TEXT = {
+    "disabled": "automatic repricing is switched off (execution.repeg_enabled)",
+    "no_room": "it was already sitting at the slippage ceiling, so there was "
+               "no legal price left to reprice to",
+    "not_at_exchange": "the exchange had not acknowledged it within the "
+                       "window, so a reprice was NOT attempted (Alpaca "
+                       "rejects a replace on an order that has not reached "
+                       "the exchange)",
+    "market_within_limit": "the market was at or below the limit, so it "
+                           "should have filled without a reprice",
+    "replaced": "it was repriced ONCE to a market-crossing price",
+    "replace_rejected": "one reprice was attempted and the broker refused it",
+    "replace_unknown": "one reprice was attempted and its outcome could not "
+                       "be read back from the broker",
+    "wal_refused": "a reprice was NOT attempted because its recovery record "
+                   "could not be written first",
+    "wait_failed": "a reprice was NOT attempted because the order's status "
+                   "could not be read",
+    "quote_unavailable": "a reprice was NOT attempted because no quote was "
+                         "available",
+    "unpriced": "a reprice was NOT attempted (no reference or limit price)",
+}
 
 
 def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
-    """Walk a working entry limit toward the market, bounded twice over.
+    """ONE decisive reprice of a working entry limit — not a ladder.
 
-    Returns ``(order_id_to_protect, shares_filled_under_superseded_ids)``.
+    Returns ``(order_id_to_protect, shares_filled_under_superseded_ids)`` and
+    writes ``spec["attempted_prices"]`` / ``spec["repeg_outcome"]`` so the
+    end-of-session cancel alert can say exactly what was tried.
 
-    THE THREE BOUNDS, all hard:
-      * **Price** — the limit never goes above the slippage ceiling the entry
-        was already gated on: ``reference * (1 + max_entry_slippage_bps)``.
-        The ceiling is computed from the reference captured at submission, NOT
-        re-derived from a fresh quote, because a ceiling that follows the
-        market is not a ceiling.
-      * **Count** — at most `repeg_max_attempts` replacements. A replacement
-        mints a new order id; an unbounded loop is an unbounded chain.
-      * **Wall clock** — `repeg_max_attempts * repeg_poll_seconds`, checked
-        against a monotonic deadline at the top of every attempt and used to
-        shorten the last wait so it cannot overrun. This number is NOT a new
-        invented constant: it is the latency budget `ExecutionConfig`'s own
-        docstring has always CLAIMED this function is bounded by
-        ("Total added latency per entry is bounded by `repeg_max_attempts *
-        repeg_poll_seconds`"). That claim was previously false — a wait that
-        overran, a slow quote or a slow replace round-trip could push the
-        real elapsed time past it without limit, because nothing measured
-        it. The deadline makes the documented bound the enforced one.
-        Deliberately no new config knob: a second, differently-derived
-        number would just be one more thing to keep consistent.
+    WHY ONE REPLACE, NOT A LADDER (rebuilt 2026-09-12, owner-approved).
+    PR #311 walked the limit up in small steps, confirming each swap before
+    the next. Two things from Alpaca's own community and docs retired that:
+      * the practice real users converge on for a fast market is submit,
+        wait a few seconds, then replace ONCE at a deliberately aggressive
+        price that crosses the market — not a sequence of nudges that each
+        arrive after the market has moved again;
+      * every replace is another `pending_replace` window to get stuck in
+        (a real user reported a position left unmanageable that way), so
+        the number of replaces is exposure, and one is the minimum.
 
-    WHEN THE CHASE ENDS WITHOUT A FILL, THE OWNER IS TOLD. An entry that is
-    walked to its ceiling and still does not fill used to leave nothing but a
-    log line and a pipeline-event row — the order simply stopped being chased
-    and nobody was told. That is the exact "an order must never simply die
-    with no trace" case: it is a lost opportunity the desk chose, silently.
-    `_alert_owner_repeg_exhausted` now fires a STANDALONE Telegram alert (see
-    that function for which endings do and do not page).
+    WHAT "DECISIVE" MEANS HERE, WITH NO NEW NUMBER. The single reprice goes
+    straight to the slippage CEILING — ``reference * (1 + max_entry_slippage
+    _bps)`` — the price this entry was already approved to pay when it was
+    gated at submission. A buy limit at the ceiling crosses any ask at or
+    below it and executes at the ask, not at the limit, so it is the most
+    aggressive legal price and costs nothing extra when the market is
+    inside it. It is the ONE bound that was already there; no "cross by X
+    cents" constant is invented on top of it. The ceiling is computed from
+    the reference captured at submission, NOT a fresh quote, because a
+    ceiling that follows the market is not a ceiling — and it is absolute:
+    nothing here can price above it to force a fill.
 
-    THE FOOTGUN. Alpaca does not edit an order in place. It cancels the old
-    one and creates a NEW one with a NEW id, and the old id is dead the
-    instant the PATCH is accepted. Three consequences drive every branch here:
+    THE OPEN-MARKET DEFECT THIS FIXES. A replace against an order Alpaca has
+    accepted but the exchange has not yet acknowledged is REJECTED
+    ("unable to replace order, order isn't sent to exchange yet"). At the
+    open — slowest acknowledgement, highest volatility, and when this desk
+    trades most — the old first nudge at ~5s was the attempt most likely to
+    be thrown away. So the reprice is now GATED on the order having left
+    Alpaca's not-yet-at-exchange statuses (`accepted`, `pending_new`; see
+    `AlpacaBroker._ORDER_PRE_EXCHANGE_STATES` for the sourced list), read
+    from the same `trade_updates` websocket as the fill wait. If it never
+    gets there inside the window, no replace is sent — that attempt would
+    be rejected anyway — and the reason is recorded honestly.
 
-      1. `trades.broker_order_id` must be repointed or fill reconciliation
-         follows a dead id and concludes the order vanished. That repoint is
-         write-ahead-logged (`pending_repegs`) so a crash mid-replace is
-         recoverable from the broker rather than lost.
-      2. A partially filled order must NEVER be replaced. Fill counters do not
-         carry across a replacement, so re-pegging after a partial is how the
-         same idea gets bought twice. This function therefore re-reads the fill
-         immediately before each attempt and gives up the moment it sees any
-         fill at all — leaving the order working, which is the outcome that
-         risks doing nothing.
-      3. A replacement can be rejected because the order filled in the
-         meantime. That is not an error; it is the good case. The original id
-         stays authoritative and the chase stops.
+    WHAT HAPPENS TO AN UNFILLED ORDER AFTERWARDS. It is NOT left working.
+    `place_entry_protection` cancels any entry still working at the end of
+    this session and pages the owner (see that method for the derivation:
+    the cancel is bound to the desk's own session boundary, not a timeout).
 
-    Never raises: a re-peg failing must leave the ordinary
-    "protect whatever filled" path exactly as it was.
+    TIME. This adds at most ``2 * repeg_poll_seconds`` plus one replace
+    round-trip before protection: one window to let the order work, and —
+    only if the venue has not acknowledged it yet — one more to wait for
+    that acknowledgement.
+
+    THE FOOTGUN (unchanged). Alpaca does not edit an order in place. It
+    cancels the old one and creates a NEW one with a NEW id:
+      1. `trades.broker_order_id` must be repointed, write-ahead-logged
+         (`pending_repegs`) so a crash mid-replace is recoverable.
+      2. A partially filled order must NEVER be replaced — fill counters do
+         not carry across a replacement. The fill is re-read immediately
+         before the replace and any fill at all stops it.
+      3. A replacement rejected because the order filled first is the good
+         case; the original id stays authoritative.
+
+    Never raises: a re-peg failing must leave the ordinary "protect whatever
+    filled" path exactly as it was.
     """
     order_id = str(spec.get("order_id") or "")
     symbol = spec.get("symbol")
+    spec.setdefault("attempted_prices", [])
     if not order_id:
+        spec["repeg_outcome"] = "unpriced"
         return order_id, 0.0
 
     settings = _repeg_settings(pipeline)
     if settings is None:
+        spec["repeg_outcome"] = "disabled"
         return order_id, 0.0
-    max_attempts, poll_seconds, slippage_bps = settings
+    poll_seconds, slippage_bps = settings
 
     reference = spec.get("reference_price")
     limit_price = spec.get("limit_price")
@@ -323,180 +357,173 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
     trade_row_id = spec.get("trade_row_id")
 
     if not isinstance(reference, (int, float)) or reference <= 0:
+        spec["repeg_outcome"] = "unpriced"
         return order_id, 0.0
     if not isinstance(limit_price, (int, float)) or limit_price <= 0:
         # A market order has no limit to walk.
+        spec["repeg_outcome"] = "unpriced"
         return order_id, 0.0
 
     ceiling = reference * (1 + slippage_bps / 10_000.0)
     ceiling = round(ceiling, 2 if ceiling >= 1 else 4)
+    spec["ceiling"] = ceiling
     if limit_price >= ceiling - 1e-9:
         # Expected for most entries: since PR #111 the submitted limit IS the
-        # ceiling, so there is nothing to walk toward. Re-peg has room only
+        # ceiling, so there is nothing to reprice toward. Room exists only
         # when the limit was set below the ceiling — e.g. the quote was
         # unavailable at submission and the analyst's entry price was used.
         logger.debug(
             "re-peg %s: limit $%.4f is already at the %.0fbp ceiling $%.4f — "
             "nothing to chase", symbol, limit_price, slippage_bps, ceiling,
         )
+        spec["repeg_outcome"] = "no_room"
         return order_id, 0.0
 
-    carried_fill = 0.0
-    attempted_prices: list[float] = []
-    attempts_made = 0
-    # The wall-clock bound. Monotonic, so a clock adjustment mid-session
-    # cannot extend or collapse it.
-    deadline = time.monotonic() + max_attempts * poll_seconds
-    for attempt in range(1, max_attempts + 1):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            logger.info(
-                "re-peg %s: %.1fs wall-clock budget spent after %d attempt(s) "
-                "— order %s left working at its last price",
-                symbol, max_attempts * poll_seconds, attempts_made, order_id,
-            )
-            _record_pipeline_event(
-                pipeline, ctx, symbol, "repeg", "time_budget_exhausted",
-                "repeg_time_budget", broker_order_id=order_id,
-                attempts=attempts_made,
-                budget_seconds=max_attempts * poll_seconds,
-            )
-            _alert_owner_repeg_exhausted(
-                pipeline, symbol=symbol, order_id=order_id,
-                attempts=attempts_made, attempted_prices=attempted_prices,
-                ceiling=ceiling, reason="time_budget",
-            )
-            return order_id, carried_fill
-
-        # Let it work first. A marketable limit usually fills here and the
-        # cheapest re-peg is the one never sent. The wait is clipped to what
-        # is left of the budget so the last attempt cannot overrun it.
-        try:
-            wait_seconds = min(poll_seconds, remaining)
-            status = pipeline.broker.wait_for_order_terminal(
-                order_id, timeout_seconds=wait_seconds,
-                poll_interval=min(1.0, wait_seconds),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("re-peg %s: wait failed (%s) — leaving the order "
-                           "as-is", symbol, exc)
-            return order_id, carried_fill
-        if str(status or "").lower() in pipeline.broker._TERMINAL_ORDER_STATES:
-            return order_id, carried_fill
-
-        try:
-            info = pipeline.broker.get_order_fill_info(order_id) or {}
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("re-peg %s: fill read failed (%s) — leaving the "
-                           "order as-is", symbol, exc)
-            return order_id, carried_fill
-        if str(info.get("status") or "").lower() in pipeline.broker._TERMINAL_ORDER_STATES:
-            return order_id, carried_fill
-        try:
-            filled_so_far = float(info.get("filled_qty") or 0)
-        except (TypeError, ValueError):
-            filled_so_far = 0.0
-        if filled_so_far > 0:
-            # Partial fill. STOP. Replacing now would re-peg a quantity the
-            # broker has already partly executed, and the only failure mode
-            # worth being paranoid about on this path is buying twice.
-            logger.info(
-                "re-peg %s: %.4f share(s) already filled on %s — not "
-                "replacing a partially filled order; the working remainder "
-                "is handed to entry protection unchanged",
-                symbol, filled_so_far, order_id,
-            )
-            _record_pipeline_event(
-                pipeline, ctx, symbol, "repeg", "abandoned_partial_fill",
-                "repeg_partial_fill", broker_order_id=order_id,
-                fill_qty=filled_so_far, attempt=attempt,
-            )
-            return order_id, carried_fill
-
-        # Where is the market now?
-        try:
-            quote = pipeline.broker.get_latest_quote(symbol)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("re-peg %s: quote failed (%s)", symbol, exc)
-            return order_id, carried_fill
-        ask = quote.get("ask_price") if isinstance(quote, dict) else None
-        if not isinstance(ask, (int, float)) or ask <= 0:
-            return order_id, carried_fill
-
-        target = min(float(ask), ceiling)
-        target = round(target, 2 if target >= 1 else 4)
-        if target <= limit_price + 1e-9:
-            # Either the market came back to us or the ceiling binds. Both
-            # mean: leave the order working at its current price.
-            logger.info(
-                "re-peg %s: no room — ask $%.4f vs limit $%.4f, ceiling "
-                "$%.4f. Order left working.", symbol, ask, limit_price, ceiling,
-            )
-            _record_pipeline_event(
-                pipeline, ctx, symbol, "repeg", "ceiling_reached",
-                "repeg_no_room", broker_order_id=order_id, ask=float(ask),
-                limit_price=limit_price, ceiling=ceiling, attempt=attempt,
-            )
-            if attempts_made:
-                # We DID chase — walked the limit up one or more times, and
-                # the market still ran away faster than the ceiling allows.
-                # That is repricing exhausted by the price bound rather than
-                # the count bound, and it ends the same way: an unfilled
-                # order the desk has stopped working on. It pages.
-                #
-                # When `attempts_made` is zero this is the market simply
-                # never moving against us on the first look — nothing was
-                # tried, nothing is exhausted, and the order is still
-                # perfectly likely to fill on its own. Paging there would
-                # page on almost every ordinary entry.
-                _alert_owner_repeg_exhausted(
-                    pipeline, symbol=symbol, order_id=order_id,
-                    attempts=attempts_made, attempted_prices=attempted_prices,
-                    ceiling=ceiling, reason="price_ceiling",
-                )
-            return order_id, carried_fill
-
-        attempts_made = attempt
-        attempted_prices.append(target)
-        new_id, carried_fill, keep_going = _apply_repeg(
-            pipeline, ctx, symbol=symbol, order_id=order_id,
-            trade_row_id=trade_row_id, target=target,
-            requested_qty=requested_qty, attempt=attempt,
-            ceiling=ceiling,
-            # Confirming the swap is itself part of the same latency budget,
-            # so it is clipped to whatever is left of it.
-            confirm_seconds=max(
-                0.1, min(poll_seconds, deadline - time.monotonic()),
-            ),
-            is_last_attempt=(attempt >= max_attempts),
+    # 1. Let it work first. A marketable limit usually fills here and the
+    #    cheapest reprice is the one never sent.
+    try:
+        status = pipeline.broker.wait_for_order_terminal(
+            order_id, timeout_seconds=poll_seconds,
+            poll_interval=min(1.0, poll_seconds),
         )
-        order_id = new_id
-        if not keep_going:
-            return order_id, carried_fill
-        limit_price = target
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("re-peg %s: wait failed (%s) — leaving the order "
+                       "as-is", symbol, exc)
+        spec["repeg_outcome"] = "wait_failed"
+        return order_id, 0.0
+    status = str(status or "").lower()
+    if status in pipeline.broker._TERMINAL_ORDER_STATES:
+        spec["repeg_outcome"] = "terminal_before_reprice"
+        return order_id, 0.0
 
-    logger.info(
-        "re-peg %s: attempt cap (%d) reached — order %s left working at the "
-        "last re-pegged price", symbol, max_attempts, order_id,
+    # 2. Has the EXCHANGE got it yet? A replace before that is rejected.
+    #    Only pay this second window when the first one ended with the order
+    #    still in a pre-exchange status.
+    if status not in pipeline.broker._ORDER_REPLACEABLE_STATES and \
+            status != "partially_filled":
+        try:
+            status = pipeline.broker.wait_for_order_at_exchange(
+                order_id, timeout_seconds=poll_seconds,
+                poll_interval=min(1.0, poll_seconds),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("re-peg %s: exchange-ack wait failed (%s) — "
+                           "leaving the order as-is", symbol, exc)
+            spec["repeg_outcome"] = "wait_failed"
+            return order_id, 0.0
+        status = str(status or "").lower()
+        if status in pipeline.broker._TERMINAL_ORDER_STATES:
+            spec["repeg_outcome"] = "terminal_before_reprice"
+            return order_id, 0.0
+        if status not in pipeline.broker._ORDER_REPLACEABLE_STATES and \
+                status != "partially_filled":
+            logger.info(
+                "re-peg %s: order %s still %r after %.1fs — the exchange has "
+                "not acknowledged it, so a replace would be rejected; NOT "
+                "repricing. It is handed to end-of-session handling as-is.",
+                symbol, order_id, status or "unknown", poll_seconds,
+            )
+            _record_pipeline_event(
+                pipeline, ctx, symbol, "repeg", "not_at_exchange",
+                "repeg_not_at_exchange", broker_order_id=order_id,
+                status=status or "unknown", window_seconds=poll_seconds,
+            )
+            spec["repeg_outcome"] = "not_at_exchange"
+            return order_id, 0.0
+
+    # 3. The partial-fill guard, re-read immediately before the replace.
+    try:
+        info = pipeline.broker.get_order_fill_info(order_id) or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("re-peg %s: fill read failed (%s) — leaving the "
+                       "order as-is", symbol, exc)
+        spec["repeg_outcome"] = "wait_failed"
+        return order_id, 0.0
+    if str(info.get("status") or "").lower() in pipeline.broker._TERMINAL_ORDER_STATES:
+        spec["repeg_outcome"] = "terminal_before_reprice"
+        return order_id, 0.0
+    try:
+        filled_so_far = float(info.get("filled_qty") or 0)
+    except (TypeError, ValueError):
+        filled_so_far = 0.0
+    if filled_so_far > 0:
+        # Partial fill. STOP. Replacing now would re-peg a quantity the
+        # broker has already partly executed, and the only failure mode
+        # worth being paranoid about on this path is buying twice.
+        logger.info(
+            "re-peg %s: %.4f share(s) already filled on %s — not "
+            "replacing a partially filled order; the working remainder "
+            "is handed to entry protection unchanged",
+            symbol, filled_so_far, order_id,
+        )
+        _record_pipeline_event(
+            pipeline, ctx, symbol, "repeg", "abandoned_partial_fill",
+            "repeg_partial_fill", broker_order_id=order_id,
+            fill_qty=filled_so_far,
+        )
+        spec["repeg_outcome"] = "partial_fill"
+        return order_id, 0.0
+
+    # 4. Where is the market? Only to decide whether a reprice is needed at
+    #    all — the PRICE is the ceiling regardless, never the ask plus
+    #    something.
+    try:
+        quote = pipeline.broker.get_latest_quote(symbol)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("re-peg %s: quote failed (%s)", symbol, exc)
+        spec["repeg_outcome"] = "quote_unavailable"
+        return order_id, 0.0
+    ask = quote.get("ask_price") if isinstance(quote, dict) else None
+    if not isinstance(ask, (int, float)) or ask <= 0:
+        spec["repeg_outcome"] = "quote_unavailable"
+        return order_id, 0.0
+    if float(ask) <= limit_price + 1e-9:
+        # The market is at or inside our limit: the order is marketable as
+        # it stands and a replace would only re-queue it. Leave it working.
+        logger.info(
+            "re-peg %s: ask $%.4f is at/below limit $%.4f — order is "
+            "marketable as-is, no reprice", symbol, ask, limit_price,
+        )
+        _record_pipeline_event(
+            pipeline, ctx, symbol, "repeg", "market_within_limit",
+            "repeg_no_reprice_needed", broker_order_id=order_id,
+            ask=float(ask), limit_price=limit_price, ceiling=ceiling,
+        )
+        spec["repeg_outcome"] = "market_within_limit"
+        return order_id, 0.0
+
+    # 5. THE ONE REPRICE. Straight to the ceiling — the maximum price this
+    #    entry was already approved for. Crosses the market when the ask is
+    #    inside the ceiling; when the ask has run past the ceiling this is
+    #    still the best legal price and is sent once, not chased.
+    target = ceiling
+    target = round(target, 2 if target >= 1 else 4)
+    assert target <= ceiling + 1e-9
+    crosses = float(ask) <= target + 1e-9
+    if not crosses:
+        logger.info(
+            "re-peg %s: ask $%.4f is ABOVE the ceiling $%.4f — the single "
+            "reprice cannot cross the market; sending it at the ceiling "
+            "anyway as the best legal price", symbol, ask, ceiling,
+        )
+    spec["attempted_prices"].append(target)
+    new_id, carried_fill, outcome = _apply_repeg(
+        pipeline, ctx, symbol=symbol, order_id=order_id,
+        trade_row_id=trade_row_id, target=target,
+        requested_qty=requested_qty, ceiling=ceiling,
+        ask=float(ask), crosses_market=crosses,
     )
-    _record_pipeline_event(
-        pipeline, ctx, symbol, "repeg", "attempt_cap_reached",
-        "repeg_attempt_cap", broker_order_id=order_id, attempts=max_attempts,
-    )
-    _alert_owner_repeg_exhausted(
-        pipeline, symbol=symbol, order_id=order_id, attempts=attempts_made,
-        attempted_prices=attempted_prices, ceiling=ceiling,
-        reason="attempt_cap",
-    )
-    return order_id, carried_fill
+    spec["repeg_outcome"] = outcome
+    return new_id, carried_fill
 
 
 # AUTO-RESUBMISSION IS DELIBERATELY NOT IMPLEMENTED — a live owner decision,
 # not an oversight. The owner raised it as a possibility ("maybe there's
 # other options like just wait again and resubmit... it could all be
 # automatic"), which is a possibility to consider, not a ratified
-# instruction, so the safe half is what ships: bounded automatic repricing
-# with no human in the loop, then an alert.
+# instruction, so the safe half is what ships: one bounded automatic
+# reprice with no human in the loop, an end-of-session cancel, then an
+# alert.
 #
 # Why the line is drawn exactly there. Repricing an EXISTING order is bounded
 # by construction — one order stays one order, it can never cross the
@@ -515,34 +542,20 @@ def _repeg_entry_order(pipeline, ctx, spec: dict) -> tuple[str, float]:
 # Neither exists today. Left as a follow-up.
 
 
-#: Human-readable ending for each way the chase can run out. Text, never
-#: colour or an emoji standing alone — the owner is red/green colour blind
-#: and severity must survive being read as plain words.
-_REPEG_EXHAUSTION_REASONS = {
-    "attempt_cap": (
-        "the re-peg attempt cap was reached and it still had not filled"
-    ),
-    "price_ceiling": (
-        "the market ran past the slippage ceiling this entry was approved "
-        "against, so there was no legal price left to chase"
-    ),
-    "time_budget": (
-        "the re-peg time budget was spent and it still had not filled"
-    ),
-}
-
-
-def _alert_owner_repeg_exhausted(
-    pipeline, *, symbol, order_id: str, attempts: int,
-    attempted_prices: list[float], ceiling: float, reason: str,
-) -> None:
-    """The entry was chased, it did not fill, and the desk has stopped. PAGE.
+def _alert_owner_entry_cancelled(pipeline, spec: dict, info: dict) -> None:
+    """An entry was cancelled unfilled at the end of its session. PAGE.
 
     The owner's requirement in his own words: an order must never simply die
     with no trace, and if the automatic attempts are exhausted he wants to be
     told so he has a choice. Everything up to this point is deliberately
-    hands-off — the ordinary stalling entry is repriced and filled with no
-    human involved. This fires only once that automatic path is out of road.
+    hands-off — the ordinary stalling entry is repriced once and filled with
+    no human involved. This fires only once the session has given up on it.
+
+    This is ALSO the "repricing exhausted" alert: since 2026-09-12 an
+    unfilled entry is cancelled rather than left working, so "the reprice
+    ran out" and "the order was cancelled" are the same event and get ONE
+    message, not two. It fires whether or not repricing is enabled — the
+    cancel happens either way, and the text says what was and was not tried.
 
     A SEPARATE Telegram message via `send_owner_alert`, never a line inside
     the session summary, per this desk's standing alert-design rule (see
@@ -555,10 +568,10 @@ def _alert_owner_repeg_exhausted(
     away:
       * the order FILLED (the whole point) — including a fill that landed
         mid-replace and a replacement the broker refused because it filled;
-      * a PARTIAL fill — shares were acquired and the stop covers them;
-      * re-peg switched off, or an order already sitting at its ceiling with
-        nothing to chase (the post-PR-#111 normal case);
-      * the market coming back to us before any replacement was attempted.
+      * a PARTIAL fill — shares were acquired and the stop covers them (the
+        unfilled remainder is cancelled by protection as before, silently);
+      * an order that reached a terminal state on its own (expired,
+        rejected) — that is a different failure with its own reporting.
 
     NOT deduplicated, matching the data-quality alert's stated reasoning: if
     the same symbol stalls again tomorrow that is a real repeated event, not
@@ -568,45 +581,61 @@ def _alert_owner_repeg_exhausted(
     reporting on.
     """
     try:
-        tried = (
-            " → ".join(f"${p:,.2f}" for p in attempted_prices)
-            if attempted_prices else "no price change was accepted"
+        symbol = spec.get("symbol")
+        attempted = list(spec.get("attempted_prices") or [])
+        limit_price = spec.get("limit_price")
+        ceiling = spec.get("ceiling")
+        outcome = str(spec.get("repeg_outcome") or "")
+        ending = _REPEG_OUTCOME_TEXT.get(
+            outcome, "no automatic reprice was made",
         )
-        ending = _REPEG_EXHAUSTION_REASONS.get(
-            reason, "the automatic re-peg path ended"
+        prices = [p for p in [limit_price] if isinstance(p, (int, float))]
+        prices += attempted
+        tried = (
+            " → ".join(f"${p:,.2f}" for p in prices)
+            if prices else "(no limit price recorded — market order)"
+        )
+        ceiling_line = (
+            f"Ceiling it may not cross: ${ceiling:,.2f}\n"
+            if isinstance(ceiling, (int, float)) else ""
         )
         body = (
-            "ENTRY DID NOT FILL — automatic repricing exhausted\n"
-            f"{symbol}: the buy limit was repriced {attempts} time(s) toward "
-            f"the market and {ending}.\n"
+            "ENTRY DID NOT FILL — cancelled at the end of its session\n"
+            f"{symbol}: the entry limit did not fill; {ending}.\n"
             f"Prices tried: {tried}\n"
-            f"Ceiling it may not cross: ${ceiling:,.2f}\n"
-            f"Broker order still working: {order_id}\n"
+            f"{ceiling_line}"
+            f"Broker order {info.get('order_id')}: CANCELLED (last status "
+            f"{info.get('status', 'unknown')}), filled 0. It was NOT left "
+            "working at the broker.\n"
             "\n"
-            "OUTCOME: the order has been LEFT WORKING at the broker at its "
-            "last price — it was not cancelled, so it can still fill on its "
-            "own, and it expires with the trading day like any other DAY "
-            "order. Nothing new was submitted automatically.\n"
-            "YOUR CHOICE: leave it (it may still fill), cancel it, or place "
-            "a fresh entry at a price you are willing to pay. The desk will "
-            "not resubmit this one by itself."
+            "WHY CANCELLED: this desk re-analyses from scratch each session "
+            "at current prices. An order resting past its own session would "
+            "be acting on analysis the desk has already replaced. If the "
+            "next session still wants this trade it will propose it again "
+            "at real current prices.\n"
+            "Nothing new was submitted automatically — the desk will not "
+            "resubmit this one by itself. YOUR CHOICE: leave it to the next "
+            "session, or place a fresh entry at a price you are willing to "
+            "pay."
         )
         from src import notifier as _notifier
         _notifier.send_owner_alert(body, symbols=[str(symbol)])
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "re-peg %s: exhaustion alert could not be sent: %s", symbol, exc,
+            "entry-cancel alert for %s could not be sent: %s",
+            spec.get("symbol"), exc,
         )
 
 
 def _apply_repeg(
     pipeline, ctx, *, symbol, order_id: str, trade_row_id, target: float,
-    requested_qty, attempt: int, ceiling: float,
-    confirm_seconds: float = 5.0, is_last_attempt: bool = True,
-) -> tuple[str, float, bool]:
-    """One write-ahead-logged replacement.
+    requested_qty, ceiling: float, ask: float | None = None,
+    crosses_market: bool = True,
+) -> tuple[str, float, str]:
+    """The one write-ahead-logged replacement.
 
-    Returns ``(order_id_now_authoritative, superseded_filled_qty, keep_going)``.
+    Returns ``(order_id_now_authoritative, superseded_filled_qty, outcome)``
+    where `outcome` is a `_REPEG_OUTCOME_TEXT` key.
 
     The WAL row is the whole point of this function. Between the PATCH
     landing at Alpaca and `repoint_trade_broker_order_id` committing, the
@@ -617,6 +646,11 @@ def _apply_repeg(
     untracked. With the row written first, `_drain_pending_repegs` at the next
     session start re-reads the old id, follows Alpaca's `replaced_by` link,
     and repoints the trades row.
+
+    There is no "confirm the swap before the next replace" step any more:
+    this is the only replace, and nothing is sent after it. Alpaca's
+    one-replace-at-a-time rule (`await_replacement_confirmed`) therefore has
+    nothing to protect here.
     """
     try:
         wal_row_id = pipeline.db.insert_pending_repeg(
@@ -631,7 +665,7 @@ def _apply_repeg(
             "order %s. An unlogged replacement is an untrackable order.",
             symbol, exc, order_id,
         )
-        return order_id, 0.0, False
+        return order_id, 0.0, "wal_refused"
 
     result = pipeline.broker.replace_entry_limit(
         order_id, target,
@@ -646,19 +680,19 @@ def _apply_repeg(
         resolved = pipeline.broker.resolve_replacement_chain(order_id)
         if resolved is None:
             # Broker unreadable. Leave the WAL row standing; the drain owns it
-            # from here. Stop chasing.
+            # from here.
             logger.error(
                 "re-peg %s: replacement of %s failed AND the order could not "
                 "be re-read — leaving WAL row %s for the session-start drain",
                 symbol, order_id, wal_row_id,
             )
-            return order_id, 0.0, False
+            return order_id, 0.0, "replace_unknown"
         if resolved == order_id:
             # Nothing was minted; the original order is still the only one.
             _delete_repeg_wal(pipeline, wal_row_id)
             logger.info(
                 "re-peg %s: broker refused the replacement of %s (%s) — the "
-                "original order remains authoritative; chase stops",
+                "original order remains authoritative",
                 symbol, order_id, (result or {}).get("status", "unknown"),
             )
             _record_pipeline_event(
@@ -666,9 +700,8 @@ def _apply_repeg(
                 "repeg_replace_rejected", broker_order_id=order_id,
                 detail=str((result or {}).get("detail") or
                            (result or {}).get("status") or ""),
-                attempt=attempt,
             )
-            return order_id, 0.0, False
+            return order_id, 0.0, "replace_rejected"
         # The PATCH actually landed even though the response was lost.
         logger.warning(
             "re-peg %s: replacement of %s reported failure but the broker "
@@ -689,11 +722,14 @@ def _apply_repeg(
     _record_pipeline_event(
         pipeline, ctx, symbol, "repeg", "replaced", "repeg_replaced",
         broker_order_id=str(new_id), replaces_order_id=order_id,
-        limit_price=target, ceiling=ceiling, attempt=attempt,
+        limit_price=target, ceiling=ceiling, ask=ask,
+        crosses_market=bool(crosses_market),
     )
     logger.info(
-        "re-peg %s attempt %d: order %s → %s at $%.4f (ceiling $%.4f)",
-        symbol, attempt, order_id, new_id, target, ceiling,
+        "re-peg %s: ONE reprice, order %s → %s at $%.4f (ceiling $%.4f, "
+        "ask $%s, crosses market: %s)",
+        symbol, order_id, new_id, target, ceiling,
+        f"{ask:.4f}" if isinstance(ask, (int, float)) else "?", crosses_market,
     )
 
     # THE RACE. The order could have filled between the zero-fill read above
@@ -721,61 +757,10 @@ def _apply_repeg(
             pipeline, ctx, symbol, "repeg", "raced_partial_fill",
             "repeg_ancestor_filled", broker_order_id=str(new_id),
             replaces_order_id=order_id, fill_qty=ancestor_filled,
-            attempt=attempt,
         )
-        return str(new_id), ancestor_filled, False
+        return str(new_id), ancestor_filled, "partial_fill"
 
-    if not is_last_attempt:
-        # ONE REPLACE AT A TIME — a hard Alpaca constraint, not a courtesy.
-        # Alpaca refuses to replace an order whose status is `accepted`,
-        # `pending_new`, `pending_cancel` or `pending_replace` (its own
-        # Replace-Order reference). A replacement therefore has a window in
-        # which the order is NOT replaceable, and a second PATCH fired into
-        # that window is rejected. Before this gate the loop went straight
-        # back round on the freshly-minted id, so every chase past the first
-        # attempt was racing broker timing for no reason.
-        #
-        # `await_replacement_confirmed` watches the OLD order reach the
-        # terminal status `replaced` on the real-time `trade_updates`
-        # websocket (PR #287), so the ordinary confirmation costs
-        # milliseconds, not the timeout — and a websocket outage degrades to
-        # that method's REST fallback rather than to no confirmation.
-        #
-        # Skipped on the LAST attempt only because there is no second
-        # replace to protect: nothing is sent after it either way, so paying
-        # the wait would add latency to every chase and buy nothing.
-        #
-        # Unconfirmed ⇒ STOP, and deliberately do NOT page: the broker
-        # returned an id, so the swap did land; the order is working at a
-        # better price with the trades row already repointed. That is a
-        # successful re-peg we merely stopped building on, not an entry that
-        # died — which is why this is a log-and-event, while genuine
-        # exhaustion (`_alert_owner_repeg_exhausted`) is a Telegram alert.
-        try:
-            confirmed = pipeline.broker.await_replacement_confirmed(
-                order_id, str(new_id), timeout_seconds=confirm_seconds,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "re-peg %s: confirmation of %s → %s raised (%s) — stopping "
-                "the chase rather than replacing an unconfirmed order",
-                symbol, order_id, new_id, exc,
-            )
-            confirmed = False
-        if not confirmed:
-            logger.info(
-                "re-peg %s: replacement %s → %s not confirmed within %.1fs — "
-                "chase stops here; the order is working at $%.4f",
-                symbol, order_id, new_id, confirm_seconds, target,
-            )
-            _record_pipeline_event(
-                pipeline, ctx, symbol, "repeg", "replace_unconfirmed",
-                "repeg_replace_unconfirmed", broker_order_id=str(new_id),
-                replaces_order_id=order_id, attempt=attempt,
-            )
-            return str(new_id), 0.0, False
-
-    return str(new_id), 0.0, True
+    return str(new_id), 0.0, "replaced"
 
 
 def _repoint_trade(pipeline, trade_row_id, old_order_id: str,
@@ -5767,10 +5752,10 @@ class ExecutionStage:
             if not spec.get("order_id"):
                 continue
             try:
-                # Bounded re-peg FIRST, protection second, always. The chase
-                # may hand back a different order id (Alpaca mints one per
-                # replacement) plus any shares an ancestor order filled; both
-                # feed straight into the stop so no filled share is left
+                # Single-shot reprice FIRST, protection second, always. The
+                # reprice may hand back a different order id (Alpaca mints one
+                # per replacement) plus any shares an ancestor order filled;
+                # both feed straight into the stop so no filled share is left
                 # without one. With `execution.repeg_enabled` off — the
                 # default — this returns the same id and 0.0 without making a
                 # single broker call.
@@ -5789,11 +5774,19 @@ class ExecutionStage:
                     )
                     entry_order_id, superseded_fill = spec["order_id"], 0.0
                 entry_side = spec.get("side", "buy")
+                # End-of-session cancel of a still-unfilled entry lives
+                # inside `place_entry_protection` (see its docstring for the
+                # derivation); the callback is how the owner gets told, with
+                # the prices this stage tried, which the broker does not know.
                 protection = pipeline.broker.place_entry_protection(
                     symbol=spec["symbol"], order_id=entry_order_id,
                     stop_price=spec["stop_price"], requested_qty=spec["qty"],
                     superseded_filled_qty=superseded_fill,
                     side=entry_side,
+                    on_unfilled_cancel=(
+                        lambda info, _spec=spec:
+                        _alert_owner_entry_cancelled(pipeline, _spec, info)
+                    ),
                 )
                 _record_pipeline_event(
                     pipeline, ctx, spec["symbol"], "protection",

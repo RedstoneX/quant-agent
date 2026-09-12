@@ -368,30 +368,43 @@ class ExecutionConfig(BaseModel):
     order."""
 
     repeg_enabled: bool = False
-    """Master switch for bounded entry re-pegging. OFF by default so the
-    feature can be deployed dark: with it off, `_repeg_entry_order` returns
-    the original order id untouched and not a single broker call is made."""
+    """Master switch for the single-shot entry reprice. OFF by default so
+    the feature can be deployed dark: with it off, `_repeg_entry_order`
+    returns the original order id untouched and not a single broker call is
+    made. The owner owns this switch."""
 
-    repeg_max_attempts: int = Field(default=2, ge=1, le=5)
-    """Hard cap on replacements per entry order. A replacement mints a new
-    order id at Alpaca, so an unbounded loop is an unbounded chain of
-    untracked ids; low single digits is the whole point."""
+    # `repeg_max_attempts` was DELETED 2026-09-12 (rejected loudly below if
+    # still present in settings.yaml). The reprice is now exactly ONE
+    # replace, by design, not by a cap set to 1: Alpaca's own community
+    # practice for a fast market is a single deliberately aggressive replace
+    # that crosses the market, not a ladder of nudges — and every extra
+    # replace is another `pending_replace` window an order can get stuck in.
+    # A knob whose only legal value is 1 would invite someone to turn it up.
 
     repeg_poll_seconds: float = Field(default=5.0, gt=0, le=30)
-    """How long to let the working order rest before each re-peg attempt.
-    Total added latency per entry is bounded by
-    `repeg_max_attempts * repeg_poll_seconds`, and lands BEFORE
-    `place_entry_protection`'s own fill wait.
+    """How long to let the working order rest before the one reprice, and —
+    only if the exchange has not yet acknowledged the order by then — how
+    much longer to wait for that acknowledgement before giving up on the
+    reprice (a replace against an unacknowledged order is rejected by
+    Alpaca). Total added latency per entry is therefore at most
+    `2 * repeg_poll_seconds` plus one replace round-trip, and lands BEFORE
+    `place_entry_protection`'s own fill wait, which is where an entry still
+    unfilled at the end of its session is cancelled."""
 
-    That product is now ENFORCED, not just claimed: `_repeg_entry_order`
-    holds a monotonic deadline of `repeg_max_attempts * repeg_poll_seconds`,
-    checks it before every attempt and clips each wait (including the
-    one-replace-at-a-time confirmation wait) to what is left. Previously a
-    slow wait, quote or replace round-trip could push real elapsed time past
-    this figure without limit, because nothing measured it. There is
-    deliberately no separate "max total seconds" knob — a second,
-    differently-derived number would only be one more thing to keep
-    consistent with this one."""
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_deleted_repeg_keys(cls, data):
+        # Same pattern as `RiskConfig._reject_renamed_short_gross_key`:
+        # BaseModel's default `extra="ignore"` would let a settings.yaml still
+        # carrying the deleted key load silently, and an operator would
+        # believe a ladder length they set was in force. Fail loudly.
+        if isinstance(data, dict) and "repeg_max_attempts" in data:
+            raise ValueError(
+                "execution.repeg_max_attempts was removed 2026-09-12: the "
+                "entry reprice is a single replace by design (see "
+                "ExecutionConfig). Delete the key from the settings file."
+            )
+        return data
 
     # Spec §11.1 (owner-ratified 2026-09-01), reversing the 2026-08-27
     # decision to keep fractional off.
