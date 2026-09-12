@@ -1138,9 +1138,20 @@ def test_the_real_pm_gate_parses_and_has_at_least_one_open_item():
     work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     items, problem = sb.load_pm_gate(work)
     assert problem is None, problem
-    assert len(items) >= 5, f"only {len(items)} PM-gate items parsed"
+    assert items, "the gate parsed nothing — the real file has been edited into a shape the parser no longer recognises"
     open_items = [i for i in items if not i.done]
     assert open_items, "the gate reports nothing open — that would mean the PM test is unblocked"
+    # No count floor. Owner doctrine 2026-09-12: a cleared gate item is
+    # DELETED from docs/WORK.md once it is written up in
+    # docs/INCIDENT_HISTORY.md, because every session and every compaction
+    # reloads WORK.md and resolved history is paid for again each time. A
+    # floor on the number of items would therefore forbid exactly the
+    # cleanup the doctrine requires. What must hold is that the section
+    # still parses and still reports something open.
+    assert all(not i.done for i in items), (
+        "a cleared gate item is still in docs/WORK.md; it should have been "
+        "deleted once written up in docs/INCIDENT_HISTORY.md"
+    )
 
 
 def test_a_renamed_pm_gate_heading_says_so_instead_of_rendering_empty(tmp_path):
@@ -1741,8 +1752,16 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # "FIXED, pending review" — finished, review still owed, its own section.
     for rank in (33, 34):
         assert by_rank[rank].bucket == "review_owed", rank
-    # RESOLVED 2026-09-11 — genuinely closed, struck through, no longer live.
-    assert by_rank[2].bucket == "resolved"
+    # No item should be in the "resolved" bucket at all any more. Owner
+    # doctrine 2026-09-12: once an item is resolved AND written up in
+    # docs/INCIDENT_HISTORY.md it is DELETED from docs/WORK.md, so a
+    # resolved item surviving here means the deletion half of the rule was
+    # skipped. The bucket itself is kept — it still catches an item in the
+    # window between being closed and being written up.
+    assert [i.rank for i in items if i.bucket == "resolved"] == [], (
+        "resolved items are still in docs/WORK.md; write them up in "
+        "docs/INCIDENT_HISTORY.md and delete them from the queue"
+    )
     # Genuinely partial work stays where he can see it.
     for rank in (18, 32):
         assert by_rank[rank].bucket == "open", rank
@@ -1879,7 +1898,7 @@ def test_the_identifier_is_readable_but_does_not_dominate_the_card():
                 / "scripts" / "status_board_template.html").read_text()
     assert ".ref{" in template
     ref_rule = template.split(".ref{", 1)[1].split("}", 1)[0]
-    assert "IBM Plex Mono" in ref_rule
+    assert "JetBrains Mono" in ref_rule
     assert "user-select:all" in ref_rule   # tap-and-copy on a phone
     # And it is not set at heading weight/size.
     assert "font-size:11.5px" in ref_rule
@@ -2018,9 +2037,12 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     # Checked and by design.
     for rank in (3, 4, 8):
         assert by_rank[rank].bucket == "no_action", rank
-    # 48 and 50 said RESOLVED and were never struck through; they are now.
-    for rank in (48, 50):
-        assert by_rank[rank].bucket == "resolved", rank
+    # Items 48 and 50 used to be pinned here as the "RESOLVED but never
+    # struck through" case. Both have since been written up in
+    # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md under the
+    # owner's 2026-09-12 doctrine, so there is nothing left to pin. The
+    # sibling test asserts the stronger property their absence now implies:
+    # no item is in the "resolved" bucket at all.
     # And what is open is genuinely open: nothing in it carries a ruling.
     for it in items:
         if it.bucket == "open":
@@ -2273,9 +2295,15 @@ def test_every_text_pairing_on_the_board_clears_wcag_aa(theme):
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_the_two_accent_hues_are_blue_and_orange_never_red_or_green(theme):
-    """Red-green colour blindness keeps blue-yellow discrimination, so the
-    only hue axis this page may use is blue against orange. A green or a red
-    accent would put meaning back where he cannot see it."""
+    """The owner set the palette himself on 2026-09-12: violet against blue,
+    the conventional modern-web scheme, asked for explicitly and asked for
+    STRONG. The earlier blue/orange palette was chosen on colour-blindness
+    grounds and he rejected both the look and the reasoning — "forget that
+    I'm colourblind". So this test no longer makes an accessibility
+    argument. What it still pins is his two stated dislikes: nothing pink,
+    and nothing washed out. Meaning is carried by text and edge shape
+    rather than hue anyway — see the sibling tests — so the palette is free
+    to be a preference."""
     def hue(h):
         r, g, b = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
         mx, mn = max(r, g, b), min(r, g, b)
@@ -2291,13 +2319,23 @@ def test_the_two_accent_hues_are_blue_and_orange_never_red_or_green(theme):
         return (deg * 60) % 360
     pal = _palettes()[theme]
     for name in ("accent", "strong", "strong-edge"):
-        assert 200 <= hue(pal[name]) <= 250, f"{theme}: {name} is not blue"
+        assert 248 <= hue(pal[name]) <= 268, f"{theme}: {name} is not violet"
     for name in ("flag", "flag-edge"):
-        assert 15 <= hue(pal[name]) <= 45, f"{theme}: {name} is not orange"
-    # And the neutrals carry no hue at all — the old palette's greys were
-    # faintly green, which is part of why the page read as monochrome.
+        assert 205 <= hue(pal[name]) <= 232, f"{theme}: {name} is not blue"
+    # Nothing pink, and nothing warm, in ANY role. He named the previous
+    # palette's warm accent as reading pink and asked for it gone; violet
+    # sits next door to magenta, so the exclusion is stated rather than
+    # left implied by the ranges above.
+    for name, h in pal.items():
+        deg = hue(h)
+        if deg is None:
+            continue
+        assert not (deg < 195 or deg > 275), f"{theme}: {name} is warm or pink"
+    # Neutrals may carry the cool tint the scheme is built on, never a warm
+    # one — a warm grey is what made the previous page read as pink.
     for name in ("ink", "muted", "faint", "rule", "paper", "quiet-bg"):
-        assert hue(pal[name]) is None, f"{theme}: {name} carries a tint"
+        deg = hue(pal[name])
+        assert deg is None or 205 <= deg <= 255, f"{theme}: {name} is warm-tinted"
 
 
 def test_every_nothing_needed_state_has_its_own_edge_shape():
