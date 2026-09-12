@@ -6308,7 +6308,8 @@ class TradingPipeline:
                 # 2026-09-12: a refusal the constructor recorded AS DATA
                 # (`PortfolioConstructor.last_refusals`, filed by
                 # `DecisionStage` under `constructor_refused` with the code
-                # beside it — today `no_structural_floor`). Kept apart from
+                # beside it — today `stop_wider_than_instrument_noise_band`
+                # or `insufficient_history`, item 54). Kept apart from
                 # the regex-recovered `constructor_dropped` so the digest
                 # names the rule, not a sentence.
                 elif (data.get("stage") == "deterministic_gate"
