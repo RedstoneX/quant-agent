@@ -3824,7 +3824,8 @@ class DecisionStage:
         constructor_refusals_by_symbol = {
             str(sym).upper(): dict(refusal)
             for sym, refusal in dict(getattr(
-                pipeline.portfolio_constructor, "last_refusals", {},
+                getattr(pipeline, "portfolio_constructor", None),
+                "last_refusals", {},
             ) or {}).items()
         }
 
