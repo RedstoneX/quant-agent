@@ -22,6 +22,51 @@ what would catch it next time.
 
 ---
 
+### 2026-09-12 — funnel item 6 ("no structural level to derive a target from") retired: the refusal cannot fire any more, and the question it asked no longer exists
+
+**In plain words:** the census once counted 3 of 68 trade ideas (all on
+2026-09-02) thrown away because the desk could not find a chart level above
+the entry to aim a profit target at. The board flagged it "too new to
+classify" and asked for a re-measure. There is nothing left to re-measure:
+the desk no longer sets profit targets at all, so "no level to derive a
+target from" is not a reason to refuse anything, and the code path that
+produced that refusal was made unreachable on 2026-09-11.
+
+**Why it is dead twice over.**
+
+1. *The refusal cannot fire.* The level engine's "no level in the trade's
+   direction" refusal used to require the analyst to ALSO label the setup a
+   breakout before it would project a measured-move reference instead of
+   refusing. On 2026-09-11 the shared trend-trade definition
+   (`src/risk/constants.py::is_trend_trade`) was given the measured fact —
+   the desk's own level computation found no ceiling — and with that fact
+   supplied the condition is always true, so the branch returns a
+   projection every time. The refusal constant is kept only because it
+   appears in historical logs and in the census; the level engine's own
+   comment names this item and says so.
+2. *The premise is gone.* Since the owner decision of 2026-09-11 (docs/WORK.md
+   item 1(d)) profit-taking is the trailing stop and nothing else. A
+   breakout is never judged on reward:risk; a range trade's real ratio is a
+   ranking input and a starter-size cap, not a gate. A target is now a
+   reference number for ranking and the Risk Manager's display, never a
+   price the desk exits at, so failing to derive one is not a reason a
+   trade should not happen.
+
+**What was ruled out:** that the three 2026-09-02 cases were a regression
+from that day's ship. They were the pre-2026-09-11 label-dependent refusal
+working as it was then written, on charts whose own computed levels found
+nothing overhead — exactly the case the projection now handles.
+
+**What would catch it next time:** nothing needs to. The only genuine
+"nothing can be read from this chart" case is still refused one branch
+earlier (`REFUSAL_NO_STRUCTURE`), and that refusal is counted by the
+silent-feed-outage watchdog (funnel item 11).
+
+No source change. Documentation only: item 6 deleted from the board, its
+plain-language block removed from `docs/BOARD_NOTES.md`, number retired.
+
+---
+
 ### 2026-09-11 — the desk's loss alarms assumed the future would look like the past (and the first fix measured the wrong thing)
 
 **In plain words:** the desk had three alarms that say "we have lost too

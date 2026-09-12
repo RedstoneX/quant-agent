@@ -34,7 +34,7 @@
   `tests/test_gross_exposure_ladder.py`.
 - `cash_sweep` `SWEEP_BUY` intentionally bypasses the shared hard-risk gate. It is deterministic, config-fixed and treated as cash-equivalent; its own bounds govern it.
 - The shared deterministic gate runs before AI Risk and again after AI-applied modifications; AI cannot loosen a hard limit.
-- AI Risk can widen a positive `stop_loss`; that widening is not separately re-audited for reward/risk. This is a known narrow behavior, not permission to redesign risk during unrelated work.
+- AI Risk can widen a positive `stop_loss`; that widening IS re-audited (`src/pipeline.py::_apply_risk_modifications`, 2026-09-03): the edit is refused if it makes reward:risk unmeasurable or rests the stop inside the ATR noise band, using the constructor's own arithmetic and floor. A range edit that lands under the reward:risk reference is logged, not refused — no universal floor exists since 2026-09-11 — and a breakout is not measured on reward:risk at all. This is a known narrow behavior, not permission to redesign risk during unrelated work.
 - `alpaca.paper` is the effective paper/live selector; `alpaca.base_url` is not a second live-safety switch.
 - The accepted Stage-2 API is separate-process, GET-only/read-only, uses independent SQLite `mode=ro` history reads, and has no trading-process dependency.
 - The accepted Smart Money external-symbol lane is temporary and run-scoped.
