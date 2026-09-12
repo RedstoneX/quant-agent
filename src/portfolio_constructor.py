@@ -28,7 +28,13 @@ import logging
 import re
 from dataclasses import dataclass
 
-from src.data.levels import TargetDerivation, derive_structural_target
+from src.data.levels import (
+    COVERAGE_UNKNOWN,
+    FAULT_NO_ANALYSIS,
+    FAULT_NO_ENTRY,
+    TargetDerivation,
+    derive_structural_target,
+)
 from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision, reward_to_risk,
 )
@@ -482,6 +488,59 @@ class PortfolioConstructor:
         # a caller can always `getattr(..., "last_drop_reasons", {})` — or
         # just read the attribute — without a first-call special case.
         self.last_drop_reasons: dict[str, str] = {}
+        # DATA FAULTS (2026-09-12): {SYMBOL: {"fault", "detail", "direction"}}
+        # for every symbol `_derive_target` (or the no-entry-price branch of
+        # `_resolve_entry_and_stop`) found UNMEASURABLE — an input a real
+        # market always has (price, volatility, usable bars) that this desk
+        # failed to obtain. Never a trade judgement, and deliberately NOT
+        # mixed into `last_drop_reasons`' classification: the caller
+        # (`pipeline_stages.DecisionStage`) records these as `data_fault`
+        # rows, not `constructor_dropped`, and pages the owner.
+        #
+        # Accumulates across `real_reward_risk_preview` (the PM-eligibility
+        # pass over every analysed symbol, which runs BEFORE the PM and is
+        # where a symbol silently becomes unanalysable) and
+        # `construct_orders`, because both run on this one instance in one
+        # session. `drain_data_faults()` hands them over and clears; it is
+        # the caller's job to drain once per session.
+        self.last_data_faults: dict[str, dict[str, str]] = {}
+
+    def drain_data_faults(self) -> dict[str, dict[str, str]]:
+        """Return every data fault recorded since the last drain, and clear.
+
+        See `last_data_faults`. Returned as a fresh dict so the caller can
+        hold it after this instance moves on to the next session.
+        """
+        faults = dict(self.last_data_faults)
+        self.last_data_faults = {}
+        return faults
+
+    def _note_data_fault(
+        self, symbol: str, direction: str, fault: str, detail: str,
+    ) -> None:
+        """Record and log one UNMEASURABLE symbol. Never raises.
+
+        The log line deliberately says "skipped" and "UNMEASURABLE", not
+        "rejected": the constructor did not judge this trade, it could not
+        measure the symbol. `_DropReasonCapture` still picks the line up
+        (so the symbol is never silently absent from `last_drop_reasons`),
+        and the caller reads `last_data_faults` FIRST to file it under the
+        right class.
+        """
+        try:
+            key = str(symbol or "").strip().upper()
+            self.last_data_faults[key] = {
+                "fault": str(fault), "detail": str(detail),
+                "direction": str(direction or ""),
+            }
+        except Exception:  # noqa: BLE001 — a record side-channel must never raise
+            pass
+        logger.warning(
+            "Constructor: %s %s skipped — UNMEASURABLE, a data fault and "
+            "not a trade judgement [%s]: %s",
+            "SHORT" if str(direction).lower() == "short" else "BUY",
+            symbol, fault, detail,
+        )
 
     def construct_orders(self, *args, **kwargs) -> list[TradeDecision]:
         """Same contract as `_construct_orders_impl` — see its docstring for
@@ -1105,6 +1164,16 @@ class PortfolioConstructor:
         rather than being threaded through as state. Same inputs, same
         answer, both times.
         """
+        if analysis is None:
+            # The desk holds no technical analysis for this symbol at all.
+            # Every derivation input is absent at once, so this is named
+            # for what it is rather than for the first missing field.
+            detail = (
+                "DATA FAULT: no technical analysis exists for this symbol "
+                "this session — nothing to measure a target or a stop from"
+            )
+            self._note_data_fault(symbol, direction, FAULT_NO_ANALYSIS, detail)
+            return TargetDerivation(price=None, fault=FAULT_NO_ANALYSIS, detail=detail)
         derivation = derive_structural_target(
             entry_price=entry_price,
             direction=direction,
@@ -1117,7 +1186,20 @@ class PortfolioConstructor:
             breakout_projection_atr_multiple=self.cfg.breakout_projection_atr_multiple,
             max_reach_atr_multiple=self.cfg.max_target_reach_atr_multiple,
             max_horizon_sessions=self.cfg.max_target_horizon_sessions,
+            # What the bar history behind `computed_levels` was, so an
+            # empty list from a dead feed is a DATA fault and one from a
+            # measured, structureless chart is a refusal. `getattr` with
+            # the unknown default because older rows and hand-built
+            # analyses (backtest shim, tests) predate the field.
+            levels_coverage=getattr(analysis, "levels_coverage", None) or COVERAGE_UNKNOWN,
         )
+        if derivation.fault:
+            # Recorded here, at the single funnel every derivation passes
+            # through, so the eligibility preview and order construction
+            # cannot disagree about what was unmeasurable.
+            self._note_data_fault(
+                symbol, direction, derivation.fault, derivation.detail,
+            )
         self._log_target_divergence(symbol, derivation)
         return derivation
 
@@ -1203,9 +1285,15 @@ class PortfolioConstructor:
                 target.symbol, entry_price,
             )
         if entry_price <= 0:
-            logger.warning(
-                "Constructor: cannot construct %s %s — no entry price available",
-                "SHORT" if is_short else "BUY", target.symbol,
+            # A listed instrument always has a price. No live quote AND no
+            # analyst entry is a data fault on this desk's side, the same
+            # class `derive_structural_target` would name one line later
+            # (FAULT_NO_ENTRY) — recorded and alerted as such, never as a
+            # trade the constructor judged. Still no trade.
+            self._note_data_fault(
+                target.symbol, target.direction, FAULT_NO_ENTRY,
+                "DATA FAULT: no live market price and no analyst entry "
+                "price — the symbol cannot be priced, let alone measured",
             )
             return (None, None)
 
@@ -1223,12 +1311,16 @@ class PortfolioConstructor:
             target.symbol, analysis, entry_price, target.direction,
         )
         if derivation.price is None:
-            logger.warning(
-                "Constructor: %s %s rejected — no target could be computed "
-                "from structure [%s]: %s",
-                "SHORT" if is_short else "BUY", target.symbol,
-                derivation.refusal, derivation.detail,
-            )
+            # A data fault has already been recorded and logged as
+            # UNMEASURABLE by `_derive_target`; only a genuine refusal is
+            # logged here as a rejection. Both fail closed.
+            if not derivation.fault:
+                logger.warning(
+                    "Constructor: %s %s rejected — no target could be computed "
+                    "from structure [%s]: %s",
+                    "SHORT" if is_short else "BUY", target.symbol,
+                    derivation.refusal, derivation.detail,
+                )
             return (None, None)
 
         stop_loss = self._resolve_stop(target, analysis, entry_price)
@@ -2329,12 +2421,15 @@ class PortfolioConstructor:
             target.symbol, analysis, entry_price, target.direction,
         )
         if derivation.price is None or derivation.price <= entry_price:
-            logger.warning(
-                "Constructor: BUY %s rejected — no target could be computed "
-                "above entry $%.2f [%s]: %s",
-                target.symbol, entry_price,
-                derivation.refusal or "target_not_above_entry", derivation.detail,
-            )
+            # A data fault is already recorded/logged as UNMEASURABLE by
+            # `_derive_target`; only a real refusal is a rejection here.
+            if not derivation.fault:
+                logger.warning(
+                    "Constructor: BUY %s rejected — no target could be computed "
+                    "above entry $%.2f [%s]: %s",
+                    target.symbol, entry_price,
+                    derivation.refusal or "target_not_above_entry", derivation.detail,
+                )
             return None
         take_profit = float(derivation.price)
 
@@ -2533,12 +2628,15 @@ class PortfolioConstructor:
             target.symbol, analysis, entry_price, target.direction,
         )
         if derivation.price is None or derivation.price >= entry_price:
-            logger.warning(
-                "Constructor: SHORT %s rejected — no target could be computed "
-                "below entry $%.2f [%s]: %s",
-                target.symbol, entry_price,
-                derivation.refusal or "target_not_below_entry", derivation.detail,
-            )
+            # Mirror of `_build_buy`: a data fault is already recorded and
+            # logged as UNMEASURABLE; only a real refusal is a rejection.
+            if not derivation.fault:
+                logger.warning(
+                    "Constructor: SHORT %s rejected — no target could be computed "
+                    "below entry $%.2f [%s]: %s",
+                    target.symbol, entry_price,
+                    derivation.refusal or "target_not_below_entry", derivation.detail,
+                )
             return None
         take_profit = float(derivation.price)
 

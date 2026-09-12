@@ -5,7 +5,11 @@ from pathlib import Path
 from src.agents.base import BaseAgent, AgentResult
 from src.cost_circuit import OptionalPaidAnalysisRetrySkipped, PaidAnalysisSuspended
 from src.data.context import compute_market_context, format_context_block
-from src.data.levels import find_structural_levels, format_levels_block
+from src.data.levels import (
+    find_structural_levels,
+    format_levels_block,
+    structure_coverage,
+)
 from src.models import TechAnalysisResult, parse_telemetry
 from src.token_budget import pack_to_budget, size_model_for_agent
 
@@ -647,6 +651,12 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # `TechAnalysisResult.computed_level_touches` and
         # docs/RESEARCH_FINDINGS.md §7.
         computed_level_touches_by_sym: dict[str, dict[float, int]] = {}
+        # What the bar history WAS, recorded beside the levels it did or did
+        # not produce (2026-09-12). Without it an empty `computed_levels`
+        # from a dead feed and one from a chart with no repeated turning
+        # point are the same `[]` downstream — see the COVERAGE_* constants
+        # in src/data/levels.py.
+        levels_coverage_by_sym: dict[str, str] = {}
         for s in symbols_data:
             if not isinstance(s, dict):
                 continue
@@ -655,6 +665,8 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
             if sym and indicators is not None:
                 input_indicators_by_sym[sym] = getattr(indicators, "atr_14", None)
             bars = s.get("bars")
+            if sym:
+                levels_coverage_by_sym[sym] = structure_coverage(bars)
             if sym and bars:
                 supports, resistances = find_structural_levels(bars)
                 all_levels = (*supports, *resistances)
@@ -696,6 +708,11 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     )
                     analysis.computed_level_touches = (
                         computed_level_touches_by_sym.get(analysis.symbol, {})
+                    )
+                    # A submitted symbol with no entry here had no bars dict
+                    # at all; that is the no-bars fault, not "unknown".
+                    analysis.levels_coverage = levels_coverage_by_sym.get(
+                        analysis.symbol, structure_coverage(None),
                     )
                     analyses[analysis.symbol] = analysis
                 except Exception as e:

@@ -6134,3 +6134,78 @@ it is not re-derived:
 *"we're not going with repeg"* — and independently has little to act on,
 since PR #111 already submits entries at the slippage ceiling whenever a
 quote exists.
+
+### 2026-09-12 — a broken data feed was being recorded as a trade the desk turned down
+
+**In plain words:** when the desk could not get the basic facts about a
+share — its price, how much it normally moves, or a usable price history —
+it wrote the outcome down as "we looked at this trade and rejected it". It
+had not looked at anything; it had nothing to look at. So a dead data feed
+and a trade that genuinely failed the desk's rules produced the same entry
+in the record, nobody could tell them apart, and nobody could say how often
+either was happening. The owner spotted this. Nothing about *whether* the
+desk trades changed: a share it cannot measure is still not traded.
+
+**What was actually wrong.** The function that works out a trade's target
+declines for six named reasons, all carried on one field and all logged by
+the constructor as "rejected — no target could be computed". Going through
+them one by one:
+
+- *no price at all* — a listed share always has a price. Missing means the
+  desk got neither a live quote nor the analyst's entry. Data fault.
+- *no volatility reading* — the desk computes this itself from its own
+  bars; the model never supplies it. Missing means too few bars or the
+  calculation never ran. Data fault.
+- *no structural levels* — this one was TWO different things wearing one
+  label. The level scan returns the same empty answer when the history was
+  too short or too dirty for it to run at all (data fault) and when it ran
+  over a full, clean history and found no repeated turning point within
+  reach of the price (a real fact about the chart — a relentless trend, or
+  every old level too far away). The target function only ever saw the
+  empty list, never the history behind it, so it could not tell which.
+- *no analysis at all* — found on the same path: the Portfolio Manager
+  asked for a share the technical analyst never analysed. Every input is
+  missing at once. Data fault.
+- *no expected horizon* — the analyst's own estimate of how long the idea
+  needs, and the analyst left it out. Not a market-data failure and not a
+  rules failure either: an incomplete proposal. Left as a refusal; flagged
+  for the owner in case he wants it tracked separately.
+- *projection implausible* — real inputs, and the arithmetic says the
+  measured move cannot clear its own noise (or a short's target runs
+  through zero). A genuine judgement about the trade. Refusal, unchanged.
+
+**What changed.** The two classes now travel on two separate fields and
+can never be confused: a *refusal* is a judgement about the trade; a
+*fault* means the share could not be measured. The technical analyst now
+records, beside the levels it computed, what the bar history actually was
+(nothing arrived / too few bars / bars arrived but were unusable / enough
+clean bars for the scan to run), read from the bars themselves and from the
+scan's own minimum window — no chosen threshold. Only "enough clean bars,
+nothing found" stays a refusal.
+
+A fault is written to the record under its own name (`data_fault`, with the
+specific fault code) instead of `constructor_dropped`, so the desk's own
+"why didn't we trade" census counts it separately. The eligibility check
+that runs over every analysed share before the Portfolio Manager decides
+records faults the same way, so a share that silently became unanalysable
+before anyone proposed it still leaves a row. And every session with at
+least one unmeasurable share sends the owner one standalone message naming
+each share and its fault — the same out-of-band alert path the desk already
+uses when an entry order is cancelled — because a share quietly dropping out
+of the analysable set is exactly the failure that hides.
+
+**Was the statistic already wrong?** Checked against the live database and
+the systemd journal before assuming so. The constructor's drop reasons have
+only been persisted since 2026-09-03, and the live database holds no
+constructor-drop rows at all since then (the desk has been paused). The
+journal back to 2026-08-09 shows the "no target could be computed" line
+fired three times, all for the now-unreachable "no level in the direction"
+reason — never for the two data-fault reasons. So the census was not yet
+carrying a wrong number; the code path that would have produced one is what
+was fixed. No historical rows needed re-labelling.
+
+**What would catch it next time.** Tests now fail if a data fault comes
+back on the refusal field, if a fault and a refusal are ever set together,
+if a faulted share is filed as `constructor_dropped`, or if one occurs
+without the owner alert. A measured-but-empty chart is pinned as a refusal,
+so a quiet chart cannot page the owner as an outage.

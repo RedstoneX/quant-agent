@@ -852,6 +852,8 @@ def test_a_model_asserted_computed_levels_field_is_overwritten_by_code(
     assert spy.computed_level_touches == {
         lv.price: lv.touches for lv in (*supports, *resistances)
     }
+    # 2026-09-12: enough clean bars for the scan to run — "measured".
+    assert spy.levels_coverage == "measured"
 
 
 @patch("anthropic.Anthropic")
@@ -879,3 +881,6 @@ def test_asserted_levels_are_wiped_even_when_the_chart_yields_none(
     # The model named its own stop ($494) as a computed level. It is gone.
     assert results["SPY"].stop_loss == 494.0
     assert results["SPY"].computed_levels == []
+    # 2026-09-12: and the reason it is empty travels with it — one bar is
+    # insufficient history, a DATA fault downstream, not a measured chart.
+    assert results["SPY"].levels_coverage == "insufficient_history"
