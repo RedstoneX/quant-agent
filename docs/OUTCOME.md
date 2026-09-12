@@ -122,10 +122,42 @@ is the fuller statement of the same principle.
 
 Every constant that governs a real trade decision — a stop distance, a
 holding period, a risk percentage, a reward:risk floor, a tolerance band —
-must be derived from real market data (volatility, structure, confirmed
-price action) or from this desk's own measured track record. It must
-never be a flat calendar count, a round percentage, or a number chosen
-because it "sounds prudent."
+must be READ FROM THE INSTRUMENT IN FRONT OF YOU: its volatility, its
+structure, its confirmed price action, or the trade's own claim recorded at
+entry. It must never be a flat calendar count, a round percentage, or a
+number chosen because it "sounds prudent."
+
+**Corrected 2026-09-12 — this clause used to also permit "or from this
+desk's own measured track record", and that permission was wrong.** Fitting
+a threshold to past outcomes is not the opposite of an arbitrary number; it
+is an arbitrary number with a backtest stapled to it. The owner's reasoning,
+and it is decisive: markets change, regimes change, and a black swan is
+precisely the event no history contains. A rule tuned to what already
+happened breaks at the moment it matters most.
+
+The distinction to apply:
+
+  * **READING** — the number comes from what is in front of you right now and
+    is re-read every session, so a regime change UPDATES it rather than
+    invalidating it. This stock's ATR today. This chart's levels today. This
+    trade's own pinned horizon. All acceptable.
+  * **FITTING** — the number is calibrated from what happened before, then
+    held fixed. **Not acceptable, and no amount of backtesting makes it so.**
+
+This desk has already been bitten by exactly this: `pace` once measured a
+position against the desk's own rolling average holding period, so every
+early sale shrank the average, made every surviving position look stalled,
+and drove more early sales. A self-tightening noose, and the single largest
+identified P&L defect in the system. That is what fitting to your own record
+does even when the arithmetic is correct.
+
+**When a number cannot be read from present data, do not fit one and do not
+quietly leave the feature switched off.** Off is a decision too, and an
+unowned one rots: nobody stated why, nobody owns it, nobody revisits it. The
+work is to REFORMULATE the rule so it needs no constant — "is the trend
+over?" needs a number, "does the last higher low still hold?" does not, and
+the chart supplies the level. If it genuinely cannot be reformulated, it goes
+to the owner as a decision with a date, recorded on the board.
 
 **A number does not become non-arbitrary because it was previously
 approved.** This applies to Claude's own reasoning as much as to the
