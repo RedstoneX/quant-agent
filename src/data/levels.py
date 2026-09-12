@@ -583,8 +583,53 @@ def _refused(code: str, detail: str, model_target: float | None) -> TargetDeriva
     )
 
 
+def unfilled_gap_edge(bars: Sequence[OHLCV], direction: str) -> float | None:
+    """The near edge of the binding unfilled gap on the STOP side, or None.
+
+    Owner ruling, 2026-09-12: *"A shelf $30 below, on the far side of a gap
+    the market has repriced through, isn't support anyone is defending."*
+    Price never traded through the gap, so nobody bought or defended
+    anything in that range — a level below it is a number on a chart, not
+    support, and leaning a stop on it reintroduces exactly the "no
+    defensible stop" case the floor rule exists to prevent.
+
+    Derived from the chart, no new constants: an unfilled up-gap is a
+    session whose low sits above the prior session's high, where no later
+    session has traded back down to that prior high. `src/data/context.py::
+    find_unfilled_gaps` is the desk's ONE gap detector and is reused here
+    (the Tech Analyst's context block already reports the same gaps); what
+    that inherits is its pre-existing 2% minimum gap size, which was never
+    derived for this rule — flagged, not hidden.
+
+    For a long the answer is the BOTTOM of the highest unfilled up-gap
+    below price (the prior session's high): every level at or below it is on
+    the far side. For a short the mirror: the TOP of the lowest unfilled
+    down-gap above price (the prior session's low). A level built INSIDE a
+    partly-filled gap — price came back, bounced twice — sits above the
+    edge and counts; that is the base the owner described forming.
+
+    A gap that fills stops disqualifying anything automatically, because
+    this is re-read from the bars each session. No timer, no bar count.
+    """
+    from src.data.context import find_unfilled_gaps  # one detector, no copy
+
+    clean = _clean_bars(list(bars or []))
+    if len(clean) < 2:
+        return None
+    gaps = find_unfilled_gaps(clean, limit=len(clean))
+    if str(direction or "").strip().lower() == "short":
+        tops = [g.from_price for g in gaps if g.direction == "down"]
+        return min(tops) if tops else None
+    bottoms = [g.from_price for g in gaps if g.direction == "up"]
+    return max(bottoms) if bottoms else None
+
+
 def structural_floor(
-    levels: Sequence[float], entry_price: float | None, direction: str,
+    levels: Sequence[float],
+    entry_price: float | None,
+    direction: str,
+    *,
+    gap_edge: float | None = None,
 ) -> float | None:
     """The nearest computed level on the STOP side of this entry, or None.
 
@@ -605,19 +650,24 @@ def structural_floor(
     further count is demanded here, because "bounced twice off a price it
     built after the gap" is precisely the case that is meant to qualify.
 
+    `gap_edge` (owner ruling, same day — see `unfilled_gap_edge`): a level
+    on the far side of an unfilled gap is not a floor. For a long, levels at
+    or below the edge are ignored; for a short, levels at or above it.
+
     Returns the nearest such level so a log can name the floor. None means
     there is none — "not yet", not "never": the levels are re-read every
     session, and a name that gaps into new territory earns a floor the day
-    the chart shows one, with no timer.
+    the chart shows one ABOVE the gap, with no timer.
     """
     entry = _finite_positive(entry_price)
     if entry is None:
         return None
     usable = [p for p in (_finite_positive(lv) for lv in levels or ()) if p is not None]
+    edge = _finite_positive(gap_edge)
     if str(direction or "").strip().lower() == "short":
-        side = [p for p in usable if p > entry]
+        side = [p for p in usable if p > entry and (edge is None or p < edge)]
         return min(side) if side else None
-    side = [p for p in usable if p < entry]
+    side = [p for p in usable if p < entry and (edge is None or p > edge)]
     return max(side) if side else None
 
 

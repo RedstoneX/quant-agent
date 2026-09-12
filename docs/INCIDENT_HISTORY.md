@@ -78,14 +78,29 @@ deliberately NOT a data fault: "could not compute levels" (short or dirty
 history) is PR #326's separate classification and is refused earlier under
 its own name.
 
-**Measured, not assumed — the gap case.** On a $50 -> $80 gap from an
-established base, the gap itself inflates the measured ATR, so on the gap
-day the pre-gap $50 shelf is still inside reach and is the only floor: the
-trade is permitted with a stop 37% away, i.e. at a very small size under
-the 5% risk cap. As the gap fades out of the ATR the old shelf falls out of
-reach and the new $74-75 base becomes the floor. The same was true under
-the old 40% window. Stated so "no floor on the gap day" is not read as what
-the code does.
+**Measured, then ruled on — the gap case.** The first build was checked
+against real numbers before it was described to the owner: on a $50 -> $80
+gap from an established base, the gap itself inflates the measured ATR, so
+on the gap day the pre-gap $50 shelf was still inside reach and the code
+took it as the floor — 37% below, a trade at a tiny size. That was reported
+rather than hidden, and the owner ruled the same day: *"A shelf $30 below,
+on the far side of a gap the market has repriced through, isn't support
+anyone is defending."* Price never traded through the gap, so nobody bought
+or defended anything in that range; the level below it is a number on a
+chart, and leaning a stop on it reintroduces exactly the "no defensible
+stop" case the whole rule exists to prevent. So a structural level on the
+far side of an unfilled gap does not count as a floor (mirrored for a short:
+an unfilled down-gap disqualifies a ceiling). The gap is read from the chart
+by the desk's one existing gap detector — the same unfilled gaps the
+analyst's context block already reports — rather than a second definition;
+a filled gap stops disqualifying anything automatically because the
+condition is re-read each session, with no timer or decay. The refusal has
+its own code so the census can tell "a floor exists only beyond the gap"
+from "no levels at all" and "levels only overhead". Real numbers: gap day,
+the $50.60 shelf is beyond the gap and the trade is refused; two and a half
+weeks later a base at $74-80 has bounced twice off $75 and the $74.40 floor
+above the gap qualifies. Inherited and flagged: the reused detector ignores
+gaps under 2%, a pre-existing threshold never derived for this rule.
 
 **Tests that would catch a regression:** `tests/test_no_floor_no_trade.py`
 (a volatile name reaches a shelf a quiet one cannot; the scan's window is
@@ -93,7 +108,8 @@ byte-for-byte the target derivation's own reach; a long with levels only
 overhead is refused and recorded; a short with levels only beneath the
 same; a breakout label does not exempt a long; nothing overhead is never a
 refusal; the census attributes the refusal by code; the gap case with real
-numbers). Three fixture families that deliberately kept a stop unbacked
+numbers — refused on the gap day, qualifying on the base above it, and
+re-qualifying the day the gap fills). Three fixture families that deliberately kept a stop unbacked
 gained a distant floor so they still test widening rather than the new
 refusal, and the backtest's hand-computed series gained a realistic daily
 range so its $125 shelf is within the instrument's own reach.

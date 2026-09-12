@@ -1334,12 +1334,22 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # R6 adds is the case R4 cannot see and a breakout label used to
             # skip entirely: levels exist, none is on the stop side.
             computed = getattr(analysis, "computed_levels", None) or []
+            # A level on the far side of an unfilled gap is not a floor
+            # (owner ruling, same day) — same edge the constructor reads.
+            gap_edge = getattr(
+                analysis,
+                "unfilled_down_gap_edge" if direction == "short" else "unfilled_up_gap_edge",
+                None,
+            )
             if computed and structural_floor(
-                computed, analysis.entry_price, direction,
+                computed, analysis.entry_price, direction, gap_edge=gap_edge,
             ) is None:
+                beyond_gap = structural_floor(computed, analysis.entry_price, direction) is not None
                 blocked.append(
                     f"R6 no structural {'ceiling above' if direction == 'short' else 'floor below'} "
-                    f"entry — nothing for a stop to sit on (no floor, no trade)"
+                    f"entry"
+                    + (" this side of an unfilled gap" if beyond_gap else "")
+                    + " — nothing for a stop to sit on (no floor, no trade)"
                 )
             verdicts[symbol] = blocked
         return verdicts

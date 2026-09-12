@@ -124,6 +124,17 @@ STOP_REFUSAL_WRONG_SIDE = "stop_on_wrong_side_of_entry"
 #: about this chart today, recorded as data (`last_refusals`), never a data
 #: fault: "not yet", not "never" — the levels are re-read every session.
 STOP_REFUSAL_NO_STRUCTURAL_FLOOR = "no_structural_floor"
+#: Owner ruling, same day: *"A shelf $30 below, on the far side of a gap the
+#: market has repriced through, isn't support anyone is defending."* The
+#: chart DID yield a level on the stop side — but every such level sits on
+#: the far side of an UNFILLED gap. Price never traded through that gap, so
+#: nobody bought or defended anything in it; the level below is a number on
+#: a chart, not support, and leaning a stop on it reintroduces exactly the
+#: "no defensible stop" case the floor rule exists to prevent. Its own code
+#: so the census can tell "no levels at all", "levels only overhead" and
+#: "a floor exists but only beyond the gap" apart. Re-read every session:
+#: the day the gap fills, or a base forms above it, the name qualifies.
+STOP_REFUSAL_FLOOR_BEYOND_UNFILLED_GAP = "floor_only_beyond_unfilled_gap"
 #: The `pipeline_event` reason under which `pipeline_stages.DecisionStage`
 #: files a structured constructor refusal (`refusal=<code>` beside it).
 #: Distinct from `constructor_dropped`, whose detail is recovered by regex
@@ -593,18 +604,44 @@ class PortfolioConstructor:
         cannot disagree about which names have a floor.
         """
         levels = getattr(analysis, "computed_levels", None) or []
-        floor = structural_floor(levels, entry_price, direction)
+        is_short = str(direction or "").lower() == "short"
+        # The binding unfilled-gap edge on the stop side, Python-set by the
+        # Tech Analyst from the same bars (`levels.unfilled_gap_edge`). A
+        # level on the far side of it is not a floor — owner ruling, see
+        # STOP_REFUSAL_FLOOR_BEYOND_UNFILLED_GAP. `getattr` because older
+        # rows and hand-built analyses predate the field; None = no gap.
+        gap_edge = getattr(
+            analysis,
+            "unfilled_down_gap_edge" if is_short else "unfilled_up_gap_edge",
+            None,
+        )
+        floor = structural_floor(levels, entry_price, direction, gap_edge=gap_edge)
         if floor is not None:
             return True
-        is_short = str(direction or "").lower() == "short"
+        side = "above" if is_short else "below"
+        # Same question with the gap ignored: did a level exist on the stop
+        # side at all? That decides WHICH refusal this is.
+        if structural_floor(levels, entry_price, direction) is not None:
+            self._note_refusal(
+                symbol, direction, STOP_REFUSAL_FLOOR_BEYOND_UNFILLED_GAP,
+                f"every structural level {side} the ${entry_price:,.2f} entry "
+                f"sits on the far side of an unfilled gap (edge "
+                f"${float(gap_edge):,.2f}). Price never traded through that "
+                f"gap, so nothing in it was bought or defended — a level "
+                f"beyond it is a number on a chart, not support a stop can "
+                f"lean on (owner ruling 2026-09-12). Not yet, not never: the "
+                f"name qualifies the day the gap fills or a floor forms "
+                f"{'below' if is_short else 'above'} it.",
+            )
+            return False
         self._note_refusal(
             symbol, direction, STOP_REFUSAL_NO_STRUCTURAL_FLOOR,
-            f"no structural level {'above' if is_short else 'below'} the "
-            f"${entry_price:,.2f} entry on a chart that yielded {len(levels)} "
-            f"level(s) elsewhere, so there is nothing for a stop to sit on. "
-            f"No floor, no trade (owner decision 2026-09-12) — not yet, not "
-            f"never: the levels are re-read every session and the name "
-            f"qualifies the day the chart shows one.",
+            f"no structural level {side} the ${entry_price:,.2f} entry on a "
+            f"chart that yielded {len(levels)} level(s) elsewhere, so there "
+            f"is nothing for a stop to sit on. No floor, no trade (owner "
+            f"decision 2026-09-12) — not yet, not never: the levels are "
+            f"re-read every session and the name qualifies the day the chart "
+            f"shows one.",
         )
         return False
 

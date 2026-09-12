@@ -29,11 +29,13 @@ from src.data.levels import (
     find_structural_levels,
     horizon_reach,
     structural_floor,
+    unfilled_gap_edge,
 )
 from src.data.technical import atr_series
 from src.models import OHLCV, TargetPosition, TechAnalysisResult, TechReasoningChain
 from src.portfolio_constructor import (
     CONSTRUCTOR_REFUSED_EVENT_REASON,
+    STOP_REFUSAL_FLOOR_BEYOND_UNFILLED_GAP,
     STOP_REFUSAL_NO_STRUCTURAL_FLOOR,
     PortfolioConstructor,
 )
@@ -162,35 +164,72 @@ class TestRelevanceWindowIsReadFromTheInstrument:
         $75. NO timer and NO special case: the levels are re-read each
         session and the chart answers on its own.
 
-        What the code actually does, stated so the board example is real:
-        on the gap day the gap itself inflates the measured volatility, so
-        the pre-gap shelf at ~$50.60 is still inside reach and is the only
-        floor — 37% below. As the gap fades out of the ATR the old shelf
-        falls out of reach and the new $74.40 floor (two touches) is what
-        the scan reports."""
+        Two rulings, both pinned. (1) On the gap day the gap itself inflates
+        the measured ATR, so the pre-gap ~$50.60 shelf is still inside the
+        instrument's REACH — the window does not drop it. (2) It is on the
+        far side of an unfilled gap, so it is NOT a floor: nobody bought or
+        defended anything between $50 and $80. No floor on day one. As the
+        base forms, the $74.40 floor (two touches) sits above the gap and
+        qualifies."""
         pre = _oscillation(45.0, 50.0, cycles=5) + [50.0] * 10
         gap_day = pre + [80.0]
         based = gap_day + [79, 80, 78, 79, 80] + [78, 76, 75, 76, 78, 80, 79, 77, 75, 76, 78, 79, 80, 79]
 
         day_one = _bars(gap_day, spread=0.6)
         supports, _ = find_structural_levels(day_one)
-        floor_day_one = structural_floor([lv.price for lv in supports], 80.0, "long")
-        assert floor_day_one is not None and 50 <= floor_day_one <= 51
+        prices = [lv.price for lv in supports]
+        shelf = structural_floor(prices, 80.0, "long")
+        assert shelf is not None and 50 <= shelf <= 51
         reach_day_one = horizon_reach(float(atr_series(day_one)[-1]), MAX_HORIZON_SESSIONS)
-        assert 80.0 - floor_day_one < reach_day_one
+        assert 80.0 - shelf < reach_day_one, "the window itself keeps the shelf"
+        edge = unfilled_gap_edge(day_one, "long")
+        assert edge is not None and 50 <= edge <= 51, "bottom of the unfilled up-gap"
+        assert structural_floor(prices, 80.0, "long", gap_edge=edge) is None, (
+            "the shelf is on the far side of the gap: no floor on day one"
+        )
 
         later = _bars(based, spread=0.6)
         supports, resistances = find_structural_levels(later)
+        edge_later = unfilled_gap_edge(later, "long")
+        assert edge_later is not None and 50 <= edge_later <= 51, "still unfilled"
         floor_later = structural_floor(
             [lv.price for lv in (*supports, *resistances)], later[-1].close, "long",
+            gap_edge=edge_later,
         )
         assert floor_later is not None and 74 <= floor_later <= 75.5, supports
         touched_twice = next(lv for lv in supports if 74 <= lv.price <= 75.5)
         assert touched_twice.touches == 2
-        assert not any(lv.price < 60 for lv in supports), (
-            "the pre-gap shelf should have fallen out of reach once the gap "
-            f"left the ATR: {supports}"
+
+    def test_a_filled_gap_stops_disqualifying_anything_the_same_day(self):
+        """No timer, no decay: price trades back down through the gap in
+        steps too small to be gaps themselves, and the pre-gap shelves count
+        again automatically because the condition is re-read."""
+        pre = _oscillation(45.0, 50.0, cycles=5) + [50.0] * 10
+        # Down through the $50 -> $80 gap AND through the fixture's own
+        # small 45.8 -> 50 step at the end of `pre`, so no up-gap is left.
+        descent = [78, 76, 74, 72, 70, 68, 66, 64, 62, 60, 58, 56, 54, 52,
+                   50.5, 48.5, 46.5, 48, 50]
+        bars = _bars(pre + [80.0] + descent, spread=0.6)
+        assert unfilled_gap_edge(bars, "long") is None
+        supports, _ = find_structural_levels(bars)
+        floor = structural_floor(
+            [lv.price for lv in supports], bars[-1].close, "long",
+            gap_edge=unfilled_gap_edge(bars, "long"),
         )
+        assert floor is not None and floor < 50.0
+
+    def test_a_down_gap_disqualifies_a_shorts_ceiling_the_same_way(self):
+        """Mirror: a short's floor is overhead; a shelf on the far side of an
+        unfilled DOWN-gap is not a ceiling anyone is defending."""
+        pre = _oscillation(80.0, 85.0, cycles=5) + [80.0] * 10
+        bars = _bars(pre + [50.0], spread=0.6)
+        edge = unfilled_gap_edge(bars, "short")
+        assert edge is not None and 79 <= edge <= 80, "top of the unfilled down-gap"
+        _, resistances = find_structural_levels(bars)
+        prices = [lv.price for lv in resistances]
+        assert structural_floor(prices, 50.0, "short") is not None
+        assert structural_floor(prices, 50.0, "short", gap_edge=edge) is None
+        assert unfilled_gap_edge(bars, "long") is None
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +307,41 @@ class TestNoFloorNoTrade:
         assert decisions == []
         assert "DEAD" not in constructor.last_refusals
         assert "no target could be computed" in constructor.last_drop_reasons["DEAD"]
+
+    def test_a_floor_only_beyond_an_unfilled_gap_is_refused_under_its_own_code(self):
+        """The constructor reads the Python-set gap edge and refuses with a
+        code the census can tell apart from 'no floor at all'."""
+        constructor = PortfolioConstructor()
+        analysis = _analysis("GAPD", entry=80.0, stop=76.0, levels=[50.6, 44.4])
+        analysis.unfilled_up_gap_edge = 50.6
+        decisions = constructor.construct_orders(
+            targets=[_target("GAPD")], positions=[], analyses=[analysis],
+            total_value=100_000, price_map={"GAPD": 80.0},
+        )
+        assert decisions == []
+        recorded = constructor.last_refusals["GAPD"]
+        assert recorded["refusal"] == STOP_REFUSAL_FLOOR_BEYOND_UNFILLED_GAP
+        assert "unfilled gap" in recorded["detail"]
+        # Same chart with the gap filled (edge None): the shelf is a floor.
+        analysis.unfilled_up_gap_edge = None
+        constructor = PortfolioConstructor()
+        decisions = constructor.construct_orders(
+            targets=[_target("GAPD")], positions=[], analyses=[analysis],
+            total_value=100_000, price_map={"GAPD": 80.0},
+        )
+        assert [d.action for d in decisions] == ["BUY"]
+
+    def test_r6_names_the_gap_case_too(self):
+        from src.agents.portfolio_manager import PortfolioManagerAgent
+
+        beyond = _analysis("GAPD", entry=80.0, stop=76.0, levels=[50.6, 44.4])
+        beyond.unfilled_up_gap_edge = 50.6
+        verdicts = PortfolioManagerAgent.candidate_eligibility(
+            analyses=[beyond],
+            evidence_registry={"GAPD": {"technical": "bullish", "news": "bullish"}},
+            active_state_changes="", allowed_buy_symbols={"GAPD"},
+        )
+        assert any(r.startswith("R6 ") and "unfilled gap" in r for r in verdicts["GAPD"]), verdicts
 
     def test_a_floor_two_touches_deep_qualifies_with_no_waiting_period(self):
         """The scan's own minimum (two touches) is the bar. No bar count,
@@ -433,7 +507,7 @@ class TestPmEligibilityMirrorsTheRule:
             analyses=[no_floor, with_floor],
             evidence_registry={"NVDA": {"technical": "bullish", "news": "bullish"},
                                "AMD": {"technical": "bullish", "news": "bullish"}},
-            active_state_changes=[],
+            active_state_changes="",
             allowed_buy_symbols={"NVDA", "AMD"},
         )
         assert any(r.startswith("R6 ") for r in verdicts["NVDA"]), verdicts
