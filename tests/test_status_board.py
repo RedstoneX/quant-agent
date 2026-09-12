@@ -315,6 +315,8 @@ def test_the_template_carries_every_placeholder_the_renderer_fills():
                 "{{RIGHT_NOW}}", "{{DECISIONS}}", "{{QUEUE}}", "{{PAUSED}}",
                 "{{FINISHED_UNMARKED}}", "{{FINISHED_UNMARKED_COUNT}}",
                 "{{REVIEW_OWED}}", "{{REVIEW_OWED_COUNT}}",
+                "{{IN_HAND}}", "{{IN_HAND_COUNT}}",
+                "{{NO_ACTION}}", "{{NO_ACTION_COUNT}}",
                 "{{RESOLVED}}", "{{QUEUE_OPEN}}",
                 "{{QUEUE_TOTAL}}", "{{PAUSED_COUNT}}", "{{RESOLVED_COUNT}}",
                 "{{UNEXPLAINED_NOTE}}", "{{PM_GATE}}",
@@ -1890,11 +1892,169 @@ def test_the_identifier_is_readable_but_does_not_dominate_the_card():
 @pytest.mark.parametrize("headline,expected", [
     ("A thing — DEFERRED, not investigated further.", "paused"),
     ("A thing — MOOT, deleted with item 14.", "paused"),
-    ("A thing — TOO STRICT. IN FLIGHT.", "open"),
+    # Being built is not paused — and, since 2026-09-12, not "open" either:
+    # it is in hand. See the IN HAND block below.
+    ("A thing — TOO STRICT. IN FLIGHT.", "in_hand"),
+    ("A thing — TOO STRICT. DEFECT.", "open"),
 ])
 def test_paused_items_are_separated_from_live_work(headline, expected):
     it = sb.QueueItem(1, "A thing", "", "", None, False, headline=headline)
     assert it.bucket == expected
+
+
+# ---------------------------------------------------------------------------
+# IN HAND — decided, or being built
+#
+# The owner's words: "I know for a fact I've already approved a bunch of
+# things. Either you're working on them or they're done ... why am I seeing
+# it on the board? How am I supposed to find the next thing to do, to
+# review?" The board had no state between open and finished, so an item he
+# had ruled on, or one already being built, was queued back at him.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("headline,expected", [
+    ("A thing — TOO STRICT. IN FLIGHT.", "being built"),
+    ("A thing — DEFECT. IN PROGRESS.", "being built"),
+    ("A thing — BEING BUILT, lands this week.", "being built"),
+    ("A thing — DECIDED 2026-09-12, rank-ordered.", "decided, not yet built"),
+    ("A thing — RATIFIED 2026-09-03.", "decided, not yet built"),
+    ("A thing — owner-requested.", "decided, not yet built"),
+    # Item 20's real tail: a ruling, followed by an instruction containing
+    # the word NOT. The blanket "NOT anywhere" rule would have un-ruled it.
+    ("Gate the decision — owner's design, 2026-09-02. Do not trade on "
+     "partial evidence.", "decided, not yet built"),
+    # No claim.
+    ("A thing — DEFECT. Observed, not theorised.", ""),
+    ("A thing — OPEN, found 2026-09-11 by audit.", ""),
+])
+def test_decided_and_in_progress_are_read_apart(headline, expected):
+    it = sb.QueueItem(1, "t", "", "", None, False, headline=headline)
+    assert it.in_hand_state == expected
+    assert it.bucket == ("in_hand" if expected else "open")
+
+
+@pytest.mark.parametrize("headline", [
+    "A thing — NOT DECIDED, do not act.",
+    "A thing — NOT YET APPROVED.",
+    "A thing — TO BE DECIDED after the re-measure.",
+    "A thing — AWAITING APPROVAL.",
+    "A thing — UNDECIDED.",
+    # "OWNER CALL" on its own means a call is NEEDED, not that one was made.
+    "A thing — STILL OPEN, OWNER CALL.",
+])
+def test_a_negated_ruling_is_not_a_ruling(headline):
+    it = sb.QueueItem(1, "t", "", "", None, False, headline=headline)
+    assert it.in_hand_state == ""
+    assert it.bucket == "open"
+
+
+def test_a_dated_status_paragraph_in_the_body_counts_as_a_ruling():
+    """Item 49's real shape: the headline still says OPEN, and the ruling
+    was recorded as a dated bold paragraph underneath it. That is how the
+    backlog records a later change of state, so the board reads it."""
+    body = (
+        "\n**49. The risk budget binds and nothing rations it — OPEN, "
+        "surfaced 2026-09-12.** Measured on a real run.\n\n"
+        "**DECIDED 2026-09-12 by the owner: rank-ordered, best first.** His "
+        "words. Still to BUILD.\n"
+    )
+    it = sb._parse_numbered_items(body)[0]
+    assert it.status_leads == ("DECIDED",)
+    assert it.in_hand_state == "decided, not yet built"
+    assert it.bucket == "in_hand"
+
+
+@pytest.mark.parametrize("paragraph", [
+    # An ordinary bold sentence: no date, so not a status paragraph.
+    "**Three distinct defects, and they compound:**",
+    # A status word that is not the opening word.
+    "**Conviction-band question — DECIDED 2026-09-11, owner call:** restore",
+    # Dated, but negated.
+    "**NOT DECIDED 2026-09-12.** Do not act on the existing numbers.",
+])
+def test_ordinary_bold_prose_is_not_a_status_paragraph(paragraph):
+    body = f"\n**7. A thing — DEFECT.**\n\n{paragraph}\n"
+    it = sb._parse_numbered_items(body)[0]
+    assert it.in_hand_state == ""
+    assert it.bucket == "open"
+
+
+def test_finished_and_partly_done_both_outrank_in_hand():
+    """A ruling on a finished item is history, not a live state; and real
+    outstanding work on a mostly-finished item stays in the running order,
+    labelled — the existing tests pin that and this one must not undo it."""
+    shipped = sb.QueueItem(1, "t", "", "", None, False,
+                           headline="A thing — SHIPPED 2026-09-04, owner-requested.")
+    assert shipped.bucket == "finished_unmarked"
+    partial = sb.QueueItem(1, "t", "", "", None, False,
+                           headline="A thing — PARTIALLY FIXED, rest IN FLIGHT.")
+    assert partial.bucket == "open"
+    assert partial.part_done is True
+
+
+@pytest.mark.parametrize("headline", [
+    "Accepted by the broker, never filled — 6 of 68 (9%). WORKING AS INTENDED.",
+    "A second floor — 4 of 68 (6%). WORKING AS INTENDED, BUT.",
+    "Stop on the wrong side — 2 of 68 (3%). CHECKED, NOT A DEFECT.",
+])
+def test_a_cause_that_is_by_design_is_listed_but_never_queued(headline):
+    it = sb.QueueItem(3, "t", "", "", None, False, headline=headline)
+    assert it.bucket == "no_action"
+
+
+def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
+    """The live outcome, pinned, on the items the owner would name."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    items, problem = sb.load_funnel_queue(work_md)
+    assert problem is None
+    by_rank = {i.rank: i for i in items}
+    # Item 1 is IN FLIGHT; 20 and 39 are the owner's own design / request;
+    # 49 was decided by him on 2026-09-12 in a status paragraph.
+    assert by_rank[1].in_hand_state == "being built"
+    for rank in (20, 39, 49):
+        assert by_rank[rank].in_hand_state == "decided, not yet built", rank
+    for rank in (1, 20, 39, 49):
+        assert by_rank[rank].bucket == "in_hand", rank
+    # Checked and by design.
+    for rank in (3, 4, 8):
+        assert by_rank[rank].bucket == "no_action", rank
+    # 48 and 50 said RESOLVED and were never struck through; they are now.
+    for rank in (48, 50):
+        assert by_rank[rank].bucket == "resolved", rank
+    # And what is open is genuinely open: nothing in it carries a ruling.
+    for it in items:
+        if it.bucket == "open":
+            assert it.in_hand_state == "", it.rank
+
+
+def test_the_top_card_never_shows_an_item_already_in_hand(tmp_path):
+    """End to end: with no decision due, the RIGHT NOW card falls to the
+    running order — and must skip an item he has already ruled on."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## DECISIONS PENDING\n\n## THE FUNNEL QUEUE\n\n"
+        "**1. The floor — TOO STRICT. IN FLIGHT.**\n\n"
+        "**2. The budget — OPEN, surfaced today.**\n\n"
+        "**DECIDED 2026-09-12 by the owner: best first.**\n\n"
+        "**3. The stop side — CHECKED, NOT A DEFECT.**\n\n"
+        "**4. A real open gap — DEFECT.**\n\n"
+        "### Re-measure gate\n"
+    )
+    phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.0,
+             "sessions_today": 0, "box_sha": "a", "main_sha": "a"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render(phases, state, template, work, tmp_path / "none.md")
+    top = out.split('class="rn"', 1)[1].split("</article>", 1)[0]
+    assert "A real open gap" in top
+    assert "The floor" not in top and "The budget" not in top
+    assert "no decision is waiting on you" in top
+    # The in-hand section says which is which, in words.
+    assert "being built; nothing needed from you" in out
+    assert "decided, not yet built; nothing needed from you" in out
+    assert "working as intended, nothing to fix" in out
+    # And it is drawn BELOW the running order, never above it.
+    assert out.index('id="order"') < out.index('id="inhand"')
 
 
 def test_a_struck_through_item_is_resolved_not_open():
@@ -2061,6 +2221,95 @@ def test_no_status_on_the_page_depends_on_colour_alone():
     # And each label is real words, not a colour name or a bare symbol.
     labels = [lbl for _c, lbl in sb.VERDICT_PILL.values()]
     assert all(any(ch.isalpha() for ch in lbl) for lbl in labels)
+
+
+def _css_tokens(block: str) -> dict[str, str]:
+    return {m.group(1): m.group(2).upper()
+            for m in re.finditer(r"--([a-z-]+):(#[0-9A-Fa-f]{6})", block)}
+
+
+def _contrast(a: str, b: str) -> float:
+    def lum(h):
+        r, g, b_ = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
+        f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b_)
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _palettes():
+    css = (Path(__file__).resolve().parents[1] / "scripts"
+           / "status_board_template.html").read_text()
+    light = _css_tokens(css.split(":root{", 1)[1].split("}", 1)[0])
+    dark = _css_tokens(css.split('[data-theme="dark"]{', 1)[1].split("}", 1)[0])
+    return {"light": light, "dark": dark}
+
+
+#: Every text-on-background pairing the stylesheet draws, and the WCAG
+#: minimum it must clear: 4.5:1 for text, 3:1 for a border or a dot.
+_CONTRAST_PAIRS = [
+    ("ink", "card", 4.5), ("ink", "paper", 4.5),
+    ("muted", "card", 4.5), ("muted", "paper", 4.5), ("muted", "quiet-bg", 4.5),
+    ("faint", "card", 4.5), ("faint", "paper", 4.5),
+    ("accent", "card", 4.5), ("accent", "paper", 4.5),
+    ("strong", "strong-bg", 4.5), ("strong", "card", 4.5),
+    ("flag", "flag-bg", 4.5), ("flag", "card", 4.5),
+    ("strong-edge", "card", 3.0), ("flag-edge", "card", 3.0),
+    ("accent", "card", 3.0),
+]
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_every_text_pairing_on_the_board_clears_wcag_aa(theme):
+    """The owner is red/green colour blind and reported the page as "almost
+    black and white". Contrast is computed from the stylesheet's own tokens,
+    not assumed, so a future palette change that quietly fails him fails
+    here first."""
+    pal = _palettes()[theme]
+    for fg, bg, need in _CONTRAST_PAIRS:
+        ratio = _contrast(pal[fg], pal[bg])
+        assert ratio >= need, f"{theme}: {fg} on {bg} is {ratio:.2f}:1, needs {need}"
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_the_two_accent_hues_are_blue_and_orange_never_red_or_green(theme):
+    """Red-green colour blindness keeps blue-yellow discrimination, so the
+    only hue axis this page may use is blue against orange. A green or a red
+    accent would put meaning back where he cannot see it."""
+    def hue(h):
+        r, g, b = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
+        mx, mn = max(r, g, b), min(r, g, b)
+        if mx == mn:
+            return None  # grey
+        d = mx - mn
+        if mx == r:
+            deg = (g - b) / d % 6
+        elif mx == g:
+            deg = (b - r) / d + 2
+        else:
+            deg = (r - g) / d + 4
+        return (deg * 60) % 360
+    pal = _palettes()[theme]
+    for name in ("accent", "strong", "strong-edge"):
+        assert 200 <= hue(pal[name]) <= 250, f"{theme}: {name} is not blue"
+    for name in ("flag", "flag-edge"):
+        assert 15 <= hue(pal[name]) <= 45, f"{theme}: {name} is not orange"
+    # And the neutrals carry no hue at all — the old palette's greys were
+    # faintly green, which is part of why the page read as monochrome.
+    for name in ("ink", "muted", "faint", "rule", "paper", "quiet-bg"):
+        assert hue(pal[name]) is None, f"{theme}: {name} carries a tint"
+
+
+def test_every_nothing_needed_state_has_its_own_edge_shape():
+    """Three "nothing needed from you" lists sit near each other. Each is
+    drawn with a different border STYLE so they stay apart with colour
+    stripped out: solid for a review owed, double for in hand, dashed for a
+    gap. A colour swap alone would be invisible to him."""
+    css = (Path(__file__).resolve().parents[1] / "scripts"
+           / "status_board_template.html").read_text()
+    assert re.search(r"\.ol-review\{border-left:\d+px solid", css)
+    assert re.search(r"\.ol-inhand\{border-left:\d+px double", css)
+    assert re.search(r"\.pb-gap,\.pb-jargon\{border-left-style:dashed", css)
 
 
 def test_the_rebuild_trigger_watches_the_backlog():
