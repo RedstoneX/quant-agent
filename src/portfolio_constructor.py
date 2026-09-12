@@ -28,7 +28,11 @@ import logging
 import re
 from dataclasses import dataclass
 
-from src.data.levels import TargetDerivation, derive_structural_target
+from src.data.levels import (
+    TargetDerivation,
+    derive_structural_target,
+    structural_floor,
+)
 from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision, reward_to_risk,
 )
@@ -110,6 +114,23 @@ STOP_RULE_ATR_BAND = "stop_widened_to_atr_noise_band"
 STOP_RULE_OUTSIDE_BAND = "stop_kept_already_outside_atr_band"
 STOP_RULE_NO_VOLATILITY = "stop_kept_no_atr_reading"
 STOP_REFUSAL_WRONG_SIDE = "stop_on_wrong_side_of_entry"
+#: Owner decision 2026-09-12 — "No floor, no trade. No ceiling is fine."
+#: The desk's own level computation ran over a measurable chart and found
+#: NO structural level on the stop side of this entry (below a long, above
+#: a short). Until this date such a trade shipped anyway: the analyst's stop
+#: was accepted and, having nothing computed under it, was pushed out to
+#: `min_stop_atr_multiple` ATRs — a distance, not a level, which is exactly
+#: the "pick a number and hope" the owner refuses to hold. A trade REFUSAL
+#: about this chart today, recorded as data (`last_refusals`), never a data
+#: fault: "not yet", not "never" — the levels are re-read every session.
+STOP_REFUSAL_NO_STRUCTURAL_FLOOR = "no_structural_floor"
+#: The `pipeline_event` reason under which `pipeline_stages.DecisionStage`
+#: files a structured constructor refusal (`refusal=<code>` beside it).
+#: Distinct from `constructor_dropped`, whose detail is recovered by regex
+#: over log text and misses several messages; this one is written from
+#: `last_refusals` directly, so the funnel and
+#: `scripts/blocked_proposals_census.py` see the code, not a sentence.
+CONSTRUCTOR_REFUSED_EVENT_REASON = "constructor_refused"
 # DEAD AS OF 2026-09-11 (docs/WORK.md item 1(d)) — the three
 # below-floor refusal codes and the PERMIT code below them. Nothing in this
 # module refuses a trade on a reward:risk floor any more: a breakout is not
@@ -482,6 +503,110 @@ class PortfolioConstructor:
         # a caller can always `getattr(..., "last_drop_reasons", {})` — or
         # just read the attribute — without a first-call special case.
         self.last_drop_reasons: dict[str, str] = {}
+        # STRUCTURED refusals (2026-09-12): {SYMBOL: {"refusal", "detail",
+        # "direction"}} for every trade this instance refused BY NAME on a
+        # measurable chart — today only STOP_REFUSAL_NO_STRUCTURAL_FLOOR.
+        # Written directly, never recovered from log text: `last_drop_reasons`
+        # is a regex over the constructor's own log lines and several
+        # messages miss its pattern, so a refusal that mattered could reach
+        # the record as "no matching constructor log line captured".
+        #
+        # Accumulates across `real_reward_risk_preview` (the PM-eligibility
+        # pass over every analysed symbol, which runs BEFORE the PM) and
+        # `construct_orders`, because both run on this one instance in one
+        # session. `drain_refusals()` hands them over and clears; the caller
+        # (`pipeline_stages.DecisionStage`) drains once per session.
+        self.last_refusals: dict[str, dict[str, str]] = {}
+
+    def drain_refusals(self) -> dict[str, dict[str, str]]:
+        """Return every structured refusal since the last drain, and clear.
+
+        See `last_refusals`. A fresh dict, so the caller can hold it after
+        this instance moves on to the next session.
+        """
+        refusals = dict(self.last_refusals)
+        self.last_refusals = {}
+        return refusals
+
+    def _note_refusal(
+        self, symbol: str, direction: str, refusal: str, detail: str,
+    ) -> None:
+        """Record and log one NAMED trade refusal. Never raises.
+
+        The log line says "refused" so `_DropReasonCapture` also picks it
+        up (the symbol is never absent from `last_drop_reasons`), but the
+        durable record is the structured entry — the caller reads
+        `last_refusals` FIRST and files the code as data.
+        """
+        try:
+            key = str(symbol or "").strip().upper()
+            self.last_refusals[key] = {
+                "refusal": str(refusal), "detail": str(detail),
+                "direction": str(direction or ""),
+            }
+        except Exception:  # noqa: BLE001 — a record side-channel must never raise
+            pass
+        logger.warning(
+            "Constructor: %s %s refused [%s] — %s",
+            "SHORT" if str(direction).lower() == "short" else "BUY",
+            symbol, refusal, detail,
+        )
+
+    def _require_structural_floor(
+        self,
+        symbol: str,
+        analysis: TechAnalysisResult | None,
+        entry_price: float,
+        direction: str,
+    ) -> bool:
+        """Owner decision 2026-09-12: **"No floor, no trade. No ceiling is
+        fine."** True when a computed level sits on the STOP side of this
+        entry; False — and a named, recorded refusal — when none does.
+
+        WHAT THE CODE DID BEFORE. Nothing required a floor. `_derive_target`
+        refused only when the chart yielded NO levels at all (on either
+        side), and `_resolve_stop` refused only when neither the PM nor the
+        analyst had typed a stop. A long whose chart had six resistances
+        above and nothing below shipped: the analyst's stop, backed by
+        nothing computed, was pushed out to the ATR noise band
+        (`STOP_RULE_ATR_BAND`) or kept where the model put it
+        (`STOP_RULE_OUTSIDE_BAND`) — a distance chosen and hoped for. The
+        backtest engine (`src/backtest/engine.py::
+        _resolve_structural_stop_and_target`) already declined the same
+        trade, so the live desk and its own rehearsal disagreed.
+
+        Applies to BOTH setup types: a breakout still needs support beneath
+        it. What a breakout does not need is anything OVERHEAD — that side
+        is `_derive_target`'s, which projects a target from ATR when no
+        level stands in the way and refuses nothing for it (its
+        no-level-in-direction refusal is unreachable by construction; see
+        `src.risk.constants.is_trend_trade`).
+
+        This is NOT a data fault. `_derive_target` has already run for this
+        exact trade and did not refuse, so the chart was measurable and
+        yielded levels; the only thing missing is one on the stop side.
+        Short or dirty history never reaches here.
+
+        Called from the ONE funnel both `real_reward_risk_preview` (PM
+        eligibility) and `_resolve_entry_and_stop` (order construction)
+        pass through, immediately after target derivation, so the two
+        cannot disagree about which names have a floor.
+        """
+        levels = getattr(analysis, "computed_levels", None) or []
+        floor = structural_floor(levels, entry_price, direction)
+        if floor is not None:
+            return True
+        is_short = str(direction or "").lower() == "short"
+        self._note_refusal(
+            symbol, direction, STOP_REFUSAL_NO_STRUCTURAL_FLOOR,
+            f"no structural level {'above' if is_short else 'below'} the "
+            f"${entry_price:,.2f} entry on a chart that yielded {len(levels)} "
+            f"level(s) elsewhere, so there is nothing for a stop to sit on. "
+            f"No floor, no trade (owner decision 2026-09-12) — not yet, not "
+            f"never: the levels are re-read every session and the name "
+            f"qualifies the day the chart shows one.",
+        )
+        return False
 
     def construct_orders(self, *args, **kwargs) -> list[TradeDecision]:
         """Same contract as `_construct_orders_impl` — see its docstring for
@@ -1231,6 +1356,15 @@ class PortfolioConstructor:
             )
             return (None, None)
 
+        # "No floor, no trade" (owner decision 2026-09-12). Checked AFTER
+        # target derivation so a chart that could not be measured at all is
+        # already filed under its own name, and BEFORE the stop is resolved
+        # so a stop nobody's chart defends is never widened into a trade.
+        if not self._require_structural_floor(
+            target.symbol, analysis, entry_price, target.direction,
+        ):
+            return (None, None)
+
         stop_loss = self._resolve_stop(target, analysis, entry_price)
         stop_loss = self._widen_stop_past_noise(
             target.symbol, analysis, entry_price, stop_loss, regime=regime,
@@ -1461,6 +1595,13 @@ class PortfolioConstructor:
             analysis.symbol, analysis, entry_price, direction,
         )
         if derivation.price is None:
+            return None
+        # "No floor, no trade" — same check, same place in the funnel, as
+        # `_resolve_entry_and_stop`, so the PM is not shown a candidate the
+        # constructor would refuse one stage later.
+        if not self._require_structural_floor(
+            analysis.symbol, analysis, entry_price, direction,
+        ):
             return None
 
         raw_stop = getattr(analysis, "stop_loss", None)
