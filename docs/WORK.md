@@ -120,10 +120,12 @@ see the struck-through index above for status.)
    `docs/INCIDENT_HISTORY.md`. **Still open:** a second, different
    failure (a dropped symbol key) — left unfixed, can't be auto-repaired
    without inventing data.
-6. **Macro analyst — RESOLVED 2026-09-11, see item 48.** The 52%-of-runs
-   sanity-clear was a calibration bug, not broken data. Not answered as a
-   threshold call: the calendar-day freshness test was removed outright and
-   replaced by latest-published-reading detection.
+6. **Macro analyst — CORRECTED 2026-09-03, prior "no defect" claim was
+   wrong.** Fires on 52% of runs, not rare. NOT a fetch/pipeline defect —
+   FRED's real publication lag is 2 days, but the gate's freshness bar
+   assumes 1. Calibration bug, not broken data. Replacement number is a
+   risk-threshold call for the owner — see DECIDE BY below. Full
+   measurement: `docs/INCIDENT_HISTORY.md`.
 
 **Also shipped: a bad analyst seat now gets its OWN Telegram alert.** Moved to `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
@@ -1033,17 +1035,15 @@ dollar filter — needs holdings-size data QAMC doesn't have; owner call.
 
 **46. A stop-distance tolerance setting fails its own stated justification — OPEN, found 2026-09-11 by audit.** `level_match_atr_tolerance` in `config/settings.yaml:623` sets `0.25` and justifies it as "at least" the 1% level-cluster zone width. At this book's own stated median ATR of 2.56%, 0.25 ATR is 0.64% — under the 1% it claims to cover, by ~1.6x. Governs whether a stop counts as level-backed and is therefore exempt from the ATR stop floor, so it feeds directly into item 1's geometry. Either the tolerance or the justification is wrong; both are numbers, so owner call.
 
-**47. `risk.max_position_pct`'s cash-only justification was already false when written — RESOLVED 2026-09-11, owner call.** Derived answer was 33 (largest single bet where a median real single-session collapse stays under the ladder's -20% alert rung); owner set **65** instead as his own risk-appetite call, accepting that the same disaster then costs ~39% and breaches that rung. `max_position_pct: 65`, constructor and pipeline defaults in sync. Full derivation and the five reference disasters: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
+**47. `risk.max_position_pct`'s cash-only justification was already false when written — RESOLVED 2026-09-11, owner call.** 100's comment asserted `allow_margin: false` made >100% notional unreachable; `allow_margin` had been `true` since 2026-09-02, two days before that comment (PR #258, 2026-09-04). Derived replacement: 20 (ladder emergency rung) / 0.60 (median of 5 real dated single-session idiosyncratic collapses) = 33, the largest single bet where that median disaster stays under the ladder's -20% owner-alert rung. Owner reviewed and set **65** instead — his own risk-appetite call, not a data disagreement; rejected 33 as too tight for a desk that avoids penny/micro-cap names, correction on the table first (the 5 reference disasters were all liquid, non-penny names). At 65 the same median disaster costs ~39%, past the alert rung rather than under it — knowing trade-off, not an oversight. `max_position_pct: 65` in settings.yaml, `ConstructorConfig.max_position_pct` and `pipeline.py`'s wiring default kept in sync. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
-**48. Macro `regime_shift` freshness — RESOLVED 2026-09-11, decision superseded not answered.** None of the three options was taken: the calendar-day staleness test was removed entirely and replaced by `SeriesFreshness` — is this the latest published reading, plus a separate is-a-newer-one-overdue signal, with per-series cadence derived from each series' own observed gaps. Fixes the 52%-of-runs sanity-check-clears-regime_shift measured 2026-09-03. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
+**~~48. Macro `regime_shift` freshness — RESOLVED 2026-09-11, decision superseded not answered.~~** The day-count was removed, not re-tuned. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **49. The risk budget is now the binding constraint on a full day's eligible set, and nothing decides how to ration it — OPEN, surfaced 2026-09-12 by item 1(d).** Measured on `run-64290730` after the reward:risk floor was removed by setup type: eligible names 12 -> 25, and the eligible set's total requested risk is **48% against a 25% `max_portfolio_risk_pct` budget**. The floor was previously doing the rationing by accident — refusing enough candidates that the budget rarely bound. It no longer refuses them, so the budget binds on a normal day and something must decide WHICH permitted trades get the capital. Today that is whatever order `allocate_risk_budget` happens to process in, which is not a decision anybody made. Real options, none costed yet: rank-ordered (best-scored first until exhausted), proportional scale-down (everyone sized smaller), conviction-tiered, or a hard cap on names per session. Each is a different desk, not a tuning knob — owner call. Do NOT resolve by re-tightening the floor that was just removed.
 
 **DECIDED 2026-09-12 by the owner: rank-ordered, best first.** His words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The budget is spent on the best-ranked eligible candidates until it is exhausted; the remainder are not taken, and are not silently shrunk to fit. Proportional scale-down was explicitly rejected in the recommendation he accepted, on the grounds that sizing everyone smaller turns every strong idea into a weak one. **Still to BUILD** — `allocate_risk_budget` today spends in whatever order it happens to process in, which is the defect; the decision above is not yet implemented. Whether a partially-affordable candidate at the cut line is taken at a reduced size or skipped entirely is the one sub-question the decision does not settle, and must be raised with the owner rather than assumed.
 
-**51. Rotation only ever pointed at the problem; it never acted — RESOLVED 2026-09-12 (PR #316), and ENABLED.** Phase 14 computed the opportunity-cost comparison every morning and handed it to the Portfolio Manager as information. If the model ignored it, a categorically-dead holding kept its capital indefinitely and the better-ranked candidate was simply not taken. The desk now closes ONE held position per morning session, and only when every one of five conditions measured from its own data holds: the book's existing risk leaves less headroom than the minimum tradeable size (a half-empty book never triggers this); the holding fails the desk's own entry rules TODAY, so the comparison is categorical rather than a rank wobble; its structural protection has ALREADY broken under the item-25 holding-discipline check, so a position whose thesis is intact is never rotated out; it was not bought today and has nothing in flight; and the PM itself asked to BUY the best-ranked new candidate this session — the desk never invents the buy leg. The close is an ordinary zero-size PM target through the SAME path as any PM exit: constructor, hard risk rules, AI Risk Manager review (which can refuse it), the holding-discipline claim check, the protected-sell write-ahead. Nothing is bypassed and no new exemption exists. Every execution sends a standalone owner alert; a SECOND alert fires if the sale happened and the buy leg then did not, because freed capital sitting idle after a named trade failed is the genuinely bad outcome. `rotation_enabled: true` — owner enabled it 2026-09-12 rather than shipping it dark, having set the condition that auto-selling must not begin until the book is full and the pruning logic is genuinely sound. **Never executed against a live broker**; the desk has been paused since ~2026-09-03, so the first real rotation is also its first end-to-end proof and should be watched.
-
-**50. An entry order that did not fill was left in a state nobody was told the truth about — RESOLVED 2026-09-12 (PR #315).** Three faults. The re-peg walked a ladder of small nudges where Alpaca's community practice is ONE decisive market-crossing replace (every extra replace is another `pending_replace` window to jam in); ladder removed, `repeg_max_attempts` deleted and now rejected at config load. The replace was attempted before the exchange had the order — `accepted`/`pending_new` are pre-venue and a replace on them is refused, so it is now gated on positive evidence of `new`. And **the owner was told the opposite of what happened**: PR #311's alert said the order was left working until the close, while `place_entry_protection` had always cancelled it ~90s later, silently, with README and settings.yaml repeating the false claim. The alert now states the truth — cancelled at the end of its session, prices tried, nothing resubmitted — and both the cancel and the alert are unconditional on `repeg_enabled`. Open sub-question, deliberately undecided: whether a cancelled entry should be auto-resubmitted next session. Full account and the sourced Alpaca research: `docs/INCIDENT_HISTORY.md`, 2026-09-12.
+**~~50. An entry order that did not fill was left in a state nobody was told the truth about — RESOLVED 2026-09-12 (PR #315, "Stalled entry: one reprice, only once the exchange has it, then cancelled with its session").~~** Three faults (the reprice ladder, replacing before the exchange had the order, an alert saying the opposite of what the code did), the research, and the owner's "not going with repeg" decision: `docs/INCIDENT_HISTORY.md`, 2026-09-12. Also: `repeg_max_attempts` is deleted from the schema and rejected loudly at config load. Open sub-question, deliberately not decided: whether a cancelled entry should be auto-resubmitted next session.
 
 ---
 
@@ -1290,17 +1290,33 @@ Two facts worth acting on:
    needs to cost more of the total is a separate question that a clean
    baseline, not this one, has to answer.
 
-1. **Execution: re-peg — SUPERSEDED by item 50 (PR #315). Owner decided
-   2026-09-12 that `execution.repeg_enabled` stays `false` and is not to be
-   re-proposed.** The PR #144 ladder, `repeg_max_attempts` and the walk-up
-   design no longer exist. The one still-true reason to keep this line:
-   since PR #111 a BUY limit is submitted AT the slippage ceiling whenever a
-   quote is available, so a reprice has nowhere to go and is inert by
-   construction; it would only have room where the quote was unavailable at
-   submission. Whether entries should instead peg tighter than the ceiling
-   and be walked up is a policy question that reverses part of #111's
-   reasoning and has never been taken.
+1. **Execution: bounded re-peg — SUPERSEDED 2026-09-12 by item 50 (PR #315).
+   The ladder described below no longer exists and `repeg_max_attempts` is now
+   rejected at config load. `execution.repeg_enabled` stays `false` by owner
+   decision and is not to be re-proposed. Kept only because the paragraph
+   beginning "Read this before enabling it" records the still-true reason the
+   whole feature has almost nothing to act on.** Original entry, merged
+   from `feat/bounded-repeg` (PR #144 opened against `main`, 2026-08-29):
+   `execution.repeg_enabled` (default **false**), `repeg_max_attempts`
+   (default 2, schema-capped at 5), the `pending_repegs` write-ahead queue and
+   its session-start drain, `broker.replace_entry_limit` /
+   `resolve_replacement_chain`, and
+   `place_entry_protection(superseded_filled_qty=...)` so a fill that landed
+   under a superseded order id still gets a stop. A partially filled order is
+   NEVER replaced (that is how one idea gets bought twice), a rejected
+   replacement means the order filled and the chase stops, and every
+   ambiguous branch leaves the order working.
 
+   **Read this before enabling it.** Since PR #111 a BUY limit is submitted
+   AT the slippage ceiling whenever a quote is available, so there is nothing
+   to walk toward and the re-peg is a no-op by construction for those
+   entries. It only has room where the limit was set BELOW the ceiling —
+   today that means the quote was unavailable at submission and the analyst's
+   entry price was used. Turning the flag on will therefore do approximately
+   nothing until the entry pricing policy changes. Deciding whether entries
+   should peg tighter than the ceiling (and then be walked up) is a policy
+   question that reverses part of #111's reasoning and was deliberately NOT
+   taken here.
 2. **Lazy Prices 10-K year-over-year diff.** Text similarity only, no model. The
    filings are already downloaded and stored.
 
