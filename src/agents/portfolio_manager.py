@@ -1257,7 +1257,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
               (`constructor_refusals_by_symbol`, a snapshot of
               `PortfolioConstructor.last_refusals` taken after
               `real_reward_risk_preview` ran over every analysis) — today
-              `stop_wider_than_instrument_noise_band` or
+              `stop_wider_than_instrument_reach` or
               `insufficient_history` (docs/WORK.md item 54, 2026-09-12).
               The enforcing check is one stage later, in the ONE funnel
               construction shares with the preview; this only stops the PM

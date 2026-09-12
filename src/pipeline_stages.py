@@ -3818,7 +3818,7 @@ class DecisionStage:
             )
         # Item 54 (2026-09-12): the preview above also RECORDS, by code, the
         # names the one shared funnel refused (`last_refusals` — stop wider
-        # than the instrument's noise band, or too young to measure). A
+        # than the instrument's reach, or too young to measure). A
         # snapshot, not a drain: DecisionStage drains once per session
         # after construction, so the same refusal is filed exactly once.
         constructor_refusals_by_symbol = {
@@ -4108,7 +4108,7 @@ class DecisionStage:
             )
             # 2026-09-12: a refusal the constructor recorded AS DATA
             # (`PortfolioConstructor.last_refusals` — today a stop wider
-            # than the instrument's noise band, or too little history) is
+            # than the instrument's reach, or too little history) is
             # filed under its own reason with the code beside it, never
             # through the log-text regex above, whose pattern several
             # messages miss. Drained here, once per session.
