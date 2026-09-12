@@ -117,12 +117,6 @@ this line, one heading per item.
 **Example —** A trade could clear an earlier 1.5-minimum check and still be blocked later by this separate 1.2-minimum check — two different numbers guarding essentially the same question.
 
 
-## item 6
-
-**Plain language —** Sometimes there's no clear real price level, like a past high or floor, to set a profit target from, so an idea can't be built into a trade. All three known cases happened within one day of a related change shipping, so it's too soon to tell whether this is a new problem or a coincidence.
-**Example —** All three cases so far cluster around a single day right after an unrelated change went live, rather than being spread out — the reason this is flagged as too new to judge yet.
-
-
 ## item 7
 
 **Plain language —** An AI reviewer checks a whole day's trading plan for internal consistency, and if it finds the plan doesn't hang together, it can reject every trade in that plan at once, not just the one that's actually the problem. This has happened again even after an earlier attempt to stop it.
