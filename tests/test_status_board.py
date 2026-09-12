@@ -2546,3 +2546,281 @@ def test_every_rendered_entry_carries_a_reference_handle():
         f"{len(missing)} board entries would render with no reference handle, "
         f"so the owner could not name them: {missing[:3]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# IN FLIGHT — what is being built right now, read off GitHub, never typed in
+#
+# The owner's words: "I'm kind of clueless unless you tell me stuff,
+# everything is in the background." The honest source for "in flight" is the
+# open pull requests. Two things are pinned: the section renders real work
+# from real GitHub answers, and an unreachable GitHub degrades to an explicit
+# "could not read" — never an empty list that reads as "nothing in flight".
+# ---------------------------------------------------------------------------
+
+from src import inflight  # noqa: E402
+from src.api import server as api_server  # noqa: E402
+
+
+def _gh(answers: dict[str, object], *, status: int = 200, etag: str | None = None):
+    """A canned GitHub: url -> JSON body. Records every request it sees."""
+    seen: list[dict[str, str]] = []
+
+    def fetch(url: str, headers: dict[str, str]):
+        seen.append({"url": url, **headers})
+        for key, body in answers.items():
+            if key in url:
+                h = {"etag": etag} if etag else {}
+                return status, h, json.dumps(body).encode()
+        raise AssertionError(f"unexpected url {url}")
+
+    fetch.seen = seen  # type: ignore[attr-defined]
+    return fetch
+
+
+import json  # noqa: E402
+
+
+def _pr(number, title, sha="deadbeefcafe", draft=False,
+        created="2026-09-12T16:00:02Z", updated=None):
+    return {"number": number, "title": title, "draft": draft,
+            "created_at": created, "updated_at": updated or created,
+            "head": {"sha": sha}}
+
+
+def _checks(*runs):
+    return {"check_runs": [{"name": n, "status": s, "conclusion": c}
+                           for n, s, c in runs]}
+
+
+@pytest.fixture(autouse=True)
+def _no_etag_cache():
+    inflight._etag_cache.clear()
+    yield
+    inflight._etag_cache.clear()
+
+
+def test_in_flight_lists_open_pull_requests_with_a_plain_stage():
+    fetch = _gh({
+        "/pulls?state=open": [_pr(326, "A data fault is not a trade refusal"),
+                              _pr(319, "Fix invisible markers", sha="0000000")],
+        "/pulls/326": {"mergeable_state": "dirty"},
+        "/pulls/319": {"mergeable_state": "clean"},
+        "commits/deadbeefcafe/check-runs": _checks(("pytest", "completed", "success")),
+        "commits/0000000/check-runs": _checks(("pytest", "completed", "success")),
+    })
+    got = inflight.read_in_flight(fetch=fetch)
+    assert got.readable and got.read_at is not None
+    assert [i.number for i in got.items] == [326, 319]
+    by = {i.number: i for i in got.items}
+    assert "clashes with work already merged" in by[326].stage
+    assert "waiting to be merged" in by[319].stage
+
+    out = inflight.render_in_flight(got)
+    text = re.sub(r"<[^>]+>", " ", out)
+    assert "A data fault is not a trade refusal" in text
+    assert "PR 326" in text and "PR 319" in text
+    assert "Read from GitHub at" in text, "the read time must be on the page"
+    # Trader-facing: no branch names, no commit hashes, no CI vocabulary.
+    assert "deadbeefcafe" not in out and "0000000" not in out
+    for word in ("mergeable", "dirty", "check_runs", "head", "sha", "CI "):
+        assert word not in text, word
+    assert inflight.START_MARK in out and inflight.END_MARK in out
+
+
+@pytest.mark.parametrize("draft,state,checks,expect", [
+    (True, "clean", (("pytest", "completed", "success"),), "still being written"),
+    (False, "clean", (("pytest", "in_progress", None),), "being tested now"),
+    (False, "clean", (("pytest", "completed", "failure"),), "tests failed"),
+    (False, "dirty", (("pytest", "completed", "success"),), "clashes with work already merged"),
+    (False, "blocked", (("pytest", "completed", "success"),), "waiting on a review"),
+    (False, "behind", (("pytest", "completed", "success"),), "latest changes pulled in"),
+    (False, "clean", (), "no tests have run"),
+    (False, "unknown", (("pytest", "completed", "success"),), "still being worked out"),
+    (False, None, None, "could not be read"),
+])
+def test_every_stage_is_words_not_a_github_token(draft, state, checks, expect):
+    it = inflight.InFlightItem(1, "t", dt.datetime.now(dt.timezone.utc),
+                               dt.datetime.now(dt.timezone.utc), draft=draft,
+                               mergeable_state=state, checks=checks)
+    assert expect in it.stage
+    assert not any(tok in it.stage for tok in ("dirty", "clean", "blocked:", "unstable")
+                   if tok != "blocked:")  # "blocked:" is the plain word; the others are GitHub's
+
+
+def test_unreachable_github_reads_as_could_not_read_never_as_nothing_in_flight():
+    """The failure class this desk keeps finding: an empty list that really
+    means "I could not look". Every failure shape must say so in words."""
+    def down(url, headers):
+        raise OSError("no route to host")
+    for fetch in (down, _gh({"/pulls?state=open": []}, status=403),
+                  _gh({"/pulls?state=open": []}, status=500),
+                  _gh({"/pulls?state=open": {"not": "a list"}})):
+        got = inflight.read_in_flight(fetch=fetch)
+        assert not got.readable, "a failed read must not look like a clean one"
+        assert got.items == []
+        out = inflight.render_in_flight(got)
+        text = re.sub(r"<[^>]+>", " ", out)
+        assert "Could not read what is in flight" in text
+        assert "does not mean nothing is in flight" in text
+        assert "Nothing is in flight" not in text
+
+
+def test_a_failed_read_can_show_the_last_good_read_dated_but_never_undated():
+    good = inflight.InFlight(
+        items=[inflight.InFlightItem(7, "Old but real", dt.datetime.now(dt.timezone.utc),
+                                     dt.datetime.now(dt.timezone.utc),
+                                     mergeable_state="clean", checks=())],
+        read_at=dt.datetime(2026, 9, 12, 14, 0, tzinfo=dt.timezone.utc))
+    bad = inflight.InFlight(problem="GitHub could not be reached (OSError)")
+    out = inflight.render_in_flight(bad, last_good=good)
+    text = re.sub(r"<[^>]+>", " ", out)
+    assert "Could not read what is in flight" in text
+    assert "Old but real" in text
+    assert "last successful read, at" in text and "10:00 ET" in text
+
+
+def test_a_genuinely_empty_list_says_nothing_is_in_flight_with_its_read_time():
+    got = inflight.read_in_flight(fetch=_gh({"/pulls?state=open": []}))
+    assert got.readable and got.items == []
+    text = re.sub(r"<[^>]+>", " ", inflight.render_in_flight(got))
+    assert "Nothing is in flight" in text
+    assert "Read from GitHub at" in text
+
+
+def test_an_item_whose_own_status_fails_is_still_listed_as_unreadable():
+    """One follow-up call failing must not make a change that exists vanish."""
+    calls = {"n": 0}
+
+    def fetch(url, headers):
+        if "/pulls?state=open" in url:
+            return 200, {}, json.dumps([_pr(5, "Exists")]).encode()
+        raise OSError("boom")
+    got = inflight.read_in_flight(fetch=fetch)
+    assert got.readable and [i.number for i in got.items] == [5]
+    assert got.items[0].detail_problem
+    assert "could not be read" in got.items[0].stage
+
+
+def test_the_etag_is_sent_back_and_a_304_reuses_the_held_answer():
+    """Unauthenticated reads are rate-limited; a 304 is free. So the second
+    read must send If-None-Match and accept the cached body on 304."""
+    first = _gh({"/pulls?state=open": [_pr(9, "Nine", sha="abc")],
+                 "/pulls/9": {"mergeable_state": "clean"},
+                 "commits/abc/check-runs": _checks()}, etag='W/"e1"')
+    got1 = inflight.read_in_flight(fetch=first)
+    assert [i.number for i in got1.items] == [9]
+
+    def second(url, headers):
+        assert headers.get("If-None-Match") == 'W/"e1"', url
+        return 304, {}, b""
+    got2 = inflight.read_in_flight(fetch=second)
+    assert got2.readable and [i.number for i in got2.items] == [9]
+
+
+def test_render_without_asking_github_says_so_rather_than_rendering_empty(tmp_path):
+    """`render`'s default is the explicit "nobody asked" state: a preview or
+    a test must not reach for the network, and must not print an empty list."""
+    phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
+             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render(phases, state, template)
+    assert "Could not read what is in flight" in out
+    assert "built without asking GitHub" in out
+    assert "Nothing is in flight" not in out
+    assert "{{" not in out
+
+
+def test_in_flight_sits_below_the_decisions_and_inside_the_in_hand_section(tmp_path):
+    """Nothing may push "waiting on you" down. In-flight work is part of the
+    one "nothing needed from you" section, not a second visual language."""
+    phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
+             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    got = inflight.InFlight(
+        items=[inflight.InFlightItem(3, "Built thing", dt.datetime.now(dt.timezone.utc),
+                                     dt.datetime.now(dt.timezone.utc),
+                                     mergeable_state="clean", checks=())],
+        read_at=dt.datetime.now(dt.timezone.utc))
+    out = sb.render(phases, state, template, in_flight=got)
+    assert out.index('id="yours"') < out.index('id="order"') < out.index('id="inhand"')
+    inhand = out.split('id="inhand"', 1)[1].split("</section>", 1)[0]
+    assert "Built thing" in inhand and "PR 3" in inhand
+    assert "Read from GitHub at" in inhand
+    # Drawn with the same edge shape as the in-hand list, not a new one.
+    assert 'class="ol ol-inhand ol-inflight"' in inhand
+
+
+def test_finished_and_parked_work_is_behind_one_closed_disclosure_with_counts(tmp_path):
+    """Owner, 2026-09-12: "If it's done, it's done and in the past, don't
+    carry it, don't tell me." Every bucket that needs nothing from him and is
+    not being built renders inside ONE closed <details>, counts on its
+    summary — still computed, never a list he scrolls past."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## DECISIONS PENDING\n\n## THE FUNNEL QUEUE\n\n"
+        "**1. Parked thing — PARKED until the re-measure.**\n\n"
+        "**2. By-design thing — CHECKED, NOT A DEFECT.**\n\n"
+        "**3. Reviewed thing — FIXED, pending review.**\n\n"
+        "**~~4. Signed off thing — FIXED 2026-09-03.~~**\n\n"
+        "**5. Shipped thing — SHIPPED 2026-09-10.**\n\n"
+        "**6. Live thing — DEFECT.**\n\n"
+        "### Re-measure gate\n"
+    )
+    phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.0,
+             "sessions_today": 0, "box_sha": "a", "main_sha": "a"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render(phases, state, template, work, tmp_path / "none.md")
+    start = out.index('<details class="finished rest">')
+    end = out.index("</details>", start)
+    inside = re.sub(r"\s+", " ", out[start:end])
+    for name in ("Parked thing", "By-design thing", "Reviewed thing",
+                 "Signed off thing", "Shipped thing"):
+        assert name in inside, name
+        assert name not in out[:start] + out[end:], f"{name} rendered outside the disclosure"
+    assert "Live thing" not in inside
+    assert "1 parked" in inside and "1 checked and by design" in inside
+    assert "1 finished awaiting a review" in inside and "1 signed off" in inside
+    assert "1 finished but not ticked off" in inside
+    assert 'class="finished rest" open' not in out
+    # The jump strip no longer advertises finished work as a destination.
+    nav = out.split('<nav class="jump">', 1)[1].split("</nav>", 1)[0]
+    assert "#done" not in nav and "#review" not in nav and "#paused" not in nav
+
+
+def test_the_server_re_reads_in_flight_on_every_request(monkeypatch):
+    """A pull request changing touches nothing the path unit watches, so the
+    server swaps a fresh read into the fenced section at request time."""
+    stale = inflight.render_in_flight(
+        inflight.InFlight(problem="this page was built without asking GitHub"))
+    page = f'<div class="wrap">{stale}</div>'
+    fresh = inflight.InFlight(
+        items=[inflight.InFlightItem(11, "Fresh thing", dt.datetime.now(dt.timezone.utc),
+                                     dt.datetime.now(dt.timezone.utc),
+                                     mergeable_state="clean", checks=())],
+        read_at=dt.datetime.now(dt.timezone.utc))
+    monkeypatch.setattr(api_server, "_last_good_in_flight", None)
+    monkeypatch.setattr(inflight, "read_in_flight", lambda: fresh)
+    out = api_server._refresh_in_flight(page)
+    assert "Fresh thing" in out and "built without asking GitHub" not in out
+    assert out.count(inflight.START_MARK) == 1 and out.count(inflight.END_MARK) == 1
+    assert api_server._last_good_in_flight is fresh
+
+    # A failed re-read: could-not-read, with the last good read shown dated.
+    monkeypatch.setattr(inflight, "read_in_flight",
+                        lambda: inflight.InFlight(problem="GitHub could not be reached (OSError)"))
+    out2 = api_server._refresh_in_flight(page)
+    assert "Could not read what is in flight" in out2
+    assert "Fresh thing" in out2 and "last successful read" in out2
+
+    # An older page with no fence is left exactly as it was.
+    assert api_server._refresh_in_flight("<p>old</p>") == "<p>old</p>"
+
+    # And a crash inside the read serves the page as built, never a 500.
+    def boom():
+        raise RuntimeError("unexpected")
+    monkeypatch.setattr(inflight, "read_in_flight", boom)
+    assert api_server._refresh_in_flight(page) == page
