@@ -567,6 +567,17 @@ It is information, not an instruction: read it, decide, and justify whatever
 you do with it the same way any other edit to a held position must be
 justified.
 
+When the desk's `execution.rotation_enabled` switch is ON (it ships OFF), the
+section says so explicitly, and the CATEGORICAL case only — a held name that
+fails the desk's own entry rules today — can be acted on by the desk itself:
+if you target the better candidate and do not yourself close the failing
+holding, the desk proposes a full close of it on its own, but only when its
+structural protection has already broken under the holding-discipline check,
+it was not bought today and nothing is in flight on it. That proposal is a
+SELL like any other — the Risk Manager reviews it and can refuse it. The
+ranked-margin case (both still eligible) is never acted on automatically.
+Plan for the room it would free; do not assume it will happen.
+
 **System-drawdown discipline** (independent of macro regime):
 
 - `in_drawdown=true` (5d/20d rolling-return thresholds shown in the

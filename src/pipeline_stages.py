@@ -214,6 +214,412 @@ def _book_risk_inputs(ctx, total_value: float):
 _WAL_REPEG_SENTINEL = "__WAL_REPEG_PENDING__"
 
 
+def _rotation_execution_enabled(pipeline) -> bool:
+    """Phase 14b — is automatic opportunity-cost rotation ON?
+
+    True for an explicit `execution.rotation_enabled is True` and nothing
+    else, the same convention as `_repeg_settings` below and for the same
+    reason: many tests build the pipeline with a MagicMock config whose
+    auto-attributes are truthy, and a MagicMock must never read as "yes,
+    close a real position on your own".
+    """
+    execution_cfg = getattr(getattr(pipeline, "config", None), "execution", None)
+    return getattr(execution_cfg, "rotation_enabled", None) is True
+
+
+#: Trades-row fill states that mean "an order on this symbol has been
+#: handed to the broker and not yet reconciled" — the same two values
+#: `Database.get_symbol_last_buy(include_in_flight=True)` treats as
+#: in-flight. A rotation never touches a symbol carrying one.
+_IN_FLIGHT_FILL_STATUSES = frozenset({"submitted", "pending_submit"})
+
+
+def _rotation_skip(pipeline, ctx, opportunity, reason: str, **details) -> None:
+    """One durable `rotation` / `skipped` audit row. Every refusal to act
+    lands here so the evening review can see WHY a surfaced comparison did
+    not become a trade, rather than inferring it from a log line."""
+    logger.info(
+        "Rotation: not acting on %s -> %s (%s)",
+        opportunity.held_symbol, opportunity.new_symbol, reason,
+    )
+    _record_pipeline_event(
+        pipeline, ctx, opportunity.held_symbol, "rotation", "skipped", reason,
+        new_symbol=opportunity.new_symbol, tier=opportunity.tier, **details,
+    )
+
+
+def _apply_rotation_execution(pipeline, ctx, portfolio_decision, positions,
+                              position_history: dict | None) -> None:
+    """Phase 14b — turn the CATEGORICAL rotation comparison into an ordinary
+    zero-size PM target, when the desk's own data says it is safe to.
+
+    Runs after the PM's plan is parsed and grounded and BEFORE
+    `PortfolioConstructor.construct_orders`, so the close it proposes is
+    built, risk-checked, reviewed and executed by exactly the machinery a
+    PM-decided close goes through — `_build_sell`, the hard risk rules, the
+    AI Risk Manager (which can refuse it by symbol), the holding-discipline
+    claim check in `RiskStage`, and `_submit_protected_sell` in
+    `ExecutionStage`. This function adds a target to the plan and records
+    why; it never places an order and never removes anything the PM asked
+    for. See `src/rotation.py` for the doctrine and the owner request.
+
+    Every guard below fails CLOSED — an unanswerable question means no
+    sale — and every refusal is recorded as a `rotation`/`skipped` event:
+
+      1. `execution.rotation_enabled` must be explicitly True (else this
+         function is a no-op and the run is byte-for-byte Phase 14).
+      2. The PM's own prompt must have surfaced a comparison this session,
+         and it must be the categorical tier. The ranked-margin tier is
+         information only (see `src/rotation.py`).
+      3. The held name must be a LONG the broker actually shows. Shorts
+         are not automated — a COVER is a different order shape with its
+         own caps, and nothing here has been verified against it.
+      4. The PM must itself have targeted the new candidate with a real
+         size this session. The desk never invents the buy leg; the close
+         only makes room for a trade the model already decided to make.
+      5. The PM must not already be targeting the held symbol (closing it
+         itself, or adding to it). Either way the model has spoken and
+         this function does not override a decision the PM made.
+      6. Nothing may be in flight on the held symbol: no trades row for
+         it today still `submitted`/`pending_submit`, no BUY of it today at
+         all (a day-zero exit "never given a single day's normal range to
+         breathe" is exactly what the exit noise band exists to prevent —
+         OKLO 2026-08-26), no pending protection-restore WAL row (a sell
+         already mid-flight), no pending re-peg row (an entry mid-chase).
+      7. Its structural protection must ALREADY be broken under the item-25
+         holding-discipline check (`_structural_protection_for_holding`,
+         the same call `RiskStage` makes). A position whose thesis level
+         is intact is protected from a plain, no-real-trigger sale by this
+         desk's own doctrine, and opportunity cost is not one of the three
+         real triggers — so it is surfaced, never sold.
+    """
+    if not _rotation_execution_enabled(pipeline):
+        return
+    from src.models import TargetPosition
+    from src.rotation import RotationPrecheck, rotation_sell_reason
+
+    precheck = getattr(
+        getattr(pipeline, "portfolio_manager", None), "last_rotation_precheck", None,
+    )
+    if not isinstance(precheck, RotationPrecheck) or precheck.opportunity is None:
+        return  # nothing was surfaced this session — nothing to act on
+    opportunity = precheck.opportunity
+    held_symbol = opportunity.held_symbol.strip().upper()
+    new_symbol = opportunity.new_symbol.strip().upper()
+
+    if opportunity.tier != "ineligible_hold":
+        _rotation_skip(
+            pipeline, ctx, opportunity, "ranked_margin_tier_is_surfaced_only",
+        )
+        return
+
+    held = next(
+        (p for p in (positions or []) if (p.symbol or "").upper() == held_symbol),
+        None,
+    )
+    if held is None or held.qty <= 0:
+        _rotation_skip(
+            pipeline, ctx, opportunity, "held_symbol_is_not_a_long_position",
+            qty=getattr(held, "qty", None),
+        )
+        return
+
+    targets = list(getattr(portfolio_decision, "targets", None) or [])
+    new_targeted = any(
+        t.symbol.upper() == new_symbol and not t.is_close for t in targets
+    )
+    if not new_targeted:
+        _rotation_skip(
+            pipeline, ctx, opportunity, "pm_did_not_target_new_candidate",
+        )
+        return
+    if any(t.symbol.upper() == held_symbol for t in targets):
+        _rotation_skip(
+            pipeline, ctx, opportunity, "pm_already_targets_held_symbol",
+        )
+        return
+
+    # 6. In flight? Read from the desk's own durable state machine. Any
+    # failure to answer is a refusal to act, never an assumption of "clear".
+    try:
+        today_rows = pipeline.db.get_trades(
+            symbol=held_symbol, limit=50, today_only=True,
+        )
+        bought_today = any(
+            str(r.get("action") or "").upper() == "BUY" for r in today_rows
+        )
+        in_flight_rows = [
+            r for r in today_rows
+            if str(r.get("fill_status") or "").lower() in _IN_FLIGHT_FILL_STATUSES
+            and str(r.get("action") or "").upper() != "HOLD"
+        ]
+        pending_restores = [
+            r for r in pipeline.db.get_pending_protection_restores()
+            if str(r.get("symbol") or "").upper() == held_symbol
+        ]
+        pending_repegs = [
+            r for r in pipeline.db.get_pending_repegs()
+            if str(r.get("symbol") or "").upper() == held_symbol
+        ]
+    except Exception as exc:  # noqa: BLE001
+        _rotation_skip(
+            pipeline, ctx, opportunity, "in_flight_check_failed", detail=str(exc),
+        )
+        return
+    if bought_today:
+        _rotation_skip(pipeline, ctx, opportunity, "held_symbol_bought_today")
+        return
+    if in_flight_rows:
+        _rotation_skip(
+            pipeline, ctx, opportunity, "order_in_flight_on_held_symbol",
+            detail="; ".join(
+                f"{r.get('action')}:{r.get('fill_status')}:{r.get('broker_order_id')}"
+                for r in in_flight_rows
+            )[:400],
+        )
+        return
+    if pending_restores:
+        _rotation_skip(
+            pipeline, ctx, opportunity, "sell_already_in_flight_wal_row",
+            detail=str(pending_restores[0].get("sell_order_id")),
+        )
+        return
+    if pending_repegs:
+        _rotation_skip(
+            pipeline, ctx, opportunity, "entry_repeg_in_flight",
+            detail=str(pending_repegs[0].get("old_order_id")),
+        )
+        return
+
+    # 7. Item-25 holding discipline: is the position still structurally
+    # protected? Same method, same inputs `RiskStage` uses.
+    hist = (position_history or {}).get(held_symbol) or (
+        position_history or {}
+    ).get(held.symbol) or {}
+    try:
+        protection = pipeline._structural_protection_for_holding(
+            symbol=held_symbol,
+            thesis_invalid_if=hist.get("thesis_invalid_if"),
+            entry_price=hist.get("entry_price"),
+            stop_loss=hist.get("stop_loss"),
+            is_short=False,
+            run_id=ctx.run_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _rotation_skip(
+            pipeline, ctx, opportunity, "protection_check_failed", detail=str(exc),
+        )
+        return
+    if protection.protected:
+        _rotation_skip(
+            pipeline, ctx, opportunity, "held_symbol_structurally_protected",
+            protection_basis=protection.basis,
+            protection_detail=str(protection.detail)[:400],
+        )
+        return
+
+    reason = rotation_sell_reason(
+        opportunity,
+        protection_basis=protection.basis,
+        protection_detail=str(protection.detail),
+        headroom_pct=precheck.headroom_pct,
+        ceiling_pct=precheck.ceiling_pct,
+        floor_pct=precheck.floor_pct,
+    )
+    # A zero-size target IS this desk's "close it" instruction
+    # (`TargetPosition.is_close`; `_build_sell` turns it into a full SELL).
+    # `thesis_invalid_if` is carried from the position's own entry record
+    # so the built order's reasoning shows the condition the desk was
+    # holding it against, exactly as a PM-authored close would.
+    portfolio_decision.targets.append(TargetPosition(
+        symbol=held_symbol,
+        direction="long",
+        risk_allocation_pct=0.0,
+        conviction="high",
+        thesis=reason,
+        thesis_invalid_if=str(hist.get("thesis_invalid_if") or ""),
+    ))
+    ctx.rotation = {
+        "held_symbol": held_symbol,
+        "new_symbol": new_symbol,
+        "new_score": float(opportunity.new_score),
+        "held_reasons": list(opportunity.reasons),
+        "protection_basis": protection.basis,
+        "protection_detail": str(protection.detail),
+        "headroom_pct": float(precheck.headroom_pct),
+        "ceiling_pct": float(precheck.ceiling_pct),
+        "reason": reason,
+    }
+    logger.warning(
+        "Rotation: proposing a full close of %s to free room for %s — %s",
+        held_symbol, new_symbol, reason,
+    )
+    _record_pipeline_event(
+        pipeline, ctx, held_symbol, "rotation", "proposed", reason,
+        new_symbol=new_symbol, new_score=float(opportunity.new_score),
+        held_reasons=list(opportunity.reasons),
+        protection_basis=protection.basis,
+        protection_detail=str(protection.detail)[:400],
+        headroom_pct=float(precheck.headroom_pct),
+        ceiling_pct=float(precheck.ceiling_pct),
+        tier=opportunity.tier,
+    )
+
+
+def _alert_rotation_executed(*, rotation: dict, qty: float, limit_price: float,
+                             order_id: str | None) -> None:
+    """Standalone owner alert: the desk closed a position ON ITS OWN.
+
+    Same path and shape as the naked-position, re-peg-exhausted and
+    holding-discipline-block alerts (`notifier.send_owner_alert`): its own
+    Telegram message, never bundled into the run summary; severity in plain
+    words, never colour alone. Fired the moment the sale is broker-accepted
+    — that is the irreversible act, and a position sold automatically must
+    never be silent. Never raises.
+    """
+    try:
+        held = rotation["held_symbol"]
+        new = rotation["new_symbol"]
+        rules = "; ".join(rotation.get("held_reasons") or []) or "entry rules"
+        body = (
+            "POSITION CLOSED AUTOMATICALLY — OPPORTUNITY ROTATION\n"
+            f"{held}: the desk submitted a SELL of {qty:g} share(s) at limit "
+            f"${limit_price:,.2f} (broker order {order_id}) to free room for "
+            f"{new}.\n"
+            f"Why {held}: it fails the desk's own entry rules today ({rules}), "
+            f"and its structural protection had already broken "
+            f"({rotation.get('protection_basis')}).\n"
+            f"Why {new}: best-ranked eligible new candidate (score "
+            f"{rotation.get('new_score', 0.0):.2f}) that the Portfolio Manager "
+            "asked to buy, with "
+            f"{rotation.get('headroom_pct', 0.0):.2f}% risk headroom left "
+            f"against the {rotation.get('ceiling_pct', 0.0):.2f}% ceiling.\n"
+            "This sale went through the normal Risk Manager review and the "
+            "protected-sell discipline (stops cancelled write-ahead, restored "
+            f"if the sale does not fill). The BUY of {new} follows in this "
+            "session only if the sale fills; a second alert follows if it "
+            "does not happen."
+        )
+        from src import notifier as _notifier
+
+        _notifier.send_owner_alert(body, symbols=[str(held), str(new)])
+    except Exception as exc:  # noqa: BLE001
+        logger.error("rotation owner alert failed: %s", exc)
+
+
+def _drop_rotation_buy_if_room_not_freed(pipeline, ctx, buy_decisions: list,
+                                         sell_status_by_id: dict) -> list:
+    """Phase 14b — the rotation's BUY leg may only proceed on room that is
+    REAL. Returns the BUY list with the new candidate removed when it is not.
+
+    The constructor granted the new candidate its risk on the premise that
+    the held name closes. If that close was refused upstream (Risk Manager,
+    hard rules, protected-sell skip) or was accepted but did not fill,
+    buying anyway would put the book over the portfolio risk ceiling by the
+    new name's risk — a side door around the ceiling this feature must never
+    open. Uses the same `_record_execution_skip` path every other
+    deterministic BUY skip uses, so the funnel and the evening review see it.
+    Every other BUY in the plan is untouched.
+    """
+    rotation = ctx.rotation
+    if not isinstance(rotation, dict) or not buy_decisions:
+        return buy_decisions
+    sell_id = rotation.get("sell_order_id")
+    sell_status = sell_status_by_id.get(sell_id) if sell_id else None
+    if sell_id is None:
+        block_detail = (
+            f"the rotation close of {rotation.get('held_symbol')} was not "
+            "submitted this session (removed before execution — see the "
+            "risk / deterministic_gate events for it), so no room was freed"
+        )
+    elif sell_status != "filled":
+        block_detail = (
+            f"the rotation close of {rotation.get('held_symbol')} (order "
+            f"{sell_id}) ended {sell_status or 'unknown'}, not filled, so no "
+            "room was freed"
+        )
+    else:
+        return buy_decisions
+    new_symbol = rotation.get("new_symbol")
+    kept: list = []
+    for d in buy_decisions:
+        if d.symbol.upper() == new_symbol:
+            _record_execution_skip(
+                pipeline, ctx, d.symbol, "rotation_room_not_freed", block_detail,
+            )
+            continue
+        kept.append(d)
+    return kept
+
+
+def _record_rotation_buy_leg_outcome(pipeline, ctx, orders: list) -> None:
+    """Phase 14b — record both legs' outcome durably once the buy phase has
+    run. A sale that freed room for a BUY that then did not happen is the
+    exact churn the anti-rotation rules exist to prevent, so that case is
+    also paged (`_alert_rotation_buy_leg_missing`). No-op unless a rotation
+    SELL was actually broker-accepted this run."""
+    rotation = ctx.rotation
+    if not isinstance(rotation, dict) or not rotation.get("sell_order_id"):
+        return
+    new_symbol = rotation.get("new_symbol")
+    buy_submitted = any(
+        str(o.get("symbol") or "").upper() == new_symbol
+        and str(o.get("action") or "").upper() in ("BUY", "SHORT")
+        for o in orders if isinstance(o, dict)
+    )
+    if buy_submitted:
+        _record_pipeline_event(
+            pipeline, ctx, new_symbol, "rotation", "buy_submitted",
+            "replacement_entry_submitted", held_symbol=rotation.get("held_symbol"),
+        )
+        return
+    skip = next(
+        (
+            s for s in reversed(ctx.execution_skips or [])
+            if str(s.get("symbol") or "").upper() == new_symbol
+        ),
+        None,
+    )
+    detail = (
+        f"{skip.get('reason')}: {skip.get('detail')}"
+        if skip else
+        "no BUY order for it reached the broker this session (dropped "
+        "before execution — see its risk / deterministic_gate / "
+        "execution_skip events)"
+    )
+    _record_pipeline_event(
+        pipeline, ctx, new_symbol, "rotation", "buy_not_submitted", detail,
+        held_symbol=rotation.get("held_symbol"),
+    )
+    _alert_rotation_buy_leg_missing(rotation=rotation, detail=detail)
+
+
+def _alert_rotation_buy_leg_missing(*, rotation: dict, detail: str) -> None:
+    """Standalone owner alert: the rotation SOLD but did not BUY.
+
+    This is the one outcome the anti-churn rules exist to prevent — capital
+    freed for a named trade that then did not happen — so it is paged, not
+    just logged. Never raises.
+    """
+    try:
+        held = rotation["held_symbol"]
+        new = rotation["new_symbol"]
+        body = (
+            "ROTATION INCOMPLETE — SOLD BUT THE REPLACEMENT WAS NOT BOUGHT\n"
+            f"{held} was closed this session to make room for {new}, but no "
+            f"BUY of {new} was submitted.\n"
+            f"Reason recorded: {detail}\n"
+            "OUTCOME: the freed cash is sitting in the book. Nothing further "
+            "was done automatically. The next morning session will see "
+            f"{new} again as a fresh candidate with room available."
+        )
+        from src import notifier as _notifier
+
+        _notifier.send_owner_alert(body, symbols=[str(held), str(new)])
+    except Exception as exc:  # noqa: BLE001
+        logger.error("rotation buy-leg owner alert failed: %s", exc)
+
+
 def _repeg_settings(pipeline) -> tuple[float, float] | None:
     """(poll_seconds, slippage_bps), or None when re-peg is off.
 
@@ -3462,6 +3868,8 @@ class DecisionStage:
             max_portfolio_risk_pct=float(getattr(
                 pipeline.config.risk, "max_portfolio_risk_pct", 25.0,
             )),
+            # Phase 14b: wording only — see `_apply_rotation_execution`.
+            rotation_execute_enabled=_rotation_execution_enabled(pipeline),
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
         )
 
@@ -3615,6 +4023,17 @@ class DecisionStage:
         # of what the desk believed. Writes evidence rows only; the
         # `evidence_registry` handed to `construct_orders` below is the
         # identical object, unread and unmutated by this call.
+        # Phase 14b — automatic opportunity-cost rotation. Behind
+        # `execution.rotation_enabled` (default OFF: a no-op here). Appends
+        # ONE zero-size target for a categorically-ineligible, already-
+        # unprotected holding so the constructor, RiskStage and
+        # ExecutionStage below treat it exactly like a PM-authored close.
+        # Sits BEFORE the constructor on purpose: the freed risk must be
+        # visible to `allocate_risk_budget` when it rations the new
+        # candidate's BUY, and the close must pass every gate downstream.
+        _apply_rotation_execution(
+            pipeline, ctx, portfolio_decision, positions, position_history,
+        )
         _record_seat_stances(
             pipeline, ctx, evidence_registry,
             [t.symbol for t in portfolio_decision.targets],
@@ -4566,6 +4985,10 @@ class ExecutionStage:
                 logger.warning("Failed to record HOLD decision for %s: %s", d.symbol, e)
 
         sell_order_ids: list[str] = []
+        # Terminal status per SELL order id, filled in by the wait loop
+        # below. Phase 14b reads it to decide whether the rotation's freed
+        # room is REAL before the replacement BUY is allowed.
+        sell_status_by_id: dict[str, str | None] = {}
         pending_protections: list[dict] = []
         for decision in sell_decisions:
             try:
@@ -4627,6 +5050,29 @@ class ExecutionStage:
                     "broker_accepted", broker_order_id=order.get("id"), qty=qty,
                     limit_price=sell_limit, side="sell",
                 )
+                # Phase 14b — this SELL is the desk's own rotation close.
+                # Record it durably and page the owner NOW: broker
+                # acceptance is the irreversible act, and a position sold
+                # without a human or a model deciding to must never be
+                # silent (see `_alert_rotation_executed`).
+                rotation = ctx.rotation
+                if (
+                    isinstance(rotation, dict)
+                    and decision.symbol.upper() == rotation.get("held_symbol")
+                ):
+                    rotation["sell_order_id"] = order.get("id")
+                    rotation["sell_qty"] = float(qty)
+                    _record_pipeline_event(
+                        pipeline, ctx, decision.symbol, "rotation",
+                        "sell_submitted", rotation.get("reason", ""),
+                        broker_order_id=order.get("id"), qty=qty,
+                        limit_price=sell_limit,
+                        new_symbol=rotation.get("new_symbol"),
+                    )
+                    _alert_rotation_executed(
+                        rotation=rotation, qty=float(qty),
+                        limit_price=float(sell_limit), order_id=order.get("id"),
+                    )
                 logger.info(
                     "Executed: %s %s %s @ limit $%.2f",
                     action_label.lower(), pipeline._format_qty(qty), decision.symbol, sell_limit,
@@ -4653,6 +5099,7 @@ class ExecutionStage:
                     order_id, e,
                 )
                 status = None
+            sell_status_by_id[order_id] = status
             if status != "filled":
                 logger.warning(
                     "Sell order %s did not fill before buy phase (status=%s); buys will use current cash only",
@@ -4824,6 +5271,19 @@ class ExecutionStage:
                         loss_violation_now.message,
                     )
                 buy_decisions = []
+
+        # Phase 14b — the rotation's BUY leg may only proceed on room that
+        # is REAL. The constructor granted the new candidate its risk on the
+        # premise that the held name closes; if that close was refused
+        # upstream (Risk Manager, hard rules, protected-sell skip) or was
+        # accepted but did not fill, buying anyway would put the book over
+        # the portfolio risk ceiling by the new name's risk — a side door
+        # around the ceiling this feature must never open. Same
+        # `_record_execution_skip` path every other deterministic BUY skip
+        # uses, so the funnel and the evening review see it.
+        buy_decisions = _drop_rotation_buy_if_room_not_freed(
+            pipeline, ctx, buy_decisions, sell_status_by_id,
+        )
 
         # Run the cheap deterministic entry-viability checks BEFORE selling
         # SGOV. Production evidence showed the sweep funding names that were
@@ -5887,6 +6347,12 @@ class ExecutionStage:
                     "protective_stop_exception", detail=str(e),
                     entry_order_id=spec["order_id"],
                 )
+
+        # Phase 14b — the rotation's outcome, both legs, recorded durably.
+        # A sale that freed room for a BUY that then did not happen is the
+        # exact churn the anti-rotation rules exist to prevent, so that
+        # case is also paged (`_alert_rotation_buy_leg_missing`).
+        _record_rotation_buy_leg_outcome(pipeline, ctx, orders)
 
         ctx.orders = orders
         return orders

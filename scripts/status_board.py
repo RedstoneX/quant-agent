@@ -43,6 +43,8 @@ replaces, because that shape worked for him:
   * for every item: what it is in plain language, a concrete real-world
     example, and where a ruling is needed, the decision plus a recommendation;
   * a short numbered queue of what is next, one line each;
+  * what he has already decided, or is already being built, so his own
+    rulings are never queued back at him as questions;
   * what is paused and needs no decision, so he knows what to ignore;
   * what is already resolved, so finished work stops competing for attention.
 
@@ -719,6 +721,91 @@ _CLOSURE_NEGATIONS = ("NOT ", "STILL BROKEN", "STILL OPEN", "NEVER ",
                       "TO BE ", "WILL BE ", "SHOULD BE ", "NEEDS TO BE ",
                       "YET TO BE ")
 
+# ---------------------------------------------------------------------------
+# IN HAND — decided, or being built. Nothing needed from him.
+#
+# The owner's complaint, in his words: "I know for a fact I've already
+# approved a bunch of things. Either you're working on them or they're done
+# ... why am I seeing it on the board? How am I supposed to find the next
+# thing to do, to review?"
+#
+# Measured against the live backlog on 2026-09-12, the cause was that the
+# board had NO state between "open" and "finished". An item he had already
+# ruled on (item 49, "DECIDED 2026-09-12 by the owner") and an item being
+# actively built (item 1, "IN FLIGHT") both fell into `open`, and `open` is
+# what the running order and the RIGHT NOW card are drawn from. So his own
+# decisions were queued back at him as if they were still his to make.
+#
+# Two vocabularies, read the same way the closure words are — on word
+# boundaries, from the item's own status text, never from a neighbour's:
+#
+#   decided   — the owner has given his answer; the build has not landed
+#   building  — somebody is actively on it
+#
+# Both go in one section, below everything that is actually waiting on him,
+# each line saying which of the two it is.
+# ---------------------------------------------------------------------------
+
+#: The owner has ruled. "OWNER CALL" is deliberately absent: the backlog
+#: writes "STILL OPEN, OWNER CALL" to mean a call is NEEDED, the opposite.
+_IN_HAND_DECIDED_WORDS = ("DECIDED", "RATIFIED", "APPROVED", "OWNER-REQUESTED",
+                          "OWNER'S DESIGN", "OWNER'S RULING", "OWNER RULING")
+
+#: Somebody is on it now.
+_IN_HAND_BUILDING_WORDS = ("IN FLIGHT", "IN PROGRESS", "IN BUILD", "BEING BUILT",
+                           "UNDER WAY", "UNDERWAY", "BUILD UNDERWAY")
+
+#: A word sitting immediately before a status word that reverses it:
+#: "NOT DECIDED", "NOT YET APPROVED", "TO BE DECIDED", "AWAITING APPROVAL".
+#: Only the few words BEFORE the hit are read, not the whole tail — item 20's
+#: tail is "owner's design, 2026-09-02. Do NOT trade on partial evidence", and
+#: the blanket "NOT anywhere" rule the closure words use would have read that
+#: ruling as un-ruled.
+_IN_HAND_NEGATIONS = ("NOT", "NEVER", "BE", "UNTIL", "AWAITING", "PENDING", "NEEDS")
+_IN_HAND_LOOKBEHIND_WORDS = 3
+
+#: A STATUS PARAGRAPH in an item's body: a bold lead that OPENS with one or
+#: more capitalised words and a date — "**DECIDED 2026-09-12 by the owner:
+#: ...**". That is how the backlog records a later change of state without
+#: rewriting the headline (item 49 is the live example: its headline still
+#: says OPEN, the paragraph under it says DECIDED). The date is required on
+#: purpose: it is the same shape as a headline's own status ("SHIPPED
+#: 2026-09-04"), and it is what keeps an ordinary bold sentence ("**Three
+#: distinct defects, and they compound:**") from being read as a status.
+_STATUS_PARAGRAPH_RE = re.compile(
+    r"^\*\*([A-Z][A-Z'-]*(?:\s+[A-Z][A-Z'-]*)*),?\s+\d{4}-\d{2}-\d{2}\b")
+
+#: A diagnosis that needs nothing fixed. "WORKING AS INTENDED" is already one
+#: of `_QUEUE_CLASSES`; "NOT A DEFECT" is the other way the backlog says it.
+#: These are kept in the file because the funnel queue is a ranked list of
+#: CAUSES and a cause that turned out to be by design is still a cause — but
+#: nothing about one is his to act on, so it must not sit in the running
+#: order, and it must never be the RIGHT NOW card.
+_NO_ACTION_WORDS = ("WORKING AS INTENDED", "NOT A DEFECT")
+
+
+def _status_hit(text: str, words: tuple[str, ...]) -> bool:
+    """Whether any of `words` appears in `text` as a whole word AND is not
+    reversed by one of `_IN_HAND_NEGATIONS` within the few words before it."""
+    for w in words:
+        for m in re.finditer(r"\b" + re.escape(w) + r"\b", text):
+            before = text[:m.start()].split()[-_IN_HAND_LOOKBEHIND_WORDS:]
+            if not any(b.strip(",.;:") in _IN_HAND_NEGATIONS for b in before):
+                return True
+    return False
+
+
+def status_paragraph_leads(body_lines: list[str]) -> tuple[str, ...]:
+    """The capitalised, dated openings of an item's status paragraphs —
+    ``("DECIDED",)`` for item 49 — upper-cased. Empty when the body has none,
+    which is most items."""
+    leads: list[str] = []
+    for raw in body_lines:
+        m = _STATUS_PARAGRAPH_RE.match(raw.strip())
+        if m:
+            leads.append(m.group(1).upper())
+    return tuple(leads)
+
 
 # ---------------------------------------------------------------------------
 # Identifiers: what the owner can actually quote back
@@ -809,6 +896,10 @@ class QueueItem:
     raw_body: str = ""
     #: Tracking references literally present in the item's source text.
     refs: tuple[str, ...] = ()
+    #: The dated, capitalised openings of the body's status paragraphs — see
+    #: `status_paragraph_leads`. This is where a later change of state lands
+    #: when the headline is not rewritten (item 49's "DECIDED 2026-09-12").
+    status_leads: tuple[str, ...] = ()
 
     @property
     def ref(self) -> str:
@@ -903,6 +994,41 @@ class QueueItem:
         return any(w in self.status_tail for w in _PAUSED_WORDS)
 
     @property
+    def in_hand_state(self) -> str:
+        """Why this item needs nothing from him, in his words — or ``""``.
+
+          ``"decided, not yet built"``  he has ruled; the build has not landed
+          ``"being built"``             somebody is actively on it
+
+        Read from the headline's status tail and from any dated status
+        paragraph in the body (`status_leads`), because the backlog records a
+        ruling either way. A mostly-finished item (`part_done`) is deliberately
+        NOT in hand: real work is outstanding and the tests pin it to the
+        running order, labelled.
+        """
+        if self.done or self.claims_closure or self.review_owed or self.paused:
+            return ""
+        if self.part_done:
+            return ""
+        texts = (self.status_tail, *self.status_leads)
+        if any(_status_hit(t, _IN_HAND_BUILDING_WORDS) for t in texts):
+            return "being built"
+        if any(_status_hit(t, _IN_HAND_DECIDED_WORDS) for t in texts):
+            return "decided, not yet built"
+        return ""
+
+    @property
+    def no_action(self) -> bool:
+        """A diagnosis that turned out to need nothing fixed — "WORKING AS
+        INTENDED", "CHECKED, NOT A DEFECT". Still a ranked cause of trades not
+        happening, so still listed; never his to act on."""
+        if self.done or self.claims_closure or self.review_owed or self.paused:
+            return False
+        if self.part_done or self.in_hand_state:
+            return False
+        return _closure_hit(self.status_tail, _NO_ACTION_WORDS)
+
+    @property
     def bucket(self) -> str:
         """Which section of the page this item belongs in. One item, one
         section, decided once here so no two renderers can disagree.
@@ -911,6 +1037,14 @@ class QueueItem:
         complaint: an item whose status word the board did not used to
         recognise ("SHIPPED", "REPLACED", "REDESIGNED") was drawn in the
         running order, competing with live work. It is now drawn as finished.
+
+        ``in_hand`` answers the next complaint in the same family: an item he
+        had already ruled on, or that was already being built, was drawn in
+        the running order too — and, when nothing else outranked it, as the
+        RIGHT NOW card, asking him for an answer he had already given.
+
+        ``no_action`` is a cause that turned out to be by design. Listed,
+        never queued.
         """
         if self.done:
             return "resolved"
@@ -920,6 +1054,10 @@ class QueueItem:
             return "review_owed"
         if self.paused:
             return "paused"
+        if self.in_hand_state:
+            return "in_hand"
+        if self.no_action:
+            return "no_action"
         return "open"
 
 
@@ -972,6 +1110,7 @@ def _parse_numbered_items(body: str, source: str = "backlog",
             # that is where the backlog actually writes them, and only from
             # this item's own text — never from a neighbour's.
             refs=extract_refs(headline + " " + " ".join(body_lines)),
+            status_leads=status_paragraph_leads(body_lines),
         ))
     return sorted(items, key=lambda i: i.rank)
 
@@ -1894,6 +2033,45 @@ def _render_finished_unmarked(items: list[QueueItem]) -> str:
     return "\n".join(rows)
 
 
+def _render_in_hand(items: list[QueueItem]) -> str:
+    """Decided, or being built. Nothing here is his to answer.
+
+    Each line says WHICH of the two it is, in words, because "you already
+    decided this" and "somebody is building this" are different facts and
+    the owner asked to be able to tell them apart from the things that are
+    still his to rule on. Never struck through: none of it is finished.
+    """
+    if not items:
+        return ('<div class="note">Nothing is in hand. Every item that has '
+                'been decided or started is either finished or waiting on '
+                'you.</div>')
+    rows = []
+    for it in items:
+        rows.append(
+            '<div class="ol ol-inhand"><span class="q-n">'
+            f'{_esc(it.ref)}</span>'
+            f'<span>{_esc(it.title)} '
+            f'<em>&mdash; {_esc(it.in_hand_state)}; nothing needed from you.</em>'
+            '</span></div>')
+    return "\n".join(rows)
+
+
+def _render_no_action(items: list[QueueItem]) -> str:
+    """Causes that were checked and turned out to be by design."""
+    if not items:
+        return ('<div class="note">Nothing has been checked and found to be '
+                'working as intended.</div>')
+    rows = []
+    for it in items:
+        rows.append(
+            '<div class="ol ol-noaction"><span class="q-n">'
+            f'{_esc(it.ref)}</span>'
+            f'<span>{_esc(it.title)} '
+            '<em>&mdash; checked; working as intended, nothing to fix.</em>'
+            '</span></div>')
+    return "\n".join(rows)
+
+
 def _render_review_owed(items: list[QueueItem]) -> str:
     """Finished work with a review still owed on it.
 
@@ -2064,8 +2242,13 @@ def _render_right_now(contradicted: list[PhaseView],
             ref=d.ref, refs=d.refs)
 
     if open_items:
+        # Nothing is waiting on his decision — the card says so in its own
+        # label rather than dressing the next work item up as one. The
+        # callers pass only genuinely open items here: anything decided,
+        # being built, or checked-and-fine has already been bucketed away.
         it = open_items[0]
-        return card("top of the running order", it.title,
+        return card("no decision is waiting on you — this is next in the "
+                    "running order", it.title,
                     _render_prose(it.prose, raw_source=it.raw_body)
                     + _wording_note(it.title, "name"),
                     ref=it.ref, refs=it.refs)
@@ -2255,6 +2438,10 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     finished_unmarked = [i for i in queue_items
                          if i.bucket == "finished_unmarked"]
     review_owed = [i for i in queue_items if i.bucket == "review_owed"]
+    # Decided or being built: his answer is already given, or the work is
+    # under way. Drawn BELOW everything that is actually his to answer.
+    in_hand = [i for i in queue_items if i.bucket == "in_hand"]
+    no_action = [i for i in queue_items if i.bucket == "no_action"]
     unexplained = [i for i in open_items if not i.prose.plain]
 
     body = body.replace("{{RIGHT_NOW}}",
@@ -2268,6 +2455,10 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     body = body.replace("{{FINISHED_UNMARKED}}",
                         _render_finished_unmarked(finished_unmarked))
     body = body.replace("{{REVIEW_OWED}}", _render_review_owed(review_owed))
+    body = body.replace("{{IN_HAND}}", _render_in_hand(in_hand))
+    body = body.replace("{{IN_HAND_COUNT}}", str(len(in_hand)))
+    body = body.replace("{{NO_ACTION}}", _render_no_action(no_action))
+    body = body.replace("{{NO_ACTION_COUNT}}", str(len(no_action)))
     body = body.replace("{{RESOLVED}}", _render_one_liners(
         resolved_items,
         "Nothing has been signed off as finished yet.", struck=True))
