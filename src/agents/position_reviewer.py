@@ -572,8 +572,8 @@ class PositionReviewerAgent(BaseAgent):
             system_actions_section = ""
 
         # Same-day trim discipline section. Renders only when at least one
-        # symbol was already trimmed earlier today (auto-TP, midday REDUCE,
-        # morning emergency sell, force-delever). The Python executor
+        # symbol was already trimmed earlier today (midday REDUCE, morning
+        # emergency sell, force-delever). The Python executor
         # enforces this rule independently — this section is the prompt-side
         # belt so the LLM isn't fighting an invisible filter.
         if already_trimmed_today:
@@ -581,7 +581,7 @@ class PositionReviewerAgent(BaseAgent):
                 "### ⚠️ Already Trimmed Today — DO NOT REDUCE/SELL again\n"
                 f"Symbols sold earlier today: {', '.join(sorted(already_trimmed_today))}\n"
                 "These positions ALREADY received a sell-side action this session day "
-                "(auto-take-profit, midday REDUCE, force-delever, or emergency sell).\n"
+                "(midday REDUCE, force-delever, or emergency sell).\n"
                 "**HOLD them at this session unless ONE of these HARD triggers fires:**\n"
                 "  - Named `thesis_invalid_if` condition is satisfied (price closed below "
                 "cited level, fundamental signal flipped, etc.)\n"

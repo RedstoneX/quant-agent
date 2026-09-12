@@ -180,6 +180,16 @@ for what in this codebase has actually been measured versus merely
 asserted. If a real number cannot yet be derived from data or a measured
 record, mark it explicitly as provisional — never let it read as settled.
 
+**Exits, specifically (owner decision, 2026-09-12).** Profit-taking is
+trailing-stop-driven and nothing else: the reward side of a trade cannot be
+predetermined because the holding period is unknown, so a preset profit
+target — sell a fixed fraction at a fixed gain, decided in advance with no
+reference to what the instrument is doing — is rejected as a class, exactly
+as reward:risk was rejected as a universal entry gate. The 30%/15%
+automatic take-profit trim inherited from upstream (tuned on one GOOGL
+trade) was deleted under this rule; `tests/test_pipeline.py::
+test_no_fixed_gain_automatic_profit_trim_exists` keeps it out.
+
 ## Check what the platform already solved, before tuning your own workaround
 
 **Owner correction, 2026-09-10.** A sibling mistake to "no arbitrary
