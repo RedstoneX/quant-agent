@@ -1033,6 +1033,121 @@ def _alert_owner_entry_cancelled(pipeline, spec: dict, info: dict) -> None:
         )
 
 
+def _alert_unmeasurable_symbols(faults: dict[str, dict]) -> None:
+    """Page the owner: these symbols could not be MEASURED this session.
+
+    2026-09-12. A data fault — no price, no ATR, no usable bars, no
+    analysis at all — used to be filed as a trade the constructor rejected,
+    so a dead feed and a trade that failed its rules were the same class
+    of outcome in the record and nobody could count either. The symbol was
+    simply, silently, not traded. This is the alert half of the split:
+    `PortfolioConstructor.last_data_faults` is recorded under its own
+    `data_fault` reason (see `_record_constructor_drops`), and paged here.
+
+    ONE message per session listing every unmeasurable symbol, not one per
+    symbol: an outage hits the whole universe at once and sixty pages are
+    less readable than one list. Same standalone `send_owner_alert` path
+    and same rules as the entry-cancel alert above — its own Telegram
+    message, never a line in the run summary; severity in TEXT, never
+    colour; NOT deduplicated, because a feed that is still broken tomorrow
+    should page again.
+
+    Never raises. An alerting bug must not break the decision path.
+    """
+    try:
+        if not faults:
+            return
+        symbols = sorted(faults)
+        lines = []
+        for sym in symbols:
+            entry = faults.get(sym) or {}
+            lines.append(f"  {sym}: {entry.get('fault', 'unknown')} — {entry.get('detail', '')}")
+        body = (
+            "DATA FAULT — symbols UNMEASURABLE this session, not judged\n"
+            f"{len(symbols)} symbol(s) could not be measured because an input "
+            "a real market always has (a price, volatility, usable bars, an "
+            "analysis) was not obtained by the desk:\n"
+            + "\n".join(lines) + "\n"
+            "\n"
+            "WHAT HAPPENED: none of these was traded (fail-closed, "
+            "unchanged). They are recorded as data faults, NOT as trades "
+            "the desk rejected, so the 'why didn't we trade' statistics are "
+            "not contaminated. No trade judgement was made on any of them.\n"
+            "WHAT TO CHECK: the market data provider and the bar history "
+            "for these names before trusting today's no-trade outcome on "
+            "them."
+        )
+        from src import notifier as _notifier
+        _notifier.send_owner_alert(body, symbols=symbols)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("unmeasurable-symbols alert could not be sent: %s", exc)
+
+
+def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, dict]:
+    """Persist WHY each PM target the constructor dropped was dropped — and
+    file the two classes of "no order" under different names.
+
+    Funnel-queue item 2 (2026-09-03): a target the constructor drops before
+    ever building a `proposed_order` row previously left NOTHING in the
+    database — no verdict (RM never saw it), no execution_skip (execution
+    never saw it either), just an aggregate log line.
+    `blocked_proposals_census.py` counted every one as `no_order_built`,
+    its largest unexplained bucket. `last_drop_reasons` (see
+    `PortfolioConstructor.construct_orders`) recovers the constructor's
+    OWN log line from the same call that just ran, so every dropped symbol
+    gets a terminal, real-reason evidence row instead of silence.
+
+    2026-09-12: the constructor now also reports DATA FAULTS separately
+    (`PortfolioConstructor.drain_data_faults`). A symbol it could not
+    MEASURE — no price, no ATR, no usable bars, no analysis — is filed as
+    (stage='deterministic_gate', outcome='unmeasurable',
+    reason='data_fault'), never as `constructor_dropped`, because it is not
+    a trade the desk judged and must not be counted as one. Faults on
+    symbols the PM never targeted (found by the eligibility preview, which
+    runs over every analysed name) are recorded the same way with
+    `targeted=False`, so a symbol that silently became unanalysable before
+    the PM ever saw it still leaves a durable row. Returns the faults so
+    the caller can page the owner.
+
+    Best-effort like every evidence write here: never raises.
+    """
+    faults: dict[str, dict] = {}
+    try:
+        constructor = pipeline.portfolio_constructor
+        drain = getattr(constructor, "drain_data_faults", None)
+        faults = dict(drain() if callable(drain) else {})
+        dropped = [str(s).upper() for s in (portfolio_decision.constructor_dropped or [])]
+        drop_reasons = getattr(constructor, "last_drop_reasons", {})
+        for sym in dropped:
+            fault = faults.get(sym)
+            if fault:
+                _record_pipeline_event(
+                    pipeline, ctx, sym, "deterministic_gate", "unmeasurable",
+                    "data_fault", fault=fault.get("fault", ""),
+                    detail=fault.get("detail", ""), targeted=True,
+                )
+                continue
+            # Falls back to a generic label only if a future refactor adds
+            # a new drop path the capture's log-message pattern doesn't
+            # match — never nothing, even then.
+            _record_pipeline_event(
+                pipeline, ctx, sym, "deterministic_gate", "blocked",
+                "constructor_dropped",
+                detail=drop_reasons.get(sym, "no matching constructor log line captured"),
+            )
+        for sym, fault in faults.items():
+            if sym in dropped:
+                continue
+            _record_pipeline_event(
+                pipeline, ctx, sym, "deterministic_gate", "unmeasurable",
+                "data_fault", fault=fault.get("fault", ""),
+                detail=fault.get("detail", ""), targeted=False,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("constructor drop/fault recording failed: %s", exc)
+    return faults
+
+
 def _apply_repeg(
     pipeline, ctx, *, symbol, order_id: str, trade_row_id, target: float,
     requested_qty, ceiling: float, ask: float | None = None,
@@ -1258,7 +1373,10 @@ def _check_levels_coverage(db: "Database", ctx: RunContext,
     run's per-symbol coverage nor its bars-fetch success was kept anywhere
     a postmortem could read after the fact — only a per-symbol WARNING log
     line for the latter, gone at the next log rotation, and the former not
-    even that.
+    even that. (2026-09-12: the per-symbol half is now also carried on
+    `TechAnalysisResult.levels_coverage`, and the dead-feed case is a DATA
+    fault — `FAULT_NO_STRUCTURE`, `data_fault` row, owner alert — rather
+    than a refusal. This run-level check is unchanged and complementary.)
 
     `analyses` is scoped to RESOLVED symbols only (never-resolved symbols —
     an LLM parse failure — are `data_status["tech"]` partial/failed and the
@@ -4073,30 +4191,13 @@ class DecisionStage:
                 "PM's narrative mentioning them does not read as incoherence.",
                 ", ".join(portfolio_decision.constructor_dropped),
             )
-            # Funnel-queue item 2 (2026-09-03): a target the constructor
-            # drops before ever building a `proposed_order` row previously
-            # left NOTHING in the database — no verdict (RM never saw it),
-            # no execution_skip (execution never saw it either), just the
-            # generic aggregate log line above. `blocked_proposals_census.py`
-            # counts every one of these as `no_order_built`, its largest
-            # unexplained bucket. The constructor's OWN reason has always
-            # existed (its per-target logger.warning/info calls) but was
-            # never persisted — `last_drop_reasons` (see
-            # `PortfolioConstructor.construct_orders`) recovers it from the
-            # SAME call that just ran, so every dropped symbol now gets a
-            # terminal, real-reason evidence row instead of silence. Falls
-            # back to a generic label only if a future refactor adds a new
-            # drop path this capture's log-message pattern doesn't match —
-            # never nothing, even then.
-            drop_reasons = getattr(
-                pipeline.portfolio_constructor, "last_drop_reasons", {},
-            )
-            for sym in portfolio_decision.constructor_dropped:
-                _record_pipeline_event(
-                    pipeline, ctx, sym, "deterministic_gate", "blocked",
-                    "constructor_dropped",
-                    detail=drop_reasons.get(sym, "no matching constructor log line captured"),
-                )
+        # Every drop gets a terminal, real-reason evidence row — and a DATA
+        # fault (a symbol the constructor could not MEASURE) is filed under
+        # its own name and paged, never counted as a trade the desk judged.
+        # See `_record_constructor_drops` / `_alert_unmeasurable_symbols`.
+        data_faults = _record_constructor_drops(pipeline, ctx, portfolio_decision)
+        if data_faults:
+            _alert_unmeasurable_symbols(data_faults)
         logger.info(
             "Constructor: %d targets → %d decisions "
             "(%d BUY, %d SELL, %d SHORT, %d COVER, %d HOLD)",

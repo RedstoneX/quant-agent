@@ -17,9 +17,20 @@ default — a manufactured target with better provenance is still manufactured.
 from datetime import date, timedelta
 
 from src.data.levels import (
+    COVERAGE_INSUFFICIENT_HISTORY,
+    COVERAGE_MEASURED,
+    COVERAGE_NO_BARS,
+    COVERAGE_UNKNOWN,
+    COVERAGE_UNUSABLE_BARS,
+    FAULT_NO_ANALYSIS,
+    FAULT_NO_ENTRY,
+    FAULT_NO_STRUCTURE,
+    FAULT_NO_VOLATILITY,
     MAX_HORIZON_SESSIONS,
+    REFUSAL_NO_STRUCTURE,
     derive_structural_target,
     find_structural_levels,
+    structure_coverage,
 )
 from src.models import (
     OHLCV,
@@ -171,33 +182,127 @@ class TestBothDirections:
 # ---------------------------------------------------------------------------
 
 class TestRefusals:
-    def test_insufficient_history_refuses_rather_than_fabricating(self):
+    def test_insufficient_history_declines_rather_than_fabricating(self):
         """Four bars cannot produce structure. `find_structural_levels` says
         so honestly (empty lists), and the derivation must decline instead of
-        inventing a default — a made-up target is the defect being removed."""
-        supports, resistances = find_structural_levels(_bars([100.0] * 4))
+        inventing a default — a made-up target is the defect being removed.
+
+        **2026-09-12:** four bars is not a chart the desk judged; it is a
+        history the desk failed to obtain. So this declines as a DATA FAULT
+        (`fault` set, `refusal` empty), still with no price and still
+        carrying the model's guess as evidence only."""
+        bars = _bars([100.0] * 4)
+        supports, resistances = find_structural_levels(bars)
         assert (supports, resistances) == ([], [])
+        assert structure_coverage(bars) == COVERAGE_INSUFFICIENT_HISTORY
 
         result = derive_structural_target(
             entry_price=100.0, direction="long",
             levels=[lv.price for lv in (*supports, *resistances)],
             atr=2.0, horizon_sessions=20, setup_type="range",
-            model_target=120.0,
+            model_target=120.0, levels_coverage=structure_coverage(bars),
         )
         assert result.price is None
         assert result.refused
-        assert result.refusal == "no_structural_levels"
-        assert "insufficient" in result.detail
+        assert result.unmeasurable
+        assert result.fault == FAULT_NO_STRUCTURE
+        assert result.refusal == ""
+        assert "DATA FAULT" in result.detail
+        assert COVERAGE_INSUFFICIENT_HISTORY in result.detail
         # The model's guess survives as evidence and is NOT promoted to the
         # answer just because nothing else was available.
         assert result.model_target == 120.0
 
-    def test_no_volatility_reading_refuses(self):
+    def test_no_volatility_reading_is_a_data_fault_not_a_refusal(self):
+        """ATR is computed by the desk from its own bars; a real market
+        always has volatility. Its absence is the desk's failure."""
         result = derive_structural_target(
             entry_price=100.0, direction="long", levels=[90.0, 115.0],
             atr=None, horizon_sessions=20, setup_type="range",
         )
-        assert result.refusal == "no_volatility_reading"
+        assert result.price is None
+        assert result.fault == FAULT_NO_VOLATILITY
+        assert result.refusal == ""
+
+    def test_no_entry_price_is_a_data_fault_not_a_refusal(self):
+        result = derive_structural_target(
+            entry_price=None, direction="long", levels=[90.0, 115.0],
+            atr=2.0, horizon_sessions=20, setup_type="range",
+        )
+        assert result.price is None
+        assert result.fault == FAULT_NO_ENTRY
+        assert result.refusal == ""
+
+    def test_a_measured_chart_with_no_structure_is_still_a_refusal(self):
+        """The other half of the split, and the one that keeps this honest:
+        enough clean bars for the pivot scan to run, and it found no level
+        with the minimum touches within reach. That is a fact about the
+        chart, not about the feed — a trade judgement, filed as one."""
+        result = derive_structural_target(
+            entry_price=100.0, direction="long", levels=[],
+            atr=2.0, horizon_sessions=20, setup_type="range",
+            levels_coverage=COVERAGE_MEASURED,
+        )
+        assert result.price is None
+        assert result.refusal == REFUSAL_NO_STRUCTURE
+        assert result.fault == ""
+        assert not result.unmeasurable
+        assert "measured" in result.detail
+
+    def test_every_non_measured_coverage_is_a_data_fault(self):
+        """No bars, too few bars, dirty bars, and unknown provenance all
+        mean the desk cannot claim the chart was measured. All four are
+        faults; none is a refusal."""
+        for coverage in (
+            COVERAGE_NO_BARS, COVERAGE_INSUFFICIENT_HISTORY,
+            COVERAGE_UNUSABLE_BARS, COVERAGE_UNKNOWN,
+        ):
+            result = derive_structural_target(
+                entry_price=100.0, direction="long", levels=[],
+                atr=2.0, horizon_sessions=20, setup_type="range",
+                levels_coverage=coverage,
+            )
+            assert result.fault == FAULT_NO_STRUCTURE, coverage
+            assert result.refusal == "", coverage
+            assert result.price is None, coverage
+
+    def test_a_fault_and_a_refusal_never_coexist_and_never_trade(self):
+        """The invariant the record depends on: a declined derivation has
+        exactly ONE of `fault` / `refusal` set, and neither ever carries a
+        price. If a future branch sets both, or sets a price beside
+        either, the two classes have merged again."""
+        cases = [
+            dict(entry_price=None, atr=2.0, horizon_sessions=20, levels=[90.0]),
+            dict(entry_price=100.0, atr=None, horizon_sessions=20, levels=[90.0]),
+            dict(entry_price=100.0, atr=2.0, horizon_sessions=None, levels=[90.0]),
+            dict(entry_price=100.0, atr=2.0, horizon_sessions=20, levels=[]),
+            dict(entry_price=100.0, atr=2.0, horizon_sessions=20, levels=[],
+                 levels_coverage=COVERAGE_MEASURED),
+            dict(entry_price=100.0, atr=2.0, horizon_sessions=1, levels=[80.0],
+                 setup_type="breakout"),
+        ]
+        for case in cases:
+            case.setdefault("setup_type", "range")
+            result = derive_structural_target(direction="long", **case)
+            assert result.price is None, case
+            assert bool(result.fault) != bool(result.refusal), case
+
+    def test_structure_coverage_is_read_from_the_bars(self):
+        """The coverage states come from the history itself and from the
+        scan's own minimum window — not from a chosen threshold."""
+        assert structure_coverage(None) == COVERAGE_NO_BARS
+        assert structure_coverage([]) == COVERAGE_NO_BARS
+        assert structure_coverage(_bars([100.0] * 4)) == COVERAGE_INSUFFICIENT_HISTORY
+        assert structure_coverage(_bars([100.0] * 40)) == COVERAGE_MEASURED
+        # Enough bars arrived, but they cannot be true (high below low), so
+        # cleaning leaves nothing the scan can run over: a dirty feed.
+        from datetime import date, timedelta
+        dirty = [
+            OHLCV(date=date(2024, 1, 1) + timedelta(days=i), open=100.0,
+                  high=90.0, low=110.0, close=100.0, volume=1)
+            for i in range(40)
+        ]
+        assert structure_coverage(dirty) == COVERAGE_UNUSABLE_BARS
 
     def test_no_horizon_refuses(self):
         result = derive_structural_target(
@@ -235,15 +340,27 @@ class TestRefusals:
         assert result.level_used is None
         assert "nothing overhead is expected to stop this trade" in result.detail
 
-    def test_an_unreadable_chart_is_still_refused_and_is_not_this_case(self):
+    def test_an_unreadable_chart_is_still_declined_and_is_not_this_case(self):
         """The distinction funnel item 6's fix rests on. No levels AT ALL
-        means the history was too short or too dirty to say anything — that
-        is not "no ceiling", and it still refuses whatever the setup says."""
-        result = derive_structural_target(
+        is not "no ceiling", and it still declines whatever the setup says
+        — as a data fault when the history was too short or too dirty
+        (2026-09-12), as a refusal when the chart was measured and holds
+        nothing. Neither earns the measured move."""
+        unusable = derive_structural_target(
             entry_price=100.0, direction="long", levels=[],
             atr=2.0, horizon_sessions=20, setup_type="breakout",
         )
-        assert result.refusal == "no_structural_levels"
+        assert unusable.price is None
+        assert unusable.basis != "measured_move"
+        assert unusable.fault == FAULT_NO_STRUCTURE
+        measured = derive_structural_target(
+            entry_price=100.0, direction="long", levels=[],
+            atr=2.0, horizon_sessions=20, setup_type="breakout",
+            levels_coverage=COVERAGE_MEASURED,
+        )
+        assert measured.price is None
+        assert measured.basis != "measured_move"
+        assert measured.refusal == REFUSAL_NO_STRUCTURE
 
     def test_the_trend_classification_is_shared_with_the_reward_risk_gate(self):
         """One definition, asserted as one function. If someone adds a second
@@ -263,31 +380,37 @@ class TestRefusals:
         assert is_trend_trade(None) is False
         assert reward_risk_floor_applies(None) is True
 
-    def test_each_refusal_names_a_different_thing_being_wrong(self):
+    def test_each_decline_names_a_different_thing_being_wrong(self):
         """'No trade' without a reason is what let the original defect
         survive unnoticed. A missing ATR, a missing horizon, an unreadable
-        chart and a disagreement about the setup are four different
-        problems and must not share one message."""
+        chart, a measured-but-empty chart and a projection that cannot
+        clear its own noise are five different problems and must not share
+        one code — across BOTH fields, since 2026-09-12 split them."""
+        def _code(result):
+            return result.fault or result.refusal
+
         codes = {
-            derive_structural_target(
+            _code(derive_structural_target(
                 entry_price=100.0, direction="long", levels=[90.0, 115.0],
-                atr=None, horizon_sessions=20, setup_type="range").refusal,
-            derive_structural_target(
+                atr=None, horizon_sessions=20, setup_type="range")),
+            _code(derive_structural_target(
                 entry_price=100.0, direction="long", levels=[90.0, 115.0],
-                atr=2.0, horizon_sessions=0, setup_type="range").refusal,
-            derive_structural_target(
+                atr=2.0, horizon_sessions=0, setup_type="range")),
+            _code(derive_structural_target(
                 entry_price=100.0, direction="long", levels=[],
-                atr=2.0, horizon_sessions=20, setup_type="range").refusal,
-            # A projection too small to clear its own noise floor — the
-            # fourth distinct refusal. (It used to be "no level in the
-            # direction on a range setup"; funnel item 6 made that a
-            # measured move rather than a refusal, so a different fourth
-            # case is used to prove the codes stay distinct.)
-            derive_structural_target(
+                atr=2.0, horizon_sessions=20, setup_type="range")),
+            _code(derive_structural_target(
+                entry_price=100.0, direction="long", levels=[],
+                atr=2.0, horizon_sessions=20, setup_type="range",
+                levels_coverage=COVERAGE_MEASURED)),
+            # A projection too small to clear its own noise floor. (It used
+            # to be "no level in the direction on a range setup"; funnel
+            # item 6 made that a measured move rather than a refusal.)
+            _code(derive_structural_target(
                 entry_price=100.0, direction="long", levels=[80.0],
-                atr=2.0, horizon_sessions=1, setup_type="breakout").refusal,
+                atr=2.0, horizon_sessions=1, setup_type="breakout")),
         }
-        assert len(codes) == 4
+        assert len(codes) == 5
 
     def test_the_constructor_declines_the_order_when_derivation_refuses(self):
         """The analyst named levels; Python found none in the history. The
@@ -307,6 +430,137 @@ class TestRefusals:
             price_map={"NVDA": 100.0},
         )
         assert decisions == []
+
+
+# ---------------------------------------------------------------------------
+# A data fault is not a trade refusal (2026-09-12)
+# ---------------------------------------------------------------------------
+#
+# The owner's point: a broken feed and a trade that failed its rules used to
+# produce the same class of outcome, so nobody could tell them apart in the
+# record and nobody knew how often either happened. These pin the split at
+# the constructor: a fault lands on `last_data_faults` (and is filed as
+# `data_fault` by `DecisionStage`, never `constructor_dropped`), a refusal
+# does not; and NEITHER trades.
+
+class TestDataFaultsAtTheConstructor:
+    def _target(self, symbol="NVDA", direction="long"):
+        return TargetPosition(
+            symbol=symbol, direction=direction, target_weight_pct=8.0,
+            conviction="high", thesis="t",
+        )
+
+    def test_unusable_history_is_recorded_as_a_fault_and_not_traded(self):
+        constructor = PortfolioConstructor()
+        analysis = _analysis(
+            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
+            model_target=130.0, levels=[95.0, 130.0], computed=[],
+            atr=1.4, horizon=30,
+        )
+        analysis.levels_coverage = COVERAGE_INSUFFICIENT_HISTORY
+        decisions = constructor.construct_orders(
+            targets=[self._target()], positions=[], analyses=[analysis],
+            total_value=100_000, price_map={"NVDA": 100.0},
+        )
+        assert decisions == []                      # fail-closed, unchanged
+        assert constructor.last_data_faults["NVDA"]["fault"] == FAULT_NO_STRUCTURE
+        # Still captured as a drop (never silently absent), but the line
+        # says what it is.
+        assert "UNMEASURABLE" in constructor.last_drop_reasons["NVDA"]
+        assert "rejected" not in constructor.last_drop_reasons["NVDA"]
+
+    def test_missing_atr_is_recorded_as_a_fault(self):
+        constructor = PortfolioConstructor()
+        analysis = _analysis(
+            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
+            model_target=130.0, levels=[95.0, 130.0], atr=1.4, horizon=30,
+        )
+        analysis.atr_14 = None
+        decisions = constructor.construct_orders(
+            targets=[self._target()], positions=[], analyses=[analysis],
+            total_value=100_000, price_map={"NVDA": 100.0},
+        )
+        assert decisions == []
+        assert constructor.last_data_faults["NVDA"]["fault"] == FAULT_NO_VOLATILITY
+
+    def test_no_analysis_at_all_is_recorded_as_a_fault(self):
+        constructor = PortfolioConstructor()
+        decisions = constructor.construct_orders(
+            targets=[self._target()], positions=[], analyses=[],
+            total_value=100_000, price_map={"NVDA": 100.0},
+        )
+        assert decisions == []
+        assert constructor.last_data_faults["NVDA"]["fault"] == FAULT_NO_ANALYSIS
+
+    def test_no_price_anywhere_is_recorded_as_a_fault(self):
+        constructor = PortfolioConstructor()
+        analysis = _analysis(
+            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
+            model_target=130.0, levels=[95.0, 130.0], atr=1.4, horizon=30,
+        )
+        analysis.entry_price = None
+        decisions = constructor.construct_orders(
+            targets=[self._target()], positions=[], analyses=[analysis],
+            total_value=100_000, price_map={},      # no live quote either
+        )
+        assert decisions == []
+        assert constructor.last_data_faults["NVDA"]["fault"] == FAULT_NO_ENTRY
+
+    def test_a_measured_empty_chart_is_a_refusal_and_not_a_fault(self):
+        """The negative case that keeps the fault list honest: a chart the
+        desk measured and found structureless is a trade judgement. It is
+        dropped and its reason captured, but it must NOT appear among the
+        data faults or the owner would be paged for a quiet chart."""
+        constructor = PortfolioConstructor()
+        analysis = _analysis(
+            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
+            model_target=130.0, levels=[95.0, 130.0], computed=[],
+            atr=1.4, horizon=30,
+        )
+        analysis.levels_coverage = COVERAGE_MEASURED
+        decisions = constructor.construct_orders(
+            targets=[self._target()], positions=[], analyses=[analysis],
+            total_value=100_000, price_map={"NVDA": 100.0},
+        )
+        assert decisions == []
+        assert constructor.last_data_faults == {}
+        assert "rejected" in constructor.last_drop_reasons["NVDA"]
+        assert REFUSAL_NO_STRUCTURE in constructor.last_drop_reasons["NVDA"]
+
+    def test_the_eligibility_preview_records_faults_too(self):
+        """A symbol becomes unanalysable BEFORE the PM ever sees it: the
+        eligibility preview runs the same derivation over every analysed
+        name. Its faults must survive to the same record, or the quietest
+        failure of all — a name that never even reaches a proposal — stays
+        invisible."""
+        constructor = PortfolioConstructor()
+        analysis = _analysis(
+            symbol="NVDA", rating="buy", entry=100.0, stop=95.0,
+            model_target=130.0, levels=[95.0, 130.0], atr=1.4, horizon=30,
+        )
+        analysis.atr_14 = None
+        assert constructor.real_reward_risk_preview(analysis, "long") is None
+        assert constructor.last_data_faults["NVDA"]["fault"] == FAULT_NO_VOLATILITY
+        # Drain hands them over and clears, so the next session starts clean.
+        drained = constructor.drain_data_faults()
+        assert drained["NVDA"]["fault"] == FAULT_NO_VOLATILITY
+        assert constructor.last_data_faults == {}
+
+    def test_a_short_faults_the_same_way(self):
+        constructor = PortfolioConstructor()
+        analysis = _analysis(
+            symbol="TSLA", rating="sell", entry=250.0, stop=262.5,
+            model_target=150.0, levels=[220.0, 262.5, 300.0], computed=[],
+            atr=3.0, horizon=45,
+        )
+        analysis.levels_coverage = COVERAGE_NO_BARS
+        decisions = constructor.construct_orders(
+            targets=[self._target("TSLA", "short")], positions=[],
+            analyses=[analysis], total_value=100_000, price_map={"TSLA": 250.0},
+        )
+        assert decisions == []
+        assert constructor.last_data_faults["TSLA"]["fault"] == FAULT_NO_STRUCTURE
+        assert constructor.last_data_faults["TSLA"]["direction"] == "short"
 
 
 # ---------------------------------------------------------------------------

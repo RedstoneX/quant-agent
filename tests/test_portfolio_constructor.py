@@ -569,7 +569,13 @@ def test_dropped_target_reason_is_captured_not_silently_lost():
     assert "NVDA" in constructor.last_drop_reasons
     reason = constructor.last_drop_reasons["NVDA"]
     assert "NVDA" in reason
-    assert "rejected" in reason
+    # 2026-09-12: "no analysis at all" is a DATA fault, not a trade the
+    # constructor judged — the line says UNMEASURABLE, never "rejected",
+    # and the fault is on `last_data_faults` for DecisionStage to file
+    # under its own name (see tests/test_target_derivation.py).
+    assert "UNMEASURABLE" in reason
+    assert "rejected" not in reason
+    assert constructor.last_data_faults["NVDA"]["fault"] == "analysis_missing"
 
     # A second call must not leak the first call's reasons onto a run that
     # dropped nothing — each call's capture is fresh, not cumulative.

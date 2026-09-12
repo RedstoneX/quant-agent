@@ -144,7 +144,10 @@ class RunContext:
     # src/data/levels.py now hard-refuses any trade when it is empty
     # (REFUSAL_NO_STRUCTURE). A dead bar feed and a genuinely structureless
     # market both produce that same empty list, and without this, nothing
-    # records which one happened.
+    # recorded which one happened at RUN level. Since 2026-09-12 the
+    # per-symbol half is carried on `TechAnalysisResult.levels_coverage`,
+    # and an empty list from unusable history is a DATA fault
+    # (`FAULT_NO_STRUCTURE`), not a refusal — see src/data/levels.py.
     tech_bars_coverage: dict = field(default_factory=dict)
     data_status: dict[str, str] = field(default_factory=dict)
     # What this session's LLM-response parsing lost or papered over

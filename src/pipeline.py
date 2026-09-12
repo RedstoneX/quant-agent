@@ -6386,6 +6386,7 @@ class TradingPipeline:
         skips: dict[tuple[str, str], str] = {}       # → verbatim reason
         verdicts: dict[str, dict] = {}               # decision_id → verdict
         constructor_drops: dict[tuple[str, str], str] = {}  # → constructor's own reason
+        data_faults: dict[tuple[str, str], str] = {}        # → FAULT_* code (unmeasurable)
         for row in raw.get("evidence") or []:
             kind = row.get("kind")
             did = row.get("decision_id")
@@ -6449,6 +6450,15 @@ class TradingPipeline:
                     constructor_drops[(did, sym)] = (
                         data.get("detail") or "constructor_dropped"
                     )
+                elif (data.get("stage") == "deterministic_gate"
+                        and data.get("outcome") == "unmeasurable"
+                        and data.get("reason") == "data_fault"):
+                    # 2026-09-12: a symbol the constructor could not
+                    # MEASURE (no price / ATR / usable bars / analysis).
+                    # Its own bucket — not `constructor_dropped`, which is
+                    # for trades the desk judged. Mirrors
+                    # `scripts/blocked_proposals_census.py`.
+                    data_faults[(did, sym)] = str(data.get("fault") or "unknown")
 
         if not proposals:
             return ""
@@ -6479,6 +6489,11 @@ class TradingPipeline:
                 return f"order_{status}"
             if key in skips:
                 return skips[key]
+            if key in data_faults:
+                # Not a trade judgement: the desk could not measure the
+                # symbol. Named by fault so a feed outage and a missing
+                # analysis stay distinguishable in the digest.
+                return f"data_fault:{data_faults[key]}"
             if key in constructor_drops:
                 # Checked before the verdict/`ordered` logic below, so a
                 # symbol the deterministic constructor dropped before the

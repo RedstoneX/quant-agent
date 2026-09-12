@@ -727,6 +727,14 @@ class TechAnalysisResult(LLMOutputModel):
     # docs/RESEARCH_FINDINGS.md §7 for the touch-count evidence and the
     # threshold derived from it.
     computed_level_touches: dict[float, int] = Field(default_factory=dict)
+    # PYTHON-SET (2026-09-12): what the bar history behind `computed_levels`
+    # was — one of the COVERAGE_* states in `src/data/levels.py`. An empty
+    # `computed_levels` with coverage "measured" is a chart with no
+    # structure (a trade refusal); with any other coverage it is a DATA
+    # fault (unusable history) that must be recorded and alerted as such,
+    # never counted as a trade the desk judged. Defaults to "unknown",
+    # which the derivation classifies with the faults, fail-closed.
+    levels_coverage: str = "unknown"
     # How the position must be MANAGED, decided at entry from the chart:
     #   "range"    — clear structure on both sides. Fixed target is meaningful;
     #                thesis_progress and pace are valid measurements.

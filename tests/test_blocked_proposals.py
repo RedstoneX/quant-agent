@@ -380,6 +380,35 @@ def test_constructor_dropped_symbol_is_not_blamed_for_a_rm_veto(tmp_path):
            "recent first: rm_rejected" not in out
 
 
+def test_a_data_fault_reaches_the_pm_digest_as_a_fault_not_a_drop(tmp_path):
+    """2026-09-12. The PM-facing digest mirrors the census: a symbol the
+    constructor could not measure is `data_fault:<code>`, never
+    `constructor_dropped` and never the unexplained bucket."""
+    pipeline, db = _pipeline(tmp_path)
+    _target(db, "r1", "d1", "A", days_ago=2)
+    row_id = db.insert_specialist_evidence(
+        run_id="r1", decision_id="d1", agent_name="pipeline",
+        kind="pipeline_event", scope="symbol", symbol="A",
+        evidence_json=json.dumps({
+            "stage": "deterministic_gate", "outcome": "unmeasurable",
+            "reason": "data_fault", "fault": "price_history_unusable",
+            "detail": "DATA FAULT: coverage=no_bars", "targeted": True,
+        }),
+    )
+    db.conn.execute(
+        "UPDATE specialist_evidence SET timestamp = datetime('now', '-2 days') "
+        "WHERE id = ?", (row_id,),
+    )
+    db.conn.commit()
+
+    out = pipeline._build_blocked_proposals(min_proposals=1)
+
+    assert "A: proposed 1× across 1 sessions, filled 0 — most recent " \
+           "first: data_fault:price_history_unusable" in out
+    assert "constructor_dropped" not in out
+    assert "no_order_built" not in out
+
+
 def test_constructor_dropped_symbol_gets_its_own_reason_not_no_order_built(tmp_path):
     """A constructor drop carries its OWN reason, not the generic bucket.
 
