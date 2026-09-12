@@ -1210,8 +1210,8 @@ class TradingPipeline:
     def _trade_executed_or_pending(trade: dict) -> bool:
         """True when a trade either executed or is still an open live attempt.
 
-        Used for idempotence checks on system-generated orders like
-        TAKE_PROFIT: a pending submitted trim should block a duplicate order,
+        Used for idempotence checks on sell-side rows (same-day trim
+        discipline): a pending submitted trim should block a duplicate order,
         but a canceled/rejected/expired zero-fill should not.
         """
         status = str(trade.get("fill_status") or "").lower()
@@ -2713,8 +2713,8 @@ class TradingPipeline:
         except Exception as exc:  # noqa: BLE001
             # Submit raised → the position is intact but its stops are
             # cancelled. Restore them in-session rather than waiting for the
-            # next drain (this used to vary by site — only auto_take_profit
-            # restored; the others rode naked until drain).
+            # next drain (this used to vary by site — only the since-deleted
+            # auto take-profit restored; the others rode naked until drain).
             logger.error("%s: submit failed for %s: %s", label, symbol, exc)
             if stop_specs:
                 self.broker._restore_stop_orders(
@@ -3766,7 +3766,7 @@ class TradingPipeline:
         self, symbol: str, residual_qty: float, cancelled_specs: list[dict],
         *, side: str = "sell",
     ) -> bool:
-        """After a partial exit (TAKE_PROFIT / REDUCE / PARTIAL_SELL), place a
+        """After a partial exit (REDUCE / PARTIAL_SELL), place a
         fresh stop on the residual qty using the most-protective price among
         the stops we cancelled to clear held_for_orders for the SELL.
 
@@ -4753,158 +4753,6 @@ class TradingPipeline:
             )
         return orders
 
-    def _auto_take_profit(self, positions, run_id: str,
-                          profit_pct_trigger: float = 30.0,
-                          trim_fraction: float = 0.15) -> list[dict]:
-        """Auto-sell `trim_fraction` of any position up ≥ `profit_pct_trigger`%.
-
-        Runs once per holding (detected by looking for a prior TAKE_PROFIT row
-        in trades after the most recent BUY for that symbol). Defaults bias
-        hard toward "let winners run" — auto-TP is a give-back guardrail, not
-        an alpha-generating mechanism, and the LLM position_reviewer (which
-        runs AFTER this) is the right place for thesis-aware trims.
-
-        Earlier 15%/33% defaults were clipping early-innings multi-baggers:
-        2026-04-30 GOOGL trim fired at +27% gain on the same morning that
-        news_analyst flagged a HIGH bullish state change (AI capex split
-        favoring Alphabet). The LLM reviewer's later read was "clearest hold,
-        fast winner with reinforced thesis should keep running" — but auto-TP
-        had already cut 28% of the position before the LLM got to vote.
-
-        30%/15% defaults: only truly outsized single-name gains (30%+) trigger,
-        and when triggered, the trim is a clip (15%) not a harvest (33%).
-        Combined effect ~75% less auto-TP turnover. Backstops still in place:
-        OTO stop, trailing stop, LLM reviewer at midday/close, hard daily-loss
-        circuit breaker, evening thesis_health_review.
-        """
-        orders: list[dict] = []
-        pending_protections: list[dict] = []
-        for p in positions:
-            if p.qty <= 0 or p.avg_entry <= 0:
-                continue
-            # Same `unrealized_pnl_pct` every P&L% in the system now uses.
-            # Long-only here (the `p.qty <= 0` filter above), so the absolute
-            # cost basis is arithmetically identical to the signed one this
-            # replaces — routed through the shared function so a future
-            # short-side auto-TP cannot inherit a fifth denominator.
-            pnl_pct = unrealized_pnl_pct(p)
-            if pnl_pct is None or pnl_pct < profit_pct_trigger:
-                continue
-            # Did we already trim this holding? Look at trades newer than the
-            # most recent BUY for this symbol. If a TAKE_PROFIT exists there,
-            # skip.
-            try:
-                sym_trades = self.db.get_trades(symbol=p.symbol, limit=20)
-            except Exception as e:
-                logger.warning("auto_take_profit: trade history lookup failed for %s: %s", p.symbol, e)
-                continue
-            # Trades are newest-first; find the index of the most recent BUY
-            # and check for TAKE_PROFIT rows AFTER it.
-            recent_buy_idx = None
-            for i, t in enumerate(sym_trades):
-                if (
-                    (t.get("action") or "").upper() == "BUY"
-                    and self._trade_executed_or_pending(t)
-                ):
-                    recent_buy_idx = i
-                    break
-            if recent_buy_idx is None:
-                # No prior BUY on record — odd; could be a pre-existing manual
-                # position. Skip auto-TP to avoid touching things we didn't open.
-                continue
-            already_tp = any(
-                (t.get("action") or "").upper() == "TAKE_PROFIT"
-                and self._trade_executed_or_pending(t)
-                for t in sym_trades[:recent_buy_idx]
-            )
-            if already_tp:
-                continue
-
-            # Compute trim qty. For integer holdings round down, min 1 share.
-            trim_qty = p.qty * trim_fraction
-            if float(p.qty).is_integer():
-                trim_qty = max(1.0, float(int(trim_qty)))
-            if trim_qty <= 0 or trim_qty >= p.qty:
-                # Trimming the whole position isn't 'take-profit' — skip and
-                # let the trailing stop handle that decision.
-                continue
-            sell_limit = round(p.current_price * 0.995, 2)
-            # audit F1 review #1: snapshot -> persist WAL -> cancel, so
-            # the recovery row is durable BEFORE any broker mutation.
-            sale = self._submit_protected_sell(
-                symbol=p.symbol, qty=trim_qty, limit_price=sell_limit,
-                reference_price=p.current_price, position_qty_before_sell=p.qty,
-                label="TAKE_PROFIT",
-            )
-            if sale is None:
-                continue
-            order, prot = sale
-            pending_protections.append(prot)
-            try:
-                self.db.insert_trade(
-                    symbol=p.symbol, action="TAKE_PROFIT", qty=trim_qty,
-                    price=p.current_price,
-                    reasoning=(
-                        f"Auto take-profit: {pnl_pct:+.1f}% ≥ {profit_pct_trigger}%, "
-                        f"trimming {trim_fraction * 100:.0f}% (remaining {p.qty - trim_qty:.0f} "
-                        f"shares continue riding stop)"
-                    ),
-                    run_id=run_id,
-                    broker_order_id=order.get("id"),
-                    fill_status="submitted",
-                )
-            except Exception as e:
-                logger.warning("auto_take_profit: audit log failed for %s: %s", p.symbol, e)
-            orders.append(order)
-            logger.info(
-                "Auto take-profit: %s +%.1f%% → sold %s of %s @ limit $%.2f",
-                p.symbol, pnl_pct, self._format_qty(trim_qty),
-                self._format_qty(p.qty), sell_limit,
-            )
-        # Wait for each accepted sell to terminate, then reprotect on
-        # actual residual or restore originals if the sell didn't fill.
-        self._finalize_pending_protections(
-            pending_protections, context="auto_take_profit",
-        )
-        return orders
-
-    def _wait_for_midday_auto_tp_orders(self, auto_tp_orders: list[dict]) -> set[str]:
-        """Wait briefly for midday auto take-profit sells and return symbols still in flight."""
-        pending_symbols: set[str] = set()
-        terminal_states = {
-            "filled",
-            "canceled",
-            "cancelled",
-            "expired",
-            "rejected",
-            "done_for_day",
-            "replaced",
-        }
-        for order in auto_tp_orders:
-            symbol = (order.get("symbol") or "").strip().upper()
-            if not symbol:
-                continue
-            order_id = order.get("id")
-            status = str(order.get("status") or "").lower()
-            if order_id:
-                try:
-                    polled = self.broker.wait_for_order_terminal(order_id)
-                    if polled:
-                        status = str(polled).lower()
-                except Exception as e:
-                    logger.warning(
-                        "Midday auto-TP wait failed for %s (%s): %s",
-                        symbol, order_id, e,
-                    )
-            if status not in terminal_states:
-                pending_symbols.add(symbol)
-        if pending_symbols:
-            logger.info(
-                "Midday: blocking same-symbol LLM exits while auto take-profit is still in flight: %s",
-                ", ".join(sorted(pending_symbols)),
-            )
-        return pending_symbols
-
     def _build_rm_recent_verdicts(self, limit: int = 5) -> str:
         """How RM has been judging PM's output over the last N sessions.
 
@@ -5212,7 +5060,8 @@ class TradingPipeline:
         cutoff = et_today() - _td(days=lookback_days)
         # REDUCE = midday reviewer trim (discretionary partial exit — a SELL
         # decision the reviewer owns and should be graded on). TAKE_PROFIT
-        # stays out because it's rule-based, not a reviewer decision.
+        # stays out: it was the rule-based auto trim (deleted 2026-09-12),
+        # never a reviewer decision — historical rows still carry the label.
         # Belt (audit round 2): the vehicle also exits under EMERGENCY_SELL
         # when the breaker liquidates everything — filter by SYMBOL here,
         # mirroring _build_post_exit_reality, so parking churn never reaches
@@ -5668,6 +5517,8 @@ class TradingPipeline:
     # force us out right before a bounce" is exactly the question this
     # audit exists to answer, and a forced exit is where the answer is
     # most likely to be uncomfortable.
+    # TAKE_PROFIT stays for HISTORICAL rows: the auto trim that wrote it was
+    # deleted 2026-09-12 and nothing writes the label any more.
     _EXIT_AUDIT_ACTIONS = (
         "SELL", "REDUCE", "EMERGENCY_SELL", "FORCE_DELEVER", "TAKE_PROFIT",
         "STOP_OUT",
@@ -8108,7 +7959,8 @@ class TradingPipeline:
         73% one-day cut on a still-working position (2026-05-04 AMZN 41 →
         21 → 11 shares).
 
-        Sell-side = REDUCE / SELL / TAKE_PROFIT / PARTIAL_SELL(...) /
+        Sell-side = REDUCE / SELL / TAKE_PROFIT (historical rows only — the
+        auto trim was deleted 2026-09-12) / PARTIAL_SELL(...) /
         EMERGENCY_SELL / FORCE_DELEVER, and its short-side mirror COVER /
         EMERGENCY_COVER / PARTIAL_COVER(...) (Stage 3 — a short trimmed at
         midday must be exempt from a second same-flag COVER at close for
@@ -8742,7 +8594,7 @@ class TradingPipeline:
         return vetoed, verdict
 
     def _midday_execute_llm_actions(
-        self, positions, review, run_id: str, blocked_symbols: set[str] | None = None,
+        self, positions, review, run_id: str,
         already_trimmed_today: set[str] | None = None,
         metric_deltas: dict | None = None,
         risk_vetoed_symbols: set[str] | None = None,
@@ -8753,9 +8605,10 @@ class TradingPipeline:
 
         Dedups same-symbol conflicting actions by priority (SELL/COVER >
         REDUCE > TRAIL_STOP > HOLD) to avoid the broker seeing two orders
-        fighting each other on one position. `blocked_symbols` lets midday
-        suppress LLM exits for symbols that already have an in-flight system
-        sell order.
+        fighting each other on one position. (A `blocked_symbols` argument
+        used to suppress LLM exits on a symbol whose midday auto-take-profit
+        sell was still in flight; that rule was deleted 2026-09-12 and no
+        other system sell runs ahead of the reviewer in the same session.)
 
         COVER is the short-side twin of SELL/REDUCE (Stage 3 shorts gap
         fix): it is the ONLY lever the reviewer has on a held short (never
@@ -8772,11 +8625,6 @@ class TradingPipeline:
         """
         orders: list[dict] = []
         pending_protections: list[dict] = []
-        blocked = {
-            symbol.strip().upper()
-            for symbol in (blocked_symbols or set())
-            if symbol and symbol.strip()
-        }
         _priority = {"SELL": 0, "COVER": 0, "REDUCE": 1, "TRAIL_STOP": 2, "HOLD": 3}
         best_by_symbol: dict[str, dict] = {}
         actions_raw = review.actions if review else []
@@ -8813,14 +8661,8 @@ class TradingPipeline:
             if act not in ("SELL", "REDUCE", "TRAIL_STOP", "COVER"):
                 continue
             symbol = action_item.get("symbol", "")
-            if symbol in blocked:
-                logger.info(
-                    "Midday: skipping %s %s — auto take-profit sell still in flight",
-                    act, symbol,
-                )
-                continue
             # Same-day trim discipline: a symbol that already had a sell-side
-            # action TODAY (auto-TP, midday REDUCE, etc.) is off-limits for
+            # action TODAY (midday REDUCE, force-delever, etc.) is off-limits for
             # additional REDUCE / SELL on a SECOND session unless the LLM
             # explicitly cites a hard trigger in the reason. TRAIL_STOP is
             # exempt — adjusting a stop is not selling shares.
@@ -10614,7 +10456,7 @@ class TradingPipeline:
 
         Same memory layers, same schema, same agent. Session bias is injected
         via prompt language driven by `session_type`. Everything else — force
-        de-lever / auto take-profit / ex-div / news / earnings / LLM review /
+        de-lever / ex-div / news / earnings / LLM review /
         emergency liquidate / execution / reconcile — is identical.
         """
         if session_type not in ("midday", "close"):
@@ -10752,37 +10594,30 @@ class TradingPipeline:
                 "run_id": run_id,
             }
 
-        # 1b. Auto take-profit (midday only — close is too near EOD to start
-        # a partial-trim cycle that won't finish). At close, LLM handles trims
-        # explicitly via the reasoning chain.
-        auto_tp_orders: list[dict] = []
-        blocked_position_symbols: set[str] = set()
-        if session_type == "midday":
-            auto_tp_orders = self._auto_take_profit(positions, run_id)
-            if auto_tp_orders:
-                blocked_position_symbols = self._wait_for_midday_auto_tp_orders(auto_tp_orders)
-                # Refresh account + positions after auto-TP.
-                account = self.broker.get_account()
-                positions = self.broker.get_positions()
-                cash = account["cash"]
-                total_value = account["portfolio_value"]
-                last_equity = account.get("last_equity", total_value)
-                ctx.account = account
-                ctx.positions = positions
-                ctx.cash = cash
-                ctx.deployable_cash = self._compute_deployable_cash(cash, positions)
-                ctx.total_value = total_value
-                ctx.last_equity = last_equity
-                self.db.sync_positions(positions)
+        # 1b. (DELETED 2026-09-12, owner decision.) A midday "auto take-profit"
+        # used to sit here: sell 15% of any position once its unrealised
+        # gain reached 30%. Both numbers were tuned off ONE trade (a GOOGL
+        # trim at +27% on 2026-04-30) — hindsight-tuning on n=1 — and, more
+        # fundamentally, it was a preset profit target: a fixed fraction at
+        # a fixed gain decided in advance with no reference to what the
+        # instrument is doing. The owner removed that class of logic when he
+        # removed reward:risk as a universal gate: the reward side of a
+        # trade cannot be predetermined because the holding period is
+        # unknown, and profit-taking belongs to the trailing stop
+        # (`src/risk/trailing.py`). The rule predated QAMC and was never
+        # ratified against that doctrine. The ONLY exit rule is the
+        # trailing stop; `tests/test_pipeline.py::
+        # test_no_fixed_gain_automatic_profit_trim_exists` fails if a
+        # fixed-gain trim is reintroduced.
 
         # 1c. Ex-dividend stop adjustment (both sessions — a dividend tomorrow
         # is still a dividend tomorrow no matter which session looks at it).
         exdiv_orders = self._handle_ex_dividends(positions, run_id)
 
-        # Auto-TP/ex-dividend actions and all protection reconciliation above
-        # are deterministic. A latched paid-analysis breaker stops only at
-        # this boundary, before news/reviewer model requests.
-        orders = list(forced_orders) + list(auto_tp_orders) + list(exdiv_orders)
+        # Ex-dividend actions and all protection reconciliation above are
+        # deterministic. A latched paid-analysis breaker stops only at this
+        # boundary, before news/reviewer model requests.
+        orders = list(forced_orders) + list(exdiv_orders)
         try:
             self._require_paid_analysis(f"{session_type}_analysis")
         except PaidAnalysisSuspended as exc:
@@ -11078,7 +10913,6 @@ class TradingPipeline:
                 )
                 orders.extend(self._midday_execute_llm_actions(
                     review_positions, review, run_id,
-                    blocked_symbols=blocked_position_symbols,
                     already_trimmed_today=already_trimmed_today,
                     metric_deltas=metric_deltas,
                     risk_vetoed_symbols=risk_vetoed,

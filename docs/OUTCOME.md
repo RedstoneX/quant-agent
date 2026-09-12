@@ -125,10 +125,42 @@ holding period, a risk percentage, a tolerance band, the reward:risk
 reference under which a range trade is capped at starter size (no longer a
 gate anywhere, never applied to a breakout, and self-flagged in
 `src/risk/constants.py` as the last flat number still standing) —
-must be derived from real market data (volatility, structure, confirmed
-price action) or from this desk's own measured track record. It must
-never be a flat calendar count, a round percentage, or a number chosen
-because it "sounds prudent."
+must be READ FROM THE INSTRUMENT IN FRONT OF YOU: its volatility, its
+structure, its confirmed price action, or the trade's own claim recorded at
+entry. It must never be a flat calendar count, a round percentage, or a
+number chosen because it "sounds prudent."
+
+**Corrected 2026-09-12 — this clause used to also permit "or from this
+desk's own measured track record", and that permission was wrong.** Fitting
+a threshold to past outcomes is not the opposite of an arbitrary number; it
+is an arbitrary number with a backtest stapled to it. The owner's reasoning,
+and it is decisive: markets change, regimes change, and a black swan is
+precisely the event no history contains. A rule tuned to what already
+happened breaks at the moment it matters most.
+
+The distinction to apply:
+
+  * **READING** — the number comes from what is in front of you right now and
+    is re-read every session, so a regime change UPDATES it rather than
+    invalidating it. This stock's ATR today. This chart's levels today. This
+    trade's own pinned horizon. All acceptable.
+  * **FITTING** — the number is calibrated from what happened before, then
+    held fixed. **Not acceptable, and no amount of backtesting makes it so.**
+
+This desk has already been bitten by exactly this: `pace` once measured a
+position against the desk's own rolling average holding period, so every
+early sale shrank the average, made every surviving position look stalled,
+and drove more early sales. A self-tightening noose, and the single largest
+identified P&L defect in the system. That is what fitting to your own record
+does even when the arithmetic is correct.
+
+**When a number cannot be read from present data, do not fit one and do not
+quietly leave the feature switched off.** Off is a decision too, and an
+unowned one rots: nobody stated why, nobody owns it, nobody revisits it. The
+work is to REFORMULATE the rule so it needs no constant — "is the trend
+over?" needs a number, "does the last higher low still hold?" does not, and
+the chart supplies the level. If it genuinely cannot be reformulated, it goes
+to the owner as a decision with a date, recorded on the board.
 
 **A number does not become non-arbitrary because it was previously
 approved.** This applies to Claude's own reasoning as much as to the
@@ -150,6 +182,78 @@ recurring bug, not a fresh question — and see `docs/RESEARCH_FINDINGS.md`
 for what in this codebase has actually been measured versus merely
 asserted. If a real number cannot yet be derived from data or a measured
 record, mark it explicitly as provisional — never let it read as settled.
+
+**Exits, specifically (owner decision, 2026-09-12).** Profit-taking is
+trailing-stop-driven and nothing else: the reward side of a trade cannot be
+predetermined because the holding period is unknown, so a preset profit
+target — sell a fixed fraction at a fixed gain, decided in advance with no
+reference to what the instrument is doing — is rejected as a class, exactly
+as reward:risk was rejected as a universal entry gate. The 30%/15%
+automatic take-profit trim inherited from upstream (tuned on one GOOGL
+trade) was deleted under this rule; `tests/test_pipeline.py::
+test_no_fixed_gain_automatic_profit_trim_exists` keeps it out.
+
+## An unverifiable number must never rank or size a trade
+
+**Owner decision, 2026-09-12.** Proposals compete for a finite risk budget. A
+model that supplies a confident number scores better than one that admits
+uncertainty — so if an unverifiable number is allowed to influence ranking or
+position size, **the desk selects FOR fabrication.** The capital flows to the
+least honest proposal, and a genuine opportunity loses to an invented one.
+That is not noise; it is a bias with a direction, and it compounds every
+session.
+
+The rule: **anything that ranks or sizes must be computed by this desk from
+the instrument** — its price, its volatility, its levels. A number the model
+asserts and nothing can check may inform a human-readable explanation. It may
+never compete for capital.
+
+The corollary matters as much. **Requiring a number the analyst cannot know
+does not produce a refusal — it produces an invention**, and an invented
+horizon is indistinguishable downstream from a real one. So *"I could not
+build a proposal: insufficient data"* must be a first-class, recordable
+answer at every seat. A schema that has no way to say "I don't know" is
+asking to be lied to.
+
+## There is no such thing as a quiet market
+
+Across a universe of a hundred-plus names, something is always moving. **"It
+was a quiet market" is a cover story for "our filters rejected everything"** —
+a statement about this desk, not about the market.
+
+Legitimate zero-trade days exist: a market-wide halt, a latched circuit
+breaker, risk rules correctly refusing in a genuine crisis. Every one of them
+is a *nameable event*. None of them is "quiet".
+
+So a day with no trades must always name why, per candidate, and "nothing
+looked good" is not a reason — it is a hundred separate refusals, each with a
+cause. If those causes cannot be produced, the defect is in the recording, not
+in the market.
+
+## Adopt the archetype, never the constants that ship with it
+
+Where a rule is needed, start from the recognised version of it — as it is
+actually defined in the trading literature and as it is actually implemented
+in the standard technical-analysis libraries and platforms. Code is
+unambiguous about what a rule computes where prose is not, and a library
+*declining* to implement something is information too.
+
+**But separate the shape from the settings.** The archetype is usually sound
+and widely agreed; the specific constants attached to it in any given
+implementation are usually convention with no derivation behind them.
+Adopting the shape of a published rule is legitimate. Adopting its default
+numbers because they came in the box is the arbitrary-number failure in
+borrowed clothing.
+
+The worked case: the Chandelier trailing exit is textbook and stays. The
+"22-day" ATR that travels with it in every charting platform traces to one
+site's note that there are 22 trading days in a month — a calendar
+coincidence, not a market-structure derivation, and not something its author
+ever specified.
+
+No single source is gospel. The literature, the reference implementations,
+and what can be read off the instrument itself agreeing is the most
+confidence available — and it is enough to act on.
 
 ## Check what the platform already solved, before tuning your own workaround
 

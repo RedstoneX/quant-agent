@@ -324,8 +324,9 @@ def _categorize_exit_reason(
         read, so the category comes from the action alone, and only once
         the fill is CONFIRMED (an unfilled TRAIL_STOP placement is
         protection sitting there, not an exit — see `_is_filled_trail_stop`).
-      - TAKE_PROFIT is `_auto_take_profit`'s deterministic give-back
-        guardrail, not a judgment call — same confirmed-fill gate.
+      - TAKE_PROFIT was the deterministic auto trim's label (rule deleted
+        2026-09-12; only historical rows carry it), not a judgment call —
+        same confirmed-fill gate.
       - Everything else in `_is_position_exit_action` (SELL*, PARTIAL_SELL*,
         EMERGENCY_SELL, EMERGENCY_COVER, FORCE_DELEVER, REDUCE) is a reasoned
         decision: its reasoning text is checked at submission time against
@@ -365,7 +366,7 @@ def _categorize_exit_reason(
 # session — see the ordinary SELL/COVER loops in pipeline_stages.py's
 # ExecutionStage); 'no_originating_decision' when the row is exit-family but
 # the code path that wrote it never had ANY decision to attach (broker stop
-# fills, `_auto_take_profit`, deterministic trailing, emergency liquidation,
+# fills, historical TAKE_PROFIT auto trims, deterministic trailing, emergency liquidation,
 # force-delever/sweep, the midday reviewer's own exits) — a labelled
 # absence, not a guess. None for BUY/SHORT/HOLD/SWEEP_* rows: the field
 # does not apply to them at all (mirrors `_categorize_exit_reason`

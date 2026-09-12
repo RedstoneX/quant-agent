@@ -6179,3 +6179,67 @@ it is not re-derived:
 *"we're not going with repeg"* — and independently has little to act on,
 since PR #111 already submits entries at the slippage ceiling whenever a
 quote exists.
+
+### 2026-09-12 — the automatic take-profit trim is deleted; the trailing stop is the only exit rule
+
+**In plain words:** every midday, the desk used to sell 15% of any position
+that was up 30% or more, automatically, before the reviewer looked at it.
+That rule is gone. Nothing now sells a winner because of the size of its
+gain. A position is exited by its trailing stop, by the reviewer citing a
+real named trigger, or by a hard risk rule — never by a preset target.
+
+**Why.** Two reasons, both owner doctrine (`docs/OUTCOME.md`, "No arbitrary
+numbers, ever"):
+
+- The 30% trigger and 15% trim were tuned off a SINGLE trade — a GOOGL trim
+  that fired at +27% on 2026-04-30, as the function's own docstring said.
+  Hindsight-tuning on n=1. Git shows the rule arriving upstream on
+  2026-04-18 (`e61cc79`, 33% at +15%) and being re-tuned to 30%/15% on
+  2026-05-01 (`ca3c409`); it predates QAMC (2026-08-09) and was never
+  ratified against the desk's own principles.
+- More fundamentally it was a **preset profit target**: sell a fixed
+  fraction at a fixed gain, decided in advance, with no reference to what
+  the instrument is actually doing. The owner removed exactly this class of
+  logic when he removed reward:risk as a universal gate — the reward side of
+  a trade cannot be predetermined because the holding period is unknown,
+  and profit-taking belongs to a trailing stop. His ruling: *"Delete the
+  live exit item, the only exit rule is trailing stop."*
+
+**What changed.** `_auto_take_profit` and its midday wait-and-block helper
+are deleted, along with the reviewer's "skip this symbol, an auto-TP sell is
+in flight" path that existed only to serve it. There was no settings key or
+config field for the rule (its numbers were hard-coded function defaults),
+so there is nothing for a settings file to trip over. Historical
+`TAKE_PROFIT` rows stay readable in the ledger, exit-audit and calibration
+queries; nothing writes the label any more. The protection tests that had
+used the auto trim as their vehicle now drive the shared partial-exit path
+directly (`REDUCE`), so the invariant they pin — cancelled stops are
+restored on a failed sell or re-placed on the true residual after a fill —
+is unchanged. A new test fails if any fixed-gain automatic profit trim is
+reintroduced anywhere under `src/`.
+
+**What can still close or reduce a position, verified in code while
+removing this:** the broker-resident GTC protective stop (fills written back
+by the stop-out reconciler); the deterministic volatility/structure trailing
+stop (`src/risk/trailing.py` — ratchets on swing lows, chandelier, and the
++1R breakeven move; never a fixed-gain sale); the reviewer's discretionary
+SELL / REDUCE / COVER / TRAIL_STOP behind the named-trigger phrase gate,
+the holding-discipline claim check and the risk-manager exit veto; the hard
+risk rules (daily-loss circuit breaker at intra_check and session start,
+force-delever ladder); ex-dividend stop adjustment (moves the stop only);
+opportunity-cost rotation (dark by default, `rotation_enabled: false`); and
+the cash-sweep parking vehicle's own SWEEP_SELL. None of them sells on a
+fixed gain. The reviewer is still SHOWN fixed-percentage flags (drift at
+weight > 12% and P&L > 10%, parabolic at >= 15% inside 3 days,
+`TARGET_BREACH` at > 150% of planned move) but the prompt and the executor
+both treat those as soft signals that can never justify an exit on their
+own.
+
+**`TradeDecision.take_profit` is not an order.** The broker's `submit_order`
+accepts a `take_profit_price` argument, but no caller in the codebase passes
+it, and the entry path submits only the limit price plus a post-fill
+protective stop — the `TakeProfitRequest` import in `src/execution/broker.py`
+is unused. The constructor's `take_profit` is written to the trade row and
+shown to the reviewer as a reference (progress-to-target, distance-to-target)
+and, for range setups only, to the execution-time reward:risk belt. Purely
+informational; unchanged by this work.
