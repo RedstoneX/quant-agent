@@ -55,7 +55,7 @@
   --rule:#E5E7EB;--accent:#6D28D9;
   --strong:#4C1D95;--strong-bg:#F5F3FF;--strong-edge:#7C3AED;
   --flag:#1D4ED8;--flag-bg:#EFF6FF;--flag-edge:#2563EB;
-  --quiet-bg:#F3F4F6;
+  --quiet-bg:#F3F4F6;--rec-bg:#FAF9FF;
   --shadow:0 1px 2px rgba(0,0,0,.06),0 6px 20px rgba(0,0,0,.05);
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
@@ -63,7 +63,7 @@
   --rule:#2A3352;--accent:#A78BFA;
   --strong:#C4B5FD;--strong-bg:#2E1065;--strong-edge:#8B5CF6;
   --flag:#93C5FD;--flag-bg:#172554;--flag-edge:#3B82F6;
-  --quiet-bg:#232B45;
+  --quiet-bg:#232B45;--rec-bg:#1A1830;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 20px rgba(0,0,0,.3);
 }}
 :root[data-theme="dark"]{
@@ -71,7 +71,7 @@
   --rule:#2A3352;--accent:#A78BFA;
   --strong:#C4B5FD;--strong-bg:#2E1065;--strong-edge:#8B5CF6;
   --flag:#93C5FD;--flag-bg:#172554;--flag-edge:#3B82F6;
-  --quiet-bg:#232B45;
+  --quiet-bg:#232B45;--rec-bg:#1A1830;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 20px rgba(0,0,0,.3);
 }
 *{box-sizing:border-box}
@@ -86,9 +86,7 @@ body{margin:0;background:var(--paper);color:var(--ink);
 .mast{padding-bottom:16px;border-bottom:1px solid var(--rule)}
 .mast h1{font-family:Inter,system-ui,sans-serif;font-weight:700;
   font-size:clamp(26px,7.5vw,34px);line-height:1.05;letter-spacing:-.03em;
-  margin:0;text-wrap:balance;
-  background:linear-gradient(95deg,var(--strong) 0%,var(--accent) 45%,var(--flag-edge) 100%);
-  -webkit-background-clip:text;background-clip:text;color:transparent}
+  margin:0;text-wrap:balance;color:var(--ink)}
 .stamp{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;
   color:var(--faint);letter-spacing:.02em;margin-top:5px}
 
@@ -106,7 +104,11 @@ nav.jump a:active{background:var(--quiet-bg)}
 .rn-clear{border-left-color:var(--rule)}
 .rn-h{font-family:Inter,sans-serif;font-weight:700;
   font-size:clamp(20px,5.6vw,25px);line-height:1.2;margin:8px 0 12px;
-  letter-spacing:-.015em;text-wrap:balance}
+  letter-spacing:-.015em;text-wrap:balance;
+  /* This is an <h2>, so without these it inherits the section-label rule
+     below — small, uppercase, accent-coloured — and renders as a giant
+     all-caps violet sentence. Both resets are load-bearing. */
+  color:var(--ink);text-transform:none;border-bottom:0;padding-bottom:0}
 /* A backlog headline can be a whole sentence. At display size that stops
    being a heading and becomes a paragraph in heading clothing, which is what
    made this card read as a structural mess. Stepped down, never shortened. */
@@ -160,7 +162,7 @@ details.raw[open]>summary::before{content:"\25BE  "}
 .pb-eg p{color:var(--muted)}
 .pb-dec{border-left-color:var(--strong-edge)}
 .pb-dec p{color:var(--ink);font-weight:600}
-.pb-rec{border-left-color:var(--strong-edge);background:var(--strong-bg);
+.pb-rec{border-left-color:var(--strong-edge);background:var(--rec-bg);
   padding:10px 12px;border-radius:0 8px 8px 0}
 .pb-rec .pb-k{color:var(--strong)}
 /* A gap is drawn as a dashed edge — a SHAPE, not a colour — so "nobody has
