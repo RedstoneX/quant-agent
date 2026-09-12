@@ -99,24 +99,10 @@ this line, one heading per item.
 **Recommendation —** Approve a small, capped spend for one fresh comparison before the due date. Do not switch models based on the old, invalidated numbers.
 
 
-## item 48
-
-**Plain language —** A check meant to catch a shift in the broader market mood relies on government economic data, which always arrives a couple of days late. The rule used to refuse anything more than one day old, so ordinary reporting lag made it fail almost every time regardless of what was actually happening in markets. Rather than pick a looser day-count, the day-count itself was removed: the check now asks whether the number on hand is the newest one that has actually been published, and separately, whether a newer one was due and never showed up.
-**Example —** Inflation and jobs figures only come out once a month. A 20-day-old inflation reading is not stale — it is the only one that exists. The old rule would have refused it anyway for being "too old." The new check asks the right question instead: is this the latest published figure, yes or no.
-**Recommendation —** None needed; this is resolved, not a decision. Worth knowing plainly: this was expected to clear roughly half of all runs that were previously refusing to make a call for no real reason, though that hasn't been re-measured against live trading yet since the fix ships forward, not backward.
-
-
 ## item 1
 
 **Plain language —** Before placing a trade, the desk checks that the potential reward is large enough compared to the risk. That check compared the two using two different, inconsistent ways of measuring the stop distance, so it wrongly rejected about a quarter of all trade ideas. It also had a loophole: a trade could skip the check if a news story could be cited as justification, and one can be found for almost any well-known name.
 **Example —** One live signal came through at a reward-to-risk of 1.28 when the best the arithmetic could possibly produce was 1.29 — the stop had been pushed out to a fixed minimum distance instead of sitting where the chart said, so the trade was refused for failing a bar it was mathematically incapable of clearing. Separately, a trade in a very famous stock was let through below the required ratio because a citable news story was available — something true of nearly every big name.
-
-
-## item 2
-
-**Plain language —** About a fifth of all trade ideas once appeared to vanish from the record with no explanation. Investigated fully: none of them actually vanished. Every one had a real, ordinary reason — not enough cash yet, a safety check correctly aborting a plan, a sector limit, a stock with no supporting research that day. The desk explained itself every time; the report reading those explanations back just hadn't been taught to look in the right place yet. That's now fixed.
-**Example —** Nine cases looked like an order was being built and then the trail went cold, as if something crashed mid-way. It didn't. All nine traced back to four ordinary, already-logged reasons — the report just wasn't reading that log yet.
-**Recommendation —** None needed; this is resolved. One thing worth knowing: the original explanation for one of the four reasons (insufficient cash) was itself corrected — it was never a settlement delay, it was a since-fixed bug where the system counted a sale's proceeds before confirming the sale had actually gone through.
 
 
 ## item 3
@@ -129,12 +115,6 @@ this line, one heading per item.
 
 **Plain language —** There are two separate reward-to-risk minimums enforced at two different points, using two different numbers, and neither is backed by real research. Both work as designed, but two different rules checking the same thing is confusing, and this one should be merged into the fix already underway for the main floor above.
 **Example —** A trade could clear an earlier 1.5-minimum check and still be blocked later by this separate 1.2-minimum check — two different numbers guarding essentially the same question.
-
-
-## item 5
-
-**Plain language —** A trade could get sized down to less than one whole share and effectively disappear. This used to happen for real, but the desk can now buy fractional shares, which already prevents it — the three recorded cases all predate that fix.
-**Example —** Sizing a small account's 3% risk into an expensive stock might come out to 0.6 shares; before fractional shares were allowed, that rounded down to zero and the trade silently never happened.
 
 
 ## item 6
@@ -155,12 +135,6 @@ this line, one heading per item.
 **Example —** An idea forms when a stock is at $100 with a stop at $98; moments later, by the time the order is assembled, the price has already dropped to $97 — the same stop now sits above the price, and the trade is correctly refused.
 
 
-## item 9
-
-**Plain language —** A handful of trades were rejected for ordinary, sensible reasons: not enough cash available, a broken-looking price quote correctly thrown out, and one outright rejection by the broker itself. None of this needs fixing.
-**Example —** One rejected idea involved a price quote that was 14.6% off the reference price the desk expected — a clear sign of bad data, correctly ignored rather than traded on.
-
-
 ## item 10
 
 **Plain language —** The desk kept suggesting the same stock ideas repeatedly even though they never turned into real trades, using up a limited number of trade slots each session. The AI can now see its own track record of which names it keeps proposing and how often they actually go through, but nothing yet stops it from proposing a repeat name again.
@@ -175,12 +149,6 @@ this line, one heading per item.
 **Example —** Ten of the fourteen recorded failures happened on a single day, producing a completely empty result indistinguishable, at the time, from an ordinary quiet market — the new watchdog exists specifically to catch a repeat of that day.
 
 
-## item 12
-
-**Plain language —** The desk's own internal tally of why trades got blocked used to credit the wrong step for a rejection. That bookkeeping error is fixed — a rejection is now counted against whichever step actually killed the idea.
-**Example —** An idea dropped by an earlier build step used to be counted as if a later risk review had vetoed it; it's now correctly counted against the step that actually dropped it.
-
-
 ## item 14
 
 **Plain language —** A cost-safety mechanism used to reserve far more money than an AI call actually used, which could stop the desk over money it was never really going to spend. That over-cautious reservation is gone, replaced by a check against real settled cost plus a simple cap on how many calls can happen in one session. That call-count cap is a first real-data number, not yet confirmed after a longer stretch of live use.
@@ -193,12 +161,6 @@ this line, one heading per item.
 **Example —** A held stock's price used to be treated as fresh by default even though the broker never confirms when it last updated; it's now correctly labelled freshness "unknown" instead of falsely marked current.
 **The decision —** Which of two competing technical approaches to use for tagging whether a live quote or historical price is actually fresh.
 **Recommendation —** Have both approaches laid out side by side with trade-offs before this goes to the owner; not enough is settled yet to recommend one over the other.
-
-
-## item 16
-
-**Plain language —** An unfinished idea to hold back extra spending in the afternoon is no longer relevant. The whole system it would have plugged into was removed when the budget guard above was replaced, so there's nothing left to build.
-**Example —** Work toward this was started but never connected to anything; when the surrounding budget system was rebuilt, the piece it belonged to disappeared along with it.
 
 
 ## item 17
@@ -231,22 +193,10 @@ this line, one heading per item.
 **Recommendation —** This is designed but not yet built. Have a concrete number proposed with its reasoning shown before shipping anything, rather than picking one casually.
 
 
-## item 25
-
-**Plain language —** The rule that a protected position shouldn't be closed without a genuine reason used to rely purely on the AI's own wording. Now the two most common claimed reasons for exiting are actually checked against real data before being accepted, and a claim that turns out false blocks the exit and raises an alert.
-**Example —** If the stated reason for selling is that a price target was already hit, that claim is now checked against real recorded prices; if it's false, the sale is blocked and someone is alerted, instead of the sale going through on the AI's word alone.
-
-
 ## item 28
 
 **Plain language —** An automated test meant to check the desk's cost-safety limit was marked fixed, but checking again, three separate times against a clean copy of the current code, shows it still fails every time. Whatever change was believed to fix it did not, and nobody re-verified the claim before writing it down as solved.
 **Example —** The fix was believed to be done because settings the test depended on were removed during an unrelated rewrite; three fresh re-runs since then all fail the same way, meaning the real cause hasn't actually been found yet.
-
-
-## item 29
-
-**Plain language —** A tool for grading the AI analysts' track record was mistakenly written up as missing work. It had already been built and was already running, so the item was withdrawn.
-**Example —** Someone proposed building a scorecard to track how good each AI analyst's calls have been, not realising an equivalent one already existed and was already in use.
 
 
 ## item 30
@@ -299,20 +249,6 @@ this line, one heading per item.
 **Recommendation —** Turn it on for a trial period; since it can only confirm existing ideas and never invents new ones, the downside of trying it is limited.
 
 
-## item 37
-
-**Plain language —** On one night, eleven separate pieces of pending work were all ready to merge into the codebase at once. None conflicted logically, but several touched the same underlying parts, so the order they went in mattered to avoid one change quietly undoing another.
-**Example —** Two or three of these changes all edited the same part of the system that handles trade decisions, so merging them in the wrong order could have silently reversed one of the fixes.
-
-
-## item 38
-
-**Plain language —** When looking for a cluster of company insiders buying stock around the same time, the desk used a 14-day window with no real basis. The published research it was supposedly based on actually defines a cluster as about 2 days, so the window was corrected to match.
-**Example —** A set of insider purchases spread across two weeks no longer counts as one meaningful cluster; they now need to fall within about two days of each other to count.
-**The decision —** Whether to pursue getting ownership-size data so an insider purchase can be judged relative to how much stock that insider already holds, instead of by a flat dollar amount.
-**Recommendation —** Low priority. Flag it and revisit only if a good, free data source for insider holdings turns up.
-
-
 ## item 39
 
 **Plain language —** When the desk's risk budget is nearly maxed out and it can't take a promising new trade, it now shows the AI a direct comparison between its weakest current holding and the strongest new idea being turned away, so it can weigh whether to make room. It only surfaces this comparison — it never automatically swaps one position for another.
@@ -359,13 +295,6 @@ this line, one heading per item.
 **The decision —** Whether the setting is wrong or the justification beside it is wrong. They cannot both be right.
 **Recommendation —** Treat this as arithmetic rather than taste, because it is. Establish the real width of a level zone from published work first, then set the tolerance from that figure — rather than leaving a number in place and a sentence next to it that the number does not satisfy.
 
-## item 47
-
-**Plain language —** A rule let a single stock be sized up to 100% of the account. The note explaining why said it was safe because the account could not borrow money to buy more than it held in cash. Borrowing had been switched on two days before that note was written. The note stood, describing a safety net that no longer existed, for a week.
-**Example —** Luckin Coffee, April 2020: the company admitted it had faked its sales and lost three quarters of its value in a single day. Nothing in any analysis could have shown that coming that morning. If one stock is the entire account and that happens, it costs three quarters of everything in a day. At the new 65% cap, the same disaster costs about half — serious, but survivable, and the desk keeps trading.
-**The decision —** Already made. Real industry research found no standard notional concentration limit exists for a desk like this, so a number was derived instead from the desk's own -20% emergency alarm: the largest single bet where even a severe real-world disaster stays under that line came to 33%. The owner reviewed that derivation and set his own number instead — 65% — after confirming that avoiding penny stocks does not remove this risk (all five reference disasters were liquid, well-known companies, not cheap stock).
-**Recommendation —** None needed; this is resolved. Worth knowing plainly: at 65%, a severe disaster (about a 60% single-day loss) now exceeds the desk's emergency alarm line rather than staying under it, the way 33% would have guaranteed. That trade-off was made with the real numbers in front of the owner, not by accident.
-
 ## item 49
 
 **Plain language —** Removing the rule that was wrongly blocking good trades worked — the desk now finds roughly twice as many trades it's allowed to take. But that rule had been quietly doing a second job nobody noticed: by refusing so many trades, it meant the desk almost never ran out of risk budget. Now it does. On a normal day the desk wants to risk about twice what it's allowed to risk in total, so something has to decide which of the permitted trades actually get the money. Right now nothing decides that deliberately — they're taken in whatever order they happen to come out of the process, which is not a choice anybody made.
@@ -374,9 +303,9 @@ this line, one heading per item.
 **Recommendation —** Best-ranked-first is the most defensible starting point — it uses the ranking the desk already computes, and it means the money goes to the strongest ideas rather than whichever happened to be processed first. Sizing everyone smaller sounds fairer but quietly turns every strong idea into a weak one. Worth your judgement though: this genuinely changes what kind of desk this is, so it shouldn't be picked on my say-so alone.
 **DECIDED — 2026-09-12, by you.** Best-ranked-first. Your words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The money goes to the strongest ideas in order until it runs out; the rest simply don't happen that day, and they are not shrunk down to squeeze in. **Not built yet** — the decision is recorded, the code still spends the budget in arbitrary order. One thing the decision doesn't answer, which will come back to you when it's built: if the next-best idea only half fits in what's left of the budget, does it get taken at half size, or skipped?
 
-## item 50
+## item 51
 
-**Plain language —** When the desk places an order to buy at a set price and the price runs away before it fills, three things were wrong. First, it chased the price in a series of small steps — real traders on Alpaca's forums say the right move in a fast market is one decisive move, not nibbling, because every step is another chance for the order to get stuck in limbo. Second, it tried to change the price before the exchange had even acknowledged the order, which the exchange simply refuses. Third, and worst: **the message you got told you the order was still working until the end of the day. It wasn't.** The desk had already quietly cancelled it about ninety seconds later. You were being told the opposite of what happened, and the manual said the same wrong thing.
-**Example —** 9:31 in the morning, the desk wants Oracle at $100.00 and is allowed to pay up to $100.40. The stock jumps to $100.30 before the order fills. Old behaviour: nudge to $100.10, then $100.20, each nudge a fresh chance to jam — and if nothing filled, you got a message saying the order was still out there working, when in fact it had been killed a minute and a half earlier. New behaviour: wait until the exchange confirms it actually has the order, then one move straight to $100.40 (the most it was ever allowed to pay). If it still doesn't fill, the order is cancelled at the end of that session and you get a message that says exactly that — the stock, the prices tried, and that nothing was resubmitted. Tomorrow's session decides for itself whether it still wants Oracle.
-**The decision —** Already made, and one of them was yours: chasing the price automatically stays switched OFF. Your call — *"we're not going with repeg."* That costs nothing, because the desk already places its buy at the highest price it's allowed to pay, so there's usually nowhere higher to chase to. The cancel and the honest message happen either way.
-**Recommendation —** Nothing needed from you. One question is deliberately left open for later: when an order gets cancelled unfilled, should the desk automatically try again next session, or wait for you? Right now it waits, and tells you.
+**Plain language —** Every morning the desk worked out whether something it already owns is worse than something it could buy instead, and then just showed that answer to the manager as a note. If the manager ignored it, nothing happened — the dead position kept the money and the better trade never got taken. Now the desk can actually act: it will close one holding per morning to make room. It is deliberately hard to trigger. It only fires when the account has genuinely run out of room to buy anything, the holding would not be bought today under the desk's own rules, and that holding has already broken its own safety level on two consecutive closes. A position that is simply flat but still doing what it was bought to do is never touched.
+**Example —** The account is fully invested. One holding was bought on a breakout that has since failed — it has closed below the level the whole idea rested on, twice. That morning the desk finds a better-ranked candidate and the manager wants to buy it, but there is no money free. Old behaviour: a note saying "consider selling the weak one", and if nobody acted, no trade. New behaviour: the desk closes the broken holding, buys the better candidate, and sends you a message naming both and the measured reason. If the sale goes through but the purchase then fails, you get a second, separate message — because cash sitting idle after you sold something specifically to fund a trade is the genuinely bad outcome, and it should never happen quietly.
+**The decision —** Already made, by you. It is switched ON rather than shipped switched off, because you said you'd forget otherwise. Your two conditions are built into the logic itself, not left as good intentions: it cannot sell while the portfolio still has room, and it cannot sell a position whose reason for existing is still intact.
+**Recommendation —** One thing to watch, stated plainly: this has never run against a real broker. The desk has been paused since early September, so the first rotation that happens will also be the first proof it works end to end. Worth looking at that first one when the desk restarts.

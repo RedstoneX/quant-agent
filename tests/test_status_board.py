@@ -1138,9 +1138,20 @@ def test_the_real_pm_gate_parses_and_has_at_least_one_open_item():
     work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     items, problem = sb.load_pm_gate(work)
     assert problem is None, problem
-    assert len(items) >= 5, f"only {len(items)} PM-gate items parsed"
+    assert items, "the gate parsed nothing — the real file has been edited into a shape the parser no longer recognises"
     open_items = [i for i in items if not i.done]
     assert open_items, "the gate reports nothing open — that would mean the PM test is unblocked"
+    # No count floor. Owner doctrine 2026-09-12: a cleared gate item is
+    # DELETED from docs/WORK.md once it is written up in
+    # docs/INCIDENT_HISTORY.md, because every session and every compaction
+    # reloads WORK.md and resolved history is paid for again each time. A
+    # floor on the number of items would therefore forbid exactly the
+    # cleanup the doctrine requires. What must hold is that the section
+    # still parses and still reports something open.
+    assert all(not i.done for i in items), (
+        "a cleared gate item is still in docs/WORK.md; it should have been "
+        "deleted once written up in docs/INCIDENT_HISTORY.md"
+    )
 
 
 def test_a_renamed_pm_gate_heading_says_so_instead_of_rendering_empty(tmp_path):
@@ -1741,8 +1752,16 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # "FIXED, pending review" — finished, review still owed, its own section.
     for rank in (33, 34):
         assert by_rank[rank].bucket == "review_owed", rank
-    # RESOLVED 2026-09-11 — genuinely closed, struck through, no longer live.
-    assert by_rank[2].bucket == "resolved"
+    # No item should be in the "resolved" bucket at all any more. Owner
+    # doctrine 2026-09-12: once an item is resolved AND written up in
+    # docs/INCIDENT_HISTORY.md it is DELETED from docs/WORK.md, so a
+    # resolved item surviving here means the deletion half of the rule was
+    # skipped. The bucket itself is kept — it still catches an item in the
+    # window between being closed and being written up.
+    assert [i.rank for i in items if i.bucket == "resolved"] == [], (
+        "resolved items are still in docs/WORK.md; write them up in "
+        "docs/INCIDENT_HISTORY.md and delete them from the queue"
+    )
     # Genuinely partial work stays where he can see it.
     for rank in (18, 32):
         assert by_rank[rank].bucket == "open", rank
@@ -2018,9 +2037,12 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     # Checked and by design.
     for rank in (3, 4, 8):
         assert by_rank[rank].bucket == "no_action", rank
-    # 48 and 50 said RESOLVED and were never struck through; they are now.
-    for rank in (48, 50):
-        assert by_rank[rank].bucket == "resolved", rank
+    # Items 48 and 50 used to be pinned here as the "RESOLVED but never
+    # struck through" case. Both have since been written up in
+    # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md under the
+    # owner's 2026-09-12 doctrine, so there is nothing left to pin. The
+    # sibling test asserts the stronger property their absence now implies:
+    # no item is in the "resolved" bucket at all.
     # And what is open is genuinely open: nothing in it carries a ruling.
     for it in items:
         if it.bucket == "open":
