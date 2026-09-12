@@ -1898,7 +1898,7 @@ def test_the_identifier_is_readable_but_does_not_dominate_the_card():
                 / "scripts" / "status_board_template.html").read_text()
     assert ".ref{" in template
     ref_rule = template.split(".ref{", 1)[1].split("}", 1)[0]
-    assert "IBM Plex Mono" in ref_rule
+    assert "JetBrains Mono" in ref_rule
     assert "user-select:all" in ref_rule   # tap-and-copy on a phone
     # And it is not set at heading weight/size.
     assert "font-size:11.5px" in ref_rule
@@ -2295,9 +2295,15 @@ def test_every_text_pairing_on_the_board_clears_wcag_aa(theme):
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_the_two_accent_hues_are_blue_and_orange_never_red_or_green(theme):
-    """Red-green colour blindness keeps blue-yellow discrimination, so the
-    only hue axis this page may use is blue against orange. A green or a red
-    accent would put meaning back where he cannot see it."""
+    """The owner set the palette himself on 2026-09-12: violet against blue,
+    the conventional modern-web scheme, asked for explicitly and asked for
+    STRONG. The earlier blue/orange palette was chosen on colour-blindness
+    grounds and he rejected both the look and the reasoning — "forget that
+    I'm colourblind". So this test no longer makes an accessibility
+    argument. What it still pins is his two stated dislikes: nothing pink,
+    and nothing washed out. Meaning is carried by text and edge shape
+    rather than hue anyway — see the sibling tests — so the palette is free
+    to be a preference."""
     def hue(h):
         r, g, b = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
         mx, mn = max(r, g, b), min(r, g, b)
@@ -2313,13 +2319,23 @@ def test_the_two_accent_hues_are_blue_and_orange_never_red_or_green(theme):
         return (deg * 60) % 360
     pal = _palettes()[theme]
     for name in ("accent", "strong", "strong-edge"):
-        assert 200 <= hue(pal[name]) <= 250, f"{theme}: {name} is not blue"
+        assert 248 <= hue(pal[name]) <= 268, f"{theme}: {name} is not violet"
     for name in ("flag", "flag-edge"):
-        assert 15 <= hue(pal[name]) <= 45, f"{theme}: {name} is not orange"
-    # And the neutrals carry no hue at all — the old palette's greys were
-    # faintly green, which is part of why the page read as monochrome.
+        assert 205 <= hue(pal[name]) <= 232, f"{theme}: {name} is not blue"
+    # Nothing pink, and nothing warm, in ANY role. He named the previous
+    # palette's warm accent as reading pink and asked for it gone; violet
+    # sits next door to magenta, so the exclusion is stated rather than
+    # left implied by the ranges above.
+    for name, h in pal.items():
+        deg = hue(h)
+        if deg is None:
+            continue
+        assert not (deg < 195 or deg > 275), f"{theme}: {name} is warm or pink"
+    # Neutrals may carry the cool tint the scheme is built on, never a warm
+    # one — a warm grey is what made the previous page read as pink.
     for name in ("ink", "muted", "faint", "rule", "paper", "quiet-bg"):
-        assert hue(pal[name]) is None, f"{theme}: {name} carries a tint"
+        deg = hue(pal[name])
+        assert deg is None or 205 <= deg <= 255, f"{theme}: {name} is warm-tinted"
 
 
 def test_every_nothing_needed_state_has_its_own_edge_shape():
