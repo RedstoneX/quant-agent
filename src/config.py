@@ -381,6 +381,19 @@ class ExecutionConfig(BaseModel):
     # replace is another `pending_replace` window an order can get stuck in.
     # A knob whose only legal value is 1 would invite someone to turn it up.
 
+    rotation_enabled: bool = False
+    """Master switch for AUTOMATIC opportunity-cost rotation (Phase 14b,
+    `src/rotation.py`). OFF by default so it deploys dark, exactly like
+    `repeg_enabled`: with it off, the rotation comparison is still computed
+    and shown to the Portfolio Manager as information (the Phase 14
+    behaviour, unchanged byte for byte), and the desk never closes a
+    position on its own. With it on, ONE categorically-ineligible held
+    position per morning session — one that fails the desk's own entry
+    rules today AND whose structural protection has already broken — is
+    closed through the ordinary PM-target → constructor → Risk Manager →
+    execution path, to free room for the best-ranked new candidate the PM
+    itself asked to buy. Every rotation fires a standalone owner alert."""
+
     repeg_poll_seconds: float = Field(default=5.0, gt=0, le=30)
     """How long to let the working order rest before the one reprice, and —
     only if the exchange has not yet acknowledged the order by then — how
