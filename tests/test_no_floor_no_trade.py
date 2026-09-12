@@ -70,7 +70,11 @@ def _rc() -> TechReasoningChain:
 def _analysis(symbol, *, entry, stop, levels, rating="buy", setup="range",
               target=None, atr=2.0, horizon=20) -> TechAnalysisResult:
     """`computed_levels` is exactly `levels` — the desk's own scan output,
-    attached in Python. Nothing here lists the stop unless the test does."""
+    attached in Python. Nothing here lists the stop unless the test does.
+    `reference_target` is the model's guess, required by the schema for an
+    actionable rating and never used by the derivation to choose."""
+    if target is None:
+        target = round(entry * (0.9 if rating in ("sell", "strong_sell") else 1.1), 2)
     return TechAnalysisResult(
         symbol=symbol, rating=rating, entry_price=entry, stop_loss=stop,
         reference_target=target, reasoning="test",
@@ -385,7 +389,7 @@ class TestTheRefusalIsRecordedAsData:
             _connect, _load_fills, _load_pairs, _load_recorded_reasons,
             _load_skips, _load_verdicts, classify,
         )
-        from src.database import Database
+        from src.storage.db import Database
 
         db = Database(str(tmp_path / "census.db"))
         db.initialize()
