@@ -254,9 +254,22 @@ execution:
   # naming what was sold, what it was sold to make room for, and the
   # measured reason; a second alert fires if the buy leg then did not
   # happen. Everything is written to the pipeline_event audit stream.
-  # OFF by default: this is the desk selling a position without a human or
-  # a model deciding to. Enable deliberately.
-  rotation_enabled: false
+  # Was OFF by default: this is the desk selling a position without a human
+  # or a model deciding to, so it required a deliberate enablement.
+  # ENABLED 2026-09-12 by the owner, on the build described above and after
+  # he set the condition that auto-selling must not happen until the book is
+  # full: *"Auto selling isn't gonna happen until the portfolio is full. And
+  # then pruning needs to have really good logic in place."* Both halves of
+  # that condition are structural here, not conventions — the first gate is
+  # the capital-constrained test (a half-empty book has headroom, so nothing
+  # fires), and the third is the holding-discipline break (a position whose
+  # thesis is still intact is never rotated out). He also asked for it on
+  # rather than shipped dark: *"I'd like it turned on at the start because
+  # I'm gonna forget otherwise."*
+  # NOTE: this has never executed against a live broker. The desk has been
+  # paused since ~2026-09-03, so the first real rotation will be the first
+  # end-to-end proof. Watch the first one.
+  rotation_enabled: true
   # Spec §11.1 (owner-ratified 2026-09-01). Exact position sizing: the share
   # count the risk math produced is used as-is instead of being floored to a
   # whole number. Whole-share rounding is a silent, constant tax — V wanted
