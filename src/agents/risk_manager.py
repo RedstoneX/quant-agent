@@ -42,6 +42,23 @@ class RiskManagerAgent(BaseAgent):
     def __init__(self, *args, risk_config=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._risk_config = risk_config
+        # COMMISSIONING RENDER. `system_prompt` is a lazy property read inside
+        # `BaseAgent.run`, i.e. at the risk stage — after every analyst seat,
+        # after PM and after the constructor. A placeholder naming no setting
+        # would therefore have thrown mid-session, having already spent the
+        # whole day's analysis budget, rather than at startup. Rendering once
+        # here moves that failure to construction time, which is what lets
+        # this be described as a startup check. Cost is one file read.
+        self.assert_prompt_renders()
+
+    def assert_prompt_renders(self) -> None:
+        """Render the standing sheet once and discard it, to surface a bad
+        placeholder now rather than in the middle of a trading session.
+
+        Separate from `__init__` so a commissioning script or a test can call
+        it against a candidate config without building an agent.
+        """
+        _ = self.system_prompt
 
     @property
     def risk_config(self):

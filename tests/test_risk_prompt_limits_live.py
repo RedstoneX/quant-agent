@@ -12,32 +12,60 @@ Two jobs in this file.
    the setting moves what the reviewer reads; a placeholder naming no setting
    fails loudly rather than rendering blank or a stale default.
 
-WHY THIS EXISTS. On 2026-09-13 the sheet told the reviewer the long
-single-name ceiling was 33% while `risk.max_position_pct` had been 65 since
-2026-09-11 — the seat spent two days auditing plans against a limit less than
-half the real one. Separately (PR #341) it was still told a 1.5 reward:risk
-floor was enforceable months after that gate was removed, which was the named
-cause of three of the four whole-plan vetoes in the archived database. Both
-are the same defect: a limit with two homes, only one of them enforced.
+WHY THIS EXISTS — AND WHAT ACTUALLY HAPPENED, WHICH IS NOT DRIFT. Commit
+e1c639a2 (2026-09-11, PR #297, "single-name cap 100 -> 33") set
+`risk.max_position_pct: 65` and, in the SAME diff about a hundred lines away,
+wrote "tighter than the 33% long single-name ceiling" into this sheet. The
+prompt was wrong at birth, not stale over time — the commit's title says 33,
+it landed at 65, and only one of the two hunks got the correction. The same
+commit ALSO wrote `max_position_pct=65` correctly into the sheet's hard-rule
+inventory, so the sheet contradicted itself from the first minute.
 
-WHY THE BUILD CHECK IS DELIBERATELY NARROW. A general "no numbers in the
-prompt" rule would cry wolf constantly — the sheet is full of legitimate
-figures: worked arithmetic in examples ("a 15% position stopped 3% below entry
-risks 0.45% of equity"), break-even hit rates, prices in a `reason` example,
-dates, spec section numbers. So the check fires on ONE precise pattern: a
-digit sitting immediately beside the NAME of a `RiskConfig` setting, which is
-how a limit gets restated in prose. That catches every drift actually observed
-(`max_single_short_pct` (10%, ...), `max_position_pct=65`) and ignores every
-illustration, because an illustration does not name a setting.
+Worse, and the reason this file's check has the shape it does: the line that
+commit REPLACED read "`max_single_short_pct` (10%, half the long single-name
+ceiling". That is a RELATION. It carries no second copy of any number and
+could not drift. The commit swapped a drift-immune phrasing for a hand-typed
+literal.
 
-What it therefore does NOT catch, stated plainly rather than papered over:
-a limit restated in prose far from its setting's name ("the long single-name
-ceiling is 33%" with no `max_position_pct` nearby), and a number that is a
-limit somewhere else in the codebase but is not a `RiskConfig` field (the
-50% correlation-cluster advisory is a Python function default in
-`src/risk/rules.py`, not a setting). Both are covered instead by the second
-check: every wired setting must still have a live placeholder, so removing
-one to type a number in its place fails.
+TWO CHECKS, BECAUSE ONE OF THEM WOULD HAVE MISSED THE ORIGINATING BUG.
+
+  (a) `_hand_typed_limits` — adjacency. A digit stated as the value of a
+      `RiskConfig` field name (within ADJACENCY_CHARS of it) must be a
+      rendered placeholder. Catches `max_position_pct=65` and
+      "`max_single_short_pct` (10%".
+
+  (b) `_unrendered_limit_phrases` — the limit-noun pattern. A numeral read as
+      the value of a "ceiling / cap / budget / limit / floor / maximum"
+      phrase must be a rendered placeholder. This is the one that catches the
+      2026-09-11 shape, where the literal ("33% long single-name ceiling")
+      sits well past the adjacency window of any setting name — and check (a)
+      demonstrably does NOT catch it. See
+      `test_adjacency_alone_would_have_missed_the_originating_bug`, which
+      pins that gap so nobody re-describes (a) as sufficient.
+
+WHY BOTH ARE DELIBERATELY NARROW. A general "no numbers in the prompt" rule
+would cry wolf constantly — the sheet is full of legitimate figures: worked
+arithmetic ("a 15% position stopped 3% below entry risks 0.45% of equity"),
+break-even hit rates, prices in a `reason` example, dates, spec section
+numbers. Both checks therefore key on a limit being STATED AS SUCH, which an
+illustration does not do.
+
+WHAT NEITHER CHECK CATCHES, stated plainly rather than papered over:
+
+  * a limit restated with no setting name nearby AND no limit noun — "no
+    single holding may exceed 33% of the book" passes both. Only the
+    placeholder-coverage check (c) constrains this, and only by ensuring the
+    correct rendered statement still exists somewhere.
+  * a number that is a limit elsewhere in the codebase but is not a
+    `RiskConfig` field. The 50% correlation-cluster advisory is a function
+    default in `src/risk/rules.py`, not a setting, and is invisible here.
+  * a placeholder rendering the WRONG setting for the sentence it sits in.
+    Nothing mechanical can know that a sentence about shorts should cite the
+    short cap.
+
+So: these checks make the 2026-09-11 shape fail the build. They do not make
+this class of defect impossible, and this file must not be cited as if they
+did.
 """
 from __future__ import annotations
 
@@ -54,8 +82,13 @@ from src.agents.prompt_limits import (
 from src.agents.risk_manager import PROMPT_PATH, SETTINGS_PATH, RiskManagerAgent
 from src.config import RiskConfig
 
-#: Settings whose value the sheet states in prose and must therefore render.
-#: Removing one from the sheet without removing it here fails the build.
+#: Settings whose value the sheet states and must therefore render. This IS a
+#: hand-maintained list — the module docstring's "no hand-maintained table"
+#: claim applies to `src/agents/prompt_limits.py`, which holds no limit VALUES
+#: and resolves fields reflectively; it does not apply here. What this list
+#: holds is an intent ("the sheet is supposed to state these"), which cannot
+#: be derived from either the config or the sheet, because deriving it from
+#: the sheet is exactly what a regression would defeat.
 WIRED_SETTINGS = (
     "max_position_pct",
     "max_total_position_pct",
@@ -65,6 +98,27 @@ WIRED_SETTINGS = (
     "min_position_risk_pct",
     "max_single_short_pct",
     "max_gross_bearish_pct",
+)
+
+#: Nouns that mark a numeral as being stated AS a limit rather than used in an
+#: illustration. This is the pattern that catches the 2026-09-11 shape.
+_LIMIT_NOUN = r"(?:ceiling|caps?|budget|limit|maximum|floor|allowance)\b"
+
+#: A numeral read as the value of a limit noun close after it.
+_LIMIT_PHRASE = re.compile(
+    r"(?<![\w.$])(\d+(?:\.\d+)?)\s*%?[^.\n]{0,32}?" + _LIMIT_NOUN, re.I,
+)
+
+#: Phrases the limit-noun check must not flag, each with the reason it is not
+#: a limit statement. Kept explicit and short: an exemption is a hole, so it
+#: should be readable in one screen and argued for individually.
+_LIMIT_PHRASE_EXEMPTIONS = (
+    # The sheet states TWICE that the 1.5 reward:risk floor no longer exists,
+    # once as a forbidden phrasing to quote back. Both are negations of a
+    # removed gate, not statements of a live limit, and there is no setting
+    # to render (the gate was deleted, not reconfigured — PR #341).
+    "1.5 floor",
+    "1.5\nfloor",
 )
 
 #: How far past a setting's name a digit still counts as "restating its
@@ -138,6 +192,68 @@ def _hand_typed_limits(text: str) -> list[str]:
     return findings
 
 
+def _unrendered_limit_phrases(text: str) -> list[str]:
+    """Every numeral stated as the value of a limit noun without being
+    rendered.
+
+    Check (b). This is the one that catches the shape the 2026-09-11 commit
+    actually introduced — "tighter than the 33% long single-name ceiling" —
+    which sits outside the adjacency window of any setting name and which
+    check (a) misses entirely.
+    """
+    # Spec section references (§9.4, §12.3) are numbered pointers, not
+    # values; blanked so "§9.4 agreement ceiling" does not read as a limit
+    # stated at 9.4.
+    marked = re.sub(r"§\s*[\d.]+", "", PLACEHOLDER_RE.sub(_RENDERED, text))
+    findings = []
+    for match in _LIMIT_PHRASE.finditer(marked):
+        phrase = match.group(0).replace(_RENDERED, "<rendered>")
+        if any(ex in match.group(0) for ex in _LIMIT_PHRASE_EXEMPTIONS):
+            continue
+        findings.append(phrase)
+    return findings
+
+
+def test_no_unrendered_limit_phrase():
+    findings = _unrendered_limit_phrases(_sheet())
+    assert not findings, (
+        "A numeral is stated as the value of a limit in "
+        "config/prompts/risk_manager.md without being rendered from the "
+        "config. Either render it from its setting, or — better where the "
+        "sentence is about how two limits RELATE — state the relation and "
+        "name the settings, which carries no copy of any number at all:\n  "
+        + "\n  ".join(findings)
+    )
+
+
+def test_the_check_catches_the_shape_that_actually_happened():
+    """The 2026-09-11 regression, reproduced exactly: the placeholder is left
+    in place and a SECOND, hand-typed ceiling is added beside it. This is what
+    commit e1c639a2 did, and it is not the same as deleting a placeholder."""
+    regressed = _sheet().replace(
+        "deliberately tighter than the long single-name ceiling "
+        "`max_position_pct`",
+        "tighter than the 33% long single-name ceiling",
+    )
+    assert regressed != _sheet(), "fixture text no longer present in the sheet"
+    assert any("33" in f for f in _unrendered_limit_phrases(regressed))
+
+
+def test_adjacency_alone_would_have_missed_the_originating_bug():
+    """Pins the known gap in check (a) so it is never described as
+    sufficient. If this test starts failing because adjacency got stronger,
+    that is good news — delete the test and say so in the docstring."""
+    regressed = _sheet().replace(
+        "deliberately tighter than the long single-name ceiling "
+        "`max_position_pct`",
+        "tighter than the 33% long single-name ceiling",
+    )
+    assert _hand_typed_limits(regressed) == [], (
+        "check (a) now catches this shape — update the module docstring, "
+        "which currently states that it does not"
+    )
+
+
 def test_no_hand_typed_limit_beside_a_risk_setting():
     findings = _hand_typed_limits(_sheet())
     assert not findings, (
@@ -191,9 +307,15 @@ def test_every_wired_setting_still_has_a_placeholder():
     keys = placeholders_in(_sheet())
     missing = [s for s in WIRED_SETTINGS if f"risk.{s}" not in keys]
     assert not missing, (
-        "config/prompts/risk_manager.md no longer renders these settings; if "
-        "the sheet genuinely stopped stating them, drop them from "
-        "WIRED_SETTINGS in this file too: " + ", ".join(missing)
+        "config/prompts/risk_manager.md no longer renders these settings: "
+        + ", ".join(missing)
+        + ". Restore the {{risk.<setting>}} placeholder. Do NOT resolve this "
+        "by typing the number into the sheet, and do NOT resolve it by "
+        "deleting the entry here — that is defeating the check, not passing "
+        "it. Removing an entry from WIRED_SETTINGS is correct ONLY when the "
+        "sheet genuinely no longer needs to state that limit at all (for "
+        "instance because the sentence was rewritten as a relation between "
+        "two named settings), and the removal should say which."
     )
 
 
@@ -218,9 +340,19 @@ def test_each_wired_limit_renders_its_live_value():
             f"{setting} (live value {value}) does not appear in the rendered "
             f"sheet"
         )
-    # The specific drift this PR closes: the long single-name ceiling the
-    # reviewer reads is settings.yaml's, and the stale 33% is gone.
-    assert f"{raw['max_position_pct']:g}% long single-name ceiling" in rendered
+    # The specific defect this PR closes. The stale "33% long single-name
+    # ceiling" is gone; the hard-rule inventory renders the live ceiling, and
+    # the SHORT-discipline sentence that carried the bad literal is now a
+    # RELATION naming both settings and quoting neither long number.
+    # NB: "33%" still legitimately appears in the break-even hit-rate table
+    # (R/R 2.0 -> 33%), which is arithmetic, not a limit. Assert on the
+    # PHRASE that carried the defect, not on the digits.
+    assert "33% long single-name ceiling" not in rendered
+    assert f"`max_position_pct={raw['max_position_pct']:g}`" in rendered
+    assert (
+        "deliberately tighter than the long single-name ceiling "
+        "`max_position_pct`"
+    ) in rendered
 
 
 def test_changing_the_setting_changes_what_the_reviewer_is_shown():
@@ -228,9 +360,9 @@ def test_changing_the_setting_changes_what_the_reviewer_is_shown():
     before = render_prompt_limits(_sheet(), cfg)
     moved = cfg.model_copy(update={"max_position_pct": 41.0})
     after = render_prompt_limits(_sheet(), moved)
-    assert "41% long single-name ceiling" in after
-    assert "41% long single-name ceiling" not in before
-    assert f"{cfg.max_position_pct:g}% long single-name ceiling" not in after
+    assert "`max_position_pct=41`" in after
+    assert "`max_position_pct=41`" not in before
+    assert f"`max_position_pct={cfg.max_position_pct:g}`" not in after
 
 
 def test_short_cap_and_gross_bearish_track_their_settings():
@@ -251,7 +383,7 @@ def test_per_trade_risk_budget_is_the_ratified_unit_not_the_old_half_percent():
         "max_position_risk_pct": 4.0, "min_position_risk_pct": 0.25,
     })
     rendered = render_prompt_limits(_sheet(), cfg)
-    assert "`max_position_risk_pct`, 4% of\nequity" in rendered
+    assert "`max_position_risk_pct`,\n   4% of equity" in rendered
     assert "`min_position_risk_pct`, 0.25% risk" in rendered
 
 
@@ -315,12 +447,12 @@ def _agent(**kwargs) -> RiskManagerAgent:
 def test_agent_system_prompt_renders_the_live_settings_file():
     prompt = _agent().system_prompt
     assert "{{" not in prompt
-    assert f"{_live_risk_config().max_position_pct:g}% long single-name ceiling" in prompt
+    assert f"`max_position_pct={_live_risk_config().max_position_pct:g}`" in prompt
 
 
 def test_agent_uses_the_injected_config_over_the_settings_file():
     injected = _live_risk_config().model_copy(update={"max_position_pct": 12.0})
-    assert "12% long single-name ceiling" in _agent(risk_config=injected).system_prompt
+    assert "`max_position_pct=12`" in _agent(risk_config=injected).system_prompt
 
 
 def test_risk_ceiling_defaults_to_the_live_portfolio_risk_setting():
@@ -338,3 +470,113 @@ def test_settings_file_without_a_risk_block_fails_loudly(tmp_path: Path):
     bad.write_text("llm:\n  fallback_model: x\n")
     with pytest.raises(PromptPlaceholderError):
         load_risk_config_from_settings(bad)
+
+
+# --------------------------------------------------------------------------
+# 5. The rendered value and the ENFORCED value must be the same object
+# --------------------------------------------------------------------------
+#
+# Rendering a limit into the reviewer's briefing from settings.yaml while the
+# deterministic engine enforced a different object's DEFAULT would be the same
+# two-homes defect this change removes, pointed the other way. `Pipeline`
+# builds the engine's `RiskConfig` from a hand-enumerated argument list, so a
+# setting left out of it silently falls back to the pydantic class default and
+# settings.yaml is ignored for that field — the exact bug already found once
+# for `allow_margin` (Codex r11 P2, see the comment at that argument).
+
+def _engine_config_arguments() -> set[str]:
+    """Field names `Pipeline.__init__` actually passes when it builds the
+    risk engine's config. Parsed from source rather than by constructing a
+    Pipeline, which needs brokers, keys and a database."""
+    src = Path(__file__).parent.parent.joinpath("src/pipeline.py").read_text()
+    start = src.index("self.risk_engine = RiskRuleEngine(RiskConfig(")
+    depth = 0
+    for offset, char in enumerate(src[start:]):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                break
+    return set(re.findall(r"^\s*([a-z_]+)=", src[start:start + offset], re.M))
+
+
+def test_every_rendered_setting_is_also_threaded_into_the_engine():
+    """A setting the sheet SHOWS must be one the engine READS from the same
+    file. Without this, the seat could be briefed with settings.yaml's value
+    while the engine hard-blocked against a class default."""
+    threaded = _engine_config_arguments()
+    # `effective_max_daily_loss_pct` is derived, not a field; it is covered by
+    # its three inputs, all of which are threaded.
+    rendered_fields = [
+        s for s in WIRED_SETTINGS if s in RiskConfig.model_fields
+    ]
+    missing = [s for s in rendered_fields if s not in threaded]
+    assert not missing, (
+        "config/prompts/risk_manager.md renders these settings from "
+        "settings.yaml, but src/pipeline.py does not pass them when building "
+        "the risk engine's RiskConfig — so the engine enforces the pydantic "
+        "class default instead, and the reviewer is shown a number the "
+        "engine may not be using: " + ", ".join(missing)
+    )
+
+
+def test_daily_loss_inputs_are_threaded_too():
+    threaded = _engine_config_arguments()
+    for field in ("max_daily_loss_pct", "daily_loss_risk_multiple",
+                  "max_position_risk_pct"):
+        assert field in threaded, field
+
+
+def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
+    """This PR threaded only the settings it renders. The rest of the
+    hand-enumerated list is still incomplete, is pre-existing, and is
+    currently latent (every omitted field's class default equals its
+    settings.yaml value). Pinned here so the count cannot grow unnoticed and
+    so nobody reads this file as a claim that the whole list is wired."""
+    threaded = _engine_config_arguments()
+    raw = yaml.safe_load(SETTINGS_PATH.read_text())["risk"]
+    omitted = sorted(
+        f for f in RiskConfig.model_fields
+        if f not in threaded and f in raw
+    )
+    live_divergence = [
+        f for f in omitted
+        # `get_default(call_default_factory=True)` — a field declared with a
+        # default_factory (agreement_ceiling_pct) reports `.default` as
+        # PydanticUndefined, which would read as a false divergence.
+        if raw[f] != RiskConfig.model_fields[f].get_default(
+            call_default_factory=True,
+        )
+    ]
+    assert not live_divergence, (
+        "A setting is present in settings.yaml with a NON-DEFAULT value and "
+        "is NOT passed to the engine's RiskConfig — the engine is enforcing "
+        "something settings.yaml does not say. This is live-wrong, not "
+        "latent: " + ", ".join(live_divergence)
+    )
+    assert len(omitted) == 19, (
+        f"the engine's hand-enumerated RiskConfig now omits {len(omitted)} "
+        f"settings present in settings.yaml, not 19 — if that grew, thread "
+        f"the new one; if it shrank, lower this number. Omitted: {omitted}"
+    )
+
+
+# --------------------------------------------------------------------------
+# 6. The render happens at construction, not mid-session
+# --------------------------------------------------------------------------
+
+def test_a_bad_placeholder_fails_at_construction_not_at_first_llm_call(tmp_path, monkeypatch):
+    """`system_prompt` is a lazy property read inside `BaseAgent.run`, i.e. at
+    the risk stage, after the whole day's analysis has been paid for. The
+    commissioning render in `__init__` moves that failure to startup."""
+    broken = tmp_path / "risk_manager.md"
+    broken.write_text("ceiling is {{risk.no_such_setting}}%\n")
+    monkeypatch.setattr("src.agents.risk_manager.PROMPT_PATH", broken)
+    with pytest.raises(PromptPlaceholderError):
+        RiskManagerAgent(api_key="k", model="m")
+
+
+def test_a_good_sheet_constructs_cleanly():
+    agent = RiskManagerAgent(api_key="k", model="m")
+    agent.assert_prompt_renders()  # idempotent, callable by a commissioning script
