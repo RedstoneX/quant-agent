@@ -25,6 +25,44 @@ if [[ -f "${PROJECT_ROOT}/.env" ]]; then
     set +a
 fi
 
+# A DELIBERATELY PAUSED DESK IS NOT A SILENT ONE.
+#
+# This watchdog fires on the absence of sessions. When the owner pauses the
+# desk, absence of sessions is the intended state, and an alarm that pages
+# every 30 minutes about a thing somebody chose on purpose is an alarm that
+# gets muted — and a muted alarm is why item 17c exists in the first place.
+#
+# The pause is expressed by disabling the six mode timers, so that is what
+# is read here rather than a flag somebody has to remember to set. Kept in
+# the wrapper, not in `src/silence_watchdog.py`: whether systemd units are
+# enabled is a deployment fact, and the watchdog stays a pure reader of the
+# database. `--paused-ok` bypasses this for the tests and for a manual run.
+paused_ok=0
+args=()
+for arg in "$@"; do
+    if [[ "$arg" == "--paused-ok" ]]; then
+        paused_ok=1
+    else
+        args+=("$arg")
+    fi
+done
+
+if [[ "$paused_ok" -eq 0 ]] && command -v systemctl >/dev/null 2>&1; then
+    enabled_modes=0
+    for unit in morning midday intra_check close evening daily; do
+        if systemctl --user is-enabled "quant-agent-${unit}.timer" \
+                >/dev/null 2>&1; then
+            enabled_modes=$((enabled_modes + 1))
+        fi
+    done
+    if [[ "$enabled_modes" -eq 0 ]]; then
+        echo "every trading-mode timer is disabled: the desk is paused on" \
+             "purpose, so its silence is not a finding. Nothing checked."
+        exit 0
+    fi
+fi
+
 # 60s is generous: one read-only SQLite query plus, at most, one Telegram
 # send — no LLM call, no broker call.
-exec "$TIMEOUT" --kill-after=15 60 "$PYTHON" scripts/silence_heartbeat.py "$@"
+exec "$TIMEOUT" --kill-after=15 60 "$PYTHON" scripts/silence_heartbeat.py \
+    ${args[@]+"${args[@]}"}
