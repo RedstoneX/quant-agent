@@ -131,12 +131,6 @@ this line, one heading per item.
 **Recommendation —** Wait for a few more weeks of real data before setting a hard block; there isn't yet enough evidence to know where a fair cutoff belongs.
 
 
-## item 11
-
-**Plain language —** On one day, the desk produced zero trade ideas because of outright technical failures, and nobody noticed at the time — total silence looked exactly like a normal quiet market on every screen available. A watchdog has since been built that tracks how often the desk comes back empty and alerts the owner directly when that happens too often to be coincidence.
-**Example —** Ten of the fourteen recorded failures happened on a single day, producing a completely empty result indistinguishable, at the time, from an ordinary quiet market — the new watchdog exists specifically to catch a repeat of that day.
-
-
 ## item 15
 
 **Plain language —** The desk couldn't always tell whether a price was current or stale, risking decisions made on outdated information. The piece covering stocks it already owns is fixed — it now honestly says "unknown" freshness instead of pretending a price is live when the broker never actually confirms that. The bigger remaining piece is doing the same for live quotes and historical price data, which needs a choice between two different competing ways to build it.
@@ -208,13 +202,6 @@ this line, one heading per item.
 **Plain language —** When the desk's risk budget is nearly maxed out and it can't take a promising new trade, it now shows the AI a direct comparison between its weakest current holding and the strongest new idea being turned away, so it can weigh whether to make room. It only surfaces this comparison — it never automatically swaps one position for another.
 **Example —** If the desk is already near its risk ceiling and a strong new opportunity appears, the decision-maker is shown its own weakest current holding side by side with the new idea, but nothing forces a trade either way.
 
-
-## item 46
-
-**Plain language —** When the AI puts a stop near a price level the stock has bounced off before, the desk checks whether the stop is close enough to that level to count as genuinely backed by it. If it counts, the stop stays where it was placed. If it does not, the stop gets pushed wider, which automatically shrinks the trade. The setting that decides "close enough" was justified in writing as covering a one percent zone around the level. Do the arithmetic at this book's own typical daily range and it actually covers about two thirds of that.
-**Example —** A stock trades at one hundred dollars with a floor it has bounced off at ninety-seven. The AI places its stop at ninety-six eighty, just under the floor and well inside the one percent zone the written rule says is allowed. Because the real tolerance is narrower than the rule claims, that stop can be judged unbacked and pushed wider anyway — and the position is sized smaller than it should have been, for a reason that only exists on paper.
-**The decision —** Whether the setting is wrong or the justification beside it is wrong. They cannot both be right.
-**Recommendation —** Treat this as arithmetic rather than taste, because it is. Establish the real width of a level zone from published work first, then set the tolerance from that figure — rather than leaving a number in place and a sentence next to it that the number does not satisfy.
 
 ## item 49
 

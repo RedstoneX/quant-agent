@@ -646,27 +646,13 @@ several full trading days have accumulated. Actually stopping re-proposals
 (vs. just showing them) would need a new gating threshold — that is an
 owner decision, not made here.
 
-**11. Fourteen outright agent failures, ten of them on 2026-08-25 alone. DEFECT.**
-
-The desk produced **zero proposals that entire day** and this was not noticed
-at the time. A day of total silence looks identical to a quiet market from
-every surface we have. Related to item 2.
-
-The related-but-separate silent-feed-outage watchdog once parked on
-`wt/empty-levels` is now built and merged (it does not fix or explain
-2026-08-25 itself — see the caveat in its own docstring). Every run now
-counts what share of resolved symbols came back with no structural level or
-no bars at all, persists it, and pages the owner directly when the share
-crosses a threshold too high to be a coincidental quiet market. Full
-detail: `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
-
 **15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
 
 Full reasoning: `docs/INCIDENT_HISTORY.md` ("item 15"). Shipped: held
 positions now carry real provenance, never fabricated as fresh (Alpaca
 supplies no mark timestamp, so `freshness` is correctly tagged
 `"unknown"`). Still open, the bigger half — tagging live quotes and
-historical bars the same way, which is what items 5/9/11 actually need:
+historical bars the same way, which is what retired items 5/9/11 needed:
 needs an owner decision between two competing `read_price_bars`
 implementations (`rescue/price-provenance` branch), a real architecture
 choice, not a mechanical merge.
@@ -808,9 +794,10 @@ a decision nobody should act on. Checking coverage first is free.
   b. **Below threshold → do not decide.** Skip the run, record the coverage
      figures and which seats were short, spend nothing.
   c. **The next scheduled run tries again.** No new infrastructure.
-  d. **THE SKIP MUST BE LOUD.** Item 11 is the desk producing zero proposals
-     for a whole day and nobody noticing. A silent skip is that bug again.
-     A skip is an event to surface, not an absence to infer.
+  d. **THE SKIP MUST BE LOUD.** Retired item 11 was the desk producing zero
+     proposals for a whole day and nobody noticing (closed 2026-09-13, see
+     `docs/INCIDENT_HISTORY.md`). A silent skip is that bug again. A skip
+     is an event to surface, not an absence to infer.
 
 **The signal already exists — read it, do not rebuild it.** Every earnings
 report already carries a `data quality` line, and 11 of them say outright
@@ -928,8 +915,6 @@ No DECIDE BY — revisit only if it recurs.
 
 **39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
 
-**46. A stop-distance tolerance setting fails its own stated justification — OPEN, found 2026-09-11 by audit.** `level_match_atr_tolerance` in `config/settings.yaml:623` sets `0.25` and justifies it as "at least" the 1% level-cluster zone width. At this book's own stated median ATR of 2.56%, 0.25 ATR is 0.64% — under the 1% it claims to cover, by ~1.6x. Governs whether a stop counts as level-backed and is therefore exempt from the ATR stop floor, so it feeds directly into item 1's geometry. Either the tolerance or the justification is wrong; both are numbers, so owner call.
-
 **49. The risk budget is now the binding constraint on a full day's eligible set, and nothing decides how to ration it — OPEN, surfaced 2026-09-12 by item 1(d).** Measured on `run-64290730` after the reward:risk floor was removed by setup type: eligible names 12 -> 25, and the eligible set's total requested risk is **48% against a 25% `max_portfolio_risk_pct` budget**. The floor was previously doing the rationing by accident — refusing enough candidates that the budget rarely bound. It no longer refuses them, so the budget binds on a normal day and something must decide WHICH permitted trades get the capital. Today that is whatever order `allocate_risk_budget` happens to process in, which is not a decision anybody made. Real options, none costed yet: rank-ordered (best-scored first until exhausted), proportional scale-down (everyone sized smaller), conviction-tiered, or a hard cap on names per session. Each is a different desk, not a tuning knob — owner call. Do NOT resolve by re-tightening the floor that was just removed.
 
 **DECIDED 2026-09-12 by the owner: rank-ordered, best first.** His words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The budget is spent on the best-ranked eligible candidates until it is exhausted; the remainder are not taken, and are not silently shrunk to fit. Proportional scale-down was explicitly rejected in the recommendation he accepted, on the grounds that sizing everyone smaller turns every strong idea into a weak one. **Still to BUILD** — `allocate_risk_budget` today spends in whatever order it happens to process in, which is the defect; the decision above is not yet implemented. Whether a partially-affordable candidate at the cut line is taken at a reduced size or skipped entirely is the one sub-question the decision does not settle, and must be raised with the owner rather than assumed.
@@ -938,7 +923,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **53. A paused desk leaves part of every fractional position with NO stop, and nothing said so — OPEN, owner call, found 2026-09-12.** The alarm is built; what to do with the remainder is the decision. Verified live 2026-09-12: ORCL 5.3089 shares held, one stop-limit at the broker for 5.0. The 0.3089-share DAY leg lapsed at the close on 2026-09-02 exactly as §11.1 designs, and the trading timers were disabled before the 09-03 open, so the session sweep that re-places it never ran — six full sessions (09-03 to 09-11) with $46 of a $798 position unprotected, and every record on the box calling it "expected overnight". NOT a flooring bug: `_split_protective_qty` is working as designed. NOT fixable at the broker: fractional orders must be DAY (measured 2026-09-01, code 42210000; Alpaca's fractional-trading page says the same) — no durable fractional stop exists. Shipped: `src/coverage_watchdog.py`, run from the 06:15 ET alert-heartbeat unit (fires whether or not trading timers are on); alerts once per trading day when broker coverage is short of held AND no session ran during the last cash session. Read-only. **The decision (BOARD_NOTES 53):** what to do with the remainder while paused — close it, accept it with the alert, or go whole-share (owner already declined whole-share on 2026-09-02). Also found, NOT fixed: the repo's silence-watchdog timer unit is not installed on the box (no state file, absent from the timer list), so item 17c's alarm has never actually run in production. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-12.
 
-**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 12, 14, 16, 25, 28, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
+**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 11, 12, 14, 16, 25, 28, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
 
 ## Evidence-only follow-ups
 

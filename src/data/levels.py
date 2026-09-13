@@ -77,6 +77,41 @@ MIN_SCAN_BARS = max(PIVOT_WINDOW * 2 + 1, ATR_PERIOD)
 # does not respect a number to the cent — it respects a zone.
 CLUSTER_TOLERANCE_PCT = 1.0
 
+
+def level_zone_halfwidth(
+    level_price: float, tolerance_pct: float = CLUSTER_TOLERANCE_PCT
+) -> float:
+    """How far from a reported `Level.price` its own zone can still reach.
+
+    THE ONE definition of "a level is a zone, not a number", so no caller
+    ever has to restate it in different units. docs/WORK.md item 46.
+
+    Derivation, read straight off `_cluster` and `find_structural_levels`
+    above — not chosen here:
+
+      * `_cluster` chains a pivot into the current group when it sits within
+        `tolerance_pct` of that group's ANCHOR, and the anchor is the group's
+        LOWEST member (the pivots are sorted ascending). So every member of a
+        cluster lies in ``[anchor, anchor * (1 + tolerance_pct/100)]`` and the
+        cluster's full span is at most ``anchor * tolerance_pct/100``.
+      * `Level.price` is the MEAN of the cluster, so it lies inside that span
+        and ``anchor <= price``.
+      * Therefore the distance from `Level.price` to the furthest real pivot
+        in its own zone is at most ``anchor * tolerance_pct/100``, which is at
+        most ``price * tolerance_pct/100``.
+
+    That last line is the whole function: a bound that is guaranteed to cover
+    the zone, in the same unit the zone was defined in. Anything asking "is
+    this price AT that level" must use this and nothing else — a tolerance
+    expressed in some other unit (ATRs, say) tracks a quantity that has no
+    fixed relationship to `tolerance_pct` and silently stops covering the
+    zone on any name whose volatility moves. That is exactly the defect item
+    46 recorded.
+    """
+    if not math.isfinite(level_price) or level_price <= 0:
+        return 0.0
+    return level_price * tolerance_pct / 100.0
+
 # A level touched once is a coincidence, not structure.
 MIN_TOUCHES = 2
 

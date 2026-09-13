@@ -106,6 +106,293 @@ the next one to break. "Compiles and can be collected" is not verification.
 
 ---
 
+
+### 2026-09-13 — can the desk still die quietly? Every way it can produce nothing, enumerated (item 11 closed)
+
+**In plain words:** item 11 recorded a day the desk produced no trade ideas at
+all because of technical failures, and nobody noticed, because a broken desk
+and a quiet market look identical from outside. The item's real content was
+never the failures of that one day — it was the premise that *a failure can be
+silent*. So the question that closes it is not "was 2026-08-25 fixed" but "can
+the desk still go quiet without telling anyone". Every way it can produce
+nothing was enumerated and each alarm was read in the code that actually sends
+it. One path was genuinely uncovered; it was closed the same day. The
+enumeration below is the durable artefact and is why the item can go.
+
+**One path was open, and the noise guard had just opened it.** Earlier the
+same day, the silence watchdog's runner gained a guard so it stays quiet while
+the desk is deliberately paused — correct in itself; an alarm that pages every
+thirty minutes about a state somebody chose gets muted. But it exited in
+silence, and nothing else covers a paused desk: the daily channel probe sends
+its test message and deletes it, so a healthy day is invisible to the owner by
+design; the stop-coverage watchdog only speaks when a held position is short of
+stops; the alert channel's `stale` state is a colour on Mission Control that
+nobody is pushed. A paused desk with a flat book was therefore indistinguishable
+from a working desk in a quiet market — item 11's own premise, reintroduced by
+the guard meant to reduce noise. The desk was in exactly that state when this
+was checked. Fixed: the silence *check* stays suppressed while paused, and a
+reminder goes out once per ET weekday instead, only after one of that day's
+scheduled windows has closed. Neither the cadence nor the gate is a new number
+— the once-every-24-hours-while-it-stays-broken rule is the existing item 41
+ruling already used by the stop-coverage watchdog, and the window gate is read
+off the session schedule.
+
+**The enumeration. Each alarm was traced to the line that sends it, not taken
+from a docstring.**
+
+| How the desk produces nothing | What tells somebody | Where |
+|---|---|---|
+| No session at all — timers off, box down, service dead | Desk-wide silence alert after 2 consecutive scheduled windows with no completed session, in any mode. Fires on the ABSENCE of events, so a broken alert path cannot defeat it | `src/silence_watchdog.py` |
+| Desk deliberately paused, then forgotten | **WAS THE HOLE.** Now a once-per-weekday paused-desk reminder, after the day's first window closes | `src/silence_watchdog.py` (`check_paused_desk`), `scripts/run_silence_heartbeat.sh` |
+| Box itself dead or unreachable | **NOT COVERED, owner-accepted.** Nothing running on the box can report the box. An external ping would cover it; the owner refused that dependency outright, so the gap is stated, not closed | stated in `src/alert_watchdog.py` |
+| Session runs, pipeline raises anywhere | Every path out of a session hits one `finally` that pushes a `FAILED:` message with the exception, and separately proves the alert channel and records the verdict | `main.py`, `src/notifier.py`, `src/alert_watchdog.py` |
+| PM never produced a usable decision (parse, schema, grounding fault) | Distinct `pm_*` / `analysis_error` status, rendered as its own banner saying *no decisions were made; this is NOT a deliberate hold* — written precisely so it cannot read as a quiet day | `src/pipeline.py`, `src/notifier.py` |
+| An analyst seat returned junk or nothing | Standalone data-quality alert, never a line buried in the run summary | `src/notifier.py` (`maybe_alert_data_quality`) |
+| A whole session never fired on a trading day | Evening dead-man's check names the missing session, with two sharper probes for a morning that started and died mid-run | `src/pipeline.py` (`_expected_sessions_missing_today`) |
+| The data was empty — dead bar feed wearing the costume of a quiet market | Owner alert when the share of symbols with no bars, or no structural level, crosses the threshold (min sample 10, so a tiny universe is correctly treated as noise) | `src/pipeline_stages.py` (`_persist_levels_coverage`) |
+| Cost circuit latched — paid analysis durably off | Session status `paid_analysis_suspended` with a SUSPENDED banner naming the trigger, plus a dedicated alert whose delivery outcome is written into the latch file and retried by any later process until it lands | `src/cost_circuit.py`, `src/notifier.py` |
+| Kill switch left on | Every session returns `kill_switch_halted`, the one status that speaks even on an otherwise-silent intra_check tick | `src/pipeline.py`, `src/notifier.py` |
+| Proposals made, every one refused | Distinguished **in the status word**: `no_trades` means the PM proposed nothing, `no_orders` means a plan existed and nothing was submitted, `buys_unfunded` means approved buys lost a cash race. Three different words for three different days | `src/pipeline.py`, `src/notifier.py` |
+| Alert channel itself broken while the box lives | Every session probes the channel end to end and records the verdict; `broken` / `stale` show on Mission Control without Telegram working | `src/alert_watchdog.py` |
+| An alarm's own systemd unit never installed, edited by hand, or not enabled | Unit-drift check compares installed units against the deployed checkout byte for byte, in four buckets including `not_enabled` | `scripts/check_unit_drift.py` |
+
+**Two honest limits recorded rather than papered over.** First, a persistent
+all-refused condition — a gate defect that refuses everything every day —
+reports `no_orders` truthfully each session but nothing escalates on the
+repetition; the day is distinguishable, the *pattern* is not alarmed. That is a
+judgement about how many identical quiet days should trigger a page, which is a
+threshold the owner has not set, so no number was invented for it. Second, this
+enumeration was done by reading the repository. Whether each unit is actually
+installed and running on the box could not be verified from here — no
+`quant-agent` user units are visible from this environment and its database file
+is empty, so this is not the live box. The unit-drift check exists precisely
+because a repo carrying a unit is not the same as a box running it.
+
+**What was ruled out.** That item 11 could be closed because the watchdogs
+exist. It could not: reading the pause guard is what found the hole, and the
+guard's own docstring described it as safe.
+
+**Corrected in passing.** The silence alert and its CLI still told the reader
+its threshold was "a placeholder pending owner confirmation". It was ratified
+2026-09-03; the sentence outlived the fact.
+
+---
+
+
+
+### 2026-09-13 — the risk reviewer was told, on every exit review, that the analyst had skipped two mandatory checks. It had not; those checks do not exist on that path. It then wrote that falsehood into the permanent audit trail.
+
+**In plain words:** the same AI risk seat reviews two different things — the
+morning's new purchases, and the decisions to SELL positions the desk already
+holds. It was only ever set up for the first job. When the sell-side review
+reused it, the seat was handed a form with two boxes unfilled, and its
+standing instructions read an unfilled box as "the analyst skipped a mandatory
+safety check". Nobody had skipped anything: those two boxes belong to a
+different analyst's form and cannot exist on the sell side. The seat believed
+it, said so, and the statement is now permanently in the desk's own records.
+
+**What the record proves, and what it does not.** The archive holds exactly
+three exit-path risk reviews (rows 296, 319, 330 — 2026-09-01). All three
+carry both false banners. All three **approved**, with zero modifications and
+zero refusals: 8 of 8 exits allowed. The seat talked itself out of the trap
+every time; row 296 wrote that the missing steps "are a concern for PM's
+internal discipline, but the plan itself is sound". So the natural claim —
+that this made the seat refuse exits — is **not supported by the record**, and
+was overstated in the first draft of this fix. Three reviews is also far too
+small a sample to show there is no such bias. Both of those are true.
+
+**The harm that IS proven is to the audit trail.** Rows 319 and 330 wrote the
+falsehood into their own permanent `overall` field. Row 330: "both
+continuity_check and premortem_check are MISSING — the two mandatory red-team
+steps were skipped", and it set `reason_category: "data_degraded"` on that
+basis — a tag the Portfolio Manager reads back to self-calibrate its sizing.
+The system recorded, permanently and untruthfully, that an analyst skipped a
+safety check, and fed that record into a live feedback loop.
+
+**Why the direction still matters even unpaid.** Refusing a BUY means not
+buying, which costs nothing. Refusing a SELL leaves the position on the book
+overnight with only the broker stop behind it, and `docs/OUTCOME.md` records
+under-trading as this desk's measured failure. The cost is asymmetric whether
+or not it has been paid yet.
+
+**The real cause, and what it was not.** Not a bug in the renderer — its
+[MISSING] banner is correct on the morning path, where an empty field really
+does mean PM skipped a step its own prompt makes mandatory while the schema
+lets it return "". The cause was that the exit call site reused a renderer
+built for a different caller and a different schema, then papered over the
+mismatch: it wrote the literal string `"n/a"` into six chain fields and a
+cross-reference sentence into two more, to satisfy a `min_length=1`
+constraint. A fabricated "n/a" reads to the seat as a real answer to a
+question nobody answered. That substitution is where the defect started, and
+it is why the fix uses no placeholders.
+
+**A finding worth its own decision: the banner has never once been right.**
+Across the 15 archived MORNING risk reviews the banner has fired **zero**
+times — PM has never actually skipped either step. Its entire production
+output to date is the three false statements above. On the evidence, deleting
+it outright is the better fix than routing around it. It was left standing
+because removing it changes the morning seat's behaviour on a case that has
+not yet occurred, which is a separate decision with a separate blast radius.
+Recorded here so the next person does not have to re-derive it.
+
+**What was done.** The seat is now told which review it is in. On the exit path
+the two PM-only audit steps are not rendered at all; the chain is labelled as
+the position reviewer's, under its own field names (its execution rationale had
+been audited under the heading "Sizing logic"); the Tech block, which no call
+on this loop produces, says it is unavailable by design rather than "(not
+provided)"; and the `$0.0` entry/stop/target are explained as structural zeros
+rather than looking like a data fault.
+
+Three further corrections came out of adversarial review of the first draft,
+each of which had introduced or left a false statement of its own:
+
+- **The event-risk checklist inverts on this path, and the fix had activated
+  it.** Checklist 4 says a fetched earnings date inside the window means
+  "downsize or reject". Adding a real earnings fetch here — which the fix does
+  — gave that instruction something to fire on for the first time. On an entry,
+  refusing means carrying *less* risk through the event; on an exit, refusing
+  means carrying the position *through* it. Same words, opposite effect. The
+  seat is now told to answer `event_risk` but never to cite event proximity as
+  a reason to refuse an exit.
+- **Holding discipline was stood down using its own justification against
+  it.** Checklist 8 exists precisely *because* the deterministic check runs
+  after the review. The first draft confirmed that ordering and then cited it
+  as "already covered". Restored, and it is now named as the substance of the
+  seat's job here.
+- **The four Python gates are much narrower than they read.** The trigger gate
+  checks that the reason says recognised words, not that the claim is true. The
+  noise band is bypassed whenever the reason cites external information, which
+  the trigger gate all but requires. The metric-contradiction veto does not run
+  without recorded prior metrics for that symbol. `holding_discipline_claim_check`
+  examines only a claimed regime flip or a claimed HIGH-conviction bearish state
+  change, only while the position is still structurally protected, and passes
+  every unverifiable claim by design. None of them can catch a plausibly-worded,
+  deterministically-clean, wrong exit. The seat is now told exactly that,
+  instead of being handed a list of coverage that does not exist.
+
+**A lever that was never connected.** `modifications` and `scale_all_buys` are
+discarded on the exit path — `_apply_risk_modifications` is called only from
+the morning stage, and the exit verdict is consumed for `rejected_symbols`
+alone. The seat had been receiving detailed guidance on editing `allocation_pct`
+here, guidance for a mechanism with no effect: the same class of false
+statement this whole change exists to remove. It is now told plainly that
+refusal is its only lever and that the exit fraction is the position reviewer's
+call, not its own. Wiring modifications through instead was rejected as scope:
+the exit path executes from the reviewer's own action list, not from the
+translated decisions the seat sees, so applying an edit would need a new
+translation layer — and the edit it would most naturally make is to shrink an
+exit, which is the dangerous direction.
+
+**And what was simply never passed.** Everything the loop had already fetched
+before the position reviewer ran, then did not forward: today's news, earnings,
+deployable cash and the parked reserve, drawdown state, and holding ages. All
+now passed. Earnings proximity is additionally fetched here, bounded by the
+same timeouts the morning path uses. Genuinely unavailable on this path: Tech
+signals, and the macro-release and FOMC calendars (fetched by the morning
+research stage, which does not run on this loop) — those keep the labelled NOT
+FETCHED form, which is honest.
+
+**A wrong claim in the code, corrected while in there.** `_risk_review_exits`
+documented itself as running *after* the deterministic exit gates. It does
+not: all four live in `_midday_execute_llm_actions`, which the caller invokes
+afterwards. They still run before anything reaches the broker, so the
+substantive point — that they, not this seat, are the last line — stands. Only
+the ordering claim was false, and that ordering is exactly why checklist 8 had
+to be restored.
+
+**On length.** The added instruction is a real cost with no way to measure the
+benefit: there is no rig here that can validate a prompt rewrite. Archived exit
+prompts ran 7,775-8,428 characters; the first draft added 4,860 characters of
+mostly negative instruction. After cutting what the corrections above made
+redundant, the overhead is 3,558 and pinned by test so it cannot drift.
+
+**What would catch it next time.** The rule is written where the rendering
+happens and pinned by test: *never tell the seat a check was skipped when that
+check does not apply to the path it is on, and never tell it to verify against
+a block that is absent by construction — or to use a lever that is not
+connected.* The tests assert the exit message carries no NOT-PERFORMED banner,
+that the morning path still carries both when genuinely earned, and that the
+two renderings are byte-identical when no review mode is given.
+
+
+### 2026-09-13 — a "close enough to the level" tolerance was measured in the wrong unit, and was narrower than the thing it claimed to cover on every ordinary stock
+
+**In plain words:** when the desk decides whether a stop is sitting *on* a
+support level, it has to allow some slack, because a level is a band of
+prices, not a single number — the desk builds each level by merging together
+past bounces that fall within one percent of each other. The slack it allowed
+was written down in a completely different unit: a fraction of the stock's
+daily trading range, rather than a percentage of its price. The note beside
+the setting claimed the slack was "at least as wide" as that one-percent band.
+It was not. On a typical stock it was about two thirds as wide, so a stop
+placed inside a level's real band was judged not to be on the level at all.
+The desk then pushed that stop wider, off the structure the analyst had
+chosen, and sized the trade against the worse number. Nothing crashed and no
+money was visibly lost; the trades were just quietly worse than intended.
+
+**The arithmetic, which is the whole finding.** The slack was `0.25 x ATR`
+(ATR being the stock's own average daily range). The level band is `1% of
+price`. Setting them equal:
+
+    0.25 x ATR >= 0.01 x price   <=>   ATR >= 4.0% of price
+
+So the written justification was not a fact about the setting at all — it was
+a hidden condition on the *stock*. It held only on names moving 4% or more a
+day. This desk's own comments quote a median ATR of 2.56% of price (measured
+against the live book on 2026-08-27, recorded in prose in
+`docs/QAMC_REMEDIATION_SPEC.md`), at which the slack is 0.64% of price against
+a 1% band — 1.56x too narrow. Verified by direct read of both numbers and both
+consumers, not taken from the audit note.
+
+**Why it mattered beyond tidiness.** A stop that counts as level-backed is
+exempt from the ATR stop floor. Failing the match therefore does not just
+change a label: it moves the stop, which changes the trade's reward:risk and
+its position size, because size is `risk% x entry / (entry - stop)`. This fed
+straight into the reward:risk geometry the desk was already fixing.
+
+**What was ruled out.** Re-tuning the multiple. There is no ATR multiple that
+can be correct, because the quantity it is being compared against is a
+percentage of price and the ratio between the two is a different number for
+every name on every day — any value picked would have been a number fitted to
+one volatility and wrong at every other. Choosing a new "1.5%" or "0.4 ATR"
+would have been exactly the invented constant this desk has banned.
+
+**What was actually done.** The setting was deleted, not replaced. The match
+now reads the tolerance off the level's own zone, derived from the very same
+clustering constant that built that zone, so the tolerance is by construction
+exactly as wide as the thing it is matching against. Two numbers became one,
+and they can no longer disagree because there is only one of them. The
+tolerance is no longer configurable and a settings file still carrying the old
+key is now refused loudly rather than ignored — the same pattern already used
+for other deleted keys, because a silently-ignored risk setting is how an
+operator ends up believing a value they set is in force.
+
+**The ATR argument was not wrong, it was misfiled.** "Is this stop far enough
+out to survive this name's noise" genuinely is a volatility question, and it
+is still asked, by `min_stop_atr_multiple` and `absolute_min_stop_atr_multiple`.
+"Is this stop decisively through the level" is also a volatility question, and
+still uses the ATR noise band. "Which level is this stop sitting on" is an
+identity question about a band defined in percent, and now gets answered in
+percent. The original comment collapsed all three into one number.
+
+**What would catch it next time.** The general lesson is a unit check, not a
+value check: whenever a comment says one number is "at least as wide as"
+another, confirm the two are in the same unit first — if they are not, the
+sentence is a claim about the instrument, not about the setting, and it will
+be true for some names and false for others. `tests/test_level_match_zone.py`
+now pins the relationship directly, reproduces the old arithmetic including
+the 4%-ATR crossover, checks the two independent implementations of the match
+rule agree at the boundary, and fails if the deleted key or a second copy of
+the clustering constant reappears anywhere in the tree.
+
+**One thing left honestly unresolved.** The 1% clustering width itself
+(`CLUSTER_TOLERANCE_PCT`) carries no derivation — its comment says only that
+price respects a zone rather than a number. That is a separate, still-open
+question about what a level zone's real width is, and it was deliberately not
+answered here. This change makes the match tolerance *consistent* with that
+width; it does not claim the width is right. Nothing was invented to paper
+over it.
+
 ### 2026-09-13 — the whole-plan veto: what actually caused it, and the two holes left in the fix (item 7)
 
 **In plain words:** the AI risk reviewer can refuse a whole day's plan rather
@@ -249,7 +536,6 @@ it happened. `tests/test_correlation_breach_not_a_trigger.py` pins the
 removal, the noise-band classification, the fact that no other trigger was
 narrowed, and the end-to-end exit that used to slip through.
 
-||||||| 91302399
 
 ### 2026-09-13 — a comment claimed two parts of the desk agreed on what a "swing low" is; they never have, and the research says nobody can say which is right
 
