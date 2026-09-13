@@ -22,6 +22,65 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — the whole-plan veto: what actually caused it, and the two holes left in the fix (item 7)
+
+**In plain words:** the AI risk reviewer can refuse a whole day's plan rather
+than one trade in it. Item 7 recorded this as still happening after a fix had
+been written for it. Checked against the archived database, that is not what
+happened, and the item's own cause was wrong.
+
+**The measurement, preserved here because deleting the item deletes it.**
+Item 7 read "2 of 68 (3%)". That count comes from
+`scripts/blocked_proposals_census.py`, which counts PROPOSALS, not sessions:
+the single veto it refers to covered a decision with three targets, one of
+which had already been dropped, so it attributes two. Counted as SESSIONS
+there were four refusals in the 2026-08-18 to 2026-09-02 archive, and the two
+numbers do not contradict each other.
+
+**What each refusal was actually for.** Only ONE of the four was the
+incoherence case — 2026-08-31 19:08, where the plan's narrative argued for a
+symbol deterministic code had already removed, and the reviewer refused the
+whole plan as inconsistent, killing two trades it had just called valid. The
+other three cited the flat 1.5 reward:risk floor by name. So the dominant
+cause of this item was never incoherence; it was item 1's floor.
+
+**It did not reproduce.** The fix (`311efce0`, telling the reviewer what was
+removed) was authored 20:25 and first reachable on `main` at 20:31 that
+evening — after both of that day's refusals. The one later refusal, on
+2026-09-01, ran with the fix live: its recorded input contains the "Removed
+Before You Saw This" section verbatim. It refused on the reward:risk floor,
+not on coherence.
+
+**Two real holes, both found by adversarial review and both fixed here.**
+
+  * *The reviewer was still being told a floor existed.* The floor stopped
+    being a gate on 2026-09-11, and a later pass claimed to have retired it
+    "from every place still describing it" — but this seat's own briefing
+    still called 1.5 "the number ... to enforce" and told it that sub-floor
+    orders "have already been refused deterministically". Both false. That
+    text is the direct cause of three of the four refusals in the archive and
+    it was live on `main` until today.
+  * *The removed-symbols list was computed too early.* It was frozen right
+    after construction, but the order list is filtered at least three more
+    times before the review — the symbol guard, the queued-earnings clamp and
+    the hard-risk gate — and each can remove some names and pass the rest
+    through. A symbol struck by one of those was missing from the order list
+    AND missing from the removed list, which is the 2026-08-31 failure exactly,
+    on a path the original fix never covered. It is now recomputed immediately
+    before the review. The note also no longer asserts WHICH rule removed a
+    symbol, because it cannot know — the durable per-symbol reason is already
+    recorded in the evidence trail.
+
+**What actually addresses the item's stated cost.** Item 7's complaint was
+that one refusal discards every trade, so the cost is superlinear. The thing
+that fixes that is per-symbol refusal (`b1b31bf5`, 2026-09-01) — a failing
+trade now dies alone. The reviewer can still fail closed and refuse a whole
+plan when repair itself fails, and that is deliberate.
+
+**Honest limit.** The desk has been paused since 2026-09-03, so there is one
+post-fix session in the record. This is closed on the timestamps and on the
+two repairs above, not on a re-measure.
+
 ### 2026-09-13 — "correlation breach" was a password, not a reason, and has been removed from the accepted exit vocabulary
 
 **In plain words:** to sell a position it is supposed to keep holding, the

@@ -351,16 +351,18 @@ class RiskManagerAgent(BaseAgent):
                     f"- {a.symbol}: {a.rating} ({a.conviction}) | {rr_str} | {price_str} — {a.reasoning[:120]}"
                 )
             tech_section = (
-                "## Tech Analyst Signals (cross-check PM's decisions + R/R discipline)\n"
+                "## Tech Analyst Signals (cross-check PM's decisions)\n"
                 "The R/R here is the ANALYST's, priced at its own snapshot entry "
                 "against its own target. The R/R on each order above is the "
                 "ORDER's, priced at the live entry and the structurally derived "
-                "target — that is the number the 1.5 floor is judged on, and the "
-                "only one to enforce. A gap between the two is normal price drift "
-                "between analysis and construction, not a defect and not PM "
-                "inconsistency; both are computed by the same Python function. An "
-                "order whose own R/R fails the floor has already been refused "
-                "deterministically and is not in the list above.\n"
+                "target — that is the real one. A gap between the two is normal "
+                "price drift between analysis and construction, not a defect and "
+                "not PM inconsistency; both are computed by the same Python "
+                "function. **There is no reward:risk floor.** Nothing has been "
+                "refused for failing one, a breakout has no ratio at all, and a "
+                "thin ratio on a range trade has already been paid for in size "
+                "by the constructor before you see it. A low number is not, on "
+                "its own, grounds to refuse anything.\n"
                 + "\n".join(tech_lines)
             )
         else:
@@ -445,12 +447,14 @@ Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})
         if dropped:
             dropped_text = (
                 "\n## Removed Before You Saw This\n"
-                f"The deterministic constructor removed: {', '.join(dropped)}.\n"
-                "These failed a hard rule (a range setup whose reward:risk "
-                "could not be measured, no readable chart structure, or no "
-                "valid stop — there is no reward:risk floor, and a breakout "
-                "is never measured) and were struck by code, not by "
-                "judgement. PM's reasoning below was written BEFORE that "
+                f"Removed by deterministic code before this review: "
+                f"{', '.join(dropped)}.\n"
+                "Each was struck by a rule in Python — the constructor could "
+                "not measure or build it, or a later gate (unsupported "
+                "symbol, an earnings date inside the window, a hard risk "
+                "limit) removed it. Which rule it was is recorded per symbol "
+                "in the evidence trail; it was NOT a judgement call and is "
+                "not yours to review. PM's reasoning below was written BEFORE "
                 "happened, so it may still argue for them. That is EXPECTED "
                 "and is NOT evidence of an incoherent plan — do not veto the "
                 "surviving trades over it. Judge only the orders listed "

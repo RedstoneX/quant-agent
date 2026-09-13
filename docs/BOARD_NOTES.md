@@ -91,12 +91,12 @@ put it at.
 Real entries for the current backlog are drafted separately and go below
 this line, one heading per item.
 
-## decision due 2026-09-16
+## decision due 2026-10-31
 
-**Plain language —** The seat that actually decides trades runs on a paid AI model, and it drives almost the whole AI bill. The desk wants to compare cheaper models fairly, but the last comparison ran before the seat's own instructions were rewritten, so those numbers are now known to be invalid.
-**Example —** This one seat already accounts for roughly 93 cents of every dollar spent on AI in a week. A fair re-test means spending more real money on fresh comparison runs before anyone can honestly compare cost against a cheaper option.
-**The decision —** Whether to spend real money now on a fresh, fair model comparison, and only then whether to switch away from the current one.
-**Recommendation —** Approve a small, capped spend for one fresh comparison before the due date. Do not switch models based on the old, invalidated numbers.
+**Plain language —** The seat that actually decides trades runs on a paid AI model, and it drives almost the whole AI bill. Comparing it against a cheaper model means paying for fresh test runs — and you have ruled that no such test can mean anything while the job board is still dirty, because the comparison feeds on the same data the open items are about.
+**Example —** This one seat accounts for roughly 93 cents of every dollar spent on AI. But the test hands each model the same day's evidence and grades what it picks — so if that evidence is coming from seats with open faults against them, a cheaper model can win or lose the comparison on the quality of the input rather than its own judgement, and the answer would be worthless at any price.
+**The decision —** Not yet yours to make. It becomes a decision once the model-test gate below is clear; until then the date only exists because this file needs one, and it moves rather than forcing an answer.
+**Recommendation —** Nothing to approve. Clear the gate first. A recommendation to spend roughly $5 and settle it was put to you on 2026-09-13 and withdrawn the same day for this reason.
 
 
 ## item 1
@@ -115,12 +115,6 @@ this line, one heading per item.
 
 **Plain language —** There are two separate reward-to-risk minimums enforced at two different points, using two different numbers, and neither is backed by real research. Both work as designed, but two different rules checking the same thing is confusing, and this one should be merged into the fix already underway for the main floor above.
 **Example —** A trade could clear an earlier 1.5-minimum check and still be blocked later by this separate 1.2-minimum check — two different numbers guarding essentially the same question.
-
-
-## item 7
-
-**Plain language —** An AI reviewer checks a whole day's trading plan for internal consistency, and if it finds the plan doesn't hang together, it can reject every trade in that plan at once, not just the one that's actually the problem. This has happened again even after an earlier attempt to stop it.
-**Example —** One flawed piece of reasoning in one part of a day's plan can throw out every other, unrelated trade idea proposed in that same session — a small problem with an outsized cost.
 
 
 ## item 8

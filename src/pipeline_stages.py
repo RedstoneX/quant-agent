@@ -1086,6 +1086,37 @@ def _alert_unmeasurable_symbols(faults: dict[str, dict]) -> None:
         logger.warning("unmeasurable-symbols alert could not be sent: %s", exc)
 
 
+def _dropped_since_proposal(portfolio_decision) -> list[str]:
+    """Symbols the PM proposed that are no longer in the order list.
+
+    Targets minus decisions, and deliberately nothing cleverer: whatever
+    removed the symbol, the fact the Risk Manager needs is the same one —
+    "the narrative below argues for a name that is not in the list above,
+    and that is expected."
+
+    WHY THIS IS A FUNCTION AND NOT A LINE
+    --------------------------------------
+    It used to be computed once, immediately after `construct_orders`, and
+    then left alone. Between that point and the Risk Manager's review the
+    decision list is filtered at least three more times — the symbol guard,
+    the queued-earnings clamp, and the hard-risk gate — and each of those
+    can remove SOME names while letting the rest through. A symbol removed
+    by one of them was gone from the order list and absent from the frozen
+    drop list, so the Risk Manager saw a plan arguing for a name it could
+    not find and nothing telling it why. That is exactly the failure the
+    drop list was written to prevent (docs/INCIDENT_HISTORY.md,
+    2026-08-31), reappearing on a path the original fix did not cover.
+
+    So it is recomputed right before the review instead. HOLD still counts
+    as kept: the symbol survived, it just is not being traded today.
+    """
+    kept = {d.symbol.upper() for d in portfolio_decision.decisions}
+    return [
+        t.symbol.upper() for t in portfolio_decision.targets
+        if t.symbol.upper() not in kept
+    ]
+
+
 def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, dict]:
     """Persist WHY each PM target the constructor dropped was dropped — and
     file the two classes of "no order" under different names.
@@ -4225,11 +4256,9 @@ class DecisionStage:
         # deterministic constructor remove? Derived here (targets minus
         # decisions) rather than by changing construct_orders' signature.
         # HOLD decisions still count as "kept" — the symbol survived review.
-        _kept = {d.symbol.upper() for d in portfolio_decision.decisions}
-        portfolio_decision.constructor_dropped = [
-            t.symbol.upper() for t in portfolio_decision.targets
-            if t.symbol.upper() not in _kept
-        ]
+        portfolio_decision.constructor_dropped = _dropped_since_proposal(
+            portfolio_decision
+        )
         if portfolio_decision.constructor_dropped:
             logger.info(
                 "Constructor dropped %s — recorded for the Risk Manager so "
@@ -4728,6 +4757,15 @@ class RiskStage:
             rm_reserve_balance = sweeper.parked_value(ctx.positions)
 
         rm_event_risk_block = self._build_event_risk_block(pipeline, ctx)
+
+        # Recompute against the list the Risk Manager is about to be shown.
+        # Several gates between construction and here can remove SOME orders
+        # and pass the rest through; a name dropped by one of those was
+        # missing from the order list AND from the drop list. See
+        # `_dropped_since_proposal`.
+        portfolio_decision.constructor_dropped = _dropped_since_proposal(
+            portfolio_decision
+        )
 
         verdict, rm_result = pipeline.risk_manager.review(
             portfolio_decision=portfolio_decision,
