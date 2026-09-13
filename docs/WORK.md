@@ -30,13 +30,27 @@ while writing "all four were ratified". That is exactly the forbidden move this
 test guards against, and it made a later session believe the model choice was
 settled. Restored:**
 
-- [ ] DECIDE BY 2026-09-16 — Which model should run the desk's actual trade-decision seat?
-  **DATE MOVED 2026-09-02, reason recorded — not a silent deferral.** The
-  re-measure this decision waits on DOES NOT EXIST: the newest file in
-  `ops/model_policy/results/` is dated 2026-09-01, i.e. pre-rewrite and stale
-  by this block's own terms. Verified by listing the directory, in this repo
-  and on the live desk. Deciding without it would be picking a model from
-  numbers we already wrote down as invalid.
+- [ ] DECIDE BY 2026-10-31 — Which model should run the desk's actual trade-decision seat?
+  **DATE MOVED 2026-09-13 BY THE OWNER, reason recorded — not a silent
+  deferral, and not an agent's choice.** His ruling, verbatim: *"We can't run
+  model comparison until the job board is clean. Otherwise the test is flawed
+  because the data is flawed because the agents are flawed because the board
+  is flawed because the project is flawed."* The gating condition is therefore
+  the PM TEST GATE section below, not a date — the date exists only because
+  this file's format requires one, and it must move again rather than force a
+  decision the gate has not earned. **Do not propose running the benchmark,
+  and do not ask him to authorise the spend, while any PM-gate item is open.**
+  This supersedes the recommendation put to him on 2026-09-13 to spend roughly
+  $5 and settle it; that recommendation was wrong for exactly the reason he
+  gave, and it is recorded here so it is not made a third time.
+  **DATE MOVED 2026-09-02, reason recorded.** The re-measure this decision
+  waits on DOES NOT EXIST: the newest file in `ops/model_policy/results/` is
+  dated 2026-09-02 and tested the INCUMBENT ALONE, with no challenger, so
+  there is nothing to compare. Every earlier file was measured against a
+  prompt that has since been rewritten — verified 2026-09-13, the live
+  `config/prompts/portfolio_manager.md` hashes to `00ca991d...` and no result
+  file in the repo was produced against it. Deciding without a re-run would be
+  picking a model from numbers already written down as invalid.
   **The blocking dependency is a benchmark re-run, and it SPENDS OPENROUTER
   CREDITS — real money, and the owner's single stated financial concern.** It
   is therefore an owner call to authorise, not an agent one, and that is why
@@ -609,11 +623,6 @@ Working as designed, but one quantity has two definitions with two different
 numbers, and neither is doctrinally grounded. Fold into item 1(b); do not
 resolve it separately.
 
-**7. AI Risk Manager vetoes the entire plan for incoherence — 2 of 68 (3%). TOO STRICT.**
-
-Notable because it is reproducing AFTER a fix intended to stop exactly this.
-One veto discards every trade in the plan, so its cost is superlinear.
-
 **8. Stop placed on the wrong side of entry — 2 of 68 (3%). CHECKED, NOT A DEFECT.**
 
 Full reasoning + test: `docs/INCIDENT_HISTORY.md`. Stop is
@@ -931,7 +940,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **53. A paused desk leaves part of every fractional position with NO stop, and nothing said so — OPEN, owner call, found 2026-09-12.** The alarm is built; what to do with the remainder is the decision. Verified live 2026-09-12: ORCL 5.3089 shares held, one stop-limit at the broker for 5.0. The 0.3089-share DAY leg lapsed at the close on 2026-09-02 exactly as §11.1 designs, and the trading timers were disabled before the 09-03 open, so the session sweep that re-places it never ran — six full sessions (09-03 to 09-11) with $46 of a $798 position unprotected, and every record on the box calling it "expected overnight". NOT a flooring bug: `_split_protective_qty` is working as designed. NOT fixable at the broker: fractional orders must be DAY (measured 2026-09-01, code 42210000; Alpaca's fractional-trading page says the same) — no durable fractional stop exists. Shipped: `src/coverage_watchdog.py`, run from the 06:15 ET alert-heartbeat unit (fires whether or not trading timers are on); alerts once per trading day when broker coverage is short of held AND no session ran during the last cash session. Read-only. **The decision (BOARD_NOTES 53):** what to do with the remainder while paused — close it, accept it with the alert, or go whole-share (owner already declined whole-share on 2026-09-02). Also found, NOT fixed: the repo's silence-watchdog timer unit is not installed on the box (no state file, absent from the timer list), so item 17c's alarm has never actually run in production. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-12.
 
-**Retired item numbers — never reuse.** 2, 5, 6, 9, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
+**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
 
 ## Evidence-only follow-ups
 
