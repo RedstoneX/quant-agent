@@ -235,13 +235,6 @@ this line, one heading per item.
 **The decision —** Which definition is correct, or whether the two are meant to differ on purpose.
 **Recommendation —** Research what published swing-trading work actually uses before choosing, the same way the stop floor was settled. If both turn out defensible, make them the same number and record it as your own dial — what should not survive is two different answers with a note claiming they agree.
 
-## item 46
-
-**Plain language —** When the AI puts a stop near a price level the stock has bounced off before, the desk checks whether the stop is close enough to that level to count as genuinely backed by it. If it counts, the stop stays where it was placed. If it does not, the stop gets pushed wider, which automatically shrinks the trade. The setting that decides "close enough" was justified in writing as covering a one percent zone around the level. Do the arithmetic at this book's own typical daily range and it actually covers about two thirds of that.
-**Example —** A stock trades at one hundred dollars with a floor it has bounced off at ninety-seven. The AI places its stop at ninety-six eighty, just under the floor and well inside the one percent zone the written rule says is allowed. Because the real tolerance is narrower than the rule claims, that stop can be judged unbacked and pushed wider anyway — and the position is sized smaller than it should have been, for a reason that only exists on paper.
-**The decision —** Whether the setting is wrong or the justification beside it is wrong. They cannot both be right.
-**Recommendation —** Treat this as arithmetic rather than taste, because it is. Establish the real width of a level zone from published work first, then set the tolerance from that figure — rather than leaving a number in place and a sentence next to it that the number does not satisfy.
-
 ## item 49
 
 **Plain language —** Removing the rule that was wrongly blocking good trades worked — the desk now finds roughly twice as many trades it's allowed to take. But that rule had been quietly doing a second job nobody noticed: by refusing so many trades, it meant the desk almost never ran out of risk budget. Now it does. On a normal day the desk wants to risk about twice what it's allowed to risk in total, so something has to decide which of the permitted trades actually get the money. Right now nothing decides that deliberately — they're taken in whatever order they happen to come out of the process, which is not a choice anybody made.

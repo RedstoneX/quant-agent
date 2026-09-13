@@ -879,7 +879,7 @@ def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
     # 2026-09-12, "no floor, no trade": the constructor now refuses a long
     # with NO computed level below its entry. These fixtures deliberately
     # keep the stop unbacked, so the floor is a DISTANT shelf at half the
-    # entry — far outside `level_match_atr_tolerance` of any stop here, so
+    # entry — far outside any level's own match zone here, so
     # it satisfies the floor requirement without backing the stop, and the
     # widening tests still test widening.
     if not any(0 < float(p) < float(entry) for p in levels):
@@ -1245,20 +1245,26 @@ def test_the_absolute_floor_is_configurable_and_can_be_switched_off():
 
 
 def test_a_near_miss_outside_the_tolerance_is_not_level_backed():
-    """The tolerance is a boundary, not a suggestion. 0.25 x ATR = $0.5875
-    from the computed level at $95.00: $95.10 is sitting on it, $95.60 is
-    not, and the second one gets the band like any unbacked stop.
+    """The tolerance is a boundary, not a suggestion. The boundary is the
+    level's OWN zone: `CLUSTER_TOLERANCE_PCT` (1%) of the computed level at
+    $95.00 = $0.95. So $95.90 is sitting on that level, $96.10 is not, and
+    the second one gets the band like any unbacked stop.
 
     Both candidate stops are deliberately INSIDE the 2.25 ATR band ($94.71)
-    and outside the 1.00 ATR hard floor ($97.65) — 95.10 is 4.90 / 2.35 =
-    2.09 ATRs out, 95.60 is 4.40 / 2.35 = 1.87 — so backing is the only
+    and outside the 1.00 ATR hard floor ($97.65) — 95.90 is 4.10 / 2.35 =
+    1.74 ATRs out, 96.10 is 3.90 / 2.35 = 1.66 — so backing is the only
     thing that can decide either one. A stop outside the band is left alone
     for reasons that have nothing to do with the tolerance, and would make
     this assert nothing.
 
-    (Was $96.90 / $97.60 against a level at $97.00 while the band was 1.35
-    ATRs. The pair moved with the fixture level, keeping the same $0.10
-    inside / $0.60 outside gaps either side of the $0.5875 tolerance.)"""
+    (Was $95.10 / $95.60 either side of a 0.25 x ATR = $0.5875 tolerance.
+    That tolerance was DELETED on 2026-09-13 — docs/WORK.md item 46: an ATR
+    multiple cannot stay consistent with the percentage-of-price zone it
+    claimed to cover, and at this fixture's own 2.35% ATR it was 0.62x as
+    wide as the zone. The pair moved to straddle the real boundary; the
+    fixture level, band and floor are unchanged. `$95.60` now correctly
+    counts as level-backed, which is the behaviour change item 46 shipped.)
+    """
     constructor = PortfolioConstructor()
 
     def stop_for(stop):
@@ -1269,8 +1275,8 @@ def test_a_near_miss_outside_the_tolerance_is_not_level_backed():
             entry_price=_ENTRY, stop_loss=stop, target_price=130.0,
         )
 
-    assert stop_for(95.1) == 95.1                      # gap $0.10, inside
-    assert round(stop_for(95.6), 2) == _BAND_EDGE      # gap $0.60, outside
+    assert stop_for(95.9) == 95.9                      # gap $0.90, inside
+    assert round(stop_for(96.1), 2) == _BAND_EDGE      # gap $1.10, outside
 
 
 def test_a_level_the_model_asserted_does_not_earn_the_exemption():
@@ -1346,7 +1352,7 @@ def test_a_level_with_no_touch_count_on_record_fails_closed():
     assert constructor._level_backing_stop(
         _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR,
                       computed=[96.0, _UPPER_LEVEL], touches={}),
-        _ENTRY, 96.0, _ATR, is_short=False,
+        _ENTRY, 96.0, is_short=False,
     ) is None
 
 
@@ -1361,12 +1367,12 @@ def test_a_level_on_the_wrong_side_of_entry_cannot_back_a_stop():
                              atr=_ATR,
                              computed=[_TIGHT_STOP, _UPPER_LEVEL])
     assert constructor._level_backing_stop(
-        analysis, _ENTRY, _TIGHT_STOP, _ATR, is_short=False,
+        analysis, _ENTRY, _TIGHT_STOP, is_short=False,
     ) == _TIGHT_STOP
     # The identical level read as a SHORT's backing: it is below entry, so it
     # cannot be what a short's stop above entry is resting on.
     assert constructor._level_backing_stop(
-        analysis, _ENTRY, _TIGHT_STOP, _ATR, is_short=True,
+        analysis, _ENTRY, _TIGHT_STOP, is_short=True,
     ) is None
 
 

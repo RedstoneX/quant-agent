@@ -1029,11 +1029,14 @@ def holding_discipline_false_claim(
 #      the model — see that method's docstring), gated on
 #      `min_level_touches` prior touches (the already-ratified
 #      `min_level_touches_for_stop_honor` bar, docs/RESEARCH_FINDINGS.md
-#      §7), matched to the stop within `level_match_atr_tolerance * atr`.
-#      No new constant is introduced here — both bars are the ones
-#      `_level_backing_stop` already uses, reused rather than duplicated.
-#      A long's level is "broken" when price is at or through it, i.e. no
-#      longer holding above the level by more than the same ATR tolerance;
+#      §7), matched to the stop by whether the stop falls inside that
+#      level's own zone (`level_cluster_tolerance_pct` of the level price
+#      — `src.data.levels.CLUSTER_TOLERANCE_PCT`, the constant that built
+#      the zone). No new constant is introduced here — both bars are the
+#      ones `_level_backing_stop` already uses, reused rather than
+#      duplicated. A long's level is "broken" when price is at or through
+#      it by more than one ATR noise band (a different question in a
+#      different unit — see `check_structural_protection`'s docstring);
 #      the mirror for a short is price at or through a resistance level
 #      from above.
 #   3. Neither (1) nor (2) resolves — no stated condition (or an
@@ -1087,31 +1090,36 @@ def _structural_level_backing_stop(
     *,
     entry_price: float,
     stop_loss: float,
-    atr: float,
     is_short: bool,
     computed_levels: list | None,
     computed_level_touches: dict | None,
     min_level_touches: int,
-    level_match_atr_tolerance: float,
+    level_cluster_tolerance_pct: float,
 ) -> float | None:
     """The verified structural level nearest `stop_loss`, or None.
 
     Exact same matching rule as
     `PortfolioConstructor._level_backing_stop` (side-correctness relative
-    to entry, `min_level_touches` prior touches, closest level within
-    `level_match_atr_tolerance * atr` of the stop) — reimplemented here as
-    a free function, over the same plain data, because that method lives on
-    a class this module must not import (it would be a risk module
-    depending on the constructor, backwards from every other dependency in
-    this codebase) and because the two ATR/touch bars it reads off
-    `self.cfg` are passed in here directly by the caller instead. Any
-    behavioural drift between the two would be a bug; there is deliberately
-    only one set of numbers (the caller's config), never a second one
-    invented here.
+    to entry, `min_level_touches` prior touches, closest level whose own
+    ZONE contains the stop) — reimplemented here as a free function, over
+    the same plain data, because that method lives on a class this module
+    must not import (it would be a risk module depending on the
+    constructor, backwards from every other dependency in this codebase)
+    and because the bars it reads off `self.cfg` are passed in here
+    directly by the caller instead. Any behavioural drift between the two
+    would be a bug; there is deliberately only one set of numbers (the
+    caller's), never a second one invented here.
+
+    `level_cluster_tolerance_pct` is NOT a knob. It is
+    `src.data.levels.CLUSTER_TOLERANCE_PCT`, the constant
+    `find_structural_levels` used to build these zones, passed in rather
+    than imported only because this module is deliberately stdlib-only.
+    Every caller must pass exactly that; `tests/test_level_match_zone.py`
+    checks that they all do. Until 2026-09-13 this was an ATR multiple
+    (`level_match_atr_tolerance`, 0.25) claiming to be "at least as wide"
+    as the 1% zone — a claim in a different unit that only held above 4%
+    ATR — see docs/WORK.md item 46 / docs/INCIDENT_HISTORY.md.
     """
-    tolerance = level_match_atr_tolerance * atr if atr else 0.0
-    if tolerance <= 0:
-        return None
     touches_by_price = computed_level_touches or {}
     best: float | None = None
     best_gap = float("inf")
@@ -1128,6 +1136,12 @@ def _structural_level_backing_stop(
             continue
         touches = touches_by_price.get(price)
         if touches is None or touches < min_level_touches:
+            continue
+        # This level's OWN zone — the same bound
+        # `src.data.levels.level_zone_halfwidth` derives, restated here in
+        # one line only because this module imports nothing.
+        tolerance = price * level_cluster_tolerance_pct / 100.0
+        if tolerance <= 0:
             continue
         gap = abs(stop_loss - price)
         if gap <= tolerance and gap < best_gap:
@@ -1146,7 +1160,7 @@ def check_structural_protection(
     computed_levels: list | None = None,
     computed_level_touches: dict | None = None,
     min_level_touches: int,
-    level_match_atr_tolerance: float,
+    level_cluster_tolerance_pct: float,
     ma_20: float | None = None,
     ma_50: float | None = None,
     ma_200: float | None = None,
@@ -1193,9 +1207,13 @@ def check_structural_protection(
 
     The margin for "beyond the level" reuses `NOISE_BAND_ATR_MULTIPLE`
     (already 1.0, already ratified for "is an adverse move real") rather
-    than the tighter `level_match_atr_tolerance` (0.25, meant only for
-    matching a level to a stop's placement, too tight to mean "decisively
-    broken") — no third constant is introduced for this.
+    than the level-zone tolerance used to MATCH a level to a stop's
+    placement — no third constant is introduced for this. The two are not
+    even the same kind of quantity: matching is an identity question about
+    a zone defined as a percentage of price, breaking is a question about
+    whether a move exceeded the name's own noise, which is an ATR
+    question. See docs/WORK.md item 46 for why conflating the two units
+    was the defect here in the first place.
     """
     text = (thesis_invalid_if or "").strip()
     if text:
@@ -1236,21 +1254,22 @@ def check_structural_protection(
     atr_f = _finite(atr)
     if ent is not None and stop is not None and atr_f is not None and atr_f > 0:
         level = _structural_level_backing_stop(
-            entry_price=ent, stop_loss=stop, atr=atr_f, is_short=is_short,
+            entry_price=ent, stop_loss=stop, is_short=is_short,
             computed_levels=computed_levels,
             computed_level_touches=computed_level_touches,
             min_level_touches=min_level_touches,
-            level_match_atr_tolerance=level_match_atr_tolerance,
+            level_cluster_tolerance_pct=level_cluster_tolerance_pct,
         )
         if level is not None:
             cur = _finite(current_price)
             # NOTE: matching WHICH level backs the stop (above, via
-            # `_structural_level_backing_stop`) uses the tight
-            # `level_match_atr_tolerance` — "is the stop placed at this
-            # level". Deciding whether that level has since BROKEN is a
-            # different question needing a wider, decisive margin, so it
-            # reuses `NOISE_BAND_ATR_MULTIPLE` instead (see this function's
-            # docstring) — not the same number for two different purposes.
+            # `_structural_level_backing_stop`) asks an IDENTITY question
+            # and is answered inside that level's own 1%-of-price zone.
+            # Deciding whether that level has since BROKEN is a different
+            # question — it is about whether an adverse move is real, which
+            # IS a volatility question — so it uses a wider, decisive
+            # ATR-based margin, `NOISE_BAND_ATR_MULTIPLE` (see this
+            # function's docstring). Two questions, two units, on purpose.
             break_margin = NOISE_BAND_ATR_MULTIPLE * atr_f
             # A long's support is broken when the CLOSE has fallen to/through
             # it by at least one noise-band's worth; a short's resistance is
@@ -1386,7 +1405,7 @@ def structural_protection_broken(
     computed_levels: list | None = None,
     computed_level_touches: dict | None = None,
     min_level_touches: int,
-    level_match_atr_tolerance: float,
+    level_cluster_tolerance_pct: float,
     ma_20: float | None = None,
     ma_50: float | None = None,
     ma_200: float | None = None,
@@ -1414,7 +1433,7 @@ def structural_protection_broken(
         computed_levels=computed_levels,
         computed_level_touches=computed_level_touches,
         min_level_touches=min_level_touches,
-        level_match_atr_tolerance=level_match_atr_tolerance,
+        level_cluster_tolerance_pct=level_cluster_tolerance_pct,
         ma_20=ma_20, ma_50=ma_50, ma_200=ma_200,
         break_seen_prior_close=break_seen_prior_close,
     ).protected

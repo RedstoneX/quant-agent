@@ -1919,13 +1919,23 @@ list when the history is too short to yield levels. Without that, a model could
 assert a level beside its own stop and buy itself an exemption from the noise
 floor, and the verification would be worthless.
 
-**Matching tolerance: `risk.level_match_atr_tolerance`, default 0.25 ATR.**
-ATR-relative rather than a percentage, because "did the analyst place this stop
-AT that level" is a question about the name's own price noise — a flat
-percentage is far too tight on a 9%-ATR small cap and far too loose on a
-1.5%-ATR utility, so the same number would mean two different things. A
-computed level is also a *zone* (`find_structural_levels` clusters pivots
-within 1% into one), so the tolerance must be at least that wide.
+**Matching tolerance: the level's own zone width. Not configurable.**
+~~`risk.level_match_atr_tolerance`, default 0.25 ATR~~ — **CORRECTED
+2026-09-13, docs/INCIDENT_HISTORY.md.** The original text here argued the
+tolerance should be ATR-relative *and* "at least as wide" as the 1% zone
+`find_structural_levels` clusters pivots into. Those are different units, so
+the second claim was a hidden condition on the instrument rather than a
+property of the setting: `0.25 x ATR >= 0.01 x price` needs `ATR >= 4% of
+price`, and at this desk's quoted 2.56% median ATR the tolerance was 0.64%
+against a 1% zone — 1.56x too narrow, so a stop inside a level's real zone
+was not recognised as level-backed. The setting is deleted rather than
+re-tuned (no ATR multiple can stay consistent with a percentage of price),
+and the match now reads the bound off the zone's own definition,
+`src.data.levels.CLUSTER_TOLERANCE_PCT`. A settings file still carrying the
+old key is refused at load. The ATR argument was not wrong, only misfiled:
+whether a stop survives the name's noise remains `min_stop_atr_multiple` /
+`absolute_min_stop_atr_multiple`, and whether a level has broken remains the
+ATR noise band.
 
 **No strength or touches threshold was added on top.**
 `find_structural_levels` already filters: at least 2 touches (`MIN_TOUCHES` —
