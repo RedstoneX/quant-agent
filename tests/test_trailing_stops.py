@@ -229,6 +229,77 @@ def test_breakout_uses_the_highest_usable_swing_low():
     assert proposal.new_stop == 110.0        # not 100.0
 
 
+def _falling_with_lower_lows():
+    """The shape the old rule got wrong: confirmed swing lows at 110, then
+    104, then 101 — a LOWER-low sequence — with price recovered to 118.
+
+    All three lows sit between a stop at 99 and the current price, so the old
+    "highest usable low" rule trailed to 110: a level price had since traded
+    straight through, twice, and only climbed back above afterwards.
+    """
+    lows = [118, 116, 114, 110, 114, 116, 118,
+            112, 110, 108, 104, 108, 110, 112,
+            108, 106, 104, 101, 104, 106, 108, 118]
+    return _bars([(lo + 2, lo) for lo in lows])
+
+
+def test_a_lower_low_sequence_gets_no_structural_trail():
+    """A broken support level is not support. When the stock is making lower
+    lows, structure has offered nothing and the chandelier is the honest
+    answer — the old rule trailed to a level price had already gone through."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="breakout", entry=100.0, current_price=118.0,
+        current_stop=99.0, reference_target=None,
+        bars=_falling_with_lower_lows(), atr=2.0,
+    )
+    assert proposal is not None
+    assert proposal.source == "chandelier"
+    assert proposal.new_stop != 110.0
+
+
+def test_the_trail_follows_the_most_recent_higher_low_not_the_highest():
+    """"Each successive higher low" means the LATEST one, once it is higher
+    than the one before it. On a rising sequence that is also the highest, so
+    this is only visible where the two rules disagree — see the lower-low
+    case above, which is where they do."""
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="breakout", entry=100.0, current_price=125.0,
+        current_stop=99.0, reference_target=None,
+        bars=_rising_with_higher_lows(), atr=2.0,
+    )
+    assert proposal.new_stop == 110.0
+    assert proposal.source == "structure"
+
+
+def test_a_single_confirmed_low_is_still_accepted():
+    """No sequence to judge yet. This is what a freshly broken-out position
+    looks like, and refusing it would remove protection, not add it."""
+    lows = [110, 108, 106, 100, 106, 108, 110, 112]
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="breakout", entry=99.0, current_price=112.0,
+        current_stop=95.0, reference_target=None,
+        bars=_bars([(lo + 2, lo) for lo in lows]), atr=2.0,
+    )
+    assert proposal.source == "structure"
+    assert proposal.new_stop == 100.0
+
+
+def test_short_mirror_a_higher_high_sequence_gets_no_structural_trail():
+    """The short's mirror: it trails above successive LOWER highs, so a
+    sequence of HIGHER highs offers no structure to trail against."""
+    highs = [90, 92, 94, 98, 94, 92, 90,
+             96, 98, 100, 104, 100, 98, 96,
+             100, 102, 104, 107, 104, 102, 100, 90]
+    proposal = compute_trailing_stop(
+        symbol="AAA", setup_type="breakout", entry=100.0, current_price=90.0,
+        current_stop=109.0, reference_target=None, qty=-10,
+        bars=_bars([(hi, hi - 2) for hi in highs]), atr=2.0,
+    )
+    assert proposal is not None
+    assert proposal.source == "chandelier"
+    assert proposal.new_stop != 98.0
+
+
 def test_chandelier_is_the_fallback_when_structure_is_unclear():
     """A vertical move with no confirmed swing low still gets a trail."""
     straight_up = _bars([(100 + i, 99 + i) for i in range(14)])
