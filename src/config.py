@@ -748,17 +748,29 @@ class RiskConfig(BaseModel):
     # honoured whatever its ATR distance; the band only applies when nothing
     # computed backs it.
     #
-    # How close the stop must sit to a computed level to count as "at" it.
-    # ATR-relative, not a percentage: the question is whether the analyst
-    # placed the stop AT this level, and that is a question about price
-    # NOISE. A flat percentage means a different thing on a 1.5%-ATR utility
-    # than on a 9%-ATR small cap — too tight to ever match on the volatile
-    # name, loose enough on the quiet one to match a level the stop is
-    # nowhere near. `find_structural_levels` also clusters pivots within 1%
-    # into one zone, so a level IS a zone; the tolerance has to be at least
-    # that zone's width, expressed in the units every other stop rule here
-    # already speaks.
-    level_match_atr_tolerance: float = Field(default=0.25, gt=0, le=2)
+    # NO `level_match_atr_tolerance` HERE ANY MORE — removed 2026-09-13,
+    # docs/WORK.md item 46. It was 0.25 ATR and justified itself as being "at
+    # least as wide" as the 1% zone `find_structural_levels` clusters pivots
+    # into. Those are different units, so the claim was only ever true above
+    # a particular volatility: 0.25 x ATR >= 0.01 x price needs ATR >= 4% of
+    # price. At the 2.56%-of-price median ATR this repo's own comments quote,
+    # 0.25 ATR is 0.64% — 1.56x NARROWER than the zone it claimed to cover,
+    # so a stop sitting inside a level's real zone was not counted as sitting
+    # at that level. There is no honest ATR multiple to replace it with: the
+    # zone is defined as a percentage of price, the tolerance was a multiple
+    # of ATR, and the ratio between them changes with every name on every
+    # day. It is not replaced by a different constant — it is deleted, and
+    # "is this stop AT this level" now reads the zone's own bound from
+    # `src.data.levels.level_zone_halfwidth`, which derives it from the same
+    # `CLUSTER_TOLERANCE_PCT` that built the zone. The two can no longer
+    # disagree because there is only one of them.
+    #
+    # The ATR argument the old comment made is not lost, it was misplaced:
+    # "is this stop far enough out to survive the name's noise" IS an ATR
+    # question, and it is already asked, deterministically, by
+    # `min_stop_atr_multiple` and `absolute_min_stop_atr_multiple` below.
+    # "Which level is this stop sitting on" is an identity question about a
+    # zone, and is answered in the zone's own unit.
     # The deterministic backstop under the exemption above. §12.1's safety
     # argument rests on the 1*ATR hard floor in
     # `config/prompts/tech_analyst.md` — but that is a PROMPT, and Invariant
@@ -1104,6 +1116,29 @@ class RiskConfig(BaseModel):
                 "risk.max_short_gross_pct has been renamed to "
                 "risk.max_gross_bearish_pct -- update the settings file "
                 "(no alias is provided)"
+            )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_deleted_level_match_key(cls, data):
+        # docs/WORK.md item 46 (2026-09-13). Same pattern and same reason as
+        # the validators above: `extra="ignore"` would let a settings.yaml
+        # still carrying this key load silently, and an operator would
+        # believe a match tolerance they set was in force when nothing reads
+        # it any more. There is deliberately NO replacement key to point at
+        # — the tolerance is no longer configurable, because it is derived
+        # from the level zone's own definition. See the block where this
+        # field used to be declared, above.
+        if isinstance(data, dict) and "level_match_atr_tolerance" in data:
+            raise ValueError(
+                "risk.level_match_atr_tolerance was removed 2026-09-13 "
+                "(docs/WORK.md item 46): an ATR multiple can never stay "
+                "consistent with the percentage-of-price zone it claimed to "
+                "cover. The tolerance is now derived from "
+                "src.data.levels.CLUSTER_TOLERANCE_PCT and is not "
+                "configurable. Delete the key from the settings file; there "
+                "is no replacement key."
             )
         return data
 

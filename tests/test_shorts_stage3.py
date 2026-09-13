@@ -106,7 +106,7 @@ def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
     # 2026-09-12, "no floor, no trade" — for a short the floor is OVERHEAD.
     # The constructor refuses a short with no computed level above entry,
     # so a DISTANT ceiling at 1.5x entry is added when none is listed: far
-    # outside `level_match_atr_tolerance` of any stop here, so the stop
+    # outside any level's own match zone here, so the stop
     # stays unbacked and the widening tests still test widening.
     if not any(float(p) > float(entry) for p in levels):
         levels.append(round(float(entry) * 1.5, 2))
@@ -576,19 +576,25 @@ def test_short_level_backed_stop_inside_one_atr_is_floored_at_one_atr():
 
 
 def test_short_near_miss_outside_the_tolerance_is_not_level_backed():
-    """0.25 x ATR = $1.25 from the computed level at $260.00. $260.10 is
-    sitting on it (gap $0.10); $258.60 is not (gap $1.40), and gets the band
-    like any unbacked stop.
+    """The boundary is the level's OWN zone: `CLUSTER_TOLERANCE_PCT` (1%)
+    of the computed level at $260.00 = $2.60. $258.00 is sitting on it (gap
+    $2.00); $257.00 is not (gap $3.00), and gets the band like any unbacked
+    stop.
 
     Both candidates are deliberately INSIDE the 2.25-ATR band ($261.25) and
     outside the 1-ATR hard floor ($255.00), so level-backing is the only
     thing that can decide either one. That window is $6.25 wide at the 2.5
-    base, comfortably wider than the $1.25 tolerance, so the pair can now sit
-    either side of the level in the middle of the window. It could not while
-    the base was 1.5: the window was then $1.75 wide against the same $1.25
-    tolerance, which is why this fixture previously used a level at $256.60
-    with candidates at $256.50 and $255.20 crammed against both edges. The
-    computed level is now `_S_TIGHT_STOP` itself, mirroring the long side."""
+    base, wide enough to hold the $2.60 zone plus a candidate either side of
+    it. Note the pair sits BELOW the level rather than straddling it: the
+    zone's upper edge ($262.60) is past the band edge, where a stop is left
+    alone for reasons unrelated to backing and the assert would say nothing.
+
+    (Was $260.10 / $258.60 either side of a 0.25 x ATR = $1.25 tolerance.
+    That tolerance was DELETED on 2026-09-13 — docs/WORK.md item 46: an ATR
+    multiple cannot stay consistent with the percentage-of-price zone it
+    claimed to cover. This fixture is the case that was too GENEROUS: at
+    $5 ATR on a $260 level, ATR is 1.92% of price, so 0.25 ATR was 1.3x the
+    zone. The fixture level, band and floor are unchanged.)"""
     constructor = PortfolioConstructor()
 
     def stop_for(stop):
@@ -601,8 +607,8 @@ def test_short_near_miss_outside_the_tolerance_is_not_level_backed():
             target_price=_S_TARGET_LEVEL,
         )
 
-    assert stop_for(260.1) == 260.1              # gap $0.10, inside tolerance
-    assert stop_for(258.6) == _S_BAND_EDGE       # gap $1.40, outside it
+    assert stop_for(258.0) == 258.0              # gap $2.00, inside the zone
+    assert stop_for(257.0) == _S_BAND_EDGE       # gap $3.00, outside it
 
 
 def test_short_level_the_model_asserted_does_not_earn_the_exemption():
@@ -668,11 +674,11 @@ def test_short_a_level_below_entry_cannot_back_a_shorts_stop():
         computed=[_S_TARGET_LEVEL, _S_TIGHT_STOP],
     )
     assert constructor._level_backing_stop(
-        analysis, _S_ENTRY, _S_TIGHT_STOP, _S_ATR, is_short=True,
+        analysis, _S_ENTRY, _S_TIGHT_STOP, is_short=True,
     ) == _S_TIGHT_STOP
     # The support below entry is never eligible, at any distance.
     assert constructor._level_backing_stop(
-        analysis, _S_ENTRY, _S_TARGET_LEVEL, _S_ATR, is_short=True,
+        analysis, _S_ENTRY, _S_TARGET_LEVEL, is_short=True,
     ) is None
 
 

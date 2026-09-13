@@ -795,13 +795,43 @@ risk:
   # stop nothing computed backs. Neither number above moved: this changes
   # WHICH stop the arithmetic is done on, nothing else.
   #
-  # How close the stop must sit to a computed level to count as sitting AT it,
-  # in ATRs. ATR-relative rather than a percentage on purpose: "did the analyst
-  # place this stop at that level" is a question about the name's own price
-  # noise, and a flat percentage is far too tight on a volatile name and far
-  # too loose on a quiet one. A computed level is also a ZONE (pivots within 1%
-  # are clustered into one), so the tolerance must be at least that wide.
-  level_match_atr_tolerance: 0.25
+  # `level_match_atr_tolerance` WAS HERE. DELETED 2026-09-13, docs/WORK.md
+  # item 46. Do not re-add it — `RiskConfig` now refuses to load a settings
+  # file that still carries it, on purpose.
+  #
+  # It was 0.25, i.e. "the stop counts as sitting AT a computed level if it
+  # is within 0.25 ATR of it", and it justified itself by saying a computed
+  # level is a ZONE (`src/data/levels.py` clusters pivots within
+  # `CLUSTER_TOLERANCE_PCT` = 1% of price into one level) and that the
+  # tolerance therefore had to be "at least that wide".
+  #
+  # Those are two different units, so the justification was not a statement
+  # about the setting at all — it was a statement about the instrument:
+  #
+  #     0.25 x ATR  >=  0.01 x price     <=>     ATR  >=  4.0% of price
+  #
+  # i.e. it only held on names whose ATR is 4% of price or more. At the
+  # 2.56%-of-price median ATR quoted throughout this file (measured on the
+  # book 2026-08-27, see docs/QAMC_REMEDIATION_SPEC.md), 0.25 ATR is 0.64%
+  # of price — 1.56x NARROWER than the zone it claimed to cover. A stop
+  # placed inside a level's real zone was not recognised as level-backed, so
+  # it was widened to the ATR band instead, which moves the stop off real
+  # structure and changes the reward:risk the trade is judged on (item 1).
+  #
+  # It is deleted rather than re-tuned. There is no ATR multiple that stays
+  # consistent with a percentage-of-price zone, because the ratio between
+  # them is a different number for every name on every day — any value here
+  # would have been a number fitted to one volatility. The match tolerance
+  # is now READ from the zone's own definition
+  # (`src.data.levels.level_zone_halfwidth`, derived from the same
+  # `CLUSTER_TOLERANCE_PCT` that built the zone) and is not configurable.
+  # One number instead of two, and they cannot drift apart.
+  #
+  # The ATR question is still asked, in the place it belongs: whether a stop
+  # is far enough out to survive the name's own noise is
+  # `min_stop_atr_multiple` and `absolute_min_stop_atr_multiple` below.
+  # Which level a stop is sitting ON is an identity question about a zone,
+  # and is answered in the zone's unit.
   # The deterministic backstop under that exemption. A level-backed stop is
   # honoured however tight DOWN TO this many ATRs; inside it, the stop is
   # pushed out to exactly this floor and never to the full band above. The
