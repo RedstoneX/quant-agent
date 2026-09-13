@@ -35,6 +35,7 @@ from src.data.levels import (
     TargetDerivation,
     derive_structural_target,
     horizon_reach,
+    level_zone_halfwidth,
 )
 from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
@@ -442,23 +443,18 @@ class ConstructorConfig:
     # survive, so it is rejected rather than taken at a worse payoff.
     min_reward_risk_after_widening: float = 1.5
     # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------
-    # How close the stop must sit to a level `find_structural_levels`
-    # actually COMPUTED before `_widen_stop_past_noise` treats it as sitting
-    # AT that level and honours it whatever the band says.
-    #
-    # ATR-relative rather than a percentage, deliberately. The question is
-    # "did the analyst place this stop at that level?", which is a question
-    # about the name's own price noise — and ATR is the unit every other
-    # stop rule in this file already speaks (`min_stop_atr_multiple`,
-    # `min_target_atr_multiple`, Phase 3's trailing band). A flat percentage
-    # would be too tight to ever match on a 9%-ATR small cap and loose
-    # enough on a 1.5%-ATR utility to match a level the stop is nowhere
-    # near, so the SAME tolerance would mean two different things. A
-    # computed level is also a ZONE, not a number — `find_structural_levels`
-    # clusters pivots within `CLUSTER_TOLERANCE_PCT` (1%) into one level —
-    # so the tolerance has to be at least as wide as that zone.
-    # Kept in sync with `risk.level_match_atr_tolerance`.
-    level_match_atr_tolerance: float = 0.25
+    # NO `level_match_atr_tolerance` HERE ANY MORE — removed 2026-09-13,
+    # docs/WORK.md item 46, along with the `risk.*` setting it mirrored.
+    # It said "within 0.25 ATR of a computed level counts as sitting AT it"
+    # and justified 0.25 as being at least as wide as the 1%-of-price zone
+    # `find_structural_levels` clusters pivots into. Different units: the
+    # claim only held where ATR >= 4% of price, and at this desk's quoted
+    # 2.56% median ATR the tolerance was 0.64% — 1.56x narrower than the
+    # zone. `_level_backing_stop` now reads the bound off the zone itself
+    # via `level_zone_halfwidth`, so there is one number, in one unit, in
+    # one file. The ATR question ("is the stop far enough out to survive
+    # this name's noise") is unchanged and still lives in
+    # `min_stop_atr_multiple` / `absolute_min_stop_atr_multiple`.
     # The deterministic floor UNDER the exemption above, applying to
     # level-backed stops too. See `_widen_stop_past_noise` for the reasoning;
     # in short, §12.1 argues the exemption is safe because
@@ -1551,10 +1547,16 @@ class PortfolioConstructor:
         analysis: TechAnalysisResult | None,
         entry_price: float,
         stop_loss: float,
-        atr: float,
         is_short: bool,
     ) -> float | None:
         """The computed structural level this stop sits at, or None.
+
+        Takes no ATR. It used to, because the match tolerance was an ATR
+        multiple; since 2026-09-13 (docs/WORK.md item 46) "at this level"
+        is decided against the level's own zone, whose width is a
+        percentage of price, so the name's volatility is not an input to
+        this question at all. It is still very much an input to whether
+        the resulting stop is honoured — see `_widen_stop_past_noise`.
 
         Spec §12.1. "Verified" means the price came out of
         `src/data/levels.py::find_structural_levels` and was attached to the
@@ -1587,9 +1589,6 @@ class PortfolioConstructor:
         raw_levels = getattr(analysis, "computed_levels", None) or []
         touches_by_price = getattr(analysis, "computed_level_touches", None) or {}
         min_touches = self.cfg.min_level_touches_for_stop_honor
-        tolerance = self.cfg.level_match_atr_tolerance * atr
-        if tolerance <= 0:
-            return None
 
         best: float | None = None
         best_gap = float("inf")
@@ -1614,6 +1613,13 @@ class PortfolioConstructor:
                 # "below the bar" — fail closed, per Invariant 2, rather than
                 # honour a tight stop we cannot show cleared the bar.
                 continue
+            # "At" this level means INSIDE this level's own zone. The bound
+            # is read per-level off `CLUSTER_TOLERANCE_PCT`, the same
+            # constant `find_structural_levels` used to build the zone in the
+            # first place, so the tolerance is exactly as wide as the thing
+            # it is matching against — never narrower, never a second number
+            # that can drift. docs/WORK.md item 46.
+            tolerance = level_zone_halfwidth(price)
             gap = abs(stop_loss - price)
             if gap <= tolerance and gap < best_gap:
                 best, best_gap = price, gap
@@ -2102,7 +2108,7 @@ class PortfolioConstructor:
                 # §12.1 — is this stop sitting on something we COMPUTED?
                 # ---------------------------------------------------------
                 level = self._level_backing_stop(
-                    analysis, entry_price, stop_loss, atr, is_short,
+                    analysis, entry_price, stop_loss, is_short,
                 )
                 if level is not None:
                     honoured, rule = stop_loss, STOP_RULE_LEVEL_HONOURED
@@ -2325,6 +2331,13 @@ class PortfolioConstructor:
         execution-time ATR floor in `src/pipeline_stages.py` still applies,
         which is the pre-existing behaviour.
         """
+        # The ATR check below is NOT the match tolerance any more (item 46
+        # made that a percentage of the level's own price). It is kept as a
+        # precondition because what this function REPORTS is an exemption
+        # from an ATR floor: with no usable ATR there is no floor to be
+        # exempt from, and claiming the exemption would be answering a
+        # question nobody can evaluate. Unchanged behaviour, different
+        # reason.
         atr = getattr(analysis, "atr_14", None) if analysis else None
         try:
             atr = float(atr) if atr is not None else None
@@ -2338,7 +2351,7 @@ class PortfolioConstructor:
         ):
             return None
         level = self._level_backing_stop(
-            analysis, entry_price, stop_loss, atr, direction == "short",
+            analysis, entry_price, stop_loss, direction == "short",
         )
         return STOP_RULE_LEVEL_HONOURED if level is not None else None
 
