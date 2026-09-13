@@ -6241,6 +6241,7 @@ class TradingPipeline:
         skips: dict[tuple[str, str], str] = {}       # → verbatim reason
         verdicts: dict[str, dict] = {}               # decision_id → verdict
         constructor_drops: dict[tuple[str, str], str] = {}  # → constructor's own reason
+        constructor_refusals: dict[tuple[str, str], str] = {}  # → "constructor_refused:<code>"
         for row in raw.get("evidence") or []:
             kind = row.get("kind")
             did = row.get("decision_id")
@@ -6304,6 +6305,19 @@ class TradingPipeline:
                     constructor_drops[(did, sym)] = (
                         data.get("detail") or "constructor_dropped"
                     )
+                # 2026-09-12: a refusal the constructor recorded AS DATA
+                # (`PortfolioConstructor.last_refusals`, filed by
+                # `DecisionStage` under `constructor_refused` with the code
+                # beside it — today `stop_wider_than_instrument_reach`
+                # or `insufficient_history`, item 54). Kept apart from
+                # the regex-recovered `constructor_dropped` so the digest
+                # names the rule, not a sentence.
+                elif (data.get("stage") == "deterministic_gate"
+                        and data.get("outcome") == "blocked"
+                        and data.get("reason") == "constructor_refused"):
+                    constructor_refusals[(did, sym)] = (
+                        f"constructor_refused:{data.get('refusal') or 'unknown'}"
+                    )
 
         if not proposals:
             return ""
@@ -6334,6 +6348,11 @@ class TradingPipeline:
                 return f"order_{status}"
             if key in skips:
                 return skips[key]
+            if key in constructor_refusals:
+                # Same precedence as a constructor drop (the constructor
+                # runs before the Risk Manager), but the CODE is the
+                # category, so "no floor" aggregates under its own line.
+                return constructor_refusals[key]
             if key in constructor_drops:
                 # Checked before the verdict/`ordered` logic below, so a
                 # symbol the deterministic constructor dropped before the

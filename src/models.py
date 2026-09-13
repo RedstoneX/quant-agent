@@ -727,6 +727,19 @@ class TechAnalysisResult(LLMOutputModel):
     # docs/RESEARCH_FINDINGS.md §7 for the touch-count evidence and the
     # threshold derived from it.
     computed_level_touches: dict[float, int] = Field(default_factory=dict)
+    # PYTHON-SET (2026-09-12, docs/WORK.md item 54), same pattern as the
+    # two above, from the same bars: the last completed bar's low and high
+    # — the SIGNAL bar the analyst judged — and how many completed sessions
+    # the desk actually had for this instrument. The constructor reads the
+    # bar edge as the instrument's own fallback stop when nothing computed
+    # backs the typed one (the wider of it and the ATR noise band —
+    # Kullamägi's "low of the day"), and the bar count to refuse a listing
+    # too young to measure (`src/data/technical.py::
+    # LONGEST_INDICATOR_WINDOW`). None = not recorded (older persisted row,
+    # hand-built object): the band alone decides, and no youth is assumed.
+    signal_bar_low: float | None = None
+    signal_bar_high: float | None = None
+    bars_available: int | None = None
     # How the position must be MANAGED, decided at entry from the chart:
     #   "range"    — clear structure on both sides. Fixed target is meaningful;
     #                thesis_progress and pace are valid measurements.

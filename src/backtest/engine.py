@@ -93,7 +93,7 @@ from types import SimpleNamespace
 from src.config import AppConfig
 from src.data.context import compute_market_context
 from src.data.correlation import build_correlation_matrix, correlation_clusters
-from src.data.levels import find_structural_levels
+from src.data.levels import find_structural_levels, structural_floor
 from src.data.technical import compute_indicators
 from src.models import OHLCV
 from src.pipeline import TradingPipeline
@@ -229,15 +229,22 @@ def _resolve_structural_stop_and_target(
     all_level_objs = (*supports, *resistances)
     all_levels = sorted(lv.price for lv in all_level_objs)
     touches = {lv.price: lv.touches for lv in all_level_objs}
+    # The stop candidate is the nearest level on the stop side of the
+    # last close. KNOWN DIVERGENCE from the live desk, pre-existing and
+    # flagged rather than fixed here (docs/WORK.md item 54, 2026-09-12):
+    # this engine still DECLINES a signal with no level on the stop side,
+    # while the live constructor reads a fallback stop from the instrument
+    # (the wider of the ATR noise band and the signal bar's edge) and gates
+    # on width instead. The one-day "no floor, no trade" rule that briefly
+    # made these agree was replaced on sourced research; bringing the
+    # engine to the live behaviour is a separate change.
+    close = bars_through_signal[-1].close
+    stop = structural_floor(all_levels, close, direction)
+    if stop is None:
+        return None, None, [], {}
     if direction == "long":
-        if not supports:
-            return None, None, [], {}
-        stop = max(lv.price for lv in supports)  # nearest support below close
         target = min((lv.price for lv in resistances), default=None)
     else:
-        if not resistances:
-            return None, None, [], {}
-        stop = min(lv.price for lv in resistances)  # nearest resistance above close
         target = max((lv.price for lv in supports), default=None)
     return stop, target, all_levels, touches
 

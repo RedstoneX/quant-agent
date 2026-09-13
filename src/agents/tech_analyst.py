@@ -647,6 +647,10 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
         # `TechAnalysisResult.computed_level_touches` and
         # docs/RESEARCH_FINDINGS.md §7.
         computed_level_touches_by_sym: dict[str, dict[float, int]] = {}
+        # The signal bar's low/high and the completed-session count
+        # (2026-09-12, docs/WORK.md item 54). Same bars, same Python-set
+        # discipline as the levels — see `TechAnalysisResult.signal_bar_low`.
+        signal_bar_by_sym: dict[str, tuple[float | None, float | None, int]] = {}
         for s in symbols_data:
             if not isinstance(s, dict):
                 continue
@@ -662,6 +666,10 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                 computed_level_touches_by_sym[sym] = {
                     lv.price: lv.touches for lv in all_levels
                 }
+                last = bars[-1]
+                signal_bar_by_sym[sym] = (
+                    getattr(last, "low", None), getattr(last, "high", None), len(bars),
+                )
 
         analyses: dict[str, TechAnalysisResult] = {}
         failed_symbols: list[str] = []
@@ -697,6 +705,12 @@ Last completed close: {_px(last_close)}{_intraday_block(symbol, last_close)}""")
                     analysis.computed_level_touches = (
                         computed_level_touches_by_sym.get(analysis.symbol, {})
                     )
+                    bar_low, bar_high, bar_count = signal_bar_by_sym.get(
+                        analysis.symbol, (None, None, None),
+                    )
+                    analysis.signal_bar_low = bar_low
+                    analysis.signal_bar_high = bar_high
+                    analysis.bars_available = bar_count
                     analyses[analysis.symbol] = analysis
                 except Exception as e:
                     bad_symbol = str((item or {}).get("symbol", "?")) if isinstance(item, dict) else "?"

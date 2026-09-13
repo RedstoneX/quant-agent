@@ -22,6 +22,192 @@ what would catch it next time.
 
 ---
 
+### 2026-09-12 — "no floor, no trade" shipped in the morning and was falsified by sourced research within hours; replaced by a stop-width gate the same day
+
+**In plain words:** the desk had just been told to refuse any trade with no
+support level beneath the entry, and to ignore a level sitting on the far
+side of an unfilled gap. Both ideas sounded like discipline. Neither
+survived contact with the published record, and the owner approved
+replacing them before the rule had run a single live session.
+
+**What the sources say, and where.** No published stop method refuses a
+trade for lack of a level below: Chandelier (highest high minus 3 ATR),
+Parabolic SAR, the Darvas box bottom and the entry-bar low all place a
+stop with no level at all, and Darvas only bought stocks at new highs
+(Kristjan Kullamägi, in his own words,
+https://qullamaggie.com/my-3-timeless-setups-that-have-made-me-tens-of-millions/).
+The gap branch was not merely unsupported but backwards, and this is
+measured: Thomas Bulkowski finds a rising window supports price only 20%
+of the time (16% in a bear market) and says outright that gaps do not
+work well as support or resistance
+(https://thepatternsite.com/SAR.html,
+https://thepatternsite.com/GaugingGaps.html). Price passes through the gap
+four times in five, which makes the pre-gap level more reachable, not
+void; no source anywhere treats a pre-gap level as void — that premise
+was this desk's own invention. Worst, the rule was adversely selected:
+George and Hwang (2004, Journal of Finance) show that nearness to the
+52-week high forecasts returns and dominates past returns as a predictor,
+robust in 18 of 20 international markets
+(https://www.bauer.uh.edu/tgeorge/papers/gh4-paper.pdf) — and a stock near
+its high is exactly the stock with nothing computed beneath it. Measured
+against the real universe the morning rule refused nine names, six of
+them for the gap reason alone.
+
+**What published practice constrains instead is the stop's width.**
+Kullamägi: "stop should not be wider than the ATR or ADR of the stock".
+The response to a wide stop is a smaller position — Van Tharp's sizing,
+position = risk budget divided by distance to stop, which is arithmetic
+rather than an empirical claim — not a refusal.
+
+**What was done.** The floor requirement, its two refusal codes, the
+PM-eligibility mirror and the gap-edge plumbing were deleted; the gap
+detector stays as analyst context and nothing reads it as a rule. The
+structured-refusal record the morning PR built (a refusal written as data
+with its code, drained once per session, read by the census and the PM
+digest as its own bucket) was kept and reused. A stop is now always
+derivable, with no new mechanism: the ATR noise band that already widened
+an unbacked stop now also places a missing one, and the wider of that
+band and the signal bar's far edge is the fallback. The gate is on width,
+refused by code. **The cap had to be chosen honestly, and it is not
+Kullamägi's.** His one-day range would refuse this desk's own ratified
+2.5-ATR fallback; the fallback band as cap would refuse every "wider stop,
+smaller position" trade the ratified sizing rule requires (38 pinned tests
+failed when that was tried). The only instrument-read width the desk
+already had past both is the reach — ATR times the square root of the
+horizon times the same 1.5 the target derivation and the level scan use —
+the furthest price plausibly travels inside the trade. A stop past it
+cannot be hit inside the trade, so the size computed from it is fiction.
+The desk computes ATR, not ADR; the substitution is stated in the code.
+One narrow refusal survives on different grounds: a listing with fewer
+completed sessions than the analyst's own 200-session trend reference is
+refused as too young to measure, checked first so it is named as such and
+not filed as a dead-feed fault by PR #326's classification, which would
+not have caught it (its own floor is 11 bars).
+
+**Verified, not assumed: sizing already shrinks as the stop widens.** The
+risk-based path divides a fixed risk budget by the stop distance on every
+risk-sized target. What clamps it afterwards is the single-name notional
+ceiling (65% of equity, the owner's own setting — docs/WORK.md item 47):
+a tight stop stops growing the position there, and the risk actually
+taken is then below the budget, which the order note says. Pre-existing
+and recorded, not something this change introduced or fixed.
+
+**Measured after the change,** same method as the morning (real universe,
+real daily bars through the desk's own data path, the shipped code
+imported): at a 20-session horizon 95 of 101 pass, 4 are refused on width
+(MRVL, VLO, OKLO, NUE — a stop leaned on a floor 7.8 to 9.5 ATR away,
+past the 6.7-ATR reach), 2 on history (DRAM at 112 bars, CBRS at 83), 0
+data faults; at the 60-session cap 99 pass and only the 2 history
+refusals remain. Flagged and not fixed: SNDK's series shows a $27.89 low
+and a $1,633 close inside eighteen months — a corporate action or a data
+error, not a market fact — and the rehearsal engine still declines a
+trade with no level beneath it, a pre-existing divergence from the live
+desk now stated in its code.
+
+**What would catch it next time.** The morning rule went from owner
+sentence to shipped code in one pass with no literature check. The desk's
+standing rule that technical questions go to published doctrine, never to
+training recall or to the owner's instinct, existed and was not applied.
+`tests/test_stop_width_gate.py` pins the replacement: nothing refuses for
+absent structure, the gap branch cannot be re-imported, a missing stop is
+read from the instrument, the width refusal fires past the reach and is
+recorded, a wider stop under the cap halves the shares at the same
+dollars of risk, and a young listing is refused first under its own name.
+
+---
+
+### 2026-09-12 — the "is this price level relevant" window was a flat 40% nobody derived; it is now read from the stock's own volatility, and "no floor, no trade" is enforced on top of it
+
+**In plain words:** when the desk scans a stock's history for prices it has
+repeatedly bounced off, it only keeps the ones the stock could plausibly get
+back to — otherwise a shelf from a $10 SPAC era would count as "support" for
+a $42 stock. Until today "plausibly" meant "within 40% of the current
+price". That number had no derivation and meant a different thing on every
+stock: on a utility that moves 1% a day it is months of travel, on a name
+that moves 8% a day it is a week. It did not matter much while these levels
+only fed targets. It matters a great deal now, because the owner has ruled
+that a trade with no support level beneath it is refused outright — and if
+the window is too narrow for a volatile name, the desk refuses a good trade
+for the wrong reason: the floor exists, we just did not look far enough.
+
+**What replaced it, and where it came from.** The desk already had one
+answer to "how far can this stock travel": the target derivation's own
+reachability estimate, ATR x sqrt(sessions) x 1.5, which decides whether a
+structural level is a reachable target. The level scan now uses that exact
+function, evaluated at the 60-session horizon cap the desk already imposes
+on every stated holding period — so the window is "the furthest any trade
+this desk permits could go", about 11.6 ATRs. No new multiplier, no second
+notion of reachable distance: every level the target derivation could ever
+accept is inside the window by construction, and a level outside it could
+be neither a target for any permitted horizon nor a stop. The window now
+widens on a volatile name and narrows on a quiet one because ATR does.
+Nothing was fitted to past outcomes (`docs/OUTCOME.md`, no arbitrary
+numbers). Where the scan cannot measure an ATR (fewer than 14 usable bars)
+it reports nothing rather than fall back to a distance it cannot justify.
+
+**The rule enforced on top: no floor, no trade; no ceiling is fine.** What
+the code did before, established by reading it: nothing required a floor.
+Order construction refused only when the chart yielded no levels at all, or
+when neither the PM nor the analyst had typed a stop. A long with six
+resistances overhead and nothing beneath shipped — its unbacked stop was
+pushed out to the ATR noise band, a distance rather than a level, which is
+exactly the "pick a number and hope" the owner refuses to hold. The
+backtest engine already declined that trade, so the live desk and its own
+rehearsal disagreed. Now a trade with no computed level on the stop side of
+its entry (below a long, above a short) is refused by name on both setup
+types, at the PM-eligibility preview and at order construction, from the
+one code path both share. Nothing overhead is required: a stock at new
+highs has no ceiling by definition, its target is the measured move, and
+the corresponding refusal stays unreachable. No timer and no gap-vs-pop
+filter were added — the levels are re-read every session and a name
+qualifies the day the chart shows a floor.
+
+**Recorded as data, not as a log line.** The constructor's existing
+per-symbol drop reasons are recovered by a regular expression over its own
+log text, and several messages miss the pattern. This refusal is written to
+a structured record on the constructor and filed by the decision stage
+under its own event reason with the code beside it; the blocked-proposals
+census and the PM-facing digest read it as its own bucket. It is
+deliberately NOT a data fault: "could not compute levels" (short or dirty
+history) is PR #326's separate classification and is refused earlier under
+its own name.
+
+**Measured, then ruled on — the gap case.** The first build was checked
+against real numbers before it was described to the owner: on a $50 -> $80
+gap from an established base, the gap itself inflates the measured ATR, so
+on the gap day the pre-gap $50 shelf was still inside reach and the code
+took it as the floor — 37% below, a trade at a tiny size. That was reported
+rather than hidden, and the owner ruled the same day: *"A shelf $30 below,
+on the far side of a gap the market has repriced through, isn't support
+anyone is defending."* Price never traded through the gap, so nobody bought
+or defended anything in that range; the level below it is a number on a
+chart, and leaning a stop on it reintroduces exactly the "no defensible
+stop" case the whole rule exists to prevent. So a structural level on the
+far side of an unfilled gap does not count as a floor (mirrored for a short:
+an unfilled down-gap disqualifies a ceiling). The gap is read from the chart
+by the desk's one existing gap detector — the same unfilled gaps the
+analyst's context block already reports — rather than a second definition;
+a filled gap stops disqualifying anything automatically because the
+condition is re-read each session, with no timer or decay. The refusal has
+its own code so the census can tell "a floor exists only beyond the gap"
+from "no levels at all" and "levels only overhead". Real numbers: gap day,
+the $50.60 shelf is beyond the gap and the trade is refused; two and a half
+weeks later a base at $74-80 has bounced twice off $75 and the $74.40 floor
+above the gap qualifies. Inherited and flagged: the reused detector ignores
+gaps under 2%, a pre-existing threshold never derived for this rule.
+
+**Tests that would catch a regression:** `tests/test_no_floor_no_trade.py`
+(a volatile name reaches a shelf a quiet one cannot; the scan's window is
+byte-for-byte the target derivation's own reach; a long with levels only
+overhead is refused and recorded; a short with levels only beneath the
+same; a breakout label does not exempt a long; nothing overhead is never a
+refusal; the census attributes the refusal by code; the gap case with real
+numbers — refused on the gap day, qualifying on the base above it, and
+re-qualifying the day the gap fills). Three fixture families that deliberately kept a stop unbacked
+gained a distant floor so they still test widening rather than the new
+refusal, and the backtest's hand-computed series gained a realistic daily
+range so its $125 shelf is within the instrument's own reach.
+
 ### 2026-09-12 — a paused desk left part of a real position with no stop for six sessions, and every record called it "expected"
 
 **In plain words:** the desk owns 5.3089 shares of Oracle. The broker will
