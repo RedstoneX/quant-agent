@@ -169,7 +169,6 @@ does not make the class of defect impossible.
 
 ---
 
-||||||| 7a168ecd
 ### 2026-09-13 — a fifth of what the trade-picking seat reads said nothing at all (item 18d / PM gate item 7)
 
 **In plain words:** the seat that actually picks the trades reads a long
