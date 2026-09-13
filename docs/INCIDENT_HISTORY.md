@@ -128,6 +128,80 @@ no-change, and a shorter prompt is not evidence of a better one.
 ---
 
 
+
+### 2026-09-13 — can the desk still die quietly? Every way it can produce nothing, enumerated (item 11 closed)
+
+**In plain words:** item 11 recorded a day the desk produced no trade ideas at
+all because of technical failures, and nobody noticed, because a broken desk
+and a quiet market look identical from outside. The item's real content was
+never the failures of that one day — it was the premise that *a failure can be
+silent*. So the question that closes it is not "was 2026-08-25 fixed" but "can
+the desk still go quiet without telling anyone". Every way it can produce
+nothing was enumerated and each alarm was read in the code that actually sends
+it. One path was genuinely uncovered; it was closed the same day. The
+enumeration below is the durable artefact and is why the item can go.
+
+**One path was open, and the noise guard had just opened it.** Earlier the
+same day, the silence watchdog's runner gained a guard so it stays quiet while
+the desk is deliberately paused — correct in itself; an alarm that pages every
+thirty minutes about a state somebody chose gets muted. But it exited in
+silence, and nothing else covers a paused desk: the daily channel probe sends
+its test message and deletes it, so a healthy day is invisible to the owner by
+design; the stop-coverage watchdog only speaks when a held position is short of
+stops; the alert channel's `stale` state is a colour on Mission Control that
+nobody is pushed. A paused desk with a flat book was therefore indistinguishable
+from a working desk in a quiet market — item 11's own premise, reintroduced by
+the guard meant to reduce noise. The desk was in exactly that state when this
+was checked. Fixed: the silence *check* stays suppressed while paused, and a
+reminder goes out once per ET weekday instead, only after one of that day's
+scheduled windows has closed. Neither the cadence nor the gate is a new number
+— the once-every-24-hours-while-it-stays-broken rule is the existing item 41
+ruling already used by the stop-coverage watchdog, and the window gate is read
+off the session schedule.
+
+**The enumeration. Each alarm was traced to the line that sends it, not taken
+from a docstring.**
+
+| How the desk produces nothing | What tells somebody | Where |
+|---|---|---|
+| No session at all — timers off, box down, service dead | Desk-wide silence alert after 2 consecutive scheduled windows with no completed session, in any mode. Fires on the ABSENCE of events, so a broken alert path cannot defeat it | `src/silence_watchdog.py` |
+| Desk deliberately paused, then forgotten | **WAS THE HOLE.** Now a once-per-weekday paused-desk reminder, after the day's first window closes | `src/silence_watchdog.py` (`check_paused_desk`), `scripts/run_silence_heartbeat.sh` |
+| Box itself dead or unreachable | **NOT COVERED, owner-accepted.** Nothing running on the box can report the box. An external ping would cover it; the owner refused that dependency outright, so the gap is stated, not closed | stated in `src/alert_watchdog.py` |
+| Session runs, pipeline raises anywhere | Every path out of a session hits one `finally` that pushes a `FAILED:` message with the exception, and separately proves the alert channel and records the verdict | `main.py`, `src/notifier.py`, `src/alert_watchdog.py` |
+| PM never produced a usable decision (parse, schema, grounding fault) | Distinct `pm_*` / `analysis_error` status, rendered as its own banner saying *no decisions were made; this is NOT a deliberate hold* — written precisely so it cannot read as a quiet day | `src/pipeline.py`, `src/notifier.py` |
+| An analyst seat returned junk or nothing | Standalone data-quality alert, never a line buried in the run summary | `src/notifier.py` (`maybe_alert_data_quality`) |
+| A whole session never fired on a trading day | Evening dead-man's check names the missing session, with two sharper probes for a morning that started and died mid-run | `src/pipeline.py` (`_expected_sessions_missing_today`) |
+| The data was empty — dead bar feed wearing the costume of a quiet market | Owner alert when the share of symbols with no bars, or no structural level, crosses the threshold (min sample 10, so a tiny universe is correctly treated as noise) | `src/pipeline_stages.py` (`_persist_levels_coverage`) |
+| Cost circuit latched — paid analysis durably off | Session status `paid_analysis_suspended` with a SUSPENDED banner naming the trigger, plus a dedicated alert whose delivery outcome is written into the latch file and retried by any later process until it lands | `src/cost_circuit.py`, `src/notifier.py` |
+| Kill switch left on | Every session returns `kill_switch_halted`, the one status that speaks even on an otherwise-silent intra_check tick | `src/pipeline.py`, `src/notifier.py` |
+| Proposals made, every one refused | Distinguished **in the status word**: `no_trades` means the PM proposed nothing, `no_orders` means a plan existed and nothing was submitted, `buys_unfunded` means approved buys lost a cash race. Three different words for three different days | `src/pipeline.py`, `src/notifier.py` |
+| Alert channel itself broken while the box lives | Every session probes the channel end to end and records the verdict; `broken` / `stale` show on Mission Control without Telegram working | `src/alert_watchdog.py` |
+| An alarm's own systemd unit never installed, edited by hand, or not enabled | Unit-drift check compares installed units against the deployed checkout byte for byte, in four buckets including `not_enabled` | `scripts/check_unit_drift.py` |
+
+**Two honest limits recorded rather than papered over.** First, a persistent
+all-refused condition — a gate defect that refuses everything every day —
+reports `no_orders` truthfully each session but nothing escalates on the
+repetition; the day is distinguishable, the *pattern* is not alarmed. That is a
+judgement about how many identical quiet days should trigger a page, which is a
+threshold the owner has not set, so no number was invented for it. Second, this
+enumeration was done by reading the repository. Whether each unit is actually
+installed and running on the box could not be verified from here — no
+`quant-agent` user units are visible from this environment and its database file
+is empty, so this is not the live box. The unit-drift check exists precisely
+because a repo carrying a unit is not the same as a box running it.
+
+**What was ruled out.** That item 11 could be closed because the watchdogs
+exist. It could not: reading the pause guard is what found the hole, and the
+guard's own docstring described it as safe.
+
+**Corrected in passing.** The silence alert and its CLI still told the reader
+its threshold was "a placeholder pending owner confirmation". It was ratified
+2026-09-03; the sentence outlived the fact.
+
+---
+
+
+
 ### 2026-09-13 — the risk reviewer was told, on every exit review, that the analyst had skipped two mandatory checks. It had not; those checks do not exist on that path. It then wrote that falsehood into the permanent audit trail.
 
 **In plain words:** the same AI risk seat reviews two different things — the

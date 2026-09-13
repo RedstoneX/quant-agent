@@ -57,7 +57,24 @@ def test_a_paused_desk_is_not_reported_as_a_silent_one(tmp_path):
     )
     assert result.returncode == 0
     assert "paused on purpose" in result.stdout
-    assert "WOULD RUN" not in result.stdout   # never reached the watchdog
+    # The silence CHECK is still suppressed — it would page every 30 min.
+    assert "--threshold" not in result.stdout
+
+
+def test_a_paused_desk_still_gets_the_reminder_path(tmp_path):
+    """Regression for docs/WORK.md item 11. When the pause guard first
+    shipped it exited 0 in silence, which made "paused and forgotten" the
+    one desk-wide state with no alarm behind it at all. The guard must
+    suppress the 30-minute silence alarm and hand off to the
+    once-a-weekday reminder, not swallow the condition entirely."""
+    result = subprocess.run(
+        ["bash", str(SCRIPT)],
+        env=_env_with_fake_systemctl(tmp_path, running=False),
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0
+    assert "WOULD RUN" in result.stdout
+    assert "scripts/silence_heartbeat.py --desk-paused" in result.stdout
 
 
 def test_a_running_desk_still_gets_checked(tmp_path):
