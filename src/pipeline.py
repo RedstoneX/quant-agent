@@ -126,6 +126,31 @@ def _risk_number(value, default: float) -> float:
     return default if resolved is None else resolved
 
 
+def _threaded_risk_settings(risk_config, *names: str) -> dict[str, float]:
+    """Real numeric risk settings, keyed by field name, ready to splat into
+    `RiskConfig(...)`.
+
+    A name whose value is NOT a real number is OMITTED from the dict rather
+    than replaced with a literal, so pydantic applies the field's own
+    declared default and the number keeps exactly ONE home in this file's
+    source. The omission case is the MagicMock config many pipeline tests
+    build, where attribute access auto-creates a child mock pydantic refuses.
+
+    ZERO PASSES THROUGH, unlike `_risk_number`. `min_position_risk_pct` is
+    declared `ge=0` — zero is a legal "no floor" — so a `> 0` read would hand
+    the engine a floor nobody configured while the seat's standing sheet
+    rendered the configured 0. A seat briefed on a number nothing enforces is
+    the defect this whole change removes.
+    """
+    threaded: dict[str, float] = {}
+    for name in names:
+        value = getattr(risk_config, name, None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        threaded[name] = float(value)
+    return threaded
+
+
 def _daily_loss_limit_for_alert(engine, risk_config) -> float | None:
     """The daily circuit-breaker limit actually in force, for operator alerts.
 
@@ -505,6 +530,264 @@ def _classify_coverage_gap(*, held: float, covered: float) -> tuple[str, float]:
     return ("none" if covered <= 1e-6 else "partial"), 0.0
 
 
+
+
+# ---------------------------------------------------------------------------
+# The two objects that ENFORCE the desk's numeric limits.
+#
+# Lifted out of `TradingPipeline.__init__` so a test can build them from a
+# candidate settings object and read back what the engine and the sizer would
+# actually enforce. That matters because the parity these limits need is
+# behavioural: `tests/test_risk_prompt_limits_live.py` asserts that a value a
+# seat's standing sheet SHOWS is the value these objects CARRY. Parsing the
+# source text of a keyword list could only ever prove a kwarg name was typed,
+# not that the setting reached the object — `max_gross_bearish_pct=20.0`
+# hard-coded would have satisfied it.
+#
+# NOTHING ELSE CHANGED IN THE MOVE. Both bodies are the code that ran inline.
+# ---------------------------------------------------------------------------
+
+
+def build_risk_config(config) -> RiskConfig:
+    """The `RiskConfig` the deterministic risk engine is built from.
+
+    Hand-enumerated: a declared setting left out falls back to the pydantic
+    CLASS DEFAULT and settings.yaml is ignored for that field. See the
+    comments inline for which are threaded and why the rest are not.
+    """
+    return RiskConfig(
+            max_position_pct=config.risk.max_position_pct,
+            max_total_position_pct=config.risk.max_total_position_pct,
+            max_daily_loss_pct=config.risk.max_daily_loss_pct,
+            # docs/WORK.md item 32: `effective_max_daily_loss_pct` derives
+            # from these two when `max_daily_loss_pct` above is left unset,
+            # so both must be threaded through here too or a future config
+            # with an unset max_daily_loss_pct would silently derive against
+            # this dataclass's bare defaults instead of the real settings.
+            # `_risk_number` guards against the MagicMock-coerces-to-1.0
+            # posture the comment above `max_sector_hard_pct` describes.
+            max_position_risk_pct=_risk_number(
+                getattr(config.risk, "max_position_risk_pct", None), 5.0,
+            ),
+            daily_loss_risk_multiple=_risk_number(
+                getattr(config.risk, "daily_loss_risk_multiple", None), 3.0,
+            ),
+            # docs/WORK.md item 32 (owner call 2026-09-11): how many
+            # multiples of the HELD BOOK's own normal daily move trip the
+            # daily breaker. Threaded for the same reason as the two above —
+            # an unthreaded value would silently derive against this model's
+            # bare default rather than real settings.
+            drawdown_vol_sensitivity=_risk_number(
+                getattr(config.risk, "drawdown_vol_sensitivity", None),
+                DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
+            ),
+            max_sector_pct=config.risk.max_sector_pct,
+            # Spec §10.3 — the absolute ceiling behind the sector dial.
+            # Read through the same MagicMock guard `_risk_setting` applies
+            # below (many tests build the pipeline against a mock config, and
+            # a child mock coerces to 1.0, which would trip the "ceiling must
+            # sit above the target" validator with a number nobody chose).
+            # `None` means "derive 1.5x the target", which RiskConfig does.
+            max_sector_hard_pct=_optional_risk_number(
+                getattr(getattr(config, "risk", None), "max_sector_hard_pct", None),
+            ),
+            require_stop_loss=config.risk.require_stop_loss,
+            # Codex r11 P2: previously omitted, defaulting to False even
+            # when settings.yaml said True. Prompts + force_delever read
+            # config.risk.allow_margin directly, so the agent saw "margin
+            # OK" while the deterministic engine still applied cash_only.
+            # Result: a user opting in to margin had their BUYs blocked
+            # by a hard rule the agent didn't know was active.
+            allow_margin=config.risk.allow_margin,
+            # SAME OMISSION CLASS AS `allow_margin` DIRECTLY ABOVE. This
+            # `RiskConfig(...)` is hand-enumerated, so any declared setting
+            # left out of it silently falls back to the pydantic CLASS
+            # DEFAULT and settings.yaml is ignored for that field. 22 of the
+            # declared risk settings were in that state before this change;
+            # today every one of those defaults happens to equal the settings
+            # value, so nothing is live-wrong — it is latent, and
+            # `allow_margin` directly above is the proof that it does not
+            # stay latent forever.
+            #
+            # The seven threaded here are the ones the Risk Manager's and
+            # Portfolio Manager's standing sheets now RENDER from settings.yaml (see
+            # src/agents/prompt_limits.py). Rendering a value into the
+            # reviewer's briefing while the engine enforced a different
+            # object's default would be the same two-homes defect this
+            # change removes, pointed the other way. Threading them makes
+            # "the seat is briefed against what the engine enforces" true
+            # rather than merely intended, and `tests/
+            # test_risk_prompt_limits_live.py` now pins it.
+            #
+            # The other 15 are NOT touched here: they predate this work, they
+            # are not live-wrong, and sweeping them would change enforcement
+            # nobody has reviewed. Recorded in docs/WORK.md instead.
+            # Splatted through `_threaded_risk_settings`, NOT read through
+            # `_risk_number`: a `_risk_number(x, <literal>)` per field would
+            # type seven more copies of seven limits into this file, which is
+            # the two-homes defect this change removes, pointed inward. The
+            # helper omits a non-numeric (MagicMock) read instead, leaving
+            # pydantic's own field default as the single fallback home — and
+            # it lets a legal 0 through, which `_risk_number` does not.
+            **_threaded_risk_settings(
+                getattr(config, "risk", None),
+                "max_single_short_pct",
+                "max_gross_bearish_pct",
+                "min_position_risk_pct",
+                "max_portfolio_risk_pct",
+                # Rendered into the Portfolio Manager's sheet by the same
+                # mechanism, so they carry the same parity requirement.
+                "max_cluster_risk_share_pct",
+                "max_gross_exposure_x",
+                "short_gap_risk_multiple",
+            ),
+    )
+
+
+def build_constructor_config(config, risk_engine_config):
+    """The `ConstructorConfig` the deterministic sizer is built from.
+
+    Takes the risk engine's ALREADY-RESOLVED config rather than re-deriving
+    from settings, so the ceilings the sizer shrinks against are provably the
+    identical objects the engine enforces.
+
+    This is the enforcement home for four settings the Portfolio Manager's
+    standing sheet renders — `min_position_risk_pct`, `max_portfolio_risk_pct`,
+    `max_cluster_risk_share_pct` and `short_gap_risk_multiple` — none of which
+    `src/risk/rules.py` reads at all. The sizing seat's parity is against THIS
+    object, not only against `RiskConfig`.
+    """
+    from src.portfolio_constructor import ConstructorConfig
+    _risk_cfg = getattr(config, "risk", None)
+
+    def _risk_setting(name: str, default: float, allow_zero: bool = False) -> float:
+        """Read a risk ceiling, or the ratified default.
+
+        Coerced through a real float check rather than trusted from
+        `getattr`: many tests construct the pipeline against a MagicMock
+        config, where attribute access auto-creates a child mock that is
+        neither the default nor a number — and a MagicMock reaching the
+        sizing arithmetic fails with an opaque TypeError deep inside the
+        constructor. Same defensive posture as `_coerce_token_count`.
+
+        `allow_zero` for the one setting where 0 is a CONFIGURED value rather
+        than an absent one: `min_position_risk_pct` is declared `ge=0`, so 0
+        means "no floor". Swallowing it into the default would size under a
+        floor nobody configured while the sizing seat's sheet rendered the 0.
+        """
+        value = getattr(_risk_cfg, name, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return default
+        if allow_zero and value >= 0:
+            return float(value)
+        return float(value) if value > 0 else default
+
+    def _risk_list_setting(name: str, default: list[float]) -> tuple[float, ...]:
+        """Read a risk-config list setting, or the ratified default.
+
+        Same Mock-safety posture as `_risk_setting`: a MagicMock
+        config fixture auto-creates a child mock for any attribute
+        access, which is neither a list nor numeric — guard for that
+        explicitly rather than let it reach the constructor as a
+        non-iterable and blow up deep in the sizing arithmetic.
+        """
+        value = getattr(_risk_cfg, name, default)
+        if not isinstance(value, (list, tuple)) or not value:
+            return tuple(default)
+        try:
+            return tuple(float(v) for v in value)
+        except (TypeError, ValueError):
+            return tuple(default)
+
+    return ConstructorConfig(
+            risk_budget_pct=_risk_setting("max_position_risk_pct", 5.0),
+            min_risk_pct=_risk_setting("min_position_risk_pct", 0.5, allow_zero=True),
+            max_portfolio_risk_pct=_risk_setting("max_portfolio_risk_pct", 25.0),
+            max_cluster_risk_share_pct=_risk_setting("max_cluster_risk_share_pct", 40.0),
+            # Same setting the risk engine enforces (line ~326), so the
+            # constructor sizes under the ceiling rather than proposing orders
+            # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
+            max_position_pct=_risk_setting("max_position_pct", 65.0),
+            # Spec §10.3 "concentration scales size". Read back off the risk
+            # ENGINE's own resolved config rather than re-derived from
+            # settings, so the number the constructor shrinks against is
+            # provably the identical number the engine will enforce — the
+            # drift `max_position_pct`'s "keep in sync" comment can only ask
+            # for, this one gets structurally.
+            max_sector_pct=risk_engine_config.max_sector_pct,
+            max_sector_hard_pct=risk_engine_config.sector_hard_ceiling_pct,
+            # §10.3's floor — reuses the existing $500 threshold rather than
+            # inventing a second notion of "too small to bother". It lives
+            # under `cash_sweep` because that is where it was first needed;
+            # the number, not the section, is what is being reused.
+            min_order_usd=_risk_number(
+                getattr(getattr(config, "cash_sweep", None), "min_order_usd", None),
+                500.0,
+            ),
+            # Stage 3 (shorts) — same "size under the hard block" pattern as
+            # max_position_pct just above, mirrored for the short-specific
+            # ceiling and its sizing haircut.
+            max_single_short_pct=_risk_setting("max_single_short_pct", 10.0),
+            short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
+            # Spec §11.2 — same "size under the hard block" pattern again.
+            # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
+            # breaches the ceiling would be DROPPED rather than taken
+            # smaller without this. The per-session ladder step is passed to
+            # `construct_orders`; this is the standing cap it starts from.
+            max_gross_exposure_x=_risk_setting("max_gross_exposure_x", 2.0),
+            # The cash park is not exposure. Read from the SAME config gate
+            # `_sweeper()` uses (enabled + symbol) so the sizing gate and the
+            # execution gate can never disagree about what counts.
+            cash_park_symbol=(
+                getattr(getattr(config, "cash_sweep", None), "symbol", None)
+                if bool(getattr(getattr(config, "cash_sweep", None), "enabled", False))
+                else None
+            ),
+            min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 1.5),
+            min_reward_risk_after_widening=_risk_setting(
+                "min_reward_risk_after_widening", 1.5,
+            ),
+            # Spec §12.1 — a stop sitting at a level the system COMPUTED is
+            # honoured whatever the band says, down to a deterministic 1x ATR
+            # floor. Same "wire from the ratified setting, not the
+            # constructor's own default" pattern as every ceiling above.
+            # There is no `level_match_atr_tolerance` to wire any more: item
+            # 46 (2026-09-13) deleted it, and the constructor reads the
+            # match tolerance off the level zone's own definition.
+            absolute_min_stop_atr_multiple=_risk_setting(
+                "absolute_min_stop_atr_multiple", 1.0,
+            ),
+            # Phase 12.1, 2026-09-03 — how many prior touches a computed
+            # level needs before the tight-stop exemption above trusts it.
+            # docs/RESEARCH_FINDINGS.md §7.
+            min_level_touches_for_stop_honor=int(
+                _risk_setting("min_level_touches_for_stop_honor", 5),
+            ),
+            # Target derivation (2026-09-01) — the numerator of the ratio
+            # above, computed from bars instead of guessed by the analyst.
+            # Wired from the ratified settings, same pattern as every
+            # ceiling above.
+            min_target_atr_multiple=_risk_setting("min_target_atr_multiple", 1.0),
+            breakout_projection_atr_multiple=_risk_setting(
+                "breakout_projection_atr_multiple", 1.0,
+            ),
+            max_target_reach_atr_multiple=_risk_setting(
+                "max_target_reach_atr_multiple", 1.5,
+            ),
+            max_target_horizon_sessions=int(
+                _risk_setting("max_target_horizon_sessions", 60),
+            ),
+            target_divergence_warn_pct=_risk_setting(
+                "target_divergence_warn_pct", 25.0,
+            ),
+            # Spec §9.4 "agreement earns size" — same "wire from the
+            # ratified setting, not the constructor's own default" pattern
+            # as every ceiling above.
+            agreement_ceiling_pct=_risk_list_setting(
+                "agreement_ceiling_pct", [3.0, 4.0, 5.0, 5.0, 5.0],
+            ),
+    )
+
 class TradingPipeline:
     #: Set in __init__ from `risk.kill_switch_path`. Declared here so an
     #: instance built without __init__ (tests do this) reads None rather than
@@ -597,6 +880,16 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.portfolio_manager_provider,
             provider_order=config.llm.get_provider_order("portfolio_manager"),
+            # Same reason as the Risk Manager below, and it bites harder here:
+            # without this the sizing seat's sheet falls back to
+            # `load_risk_config_from_settings(config/settings.yaml)` — a
+            # HARD-CODED path — while `main.py` builds this pipeline from
+            # whatever `--config` names. Run the desk against any other
+            # settings file and the seat that picks the sizes would be shown
+            # the default file's limits while the engine enforced the chosen
+            # one. That is the two-homes defect this change exists to remove,
+            # on the very seat it is about.
+            risk_config=config.risk,
         )
         self.risk_manager = RiskManagerAgent(
             api_key=_key_for(config.llm.risk_manager_model, config.llm.risk_manager_provider),
@@ -614,77 +907,8 @@ class TradingPipeline:
             # settings file other than the one this process is running on.
             risk_config=config.risk,
         )
-        self.risk_engine = RiskRuleEngine(RiskConfig(
-            max_position_pct=config.risk.max_position_pct,
-            max_total_position_pct=config.risk.max_total_position_pct,
-            max_daily_loss_pct=config.risk.max_daily_loss_pct,
-            # docs/WORK.md item 32: `effective_max_daily_loss_pct` derives
-            # from these two when `max_daily_loss_pct` above is left unset,
-            # so both must be threaded through here too or a future config
-            # with an unset max_daily_loss_pct would silently derive against
-            # this dataclass's bare defaults instead of the real settings.
-            # `_risk_number` guards against the MagicMock-coerces-to-1.0
-            # posture the comment above `max_sector_hard_pct` describes.
-            max_position_risk_pct=_risk_number(
-                getattr(config.risk, "max_position_risk_pct", None), 5.0,
-            ),
-            daily_loss_risk_multiple=_risk_number(
-                getattr(config.risk, "daily_loss_risk_multiple", None), 3.0,
-            ),
-            # docs/WORK.md item 32 (owner call 2026-09-11): how many
-            # multiples of the HELD BOOK's own normal daily move trip the
-            # daily breaker. Threaded for the same reason as the two above —
-            # an unthreaded value would silently derive against this model's
-            # bare default rather than real settings.
-            drawdown_vol_sensitivity=_risk_number(
-                getattr(config.risk, "drawdown_vol_sensitivity", None),
-                DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
-            ),
-            max_sector_pct=config.risk.max_sector_pct,
-            # Spec §10.3 — the absolute ceiling behind the sector dial.
-            # Read through the same MagicMock guard `_risk_setting` applies
-            # below (many tests build the pipeline against a mock config, and
-            # a child mock coerces to 1.0, which would trip the "ceiling must
-            # sit above the target" validator with a number nobody chose).
-            # `None` means "derive 1.5x the target", which RiskConfig does.
-            max_sector_hard_pct=_optional_risk_number(
-                getattr(getattr(config, "risk", None), "max_sector_hard_pct", None),
-            ),
-            require_stop_loss=config.risk.require_stop_loss,
-            # Codex r11 P2: previously omitted, defaulting to False even
-            # when settings.yaml said True. Prompts + force_delever read
-            # config.risk.allow_margin directly, so the agent saw "margin
-            # OK" while the deterministic engine still applied cash_only.
-            # Result: a user opting in to margin had their BUYs blocked
-            # by a hard rule the agent didn't know was active.
-            allow_margin=config.risk.allow_margin,
-            # SAME OMISSION CLASS AS `allow_margin` DIRECTLY ABOVE. This
-            # `RiskConfig(...)` is hand-enumerated, so any declared setting
-            # left out of it silently falls back to the pydantic CLASS
-            # DEFAULT and settings.yaml is ignored for that field. 22 of the
-            # declared risk settings were in that state before this change;
-            # today every one of those defaults happens to equal the settings
-            # value, so nothing is live-wrong — it is latent, and
-            # `allow_margin` directly above is the proof that it does not
-            # stay latent forever.
-            #
-            # The four threaded here are the ones the Risk Manager's standing
-            # sheet now RENDERS from settings.yaml (see
-            # src/agents/prompt_limits.py). Rendering a value into the
-            # reviewer's briefing while the engine enforced a different
-            # object's default would be the same two-homes defect this
-            # change removes, pointed the other way. Threading them makes
-            # "the seat is briefed against what the engine enforces" true
-            # rather than merely intended, and `tests/
-            # test_risk_prompt_limits_live.py` now pins it.
-            #
-            # The other 18 are NOT touched here: they predate this work, they
-            # are not live-wrong, and sweeping them would change enforcement
-            # nobody has reviewed. Recorded in docs/WORK.md instead.
-            max_single_short_pct=config.risk.max_single_short_pct,
-            max_gross_bearish_pct=config.risk.max_gross_bearish_pct,
-            min_position_risk_pct=config.risk.min_position_risk_pct,
-            max_portfolio_risk_pct=config.risk.max_portfolio_risk_pct,
+        self.risk_engine = RiskRuleEngine(
+            build_risk_config(config),
         # docs/WORK.md item 32 (owner call 2026-09-11). Lets the daily
         # circuit breaker measure a loss against the normal daily move of
         # the book actually held — from its holdings' real market price
@@ -694,7 +918,8 @@ class TradingPipeline:
         # fires from six separate places in this file and the book changes
         # intraday. Returns None-safe values; a failing read falls back to
         # the fixed percentage.
-        ), portfolio_vol_provider=self.held_book_daily_vol_pct)
+            portfolio_vol_provider=self.held_book_daily_vol_pct,
+        )
         self.position_reviewer = PositionReviewerAgent(
             api_key=_key_for(config.llm.position_reviewer_model, config.llm.position_reviewer_provider),
             model=config.llm.position_reviewer_model,
@@ -936,129 +1161,9 @@ class TradingPipeline:
         # constructor shipped with was a default nobody chose, and the owner
         # ratified 5% / 25% on 2026-08-27. Reading it here means the deployed
         # ceiling is the one `verify_commissioning.py` can see.
-        from src.portfolio_constructor import ConstructorConfig
-        _risk_cfg = getattr(config, "risk", None)
-
-        def _risk_setting(name: str, default: float) -> float:
-            """Read a risk ceiling, or the ratified default.
-
-            Coerced through a real float check rather than trusted from
-            `getattr`: many tests construct the pipeline against a MagicMock
-            config, where attribute access auto-creates a child mock that is
-            neither the default nor a number — and a MagicMock reaching the
-            sizing arithmetic fails with an opaque TypeError deep inside the
-            constructor. Same defensive posture as `_coerce_token_count`.
-            """
-            value = getattr(_risk_cfg, name, default)
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                return default
-            return float(value) if value > 0 else default
-
-        def _risk_list_setting(name: str, default: list[float]) -> tuple[float, ...]:
-            """Read a risk-config list setting, or the ratified default.
-
-            Same Mock-safety posture as `_risk_setting`: a MagicMock
-            config fixture auto-creates a child mock for any attribute
-            access, which is neither a list nor numeric — guard for that
-            explicitly rather than let it reach the constructor as a
-            non-iterable and blow up deep in the sizing arithmetic.
-            """
-            value = getattr(_risk_cfg, name, default)
-            if not isinstance(value, (list, tuple)) or not value:
-                return tuple(default)
-            try:
-                return tuple(float(v) for v in value)
-            except (TypeError, ValueError):
-                return tuple(default)
-
-        self.portfolio_constructor = PortfolioConstructor(ConstructorConfig(
-            risk_budget_pct=_risk_setting("max_position_risk_pct", 5.0),
-            min_risk_pct=_risk_setting("min_position_risk_pct", 0.5),
-            max_portfolio_risk_pct=_risk_setting("max_portfolio_risk_pct", 25.0),
-            max_cluster_risk_share_pct=_risk_setting("max_cluster_risk_share_pct", 40.0),
-            # Same setting the risk engine enforces (line ~326), so the
-            # constructor sizes under the ceiling rather than proposing orders
-            # `max_position_pct` — a HARD_BLOCK rule — will drop outright.
-            max_position_pct=_risk_setting("max_position_pct", 65.0),
-            # Spec §10.3 "concentration scales size". Read back off the risk
-            # ENGINE's own resolved config rather than re-derived from
-            # settings, so the number the constructor shrinks against is
-            # provably the identical number the engine will enforce — the
-            # drift `max_position_pct`'s "keep in sync" comment can only ask
-            # for, this one gets structurally.
-            max_sector_pct=self.risk_engine.config.max_sector_pct,
-            max_sector_hard_pct=self.risk_engine.config.sector_hard_ceiling_pct,
-            # §10.3's floor — reuses the existing $500 threshold rather than
-            # inventing a second notion of "too small to bother". It lives
-            # under `cash_sweep` because that is where it was first needed;
-            # the number, not the section, is what is being reused.
-            min_order_usd=_risk_number(
-                getattr(getattr(config, "cash_sweep", None), "min_order_usd", None),
-                500.0,
-            ),
-            # Stage 3 (shorts) — same "size under the hard block" pattern as
-            # max_position_pct just above, mirrored for the short-specific
-            # ceiling and its sizing haircut.
-            max_single_short_pct=_risk_setting("max_single_short_pct", 10.0),
-            short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
-            # Spec §11.2 — same "size under the hard block" pattern again.
-            # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
-            # breaches the ceiling would be DROPPED rather than taken
-            # smaller without this. The per-session ladder step is passed to
-            # `construct_orders`; this is the standing cap it starts from.
-            max_gross_exposure_x=_risk_setting("max_gross_exposure_x", 2.0),
-            # The cash park is not exposure. Read from the SAME config gate
-            # `_sweeper()` uses (enabled + symbol) so the sizing gate and the
-            # execution gate can never disagree about what counts.
-            cash_park_symbol=(
-                getattr(getattr(config, "cash_sweep", None), "symbol", None)
-                if bool(getattr(getattr(config, "cash_sweep", None), "enabled", False))
-                else None
-            ),
-            min_stop_atr_multiple=_risk_setting("min_stop_atr_multiple", 1.5),
-            min_reward_risk_after_widening=_risk_setting(
-                "min_reward_risk_after_widening", 1.5,
-            ),
-            # Spec §12.1 — a stop sitting at a level the system COMPUTED is
-            # honoured whatever the band says, down to a deterministic 1x ATR
-            # floor. Same "wire from the ratified setting, not the
-            # constructor's own default" pattern as every ceiling above.
-            # There is no `level_match_atr_tolerance` to wire any more: item
-            # 46 (2026-09-13) deleted it, and the constructor reads the
-            # match tolerance off the level zone's own definition.
-            absolute_min_stop_atr_multiple=_risk_setting(
-                "absolute_min_stop_atr_multiple", 1.0,
-            ),
-            # Phase 12.1, 2026-09-03 — how many prior touches a computed
-            # level needs before the tight-stop exemption above trusts it.
-            # docs/RESEARCH_FINDINGS.md §7.
-            min_level_touches_for_stop_honor=int(
-                _risk_setting("min_level_touches_for_stop_honor", 5),
-            ),
-            # Target derivation (2026-09-01) — the numerator of the ratio
-            # above, computed from bars instead of guessed by the analyst.
-            # Wired from the ratified settings, same pattern as every
-            # ceiling above.
-            min_target_atr_multiple=_risk_setting("min_target_atr_multiple", 1.0),
-            breakout_projection_atr_multiple=_risk_setting(
-                "breakout_projection_atr_multiple", 1.0,
-            ),
-            max_target_reach_atr_multiple=_risk_setting(
-                "max_target_reach_atr_multiple", 1.5,
-            ),
-            max_target_horizon_sessions=int(
-                _risk_setting("max_target_horizon_sessions", 60),
-            ),
-            target_divergence_warn_pct=_risk_setting(
-                "target_divergence_warn_pct", 25.0,
-            ),
-            # Spec §9.4 "agreement earns size" — same "wire from the
-            # ratified setting, not the constructor's own default" pattern
-            # as every ceiling above.
-            agreement_ceiling_pct=_risk_list_setting(
-                "agreement_ceiling_pct", [3.0, 4.0, 5.0, 5.0, 5.0],
-            ),
-        ))
+        self.portfolio_constructor = PortfolioConstructor(
+            build_constructor_config(config, self.risk_engine.config),
+        )
         # Phase 4 #1: morning research stage — parallel macro/news/tech/earnings
         # fan-out extracted from the inline nested-function block.
         self.morning_research_stage = MorningResearchStage(

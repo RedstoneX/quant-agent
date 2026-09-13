@@ -5,9 +5,7 @@ from pydantic import ValidationError
 
 from src.agents import risk_review_mode
 from src.agents.base import BaseAgent
-from src.agents.prompt_limits import (
-    load_risk_config_from_settings, render_prompt_limits,
-)
+from src.agents.prompt_limits import LiveLimitPrompt
 from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, RiskModification,
     RiskVerdict, SymbolRejection, TechAnalysisResult,
@@ -31,62 +29,20 @@ def _fmt_or_na(value, suffix: str = "") -> str:
     return "N/A" if value is None else f"{value}{suffix}"
 
 
-class RiskManagerAgent(BaseAgent):
+class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
     # The reviewer is SHOWN the desk's limits, not TOLD them. Every numeric
     # ceiling in `config/prompts/risk_manager.md` is a `{{risk.*}}`
-    # placeholder rendered from this config at run time — see
-    # `src/agents/prompt_limits.py` for why, and for the two documented
-    # drifts that motivated it. Optional so every existing call site and
-    # test fixture keeps working; absent, it is loaded from the SAME
-    # `config/settings.yaml` the engine is built from, not from a default
-    # typed into this file.
-    def __init__(self, *args, risk_config=None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._risk_config = risk_config
-        # COMMISSIONING RENDER. `system_prompt` is a lazy property read inside
-        # `BaseAgent.run`, i.e. at the risk stage — after every analyst seat,
-        # after PM and after the constructor. A placeholder naming no setting
-        # would therefore have thrown mid-session, having already spent the
-        # whole day's analysis budget, rather than at startup. Rendering once
-        # here moves that failure to construction time, which is what lets
-        # this be described as a startup check. Cost is one file read.
-        self.assert_prompt_renders()
-
-    def assert_prompt_renders(self) -> None:
-        """Render the standing sheet once and discard it, to surface a bad
-        placeholder now rather than in the middle of a trading session.
-
-        Separate from `__init__` so a commissioning script or a test can call
-        it against a candidate config without building an agent.
-        """
-        _ = self.system_prompt
-
-    @property
-    def risk_config(self):
-        """The live risk settings this seat's briefing renders from.
-
-        Lazily loaded (and cached) from `config/settings.yaml` when the
-        caller passed none. A missing or malformed file raises rather than
-        substituting a default — a risk sheet quoting a number nobody
-        configured is the failure this whole change removes.
-        """
-        # `getattr`, not attribute access: several tests build this agent
-        # with `RiskManagerAgent.__new__` to exercise `build_user_message`
-        # without a live LLM client, so `__init__` never runs. Absent the
-        # attribute is the same case as absent the config — load it.
-        if getattr(self, "_risk_config", None) is None:
-            self._risk_config = load_risk_config_from_settings(SETTINGS_PATH)
-        return self._risk_config
+    # placeholder rendered from the live config at construction time — see
+    # `src/agents/prompt_limits.py` for the mechanism, and for the
+    # 2026-09-11 defect (a limit that was wrong at birth, replacing a
+    # relational phrasing that could not go wrong at all) that motivated it.
+    _prompt_path = PROMPT_PATH
+    _settings_path = SETTINGS_PATH
+    _fallback_prompt = "You are a risk manager. Respond with JSON."
 
     @property
     def name(self) -> str:
         return "risk_manager"
-
-    @property
-    def system_prompt(self) -> str:
-        if PROMPT_PATH.exists():
-            return render_prompt_limits(PROMPT_PATH.read_text(), self.risk_config)
-        return "You are a risk manager. Respond with JSON."
 
     def build_user_message(self, **kwargs) -> str:
         portfolio_decision: PortfolioDecision = kwargs["portfolio_decision"]
