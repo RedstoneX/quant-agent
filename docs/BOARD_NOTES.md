@@ -273,8 +273,3 @@ this line, one heading per item.
 **The decision —** Should selling get a purpose-built reviewer of its own — its own instructions, its own checklist — instead of the buying reviewer wearing a list of exceptions for it? This matters more than it sounds: a wrong "keep buying" that gets refused costs nothing, but a wrong "don't sell" that gets approved leaves a broken position sitting on the book overnight with only the ordinary stop-loss behind it, not a second layer of judgement.
 **Recommendation —** Not made. Today's fix was deliberately the smaller, safer move — make the shared reviewer honest about what it can and can't see on a sell, rather than building it a replacement, while the bigger question of whether selling deserves its own reviewer is put to you rather than assumed either way.
 
-## item 61
-
-**Plain language —** After a test run of the trading system, a summary report prints a line saying how many trades "the portfolio manager proposed." That number turns out not to be tied to whether the portfolio manager actually ran that session — it's counted a different way, and on one real test it printed "1" even though the portfolio manager never ran at all that session. It doesn't affect any real trading; it's a label on an after-the-fact report a person reads to judge whether a rehearsal run behaved the way it should have.
-**Example —** In the test used to reproduce a known cost-limit problem, the report said "1" order was proposed by the portfolio manager, when in fact that seat was never called during the run.
-

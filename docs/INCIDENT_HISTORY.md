@@ -22,6 +22,34 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — the rehearsal report attributed trades to the portfolio manager even when it never ran (item 61)
+
+**In plain words:** after a test rehearsal, a summary report would print how
+many trades "the portfolio manager proposed" — but the count included trades
+from other sources that shared the run_id. On one run where the Portfolio
+Manager had failed (returned no valid decision), the report printed "1" when
+the only trade in the database came from emergency liquidation, not the PM.
+Costs nothing in real trading (a rehearsal is offline, no capital at risk),
+but it misleads whoever reads the report to judge whether a rehearsal ran as
+intended.
+
+**The mechanism.** `_collect_counts()` counted trades by querying the `trades`
+table (`SELECT COUNT(*) ... WHERE action IN ('BUY', 'SELL')`), which is wrong
+for two reasons: (1) BUY/SELL trades come from other session stages that share
+the run_id — emergency liquidation at src/pipeline.py:8008 and position reviewer
+exits at :9281 — and get falsely attributed to the PM; (2) when the PM stage
+enters but fails (a common case), its agent_logs entry is still written with the
+failure string as output_summary, so no proxy check on agent_logs can
+distinguish failure from success.
+
+**The fix:** count from `specialist_evidence` rows where `agent_name='portfolio_manager'`
+and `kind='proposed_order'`. These rows are written only AFTER the PM decision
+passes validation (src/pipeline_stages.py:4292-4300), so they correctly capture
+only valid PM proposals and exclude both the failure case and trades from other
+sources. This is shorter, needs no proxy, and is the ground truth.
+
+---
+
 ### 2026-09-13 — a fifth of what the trade-picking seat reads said nothing at all (item 18d / PM gate item 7)
 
 **In plain words:** the seat that actually picks the trades reads a long
