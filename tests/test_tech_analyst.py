@@ -888,6 +888,6 @@ def test_asserted_levels_are_wiped_even_when_the_chart_yields_none(
     # The model named its own stop ($494) as a computed level. It is gone.
     assert results["SPY"].stop_loss == 494.0
     assert results["SPY"].computed_levels == []
-    # 2026-09-12: and the reason it is empty travels with it — one bar is
-    # insufficient history, a DATA fault downstream, not a measured chart.
-    assert results["SPY"].levels_coverage == "insufficient_history"
+    # 2026-09-12: and the reason it is empty travels with it — one bar
+    # cannot run the scan, a DATA fault downstream, not a measured chart.
+    assert results["SPY"].levels_coverage == "unusable_bars"

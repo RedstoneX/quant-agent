@@ -17,7 +17,6 @@ default — a manufactured target with better provenance is still manufactured.
 from datetime import date, timedelta
 
 from src.data.levels import (
-    COVERAGE_INSUFFICIENT_HISTORY,
     COVERAGE_MEASURED,
     COVERAGE_NO_BARS,
     COVERAGE_UNKNOWN,
@@ -27,11 +26,14 @@ from src.data.levels import (
     FAULT_NO_STRUCTURE,
     FAULT_NO_VOLATILITY,
     MAX_HORIZON_SESSIONS,
+    MIN_SCAN_BARS,
+    PIVOT_WINDOW,
     REFUSAL_NO_STRUCTURE,
     derive_structural_target,
     find_structural_levels,
     structure_coverage,
 )
+from src.data.technical import ATR_PERIOD
 from src.models import (
     OHLCV,
     TargetPosition,
@@ -182,7 +184,7 @@ class TestBothDirections:
 # ---------------------------------------------------------------------------
 
 class TestRefusals:
-    def test_insufficient_history_declines_rather_than_fabricating(self):
+    def test_too_few_bars_declines_rather_than_fabricating(self):
         """Four bars cannot produce structure. `find_structural_levels` says
         so honestly (empty lists), and the derivation must decline instead of
         inventing a default — a made-up target is the defect being removed.
@@ -190,11 +192,13 @@ class TestRefusals:
         **2026-09-12:** four bars is not a chart the desk judged; it is a
         history the desk failed to obtain. So this declines as a DATA FAULT
         (`fault` set, `refusal` empty), still with no price and still
-        carrying the model's guess as evidence only."""
+        carrying the model's guess as evidence only. (A listing merely too
+        YOUNG is a different thing — a named refusal the constructor makes
+        before this runs; see `_require_sufficient_history`.)"""
         bars = _bars([100.0] * 4)
         supports, resistances = find_structural_levels(bars)
         assert (supports, resistances) == ([], [])
-        assert structure_coverage(bars) == COVERAGE_INSUFFICIENT_HISTORY
+        assert structure_coverage(bars) == COVERAGE_UNUSABLE_BARS
 
         result = derive_structural_target(
             entry_price=100.0, direction="long",
@@ -208,7 +212,7 @@ class TestRefusals:
         assert result.fault == FAULT_NO_STRUCTURE
         assert result.refusal == ""
         assert "DATA FAULT" in result.detail
-        assert COVERAGE_INSUFFICIENT_HISTORY in result.detail
+        assert COVERAGE_UNUSABLE_BARS in result.detail
         # The model's guess survives as evidence and is NOT promoted to the
         # answer just because nothing else was available.
         assert result.model_target == 120.0
@@ -250,12 +254,11 @@ class TestRefusals:
         assert "measured" in result.detail
 
     def test_every_non_measured_coverage_is_a_data_fault(self):
-        """No bars, too few bars, dirty bars, and unknown provenance all
-        mean the desk cannot claim the chart was measured. All four are
+        """No bars, too few clean bars, and unknown provenance all mean
+        the desk cannot claim the chart was measured. All three are
         faults; none is a refusal."""
         for coverage in (
-            COVERAGE_NO_BARS, COVERAGE_INSUFFICIENT_HISTORY,
-            COVERAGE_UNUSABLE_BARS, COVERAGE_UNKNOWN,
+            COVERAGE_NO_BARS, COVERAGE_UNUSABLE_BARS, COVERAGE_UNKNOWN,
         ):
             result = derive_structural_target(
                 entry_price=100.0, direction="long", levels=[],
@@ -292,7 +295,11 @@ class TestRefusals:
         scan's own minimum window — not from a chosen threshold."""
         assert structure_coverage(None) == COVERAGE_NO_BARS
         assert structure_coverage([]) == COVERAGE_NO_BARS
-        assert structure_coverage(_bars([100.0] * 4)) == COVERAGE_INSUFFICIENT_HISTORY
+        assert structure_coverage(_bars([100.0] * 4)) == COVERAGE_UNUSABLE_BARS
+        # The minimum is the scan's own: one pivot AND one ATR reading.
+        assert MIN_SCAN_BARS == max(PIVOT_WINDOW * 2 + 1, ATR_PERIOD)
+        assert structure_coverage(_bars([100.0] * (MIN_SCAN_BARS - 1))) == COVERAGE_UNUSABLE_BARS
+        assert structure_coverage(_bars([100.0] * MIN_SCAN_BARS)) == COVERAGE_MEASURED
         assert structure_coverage(_bars([100.0] * 40)) == COVERAGE_MEASURED
         # Enough bars arrived, but they cannot be true (high below low), so
         # cleaning leaves nothing the scan can run over: a dirty feed.
@@ -457,7 +464,7 @@ class TestDataFaultsAtTheConstructor:
             model_target=130.0, levels=[95.0, 130.0], computed=[],
             atr=1.4, horizon=30,
         )
-        analysis.levels_coverage = COVERAGE_INSUFFICIENT_HISTORY
+        analysis.levels_coverage = COVERAGE_UNUSABLE_BARS
         decisions = constructor.construct_orders(
             targets=[self._target()], positions=[], analyses=[analysis],
             total_value=100_000, price_map={"NVDA": 100.0},

@@ -560,6 +560,22 @@ class PortfolioConstructor:
         # the caller's job to drain once per session.
         self.last_data_faults: dict[str, dict[str, str]] = {}
 
+        # STRUCTURED refusals (2026-09-12): {SYMBOL: {"refusal", "detail",
+        # "direction"}} for every trade this instance refused BY NAME —
+        # today STOP_REFUSAL_WIDER_THAN_REACH and
+        # STOP_REFUSAL_INSUFFICIENT_HISTORY. Written directly, never
+        # recovered from log text: `last_drop_reasons`
+        # is a regex over the constructor's own log lines and several
+        # messages miss its pattern, so a refusal that mattered could reach
+        # the record as "no matching constructor log line captured".
+        #
+        # Accumulates across `real_reward_risk_preview` (the PM-eligibility
+        # pass over every analysed symbol, which runs BEFORE the PM) and
+        # `construct_orders`, because both run on this one instance in one
+        # session. `drain_refusals()` hands them over and clears; the caller
+        # (`pipeline_stages.DecisionStage`) drains once per session.
+        self.last_refusals: dict[str, dict[str, str]] = {}
+
     def drain_data_faults(self) -> dict[str, dict[str, str]]:
         """Return every data fault recorded since the last drain, and clear.
 
@@ -597,21 +613,6 @@ class PortfolioConstructor:
             symbol, fault, detail,
         )
 
-        # STRUCTURED refusals (2026-09-12): {SYMBOL: {"refusal", "detail",
-        # "direction"}} for every trade this instance refused BY NAME —
-        # today STOP_REFUSAL_WIDER_THAN_REACH and
-        # STOP_REFUSAL_INSUFFICIENT_HISTORY. Written directly, never
-        # recovered from log text: `last_drop_reasons`
-        # is a regex over the constructor's own log lines and several
-        # messages miss its pattern, so a refusal that mattered could reach
-        # the record as "no matching constructor log line captured".
-        #
-        # Accumulates across `real_reward_risk_preview` (the PM-eligibility
-        # pass over every analysed symbol, which runs BEFORE the PM) and
-        # `construct_orders`, because both run on this one instance in one
-        # session. `drain_refusals()` hands them over and clears; the caller
-        # (`pipeline_stages.DecisionStage`) drains once per session.
-        self.last_refusals: dict[str, dict[str, str]] = {}
 
     def drain_refusals(self) -> dict[str, dict[str, str]]:
         """Return every structured refusal since the last drain, and clear.

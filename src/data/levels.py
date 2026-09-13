@@ -32,13 +32,24 @@ from dataclasses import dataclass, asdict
 import numpy as np
 
 from src.models import OHLCV
-from src.data.technical import atr_series
+from src.data.technical import ATR_PERIOD, atr_series
 from src.risk.constants import is_trend_trade
 
 # A pivot is a bar whose high (or low) is the most extreme within this many
 # bars either side. 5 keeps genuine swing structure while ignoring single-bar
 # wiggles; smaller values produce noise, larger ones miss real turning points.
 PIVOT_WINDOW = 5
+
+# The fewest CLEAN bars the level scan can run over — READ from the scan's
+# own two preconditions, never chosen here: a single pivot needs
+# ``PIVOT_WINDOW * 2 + 1`` bars (the pivot and its window either side), and
+# since 2026-09-12 the relevance window needs an ATR, which needs
+# ``ATR_PERIOD`` bars (`src/data/technical.py::atr_series` returns nothing
+# below that). Whichever is larger is the scan's real minimum, and both
+# `find_structural_levels` and `structure_coverage` read it from here so
+# they can never disagree about whether the scan could have run. (Before
+# this was unified, the scan needed 14 and the coverage check said 11.)
+MIN_SCAN_BARS = max(PIVOT_WINDOW * 2 + 1, ATR_PERIOD)
 
 # Two pivots within this percentage of each other are the same level. Price
 # does not respect a number to the cent — it respects a zone.
@@ -302,7 +313,7 @@ def find_structural_levels(
     the trade, never as "no structure exists".
     """
     clean = _clean_bars(bars)
-    if len(clean) < pivot_window * 2 + 1:
+    if len(clean) < max(pivot_window * 2 + 1, MIN_SCAN_BARS):
         return [], []
 
     last_close = clean[-1].close
@@ -589,17 +600,26 @@ REFUSAL_NO_VOLATILITY = "no_volatility_reading"
 #: the bars, onto `TechAnalysisResult.levels_coverage`.
 COVERAGE_MEASURED = "measured"                    # scan ran; an empty result is about the chart
 COVERAGE_NO_BARS = "no_bars"                      # the feed returned nothing
-COVERAGE_INSUFFICIENT_HISTORY = "insufficient_history"  # fewer clean bars than the scan's own minimum
-COVERAGE_UNUSABLE_BARS = "unusable_bars"          # enough bars arrived; cleaning left too few
+COVERAGE_UNUSABLE_BARS = "unusable_bars"          # bars arrived; fewer clean ones than MIN_SCAN_BARS
 COVERAGE_UNKNOWN = "unknown"                      # not recorded (older row, hand-built object)
 
+#: There is deliberately NO "insufficient_history" coverage state. A
+#: listing too YOUNG to measure is a trade REFUSAL, not a data fault, and
+#: it is named by the constructor before this derivation ever runs
+#: (`src/portfolio_constructor.py::_require_sufficient_history`, docs/
+#: WORK.md item 54: fewer completed sessions than the analyst's own
+#: 200-session window, `LONGEST_INDICATOR_WINDOW`). Every history shorter
+#: than `MIN_SCAN_BARS` is shorter than that window, so a separate
+#: short-history fault here could only ever fire when the session count
+#: was not recorded at all — and then `unusable_bars` says the true thing:
+#: the bars the desk holds cannot run the scan.
+#:
 #: The coverage states under which an empty level list is a DATA fault. The
 #: honest reading of `unknown` is "cannot claim the chart was measured", so
 #: it is classified with the faults: fail-closed for the trade either way,
 #: and the alert names the coverage so an `unknown` that recurs is visible.
 _FAULT_COVERAGE = frozenset({
-    COVERAGE_NO_BARS, COVERAGE_INSUFFICIENT_HISTORY, COVERAGE_UNUSABLE_BARS,
-    COVERAGE_UNKNOWN,
+    COVERAGE_NO_BARS, COVERAGE_UNUSABLE_BARS, COVERAGE_UNKNOWN,
 })
 
 
@@ -609,16 +629,16 @@ def structure_coverage(
     """Which COVERAGE_* state this bar history is in, read from the bars.
 
     The minimum is `find_structural_levels`'s own precondition
-    (`pivot_window * 2 + 1` clean bars — the smallest window in which a
-    single pivot can exist), not a threshold chosen here. Below it the scan
-    cannot run; at or above it the scan runs and whatever it finds,
-    including nothing, is a measurement of the chart.
+    (`MIN_SCAN_BARS` clean bars — enough for one pivot AND one ATR
+    reading, the two things the scan needs), not a threshold chosen here.
+    Below it the scan cannot run, whether too few bars arrived or cleaning
+    removed them — either way the desk holds no usable chart; at or above
+    it the scan runs and whatever it finds, including nothing, is a
+    measurement of the chart.
     """
     if not bars:
         return COVERAGE_NO_BARS
-    minimum = pivot_window * 2 + 1
-    if len(bars) < minimum:
-        return COVERAGE_INSUFFICIENT_HISTORY
+    minimum = max(pivot_window * 2 + 1, MIN_SCAN_BARS)
     if len(_clean_bars(list(bars))) < minimum:
         return COVERAGE_UNUSABLE_BARS
     return COVERAGE_MEASURED
@@ -820,7 +840,7 @@ def derive_structural_target(
         # usable chart) and when the scan ran over enough clean bars and
         # found no level with the minimum touches within reach (a
         # measurement of the chart: a relentless trend, or every repeated
-        # turn further away than MAX_DISTANCE_PCT). Only the coverage
+        # turn further away than the instrument can travel). Only the coverage
         # recorded beside the levels tells them apart. Neither trades —
         # a stop needs a level to sit on — but they go into the record and
         # to the owner as different things.
