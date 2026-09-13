@@ -156,7 +156,6 @@ connected.* The tests assert the exit message carries no NOT-PERFORMED banner,
 that the morning path still carries both when genuinely earned, and that the
 two renderings are byte-identical when no review mode is given.
 
-||||||| 9f137c65
 
 ### 2026-09-13 — a "close enough to the level" tolerance was measured in the wrong unit, and was narrower than the thing it claimed to cover on every ordinary stock
 
