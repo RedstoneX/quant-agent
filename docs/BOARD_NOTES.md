@@ -259,13 +259,6 @@ this line, one heading per item.
 **The decision —** None for you. Chart-description question, so it goes to research.
 **Recommendation —** Same fix as the level width: replace the flat percentages with the stock's own normal movement, so a gap is "unusual for this name" rather than "over 2%". That needs no number at all and is probably a small job.
 
-## item 59
-
-**Plain language —** After 13 September the desk can no longer go quiet for a day without telling you — every way it can produce nothing now has an alarm, and each kind of empty day has its own distinct wording. What it still cannot do is notice a PATTERN. If a fault caused it to refuse every single idea, every single day, it would report that truthfully each morning and never once raise its voice. Nobody has decided how many identical empty days should set something off, and no number was invented for it.
-**Example —** In the measured window, 6 sessions out of 11 placed no trades at all. So a run of empty days is completely normal here, which is exactly what makes a broken run so easy to miss — a fortnight of "no trades today" messages looks the same whether the market is dull or a gate is jammed shut.
-**The decision —** Possibly yours later, but not yet. If we can tell a jam from a quiet market by its shape, no decision is needed. Only if that fails does it become a question of how long you are prepared to be flat without being told.
-**Recommendation —** Try the shape test first. The desk already writes down WHY each idea was refused; if every refusal for days on end carries the identical reason, that is a jam, and it can be alarmed without counting days at all.
-
 ## item 60
 
 **Plain language —** The AI that double-checks trades before they go out also double-checks the desk's decisions to SELL out of a position it already holds — but it was built and tuned only for the morning buying decision, not the selling one. A repair landed today after this reviewer was found telling itself, on every single sell it ever reviewed, that two mandatory safety checks had been skipped — when those checks don't exist for a sell at all and never did. The repair stopped it lying to itself, but it did not give selling its own reviewer. Instead, four of its normal checklist items are now switched off for a sell as not relevant, a fifth is flipped in meaning (a stock about to report earnings is a reason to refuse a purchase, but a reason to get out of a sale), and it turns out two of its three ways of actually intervening on a trade — nudging one position, or scaling back the whole plan — do nothing at all when it's reviewing a sell. All it can really do there is say yes or no to the whole thing.
