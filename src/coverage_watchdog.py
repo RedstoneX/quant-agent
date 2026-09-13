@@ -144,20 +144,25 @@ def _utc_now() -> datetime:
 # ---------------------------------------------------------------------------
 
 def most_recent_trading_day(now: datetime, broker: Any = None) -> date:
-    """The most recent weekday strictly before today (ET) that the broker's
-    calendar confirms as a trading day.
+    """The most recent weekday whose cash session has already ENDED (plus
+    the timer slack) and that the broker's calendar confirms as a trading
+    day.
 
-    Strictly before: this runs pre-open, and today's session has not had
-    its chance to re-place anything yet. Holidays are excluded through
-    `broker.is_trading_day` when available. That helper answers False on a
-    calendar-read failure, so a broker outage would walk PAST a real
-    trading day and could judge a holiday-free week as "no session, because
-    there was no day" — to keep the failure on the alerting side, the walk
-    is bounded and falls back to the most recent plain weekday, which can
-    only over-alert on a holiday, never suppress a real gap.
+    "Already ended" rather than "strictly before today": at the 06:15 ET
+    run this is yesterday either way, but run by hand at 23:50 ET on a
+    Friday it must judge Friday, not Thursday — a session that has not
+    finished cannot yet have failed to re-place anything, and one that has
+    finished can. Holidays are excluded through `broker.is_trading_day`
+    when available. That helper answers False on a calendar-read failure,
+    so a broker outage would walk PAST a real trading day and could judge
+    a holiday-free week as "no session, because there was no day" — to
+    keep the failure on the alerting side, the walk is bounded and falls
+    back to the most recent plain weekday, which can only over-alert on a
+    holiday, never suppress a real gap.
     """
     today_et = now.astimezone(ET).date()
-    candidate = today_et - timedelta(days=1)
+    _start, today_end = _session_bounds_utc(today_et)
+    candidate = today_et if now >= today_end else today_et - timedelta(days=1)
     first_weekday: date | None = None
     checked = 0
     while checked < MAX_WEEKDAYS_BACK:
