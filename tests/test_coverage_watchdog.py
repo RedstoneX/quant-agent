@@ -174,6 +174,27 @@ def test_monday_morning_judges_friday_not_the_weekend(db, state_path):
     assert status.trading_day == "2026-09-11"
 
 
+def test_run_after_the_close_judges_today_not_yesterday(db, state_path):
+    """Run by hand at 23:50 ET on Friday (this is exactly how the live probe
+    on 2026-09-11 first ran, and it judged Thursday): Friday's session is
+    over, so Friday is the day that can have failed to re-place a stop."""
+    fri_late = datetime(2026, 9, 11, 23, 50, tzinfo=ET).astimezone(timezone.utc)
+    status = coverage_watchdog.check_coverage(
+        _orcl_broker(), now=fri_late, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+    )
+    assert status.trading_day == "2026-09-11"
+
+
+def test_run_during_the_session_judges_yesterday(db, state_path):
+    """At 12:00 ET on Friday the session is live and its sweep still has
+    hours to run; the finished day to judge is Thursday."""
+    fri_noon = datetime(2026, 9, 11, 12, 0, tzinfo=ET).astimezone(timezone.utc)
+    status = coverage_watchdog.check_coverage(
+        _orcl_broker(), now=fri_noon, sweep_symbol="SGOV", db_path=db, state_path=state_path,
+    )
+    assert status.trading_day == "2026-09-10"
+
+
 def test_a_market_holiday_is_skipped_via_the_broker_calendar(db, state_path):
     """2026-09-07 (Labor Day) is a weekday the exchange was shut. Tuesday
     06:15 must judge the preceding Friday, not the holiday."""
