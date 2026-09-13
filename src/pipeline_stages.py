@@ -3816,6 +3816,18 @@ class DecisionStage:
                     _a, _direction, regime=_regime_for_preview,
                 )
             )
+        # Item 54 (2026-09-12): the preview above also RECORDS, by code, the
+        # names the one shared funnel refused (`last_refusals` — stop wider
+        # than the instrument's reach, or too young to measure). A
+        # snapshot, not a drain: DecisionStage drains once per session
+        # after construction, so the same refusal is filed exactly once.
+        constructor_refusals_by_symbol = {
+            str(sym).upper(): dict(refusal)
+            for sym, refusal in dict(getattr(
+                getattr(pipeline, "portfolio_constructor", None),
+                "last_refusals", {},
+            ) or {}).items()
+        }
 
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             analyses=analyses,
@@ -3874,6 +3886,7 @@ class DecisionStage:
             # Phase 14b: wording only — see `_apply_rotation_execution`.
             rotation_execute_enabled=_rotation_execution_enabled(pipeline),
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
+            constructor_refusals_by_symbol=constructor_refusals_by_symbol,
         )
 
         if portfolio_decision and portfolio_decision.reasoning_chain:
@@ -4095,10 +4108,11 @@ class DecisionStage:
                 pipeline.portfolio_constructor, "last_drop_reasons", {},
             )
             # 2026-09-12: a refusal the constructor recorded AS DATA
-            # (`PortfolioConstructor.last_refusals` — today "no floor, no
-            # trade") is filed under its own reason with the code beside
-            # it, never through the log-text regex above, whose pattern
-            # several messages miss. Drained here, once per session.
+            # (`PortfolioConstructor.last_refusals` — today a stop wider
+            # than the instrument's reach, or too little history) is
+            # filed under its own reason with the code beside it, never
+            # through the log-text regex above, whose pattern several
+            # messages miss. Drained here, once per session.
             _drain = getattr(pipeline.portfolio_constructor, "drain_refusals", None)
             refusals = dict(_drain() if callable(_drain) else {})
             for sym in portfolio_decision.constructor_dropped:

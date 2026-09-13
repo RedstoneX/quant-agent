@@ -13,7 +13,6 @@ from src.models import (
     SmartMoneyFinding, news_verdict_for_symbol, normalize_sector_stance,
     parse_telemetry,
 )
-from src.data.levels import structural_floor
 from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
 from src.quantities import collapse_stances
 from src.risk.constants import (
@@ -535,6 +534,7 @@ class PortfolioManagerAgent(BaseAgent):
             earnings_analyses=earnings_analyses,
             smart_money_findings=smart_money_findings,
             real_reward_risk_by_symbol=kwargs.get("real_reward_risk_by_symbol"),
+            constructor_refusals_by_symbol=kwargs.get("constructor_refusals_by_symbol"),
         )
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
@@ -1215,6 +1215,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         rr_floor: float = REWARD_RISK_FLOOR,
         asof: date | None = None,
         real_reward_risk_by_symbol: dict[str, float | None] | None = None,
+        constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
     ) -> dict[str, list[str]]:
         """Which analysed names the desk's own rules ADMIT, before the PM
         decides — `{SYMBOL: [reasons it is blocked]}`, empty list = eligible.
@@ -1252,13 +1253,17 @@ Based on all the above (memory of past decisions + environment trajectory + toda
               (`signed_source_score`; §9.4 refuses net ≤ 0 outright —
               `agreement_ceiling_for_score` is 0.0 for any score ≤ 0
               whatever the schedule, so no config is needed here)
-          R6  **"No floor, no trade"** (owner decision 2026-09-12, BOTH
-              setup types) — the desk's own level scan found structure on
-              this chart but none on the STOP side of entry (below a long,
-              above a short). Nothing overhead is required: a breakout at
-              new highs has no ceiling by definition. Mirrors
-              `PortfolioConstructor._require_structural_floor`, the
-              enforcing check one stage later.
+          R6  the constructor's own preview REFUSED this name by code
+              (`constructor_refusals_by_symbol`, a snapshot of
+              `PortfolioConstructor.last_refusals` taken after
+              `real_reward_risk_preview` ran over every analysis) — today
+              `stop_wider_than_instrument_reach` or
+              `insufficient_history` (docs/WORK.md item 54, 2026-09-12).
+              The enforcing check is one stage later, in the ONE funnel
+              construction shares with the preview; this only stops the PM
+              being shown a name that funnel has already refused. Absent
+              structure is NOT a reason — the earlier "no floor, no trade"
+              R6 was replaced the day it shipped, on sourced research.
 
         R1 (current technical coverage) is implied: only symbols with an
         analysis in `analyses` are considered at all. Nothing here removes or
@@ -1325,31 +1330,19 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             ) if sources else 0
             if net <= 0:
                 blocked.append(f"R5 net evidence {net:+d} if {direction} — no rung")
-            # R6 — "No floor, no trade" (owner decision 2026-09-12), BOTH
-            # setup types. Only judged on a chart the desk's own scan
-            # measured and found structure on (`computed_levels` non-empty):
-            # an empty list is either a data fault or a structureless chart,
-            # and both are already refused by name one stage later via
-            # `_derive_target` (and, for a range trade, by R4 here). What
-            # R6 adds is the case R4 cannot see and a breakout label used to
-            # skip entirely: levels exist, none is on the stop side.
-            computed = getattr(analysis, "computed_levels", None) or []
-            # A level on the far side of an unfilled gap is not a floor
-            # (owner ruling, same day) — same edge the constructor reads.
-            gap_edge = getattr(
-                analysis,
-                "unfilled_down_gap_edge" if direction == "short" else "unfilled_up_gap_edge",
-                None,
-            )
-            if computed and structural_floor(
-                computed, analysis.entry_price, direction, gap_edge=gap_edge,
-            ) is None:
-                beyond_gap = structural_floor(computed, analysis.entry_price, direction) is not None
+            # R6 — the constructor's preview refused this name by code
+            # (item 54). Read from the snapshot, never recomputed here: the
+            # width gate and the history gate live in the one funnel the
+            # preview and construction share, and a second copy could
+            # drift. What R6 adds over R4 is the case R4 cannot see — a
+            # breakout (no reward:risk number at all) whose stop is wider
+            # than the instrument's own noise band, or a listing too young
+            # to measure.
+            refusal = (constructor_refusals_by_symbol or {}).get(symbol)
+            if refusal and refusal.get("refusal"):
                 blocked.append(
-                    f"R6 no structural {'ceiling above' if direction == 'short' else 'floor below'} "
-                    f"entry"
-                    + (" this side of an unfilled gap" if beyond_gap else "")
-                    + " — nothing for a stop to sit on (no floor, no trade)"
+                    f"R6 constructor refused [{refusal['refusal']}] — "
+                    f"{refusal.get('detail') or 'no detail recorded'}"
                 )
             verdicts[symbol] = blocked
         return verdicts
@@ -1506,6 +1499,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         earnings_analyses: list[dict] | None = None,
         smart_money_findings: list[SmartMoneyFinding] | None = None,
         real_reward_risk_by_symbol: dict[str, float | None] | None = None,
+        constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
     ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
         """The eligible names in ranked order, plus the blocked names with
         their reasons. Ordering is `src/verdicts.py::rank_verdicts` over
@@ -1539,6 +1533,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             active_state_changes=active_state_changes,
             rr_floor=rr_floor,
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
+            constructor_refusals_by_symbol=constructor_refusals_by_symbol,
             asof=asof,
         )
         all_verdicts = cls._collect_seat_verdicts(
@@ -1823,6 +1818,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # `None` (the default) falls back to that field, for the rare
                # caller with no `PortfolioConstructor` to preview from.
                real_reward_risk_by_symbol: dict[str, float | None] | None = None,
+               # Item 54 (2026-09-12): the constructor's structured refusals
+               # from the same preview pass, so eligibility rule R6 can name
+               # a candidate the one shared funnel has already refused.
+               constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
                ) -> tuple[PortfolioDecision | None, "AgentResult"]:
         result = self.run(
             analyses=analyses,
@@ -1863,6 +1862,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             max_portfolio_risk_pct=max_portfolio_risk_pct,
             rotation_execute_enabled=rotation_execute_enabled,
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
+            constructor_refusals_by_symbol=constructor_refusals_by_symbol,
         )
         parsed = result.parse_json()
         if parsed is None:

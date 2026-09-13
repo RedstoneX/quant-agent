@@ -114,17 +114,28 @@ def test_a_wider_stop_yields_a_smaller_position_not_a_rejected_trade():
     assert abs(wide / 100 * EQUITY * 0.20 - 1000) < 20    # 20/100 stop gap
 
 
-def test_a_position_with_no_structural_stop_produces_no_order():
-    """Risk cannot be sized without a stop, and stops are no longer
-    synthesized (Phase 1). No stop is no trade, not a guessed one."""
+def test_a_position_with_no_typed_stop_is_sized_against_the_instruments_own_stop():
+    """docs/WORK.md item 54 (2026-09-12): a stop is always derivable. With
+    nothing typed, the stop is read from the instrument — the ATR noise
+    band here (the signal bar is not set on this fixture) — and the size
+    follows §2.1 from THAT distance. Until this date "no stop" was "no
+    trade" (Phase 1); sourced research showed no published method refuses
+    a trade for lack of a stop level, so the desk reads one and sizes down
+    if it is wide."""
     constructor = PortfolioConstructor()
-    analysis = _analysis("NVDA", entry=100, stop=90, target=140)
+    analysis = _analysis("NVDA", entry=100, stop=90, target=140, atr=2.0)
     analysis = analysis.model_copy(update={"stop_loss": 0.0})
     decisions = constructor.construct_orders(
         targets=[_risk_target("NVDA", 2.0)], positions=[], analyses=[analysis],
         total_value=EQUITY, price_map={"NVDA": 100.0},
     )
-    assert decisions == []
+    assert [d.action for d in decisions] == ["BUY"]
+    band = 100.0 - constructor._stop_atr_multiple(analysis, None) * 2.0
+    assert abs(decisions[0].stop_loss - round(band, 2)) < 1e-9
+    # $2,000 of risk over the band's distance, as §2.1 says — not the
+    # $10/share the model's (deleted) stop would have implied.
+    expected_alloc = 2.0 * 100.0 / (100.0 - band)
+    assert abs(decisions[0].allocation_pct - expected_alloc) < 0.05
 
 
 def test_single_name_risk_is_clamped_to_the_ratified_envelope():

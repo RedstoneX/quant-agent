@@ -31,8 +31,9 @@ from dataclasses import dataclass
 from src.data.levels import (
     TargetDerivation,
     derive_structural_target,
-    structural_floor,
+    horizon_reach,
 )
+from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision, reward_to_risk,
 )
@@ -114,27 +115,52 @@ STOP_RULE_ATR_BAND = "stop_widened_to_atr_noise_band"
 STOP_RULE_OUTSIDE_BAND = "stop_kept_already_outside_atr_band"
 STOP_RULE_NO_VOLATILITY = "stop_kept_no_atr_reading"
 STOP_REFUSAL_WRONG_SIDE = "stop_on_wrong_side_of_entry"
-#: Owner decision 2026-09-12 — "No floor, no trade. No ceiling is fine."
-#: The desk's own level computation ran over a measurable chart and found
-#: NO structural level on the stop side of this entry (below a long, above
-#: a short). Until this date such a trade shipped anyway: the analyst's stop
-#: was accepted and, having nothing computed under it, was pushed out to
-#: `min_stop_atr_multiple` ATRs — a distance, not a level, which is exactly
-#: the "pick a number and hope" the owner refuses to hold. A trade REFUSAL
-#: about this chart today, recorded as data (`last_refusals`), never a data
-#: fault: "not yet", not "never" — the levels are re-read every session.
-STOP_REFUSAL_NO_STRUCTURAL_FLOOR = "no_structural_floor"
-#: Owner ruling, same day: *"A shelf $30 below, on the far side of a gap the
-#: market has repriced through, isn't support anyone is defending."* The
-#: chart DID yield a level on the stop side — but every such level sits on
-#: the far side of an UNFILLED gap. Price never traded through that gap, so
-#: nobody bought or defended anything in it; the level below is a number on
-#: a chart, not support, and leaning a stop on it reintroduces exactly the
-#: "no defensible stop" case the floor rule exists to prevent. Its own code
-#: so the census can tell "no levels at all", "levels only overhead" and
-#: "a floor exists but only beyond the gap" apart. Re-read every session:
-#: the day the gap fills, or a base forms above it, the name qualifies.
-STOP_REFUSAL_FLOOR_BEYOND_UNFILLED_GAP = "floor_only_beyond_unfilled_gap"
+#: The unbacked-stop fallback placed the stop under the SIGNAL BAR's low
+#: (above its high for a short) because that sat further from entry than
+#: the ATR noise band did. Kristjan Kullamägi's own placement for a stop
+#: with no level under it — "the low of the day" — read from the last
+#: completed bar the analyst judged (`TechAnalysisResult.signal_bar_low` /
+#: `signal_bar_high`, Python-set from the same bars as the levels). Rare by
+#: construction: it only wins when the signal bar itself spans more than
+#: the noise band, i.e. a climactic bar.
+STOP_RULE_SIGNAL_BAR = "stop_placed_past_signal_bar"
+#: 2026-09-12 (second ruling of the day — see docs/WORK.md item 54). The
+#: stop this trade REQUIRES is wider than the instrument can plausibly
+#: travel inside the trade's own horizon. The published constraint on a
+#: stop is its WIDTH, not whether a level exists under it — Kristjan
+#: Kullamägi, in his own words: "stop should not be wider than the ATR or
+#: ADR of the stock" (https://qullamaggie.com/my-3-timeless-setups-that-
+#: have-made-me-tens-of-millions/). What is adopted is the SHAPE — width
+#: measured in the stock's own volatility units, refused past a cap — and
+#: NOT his unit, for a reason that is arithmetic, not taste: this desk's
+#: own fallback for an unbacked stop is the 2.5 x ATR noise band
+#: (`ConstructorConfig.min_stop_atr_multiple`, a doctrine-grounded
+#: convention for a days-to-weeks hold; his rule is for an entry timed
+#: intraday with the stop under the day's low), so at his 1 x daily range
+#: the fallback would refuse itself. Nor can the band be the cap: the
+#: ratified sizing rule (§2.1, `_plan_risk_targets`) answers a wide stop
+#: with a SMALLER position, never a refusal, and is pinned by tests. The
+#: only instrument-read width the desk already has that sits past both is
+#: `horizon_reach` — ATR x sqrt(horizon) x the same reach multiple the
+#: target derivation and the level scan use. A stop beyond it cannot be
+#: hit inside the trade, so the risk-based size computed from it is
+#: fiction. Substitution stated plainly: the desk computes ATR(14), not
+#: ADR; ATR includes the overnight gap and runs a little wider than ADR on
+#: the same stock. The width test is on WHATEVER stop would ship — an
+#: honoured level, the absolute floor, the band, or the signal bar.
+STOP_REFUSAL_WIDER_THAN_REACH = "stop_wider_than_instrument_reach"
+#: The instrument has fewer completed sessions than the LONGEST indicator
+#: window the analyst is briefed with (`src/data/technical.py::
+#: LONGEST_INDICATOR_WINDOW`, the 200-session moving average). The 2026-
+#: 07-16 audit already treated that reference's absence as the analyst
+#: judging trend blind; a listing too young to have it also has too few
+#: repeated turning points for the level scan to say anything reliable.
+#: This is a refusal about the INSTRUMENT (a listing is young), not a data
+#: fault (a feed is dead) — PR #326's split classifies the latter. Read
+#: from `TechAnalysisResult.bars_available`, Python-set by the analyst from
+#: the bars it actually received; None (older row, hand-built object) is
+#: not judged, because an unknown count is not a short one.
+STOP_REFUSAL_INSUFFICIENT_HISTORY = "insufficient_history"
 #: The `pipeline_event` reason under which `pipeline_stages.DecisionStage`
 #: files a structured constructor refusal (`refusal=<code>` beside it).
 #: Distinct from `constructor_dropped`, whose detail is recovered by regex
@@ -492,15 +518,15 @@ class ConstructorConfig:
     # parked cash and NOT exposure. Taken from config rather than hardcoded;
     # None when sweeping is off.
     cash_park_symbol: str | None = None
-    # NOTE (2026-08-27): the ATR-multiple and naive-percent stop fallbacks were
-    # REMOVED. They were never the intended design — `_resolve_stop` always
-    # preferred the analyst's structural level and fell through to
-    # `entry - 2*ATR` (then `entry * 0.95`) only when none was supplied. In
-    # practice the analyst supplied none, so the fallback became the norm and
-    # positions were managed against stops nobody derived from the chart.
-    # A stop must now come from structure; without one there is no trade.
-    # ATR is retained only as a noise-band input for exit decisions.
-    # See docs/QAMC_REMEDIATION_SPEC.md Phase 1.
+    # NOTE (2026-08-27): the naive-percent stop fallback (`entry * 0.95`)
+    # was REMOVED and stays removed. The ATR-multiple fallback came back on
+    # 2026-09-12 (docs/WORK.md item 54) in a different form: not a silent
+    # `entry - 2*ATR` that became the norm because the analyst typed
+    # nothing, but the desk's own noise band (`min_stop_atr_multiple`, per
+    # setup and tape) or the signal bar's edge, whichever is wider, applied
+    # ONLY when nothing computed backs the typed stop — and the result is
+    # then gated on width. The analyst schema requires a stop on every
+    # actionable rating, so "nothing typed" is the rare case, not the norm.
 
 
 class PortfolioConstructor:
@@ -515,9 +541,10 @@ class PortfolioConstructor:
         # just read the attribute — without a first-call special case.
         self.last_drop_reasons: dict[str, str] = {}
         # STRUCTURED refusals (2026-09-12): {SYMBOL: {"refusal", "detail",
-        # "direction"}} for every trade this instance refused BY NAME on a
-        # measurable chart — today only STOP_REFUSAL_NO_STRUCTURAL_FLOOR.
-        # Written directly, never recovered from log text: `last_drop_reasons`
+        # "direction"}} for every trade this instance refused BY NAME —
+        # today STOP_REFUSAL_WIDER_THAN_REACH and
+        # STOP_REFUSAL_INSUFFICIENT_HISTORY. Written directly, never
+        # recovered from log text: `last_drop_reasons`
         # is a regex over the constructor's own log lines and several
         # messages miss its pattern, so a refusal that mattered could reach
         # the record as "no matching constructor log line captured".
@@ -563,85 +590,45 @@ class PortfolioConstructor:
             symbol, refusal, detail,
         )
 
-    def _require_structural_floor(
+    def _require_sufficient_history(
         self,
         symbol: str,
         analysis: TechAnalysisResult | None,
-        entry_price: float,
         direction: str,
     ) -> bool:
-        """Owner decision 2026-09-12: **"No floor, no trade. No ceiling is
-        fine."** True when a computed level sits on the STOP side of this
-        entry; False — and a named, recorded refusal — when none does.
+        """True unless the instrument is too YOUNG to be measured.
 
-        WHAT THE CODE DID BEFORE. Nothing required a floor. `_derive_target`
-        refused only when the chart yielded NO levels at all (on either
-        side), and `_resolve_stop` refused only when neither the PM nor the
-        analyst had typed a stop. A long whose chart had six resistances
-        above and nothing below shipped: the analyst's stop, backed by
-        nothing computed, was pushed out to the ATR noise band
-        (`STOP_RULE_ATR_BAND`) or kept where the model put it
-        (`STOP_RULE_OUTSIDE_BAND`) — a distance chosen and hoped for. The
-        backtest engine (`src/backtest/engine.py::
-        _resolve_structural_stop_and_target`) already declined the same
-        trade, so the live desk and its own rehearsal disagreed.
+        The one narrow refusal that survived the 2026-09-12 replacement of
+        "no floor, no trade" (docs/WORK.md item 54): a listing with fewer
+        completed sessions than the longest indicator window the analyst is
+        briefed with (`LONGEST_INDICATOR_WINDOW`, the 200-session moving
+        average) is refused by name, on both setup types, from the ONE
+        funnel `real_reward_risk_preview` and `_resolve_entry_and_stop`
+        share — FIRST, before the target derivation, because a listing this
+        young usually yields no levels either and the honest name for that
+        is this one, not the derivation's `no_structural_levels`. Nothing
+        about the chart's SHAPE is judged here — absent
+        structure is not a reason (no published method refuses a trade for
+        lack of support below); an unmeasurable instrument is.
 
-        Applies to BOTH setup types: a breakout still needs support beneath
-        it. What a breakout does not need is anything OVERHEAD — that side
-        is `_derive_target`'s, which projects a target from ATR when no
-        level stands in the way and refuses nothing for it (its
-        no-level-in-direction refusal is unreachable by construction; see
-        `src.risk.constants.is_trend_trade`).
-
-        This is NOT a data fault. `_derive_target` has already run for this
-        exact trade and did not refuse, so the chart was measurable and
-        yielded levels; the only thing missing is one on the stop side.
-        Short or dirty history never reaches here.
-
-        Called from the ONE funnel both `real_reward_risk_preview` (PM
-        eligibility) and `_resolve_entry_and_stop` (order construction)
-        pass through, immediately after target derivation, so the two
-        cannot disagree about which names have a floor.
+        Not a data fault: the bars arrived and are clean, there are simply
+        too few of them yet. A missing count (older persisted row, a
+        hand-built analysis) is not judged — an unknown count is not a
+        short one, and the desk does not refuse on what it did not measure.
         """
-        levels = getattr(analysis, "computed_levels", None) or []
-        is_short = str(direction or "").lower() == "short"
-        # The binding unfilled-gap edge on the stop side, Python-set by the
-        # Tech Analyst from the same bars (`levels.unfilled_gap_edge`). A
-        # level on the far side of it is not a floor — owner ruling, see
-        # STOP_REFUSAL_FLOOR_BEYOND_UNFILLED_GAP. `getattr` because older
-        # rows and hand-built analyses predate the field; None = no gap.
-        gap_edge = getattr(
-            analysis,
-            "unfilled_down_gap_edge" if is_short else "unfilled_up_gap_edge",
-            None,
-        )
-        floor = structural_floor(levels, entry_price, direction, gap_edge=gap_edge)
-        if floor is not None:
+        count = getattr(analysis, "bars_available", None)
+        try:
+            count = int(count) if count is not None else None
+        except (TypeError, ValueError):
+            count = None
+        if count is None or count >= LONGEST_INDICATOR_WINDOW:
             return True
-        side = "above" if is_short else "below"
-        # Same question with the gap ignored: did a level exist on the stop
-        # side at all? That decides WHICH refusal this is.
-        if structural_floor(levels, entry_price, direction) is not None:
-            self._note_refusal(
-                symbol, direction, STOP_REFUSAL_FLOOR_BEYOND_UNFILLED_GAP,
-                f"every structural level {side} the ${entry_price:,.2f} entry "
-                f"sits on the far side of an unfilled gap (edge "
-                f"${float(gap_edge):,.2f}). Price never traded through that "
-                f"gap, so nothing in it was bought or defended — a level "
-                f"beyond it is a number on a chart, not support a stop can "
-                f"lean on (owner ruling 2026-09-12). Not yet, not never: the "
-                f"name qualifies the day the gap fills or a floor forms "
-                f"{'below' if is_short else 'above'} it.",
-            )
-            return False
         self._note_refusal(
-            symbol, direction, STOP_REFUSAL_NO_STRUCTURAL_FLOOR,
-            f"no structural level {side} the ${entry_price:,.2f} entry on a "
-            f"chart that yielded {len(levels)} level(s) elsewhere, so there "
-            f"is nothing for a stop to sit on. No floor, no trade (owner "
-            f"decision 2026-09-12) — not yet, not never: the levels are "
-            f"re-read every session and the name qualifies the day the chart "
-            f"shows one.",
+            symbol, direction, STOP_REFUSAL_INSUFFICIENT_HISTORY,
+            f"only {count} completed session(s) of history against the "
+            f"{LONGEST_INDICATOR_WINDOW}-session window the analyst's own "
+            f"trend reference needs. Too young to measure, not a judgement "
+            f"about the chart: the name qualifies the day it has the history.",
         )
         return False
 
@@ -1377,6 +1364,16 @@ class PortfolioConstructor:
         # `stop_loss < entry_price` check (e.g. entry $10.00, stop $9.999 →
         # ships $10.00 == entry → risk_per_share = 0, and a stop at the entry
         # fires on the first tick down). 2026-07-16 audit.
+        # Too young to measure (item 54, 2026-09-12). Checked FIRST, before
+        # the target derivation: a listing with too few sessions usually
+        # also yields no levels, and "insufficient history" is the true
+        # name for that, not `no_structural_levels` (which PR #326 reads
+        # as a feed fault).
+        if not self._require_sufficient_history(
+            target.symbol, analysis, target.direction,
+        ):
+            return (None, None)
+
         # The target is derived BEFORE the stop is finalised, because the
         # reward:risk check inside `_widen_stop_past_noise` needs a real
         # target to measure against. It depends only on entry, direction and
@@ -1391,15 +1388,6 @@ class PortfolioConstructor:
                 "SHORT" if is_short else "BUY", target.symbol,
                 derivation.refusal, derivation.detail,
             )
-            return (None, None)
-
-        # "No floor, no trade" (owner decision 2026-09-12). Checked AFTER
-        # target derivation so a chart that could not be measured at all is
-        # already filed under its own name, and BEFORE the stop is resolved
-        # so a stop nobody's chart defends is never widened into a trade.
-        if not self._require_structural_floor(
-            target.symbol, analysis, entry_price, target.direction,
-        ):
             return (None, None)
 
         stop_loss = self._resolve_stop(target, analysis, entry_price)
@@ -1628,31 +1616,39 @@ class PortfolioConstructor:
         entry_price = float(entry_price)
         is_short = direction == "short"
 
+        # Too young to measure — same check, same place in the funnel, as
+        # `_resolve_entry_and_stop`, so the PM is not shown a candidate the
+        # constructor would refuse one stage later.
+        if not self._require_sufficient_history(
+            analysis.symbol, analysis, direction,
+        ):
+            return None
+
         derivation = self._derive_target(
             analysis.symbol, analysis, entry_price, direction,
         )
         if derivation.price is None:
             return None
-        # "No floor, no trade" — same check, same place in the funnel, as
-        # `_resolve_entry_and_stop`, so the PM is not shown a candidate the
-        # constructor would refuse one stage later.
-        if not self._require_structural_floor(
-            analysis.symbol, analysis, entry_price, direction,
-        ):
-            return None
 
         raw_stop = getattr(analysis, "stop_loss", None)
-        if not raw_stop or raw_stop <= 0:
-            return None
-        raw_stop = float(raw_stop)
-        # Geometry must already hold before any widening is attempted — a
-        # stop on the wrong side of entry is not a candidate for the noise
-        # floor, it is not a stop at all.
-        if is_short:
-            if raw_stop <= entry_price:
+        try:
+            raw_stop = float(raw_stop) if raw_stop else None
+        except (TypeError, ValueError):
+            raw_stop = None
+        if raw_stop is not None and raw_stop <= 0:
+            raw_stop = None
+        # A missing stop is no longer a None here: `_widen_stop_past_noise`
+        # reads one from the instrument (item 54) exactly as it will at
+        # construction time. A stop on the WRONG side is still refused there.
+        if raw_stop is not None:
+            # Geometry must already hold before any widening is attempted —
+            # a stop on the wrong side of entry is not a candidate for the
+            # noise floor, it is not a stop at all.
+            if is_short:
+                if raw_stop <= entry_price:
+                    return None
+            elif raw_stop >= entry_price:
                 return None
-        elif raw_stop >= entry_price:
-            return None
 
         honoured_stop = self._widen_stop_past_noise(
             analysis.symbol, analysis, entry_price, raw_stop, regime=regime,
@@ -1802,6 +1798,21 @@ class PortfolioConstructor:
         over on a shim (`src/backtest/engine.py`). That path was never
         exposed to the defect.
 
+        **2026-09-12, docs/WORK.md item 54 — the width gate, and a stop
+        that is always derivable.** Sourced research (Bulkowski on gaps,
+        George & Hwang 2004 on nearness to the 52-week high, Kullamägi's
+        own stop discipline) falsified the one-day "no floor, no trade"
+        rule: what published practice constrains is the stop's WIDTH, not
+        whether a level exists under it. So: (1) an unbacked stop is placed
+        at the wider of the noise band and the signal bar's far edge, both
+        read from the instrument; (2) a missing stop is placed the same way
+        rather than refused; (3) whatever placed the stop, a width past the
+        instrument's own reach over the trade's horizon (`horizon_reach`)
+        is REFUSED by code (`STOP_REFUSAL_WIDER_THAN_REACH`) — the only
+        place this function refuses on distance. Under the cap, width is
+        answered by `_plan_risk_targets` sizing down (§2.1), never by
+        refusal; `STOP_RULE_OUTSIDE_BAND` still keeps a wide typed stop.
+
         **2026-09-02 — the reward:risk floor now runs on EVERY path, not
         only when this function moved the stop.** It previously lived
         inside the two widening branches, behind two unnamed early returns
@@ -1853,10 +1864,12 @@ class PortfolioConstructor:
                 "SHORT" if direction == "short" else "BUY", symbol, entry_price,
             )
             return None
-        # Unchanged legacy passthrough: a missing or non-positive stop is the
+        # Unchanged legacy passthrough: a non-positive stop or entry is the
         # caller's to reject, and it does (`stop_loss <= 0` there is a real
-        # comparison on a real number).
-        if stop_loss is None or stop_loss <= 0 or entry_price <= 0:
+        # comparison on a real number). A MISSING stop is no longer passed
+        # through as None (item 54, 2026-09-12): it is read from the
+        # instrument below, in the same branch that widens an unbacked one.
+        if entry_price <= 0 or (stop_loss is not None and stop_loss <= 0):
             return stop_loss
 
         is_short = direction == "short"
@@ -1870,7 +1883,9 @@ class PortfolioConstructor:
         # its fixture carried no ATR, which is not a state production reaches
         # (`atr_14` is Python-set on every analysis). Widening corrects a stop
         # that is too CLOSE; it must not invent one that is on the wrong side.
-        if is_short and stop_loss <= entry_price:
+        if stop_loss is None:
+            pass  # nothing typed: derived from the instrument below
+        elif is_short and stop_loss <= entry_price:
             logger.warning(
                 "Constructor: SHORT %s refused [%s] — the stop $%.2f is at or "
                 "below the entry $%.2f, so it protects nothing. Refusing "
@@ -1878,7 +1893,7 @@ class PortfolioConstructor:
                 symbol, STOP_REFUSAL_WRONG_SIDE, stop_loss, entry_price,
             )
             return None
-        if not is_short and stop_loss >= entry_price:
+        elif not is_short and stop_loss >= entry_price:
             logger.warning(
                 "Constructor: BUY %s refused [%s] — the stop $%.2f is at or "
                 "above the entry $%.2f, so it protects nothing. Refusing "
@@ -1911,15 +1926,26 @@ class PortfolioConstructor:
 
         # -------------------------------------------------------------
         # Decide the shipping stop, and name the rule that placed it.
-        # Exactly one of these five branches runs. `honoured` is what
-        # ships; `rule` is why; the single reward:risk gate at the bottom
-        # judges the geometry that results, whichever branch produced it.
+        # Exactly one of these branches runs (no ATR; nothing typed, read
+        # from the instrument; outside the band; level-honoured; absolute
+        # floor; widened to the band or the signal bar). `honoured` is what
+        # ships; `rule` is why; the width gate and then the single
+        # reward:risk gate at the bottom judge the geometry that results,
+        # whichever branch produced it.
         # -------------------------------------------------------------
         if atr is None:
             # No volatility reading — leave structure alone, as always. The
             # stop is still judged on its own geometry below: whether we
             # can measure this name's noise has nothing to do with whether
-            # the trade's payoff clears the floor.
+            # the trade's payoff clears the floor. With nothing typed AND
+            # nothing to read, there is no stop: the caller rejects None.
+            if stop_loss is None:
+                logger.warning(
+                    "Constructor: %s %s has no stop from the PM or the "
+                    "analyst and no ATR reading to derive one from — "
+                    "rejecting.", side_label, symbol,
+                )
+                return None
             honoured, rule, level = stop_loss, STOP_RULE_NO_VOLATILITY, None
             band_edge = multiple = None
         else:
@@ -1928,12 +1954,54 @@ class PortfolioConstructor:
                 entry_price + multiple * atr if is_short
                 else entry_price - multiple * atr
             )
-            outside_band = (
-                stop_loss >= band_edge if is_short
-                else (band_edge <= 0 or stop_loss <= band_edge)
+            # The instrument's own fallback (item 54): the WIDER of the
+            # noise band and the signal bar's far edge — Kullamägi's
+            # "low of the day" placement, read from the last completed bar
+            # the analyst judged. Python-set beside the levels; None on an
+            # older row or a hand-built object, in which case the band
+            # alone decides, as it did before.
+            bar_edge = getattr(
+                analysis, "signal_bar_high" if is_short else "signal_bar_low", None,
             )
+            try:
+                bar_edge = float(bar_edge) if bar_edge is not None else None
+            except (TypeError, ValueError):
+                bar_edge = None
+            if bar_edge is not None and (
+                not math.isfinite(bar_edge) or bar_edge <= 0
+                or (bar_edge <= entry_price if is_short else bar_edge >= entry_price)
+            ):
+                bar_edge = None
+            bar_wins = bar_edge is not None and (
+                bar_edge > band_edge if is_short else bar_edge < band_edge
+            )
+            fallback_edge = bar_edge if bar_wins else band_edge
+            fallback_rule = STOP_RULE_SIGNAL_BAR if bar_wins else STOP_RULE_ATR_BAND
             level = None
-            if outside_band:
+            if stop_loss is None:
+                # Nothing typed by the PM or the analyst. Read the stop from
+                # the instrument rather than refuse: a stop is always
+                # derivable (item 54), and the width gate below still judges
+                # the result.
+                honoured, rule = fallback_edge, fallback_rule
+                logger.info(
+                    "Constructor: %s %s had no stop from the PM or the "
+                    "analyst; placed at $%.2f from the instrument [%s] "
+                    "(%.2f x ATR band $%.2f%s).",
+                    side_label, symbol, honoured, rule, multiple, band_edge,
+                    f", signal bar edge ${bar_edge:.2f}" if bar_edge is not None else "",
+                )
+                placed = True
+                stop_loss = honoured
+            else:
+                placed = False
+                outside_band = (
+                    stop_loss >= band_edge if is_short
+                    else (band_edge <= 0 or stop_loss <= band_edge)
+                )
+            if placed:
+                pass  # read from the instrument above; nothing to widen
+            elif outside_band:
                 # Already further from entry than the noise band asks for.
                 # Nothing to widen — but this is the path that used to
                 # return before the floor ran, and it is the majority path.
@@ -1994,21 +2062,70 @@ class PortfolioConstructor:
                             entry_price, multiple, band_edge,
                         )
                 else:
-                    # Nothing computed backs this stop — widen it, exactly
-                    # as before §12.1.
-                    honoured, rule = band_edge, STOP_RULE_ATR_BAND
+                    # Nothing computed backs this stop — widen it to the
+                    # instrument's own fallback: the band, exactly as
+                    # before §12.1, or the signal bar's far edge when that
+                    # is wider (item 54).
+                    honoured, rule = fallback_edge, fallback_rule
                     logger.info(
                         "Constructor: %s %s stop widened $%.2f → $%.2f "
                         "(%.1f%% %s entry) [%s] — no computed structural "
                         "level sits at it, and it was placed inside %.2f x "
                         "ATR of $%.2f (%s setup, %s tape). A stop nothing on "
-                        "the chart defends does not earn the §12.1 exemption.",
-                        side_label, symbol, stop_loss, band_edge,
-                        100 * abs(entry_price - band_edge) / entry_price,
-                        side_word, STOP_RULE_ATR_BAND, multiple, atr,
+                        "the chart defends does not earn the §12.1 exemption.%s",
+                        side_label, symbol, stop_loss, honoured,
+                        100 * abs(entry_price - honoured) / entry_price,
+                        side_word, rule, multiple, atr,
                         getattr(analysis, "setup_type", None) or "unknown",
                         regime or "unknown",
+                        (f" The signal bar's {'high' if is_short else 'low'} "
+                         f"${bar_edge:.2f} sits past the band's ${band_edge:.2f}, "
+                         f"so the bar decides.") if bar_wins else "",
                     )
+
+        # -------------------------------------------------------------
+        # The WIDTH gate (item 54, 2026-09-12): whatever placed the stop,
+        # it must sit within the instrument's own REACH over this trade's
+        # horizon.
+        # -------------------------------------------------------------
+        # Kullamägi's constraint in SHAPE — the stop's width is measured in
+        # the stock's own volatility units and refused past a cap — and
+        # deliberately not his unit. See STOP_REFUSAL_WIDER_THAN_REACH for
+        # why neither his 1 x daily range nor the desk's 2.5 x ATR band can
+        # be the cap on this desk. The cap is `horizon_reach`: ATR x
+        # sqrt(horizon) x the reach multiple the target derivation and the
+        # level scan already use — the furthest price plausibly travels
+        # inside the trade. A stop past it cannot be hit inside the trade,
+        # so it is not a stop, and the risk-based size computed from it
+        # is fiction. Under the cap, width is answered by `_plan_risk_
+        # targets` sizing down — the ratified §2.1 invariant — never here.
+        # No horizon means no reach and no gate: `_derive_target` has
+        # already refused such a trade by name on both live paths, so this
+        # only ever passes a hand-built shim (the backtest engine).
+        if atr is not None:
+            reach = horizon_reach(
+                atr, getattr(analysis, "expected_horizon_sessions", None),
+                max_reach_atr_multiple=self.cfg.max_target_reach_atr_multiple,
+                max_horizon_sessions=self.cfg.max_target_horizon_sessions,
+            )
+            width = abs(entry_price - honoured)
+            if reach is not None and width > reach and not math.isclose(
+                width, reach, rel_tol=1e-9,
+            ):
+                self._note_refusal(
+                    symbol, direction, STOP_REFUSAL_WIDER_THAN_REACH,
+                    f"the stop this trade needs sits ${honoured:,.2f} "
+                    f"[{rule}], {width / atr:.2f} x ATR {side_word} the "
+                    f"${entry_price:,.2f} entry — past the ${reach:,.2f} "
+                    f"({reach / atr:.2f} x ATR) the instrument can plausibly "
+                    f"travel inside this trade's "
+                    f"{getattr(analysis, 'expected_horizon_sessions', None)}-"
+                    f"session horizon. A stop price cannot reach is not a "
+                    f"stop, and the size computed from it would be fiction "
+                    f"(Kullamägi's width rule in shape, the desk's own reach "
+                    f"as the unit).",
+                )
+                return None
 
         # -------------------------------------------------------------
         # ONE reward:risk gate, on the stop that will actually ship.
@@ -2855,23 +2972,26 @@ class PortfolioConstructor:
         analysis: TechAnalysisResult | None,
         entry_price: float,
     ) -> float | None:
-        """Priority: target's suggested stop → the technical analyst's stop → no trade.
+        """Priority: target's suggested stop → the technical analyst's stop →
+        None, which `_widen_stop_past_noise` then READS FROM THE INSTRUMENT.
 
-        There is deliberately no synthesized fallback. A stop that nobody
-        derived from the chart cannot be risk-sized honestly, and the previous
-        `entry - 2*ATR` / `entry * 0.95` fallbacks were the source of exits
-        that fired inside ordinary noise. If neither source supplies a level,
-        return None and let the caller reject the position.
+        Until 2026-09-12 a None here was a refusal ("no synthesized
+        fallback"), on the argument that a stop nobody derived from the
+        chart cannot be risk-sized honestly. Item 54 (docs/WORK.md) replaced
+        that: the stop is always derivable — the wider of the ATR noise band
+        and the signal bar's far edge, both read from the bars — and the
+        thing that cannot be sized honestly is a stop WIDER than the
+        instrument's own range, which the width gate refuses. The old flat
+        `entry * 0.95` fallback stays gone; nothing here is a percentage.
         """
         if target.suggested_stop_price and target.suggested_stop_price > 0:
             return float(target.suggested_stop_price)
         if analysis and analysis.stop_loss and analysis.stop_loss > 0:
             return float(analysis.stop_loss)
-        # No structural stop from either source — reject rather than invent one.
-        logger.warning(
-            "Constructor: %s has no structural stop (suggested_stop_price and "
-            "analysis.stop_loss both absent) — rejecting. Stops are no longer "
-            "synthesized from ATR or a flat percentage.",
+        logger.info(
+            "Constructor: %s has no typed stop (suggested_stop_price and "
+            "analysis.stop_loss both absent) — it will be read from the "
+            "instrument (item 54).",
             target.symbol,
         )
         return None
