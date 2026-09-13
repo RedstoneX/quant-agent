@@ -421,7 +421,10 @@ def run_backtest(
         # band says, down to a deterministic 1x ATR floor. Wired here so a
         # change to `config.risk.*` is the same experiment in the backtest
         # as it is live.
-        level_match_atr_tolerance=config.risk.level_match_atr_tolerance,
+        # No `level_match_atr_tolerance` to wire: deleted 2026-09-13
+        # (docs/WORK.md item 46). The match tolerance is the level zone's
+        # own width, read from `src.data.levels.CLUSTER_TOLERANCE_PCT`, so
+        # live and backtest get it from the same place by construction.
         absolute_min_stop_atr_multiple=config.risk.absolute_min_stop_atr_multiple,
         # Target-derivation tunables (2026-09-01). Wired for parity with
         # live, though this engine does not reach `_derive_target`: it
