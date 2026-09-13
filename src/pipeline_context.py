@@ -217,6 +217,15 @@ class RunContext:
     # literature (docs/RESEARCH_FINDINGS.md) and any evaluation must record
     # which model produced each result. None alongside decision_id=None.
     decision_model: str | None = None
+    # Phase 14b (automatic opportunity-cost rotation, `src/rotation.py`).
+    # Written ONCE by DecisionStage when — and only when — it appended a
+    # zero-size target for a categorically-ineligible holding to the PM's
+    # plan: {held_symbol, new_symbol, new_score, reason, held_reasons,
+    # protection_basis, headroom_pct}. Read by ExecutionStage to fire the
+    # owner alert the moment that sale is broker-accepted and to record the
+    # buy leg's outcome. None on every run where no rotation was proposed
+    # (flag off, nothing qualified, or a guard refused it).
+    rotation: dict | None = None
 
     # === Populated by execution stage ===
     orders: list[dict] = field(default_factory=list)

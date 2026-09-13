@@ -50,18 +50,52 @@ comparison — it is categorical, not a ranking judgement. Only among held
 positions that ARE still eligible does the ranking-margin rule apply, to
 protect against churning on a real but marginal rank difference.
 
-**Never forces anything.** This module returns one comparison — the
+**This module never places an order.** It returns one comparison — the
 weakest thing to consider giving up, and the strongest thing there is no
 room for — as data for the Portfolio Manager's OWN prompt
-(`PortfolioManagerAgent._render_rotation_section`). It never edits a
-position, never sizes a trade, and is silent unless capital is genuinely
-constrained (real headroom under the desk's own existing risk-budget floor,
-`STARTER_POSITION_RISK_PCT` / `RiskConfig.min_position_risk_pct` — the same
-floor `allocate_risk_budget` already uses to decide "not worth trading").
-Whatever the Portfolio Manager decides to do with it is still subject to
-this desk's existing discipline on any edit to a held position: substantively
-justified and verified, never a silent side effect (`docs/WORK.md` items
-22-24).
+(`PortfolioManagerAgent._render_rotation_section`). It never sizes a
+trade, and is silent unless capital is genuinely constrained (real headroom
+under the desk's own existing risk-budget floor, `STARTER_POSITION_RISK_PCT`
+/ `RiskConfig.min_position_risk_pct` — the same floor `allocate_risk_budget`
+already uses to decide "not worth trading").
+
+**Phase 14b — the comparison can now be ACTED ON, behind a flag.** Owner
+request: positions are reassessed several times a day, and when a genuinely
+better-ranked opportunity exists while the book is full of something weaker
+and stagnant, the weak one should be pruned and the better trade taken —
+rather than the desk merely showing the model a comparison and hoping it
+acts. With `execution.rotation_enabled` ON (default OFF — see
+`config/settings.yaml`), `DecisionStage` (`src/pipeline_stages.py::
+_apply_rotation_execution`) turns the CATEGORICAL tier only into an
+ordinary zero-size PM target for the held symbol, which then travels the
+identical path every PM-decided exit travels: `PortfolioConstructor`
+(`_build_sell`), the hard risk rules, the AI Risk Manager's review and
+per-symbol refusal, the holding-discipline claim check, and
+`_submit_protected_sell`'s cancel-write-ahead → submit → restore-on-failure
+discipline. No gate is bypassed, and no new exempt reason category exists.
+
+Why only the categorical tier is automated: an ineligible holding fails the
+same rule a brand-new buy must clear today, so the case is a rule outcome,
+not a ranking judgement. The ranked-margin tier stays information-only
+because a 25% score gap is a PROVISIONAL, unmeasured band (see above), and
+selling an eligible, thesis-intact position on an unmeasured margin would be
+exactly the "arbitrary number decides a trade" pattern this desk refuses
+elsewhere.
+
+Why the desk's holding discipline still binds: `docs/WORK.md` item 25 says a
+position stays protected from a plain, no-real-trigger sale unless the level
+backing its thesis has broken (confirmed on two consecutive closes, or the
+noise-band fallback). Opportunity cost is not one of the three real triggers
+that doctrine names, so a rotation may only close a holding whose
+`check_structural_protection` verdict is ALREADY "not protected" — a stale
+position whose thesis is still structurally intact is surfaced, never sold.
+Whether opportunity cost should become a fourth trigger is an owner decision
+this module does not take.
+
+`rotation_sell_reason` writes the sale's reason from measured facts only —
+the failed entry rules, the broken-protection basis, the candidate's rank and
+score, the headroom — so the audit trail, the Risk Manager and the owner
+alert all read the same checkable statement.
 """
 
 from __future__ import annotations
@@ -73,7 +107,9 @@ from src.verdicts import RankedCandidate
 __all__ = [
     "ROTATION_MARGIN_PCT",
     "RotationOpportunity",
+    "RotationPrecheck",
     "evaluate_rotation_opportunity",
+    "rotation_sell_reason",
 ]
 
 #: Relative margin the best-ranked new candidate must clear over the
@@ -185,3 +221,61 @@ def evaluate_rotation_opportunity(
             margin_pct=margin_pct,
         )
     return None
+
+
+@dataclass(frozen=True)
+class RotationPrecheck:
+    """Everything the PM's rotation section was rendered from, kept so the
+    pipeline can act on the SAME numbers the model was shown — never a
+    second evaluation a moment later against possibly different inputs.
+
+    `opportunity` is `None` when nothing qualified; `telemetry_available`
+    is False when the book's risk was not visible this session (the
+    fail-open skip), in which case `headroom_pct` is meaningless.
+    """
+
+    opportunity: RotationOpportunity | None
+    headroom_pct: float
+    ceiling_pct: float
+    floor_pct: float
+    telemetry_available: bool = True
+
+
+def rotation_sell_reason(
+    opportunity: RotationOpportunity,
+    *,
+    protection_basis: str,
+    protection_detail: str,
+    headroom_pct: float,
+    ceiling_pct: float,
+    floor_pct: float,
+) -> str:
+    """The checkable reason a rotation sale carries, from measured facts only.
+
+    Every clause names something recorded elsewhere this run: the held
+    symbol's own `candidate_eligibility` failures, the `StructuralProtection
+    Check` basis and detail, the new candidate's rank score, and the book's
+    headroom. Nothing here is a feeling or a forecast, so the Risk Manager
+    can check every claim against the blocks it is shown and the evening
+    review can grade it.
+
+    Kept compact (the rule list is capped at 100 characters, the protection
+    detail at 60) because `PortfolioConstructor._build_sell` appends the
+    thesis condition and then truncates the order's reasoning at 500; the
+    untruncated detail lives in the `rotation` pipeline_event.
+    """
+    if opportunity.tier != "ineligible_hold":
+        raise ValueError(
+            "rotation_sell_reason is for the categorical tier only — the "
+            "ranked-margin tier is surfaced, never executed"
+        )
+    failed_rules = ("; ".join(opportunity.reasons) or "entry rules")[:100]
+    return (
+        f"ROTATION (deterministic, src/rotation.py): {opportunity.held_symbol} "
+        f"fails the desk's own entry rules today ({failed_rules}); structural "
+        f"protection not intact ({protection_basis}: {protection_detail[:60]}). "
+        f"Headroom {headroom_pct:.2f}% of the {ceiling_pct:.2f}% risk ceiling, "
+        f"under the {floor_pct:.2f}% minimum. Full close to free room for "
+        f"{opportunity.new_symbol}, the best-ranked eligible candidate (score "
+        f"{opportunity.new_score:.2f}) the PM targeted."
+    )

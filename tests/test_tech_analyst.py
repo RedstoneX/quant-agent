@@ -852,6 +852,13 @@ def test_a_model_asserted_computed_levels_field_is_overwritten_by_code(
     assert spy.computed_level_touches == {
         lv.price: lv.touches for lv in (*supports, *resistances)
     }
+    # 2026-09-12, docs/WORK.md item 54 — the signal bar's edges and the
+    # completed-session count are set the same way, from the same bars:
+    # the constructor's instrument-read fallback stop and its "too young
+    # to measure" refusal read these, never anything the model typed.
+    assert spy.signal_bar_low == bars[-1].low
+    assert spy.signal_bar_high == bars[-1].high
+    assert spy.bars_available == len(bars)
 
 
 @patch("anthropic.Anthropic")

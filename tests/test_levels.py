@@ -65,7 +65,7 @@ class TestLevelDetection:
     def test_a_level_touched_once_is_not_structure(self):
         # A single spike should not be reported as a level.
         path = [100.0] * 40 + [140.0] + [100.0] * 40
-        _, resistances = find_structural_levels(_bars(path), max_distance_pct=100.0)
+        _, resistances = find_structural_levels(_bars(path), atr=25.0)
         assert not any(135 <= lv.price <= 145 for lv in resistances)
 
     def test_insufficient_history_returns_nothing(self):
@@ -87,7 +87,7 @@ class TestBadData:
             date=bars[i].date, open=bars[i].open, high=1000.0,
             low=bars[i].low, close=bars[i].close, volume=bars[i].volume,
         )
-        supports, resistances = find_structural_levels(bars, max_distance_pct=10_000.0)
+        supports, resistances = find_structural_levels(bars, atr=1_000.0)
         assert not any(lv.price > 500 for lv in supports + resistances)
 
     def test_impossible_bars_are_discarded(self):
@@ -150,7 +150,7 @@ class TestRelevanceFiltering:
             + [96.5, 97.0, 97.5, 98.0, 98.5, 99.0]                # clears edge-of-series
         )
         supports, _ = find_structural_levels(
-            _bars(ancient + buffer + recent), max_distance_pct=100.0
+            _bars(ancient + buffer + recent), atr=25.0
         )
         assert supports, "expected support levels"
         newest = min(supports, key=lambda lv: lv.last_touch_sessions_ago)
@@ -175,10 +175,10 @@ class TestRelevanceFiltering:
         recent_tail = [90.0 + i * (20.0 / 6) for i in range(7)]
 
         old_supports, _ = find_structural_levels(
-            _bars(osc + old_tail), max_distance_pct=100.0
+            _bars(osc + old_tail), atr=25.0
         )
         recent_supports, _ = find_structural_levels(
-            _bars(osc + recent_tail), max_distance_pct=100.0
+            _bars(osc + recent_tail), atr=25.0
         )
         assert old_supports and recent_supports
         assert [lv.strength for lv in old_supports] == [
@@ -208,7 +208,7 @@ class TestRelevanceFiltering:
             + [95.5, 96.0, 96.5, 97.0, 97.5, 98.0]
         )
         supports, _ = find_structural_levels(
-            _bars(far + ramp + near), max_distance_pct=100.0
+            _bars(far + ramp + near), atr=25.0
         )
         near_levels = [lv for lv in supports if lv.price > 90.0]
         far_levels = [lv for lv in supports if lv.price < 65.0]

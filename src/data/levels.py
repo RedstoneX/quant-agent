@@ -32,6 +32,7 @@ from dataclasses import dataclass, asdict
 import numpy as np
 
 from src.models import OHLCV
+from src.data.technical import atr_series
 from src.risk.constants import is_trend_trade
 
 # A pivot is a bar whose high (or low) is the most extreme within this many
@@ -46,11 +47,16 @@ CLUSTER_TOLERANCE_PCT = 1.0
 # A level touched once is a coincidence, not structure.
 MIN_TOUCHES = 2
 
-# Levels further than this from the current price are history, not actionable
-# structure. Filters out artefacts like a pre-IPO/SPAC period spent pinned at
-# $10 while the stock now trades at $42 — technically hundreds of "touches",
-# entirely irrelevant to today's decision.
-MAX_DISTANCE_PCT = 40.0
+# No MAX_DISTANCE_PCT here. Until 2026-09-12 a level only counted if it sat
+# within a flat 40% of the current price — a number with no derivation that
+# did not scale: 40% on a utility that moves 1.2% a day is thirty-plus days
+# of typical travel, 40% on a name that moves 8% a day is five. The window
+# is now READ from the instrument: a level is relevant if the stock can
+# plausibly reach it, using the SAME reachability estimate
+# `derive_structural_target` already uses to decide whether a target is
+# reachable (`horizon_reach`, ATR x sqrt(sessions) x the reach multiple),
+# taken at the longest horizon the desk permits any trade to state
+# (`MAX_HORIZON_SESSIONS`). See `find_structural_levels`.
 
 # No RECENCY_HALFLIFE_SESSIONS here. Until 2026-09-02 this was 252.0 (~1
 # trading year), decaying each touch's contribution to `strength` by
@@ -69,6 +75,83 @@ MAX_LEVELS_PER_SIDE = 6
 # away genuine volatility is worse than tolerating a rare bad print.
 _CLEAN_WINDOW = 10
 _CLEAN_FACTOR = 5.0
+
+# ---------------------------------------------------------------------------
+# Reachability — the ONE estimate of how far an instrument travels
+# ---------------------------------------------------------------------------
+# These two constants belong to the target derivation further down (see the
+# "Deriving the TARGET from structure" section for the full reasoning and
+# the asymmetry note). They are defined up here because the level scan now
+# reuses them: the same question — "can price plausibly get there?" — decides
+# both whether a level is a reachable TARGET and whether a level is RELEVANT
+# at all. One estimate, two consumers, so they cannot drift apart.
+
+#: How far price can plausibly get within the horizon, in sqrt(session)-scaled
+#: ATRs. Deliberately looser than the measured-move projection — see the note
+#: on asymmetry in the target section.
+MAX_REACH_ATR_MULTIPLE = 1.5
+
+#: Ceiling on `expected_horizon_sessions` before it enters the sqrt() travel
+#: estimate. An analyst claiming a 250-session horizon would otherwise
+#: licence a target ~16 ATRs out; this also absorbs a nonsense value. It is
+#: also, by construction, the LONGEST horizon over which any trade on this
+#: desk may ask how far the instrument travels — which is why the level scan
+#: reads it as the relevance horizon.
+MAX_HORIZON_SESSIONS = 60
+
+
+def travel_over(atr: float, horizon_sessions: int) -> float:
+    """Typical excursion over `horizon_sessions`: ``ATR * sqrt(sessions)``.
+
+    Square-root scaling, not linear: daily ranges accumulate as a random
+    walk, and ``ATR * N`` overstates an N-session excursion by roughly
+    sqrt(N). This is the desk's single definition of "how far does this
+    instrument travel in that many sessions".
+    """
+    return float(atr) * math.sqrt(max(1, int(horizon_sessions)))
+
+
+def horizon_reach(
+    atr: float | None,
+    horizon_sessions: int | None,
+    *,
+    max_reach_atr_multiple: float = MAX_REACH_ATR_MULTIPLE,
+    max_horizon_sessions: int = MAX_HORIZON_SESSIONS,
+) -> float | None:
+    """The furthest price can plausibly get within the horizon, in dollars.
+
+    ``ATR * sqrt(min(horizon, cap)) * max_reach_atr_multiple`` — the exact
+    quantity `derive_structural_target` reports as `horizon_reach` and uses
+    to decide whether a structural level is a reachable target. Exposed so
+    `find_structural_levels` can ask the SAME question of every candidate
+    level ("could any trade on this desk plausibly get here?") instead of
+    applying a flat percentage that meant something different on every
+    instrument.
+
+    Returns None when there is no usable ATR or horizon: reachability
+    cannot be measured, and nothing here guesses it.
+    """
+    volatility = _finite_positive(atr)
+    if volatility is None:
+        return None
+    try:
+        horizon = int(horizon_sessions) if horizon_sessions is not None else 0
+    except (TypeError, ValueError):
+        horizon = 0
+    if horizon <= 0:
+        return None
+    horizon = min(horizon, max(1, int(max_horizon_sessions)))
+    return travel_over(volatility, horizon) * float(max_reach_atr_multiple)
+
+
+def _finite_positive(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number <= 0:
+        return None
+    return number
 
 
 @dataclass(frozen=True)
@@ -179,7 +262,9 @@ def find_structural_levels(
     pivot_window: int = PIVOT_WINDOW,
     tolerance_pct: float = CLUSTER_TOLERANCE_PCT,
     min_touches: int = MIN_TOUCHES,
-    max_distance_pct: float = MAX_DISTANCE_PCT,
+    atr: float | None = None,
+    max_reach_atr_multiple: float = MAX_REACH_ATR_MULTIPLE,
+    max_horizon_sessions: int = MAX_HORIZON_SESSIONS,
     max_per_side: int = MAX_LEVELS_PER_SIDE,
 ) -> tuple[list[Level], list[Level]]:
     """Return ``(support_levels, resistance_levels)``, most significant first.
@@ -188,6 +273,29 @@ def find_structural_levels(
     the level sits *now*, not by whether the pivots forming it were highs or
     lows. A ceiling that price has broken through becomes a floor, and treating
     it as resistance because it was once a swing high would be wrong.
+
+    **Relevance window (2026-09-12).** A repeated turning point only counts
+    as actionable structure if the stock can plausibly reach it. "Plausibly
+    reach" is not a percentage: it is `horizon_reach` — ``ATR x sqrt(H) x
+    MAX_REACH_ATR_MULTIPLE`` — the same estimate `derive_structural_target`
+    uses to decide whether a level is a reachable target, evaluated at
+    ``H = max_horizon_sessions``, the longest horizon the desk lets any
+    trade state. So the window is exactly "the furthest any permitted trade
+    could travel": every level the target derivation could ever accept is
+    inside it, and a level outside it could be neither a target for any
+    stated horizon nor a stop (stops sit ~1.3-1.8 ATR away). It widens on
+    a volatile name and narrows on a quiet one because ATR does, with no
+    number chosen here. Until 2026-09-12 this was a flat 40% of price,
+    which on a 1.2%-ATR utility looked thirty-plus days of travel away and
+    on an 8%-ATR name looked five days away — and, once "no floor, no
+    trade" became a rule, would have refused good trades on volatile names
+    for a level that existed but sat just past an arbitrary line.
+
+    `atr` may be supplied by a caller that already has the instrument's
+    ATR(14) (`src/data/technical.py::atr_series` — the one implementation);
+    otherwise it is computed here from the same cleaned bars. No ATR means
+    reachability cannot be measured, and the scan returns nothing rather
+    than fall back to a distance it cannot justify.
 
     Returns two empty lists when there is not enough clean history to say
     anything. Callers must treat that as "no structure identified" and decline
@@ -199,6 +307,18 @@ def find_structural_levels(
 
     last_close = clean[-1].close
     if last_close <= 0:
+        return [], []
+
+    volatility = _finite_positive(atr)
+    if volatility is None:
+        series = atr_series(clean)
+        volatility = _finite_positive(series[-1]) if series.size else None
+    window = horizon_reach(
+        volatility, max_horizon_sessions,
+        max_reach_atr_multiple=max_reach_atr_multiple,
+        max_horizon_sessions=max_horizon_sessions,
+    )
+    if window is None:
         return [], []
 
     last_index = len(clean) - 1
@@ -216,7 +336,7 @@ def find_structural_levels(
             continue
 
         distance_pct = abs(price - last_close) / last_close * 100.0
-        if distance_pct > max_distance_pct:
+        if abs(price - last_close) > window:
             continue
 
         newest_index = max(p[0] for p in cluster)
@@ -416,14 +536,10 @@ MIN_TARGET_ATR_MULTIPLE = 1.0
 #: nothing more.
 BREAKOUT_PROJECTION_ATR_MULTIPLE = 1.0
 
-#: How far price can plausibly get within the horizon, in the same units.
-#: Deliberately looser than the projection above — see the note on asymmetry.
-MAX_REACH_ATR_MULTIPLE = 1.5
-
-#: Ceiling on `expected_horizon_sessions` before it enters the sqrt() travel
-#: estimate. An analyst claiming a 250-session horizon would otherwise
-#: licence a target ~16 ATRs out; this also absorbs a nonsense value.
-MAX_HORIZON_SESSIONS = 60
+#: `MAX_REACH_ATR_MULTIPLE` and `MAX_HORIZON_SESSIONS` — the reach multiple
+#: and the horizon ceiling this section reasons about — are defined near the
+#: top of the module (the "Reachability" block) since 2026-09-12, because the
+#: level scan reuses them. Their meaning is unchanged.
 
 #: Refusal codes. Each names a DIFFERENT thing being wrong, because "no
 #: trade" without a reason is what let the original defect survive unnoticed.
@@ -467,14 +583,39 @@ def _refused(code: str, detail: str, model_target: float | None) -> TargetDeriva
     )
 
 
-def _finite_positive(value) -> float | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
+def structural_floor(
+    levels: Sequence[float],
+    entry_price: float | None,
+    direction: str,
+) -> float | None:
+    """The nearest computed level on the STOP side of this entry, or None.
+
+    A stop-placement helper, not a gate. For one day (2026-09-12, docs/
+    WORK.md item 54) `None` here refused the trade — "no floor, no trade".
+    That rule was replaced the same day on sourced research: no published
+    method refuses a trade for lack of support below (Chandelier, Parabolic
+    SAR, the Darvas box and Kullamägi's entry-bar low all place a stop with
+    no level at all), and the population it refused — names at or near
+    their highs — is the one George & Hwang (2004) found forecasts returns.
+    The live constructor now reads a fallback stop from the instrument and
+    gates on the stop's WIDTH instead. `src/backtest/engine.py` still calls
+    this for its stop candidate.
+
+    `levels` is `TechAnalysisResult.computed_levels` — the union of every
+    level `find_structural_levels` found within the instrument's own
+    reach — partitioned here against THIS entry rather than the last close,
+    for the same reason `derive_structural_target` re-partitions. Returns
+    the nearest such level so a log can name it.
+    """
+    entry = _finite_positive(entry_price)
+    if entry is None:
         return None
-    if not math.isfinite(number) or number <= 0:
-        return None
-    return number
+    usable = [p for p in (_finite_positive(lv) for lv in levels or ()) if p is not None]
+    if str(direction or "").strip().lower() == "short":
+        side = [p for p in usable if p > entry]
+        return min(side) if side else None
+    side = [p for p in usable if p < entry]
+    return max(side) if side else None
 
 
 def derive_structural_target(
@@ -539,8 +680,16 @@ def derive_structural_target(
     horizon = min(horizon, max(1, int(max_horizon_sessions)))
 
     is_short = str(direction or "").strip().lower() == "short"
-    travel = volatility * math.sqrt(horizon)
-    reach = travel * max_reach_atr_multiple
+    travel = travel_over(volatility, horizon)
+    # The same `horizon_reach` the level scan uses for relevance; the scan's
+    # window (taken at `max_horizon_sessions`) is therefore always at least
+    # this wide, so no level this derivation could accept was ever dropped
+    # before it got here.
+    reach = horizon_reach(
+        volatility, horizon,
+        max_reach_atr_multiple=max_reach_atr_multiple,
+        max_horizon_sessions=max_horizon_sessions,
+    )
     noise = volatility * min_target_atr_multiple
     setup = str(setup_type or "").strip().lower()
 

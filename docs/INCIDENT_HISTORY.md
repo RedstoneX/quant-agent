@@ -22,6 +22,329 @@ what would catch it next time.
 
 ---
 
+### 2026-09-12 — "no floor, no trade" shipped in the morning and was falsified by sourced research within hours; replaced by a stop-width gate the same day
+
+**In plain words:** the desk had just been told to refuse any trade with no
+support level beneath the entry, and to ignore a level sitting on the far
+side of an unfilled gap. Both ideas sounded like discipline. Neither
+survived contact with the published record, and the owner approved
+replacing them before the rule had run a single live session.
+
+**What the sources say, and where.** No published stop method refuses a
+trade for lack of a level below: Chandelier (highest high minus 3 ATR),
+Parabolic SAR, the Darvas box bottom and the entry-bar low all place a
+stop with no level at all, and Darvas only bought stocks at new highs
+(Kristjan Kullamägi, in his own words,
+https://qullamaggie.com/my-3-timeless-setups-that-have-made-me-tens-of-millions/).
+The gap branch was not merely unsupported but backwards, and this is
+measured: Thomas Bulkowski finds a rising window supports price only 20%
+of the time (16% in a bear market) and says outright that gaps do not
+work well as support or resistance
+(https://thepatternsite.com/SAR.html,
+https://thepatternsite.com/GaugingGaps.html). Price passes through the gap
+four times in five, which makes the pre-gap level more reachable, not
+void; no source anywhere treats a pre-gap level as void — that premise
+was this desk's own invention. Worst, the rule was adversely selected:
+George and Hwang (2004, Journal of Finance) show that nearness to the
+52-week high forecasts returns and dominates past returns as a predictor,
+robust in 18 of 20 international markets
+(https://www.bauer.uh.edu/tgeorge/papers/gh4-paper.pdf) — and a stock near
+its high is exactly the stock with nothing computed beneath it. Measured
+against the real universe the morning rule refused nine names, six of
+them for the gap reason alone.
+
+**What published practice constrains instead is the stop's width.**
+Kullamägi: "stop should not be wider than the ATR or ADR of the stock".
+The response to a wide stop is a smaller position — Van Tharp's sizing,
+position = risk budget divided by distance to stop, which is arithmetic
+rather than an empirical claim — not a refusal.
+
+**What was done.** The floor requirement, its two refusal codes, the
+PM-eligibility mirror and the gap-edge plumbing were deleted; the gap
+detector stays as analyst context and nothing reads it as a rule. The
+structured-refusal record the morning PR built (a refusal written as data
+with its code, drained once per session, read by the census and the PM
+digest as its own bucket) was kept and reused. A stop is now always
+derivable, with no new mechanism: the ATR noise band that already widened
+an unbacked stop now also places a missing one, and the wider of that
+band and the signal bar's far edge is the fallback. The gate is on width,
+refused by code. **The cap had to be chosen honestly, and it is not
+Kullamägi's.** His one-day range would refuse this desk's own ratified
+2.5-ATR fallback; the fallback band as cap would refuse every "wider stop,
+smaller position" trade the ratified sizing rule requires (38 pinned tests
+failed when that was tried). The only instrument-read width the desk
+already had past both is the reach — ATR times the square root of the
+horizon times the same 1.5 the target derivation and the level scan use —
+the furthest price plausibly travels inside the trade. A stop past it
+cannot be hit inside the trade, so the size computed from it is fiction.
+The desk computes ATR, not ADR; the substitution is stated in the code.
+One narrow refusal survives on different grounds: a listing with fewer
+completed sessions than the analyst's own 200-session trend reference is
+refused as too young to measure, checked first so it is named as such and
+not filed as a dead-feed fault by PR #326's classification, which would
+not have caught it (its own floor is 11 bars).
+
+**Verified, not assumed: sizing already shrinks as the stop widens.** The
+risk-based path divides a fixed risk budget by the stop distance on every
+risk-sized target. What clamps it afterwards is the single-name notional
+ceiling (65% of equity, the owner's own setting — docs/WORK.md item 47):
+a tight stop stops growing the position there, and the risk actually
+taken is then below the budget, which the order note says. Pre-existing
+and recorded, not something this change introduced or fixed.
+
+**Measured after the change,** same method as the morning (real universe,
+real daily bars through the desk's own data path, the shipped code
+imported): at a 20-session horizon 95 of 101 pass, 4 are refused on width
+(MRVL, VLO, OKLO, NUE — a stop leaned on a floor 7.8 to 9.5 ATR away,
+past the 6.7-ATR reach), 2 on history (DRAM at 112 bars, CBRS at 83), 0
+data faults; at the 60-session cap 99 pass and only the 2 history
+refusals remain. Flagged and not fixed: SNDK's series shows a $27.89 low
+and a $1,633 close inside eighteen months — a corporate action or a data
+error, not a market fact — and the rehearsal engine still declines a
+trade with no level beneath it, a pre-existing divergence from the live
+desk now stated in its code.
+
+**What would catch it next time.** The morning rule went from owner
+sentence to shipped code in one pass with no literature check. The desk's
+standing rule that technical questions go to published doctrine, never to
+training recall or to the owner's instinct, existed and was not applied.
+`tests/test_stop_width_gate.py` pins the replacement: nothing refuses for
+absent structure, the gap branch cannot be re-imported, a missing stop is
+read from the instrument, the width refusal fires past the reach and is
+recorded, a wider stop under the cap halves the shares at the same
+dollars of risk, and a young listing is refused first under its own name.
+
+---
+
+### 2026-09-12 — the "is this price level relevant" window was a flat 40% nobody derived; it is now read from the stock's own volatility, and "no floor, no trade" is enforced on top of it
+
+**In plain words:** when the desk scans a stock's history for prices it has
+repeatedly bounced off, it only keeps the ones the stock could plausibly get
+back to — otherwise a shelf from a $10 SPAC era would count as "support" for
+a $42 stock. Until today "plausibly" meant "within 40% of the current
+price". That number had no derivation and meant a different thing on every
+stock: on a utility that moves 1% a day it is months of travel, on a name
+that moves 8% a day it is a week. It did not matter much while these levels
+only fed targets. It matters a great deal now, because the owner has ruled
+that a trade with no support level beneath it is refused outright — and if
+the window is too narrow for a volatile name, the desk refuses a good trade
+for the wrong reason: the floor exists, we just did not look far enough.
+
+**What replaced it, and where it came from.** The desk already had one
+answer to "how far can this stock travel": the target derivation's own
+reachability estimate, ATR x sqrt(sessions) x 1.5, which decides whether a
+structural level is a reachable target. The level scan now uses that exact
+function, evaluated at the 60-session horizon cap the desk already imposes
+on every stated holding period — so the window is "the furthest any trade
+this desk permits could go", about 11.6 ATRs. No new multiplier, no second
+notion of reachable distance: every level the target derivation could ever
+accept is inside the window by construction, and a level outside it could
+be neither a target for any permitted horizon nor a stop. The window now
+widens on a volatile name and narrows on a quiet one because ATR does.
+Nothing was fitted to past outcomes (`docs/OUTCOME.md`, no arbitrary
+numbers). Where the scan cannot measure an ATR (fewer than 14 usable bars)
+it reports nothing rather than fall back to a distance it cannot justify.
+
+**The rule enforced on top: no floor, no trade; no ceiling is fine.** What
+the code did before, established by reading it: nothing required a floor.
+Order construction refused only when the chart yielded no levels at all, or
+when neither the PM nor the analyst had typed a stop. A long with six
+resistances overhead and nothing beneath shipped — its unbacked stop was
+pushed out to the ATR noise band, a distance rather than a level, which is
+exactly the "pick a number and hope" the owner refuses to hold. The
+backtest engine already declined that trade, so the live desk and its own
+rehearsal disagreed. Now a trade with no computed level on the stop side of
+its entry (below a long, above a short) is refused by name on both setup
+types, at the PM-eligibility preview and at order construction, from the
+one code path both share. Nothing overhead is required: a stock at new
+highs has no ceiling by definition, its target is the measured move, and
+the corresponding refusal stays unreachable. No timer and no gap-vs-pop
+filter were added — the levels are re-read every session and a name
+qualifies the day the chart shows a floor.
+
+**Recorded as data, not as a log line.** The constructor's existing
+per-symbol drop reasons are recovered by a regular expression over its own
+log text, and several messages miss the pattern. This refusal is written to
+a structured record on the constructor and filed by the decision stage
+under its own event reason with the code beside it; the blocked-proposals
+census and the PM-facing digest read it as its own bucket. It is
+deliberately NOT a data fault: "could not compute levels" (short or dirty
+history) is PR #326's separate classification and is refused earlier under
+its own name.
+
+**Measured, then ruled on — the gap case.** The first build was checked
+against real numbers before it was described to the owner: on a $50 -> $80
+gap from an established base, the gap itself inflates the measured ATR, so
+on the gap day the pre-gap $50 shelf was still inside reach and the code
+took it as the floor — 37% below, a trade at a tiny size. That was reported
+rather than hidden, and the owner ruled the same day: *"A shelf $30 below,
+on the far side of a gap the market has repriced through, isn't support
+anyone is defending."* Price never traded through the gap, so nobody bought
+or defended anything in that range; the level below it is a number on a
+chart, and leaning a stop on it reintroduces exactly the "no defensible
+stop" case the whole rule exists to prevent. So a structural level on the
+far side of an unfilled gap does not count as a floor (mirrored for a short:
+an unfilled down-gap disqualifies a ceiling). The gap is read from the chart
+by the desk's one existing gap detector — the same unfilled gaps the
+analyst's context block already reports — rather than a second definition;
+a filled gap stops disqualifying anything automatically because the
+condition is re-read each session, with no timer or decay. The refusal has
+its own code so the census can tell "a floor exists only beyond the gap"
+from "no levels at all" and "levels only overhead". Real numbers: gap day,
+the $50.60 shelf is beyond the gap and the trade is refused; two and a half
+weeks later a base at $74-80 has bounced twice off $75 and the $74.40 floor
+above the gap qualifies. Inherited and flagged: the reused detector ignores
+gaps under 2%, a pre-existing threshold never derived for this rule.
+
+**Tests that would catch a regression:** `tests/test_no_floor_no_trade.py`
+(a volatile name reaches a shelf a quiet one cannot; the scan's window is
+byte-for-byte the target derivation's own reach; a long with levels only
+overhead is refused and recorded; a short with levels only beneath the
+same; a breakout label does not exempt a long; nothing overhead is never a
+refusal; the census attributes the refusal by code; the gap case with real
+numbers — refused on the gap day, qualifying on the base above it, and
+re-qualifying the day the gap fills). Three fixture families that deliberately kept a stop unbacked
+gained a distant floor so they still test widening rather than the new
+refusal, and the backtest's hand-computed series gained a realistic daily
+range so its $125 shelf is within the instrument's own reach.
+
+### 2026-09-12 — a paused desk left part of a real position with no stop for six sessions, and every record called it "expected"
+
+**In plain words:** the desk owns 5.3089 shares of Oracle. The broker will
+only keep a lasting protective stop on whole shares, so the 5 whole shares
+have a stop that survives the close and the 0.3089-share slice gets a
+one-day stop that the desk puts back every morning. The desk was switched
+off on 3 September and stayed off. Nobody connected "switched off" with
+"nothing puts the morning stop back", so from 3 to 11 September the slice
+(about $46 of a $798 position) had no stop at all, while the last report
+ever written about it — the evening of 2 September — correctly called the
+lapse an expected overnight state. No report came after that, because
+reports come from sessions and there were no sessions. Nothing was lost;
+Oracle rose. The blindness is the defect.
+
+**What was actually true at the broker, checked 2026-09-12 (read-only):**
+position ORCL 5.3089 @ $146.27 average, one open stop-limit SELL for 5.0
+(stop $137.53, limit $133.40) submitted 2026-09-02 18:32:47 UTC. Nothing
+else open.
+
+**The real cause, from the desk's own log, not inferred.** At 18:32:47 UTC
+on 09-02 the entry protection logged the hybrid split — "GTC over 5 whole
+share(s) + DAY over 0.3089 sub-share remainder" — and BOTH legs landed
+("[GTC whole-share] ... qty=5.0000", "[DAY fractional] ... qty=0.3089").
+At 00:00:42 UTC on 09-03 the evening run's coverage sweep logged
+"FRACTIONAL DAY STOP LAPSED (expected)" and put `unprotected_value: 45.18`
+in its result. The six trading-mode timers last fired at 13:00 UTC on
+09-03 — before the 09:30 ET open — and have not fired since (the daily
+P&L export and the alert heartbeat kept running). So: not an `int()`,
+not a floor bug, not a silent retry at a smaller size. `_split_protective_qty`
+did exactly what spec §11.1 says. The design's precondition — "re-placed
+by the next session's coverage sweep" — was simply false for nine days,
+and no code checked the precondition.
+
+**What the broker permits, and how we know.** Fractional orders must be
+DAY; a fractional GTC is refused outright (code 42210000, "fractional
+orders must be DAY orders"); fractional trailing stops are refused at any
+tif; STOP/DAY, STOP_LIMIT/DAY and LIMIT/DAY are accepted. Source: the
+repo's own probe against the live paper account on 2026-09-01 (recorded in
+`src/execution/broker.py`, `config/settings.yaml` and the owner's notes),
+cross-checked today against Alpaca's published fractional-trading page,
+which says the same: market, limit, stop and stop-limit "with a time in
+force = Day", no other tif. I did not re-probe live — the brief was
+read-only and the measurement is eleven days old with a documented error
+code. Conclusion: **a 5.3089-share stop CAN be placed, as a DAY order, and
+it dies at 16:00 ET; there is no order the broker will hold overnight on a
+fractional quantity.** This is a platform limit, not a bug we own.
+
+**What was ruled out.** (1) A flooring bug — the 5.0 is the deliberate GTC
+leg, and the DAY leg was placed. (2) A broker rejection retried smaller —
+both legs were accepted on the first attempt; the log shows no retry. (3)
+The cockpit misreporting — the API's positions/orders match the log
+exactly. (4) "It's under one share so it's negligible" — already found
+wrong on 2026-09-02 and stays wrong: a sub-one-share position lapses in
+full, and a gap moves the whole slice.
+
+**What shipped.** `src/coverage_watchdog.py`, called from
+`scripts/alert_heartbeat.py` after its channel probe. That unit fires at
+06:15 ET seven days a week regardless of the trading timers — the one thing
+proven to still run while the desk is paused, which is exactly when this
+matters. It reads positions and open stops from the broker, and session
+evidence from `alert_channel_checks` (the same rows the silence watchdog
+reads), and sends one owner alert — with the dollar amount — when (a)
+coverage is short of held and (b) no scheduled session completed during
+the most recent trading session's cash hours. (b) is the design's own
+precondition stated as a test, so no number was introduced; the
+session-hours window is the existing `intra_check` window plus the silence
+watchdog's existing timer-cadence slack. It re-alerts at most once per
+trading day while the condition holds (item 41's existing ruling for a
+persistent fault), never on a healthy morning (the owner ratified that a
+nightly lapse must not page), and it never places, changes or cancels an
+order. The heartbeat's own exit code is untouched — it still means only
+"can the desk reach the owner". Tests reproduce the real ORCL state and
+assert the healthy morning stays silent.
+
+**What did NOT ship, on purpose.** No workaround for the broker limit. A
+"stop for the remainder that survives the close" cannot be built; anything
+that looked like one would be a lie in the order book. The remainder is an
+owner decision — WORK.md item 53 / BOARD_NOTES 53: close it while paused,
+accept it with the alert, or go whole-share (declined 2026-09-02).
+
+**Found in passing, NOT fixed (pre-existing).** The desk-wide silence
+watchdog (item 17c) ships a systemd timer under `scripts/systemd/` but that
+timer is not installed on the box: it is absent from the qamc timer list
+and its state file has never been written. So the alarm built to fire on
+"no session ran" has never run in production — which is also why nine
+days of silence produced no message. Installing units on the box is an
+operator action outside a PR; flagged for the owner.
+
+**What would catch it next time.** The watchdog above, by construction.
+And the general shape to remember: any protection whose design says
+"re-placed by the next run" needs a check that lives OUTSIDE the runs.
+
+### 2026-09-12 — funnel item 6 ("no structural level to derive a target from") retired: the refusal cannot fire any more, and the question it asked no longer exists
+
+**In plain words:** the census once counted 3 of 68 trade ideas (all on
+2026-09-02) thrown away because the desk could not find a chart level above
+the entry to aim a profit target at. The board flagged it "too new to
+classify" and asked for a re-measure. There is nothing left to re-measure:
+the desk no longer sets profit targets at all, so "no level to derive a
+target from" is not a reason to refuse anything, and the code path that
+produced that refusal was made unreachable on 2026-09-11.
+
+**Why it is dead twice over.**
+
+1. *The refusal cannot fire.* The level engine's "no level in the trade's
+   direction" refusal used to require the analyst to ALSO label the setup a
+   breakout before it would project a measured-move reference instead of
+   refusing. On 2026-09-11 the shared trend-trade definition
+   (`src/risk/constants.py::is_trend_trade`) was given the measured fact —
+   the desk's own level computation found no ceiling — and with that fact
+   supplied the condition is always true, so the branch returns a
+   projection every time. The refusal constant is kept only because it
+   appears in historical logs and in the census; the level engine's own
+   comment names this item and says so.
+2. *The premise is gone.* Since the owner decision of 2026-09-11 (docs/WORK.md
+   item 1(d)) profit-taking is the trailing stop and nothing else. A
+   breakout is never judged on reward:risk; a range trade's real ratio is a
+   ranking input and a starter-size cap, not a gate. A target is now a
+   reference number for ranking and the Risk Manager's display, never a
+   price the desk exits at, so failing to derive one is not a reason a
+   trade should not happen.
+
+**What was ruled out:** that the three 2026-09-02 cases were a regression
+from that day's ship. They were the pre-2026-09-11 label-dependent refusal
+working as it was then written, on charts whose own computed levels found
+nothing overhead — exactly the case the projection now handles.
+
+**What would catch it next time:** nothing needs to. The only genuine
+"nothing can be read from this chart" case is still refused one branch
+earlier (`REFUSAL_NO_STRUCTURE`), and that refusal is counted by the
+silent-feed-outage watchdog (funnel item 11).
+
+No source change. Documentation only: item 6 deleted from the board, its
+plain-language block removed from `docs/BOARD_NOTES.md`, number retired.
+
+---
+
 ### 2026-09-11 — the desk's loss alarms assumed the future would look like the past (and the first fix measured the wrong thing)
 
 **In plain words:** the desk had three alarms that say "we have lost too
@@ -6167,3 +6490,67 @@ no earnings history." Modelled on the existing `SeriesFreshness`
 (`src/data/macro.py`) / `FeedFailure` (`src/data/news.py`) convention: a
 degraded source must be a distinguishable signal, never a silent collapse
 into the same shape as a genuine empty result.
+
+### 2026-09-12 — the automatic take-profit trim is deleted; the trailing stop is the only exit rule
+
+**In plain words:** every midday, the desk used to sell 15% of any position
+that was up 30% or more, automatically, before the reviewer looked at it.
+That rule is gone. Nothing now sells a winner because of the size of its
+gain. A position is exited by its trailing stop, by the reviewer citing a
+real named trigger, or by a hard risk rule — never by a preset target.
+
+**Why.** Two reasons, both owner doctrine (`docs/OUTCOME.md`, "No arbitrary
+numbers, ever"):
+
+- The 30% trigger and 15% trim were tuned off a SINGLE trade — a GOOGL trim
+  that fired at +27% on 2026-04-30, as the function's own docstring said.
+  Hindsight-tuning on n=1. Git shows the rule arriving upstream on
+  2026-04-18 (`e61cc79`, 33% at +15%) and being re-tuned to 30%/15% on
+  2026-05-01 (`ca3c409`); it predates QAMC (2026-08-09) and was never
+  ratified against the desk's own principles.
+- More fundamentally it was a **preset profit target**: sell a fixed
+  fraction at a fixed gain, decided in advance, with no reference to what
+  the instrument is actually doing. The owner removed exactly this class of
+  logic when he removed reward:risk as a universal gate — the reward side of
+  a trade cannot be predetermined because the holding period is unknown,
+  and profit-taking belongs to a trailing stop. His ruling: *"Delete the
+  live exit item, the only exit rule is trailing stop."*
+
+**What changed.** `_auto_take_profit` and its midday wait-and-block helper
+are deleted, along with the reviewer's "skip this symbol, an auto-TP sell is
+in flight" path that existed only to serve it. There was no settings key or
+config field for the rule (its numbers were hard-coded function defaults),
+so there is nothing for a settings file to trip over. Historical
+`TAKE_PROFIT` rows stay readable in the ledger, exit-audit and calibration
+queries; nothing writes the label any more. The protection tests that had
+used the auto trim as their vehicle now drive the shared partial-exit path
+directly (`REDUCE`), so the invariant they pin — cancelled stops are
+restored on a failed sell or re-placed on the true residual after a fill —
+is unchanged. A new test fails if any fixed-gain automatic profit trim is
+reintroduced anywhere under `src/`.
+
+**What can still close or reduce a position, verified in code while
+removing this:** the broker-resident GTC protective stop (fills written back
+by the stop-out reconciler); the deterministic volatility/structure trailing
+stop (`src/risk/trailing.py` — ratchets on swing lows, chandelier, and the
++1R breakeven move; never a fixed-gain sale); the reviewer's discretionary
+SELL / REDUCE / COVER / TRAIL_STOP behind the named-trigger phrase gate,
+the holding-discipline claim check and the risk-manager exit veto; the hard
+risk rules (daily-loss circuit breaker at intra_check and session start,
+force-delever ladder); ex-dividend stop adjustment (moves the stop only);
+opportunity-cost rotation (dark by default, `rotation_enabled: false`); and
+the cash-sweep parking vehicle's own SWEEP_SELL. None of them sells on a
+fixed gain. The reviewer is still SHOWN fixed-percentage flags (drift at
+weight > 12% and P&L > 10%, parabolic at >= 15% inside 3 days,
+`TARGET_BREACH` at > 150% of planned move) but the prompt and the executor
+both treat those as soft signals that can never justify an exit on their
+own.
+
+**`TradeDecision.take_profit` is not an order.** The broker's `submit_order`
+accepts a `take_profit_price` argument, but no caller in the codebase passes
+it, and the entry path submits only the limit price plus a post-fill
+protective stop — the `TakeProfitRequest` import in `src/execution/broker.py`
+is unused. The constructor's `take_profit` is written to the trade row and
+shown to the reviewer as a reference (progress-to-target, distance-to-target)
+and, for range setups only, to the execution-time reward:risk belt. Purely
+informational; unchanged by this work.
