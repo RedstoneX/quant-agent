@@ -22,6 +22,49 @@ what would catch it next time.
 
 ---
 
+### 2026-09-12 — opportunity-cost rotation stopped only describing the problem and started acting on it, and was enabled rather than shipped dark
+
+**In plain words:** the desk could already see when money was tied up in a
+weak holding while a stronger idea was being refused for "no room". All it
+did was say so in the decision-maker's briefing. It never freed the money.
+It now does — it can close one held position per morning session so the
+better idea can be taken.
+
+**Why the surfacing-only version was not enough.** The 2026-09-04 design
+(recorded above under item 39) deliberately only surfaced the comparison,
+on the reasoning that a model reading the comparison would act on it. It
+did not: the note is information competing with everything else in the
+prompt, and a refused candidate stays refused whatever the briefing says.
+The capital stayed where it was.
+
+**What acts now, and the five preconditions that each fail closed.** At
+most ONE held position is closed per morning session, and only when all
+five hold, each read from data rather than chosen:
+
+1. The book's existing risk leaves less headroom than the minimum
+   tradeable size — a half-empty book never triggers rotation at all.
+2. The holding fails the desk's own entry rules TODAY, so the comparison
+   is categorical rather than a rank wobble that reverses tomorrow.
+3. Its structural protection has ALREADY broken under the holding-discipline
+   check — a position whose thesis is intact is never rotated out.
+4. It was not bought today and has nothing in flight.
+5. The decision-maker itself asked to BUY the best-ranked new candidate
+   this session. The desk never invents the buy leg.
+
+**Nothing bypasses the normal path.** The close is an ordinary zero-size
+target appended through the SAME route as any other exit the
+decision-maker asks for — no direct broker call, no separate close path,
+so every existing guard still applies. Every execution alerts the owner,
+and a SECOND alert fires if the sale happened and the buy leg then did
+not, because that is the failure mode that leaves the desk worse off than
+doing nothing.
+
+**Enabled, not dark.** `rotation_enabled` was set true rather than shipped
+behind an off flag — the owner's call. **Never executed against a live
+broker:** the desk has been paused since roughly 2026-09-03, so the first
+real rotation will also be its first end-to-end proof and should be
+watched when trading resumes.
+
 ### 2026-09-12 — "no floor, no trade" shipped in the morning and was falsified by sourced research within hours; replaced by a stop-width gate the same day
 
 **In plain words:** the desk had just been told to refuse any trade with no
@@ -89,7 +132,9 @@ duplicate of this refusal — see the third entry of this date.)
 **Verified, not assumed: sizing already shrinks as the stop widens.** The
 risk-based path divides a fixed risk budget by the stop distance on every
 risk-sized target. What clamps it afterwards is the single-name notional
-ceiling (65% of equity, the owner's own setting — docs/WORK.md item 47):
+ceiling (65% of equity, the owner's own setting — see the 2026-09-11
+entry "a rule allowing one stock to be the whole account rested on a fact
+that had already stopped being true"):
 a tight stop stops growing the position there, and the risk actually
 taken is then below the budget, which the order note says. Pre-existing
 and recorded, not something this change introduced or fixed.

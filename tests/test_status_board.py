@@ -1746,12 +1746,17 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     assert problem is None
     by_rank = {i.rank: i for i in items}
 
-    # SHIPPED / REPLACED / REDESIGNED — finished, and no longer in the queue.
-    for rank in (14, 36, 42, 43):
-        assert by_rank[rank].bucket == "finished_unmarked", rank
-    # "FIXED, pending review" — finished, review still owed, its own section.
-    for rank in (33, 34):
-        assert by_rank[rank].bucket == "review_owed", rank
+    # The ten items this test used to pin as finished-but-still-listed
+    # (14, 33, 34, 36, 41, 42, 43, 47, 51, 54) were verified against the code
+    # on main and DELETED from docs/WORK.md on 2026-09-13, which is the owner's
+    # stated rule for a resolved item: written up in docs/INCIDENT_HISTORY.md
+    # and removed outright, not condensed into a pointer. Their numbers are
+    # retired and must never come back under the same key.
+    for rank in (14, 33, 34, 36, 41, 42, 43, 47, 51, 54):
+        assert rank not in by_rank, (
+            f"item {rank} is retired and was deleted from docs/WORK.md; "
+            "it must not reappear in the funnel queue"
+        )
     # No item should be in the "resolved" bucket at all any more. Owner
     # doctrine 2026-09-12: once an item is resolved AND written up in
     # docs/INCIDENT_HISTORY.md it is DELETED from docs/WORK.md, so a
@@ -2416,8 +2421,11 @@ def test_the_real_backlog_flags_only_genuine_self_contradictions():
     work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     items, problem = sb.load_funnel_queue(work_md)
     assert problem is None
+    # An EMPTY list is the healthy state — it means no finished work is still
+    # sitting in the queue. What this pins is the opposite failure: anything
+    # that IS flagged must be flagged for a real reason, never by a widened
+    # word list catching a negation or a partly-done line.
     flagged = [i for i in items if i.bucket == "finished_unmarked"]
-    assert flagged, "the live backlog has finished-but-unticked items"
     for i in flagged:
         tail = i.status_tail
         assert sb._closure_hit(tail, sb._RENDER_CLOSURE_WORDS), i.rank

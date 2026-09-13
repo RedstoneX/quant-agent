@@ -64,8 +64,10 @@ settled. Restored:**
 
 **Macro `regime_shift` freshness DECIDE BY line — RESOLVED, see item 48.** Superseded rather than answered: the day-count this question was about was removed entirely, not re-tuned. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
-**RECONFIRM AFTER A FEW DAYS LIVE — item 14(c)'s call-count cap, owner
-instruction 2026-09-03.** Shipped at `max_calls_per_session: 40`, set from
+**RECONFIRM AFTER A FEW DAYS LIVE — the per-session LLM call-count cap,
+owner instruction 2026-09-03.** This is the cost circuit's real defence
+against a runaway loop, and it replaced the deleted per-call spend
+reservation. Shipped at `max_calls_per_session: 40`, set from
 real production data (worst COMPLETE session on record made 14 calls,
 almost all of it `tech_analyst` chunking the symbol universe, not the
 `portfolio_manager` — see `docs/INCIDENT_HISTORY.md`, "item 14"). Owner
@@ -514,8 +516,10 @@ the same 68.
 *Owner clarification, 2026-09-10: the reward:risk ratio is not rejected as a
 concept — judging it against a stop THE ATR FLOOR invented, instead of a real
 level, was. A level-backed stop is always judged on its own honest distance.
-Stop-geometry half fixed, see item 33 (floor now 2.5x ATR). Not yet
-re-measured against the same 68.*
+Stop-geometry half fixed: `min_stop_atr_multiple` is now 2.5 (published
+swing-trading doctrine, not this desk's own data) and applies ONLY where no
+real level backs the stop — derivation in `docs/INCIDENT_HISTORY.md`,
+2026-09-10. Not yet re-measured against the same 68.*
 
 The single largest cause; nothing else is close. 10 died before an order was
 built, 7 were killed by the AI Risk Manager citing the 1.5 floor by name.
@@ -647,22 +651,6 @@ no bars at all, persists it, and pages the owner directly when the share
 crosses a threshold too high to be a coincidental quiet market. Full
 detail: `docs/INCIDENT_HISTORY.md`, 2026-09-03 entry.
 
-**14. Replace the budget guard — SHIPPED on `feat/replace-budget-reservation`.**
-
-Per-call cost reservation deleted entirely (it held ~2.6x what it actually
-spent, stopping the desk on money never spent — full reasoning in
-`docs/INCIDENT_HISTORY.md`, "item 14"). Replaced with (b) a settled-cost cap
-checked before and after each call, and (c) a plain per-session call-count
-cap as the real defence against a runaway loop. (a), an API-key-level spend
-cap outside our code, is NOT built — flagged in `cost_circuit.py` pointing
-back here, needs the provider's exact limit options verified first.
-
-**(c)'s number (40) is measured, not a placeholder** — set from real
-production data (worst COMPLETE session on record made 14 calls; see the
-RECONFIRM note above and `config/settings.yaml`'s own comment on
-`max_calls_per_session`). Everything else in this item is implemented and
-tested.
-
 **15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
 
 Full reasoning: `docs/INCIDENT_HISTORY.md` ("item 15"). Shipped: held
@@ -740,7 +728,10 @@ re-measuring before relying on it again.
   - Whether R/R and net evidence join the production ranking composite —
     owner call, not decided. Sizing-path parity is item 30.
   - A spend cap on the OpenRouter key (mine to set via browser access, not
-    the owner's) — see item 14(a).
+    the owner's) — still NOT built. This is an API-key-level cap outside
+    our own code, the one leg of the cost-circuit replacement that never
+    shipped; `cost_circuit.py` carries the flag. Needs the provider's exact
+    limit options verified first.
 
 Full trace, the rules-as-code reproduction (`python -m
 ops.model_policy.deterministic_selection`), all exact figures, and the
@@ -823,7 +814,7 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**28. The offline test that must reproduce a known real cost-limit failure can no longer reproduce it — STILL BROKEN, previously marked fixed in error.** `test_rehearsal_reproduces_cost_ceiling.py` marked FIXED 2026-09-04 (config keys the test forced no longer exist, after item 14's cost-circuit rewrite) but re-verified directly 2026-09-10, three separate times against a clean `origin/main` checkout: this test still fails, identically, every time. Whatever landed did not actually resolve it, and nobody re-checked the claim before writing FIXED. Needs someone to actually read the failure and re-diagnose it — not re-apply the same fix that already didn't work. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys" for the (incomplete) original diagnosis.
+**28. The offline test that must reproduce a known real cost-limit failure can no longer reproduce it — STILL BROKEN, previously marked fixed in error.** `test_rehearsal_reproduces_cost_ceiling.py` marked FIXED 2026-09-04 (config keys the test forced no longer exist, after the cost-circuit rewrite that deleted the per-call spend reservation) but re-verified directly 2026-09-10, three separate times against a clean `origin/main` checkout: this test still fails, identically, every time. Whatever landed did not actually resolve it, and nobody re-checked the claim before writing FIXED. Needs someone to actually read the failure and re-diagnose it — not re-apply the same fix that already didn't work. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys" for the (incomplete) original diagnosis.
 
 **30. The sizing path still owes the same amendment the ranking path just
 got — deliberately NOT done yet, owner should decide scope first.**
@@ -915,64 +906,6 @@ binds below ~1.5%/session; it stays as the guarantee for violent regimes.
 **Conviction-band question — DECIDED 2026-09-11, owner call:** restore
 the pre-compression bands. See item 32's conviction-band entry below.
 
-**33. The two "is this trade worth the risk" checks disagreed with each other — FIXED, pending review.**
-
-The PM's eligibility check read the model's self-reported reward:risk;
-order construction separately derived it from the real structural target
-and shipped stop — each "fixed" in isolation, never checked against the
-other. Confirmed on a real trading day: the names passing each check
-DIDN'T INTERSECT AT ALL. **Fixed 2026-09-04, PR #257** — PM eligibility
-now reads the same derived target construction uses, re-measured against
-real data (0/0 overlap on two separate real samples before the fix).
-
-**Uncovered by that fix, and now FIXED IN TURN — the entry stop-width
-floor was structurally broken, not merely tight.** Old floor (3.0× ATR,
-never derived from anything) cleared 0 of 42 real candidates and, for range
-trades (this desk's majority setup), 0 of 222 real signals at any stated
-horizon. Full 2026-09-04 measurement: `docs/INCIDENT_HISTORY.md`.
-
-**Floor history: 3.0 (undated) -> 1.5 (2026-09-04) -> 2.5 (2026-09-10),
-current.** The 1.5 was Sweeney MAE analysis on this desk's own ~2-week trade
-signals — later found to overlap the window some seats misreported
-confidence/data quality in, so no longer trusted as the sole basis for a
-risk-of-ruin number. **2.5 instead comes from published swing-trading
-doctrine** (fixed entry stops run 2.5-3.0× ATR for a multi-day hold),
-independent of this desk's own data. Applies ONLY when no real level backs
-the stop — a level-backed stop is always honoured at its own distance,
-never this number (see item 1's clarification above).
-
-Setup scalers (breakout ×1.00, range ×0.90 — corrected 2026-09-04 from a
-backwards ×0.85/×1.15) are unchanged by the base move. Reachable floor now
-2.14-3.00× ATR. Known, disclosed tension: the 1.5 reward:risk floor needs
-roughly `sqrt(hold_sessions) >= 1.5 x effective_multiple` to clear — ~10
-sessions at the tightest case (matches this desk's real observed holds),
-~20 at the widest (a real ask). Not eliminated, moved into a range this
-desk's stated horizons can plausibly satisfy. **Re-measure once honest
-post-fix trade history exists** — not a permanent constant. Full
-derivation: `docs/INCIDENT_HISTORY.md`, 2026-09-10.
-
-**Known consequence, since RESOLVED — see item 47.** (This paragraph
-previously said margin was off and >100% notional was unreachable
-regardless; both were already false when written. See item 47 and
-`docs/INCIDENT_HISTORY.md`, 2026-09-11, for the correction and the real
-number.)
-
-**34. Exit management barely managed, and ranking was close to alphabetical — FIXED, pending review.**
-
-The noise buffer that vetoed an early discretionary exit came out about as
-wide as the actual stops on most pre-stop-fix positions, so nearly all
-real exits this month were the broker's stop firing, not a judgment call.
-Ranking ties broke alphabetically on most real days — an undisclosed bias
-toward early-alphabet tickers. "Range" trades never protected gains until
-price fully reached target. **Fixed 2026-09-04, PR #256** — exit buffer
-now scales with real trading sessions held (√sessions, matching the
-target model; a same-day review caught the first version of this fix
-using calendar days instead, over-widening the band across every
-weekend — corrected before merge, residual gap: still counts a market
-holiday as a session), ties break on real reward:risk quality, range
-trades get a standard +1R breakeven ratchet. All three pending review,
-not pending a decision.
-
 **35. A stop-widening was observed in pre-clean-slate trade history (Visa, Aug 2026) — DEFERRED, not investigated further for now.**
 
 Real broker order history found a protective stop (V, bought 2026-08-27)
@@ -986,17 +919,7 @@ dig into this specific historical instance now.
 
 No DECIDE BY — revisit only if it recurs.
 
-**36. Congressional (House + Senate) trading data added to smart-money — SHIPPED 2026-09-04.** Full detail: `docs/INCIDENT_HISTORY.md`, 2026-09-04.
-
-**Still genuinely undecided:** `smart_money.congress_enabled` remains False (off) — flipping it to True has not been ratified.
-
 **39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
-
-**41. A persistently broken ticker in the intraday scan could fail silently forever — FIXED 2026-09-10.** The BRK-B fix (item covered in `docs/INCIDENT_HISTORY.md`, "QAMC Pipeline Autopsy") stopped one bad symbol from crashing the whole 101-symbol scan, but a symbol Alpaca can't return snapshot data for was still indistinguishable from "this stock just didn't move today" — silently and permanently excluded from every scan, with zero owner visibility. New `intraday_symbol_health` table now counts consecutive misses per symbol (independent per symbol, reset on any successful tick) and fires a standalone owner alert at 3 consecutive misses (~90 minutes), re-alerting at most once every 24 hours while the symbol stays broken rather than paging every 30-minute tick for an already-known problem. Full derivation and test coverage: `docs/INCIDENT_HISTORY.md`, 2026-09-10.
-
-**42. Order-fill detection was a fixed-interval REST poll from 1992, not the real-time mechanism Alpaca actually offers — REPLACED 2026-09-10.** `wait_for_order_terminal` asked "has this order filled yet?" once a second in a loop for up to a fixed timeout — the timeout had already been raised twice (15s -> 30s) after real trades (OXY, NVDA) were cancelled unfilled while still working. The owner's direct challenge — "I doubt the majority of people using this API just set up a simple timer like it's 1992" — was correct and took one documentation search to confirm: Alpaca's own docs recommend its real-time `trade_updates` websocket for exactly this, specifically instead of polling. Now: the stream is watched first and a fill/cancel/reject is detected the instant Alpaca reports it (no more guessing a wait duration for the common case); REST polling remains as the fallback ONLY if the stream itself cannot connect at all, preserving the old reliability guarantee. The timeout constant (`_ENTRY_FILL_TIMEOUT_S`) still exists but is now purely that fallback's ceiling, raised to the originally-researched 90s since a generous fallback now costs nothing. **New standing principle recorded because this shape will recur:** `docs/OUTCOME.md`, "Check what the platform already solved, before tuning your own workaround" — before adding a timeout/retry/poll around any third-party API, check whether that API's own docs already describe the real mechanism. Full derivation and test coverage: `docs/INCIDENT_HISTORY.md`, 2026-09-10.
-
-**43. Smart-money evidence was gated by calendar age instead of correlation with current evidence — REDESIGNED 2026-09-11, owner call.** A stale insider/congressional trade (>7 days) was force-relabeled "historical," an island judged only on its own age. Owner's framing: one weighted piece of a bigger picture — no correlation, it just changes the decision matrix; real correlation, stronger weight. Real research backs dropping the age gate: Seyhun (1986) found ~1/4 of an insider purchase's return realizes in 5 days, ~1/2 still unrealized after a month; real M&A run-ups start months early. `support_eligible` is now purely STRUCTURAL; whether it supports a target is decided by the PM's grounding validator finding at least one other current source agreeing on direction — same test used everywhere else. Fetch window widened 7 -> 90 days (matches `EARNINGS_STANCE_MAX_AGE_DAYS`, not a new number). Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
 **44. "Correlation breach" is an accepted exit reason that nothing can verify — OPEN, found 2026-09-11 by audit.** The hard-trigger phrase gate (`src/pipeline.py:250`) accepts `"correlation breach"`, and `exit_guard.py:299` classifies it as a claim of external information. Nothing anywhere computes a correlation-breach EVENT. `correlation_clusters` (`src/data/correlation.py`) measures |r| >= 0.7 clusters at decision time; it does not detect a break. So after PR #299 wired `holding_discipline_claim_check` into the midday/close executor, regime-flip and bearish-state-change claims are adjudicated against real data and this one still returns unverifiable by construction — which by design passes. Net: the phrase remains a free exit from a protected position. NOT a wiring defect; the thing to check against does not exist. Building it means defining what a breach IS (which correlation, over what window, versus what baseline) — every one of those is a number, so `qamc-no-arbitrary-numbers` applies and this is an owner call, not an implementation task.
 
@@ -1004,21 +927,15 @@ No DECIDE BY — revisit only if it recurs.
 
 **46. A stop-distance tolerance setting fails its own stated justification — OPEN, found 2026-09-11 by audit.** `level_match_atr_tolerance` in `config/settings.yaml:623` sets `0.25` and justifies it as "at least" the 1% level-cluster zone width. At this book's own stated median ATR of 2.56%, 0.25 ATR is 0.64% — under the 1% it claims to cover, by ~1.6x. Governs whether a stop counts as level-backed and is therefore exempt from the ATR stop floor, so it feeds directly into item 1's geometry. Either the tolerance or the justification is wrong; both are numbers, so owner call.
 
-**47. `risk.max_position_pct`'s cash-only justification was already false when written — RESOLVED 2026-09-11, owner call.** 100's comment asserted `allow_margin: false` made >100% notional unreachable; `allow_margin` had been `true` since 2026-09-02, two days before that comment (PR #258, 2026-09-04). Derived replacement: 20 (ladder emergency rung) / 0.60 (median of 5 real dated single-session idiosyncratic collapses) = 33, the largest single bet where that median disaster stays under the ladder's -20% owner-alert rung. Owner reviewed and set **65** instead — his own risk-appetite call, not a data disagreement; rejected 33 as too tight for a desk that avoids penny/micro-cap names, correction on the table first (the 5 reference disasters were all liquid, non-penny names). At 65 the same median disaster costs ~39%, past the alert rung rather than under it — knowing trade-off, not an oversight. `max_position_pct: 65` in settings.yaml, `ConstructorConfig.max_position_pct` and `pipeline.py`'s wiring default kept in sync. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-11.
-
 **49. The risk budget is now the binding constraint on a full day's eligible set, and nothing decides how to ration it — OPEN, surfaced 2026-09-12 by item 1(d).** Measured on `run-64290730` after the reward:risk floor was removed by setup type: eligible names 12 -> 25, and the eligible set's total requested risk is **48% against a 25% `max_portfolio_risk_pct` budget**. The floor was previously doing the rationing by accident — refusing enough candidates that the budget rarely bound. It no longer refuses them, so the budget binds on a normal day and something must decide WHICH permitted trades get the capital. Today that is whatever order `allocate_risk_budget` happens to process in, which is not a decision anybody made. Real options, none costed yet: rank-ordered (best-scored first until exhausted), proportional scale-down (everyone sized smaller), conviction-tiered, or a hard cap on names per session. Each is a different desk, not a tuning knob — owner call. Do NOT resolve by re-tightening the floor that was just removed.
 
 **DECIDED 2026-09-12 by the owner: rank-ordered, best first.** His words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The budget is spent on the best-ranked eligible candidates until it is exhausted; the remainder are not taken, and are not silently shrunk to fit. Proportional scale-down was explicitly rejected in the recommendation he accepted, on the grounds that sizing everyone smaller turns every strong idea into a weak one. **Still to BUILD** — `allocate_risk_budget` today spends in whatever order it happens to process in, which is the defect; the decision above is not yet implemented. Whether a partially-affordable candidate at the cut line is taken at a reduced size or skipped entirely is the one sub-question the decision does not settle, and must be raised with the owner rather than assumed.
-
-**51. Rotation only ever pointed at the problem; it never acted — RESOLVED 2026-09-12 (PR #316), and ENABLED.** The desk now closes ONE held position per morning session, and only when all five of these hold, each measured from its own data: the book's existing risk leaves less headroom than the minimum tradeable size (a half-empty book never triggers it); the holding fails the desk's own entry rules TODAY, so the comparison is categorical rather than a rank wobble; its structural protection has ALREADY broken under the item-25 holding-discipline check, so a position whose thesis is intact is never rotated out; it was not bought today and has nothing in flight; and the PM itself asked to BUY the best-ranked new candidate this session — the desk never invents the buy leg. The close is an ordinary zero-size PM target through the SAME path as any PM exit, with nothing bypassed. Every execution alerts the owner; a SECOND alert fires if the sale happened and the buy leg then did not. `rotation_enabled: true` — owner enabled it rather than shipping it dark. **Never executed against a live broker**; the desk has been paused since ~2026-09-03, so the first real rotation is also its first end-to-end proof and should be watched.
 
 **52. Insider-cluster size should be relative to a filer's holdings, not an absolute dollar filter — OPEN, owner call, carried out of deleted item 38.** The paper item 38's window fix was taken from also says the size test should be relative to what the insider already holds. QAMC has no holdings-size data for filers, so this cannot simply be implemented — acquiring or approximating that data is the decision.
 
 **53. A paused desk leaves part of every fractional position with NO stop, and nothing said so — OPEN, owner call, found 2026-09-12.** The alarm is built; what to do with the remainder is the decision. Verified live 2026-09-12: ORCL 5.3089 shares held, one stop-limit at the broker for 5.0. The 0.3089-share DAY leg lapsed at the close on 2026-09-02 exactly as §11.1 designs, and the trading timers were disabled before the 09-03 open, so the session sweep that re-places it never ran — six full sessions (09-03 to 09-11) with $46 of a $798 position unprotected, and every record on the box calling it "expected overnight". NOT a flooring bug: `_split_protective_qty` is working as designed. NOT fixable at the broker: fractional orders must be DAY (measured 2026-09-01, code 42210000; Alpaca's fractional-trading page says the same) — no durable fractional stop exists. Shipped: `src/coverage_watchdog.py`, run from the 06:15 ET alert-heartbeat unit (fires whether or not trading timers are on); alerts once per trading day when broker coverage is short of held AND no session ran during the last cash session. Read-only. **The decision (BOARD_NOTES 53):** what to do with the remainder while paused — close it, accept it with the alert, or go whole-share (owner already declined whole-share on 2026-09-02). Also found, NOT fixed: the repo's silence-watchdog timer unit is not installed on the box (no state file, absent from the timer list), so item 17c's alarm has never actually run in production. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-12.
 
-**54. Stop width, not floor existence — the "no floor, no trade" rule shipped in PR #330 was REPLACED the same day (2026-09-12) on sourced research; owner approved the replacement; IN FLIGHT.** What #330 shipped that morning: a trade with no computed structural level on its stop side was refused by name, and a level on the far side of an unfilled gap did not count. Measured against the real 101-symbol universe it refused 9 names: NKE, SNDK, DRAM (no level at all) and NVDA, MRVL, OKLO, EQNR, NOK, SQQQ (level only beyond an unfilled gap). **Why it was wrong, with sources.** (1) No published method refuses a trade for lack of support below: Chandelier (highest high minus 3 ATR), Parabolic SAR, the Darvas box bottom and the entry-bar low all place a stop with no level at all; Darvas ONLY bought stocks making new highs, so "no support below" was the normal condition of his trades (Kullamägi in his own words: https://qullamaggie.com/my-3-timeless-setups-that-have-made-me-tens-of-millions/). (2) The gap branch was backwards, and it is measured: Bulkowski finds a rising window supports price only 20% of the time, 16% in a bear market — "gaps don't work well as support or resistance areas" (https://thepatternsite.com/SAR.html, https://thepatternsite.com/GaugingGaps.html). The GAP is the weak floor; price goes straight through it 80% of the time, which makes the pre-gap level MORE reachable, not void. No source treats a pre-gap level as void — that premise was this desk's own invention. (3) The rule was adversely selected: nearness to the 52-week high forecasts returns and dominates past returns as a predictor, robust in 18 of 20 international markets (George & Hwang 2004, Journal of Finance, https://www.bauer.uh.edu/tgeorge/papers/gh4-paper.pdf); the rule refused exactly that population. (4) What published practice constrains is the stop's WIDTH, not level existence — Kullamägi: "stop should not be wider than the ATR or ADR of the stock" — and the response to a wide stop is a SMALLER position (Van Tharp: size = risk budget / distance to stop, arithmetic not an empirical claim). **What replaced it, all in the one funnel the PM-eligibility preview and order construction share.** (a) DELETED: the floor requirement, PM eligibility rule R6 in its floor form, both refusal codes (`no_structural_floor`, `floor_only_beyond_unfilled_gap`), the gap-edge fields and the gap-edge helper; the gap detector itself stays as analyst context, private again, and nothing reads it as a rule. The backtest engine STILL declines a signal with no level on the stop side — a pre-existing divergence from the live desk, flagged in its code, not fixed here. (b) A stop is ALWAYS derivable, and nothing new was added for it: the existing ATR noise band (`min_stop_atr_multiple`, 2.5 base scaled by setup and tape) already widened an unbacked stop; it now also places a MISSING stop, and the wider of that band and the signal bar's far edge (the last completed bar's low for a long, high for a short — Kullamägi's "low of the day", Python-set beside the levels) is the fallback. The bar only decides on a climactic bar wider than the band. The trailing chandelier in `src/risk/trailing.py` is an EXIT rule and was left alone. (c) The gate is on width, refused by code (`stop_wider_than_instrument_reach`) and recorded as data through the same structured-refusal record #330 built, so the census and the PM digest read it as its own bucket. **The cap is stated plainly and is NOT Kullamägi's number.** His 1 x daily range cannot be the cap on this desk: the desk's own fallback for an unbacked stop is the 2.5 x ATR band (a ratified, doctrine-grounded convention for a days-to-weeks hold), so at 1 x range the fallback would refuse itself. Nor can the band be the cap: the ratified sizing rule (§2.1) answers a wide stop with a smaller position, never a refusal, and is pinned by tests — a band-cap refused 38 of them. The only instrument-read width the desk already has past both is `horizon_reach`, ATR x sqrt(horizon) x 1.5 — the same estimate the target derivation and the level scan use, no new constant — the furthest price plausibly travels inside the trade. A stop beyond it cannot be hit inside the trade, so it is not a stop, and the size computed from it is fiction. Substitution stated: the desk computes ATR(14), not ADR; ATR includes the overnight gap and runs a little wider than ADR. (d) Sizing VERIFIED, step 4 of the brief: `_plan_risk_targets` sizes shares = equity x risk% / |entry - stop| on every risk-based target, so a wider stop buys fewer shares at the same dollars of risk (pinned: 10% vs 20% stop distance, same $1,000 at risk, half the shares). One caveat that predates this item (item 47 records the ceiling and the owner's 65 setting): the single-name notional ceiling clamps the result AFTER the risk arithmetic, so a TIGHT stop stops growing the position at 65% of equity — the risk actually taken is then less than the budget, which the order note says. Nothing on this path sizes by notional first. (e) One narrow refusal on DIFFERENT grounds, `insufficient_history`: fewer completed sessions than the longest indicator window the analyst is briefed with (the 200-session moving average, `src/data/technical.py::LONGEST_INDICATOR_WINDOW` — the desk's existing window, named not chosen; the 2026-07-16 audit already treated its absence as the analyst judging trend blind). Checked FIRST, before target derivation, so a young listing is named as young rather than filed as PR #326's `no_structural_levels` feed fault; PR #326 (merged 2026-09-13) classifies dead feeds, not youth: on merge its coverage minimum was unified with the level scan's own precondition (one constant read from the pivot window and the ATR period, 14 bars) and its separate short-history fault state was dropped as a duplicate of this refusal, which always fires first. An unknown count (older row) is not judged. PM rule R6 now reads a snapshot of the constructor's recorded refusals from the preview pass and names the code; it looks at no chart shape. **Measured, same method as the morning (real universe, real daily bars via the desk's own data path, shipped code imported).** Stop = the nearest computed floor where one exists, nothing typed otherwise; horizon stated because the analyst types it. At a 20-session horizon: 95 of 101 pass, 4 refused on width (MRVL, VLO, OKLO, NUE — an analyst leaning the stop on a floor 7.8-9.5 ATR away, past the 6.7-ATR reach), 2 refused on history (DRAM 112 bars, CBRS 83 bars), 0 data faults. At the 60-session cap: 99 pass, 0 on width, the same 2 on history. Under the old rule's no-level test the same bars refuse 3 (DRAM, NKE, SNDK) plus the 6 gap names. **Flagged, not fixed:** SNDK closes at $1,633 with a bar history whose lowest low is $27.89 (2025-04-07) and highest high $2,354 — almost certainly a corporate action or a data error in the yfinance series, not a market fact; the level scan finds nothing within reach and the trade now ships on the band. Someone should check the SNDK series before trusting any number on that name. Retired the same day it shipped: `docs/INCIDENT_HISTORY.md` 2026-09-12 (second entry of that date).
-
-**Retired item numbers — never reuse.** 2, 5, 6, 9, 12, 16, 25, 29, 37, 38, 47, 48, 50 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
+**Retired item numbers — never reuse.** 2, 5, 6, 9, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
 
 ## Evidence-only follow-ups
 
