@@ -351,10 +351,21 @@ class SymbolEventsResponse(BaseModel):
     yfinance (src.data.market.MarketDataProvider) — market-data read only,
     same dependency already used for ex-div stop adjustment and the
     next-earnings-date risk signal. Empty lists (not an error) when the
-    source has nothing to report for this symbol."""
+    source has nothing to report for this symbol.
+
+    `earnings_degraded`, when set, means the past-earnings source itself
+    (`ticker.earnings_dates`, needs the optional `lxml` package) could not
+    be read — distinct from `earnings` being empty because the symbol
+    genuinely has no history. `earnings` may still be non-empty via the
+    next-date-only fallback even when this is set, so it can look like a
+    normal result while being incomplete. Never collapse this into `error`:
+    `error` means the whole request failed; this means one degraded
+    sub-source inside an otherwise-successful one (2026-09-12 incident —
+    see docs/INCIDENT_HISTORY.md)."""
     symbol: str
     dividends: list[DividendEvent] = []
     earnings: list[EarningsEvent] = []
+    earnings_degraded: str | None = None
     error: str | None = None
 
 

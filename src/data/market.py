@@ -236,10 +236,22 @@ class MarketDataProvider:
         unchanged): a chart wants the fuller list, past events included, not
         just the next one.
 
-        Returns {"dividends": [...], "earnings": [...]}, each possibly
-        empty — yfinance returning nothing for a symbol (an ETF with no
-        earnings, a newly-listed name, a transient gap) is a normal, silent
-        empty result, never an error.
+        Returns {"dividends": [...], "earnings": [...], "earnings_degraded":
+        str | None}. `earnings` may legitimately be empty (an ETF with no
+        earnings, a newly-listed name) — that is a normal, silent empty
+        result, never an error. `earnings_degraded` is the DISTINCT signal
+        for "the past-earnings source itself could not be read" (e.g. the
+        optional `lxml` dependency `ticker.earnings_dates` needs is missing
+        from this environment): when set, the `earnings` list may be
+        incomplete even though it looks like a normal result, because it can
+        still have been filled in by the single-next-date `ticker.calendar`
+        fallback below. Modelled on `SeriesFreshness`/`FeedFailure`
+        (src/data/macro.py, src/data/news.py): a missing-data source must
+        surface as a distinguishable degraded signal, not silently collapse
+        into the same empty list a symbol with genuinely no history returns.
+        (2026-09-12 incident: exactly this collapse hid every PAST earnings
+        marker, for every symbol, because `lxml` was never installed in
+        production — see docs/INCIDENT_HISTORY.md.)
         """
         today = et_today()
         cutoff = today - timedelta(days=lookback_days)
@@ -263,12 +275,20 @@ class MarketDataProvider:
                 logger.debug("dividend history unavailable for %s: %s", symbol, e)
 
             # `ticker.earnings_dates` gives BOTH past-reported and upcoming
-            # estimated dates, but requires the optional `lxml` package —
-            # not installed in this environment (ImportError), so this
-            # silently contributes nothing there rather than raising. Kept
-            # rather than removed: it starts working for free, no code
-            # change needed, if lxml is ever added to the venv.
+            # estimated dates, but requires the optional `lxml` package. It
+            # is now declared in pyproject.toml (2026-09-12) and should be
+            # installed everywhere, but a fetch failure here — an ImportError
+            # if some environment still lacks it, or anything else yfinance
+            # can raise — must NOT collapse into the same empty list a
+            # symbol with genuinely no earnings history produces: that
+            # collapse is exactly what hid every past-earnings marker in
+            # production before this dependency was declared (see
+            # docs/INCIDENT_HISTORY.md, 2026-09-12). So the failure is
+            # recorded in `earnings_degraded` and logged at WARNING (not
+            # DEBUG) — loud enough to be noticed instead of silently
+            # indistinguishable from "no data".
             earnings_dates: set = set()
+            earnings_degraded: str | None = None
             try:
                 frame = ticker.earnings_dates
                 if frame is not None and not frame.empty:
@@ -278,7 +298,13 @@ class MarketDataProvider:
                             continue
                         earnings_dates.add(d)
             except Exception as e:
-                logger.debug("earnings_dates unavailable for %s: %s", symbol, e)
+                earnings_degraded = f"{type(e).__name__}: {e}"
+                logger.warning(
+                    "past-earnings source unavailable for %s (%s) — "
+                    "falling back to next-date-only; results may be "
+                    "incomplete, not genuinely empty",
+                    symbol, earnings_degraded,
+                )
 
             # `ticker.calendar` needs no optional dependency and is already
             # the primary source `get_next_earnings_date` above uses — but
@@ -303,17 +329,28 @@ class MarketDataProvider:
                 for d in sorted(earnings_dates)
             ]
 
-            return {"dividends": dividends, "earnings": earnings}
+            return {
+                "dividends": dividends,
+                "earnings": earnings,
+                "earnings_degraded": earnings_degraded,
+            }
 
         try:
             with ThreadPoolExecutor(max_workers=1) as ex:
                 return ex.submit(_fetch).result(timeout=_VALUATION_TIMEOUT_S)
         except FuturesTimeout:
             logger.warning("price-chart events fetch timed out for %s", symbol)
-            return {"dividends": [], "earnings": []}
+            return {
+                "dividends": [], "earnings": [],
+                "earnings_degraded": "TimeoutError: fetch exceeded "
+                f"{_VALUATION_TIMEOUT_S}s",
+            }
         except Exception as e:
             logger.warning("price-chart events fetch failed for %s: %s", symbol, e)
-            return {"dividends": [], "earnings": []}
+            return {
+                "dividends": [], "earnings": [],
+                "earnings_degraded": f"{type(e).__name__}: {e}",
+            }
 
     def get_valuation_metrics(self, symbol: str) -> dict:
         """Fetch trailing PE, forward PE, and price-to-sales from yfinance.
