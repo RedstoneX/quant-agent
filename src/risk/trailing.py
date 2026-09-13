@@ -133,6 +133,17 @@ NOISE_BAND_ATR_MULTIPLE = 1.25
 #: Reviewed 2026-09-13; ~all of this literature is assertion rather than
 #: measurement, and no source fetched offered a derivation for any window.
 #:
+#: Second pass the same day (docs/WORK.md item 55) added the ACADEMIC source
+#: the vendor docs above are not: Tsinaslanidis, "Technical Trading
+#: Strategies, Pattern Recognition and Financial Risk Management" (PhD
+#: thesis, University of Macedonia, 2012, §4.3). It defines the identical
+#: symmetric construction and, uniquely, MEASURES its sensitivity — but at
+#: rolling windows of 50/100/150 days total, i.e. 25/50/75 bars either side,
+#: reporting the results "robust to any different parameterization" over
+#: that range. That range does not contain 3, so it neither supports nor
+#: refutes this constant. It is evidence that the object is insensitive at
+#: swing scale, and silence at the scale a stop is actually placed on.
+#:
 #: So 3 stays, labelled honestly, rather than being changed to a number with
 #: no better claim on being right. Changing it would be picking a number.
 #:
