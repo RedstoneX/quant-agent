@@ -661,7 +661,7 @@ class TradingPipeline:
             # SAME OMISSION CLASS AS `allow_margin` DIRECTLY ABOVE. This
             # `RiskConfig(...)` is hand-enumerated, so any declared setting
             # left out of it silently falls back to the pydantic CLASS
-            # DEFAULT and settings.yaml is ignored for that field. 23 of the
+            # DEFAULT and settings.yaml is ignored for that field. 22 of the
             # declared risk settings were in that state before this change;
             # today every one of those defaults happens to equal the settings
             # value, so nothing is live-wrong — it is latent, and
@@ -678,7 +678,7 @@ class TradingPipeline:
             # rather than merely intended, and `tests/
             # test_risk_prompt_limits_live.py` now pins it.
             #
-            # The other 19 are NOT touched here: they predate this work, they
+            # The other 18 are NOT touched here: they predate this work, they
             # are not live-wrong, and sweeping them would change enforcement
             # nobody has reviewed. Recorded in docs/WORK.md instead.
             max_single_short_pct=config.risk.max_single_short_pct,
@@ -1023,9 +1023,9 @@ class TradingPipeline:
             # honoured whatever the band says, down to a deterministic 1x ATR
             # floor. Same "wire from the ratified setting, not the
             # constructor's own default" pattern as every ceiling above.
-            level_match_atr_tolerance=_risk_setting(
-                "level_match_atr_tolerance", 0.25,
-            ),
+            # There is no `level_match_atr_tolerance` to wire any more: item
+            # 46 (2026-09-13) deleted it, and the constructor reads the
+            # match tolerance off the level zone's own definition.
             absolute_min_stop_atr_multiple=_risk_setting(
                 "absolute_min_stop_atr_multiple", 1.0,
             ),
@@ -8154,6 +8154,7 @@ class TradingPipeline:
         separately so a memory hiccup degrades to "unconfirmed" /
         "unpersisted" rather than losing the whole check.
         """
+        from src.data.levels import CLUSTER_TOLERANCE_PCT
         from src.risk.exit_guard import check_structural_protection
         from src.trading_calendar import et_today
 
@@ -8210,7 +8211,6 @@ class TradingPipeline:
         risk_cfg = getattr(self, "risk_engine", None)
         risk_cfg = getattr(risk_cfg, "config", None)
         min_level_touches = getattr(risk_cfg, "min_level_touches_for_stop_honor", 5)
-        level_match_atr_tolerance = getattr(risk_cfg, "level_match_atr_tolerance", 0.25)
 
         check = check_structural_protection(
             thesis_invalid_if=thesis_invalid_if,
@@ -8222,7 +8222,11 @@ class TradingPipeline:
             computed_levels=computed_levels,
             computed_level_touches=computed_level_touches,
             min_level_touches=min_level_touches,
-            level_match_atr_tolerance=level_match_atr_tolerance,
+            # NOT a setting and not a fallback default — this is the exact
+            # constant `find_structural_levels` used to cluster pivots into
+            # the zones being matched against, so the tolerance cannot be
+            # anything else. docs/WORK.md item 46.
+            level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
             ma_20=ma_20, ma_50=ma_50, ma_200=ma_200,
             break_seen_prior_close=break_seen_prior_close,
         )

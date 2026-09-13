@@ -555,9 +555,9 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
         "something settings.yaml does not say. This is live-wrong, not "
         "latent: " + ", ".join(live_divergence)
     )
-    assert len(omitted) == 19, (
+    assert len(omitted) == 18, (
         f"the engine's hand-enumerated RiskConfig now omits {len(omitted)} "
-        f"settings present in settings.yaml, not 19 — if that grew, thread "
+        f"settings present in settings.yaml, not 18 — if that grew, thread "
         f"the new one; if it shrank, lower this number. Omitted: {omitted}"
     )
 
