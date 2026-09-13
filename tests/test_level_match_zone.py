@@ -44,6 +44,7 @@ import pytest
 from src.config import RiskConfig
 from src.data.levels import (
     CLUSTER_TOLERANCE_PCT,
+    MIN_TOUCHES,
     _cluster,
     find_structural_levels,
     level_zone_halfwidth,
@@ -291,6 +292,25 @@ def test_cluster_constant_has_exactly_one_definition():
                 if line.startswith("CLUSTER_TOLERANCE_PCT"):
                     definitions.append(str(path.relative_to(REPO)))
     assert definitions == ["src/data/levels.py"], definitions
+
+
+def test_min_touches_is_two_and_that_one_is_sourced():
+    """The ONE constant in the level definition that has a published answer.
+
+    docs/WORK.md item 55. Two points are the fewest that can define a
+    horizontal line, and the published construction of this exact object
+    agrees — Tsinaslanidis (PhD thesis, Univ. of Macedonia, 2012, §4.4):
+    "Only price areas (bins) with frequencies greater or equal to two are
+    considered as HSAR."
+
+    Raising it is ruled out by that work's own measurement, not by taste
+    (§4.6.1): more touches did not improve bounce frequency (NASDAQ,
+    two-local levels 60.99% over 26,868 hits; three-local 61.04% over
+    6,661). So a future session must not "tighten" this to 3 — that would
+    discard levels for no measured gain. Lowering it to 1 is excluded by
+    geometry: one pivot is a point, not a level.
+    """
+    assert MIN_TOUCHES == 2
 
 
 # ---------------------------------------------------------------------------
