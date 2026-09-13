@@ -410,6 +410,91 @@ def test_read_price_bars_uses_timestamped_intraday_read(monkeypatch):
     assert out["bars"][0]["timestamp"] == "2026-08-21T13:30:00+00:00"
 
 
+def test_read_price_bars_tags_intraday_bars_as_historical_iex(monkeypatch):
+    """docs/WORK.md item 15: every bar is a look-back structure — market_as_of
+    is the bar's OWN provider timestamp, freshness is always "historical",
+    and feed is only claimed "iex" when it was explicitly requested
+    (5m/15m/1h go through `get_intraday_chart_bars`, which does)."""
+    def _intraday(symbol, timeframe, lookback_days):
+        return [{
+            "date": "2026-08-21",
+            "timestamp": "2026-08-21T13:30:00+00:00",
+            "open": 100.0, "high": 101.0, "low": 99.0,
+            "close": 100.5, "volume": 500,
+        }]
+
+    monkeypatch.setattr(
+        broker_reads, "_get_broker",
+        lambda: _broker(get_intraday_chart_bars=_intraday),
+    )
+    out = broker_reads.read_price_bars("MRVL", lookback_days=1, timeframe="5m")
+    close_price = out["bars"][0]["close_price"]
+    assert close_price["value"] == 100.5
+    assert close_price["price_kind"] == "historical_intraday_close"
+    assert close_price["feed"] == "iex"
+    assert close_price["market_as_of"] == "2026-08-21T13:30:00+00:00"
+    assert close_price["freshness"] == "historical"
+
+
+def test_read_price_bars_tags_daily_bars_as_historical_with_no_feed_claim(monkeypatch):
+    """Daily bars (`get_bars`) don't explicitly select a feed — `feed` must
+    stay `None` rather than assuming "iex", per the no-fabrication rule."""
+    from datetime import date as _date
+
+    bar = SimpleNamespace(
+        date=_date(2026, 8, 20), open=100.0, high=106.0, low=99.0,
+        close=104.5, volume=12345,
+    )
+    monkeypatch.setattr(
+        broker_reads, "_get_broker",
+        lambda: _broker(get_bars=lambda symbol, lookback_days: [bar]),
+    )
+    out = broker_reads.read_price_bars("AAPL", lookback_days=10)
+    close_price = out["bars"][0]["close_price"]
+    assert close_price["value"] == 104.5
+    assert close_price["price_kind"] == "historical_daily_close"
+    assert close_price["feed"] is None
+    assert close_price["market_as_of"] == "2026-08-20"
+    assert close_price["freshness"] == "historical"
+
+
+# ---------------------------------------------------------------------------
+# _quote_freshness — exchange-session-boundary staleness, no invented cutoff
+# ---------------------------------------------------------------------------
+
+def test_quote_freshness_is_unknown_with_no_market_timestamp():
+    assert broker_reads._quote_freshness(None, None) == "unknown"
+
+
+def test_quote_freshness_is_unknown_when_session_open_cannot_be_derived():
+    """Non-trading day, or a calendar-lookup failure — never guess "current"."""
+    from datetime import datetime, timezone
+    ts = datetime(2026, 9, 12, 15, 0, tzinfo=timezone.utc)
+    assert broker_reads._quote_freshness(ts, None) == "unknown"
+
+
+def test_quote_freshness_is_current_when_trade_is_after_session_open():
+    from datetime import datetime, timezone
+    session_open = datetime(2026, 9, 12, 13, 30, tzinfo=timezone.utc)  # 9:30 ET
+    trade_ts = datetime(2026, 9, 12, 14, 0, tzinfo=timezone.utc)
+    assert broker_reads._quote_freshness(trade_ts, session_open) == "current"
+
+
+def test_quote_freshness_is_stale_when_trade_predates_todays_session_open():
+    """The exact case item 15 is about: market open, but nothing has
+    traded for this symbol since the prior session — must not read as live."""
+    from datetime import datetime, timezone
+    session_open = datetime(2026, 9, 12, 13, 30, tzinfo=timezone.utc)  # 9:30 ET
+    trade_ts = datetime(2026, 9, 11, 19, 59, tzinfo=timezone.utc)  # yesterday's close
+    assert broker_reads._quote_freshness(trade_ts, session_open) == "stale"
+
+
+def test_quote_freshness_accepts_an_iso_string_market_timestamp():
+    from datetime import datetime, timezone
+    session_open = datetime(2026, 9, 12, 13, 30, tzinfo=timezone.utc)
+    assert broker_reads._quote_freshness("2026-09-12T14:00:00+00:00", session_open) == "current"
+
+
 # ---------------------------------------------------------------------------
 # read_live_quotes (2026-08-21 Mission Control correctness tranche)
 # ---------------------------------------------------------------------------
@@ -429,10 +514,17 @@ def test_read_live_quotes_flattens_snapshot_data(monkeypatch):
     }))
     out = broker_reads.read_live_quotes(["NVDA"])
     assert out["error"] is None
-    assert out["quotes"]["NVDA"] == {
-        "last_price": 121.5, "prev_close": 119.0,
-        "session_open": 120.0, "session_high": 122.0, "session_low": 118.5,
-    }
+    row = out["quotes"]["NVDA"]
+    assert row["last_price"] == 121.5
+    assert row["prev_close"] == 119.0
+    assert row["session_open"] == 120.0
+    assert row["session_high"] == 122.0
+    assert row["session_low"] == 118.5
+    # No get_session_open on this stand-in broker and no last_trade_at in
+    # the snapshot — both degrade honestly to "unknown", never a guess.
+    assert row["quote"]["price_kind"] == "current_quote"
+    assert row["quote"]["market_as_of"] is None
+    assert row["quote"]["freshness"] == "unknown"
 
 
 def test_read_live_quotes_never_drops_a_requested_symbol_with_no_snapshot(monkeypatch):
@@ -441,10 +533,15 @@ def test_read_live_quotes_never_drops_a_requested_symbol_with_no_snapshot(monkey
     }))
     out = broker_reads.read_live_quotes(["NVDA", "ZZZZ"])
     assert set(out["quotes"]) == {"NVDA", "ZZZZ"}
-    assert out["quotes"]["ZZZZ"] == {
-        "last_price": None, "prev_close": None,
-        "session_open": None, "session_high": None, "session_low": None,
-    }
+    zzzz = out["quotes"]["ZZZZ"]
+    assert zzzz["last_price"] is None
+    assert zzzz["prev_close"] is None
+    assert zzzz["session_open"] is None
+    assert zzzz["session_high"] is None
+    assert zzzz["session_low"] is None
+    # No last_price at all — the whole nested observation is None, never
+    # a PriceObservation with a fabricated zero value.
+    assert zzzz["quote"] is None
     # One priced symbol in the batch — not the "every symbol empty" pattern.
     assert out["error"] is None
 
@@ -461,6 +558,35 @@ def test_read_live_quotes_reports_an_error_when_every_symbol_comes_back_empty(mo
     assert out["error"] == "no quote data returned for any requested symbol"
     assert set(out["quotes"]) == {"NVDA", "AAPL"}
     assert out["quotes"]["NVDA"]["last_price"] is None
+
+
+def test_read_live_quotes_flags_a_stale_last_price_against_session_open(monkeypatch):
+    """End-to-end: a last_trade_at from before today's session open comes
+    back "stale", not "current" — the exact defect docs/WORK.md item 15
+    names (a stale IEX print indistinguishable from a live one)."""
+    from datetime import datetime, timezone
+
+    session_open = datetime(2026, 9, 12, 13, 30, tzinfo=timezone.utc)
+    stale_trade_at = datetime(2026, 9, 11, 19, 59, tzinfo=timezone.utc)
+
+    def _broker_with_session():
+        return _broker(
+            get_intraday_snapshots=lambda symbols: {
+                "NVDA": {
+                    "last_price": 121.5, "last_trade_at": stale_trade_at,
+                    "prev_close": 119.0, "session_open": None,
+                    "session_high": None, "session_low": None,
+                },
+            },
+            get_session_open=lambda: session_open,
+        )
+
+    monkeypatch.setattr(broker_reads, "_get_broker", _broker_with_session)
+    out = broker_reads.read_live_quotes(["NVDA"])
+    quote = out["quotes"]["NVDA"]["quote"]
+    assert quote["value"] == 121.5
+    assert quote["market_as_of"] == stale_trade_at.isoformat()
+    assert quote["freshness"] == "stale"
 
 
 def test_read_live_quotes_degrades_to_error_when_the_broker_raises(monkeypatch):

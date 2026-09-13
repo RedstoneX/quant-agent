@@ -690,17 +690,6 @@ several full trading days have accumulated. Actually stopping re-proposals
 (vs. just showing them) would need a new gating threshold — that is an
 owner decision, not made here.
 
-**15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
-
-Full reasoning: `docs/INCIDENT_HISTORY.md` ("item 15"). Shipped: held
-positions now carry real provenance, never fabricated as fresh (Alpaca
-supplies no mark timestamp, so `freshness` is correctly tagged
-`"unknown"`). Still open, the bigger half — tagging live quotes and
-historical bars the same way, which is what retired items 5/9/11 needed:
-needs an owner decision between two competing `read_price_bars`
-implementations (`rescue/price-provenance` branch), a real architecture
-choice, not a mechanical merge.
-
 **17. The desk can switch itself off silently — DEFECT. Observed, not theorised.**
 
 Hit live 2026-09-02 while running a benchmark on a scratch copy. A database
@@ -1046,7 +1035,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **61. The rehearsal report's "orders the portfolio manager proposed" count is not scoped to orders the portfolio manager actually produced — OPEN, cosmetic, found 2026-09-13 while fixing item 28.** `ops/rehearsal/report.py`'s `_collect_counts` sets `report.proposed` from a `COUNT(*)` over the `trades` table for `action IN ('BUY', 'SELL')` on that run, and separately falls back to `len(orders)` when that count is zero — neither check reads whether the Portfolio Manager seat was actually invoked that run. In the reproduction of the cost-ceiling failure (`tests/test_rehearsal_reproduces_cost_ceiling.py`, see item 28) the report printed "1" under that label on a run where the Portfolio Manager was never called at all. The label is printed verbatim at `ops/rehearsal/report.py:559`: `f"  Orders the portfolio manager proposed ...... {self.proposed}"`. Costs nothing in trades placed or capital risked — this is a report a human reads after the fact to judge whether a rehearsal behaved as intended, and on at least one run it attributed output to a seat that never ran.
 
-**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 11, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
+**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 11, 12, 14, 15, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
 
 ## Evidence-only follow-ups
 

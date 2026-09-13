@@ -22,6 +22,99 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — item 15 (price provenance) closed: live quotes and price bars now carry the same honest freshness the position-mark slice shipped
+
+**In plain words:** the piece of item 15 left open on 2026-09-03 — telling a
+stale live price or chart price apart from a genuinely current one — is now
+built. A live quote's price is tagged "stale" when nothing has traded for
+that symbol since the market opened today (exactly the case that used to be
+invisible: the feed goes quiet on an illiquid name and the desk would have
+shown yesterday's last print as if it were live). Every chart bar is tagged
+"historical" — it always was one, so this is a completeness fix, not a
+behavior change. Nothing was invented to do this: the "is it stale" cutoff
+comes from the exchange's own regular-session open time, read from Alpaca's
+trading calendar (which already accounts for early-close days), not a
+guessed number of minutes.
+
+**Which slice was already shipped (2026-09-03), unchanged here:** held
+positions' `current_price` carries `position_mark`, honestly `"unknown"`
+freshness because Alpaca's position endpoint supplies no mark timestamp at
+all. That code was not touched.
+
+**What was open, and the actual architecture decision made.** The rescue
+branch (`rescue/price-provenance`, uncommitted 2026-08-21 dev-account work)
+had its own competing answer for quotes and bars: a second, dedicated Alpaca
+market-data client (`_get_market_data_client`, `read_current_quote`) and a
+hardcoded `_CURRENT_QUOTE_MAX_AGE = timedelta(minutes=15)` — a quote older
+than 15 minutes was called "stale". That number was never sourced from
+anything: not an exchange boundary, not IEX's own published behavior, not
+this desk's own measured history — just asserted. It is rejected outright,
+per the no-arbitrary-numbers rule, and was NOT merged.
+
+Meanwhile `main` had independently built its own, already-live quote/bar
+paths in the 11 days since the rescue branch's base commit:
+`read_price_bars` (multi-timeframe, 5m/15m/1h via
+`AlpacaBroker.get_intraday_chart_bars`, daily via `get_bars`, both with
+caching) and `read_live_quotes`/`get_intraday_snapshots` (batched, with
+per-symbol failure isolation). This is the richer, production-proven
+implementation, so it wins — the fix was written directly against it rather
+than resurrecting the rescue branch's redundant client.
+
+**Where the freshness cutoff actually comes from.** Alpaca's `Trade` model
+carries its own `timestamp` field for every last-trade print (confirmed
+against the installed SDK: `alpaca.data.models.trades.Trade.model_fields`
+includes `timestamp`) — a real provider-supplied market timestamp, not
+something derived from our own data. A new `AlpacaBroker.get_session_open()`
+reads today's regular-session open time from Alpaca's own trading calendar
+(the same calendar `is_trading_day`/`get_session_close` already use,
+including early-close days). `broker_reads._quote_freshness` compares the
+two: a last-trade timestamp from before today's session open is `"stale"`
+(nothing has traded since the prior session, or today isn't a trading day,
+or the calendar lookup failed) — otherwise `"current"`. No elapsed-minutes
+number appears anywhere in this logic.
+
+**One incorrect docstring found and fixed along the way.**
+`LiveQuotesResponse.as_of`'s comment claimed "Alpaca's snapshot SDK object
+doesn't expose one [a per-trade timestamp] cleanly here" — false; the SDK's
+`Trade.timestamp` was there the whole time, just never read.
+`get_intraday_snapshots` now extracts and carries it as `last_trade_at`.
+
+**What is still genuinely a separate, non-blocking gap.** Same posture as
+the position-mark slice: the two frontend components
+(`PositionsPanel.tsx`, `PriceChartPanel.tsx`) still don't render any of this
+provenance — the API now serves `quote`/`close_price` correctly typed, but
+nothing on the dashboard shows a "stale" badge yet. This is a display gap,
+not a "cannot tell stale from live" gap: the honest answer now exists at the
+API layer for any consumer (present or future) to read; Mission Control
+simply hasn't been wired to show it, exactly as position_mark's frontend
+wiring was deferred on 2026-09-03 without blocking that slice's close.
+
+**`rescue/price-provenance` is now dead — evidence, not assumption.** Its
+one useful slice (position_mark) was already merged 2026-09-03. Its
+remaining unmerged content (`.rej` hunks in `src/api/broker_reads.py.rej`,
+`src/api/routes_live.py.rej`) is the redundant client + arbitrary threshold
+described above, which this entry replaces with a sourced implementation
+against main's own code. Nothing on the branch is still needed. Recommend
+deletion (not done here — branch deletion is the owner's call per standing
+instruction).
+
+**Tests:** `tests/test_broker.py` (+5: `get_session_open` mirrors
+`get_session_close`'s early-close/none/error/caching coverage),
+`tests/test_broker_market_data.py` (+1, plus 2 existing full-equality
+assertions updated for the new `last_trade_at` field),
+`tests/test_broker_reads.py` (+9: `_quote_freshness` unit coverage, bar
+`close_price` provenance for both daily and intraday timeframes, one
+end-to-end stale-quote test, plus 2 existing tests updated for the new
+`quote` field). Full targeted run: 209 passed
+(`test_broker_reads.py test_broker.py test_broker_market_data.py
+test_api_contract.py`) plus 160 passed
+(`test_intraday_scan.py test_intraday_scan_crash_visibility.py
+test_invariants.py test_pipeline.py`, the other real consumers of
+`get_intraday_snapshots`) — 369 passed, 0 failed, 0 skipped across every
+file that touches the changed code paths.
+
+---
+
 ### 2026-09-13 — a fifth of what the trade-picking seat reads said nothing at all (item 18d / PM gate item 7)
 
 **In plain words:** the seat that actually picks the trades reads a long
