@@ -863,8 +863,8 @@ def test_the_session_alert_reports_the_rung_in_force():
     assert "1.80x" in line and "1.50x" in line
     assert "56% fall to a margin call" in line   # 55.6 rendered to 0dp
     assert "12.0% below the equity high" in line
-    # Rex is red-green colour blind: the de-levered STATE must be carried by
-    # the word, never by a colour or an icon alone.
+    # The de-levered STATE must be carried by the word, never by a colour
+    # or an icon alone.
     assert "DE-LEVERED" in line
 
 

@@ -656,8 +656,8 @@ def _repeg_settings(pipeline) -> tuple[float, float] | None:
 #: Plain-language endings for the single-shot reprice, keyed by the
 #: `repeg_outcome` written into the entry spec. Read by the end-of-session
 #: cancel alert so the owner is told what WAS and WAS NOT tried, in words —
-#: never colour or an emoji standing alone (the owner is red/green colour
-#: blind and severity must survive being read as plain text).
+#: never colour or an emoji standing alone; severity must survive being
+#: read as plain text.
 _REPEG_OUTCOME_TEXT = {
     "disabled": "automatic repricing is switched off (execution.repeg_enabled)",
     "no_room": "it was already sitting at the slippage ceiling, so there was "
@@ -2354,11 +2354,10 @@ def _alert_holding_discipline_block(
     the Risk Manager gave for it is contradicted by the desk's own data.
 
     Own message, never bundled into the run summary, and severity carried in
-    plain words — not colour and not an emoji standing in as the only signal
-    (item 21, owner's alert-design rule; he is red/green colour blind). The
-    leading emoji here is decoration on top of a plain-text header that
-    already says everything, exactly as `_alert_protection_failure` above
-    does.
+    plain words — not colour and not an emoji standing in as the only
+    signal (item 21, owner's alert-design rule). The leading emoji here is
+    decoration on top of a plain-text header that already says everything,
+    exactly as `_alert_protection_failure` above does.
 
     Deliberately NOT deduplicated, for the same reason
     `maybe_alert_data_quality` is not: the whole point of wiring this alert

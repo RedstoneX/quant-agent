@@ -1716,7 +1716,7 @@ def _render_summary(summary: Any) -> str:
 
 
 #: Every verdict is spelled out in words. There is no colour-only version of
-#: any of these, by requirement: the owner is red/green colour blind.
+#: any of these, by requirement.
 VERDICT_PILL = {
     "CONFIRMED": ("chip-quiet", "still proves out"),
     "CONTRADICTED": ("chip-strong", "proof no longer holds"),
@@ -1766,10 +1766,10 @@ def _row(p: PhaseView) -> str:
 # --------------------------------------------------------------------------
 # Rendering the plain-language blocks
 #
-# Status is ALWAYS carried by a word. The owner is red/green colour blind, so
-# nothing on this page may depend on hue to be understood: every marker is a
-# text label, and the shapes that carry emphasis are border weight, position
-# and a glyph, never a colour swapped for another colour of similar lightness.
+# Status is ALWAYS carried by a word. Nothing on this page may depend on hue
+# to be understood: every marker is a text label, and the shapes that carry
+# emphasis are border weight, position and a glyph, never a colour swapped
+# for another colour of similar lightness.
 # --------------------------------------------------------------------------
 
 #: What an item is missing, phrased as the gap it is rather than as an error.
