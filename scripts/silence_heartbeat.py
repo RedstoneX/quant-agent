@@ -26,6 +26,8 @@ USAGE
     python scripts/silence_heartbeat.py --status         # print the record, send nothing
     python scripts/silence_heartbeat.py --threshold 8    # override the placeholder for one run
 
+    python scripts/silence_heartbeat.py --desk-paused     # paused-desk reminder
+
 EXIT CODES
     0  not silent, or silent but already alerted for this baseline
     1  silent AND a new alert was (attempted to be) sent this run
@@ -45,9 +47,47 @@ from src.silence_watchdog import (  # noqa: E402
     DEFAULT_SILENT_WINDOW_THRESHOLD,
     STATE_PATH,
     alert_text,
+    check_paused_desk,
     check_silence,
     load_state,
+    paused_alert_text,
 )
+
+
+def run_paused_notice() -> tuple[int, str]:
+    """The desk is paused on purpose (the wrapper established that from
+    systemd). Remind the owner once per ET weekday — see
+    `src.silence_watchdog.check_paused_desk` for why that cadence, and why
+    saying nothing at all was the hole this closes.
+    """
+    status = check_paused_desk()
+
+    if not status.is_weekday:
+        return 0, (
+            f"silence_heartbeat: desk paused on {status.et_date} (not a "
+            "weekday); nothing to remind about"
+        )
+    if status.elapsed_windows_today == 0:
+        return 0, (
+            f"silence_heartbeat: desk paused; no scheduled window has "
+            f"closed yet on {status.et_date}; too early to say anything"
+        )
+    if status.already_notified_today:
+        return 0, (
+            f"silence_heartbeat: desk paused; already reminded once for "
+            f"{status.et_date}; not re-sending"
+        )
+
+    from src.notifier import send_owner_alert
+
+    text = paused_alert_text(status)
+    print(text, file=sys.stderr)
+    delivered = bool(send_owner_alert(text))
+    return 1, (
+        f"silence_heartbeat: desk PAUSED through "
+        f"{status.elapsed_windows_today} of today's windows; reminder "
+        f"{'delivered' if delivered else 'could NOT be delivered'}"
+    )
 
 
 def run_check(threshold: int) -> tuple[int, str]:
@@ -86,7 +126,7 @@ def run_status() -> tuple[int, str]:
         f"  last known session: {state.get('last_known_session_at') or 'never'}",
         f"  alerted for baseline: {state.get('alerted_for_baseline') or 'no'}",
         f"  updated at: {state.get('updated_at') or 'never'}",
-        f"  default threshold (placeholder, pending owner confirmation): "
+        f"  default threshold (owner-ratified 2026-09-03): "
         f"{DEFAULT_SILENT_WINDOW_THRESHOLD} scheduled windows",
     ]
     return 0, "\n".join(lines)
@@ -102,11 +142,19 @@ def main(argv: list[str] | None = None) -> int:
         help="print the record and exit; sends nothing, checks nothing fresh",
     )
     parser.add_argument(
+        "--desk-paused", action="store_true",
+        help=(
+            "the caller has established that no trading-mode timer is "
+            "running; send the once-per-weekday paused-desk reminder "
+            "instead of the silence check"
+        ),
+    )
+    parser.add_argument(
         "--threshold", type=int, default=DEFAULT_SILENT_WINDOW_THRESHOLD,
         help=(
             "consecutive scheduled windows with no completed session before "
-            f"alerting (default {DEFAULT_SILENT_WINDOW_THRESHOLD} — a "
-            "placeholder pending owner confirmation, see docs/WORK.md item 17c)"
+            f"alerting (default {DEFAULT_SILENT_WINDOW_THRESHOLD}, "
+            "owner-ratified 2026-09-03)"
         ),
     )
     args = parser.parse_args(argv)
@@ -117,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.status:
         code, line = run_status()
+    elif args.desk_paused:
+        code, line = run_paused_notice()
     else:
         code, line = run_check(args.threshold)
 
