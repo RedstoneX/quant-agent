@@ -206,8 +206,13 @@ this line, one heading per item.
 
 ## item 39
 
-**Plain language —** When the desk's risk budget is nearly maxed out and it can't take a promising new trade, it now shows the AI a direct comparison between its weakest current holding and the strongest new idea being turned away, so it can weigh whether to make room. It only surfaces this comparison — it never automatically swaps one position for another.
-**Example —** If the desk is already near its risk ceiling and a strong new opportunity appears, the decision-maker is shown its own weakest current holding side by side with the new idea, but nothing forces a trade either way.
+**Plain language —** When the desk has run out of risk budget and has to turn away a good new idea, it now compares that idea against the weakest thing it is already holding. Two different things can happen. If the holding merely ranks lower, the desk only shows the comparison and does nothing. If the holding would flatly not be bought today — it fails the desk's own entry rules, the same rules a brand-new buy has to pass — the desk can now sell it itself to make room. That selling half is switched ON, at your instruction, rather than shipped switched off. It has never actually happened yet: nothing has been running since 3 September, so the first one will also be the first proof it works end to end, and you will get a message the moment it does.
+
+**The safety conditions, all five, all measured from the desk's own records and never from an opinion —** the book must genuinely have no room left; the holding must fail the entry rules today; the reason you were holding it must have ALREADY broken (anything whose original argument is still standing is never sold this way); nothing may be part-done or in mid-flight on it; and the decision-maker must itself have asked to buy the replacement — the desk never invents the buy side. The sale then goes through exactly the same checks as any other sale, including the risk reviewer's power to refuse it. If the sale happens but the replacement purchase then doesn't, you get a second, separate message saying so.
+
+**Example —** On the one real day with good records, the desk found 25 trades it was allowed to take, wanting to risk about 48% of the account against a 25% ceiling. That is the "no room left" condition, measured, not imagined — so on a day like that the door to rotation is open. What comes through it is deliberately narrow: only a holding that fails today's entry rules AND whose original reason for existing has already broken. Nothing has passed all of that yet, so there is no real swap to show you, and I am not going to invent one.
+
+**One thing you should know —** the tier that only ranks things uses a "must be 25% better" bar that is a made-up number. It is honestly labelled as made-up in the code and it decides nothing — it only controls whether a comparison gets printed for the AI to read. The tier that can actually sell doesn't use it at all. It stays a research question, not a decision for you.
 
 
 ## item 49
