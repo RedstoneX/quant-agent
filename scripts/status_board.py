@@ -43,10 +43,16 @@ replaces, because that shape worked for him:
   * for every item: what it is in plain language, a concrete real-world
     example, and where a ruling is needed, the decision plus a recommendation;
   * a short numbered queue of what is next, one line each;
-  * what he has already decided, or is already being built, so his own
-    rulings are never queued back at him as questions;
-  * what is paused and needs no decision, so he knows what to ignore;
-  * what is already resolved, so finished work stops competing for attention.
+  * what is being built RIGHT NOW — read off the open pull requests on
+    GitHub (see `src/inflight.py`), never typed in — alongside what he has
+    already decided, so his own rulings are never queued back at him as
+    questions and he never has to ask what is under construction;
+  * everything that needs nothing from him and is not being built — parked,
+    checked-and-by-design, finished — behind ONE closed disclosure with a
+    count on it. His words, 2026-09-12: "If it's done, it's done and in the
+    past, don't carry it, don't tell me, I don't care." The buckets are still
+    computed (the backlog's own tidiness checks depend on them); they are
+    just not a list he scrolls past on a phone.
 
 The prose problem, and the convention that solves it
 ----------------------------------------------------
@@ -131,6 +137,15 @@ from zoneinfo import ZoneInfo
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+# What is being built right now, read off GitHub's open pull requests. Lives
+# in src/ rather than here because the board SERVER re-reads it at request
+# time (src/api/server.py), and scripts/ may import src/, never the reverse.
+from src import inflight  # noqa: E402
+
+
 PROD_CHECKOUT = Path("/home/qamc/quant-agent")
 ET = ZoneInfo("America/New_York")
 
@@ -2301,7 +2316,12 @@ def _unexplained_note(unexplained: int, total: int) -> str:
 
 def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
            work_md: Path | None = None,
-           board_notes: Path | None = None) -> str:
+           board_notes: Path | None = None,
+           in_flight: inflight.InFlight = inflight.NOT_ATTEMPTED) -> str:
+    """`in_flight` is what GitHub said was open when `main` asked it (see
+    `inflight.read_in_flight`). The default is the explicit "nobody asked"
+    state, so a preview or a test renders an honest "could not read" line
+    rather than reaching for the network — and never an empty list."""
     now = datetime.now(ET)
     total_rules = sum(len(p.results) for p in phases)
     total_pass = sum(p.passed for p in phases)
@@ -2457,6 +2477,10 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     body = body.replace("{{REVIEW_OWED}}", _render_review_owed(review_owed))
     body = body.replace("{{IN_HAND}}", _render_in_hand(in_hand))
     body = body.replace("{{IN_HAND_COUNT}}", str(len(in_hand)))
+    # Under construction, from GitHub — fenced so the server can swap in a
+    # fresher read on every request; the build-time copy carries its own
+    # read time so it can never pass for current when it is not.
+    body = body.replace("{{IN_FLIGHT}}", inflight.render_in_flight(in_flight))
     body = body.replace("{{NO_ACTION}}", _render_no_action(no_action))
     body = body.replace("{{NO_ACTION_COUNT}}", str(len(no_action)))
     body = body.replace("{{RESOLVED}}", _render_one_liners(
@@ -2501,6 +2525,10 @@ def main() -> int:
                     help="the owner-facing prose to render alongside the "
                          "backlog's items; point it elsewhere to preview a "
                          "page without touching the real one")
+    ap.add_argument("--no-github", action="store_true",
+                    help="do not ask GitHub what is in flight; the section "
+                         "then says the page was built without asking, "
+                         "never that nothing is in flight")
     ap.add_argument("--json", action="store_true", help="also print the findings as JSON")
     ap.add_argument("--explain", metavar="PHASE_ID", default=None,
                     help="print every rule and its verdict for one phase, then exit")
@@ -2544,8 +2572,10 @@ def main() -> int:
     board_notes = Path(args.board_notes)
     if not board_notes.is_absolute():
         board_notes = REPO_ROOT / board_notes
+    in_flight = (inflight.NOT_ATTEMPTED if args.no_github
+                 else inflight.read_in_flight())
     out.write_text(render(phases, state, REPO_ROOT / args.template, work_md,
-                          board_notes))
+                          board_notes, in_flight=in_flight))
 
     contradicted = [p.title for p in phases if p.verdict == "CONTRADICTED"]
     if args.json:
@@ -2553,6 +2583,11 @@ def main() -> int:
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "out": str(out),
             "contradicted": contradicted,
+            "in_flight": ({"problem": in_flight.problem} if not in_flight.readable
+                          else {"read_at": in_flight.read_at,
+                                "items": [{"number": i.number, "title": i.title,
+                                           "stage": i.stage}
+                                          for i in in_flight.items]}),
             "state": {k: v for k, v in state.items()},
             "phases": [
                 {"id": p.id, "recorded": p.recorded, "verdict": p.verdict,
