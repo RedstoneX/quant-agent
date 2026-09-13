@@ -3020,7 +3020,7 @@ def test_midday_blocks_second_sell_on_soft_reason_for_already_trimmed_symbol():
 def test_midday_allows_second_sell_on_hard_trigger_for_already_trimmed_symbol():
     """Same scenario but the LLM explicitly cites a hard trigger
     (thesis_invalid_if, HIGH state-change reversal, bearish earnings,
-    daily-loss circuit breaker, correlation breach, stop hit). Pin:
+    daily-loss circuit breaker, stop hit). Pin:
     discipline yields, broker.submit_order IS called."""
     position = Position(
         symbol="AMZN", qty=20.0, avg_entry=180.0, current_price=210.0,

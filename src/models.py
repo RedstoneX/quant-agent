@@ -2777,8 +2777,9 @@ class PositionReasoningChain(LLMOutputModel):
 
     thesis_integrity_check: str = Field(min_length=1)
     """Every SELL/REDUCE must cite a specific named trigger — thesis_invalid_if
-    condition, HIGH-conviction state_change reversal, bearish earnings
-    analysis, or correlation breach. Intraday price alone is NOT a trigger."""
+    condition, HIGH-conviction state_change reversal, or bearish earnings
+    analysis. Intraday price alone is NOT a trigger, and "correlation breach"
+    stopped being one 2026-09-13 (nothing can verify it)."""
 
     winners_discipline_check: str = Field(min_length=1)
     """For positions with profit > 10%: is momentum fading, is it parabolic,

@@ -12,7 +12,7 @@ This module is the deterministic half of the fix. It does not decide anything
 about the market; it only refuses to let a **deterioration claim** stand when
 the deterioration did not happen. The reviewer keeps full authority to exit on
 new information — adverse news, an earnings miss, a regime shift, a
-correlation breach, a triggered `thesis_invalid_if`. Those are judgments about
+triggered `thesis_invalid_if`. Those are judgments about
 the world. "It is stalling" is a claim about numbers, and the numbers are
 right here.
 
@@ -296,7 +296,15 @@ EXTERNAL_INFORMATION_PATTERNS: tuple[str, ...] = (
     r"\brisk[- ]off\b",
     r"\bhigh[- ]?conviction bearish\b",
     r"\bhigh bearish\b",
-    r"\bcorrelation (?:cluster )?breach\b",
+    # `correlation (cluster) breach` was REMOVED here 2026-09-13 (WORK.md
+    # item 44) alongside its removal from `pipeline._HARD_TRIGGER_KEYWORDS`.
+    # Two reasons, and the second is the interesting one: (1) nothing in the
+    # desk computes a correlation-breach event, so the claim was never
+    # checkable; (2) a correlation IS a function of the price series, so even
+    # taken at face value it is price-derived, not external — it never
+    # belonged on a list whose defining property is "comes from OUTSIDE the
+    # price series". An earnings miss is true regardless of the tape; a
+    # correlation number is the tape.
     r"\bcircuit breaker\b",
     r"\bdaily[- ]loss\b",
     r"\bdaily loss\b",
