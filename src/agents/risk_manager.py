@@ -3,6 +3,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from src.agents import risk_review_mode
 from src.agents.base import BaseAgent
 from src.agents.prompt_limits import (
     load_risk_config_from_settings, render_prompt_limits,
@@ -134,6 +135,16 @@ class RiskManagerAgent(BaseAgent):
         # it to reason that way. This is the fetched data that replaces the
         # recollection; when the caller passes nothing, the block still renders
         # and says NOT FETCHED, because a missing section reads as a calm one.
+        # WHICH review this is. One seat, two callers: the morning plan
+        # (`pipeline_stages.RiskStage`) and the exit review
+        # (`pipeline._risk_review_exits`). The exit path reused this renderer
+        # unchanged and was therefore told, on every run, that two mandatory
+        # audit steps had been skipped — steps that do not exist on that path
+        # at all. See `src/agents/risk_review_mode.py` for the full account;
+        # the rule is that an absence which is nobody's fault must never be
+        # rendered as an analyst's omission. Defaults to the morning path, so
+        # every existing call site is byte-identical.
+        review_mode: str = risk_review_mode.normalize(kwargs.get("review_mode"))
         event_risk_block: str = str(kwargs.get("event_risk_block") or "").strip()
         if not event_risk_block:
             from src.data.event_calendar import format_event_risk_block
@@ -356,26 +367,21 @@ class RiskManagerAgent(BaseAgent):
                     )
                 return f"- {label}: [EMPTY]"
 
-            reasoning_section = "\n".join([
-                "## PM Reasoning Chain — PM's CLAIMS about its own plan, not evidence",
-                "",
-                "Audit these against the blocks above. Where a claim cites a number,",
-                "check it against the Account / Positions / Tech / Macro data you were",
-                "given; where you cannot check it, say so rather than accepting it.",
-                "",
-                _field("Macro filter", rc.macro_filter),
-                _field("News check", rc.news_check),
-                _field("Earnings check", rc.earnings_check),
-                _field("Signal conflicts", rc.signal_conflicts),
-                _field("Sizing logic", rc.sizing_logic),
-                _field("Portfolio balance", rc.portfolio_balance),
-                _field("Cash target", rc.cash_target),
-                _field("Continuity check", rc.continuity_check,
-                       mandatory_prompt_only=True),
-                _field("Pre-mortem check", rc.premortem_check,
-                       mandatory_prompt_only=True),
-                "",
-            ])
+            # The two PM-only audit steps are rendered ONLY where they exist.
+            # On the exit path the chain is the position reviewer's, whose
+            # schema has no such fields — banner-ing them as NOT PERFORMED
+            # there told the seat a falsehood on every single run.
+            chain_title, chain_preamble = (
+                risk_review_mode.reasoning_chain_heading(review_mode)
+            )
+            chain_rows = [
+                _field(label, getattr(rc, attr, ""),
+                       mandatory_prompt_only=mandatory)
+                for label, attr, mandatory in risk_review_mode.chain_rows(review_mode)
+            ]
+            reasoning_section = "\n".join(
+                [chain_title, "", chain_preamble, ""] + chain_rows + [""]
+            )
         else:
             reasoning_section = (
                 "## PM Reasoning Chain\n"
@@ -425,7 +431,7 @@ class RiskManagerAgent(BaseAgent):
                 + "\n".join(tech_lines)
             )
         else:
-            tech_section = "## Tech Analyst Signals\n(not provided)"
+            tech_section = risk_review_mode.absent_block("tech", review_mode)
 
         # News intelligence — RM needs it to catch silent contradictions between
         # PM's proposals and today's news (e.g., BUY energy on a ceasefire day).
@@ -460,7 +466,7 @@ Alerts on PM's traded symbols:
 Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})
 """
         else:
-            news_section = "## News Intelligence\n(not provided)\n"
+            news_section = risk_review_mode.absent_block("news", review_mode)
 
         # Earnings — placeholders for queued filings flag event risk on those names.
         if earnings_analyses:
@@ -520,7 +526,7 @@ Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})
                 "above.\n"
             )
 
-        return f"""## Proposed Trades
+        return f"""{risk_review_mode.mode_header(review_mode)}## Proposed Trades
 {decisions_text}
 {dropped_text}
 Portfolio View: {portfolio_decision.portfolio_view}
@@ -560,7 +566,9 @@ Review these proposed trades and provide your verdict as JSON."""
                recent_performance: dict | None = None,
                heat=None,
                risk_ceiling_pct: float | None = None,
-               event_risk_block: str | None = None) -> tuple[RiskVerdict | None, "AgentResult"]:
+               event_risk_block: str | None = None,
+               review_mode: str = risk_review_mode.MORNING_PLAN,
+               ) -> tuple[RiskVerdict | None, "AgentResult"]:
         # audit round 2 #5: total_value / cash are optional so existing call
         # sites keep working; when omitted, build_user_message approximates
         # the book denominator from the sum of position market values.
@@ -590,6 +598,9 @@ Review these proposed trades and provide your verdict as JSON."""
             # `event_risk` is a MANDATORY output field, so the one thing this
             # input must never do is disappear silently.
             event_risk_block=event_risk_block,
+            # Defaults to the morning plan, so every pre-existing call site
+            # renders byte-identically. See src/agents/risk_review_mode.py.
+            review_mode=review_mode,
         )
         parsed = result.parse_json()
         if parsed is None:

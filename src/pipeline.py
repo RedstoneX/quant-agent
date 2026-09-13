@@ -8513,9 +8513,61 @@ class TradingPipeline:
                 logger.warning("trail: trade row write failed for %s: %s", symbol, e)
         return orders
 
+    def _exit_event_risk_block(self, symbols: list[str]) -> str:
+        """The fetched Event Risk section for an EXIT review.
+
+        `RiskVerdict.reasoning_chain.event_risk` is a mandatory output field.
+        The morning path fetches its answer (`RiskStage._build_event_risk_block`);
+        this path passed nothing at all, so the renderer's NOT FETCHED fallback
+        fired on all three sub-blocks and a mandatory question had no input.
+
+        Earnings proximity IS fetchable here — `self.market` exists on the
+        midday/close loop and the sweep is bounded per-symbol and in aggregate
+        by the same `config.event_risk` timeouts the morning path uses. The
+        macro-release and FOMC calendars are NOT: they are fetched by the
+        morning research stage and no equivalent runs on this loop, so they
+        render as the labelled NOT FETCHED form, which is the honest answer.
+
+        Never raises. Any failure degrades to the fully-NOT-FETCHED block —
+        an absent section reads as a calm calendar, which is the failure the
+        block exists to prevent.
+        """
+        from src.data.event_calendar import (
+            fetch_earnings_proximity, format_event_risk_block,
+        )
+
+        event_cfg = getattr(getattr(self, "config", None), "event_risk", None)
+        horizon_days = getattr(event_cfg, "horizon_days", 10)
+        earnings = None
+        try:
+            if symbols and getattr(self, "market", None) is not None:
+                earnings = fetch_earnings_proximity(
+                    self.market, symbols,
+                    per_symbol_timeout_s=getattr(
+                        event_cfg, "earnings_symbol_timeout_s", 8.0,
+                    ),
+                    total_deadline_s=getattr(event_cfg, "earnings_deadline_s", 20.0),
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Exit review: earnings proximity sweep failed: %s", e)
+            earnings = None
+        try:
+            return format_event_risk_block(
+                earnings=earnings, events=None, coverage=None,
+                horizon_days=horizon_days,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Exit review: event-risk block render failed: %s", e)
+            return format_event_risk_block(
+                earnings=None, events=None, coverage=None, horizon_days=0,
+            )
+
     def _risk_review_exits(
         self, review, positions, *, run_id: str, total_value: float,
         macro_summary: dict | None = None, position_facts: dict | None = None,
+        news_intel=None, earnings_analyses: list | None = None,
+        cash: float | None = None, reserve_balance: float = 0.0,
+        recent_performance: dict | None = None,
     ):
         """Put the reviewer's exits in front of the AI Risk Manager — Phase 3.4.
 
@@ -8536,10 +8588,46 @@ class TradingPipeline:
         - failing closed on an EXIT means a thesis-invalidated position cannot
           be closed because a language model is unavailable, and the loss is
           then bounded only by the broker stop.
-        The deterministic gates — the named-trigger requirement and the
-        metric-contradiction veto — have already run by this point and are the
-        real protection. AI Risk here is a second opinion, not the gate.
+        The deterministic gates — the named-trigger requirement, the noise
+        band, the metric-contradiction veto and `holding_discipline_claim_check`
+        — are the LAST LINE, not full coverage. Each abstains somewhere: the
+        trigger gate checks the words, not the truth of the claim; the noise
+        band is bypassed by any reason citing external information (which the
+        trigger gate all but requires); the metric veto needs recorded prior
+        metrics for that symbol or it does not run; and the claim check looks
+        only at a regime-flip or HIGH-conviction-bearish claim, only on a still-
+        protected position, passing every unverifiable claim by design. A
+        plausibly-worded, deterministically-clean, wrong exit passes all four.
+        That gap is what this seat is for.
+
+        **Ordering correction (2026-09-13).** This docstring previously said
+        those gates "have already run by this point". They have not: all four
+        live in `_midday_execute_llm_actions`, which the caller invokes AFTER
+        this method (see `run_position_review`). They still run on every exit
+        in the same session before any order can reach the broker, so the
+        substantive claim — that they, not this seat, are the last line —
+        holds; only the word "already" was wrong. That ordering is also
+        precisely why the seat's holding-discipline checklist item is NOT
+        stood down on this path: it exists because the deterministic answer
+        arrives after the seat has spoken.
+
+        **The verdict's only live effect here is `rejected_symbols`.**
+        `modifications` and `scale_all_buys` are discarded — `_apply_risk_modifications`
+        runs only in the morning `RiskStage`, and this method returns a veto
+        set. The seat is told so plainly rather than being given guidance on a
+        lever with no effect.
+
+        **What this seat is shown (2026-09-13).** It is told explicitly that it
+        is on the EXIT path (`review_mode`), so the renderer no longer stamps
+        the Portfolio Manager's `continuity_check` / `premortem_check` with a
+        NOT-PERFORMED banner for a chain that has never had those fields, and
+        no longer asks it to verify a claim against a Tech block that no call
+        on this loop produces. Everything the loop genuinely has — news,
+        earnings, deployable cash and the parked reserve, drawdown state,
+        holding ages, and a fetched earnings-proximity sweep — is now passed.
+        See `src/agents/risk_review_mode.py`.
         """
+        from src.agents import risk_review_mode
         from src.models import (
             PortfolioDecision, ReasoningChain, TradeDecision,
         )
@@ -8580,19 +8668,55 @@ class TradingPipeline:
             return set(), None
 
         summary = (review.overall_assessment or "")[:400]
+        # The position reviewer's chain travels in the PM's `ReasoningChain`
+        # container because that is the container the Risk Manager reads. Only
+        # the five fields the reviewer actually authors are populated, and
+        # `risk_review_mode` renders them under the reviewer's OWN labels.
+        #
+        # No `or "n/a"` and no cross-reference strings. Both were placeholder
+        # content invented at this call site for fields the reviewer never
+        # filled, and a fabricated "n/a" reads to the seat as a real answer —
+        # which is how this whole defect started. `ReasoningChain` still
+        # requires a non-empty string in each core field, so the substitute is
+        # `risk_review_mode.NOT_AUTHORED`, which says exactly what happened.
+        rc = review.reasoning_chain
+
+        def _step(value: str) -> str:
+            return (value or "").strip()[:800] or risk_review_mode.NOT_AUTHORED
+
         proposal = PortfolioDecision(
             reasoning_chain=ReasoningChain(
-                macro_filter=(review.reasoning_chain.macro_continuity_check or "n/a")[:800],
-                news_check="see position reviewer thesis_integrity_check",
-                earnings_check="see position reviewer thesis_integrity_check",
-                signal_conflicts=(review.reasoning_chain.thesis_integrity_check or "n/a")[:800],
-                sizing_logic=(review.reasoning_chain.execution_rationale or "n/a")[:800],
-                portfolio_balance=(review.reasoning_chain.winners_discipline_check or "n/a")[:800],
-                cash_target=(review.reasoning_chain.session_disposition_check or "n/a")[:800],
+                macro_filter=_step(rc.macro_continuity_check),
+                # Slot reuse, not a category claim: `earnings_check` is PM's
+                # field name, and `risk_review_mode` labels this row
+                # "Thesis progress check" — the reviewer's own field — in the
+                # rendered message. Nothing about earnings is implied.
+                earnings_check=_step(rc.thesis_progress_check),
+                # PM-schema field with no counterpart here. Not rendered to the
+                # seat at all on this path; the marker only has to be non-empty
+                # for the schema and unmistakable in the stored agent log.
+                news_check=risk_review_mode.UNUSED_SLOT,
+                signal_conflicts=_step(rc.thesis_integrity_check),
+                sizing_logic=_step(rc.execution_rationale),
+                portfolio_balance=_step(rc.winners_discipline_check),
+                cash_target=_step(rc.session_disposition_check),
             ),
             decisions=decisions,
             portfolio_view=f"EXIT REVIEW (position reviewer): {summary}",
         )
+
+        # Holding ages. Informational on this path (protection is decided by
+        # `check_structural_protection`, not by age) but the renderer prints
+        # "held: unknown" without it, and unknown-by-omission is exactly the
+        # kind of silent gap this fix exists to remove.
+        try:
+            exit_position_history = self._build_position_history(positions)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Exit review: position history rebuild failed — the seat sees "
+                "holding ages as unknown: %s", e,
+            )
+            exit_position_history = {}
 
         try:
             verdict, rm_result = self.risk_manager.review(
@@ -8602,6 +8726,23 @@ class TradingPipeline:
                 rule_violations=[],
                 total_value=total_value,
                 heat=self._build_portfolio_heat(positions, total_value),
+                # Everything below was available at this call site all along
+                # and simply was not passed. The seat was being asked to audit
+                # exits against news, earnings, drawdown state and event risk
+                # while being shown none of them.
+                news_intel=news_intel,
+                earnings_analyses=earnings_analyses or [],
+                cash=cash,
+                reserve_balance=reserve_balance or 0.0,
+                recent_performance=recent_performance or {},
+                position_history=exit_position_history,
+                event_risk_block=self._exit_event_risk_block(
+                    sorted({d.symbol for d in decisions})
+                ),
+                # Tells the renderer which review this is. Without it the
+                # exit path is rendered as a morning plan and the seat is told
+                # two audit steps were skipped that do not exist here.
+                review_mode=risk_review_mode.EXIT_REVIEW,
             )
         except Exception as e:  # noqa: BLE001
             logger.error(
@@ -10991,6 +11132,15 @@ class TradingPipeline:
                     review, review_positions, run_id=run_id,
                     total_value=total_value, macro_summary=macro_summary,
                     position_facts=position_facts,
+                    # This loop fetched all of these before the position
+                    # reviewer ran; until 2026-09-13 none of them reached the
+                    # AI Risk seat, which was then asked to audit the exits
+                    # against news and drawdown state it had never been shown.
+                    news_intel=session_news,
+                    earnings_analyses=session_earnings,
+                    cash=review_cash,
+                    reserve_balance=reserve_balance,
+                    recent_performance=recent_performance,
                 )
                 orders.extend(self._midday_execute_llm_actions(
                     review_positions, review, run_id,
