@@ -183,6 +183,44 @@ def _swing_highs(bars, window: int = PIVOT_WINDOW) -> list[float]:
     return highs
 
 
+def _structural_pivot(pivots: list[float], *, is_short: bool) -> float | None:
+    """The one pivot this module is entitled to trail against, or None.
+
+    The rule this module states is "trail under each successive HIGHER low"
+    (mirror: above each successive LOWER high). What the code did for a long
+    was take the highest confirmed low sitting between the stop and price —
+    which is a different rule, and on a stock making LOWER lows it is the
+    wrong one. Example, all real shapes this desk holds: entry 100, stop 90,
+    confirmed lows 95 then 92 then 91, price back at 98. The old code trailed
+    to 95 — a level price had since traded straight through down to 91 and
+    only recovered above afterwards. A support level that has been broken is
+    not support; the sequence is making lower lows, so structure has not
+    offered a trail at all and the chandelier fallback below is the honest
+    answer.
+
+    So: the pivot is the MOST RECENT confirmed one, and it counts only when
+    it is genuinely higher than the pivot before it (a real higher low).
+    Where only ONE pivot is confirmed there is no sequence to judge and it is
+    accepted on its own — that is the pre-existing behaviour, it is what a
+    freshly-broken-out position looks like, and tightening it would remove
+    protection rather than add it.
+
+    Returns None when structure gives no answer. The caller falls through to
+    the chandelier, which is exactly what "where structure is unclear" in the
+    module docstring means.
+    """
+    if not pivots:
+        return None
+    latest = pivots[-1]
+    if len(pivots) == 1:
+        return latest
+    previous = pivots[-2]
+    if is_short:
+        # A short trails above successive LOWER highs.
+        return latest if latest < previous else None
+    return latest if latest > previous else None
+
+
 def _range_breakeven_ratchet(
     *, symbol: str, ent: float, cur: float, stop: float,
     initial_stop: float | None, is_short: bool, setup_type: str | None,
@@ -312,24 +350,20 @@ def compute_trailing_stop(
     candidate: float | None = None
     source = ""
     if is_short:
-        highs = _swing_highs(bars or [])
-        # Only highs that are BELOW the current stop and ABOVE current price
-        # are useful: above the stop is not a ratchet, below the price is not
-        # a stop.
-        usable = [hi for hi in highs if cur < hi < stop]
-        if usable:
-            # The LOWEST usable high is the tightest defensible stop —
-            # mirror of the long side's `max(usable)`.
-            candidate = min(usable)
+        pivot = _structural_pivot(_swing_highs(bars or []), is_short=True)
+        # The pivot is only usable if it is BELOW the current stop and ABOVE
+        # current price: above the stop is not a ratchet, below the price is
+        # not a stop.
+        if pivot is not None and cur < pivot < stop:
+            candidate = pivot
             source = "structure"
     else:
-        lows = _swing_lows(bars or [])
-        # Only lows that are ABOVE the current stop and BELOW current price
-        # are useful: below the stop is not a ratchet, above the price is not
+        pivot = _structural_pivot(_swing_lows(bars or []), is_short=False)
+        # Mirror: only a pivot ABOVE the current stop and BELOW current price
+        # is usable — below the stop is not a ratchet, above the price is not
         # a stop.
-        usable = [lo for lo in lows if stop < lo < cur]
-        if usable:
-            candidate = max(usable)
+        if pivot is not None and stop < pivot < cur:
+            candidate = pivot
             source = "structure"
 
     # --- Fallback: chandelier, where structure is unclear ------------------
