@@ -91,12 +91,12 @@ put it at.
 Real entries for the current backlog are drafted separately and go below
 this line, one heading per item.
 
-## decision due 2026-09-16
+## decision due 2026-10-31
 
-**Plain language —** The seat that actually decides trades runs on a paid AI model, and it drives almost the whole AI bill. The desk wants to compare cheaper models fairly, but the last comparison ran before the seat's own instructions were rewritten, so those numbers are now known to be invalid.
-**Example —** This one seat already accounts for roughly 93 cents of every dollar spent on AI in a week. A fair re-test means spending more real money on fresh comparison runs before anyone can honestly compare cost against a cheaper option.
-**The decision —** Whether to spend real money now on a fresh, fair model comparison, and only then whether to switch away from the current one.
-**Recommendation —** Approve a small, capped spend for one fresh comparison before the due date. Do not switch models based on the old, invalidated numbers.
+**Plain language —** The seat that actually decides trades runs on a paid AI model, and it drives almost the whole AI bill. Comparing it against a cheaper model means paying for fresh test runs — and you have ruled that no such test can mean anything while the job board is still dirty, because the comparison feeds on the same data the open items are about.
+**Example —** This one seat accounts for roughly 93 cents of every dollar spent on AI. But the test hands each model the same day's evidence and grades what it picks — so if that evidence is coming from seats with open faults against them, a cheaper model can win or lose the comparison on the quality of the input rather than its own judgement, and the answer would be worthless at any price.
+**The decision —** Not yet yours to make. It becomes a decision once the model-test gate below is clear; until then the date only exists because this file needs one, and it moves rather than forcing an answer.
+**Recommendation —** Nothing to approve. Clear the gate first. A recommendation to spend roughly $5 and settle it was put to you on 2026-09-13 and withdrawn the same day for this reason.
 
 
 ## item 1
@@ -115,12 +115,6 @@ this line, one heading per item.
 
 **Plain language —** There are two separate reward-to-risk minimums enforced at two different points, using two different numbers, and neither is backed by real research. Both work as designed, but two different rules checking the same thing is confusing, and this one should be merged into the fix already underway for the main floor above.
 **Example —** A trade could clear an earlier 1.5-minimum check and still be blocked later by this separate 1.2-minimum check — two different numbers guarding essentially the same question.
-
-
-## item 7
-
-**Plain language —** An AI reviewer checks a whole day's trading plan for internal consistency, and if it finds the plan doesn't hang together, it can reject every trade in that plan at once, not just the one that's actually the problem. This has happened again even after an earlier attempt to stop it.
-**Example —** One flawed piece of reasoning in one part of a day's plan can throw out every other, unrelated trade idea proposed in that same session — a small problem with an outsized cost.
 
 
 ## item 8
@@ -220,20 +214,6 @@ this line, one heading per item.
 **Plain language —** When the desk's risk budget is nearly maxed out and it can't take a promising new trade, it now shows the AI a direct comparison between its weakest current holding and the strongest new idea being turned away, so it can weigh whether to make room. It only surfaces this comparison — it never automatically swaps one position for another.
 **Example —** If the desk is already near its risk ceiling and a strong new opportunity appears, the decision-maker is shown its own weakest current holding side by side with the new idea, but nothing forces a trade either way.
 
-
-## item 44
-
-**Plain language —** To sell a position it is supposed to keep holding, the desk's AI must name a real reason, and only a short list of reasons is accepted. Two of them — the market regime flipped, or bad news changed the story — are now checked against real data before the sale goes through. The third, "correlation breach", is accepted on the wording alone, because nothing anywhere in the system ever works out whether correlations actually broke. The words are the whole test.
-**Example —** The desk holds a position it is meant to keep for another week. The AI writes "exiting on correlation breach" and the sale executes. Had it written "exiting on regime shift" instead, the system would have checked whether the regime really shifted that day and blocked the sale when it had not. The correlation wording is never checked, so it always works. It is the one phrase that reliably opens the door.
-**The decision —** Whether to build something that can actually detect a correlation breach, or to stop accepting the phrase as a reason.
-**Recommendation —** Stop accepting the phrase. Building a detector means first deciding which correlation, measured over how many days, and how large a change counts as broken — three numbers nobody can derive for you, exactly the position you were in with the drawdown sensitivity. A reason that cannot be checked should not be an accepted reason, and removing it costs nothing because the two checkable reasons still cover a genuine change of circumstances.
-
-## item 45
-
-**Plain language —** Two parts of the desk look for the same thing on a chart: a swing low, meaning a dip with higher prices on both sides of it. One part requires three higher days on each side before it counts. The other requires five. A note written beside the first one claims the two match, so that a swing low means the same thing everywhere. They do not match, and that note has been wrong the whole time.
-**Example —** A stock dips on a Monday with four higher days either side of it. The trailing stop counts that as a genuine swing low and ratchets the stop up to sit just under it. The part of the system that finds support levels does not count it at all, because it wanted five. So one half of the desk is protecting a floor that the other half does not believe exists.
-**The decision —** Which definition is correct, or whether the two are meant to differ on purpose.
-**Recommendation —** Research what published swing-trading work actually uses before choosing, the same way the stop floor was settled. If both turn out defensible, make them the same number and record it as your own dial — what should not survive is two different answers with a note claiming they agree.
 
 ## item 49
 

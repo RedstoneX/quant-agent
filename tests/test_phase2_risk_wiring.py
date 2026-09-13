@@ -595,6 +595,31 @@ def test_rm_is_told_removal_was_deterministic_and_not_incoherence():
     assert "do not veto the surviving trades" in msg
 
 
+def test_the_removal_note_does_not_assert_a_cause_it_cannot_know():
+    """The list is now recomputed just before review, so a symbol on it may
+    have been removed by a later gate rather than by the constructor's own
+    measurement. The note must not name a specific rule it cannot know
+    applied — the durable per-symbol reason lives in the evidence trail."""
+    msg = _rm_message(portfolio_decision=_pd_with(["NVDA"]))
+    assert "reward:risk could not be measured" not in msg
+    assert "recorded per symbol" in msg
+
+
+def test_the_risk_manager_is_never_told_a_reward_risk_floor_exists():
+    """The floor was removed on 2026-09-11, but this seat's own briefing went
+    on calling 1.5 "the only one to enforce" and claiming sub-floor orders had
+    already been refused deterministically. Three of the four whole-plan
+    vetoes in the pre-reset archive cite that floor by name."""
+    from tests.test_agreement_sizing import _analysis
+
+    tech = _analysis("NVDA")
+    msg = _rm_message(portfolio_decision=_pd_with([]), tech_analyses=[tech])
+    assert "Tech Analyst Signals" in msg    # the section really rendered
+    assert "NVDA" in msg
+    assert "1.5 floor" not in msg
+    assert "There is no reward:risk floor" in msg
+
+
 def test_no_removal_block_when_the_constructor_dropped_nothing():
     """A clean plan must not carry an empty scary heading."""
     msg = _rm_message(portfolio_decision=_pd_with([]))
@@ -612,3 +637,37 @@ def test_constructor_dropped_defaults_empty_so_old_call_sites_are_unaffected():
         portfolio_view="x",
     )
     assert pd.constructor_dropped == []
+
+
+def test_a_symbol_removed_after_construction_is_still_reported_as_removed():
+    """The drop list used to be frozen immediately after construction. Between
+    that point and the review, the symbol guard, the queued-earnings clamp and
+    the hard-risk gate each remove SOME orders and pass the rest through — so a
+    name struck by one of them was missing from the order list AND missing from
+    the drop list, which is precisely the 2026-08-31 failure on a path the
+    original fix never covered."""
+    from src.pipeline_stages import _dropped_since_proposal
+
+    class _T:
+        def __init__(self, symbol): self.symbol = symbol
+
+    class _PD:
+        targets = [_T("AAA"), _T("BBB"), _T("CCC")]
+        decisions = [_T("aaa")]          # BBB dropped by the constructor,
+                                          # CCC by a later gate; case-insensitive
+
+    assert _dropped_since_proposal(_PD()) == ["BBB", "CCC"]
+
+
+def test_a_held_name_is_not_reported_as_removed():
+    """A HOLD survived review; it is simply not being traded today."""
+    from src.pipeline_stages import _dropped_since_proposal
+
+    class _T:
+        def __init__(self, symbol): self.symbol = symbol
+
+    class _PD:
+        targets = [_T("AAA")]
+        decisions = [_T("AAA")]
+
+    assert _dropped_since_proposal(_PD()) == []

@@ -12,8 +12,10 @@ a claimed HIGH-conviction bearish state change against real Active News State
 Change rows. It was imported from exactly ONE place in the codebase, the
 morning Portfolio-Manager path in `pipeline_stages.RiskStage`. Midday and
 close — the desk's two busiest exit surfaces — were never wired to it, so
-"regime shift to risk-off; correlation breach across the book" sold a
-protected position on the strength of the words alone.
+"regime shift to risk-off" sold a protected position on the strength of the
+words alone. (The same sentence used to carry "correlation breach across the
+book"; that phrase was removed from the accepted trigger vocabulary entirely
+on 2026-09-13 — WORK.md item 44 — because nothing could ever check it.)
 
 WHAT MUST NOT REGRESS. The checker deliberately separates PROVABLY FALSE from
 UNVERIFIABLE, and only the first blocks. An unverifiable claim passing through

@@ -123,8 +123,10 @@ This file records what is accepted and true **now**. Git history preserves imple
   and new `src/risk/exit_guard.py` deterministically vetoes a SELL/REDUCE
   whose stated reason is a deterioration claim when every metric that moved
   since the prior review improved. Exits on new information (news, earnings,
-  regime shift, correlation breach, a triggered `thesis_invalid_if`) are never
-  vetoed. §3.3 is merged separately — see below. §3.4–§3.7 (routing exits
+  regime shift, a triggered `thesis_invalid_if`) are never
+  vetoed. ("Correlation breach" was on that list until 2026-09-13, when it was
+  removed from the accepted exit vocabulary outright — nothing in the desk
+  could ever verify it. See `docs/INCIDENT_HISTORY.md`.) §3.3 is merged separately — see below. §3.4–§3.7 (routing exits
   through AI Risk, upgrading the reviewer's model off `gemini-2.5-flash-lite`,
   ATR noise band, broker-resident trailing stops) are also merged and
   deployed — see "Phase 3 ... COMPLETE" below (§3.5 was resolved as an owner

@@ -195,9 +195,10 @@ HARD_BLOCK_RULES = {
 #
 # Spec Phase 3.8: the reviewer retains full authority to exit on new
 # information — adverse news, an earnings miss, a macro regime shift, a sector
-# shock, a correlation breach, a thesis invalidation. Price movement alone is
+# shock, a thesis invalidation. Price movement alone is
 # not new information. This tuple is that list, expressed as prose the LLM
-# actually emits.
+# actually emits. (Spec 3.8 also listed "a correlation breach"; that one was
+# removed 2026-09-13 — see the note inside the tuple.)
 #
 # Soft signals — "TARGET_BREACH", "stretched", "extended", "macro noise",
 # "taking profits", "de-risking" — are deliberately ABSENT and must stay
@@ -248,8 +249,17 @@ _HARD_TRIGGER_KEYWORDS: tuple[str, ...] = (
     "daily loss",
     "daily-loss",
     "circuit breaker",
-    "correlation breach",
-    "correlation cluster breach",
+    # "correlation breach" / "correlation cluster breach" were REMOVED
+    # 2026-09-13 (WORK.md item 44). They were the only accepted triggers with
+    # nothing behind them: no part of the desk computes a correlation-breach
+    # EVENT, `holding_discipline_claim_check` has no branch for the claim (it
+    # returns "ok" — not even the log-only "unverifiable"), and a published
+    # operational definition with a stated window and threshold was searched
+    # for and not found (see docs/INCIDENT_HISTORY.md). Every other keyword
+    # here names something the desk records: a news row, an earnings row, a
+    # macro regime read, a broker fill, a deterministic circuit breaker.
+    # This one named nothing, so it passed on the wording alone. Do NOT
+    # re-add it without a verifier that can answer "did that happen today?".
     # Protection already fired
     "stop hit",
     "stopped out",
@@ -8841,7 +8851,7 @@ class TradingPipeline:
                     "Position reviewer: blocking %s %s — the reason names no "
                     "recognised trigger. Exits require NEW INFORMATION "
                     "(thesis invalidation, adverse news, earnings, regime "
-                    "shift, sector shock, correlation breach, stop hit); "
+                    "shift, sector shock, stop hit); "
                     "price action and soft flags are not triggers. Reason "
                     "was: %r",
                     act, symbol, reason_text[:200],

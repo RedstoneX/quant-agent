@@ -31,8 +31,12 @@ def _bars(pattern):
 def _rising_with_higher_lows():
     """A clean uptrend with two CONFIRMED swing lows, at 100 and 110.
 
-    Confirmed means three bars on each side are higher — the same definition
-    `src/data/levels.py` uses. The lows series is deliberately V-shaped around
+    Confirmed means three bars on each side are higher — `trailing.py`'s own
+    `PIVOT_WINDOW`, which is 3. NOT the same definition `src/data/levels.py`
+    uses: that module's window is 5 and the two are independent on purpose
+    (see `tests/test_pivot_window_independence.py`). This docstring claimed
+    they matched until 2026-09-13; they never did.
+    The lows series is deliberately V-shaped around
     each pivot; a monotonic ramp contains no swing lows at all, which is
     exactly what the chandelier fallback is for.
     """

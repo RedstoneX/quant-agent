@@ -30,13 +30,27 @@ while writing "all four were ratified". That is exactly the forbidden move this
 test guards against, and it made a later session believe the model choice was
 settled. Restored:**
 
-- [ ] DECIDE BY 2026-09-16 — Which model should run the desk's actual trade-decision seat?
-  **DATE MOVED 2026-09-02, reason recorded — not a silent deferral.** The
-  re-measure this decision waits on DOES NOT EXIST: the newest file in
-  `ops/model_policy/results/` is dated 2026-09-01, i.e. pre-rewrite and stale
-  by this block's own terms. Verified by listing the directory, in this repo
-  and on the live desk. Deciding without it would be picking a model from
-  numbers we already wrote down as invalid.
+- [ ] DECIDE BY 2026-10-31 — Which model should run the desk's actual trade-decision seat?
+  **DATE MOVED 2026-09-13 BY THE OWNER, reason recorded — not a silent
+  deferral, and not an agent's choice.** His ruling, verbatim: *"We can't run
+  model comparison until the job board is clean. Otherwise the test is flawed
+  because the data is flawed because the agents are flawed because the board
+  is flawed because the project is flawed."* The gating condition is therefore
+  the PM TEST GATE section below, not a date — the date exists only because
+  this file's format requires one, and it must move again rather than force a
+  decision the gate has not earned. **Do not propose running the benchmark,
+  and do not ask him to authorise the spend, while any PM-gate item is open.**
+  This supersedes the recommendation put to him on 2026-09-13 to spend roughly
+  $5 and settle it; that recommendation was wrong for exactly the reason he
+  gave, and it is recorded here so it is not made a third time.
+  **DATE MOVED 2026-09-02, reason recorded.** The re-measure this decision
+  waits on DOES NOT EXIST: the newest file in `ops/model_policy/results/` is
+  dated 2026-09-02 and tested the INCUMBENT ALONE, with no challenger, so
+  there is nothing to compare. Every earlier file was measured against a
+  prompt that has since been rewritten — verified 2026-09-13, the live
+  `config/prompts/portfolio_manager.md` hashes to `00ca991d...` and no result
+  file in the repo was produced against it. Deciding without a re-run would be
+  picking a model from numbers already written down as invalid.
   **The blocking dependency is a benchmark re-run, and it SPENDS OPENROUTER
   CREDITS — real money, and the owner's single stated financial concern.** It
   is therefore an owner call to authorise, not an agent one, and that is why
@@ -609,11 +623,6 @@ Working as designed, but one quantity has two definitions with two different
 numbers, and neither is doctrinally grounded. Fold into item 1(b); do not
 resolve it separately.
 
-**7. AI Risk Manager vetoes the entire plan for incoherence — 2 of 68 (3%). TOO STRICT.**
-
-Notable because it is reproducing AFTER a fix intended to stop exactly this.
-One veto discards every trade in the plan, so its cost is superlinear.
-
 **8. Stop placed on the wrong side of entry — 2 of 68 (3%). CHECKED, NOT A DEFECT.**
 
 Full reasoning + test: `docs/INCIDENT_HISTORY.md`. Stop is
@@ -921,10 +930,6 @@ No DECIDE BY — revisit only if it recurs.
 
 **39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
 
-**44. "Correlation breach" is an accepted exit reason that nothing can verify — OPEN, found 2026-09-11 by audit.** The hard-trigger phrase gate (`src/pipeline.py:250`) accepts `"correlation breach"`, and `exit_guard.py:299` classifies it as a claim of external information. Nothing anywhere computes a correlation-breach EVENT. `correlation_clusters` (`src/data/correlation.py`) measures |r| >= 0.7 clusters at decision time; it does not detect a break. So after PR #299 wired `holding_discipline_claim_check` into the midday/close executor, regime-flip and bearish-state-change claims are adjudicated against real data and this one still returns unverifiable by construction — which by design passes. Net: the phrase remains a free exit from a protected position. NOT a wiring defect; the thing to check against does not exist. Building it means defining what a breach IS (which correlation, over what window, versus what baseline) — every one of those is a number, so `qamc-no-arbitrary-numbers` applies and this is an owner call, not an implementation task.
-
-**45. Two pivot windows disagree about what a "swing low" is — OPEN, found 2026-09-11 by audit.** `src/risk/trailing.py:103` sets `PIVOT_WINDOW = 3` and its comment claims it matches `src/data/levels.py` "so 'a higher low' means the same thing in both places". `src/data/levels.py:39` sets `PIVOT_WINDOW = 5`. Verified by direct read. Consequence: the trailing-stop ratchet can see a higher low the structural-level detector does not, and vice versa. Neither number carries a derivation. Do not "fix" by copying one onto the other — picking 3 or 5 is picking a number.
-
 **49. The risk budget is now the binding constraint on a full day's eligible set, and nothing decides how to ration it — OPEN, surfaced 2026-09-12 by item 1(d).** Measured on `run-64290730` after the reward:risk floor was removed by setup type: eligible names 12 -> 25, and the eligible set's total requested risk is **48% against a 25% `max_portfolio_risk_pct` budget**. The floor was previously doing the rationing by accident — refusing enough candidates that the budget rarely bound. It no longer refuses them, so the budget binds on a normal day and something must decide WHICH permitted trades get the capital. Today that is whatever order `allocate_risk_budget` happens to process in, which is not a decision anybody made. Real options, none costed yet: rank-ordered (best-scored first until exhausted), proportional scale-down (everyone sized smaller), conviction-tiered, or a hard cap on names per session. Each is a different desk, not a tuning knob — owner call. Do NOT resolve by re-tightening the floor that was just removed.
 
 **DECIDED 2026-09-12 by the owner: rank-ordered, best first.** His words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The budget is spent on the best-ranked eligible candidates until it is exhausted; the remainder are not taken, and are not silently shrunk to fit. Proportional scale-down was explicitly rejected in the recommendation he accepted, on the grounds that sizing everyone smaller turns every strong idea into a weak one. **Still to BUILD** — `allocate_risk_budget` today spends in whatever order it happens to process in, which is the defect; the decision above is not yet implemented. Whether a partially-affordable candidate at the cut line is taken at a reduced size or skipped entirely is the one sub-question the decision does not settle, and must be raised with the owner rather than assumed.
@@ -933,7 +938,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **53. A paused desk leaves part of every fractional position with NO stop, and nothing said so — OPEN, owner call, found 2026-09-12.** The alarm is built; what to do with the remainder is the decision. Verified live 2026-09-12: ORCL 5.3089 shares held, one stop-limit at the broker for 5.0. The 0.3089-share DAY leg lapsed at the close on 2026-09-02 exactly as §11.1 designs, and the trading timers were disabled before the 09-03 open, so the session sweep that re-places it never ran — six full sessions (09-03 to 09-11) with $46 of a $798 position unprotected, and every record on the box calling it "expected overnight". NOT a flooring bug: `_split_protective_qty` is working as designed. NOT fixable at the broker: fractional orders must be DAY (measured 2026-09-01, code 42210000; Alpaca's fractional-trading page says the same) — no durable fractional stop exists. Shipped: `src/coverage_watchdog.py`, run from the 06:15 ET alert-heartbeat unit (fires whether or not trading timers are on); alerts once per trading day when broker coverage is short of held AND no session ran during the last cash session. Read-only. **The decision (BOARD_NOTES 53):** what to do with the remainder while paused — close it, accept it with the alert, or go whole-share (owner already declined whole-share on 2026-09-02). Also found, NOT fixed: the repo's silence-watchdog timer unit is not installed on the box (no state file, absent from the timer list), so item 17c's alarm has never actually run in production. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-12.
 
-**Retired item numbers — never reuse.** 2, 5, 6, 9, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 46, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
+**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
 
 ## Evidence-only follow-ups
 

@@ -100,6 +100,222 @@ answered here. This change makes the match tolerance *consistent* with that
 width; it does not claim the width is right. Nothing was invented to paper
 over it.
 
+### 2026-09-13 — the whole-plan veto: what actually caused it, and the two holes left in the fix (item 7)
+
+**In plain words:** the AI risk reviewer can refuse a whole day's plan rather
+than one trade in it. Item 7 recorded this as still happening after a fix had
+been written for it. Checked against the archived database, that is not what
+happened, and the item's own cause was wrong.
+
+**The measurement, preserved here because deleting the item deletes it.**
+Item 7 read "2 of 68 (3%)". That count comes from
+`scripts/blocked_proposals_census.py`, which counts PROPOSALS, not sessions:
+the single veto it refers to covered a decision with three targets, one of
+which had already been dropped, so it attributes two. Counted as SESSIONS
+there were four refusals in the 2026-08-18 to 2026-09-02 archive, and the two
+numbers do not contradict each other.
+
+**What each refusal was actually for.** Only ONE of the four was the
+incoherence case — 2026-08-31 19:08, where the plan's narrative argued for a
+symbol deterministic code had already removed, and the reviewer refused the
+whole plan as inconsistent, killing two trades it had just called valid. The
+other three cited the flat 1.5 reward:risk floor by name. So the dominant
+cause of this item was never incoherence; it was item 1's floor.
+
+**It did not reproduce.** The fix (`311efce0`, telling the reviewer what was
+removed) was authored 20:25 and first reachable on `main` at 20:31 that
+evening — after both of that day's refusals. The one later refusal, on
+2026-09-01, ran with the fix live: its recorded input contains the "Removed
+Before You Saw This" section verbatim. It refused on the reward:risk floor,
+not on coherence.
+
+**Two real holes, both found by adversarial review and both fixed here.**
+
+  * *The reviewer was still being told a floor existed.* The floor stopped
+    being a gate on 2026-09-11, and a later pass claimed to have retired it
+    "from every place still describing it" — but this seat's own briefing
+    still called 1.5 "the number ... to enforce" and told it that sub-floor
+    orders "have already been refused deterministically". Both false. That
+    text is the direct cause of three of the four refusals in the archive and
+    it was live on `main` until today.
+  * *The removed-symbols list was computed too early.* It was frozen right
+    after construction, but the order list is filtered at least three more
+    times before the review — the symbol guard, the queued-earnings clamp and
+    the hard-risk gate — and each can remove some names and pass the rest
+    through. A symbol struck by one of those was missing from the order list
+    AND missing from the removed list, which is the 2026-08-31 failure exactly,
+    on a path the original fix never covered. It is now recomputed immediately
+    before the review. The note also no longer asserts WHICH rule removed a
+    symbol, because it cannot know — the durable per-symbol reason is already
+    recorded in the evidence trail.
+
+**What actually addresses the item's stated cost.** Item 7's complaint was
+that one refusal discards every trade, so the cost is superlinear. The thing
+that fixes that is per-symbol refusal (`b1b31bf5`, 2026-09-01) — a failing
+trade now dies alone. The reviewer can still fail closed and refuse a whole
+plan when repair itself fails, and that is deliberate.
+
+**Honest limit.** The desk has been paused since 2026-09-03, so there is one
+post-fix session in the record. This is closed on the timestamps and on the
+two repairs above, not on a re-measure.
+
+### 2026-09-13 — "correlation breach" was a password, not a reason, and has been removed from the accepted exit vocabulary
+
+**In plain words:** to sell a position it is supposed to keep holding, the
+desk's AI has to name a reason from a short accepted list. One of those
+reasons — "correlation breach" — was accepted on the wording alone. Nothing
+anywhere in the desk ever worked out whether correlations had actually broken,
+so the phrase always worked. It was the one entry on the list that could not
+fail. It has been taken off the list.
+
+**What the audit found, and one thing it got wrong.** The audit (WORK.md item
+44) reported that the claim reached the holding-discipline checker and came
+back "unverifiable by construction", which by design passes without blocking.
+That is not what happened. The checker has no branch for a correlation claim
+at all — it only ever examines a claimed regime flip and a claimed
+HIGH-conviction bearish state change. A correlation claim returned the plain
+"ok" verdict, meaning *nothing to say*. So the phrase was not merely
+unverified, it was **unrecorded**: an "unverifiable" verdict at least writes an
+audit-trail row a human could later read, and a correlation exit wrote none.
+The hole was one notch deeper than the item described.
+
+**Why removal rather than building a detector.** The item concluded that
+building a verifier requires deciding which correlation, over what window,
+and how large a change counts as broken — three numbers — and that this was
+therefore an owner decision. That conclusion conflicts with the owner's own
+standing instruction never to be asked to pick a market-structure number:
+research the published literature, or leave the thing switched off. So the
+literature was searched before anything was written.
+
+**What the search found.** No published source consulted gives an operational
+definition of a correlation-breakdown *event* with a stated measurement window
+and a stated numeric threshold:
+
+- AnalystPrep's FRM Part 2 note on correlation basics and correlation risk
+  (fetched 2026-09-13) defines correlation risk conceptually — a loss arising
+  because realised correlation differed from anticipated correlation — and
+  gives no window, no threshold, and no trigger point.
+- *Notes on Correlation Stress Tests* (arXiv 2503.16200, fetched 2026-09-13)
+  addresses stress-testing correlation assumptions rather than declaring
+  breakdown events, and states no such definition.
+- The contagion literature the search surfaced — Forbes & Rigobon, *No
+  Contagion, Only Interdependence* (2002), and Longin & Solnik (2001) on
+  extreme correlation — tests whether correlation *changed* around a crisis
+  date that is supplied from outside the test, retrospectively, with a
+  heteroskedasticity adjustment. That is a research question about a period
+  already known to have been a crisis. It is not, and cannot be turned into,
+  a same-day per-position exit trigger.
+- What the search did surface with concrete numbers were vendor charting
+  indicators with user-configurable lookback, stability window and threshold
+  inputs. Configurable is the opposite of derived: those are the three
+  invented numbers the owner's rule forbids, wearing a product name.
+
+**The second, independent reason.** Even a correlation you could measure is
+computed *from the price series*. `exit_guard` kept a separate list of
+triggers that come from OUTSIDE the tape, which are allowed to bypass the
+1×ATR noise band on the grounds that an earnings miss is an earnings miss
+whatever the price did. "Correlation breach" was on that list and never
+belonged there: a correlation number *is* the tape. So the phrase was also
+buying a noise-band bypass it had no claim to.
+
+**Ruled out.** Reusing the desk's existing cluster machinery was considered
+and rejected. `src/data/correlation.py` groups holdings into |r| >= 0.7
+clusters at decision time; it has no notion of a break, only of a grouping.
+Its 0.7 cutoff is itself carried in the repo with no source behind it, so
+building a breach detector on top of it would have compounded one unsourced
+number rather than replacing it. Also rejected: keeping the phrase but
+logging it. A logged free pass is still a free pass.
+
+**What changed.** Both phrasings were removed from the hard-trigger
+vocabulary in the pipeline and from the external-information list in
+`exit_guard`, and from the position-reviewer prompt so the model is not being
+invited to emit a phrase that will now be dropped. The exit-reason
+*categoriser* in the storage layer deliberately still recognises them, because
+it describes rows that already exist and dropping the phrases there would
+silently re-label historical exits as uncategorised.
+
+**What would catch it next time.** The general shape of this defect is an
+accepted claim with no corresponding recorded fact. Every other entry on the
+trigger list names something the desk writes down — a news row, an earnings
+row, a macro regime read, a broker fill, a deterministic circuit breaker.
+That is the test to apply before adding a trigger: name the row that proves
+it happened. `tests/test_correlation_breach_not_a_trigger.py` pins the
+removal, the noise-band classification, the fact that no other trigger was
+narrowed, and the end-to-end exit that used to slip through.
+
+
+### 2026-09-13 — a comment claimed two parts of the desk agreed on what a "swing low" is; they never have, and the research says nobody can say which is right
+
+**What broke, plainly.** Two parts of the desk look for the same shape on a
+chart: a dip with higher prices on both sides. The trailing stop requires
+three higher days either side. The support-level finder requires five. A note
+written beside the trailing stop said the two matched, so that a swing low
+meant the same thing everywhere. It was false the day it was written and
+stayed false for as long as it existed. Nothing lost money; a sentence lied.
+
+**What was actually wrong, and what was not.** The false comment was real.
+The alarm attached to it was not. The item said the mismatch meant one half
+of the desk could protect a floor the other half did not believe in. That
+requires something downstream to compare the two, and nothing does — checked
+by reading every module that imports either one. The trailing window is used
+only by the trailing stop's own pivot scan; the level window is used only by
+the level scan and the coverage check. They never meet. So this was a
+documentation defect wearing a safety defect's clothes.
+
+**One claim in the item is wrong and is corrected here.** It said each
+window could see a low the other misses, "and vice versa". Measured, the
+asymmetry runs one way: a bar that dominates five bars either side
+necessarily dominates three, so every support pivot the level scan finds is
+also a swing low the trailing stop finds. The looser window is the trailing
+one, which sees strictly more. That is the safer direction of the two and is
+now pinned by a test.
+
+**Why the numbers were not reconciled.** The obvious fix — make both 3, or
+both 5 — is picking a number, which this desk does not do. So the literature
+was read first, and it does not support picking one:
+
+* TA-Lib's own `FRACTAL` function takes left and right arms as parameters
+  and defaults both to **2**, with no rationale stated on the page. Two
+  either side is the classic five-candle fractal — which is neither 3 nor 5,
+  so the desk's two constants both already disagree with the archetype's
+  default.
+* MetaTrader 5's fractal documentation defines the pattern as five
+  successive bars with two lower highs on both sides, and gives no reason
+  for the count.
+* Bill Williams did not require five. Five became standard because it
+  shipped as a default indicator in MetaTrader 4. That is a distribution
+  fact, not a measurement.
+* LuxAlgo's swing high/low reference says it outright: there is no
+  universally best setting, and different settings produce genuinely
+  different structure from the same chart.
+
+Roughly all of this literature is assertion rather than measurement. No
+source fetched offered a derivation for any window, and the one source that
+addressed the question directly said no derivation exists. The old comment
+beside the level scan's 5 ("smaller values produce noise, larger ones miss
+real turning points") looked like a justification but was the generic
+sensitivity tradeoff that applies to any window at all — it justifies
+nothing about 5 specifically, and it has been relabelled.
+
+**What was done.** The archetype was adopted and the constants were not.
+Both windows keep their existing values, each now labelled in its own file as
+a convention with no derivation, with the fetched sources cited beside the
+number, the consumers of each named so a future reader can check the
+"they never meet" claim without re-deriving it, and an explicit instruction
+not to "fix" the disagreement by copying. A test file pins all of it,
+including a scan that fails if any module ever imports both windows — the
+event that would turn this back into a real defect.
+
+**A third instance of the same false claim** was found in the trailing-stop
+test suite, whose fixture docstring also said the definition matched the
+level scan's. Fixed with the other two.
+
+**What would catch it next time.** Nothing did catch it, for months, because
+a comment cannot be executed. The test that now asserts what the comments say
+is the mechanism; the general lesson is that a comment claiming two constants
+agree is a claim about code and should be pinned like one.
+
+---
 ### 2026-09-12 — opportunity-cost rotation stopped only describing the problem and started acting on it, and was enabled rather than shipped dark
 
 **In plain words:** the desk could already see when money was tied up in a
