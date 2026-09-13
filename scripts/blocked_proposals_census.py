@@ -187,6 +187,14 @@ _RECORDED_REASON_KINDS: dict[tuple[str, str, str], str] = {
     # persists kind='verdict' when a verdict object exists), so every
     # symbol on that plan used to fall through to `order_not_placed` too.
     ("risk", "failed", "risk_manager_unparseable_output"): "risk_manager_unparseable_output",
+    # 2026-09-12 — a trade the constructor refused BY NAME and recorded as
+    # data (`PortfolioConstructor.last_refusals`), not recovered from a log
+    # line. Today the codes are `stop_wider_than_instrument_reach`
+    # and `insufficient_history` (docs/WORK.md item 54; the day-one
+    # `no_structural_floor` code was retired the same day it shipped).
+    # `_load_recorded_reasons` appends the code so each rule gets its own
+    # line rather than merging into one bucket.
+    ("deterministic_gate", "blocked", "constructor_refused"): "constructor_refused",
 }
 
 
@@ -217,6 +225,8 @@ def _load_recorded_reasons(con: sqlite3.Connection) -> dict[tuple[str, str], str
         )
         if label is None:
             continue
+        if label == "constructor_refused":
+            label = f"constructor_refused:{d.get('refusal') or 'unknown'}"
         key = (r["decision_id"], (r["symbol"] or "").strip().upper())
         # First recorded reason wins if a symbol somehow matches more than
         # one tuple (should not happen given the pipeline's own ordering,

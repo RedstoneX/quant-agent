@@ -727,6 +727,19 @@ class TechAnalysisResult(LLMOutputModel):
     # docs/RESEARCH_FINDINGS.md §7 for the touch-count evidence and the
     # threshold derived from it.
     computed_level_touches: dict[float, int] = Field(default_factory=dict)
+    # PYTHON-SET (2026-09-12, docs/WORK.md item 54), same pattern as the
+    # two above, from the same bars: the last completed bar's low and high
+    # — the SIGNAL bar the analyst judged — and how many completed sessions
+    # the desk actually had for this instrument. The constructor reads the
+    # bar edge as the instrument's own fallback stop when nothing computed
+    # backs the typed one (the wider of it and the ATR noise band —
+    # Kullamägi's "low of the day"), and the bar count to refuse a listing
+    # too young to measure (`src/data/technical.py::
+    # LONGEST_INDICATOR_WINDOW`). None = not recorded (older persisted row,
+    # hand-built object): the band alone decides, and no youth is assumed.
+    signal_bar_low: float | None = None
+    signal_bar_high: float | None = None
+    bars_available: int | None = None
     # How the position must be MANAGED, decided at entry from the chart:
     #   "range"    — clear structure on both sides. Fixed target is meaningful;
     #                thesis_progress and pace are valid measurements.
@@ -1695,7 +1708,8 @@ class PortfolioDecision(LLMOutputModel):
     # handing the object off to downstream stages.
     decisions: list[TradeDecision] = Field(default_factory=list)
     #: Symbols the PM proposed that the deterministic constructor DROPPED
-    #: (reward:risk floor, no structural target, no valid stop, ...). Set by
+    #: (unmeasurable range reward:risk, no readable structure, no valid
+    #: stop, ... — no reward:risk floor since 2026-09-11). Set by
     #: the pipeline after `construct_orders`, never by the LLM.
     #:
     #: Exists because PM writes its `reasoning_chain` BEFORE the constructor
@@ -1842,7 +1856,7 @@ class RiskReasoningChain(LLMOutputModel):
     Every field has `min_length=1` so the LLM can't skip a step by sending
     `""`. Matches the discipline on the other CoT chains.
     """
-    rr_audit: str = Field(min_length=1)             # did every BUY respect R/R >= 1.5 without catalyst override?
+    rr_audit: str = Field(min_length=1)             # setup-aware since 2026-09-11: breakouts carry no R/R judgement; a range trade's real ratio is an input, not a floor
     signal_fidelity: str = Field(min_length=1)      # does PM's action align with Tech/Macro/News? silent contradictions?
     correlation_check: str = Field(min_length=1)    # any hidden cluster / factor concentration across decisions?
     event_risk: str = Field(min_length=1)           # earnings / FOMC / macro events in the coming 3 days affecting these names?
@@ -1889,7 +1903,7 @@ class RiskVerdict(LLMOutputModel):
     reason_category: Literal[
         "clean",             # approved untouched, no mods
         "oversized",         # sizing too aggressive vs conviction
-        "rr_fail",           # R/R < 1.5 without catalyst on one or more BUYs
+        "rr_fail",           # legacy label: a range BUY cut/refused with reward:risk as a named factor (no universal floor since 2026-09-11; never applies to a breakout)
         "concentration",     # sector / single-name too heavy
         "correlation_risk",  # theme/factor clustering flagged
         "event_risk",        # pre-earnings / FOMC / macro event volatility

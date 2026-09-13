@@ -446,8 +446,10 @@ Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})
             dropped_text = (
                 "\n## Removed Before You Saw This\n"
                 f"The deterministic constructor removed: {', '.join(dropped)}.\n"
-                "These failed a hard rule (reward:risk floor, no structural "
-                "target, or no valid stop) and were struck by code, not by "
+                "These failed a hard rule (a range setup whose reward:risk "
+                "could not be measured, no readable chart structure, or no "
+                "valid stop — there is no reward:risk floor, and a breakout "
+                "is never measured) and were struck by code, not by "
                 "judgement. PM's reasoning below was written BEFORE that "
                 "happened, so it may still argue for them. That is EXPECTED "
                 "and is NOT evidence of an incoherent plan — do not veto the "

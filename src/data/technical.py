@@ -51,6 +51,17 @@ def atr_series(bars: list[OHLCV], period: int = ATR_PERIOD) -> np.ndarray:
     return values[period - 1:]
 
 
+#: The longest window any indicator in `compute_indicators` needs — the
+#: 200-session moving average, the long-term trend reference the analyst is
+#: briefed with (`config/settings.yaml` `lookback_days` was raised for it in
+#: the 2026-07-16 audit, which treated its absence as the analyst judging
+#: trend blind). Named here, not chosen here: it is the same 200 the
+#: `rolling(200)` below has always used. `PortfolioConstructor` reads it as
+#: the bar count under which an instrument is too YOUNG to be measured
+#: (docs/WORK.md item 54).
+LONGEST_INDICATOR_WINDOW = 200
+
+
 def compute_indicators(symbol: str, bars: list[OHLCV]) -> TechnicalIndicators:
     if not bars:
         return TechnicalIndicators(symbol=symbol)
@@ -65,8 +76,10 @@ def compute_indicators(symbol: str, bars: list[OHLCV]) -> TechnicalIndicators:
         result.ma_20 = round(float(df["close"].rolling(20).mean().iloc[-1]), 2)
     if len(df) >= 50:
         result.ma_50 = round(float(df["close"].rolling(50).mean().iloc[-1]), 2)
-    if len(df) >= 200:
-        result.ma_200 = round(float(df["close"].rolling(200).mean().iloc[-1]), 2)
+    if len(df) >= LONGEST_INDICATOR_WINDOW:
+        result.ma_200 = round(
+            float(df["close"].rolling(LONGEST_INDICATOR_WINDOW).mean().iloc[-1]), 2,
+        )
 
     # RSI
     if len(df) >= 15:

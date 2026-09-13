@@ -113,8 +113,11 @@ _STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
 # covered by TWO: a GTC stop over floor(N.f) — which survives the close —
 # and a DAY stop over the sub-share remainder, which lapses at 16:00 ET by
 # design and is re-placed at the start of the next session. The remainder is
-# a bounded, deliberate overnight exposure the owner accepted in exchange for
-# being able to hold expensive names at all on a ~$10k account.
+# a deliberate overnight exposure the owner accepted in exchange for being
+# able to hold expensive names at all on a ~$10k account. NOT bounded under
+# one share — a position that is itself sub-one-share lapses in full (see
+# config/settings.yaml), and "the next session" only exists while the desk
+# is running: `src/coverage_watchdog.py` is what says so when it is not.
 #
 # `_derive_stop_tif` is where that rule is MECHANICALLY enforced: every stop
 # this class submits goes through `_submit_stop_limit_order`, and the tif is

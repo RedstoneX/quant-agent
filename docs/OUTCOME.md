@@ -121,7 +121,10 @@ defending any threshold, cap, or rule in this codebase.** See
 is the fuller statement of the same principle.
 
 Every constant that governs a real trade decision — a stop distance, a
-holding period, a risk percentage, a reward:risk floor, a tolerance band —
+holding period, a risk percentage, a tolerance band, the reward:risk
+reference under which a range trade is capped at starter size (no longer a
+gate anywhere, never applied to a breakout, and self-flagged in
+`src/risk/constants.py` as the last flat number still standing) —
 must be READ FROM THE INSTRUMENT IN FRONT OF YOU: its volatility, its
 structure, its confirmed price action, or the trade's own claim recorded at
 entry. It must never be a flat calendar count, a round percentage, or a
@@ -189,6 +192,68 @@ as reward:risk was rejected as a universal entry gate. The 30%/15%
 automatic take-profit trim inherited from upstream (tuned on one GOOGL
 trade) was deleted under this rule; `tests/test_pipeline.py::
 test_no_fixed_gain_automatic_profit_trim_exists` keeps it out.
+
+## An unverifiable number must never rank or size a trade
+
+**Owner decision, 2026-09-12.** Proposals compete for a finite risk budget. A
+model that supplies a confident number scores better than one that admits
+uncertainty — so if an unverifiable number is allowed to influence ranking or
+position size, **the desk selects FOR fabrication.** The capital flows to the
+least honest proposal, and a genuine opportunity loses to an invented one.
+That is not noise; it is a bias with a direction, and it compounds every
+session.
+
+The rule: **anything that ranks or sizes must be computed by this desk from
+the instrument** — its price, its volatility, its levels. A number the model
+asserts and nothing can check may inform a human-readable explanation. It may
+never compete for capital.
+
+The corollary matters as much. **Requiring a number the analyst cannot know
+does not produce a refusal — it produces an invention**, and an invented
+horizon is indistinguishable downstream from a real one. So *"I could not
+build a proposal: insufficient data"* must be a first-class, recordable
+answer at every seat. A schema that has no way to say "I don't know" is
+asking to be lied to.
+
+## There is no such thing as a quiet market
+
+Across a universe of a hundred-plus names, something is always moving. **"It
+was a quiet market" is a cover story for "our filters rejected everything"** —
+a statement about this desk, not about the market.
+
+Legitimate zero-trade days exist: a market-wide halt, a latched circuit
+breaker, risk rules correctly refusing in a genuine crisis. Every one of them
+is a *nameable event*. None of them is "quiet".
+
+So a day with no trades must always name why, per candidate, and "nothing
+looked good" is not a reason — it is a hundred separate refusals, each with a
+cause. If those causes cannot be produced, the defect is in the recording, not
+in the market.
+
+## Adopt the archetype, never the constants that ship with it
+
+Where a rule is needed, start from the recognised version of it — as it is
+actually defined in the trading literature and as it is actually implemented
+in the standard technical-analysis libraries and platforms. Code is
+unambiguous about what a rule computes where prose is not, and a library
+*declining* to implement something is information too.
+
+**But separate the shape from the settings.** The archetype is usually sound
+and widely agreed; the specific constants attached to it in any given
+implementation are usually convention with no derivation behind them.
+Adopting the shape of a published rule is legitimate. Adopting its default
+numbers because they came in the box is the arbitrary-number failure in
+borrowed clothing.
+
+The worked case: the Chandelier trailing exit is textbook and stays. The
+"22-day" ATR that travels with it in every charting platform traces to one
+site's note that there are 22 trading days in a month — a calendar
+coincidence, not a market-structure derivation, and not something its author
+ever specified.
+
+No single source is gospel. The literature, the reference implementations,
+and what can be read off the instrument itself agreeing is the most
+confidence available — and it is enough to act on.
 
 ## Check what the platform already solved, before tuning your own workaround
 

@@ -213,13 +213,17 @@ This file records what is accepted and true **now**. Git history preserves imple
   quality in) before that 3.0 (never derived). 2.5 is sourced from published
   swing-trading doctrine instead, independent of this desk's own trade
   history; scaled by setup type and macro
-  regime) when no real level backs the stop, and rejects
-  the trade if the widened stop drops reward:risk below
-  `risk.min_reward_risk_after_widening` (1.5). **Since 2026-09-01 both sides
-  of that ratio are measured** — the target is computed from structure, not
-  read from the analyst (see the Phase 1 entry above and spec Phase 10.4) —
-  so this rejection is now a statement about the trade's geometry and is
-  logged as one. Measured, the book's stops
+  regime) when no real level backs the stop. As first shipped it then
+  rejected the trade if the widened stop dropped reward:risk below
+  `risk.min_reward_risk_after_widening` (1.5); **that rejection no longer
+  exists** (owner decision 2026-09-11, docs/WORK.md item 1(d); this
+  paragraph corrected 2026-09-12). Today the constructor runs no
+  reward:risk comparison at all on a `breakout`, and on a `range` trade the
+  ratio — both sides measured since 2026-09-01, the target computed from
+  structure rather than read from the analyst (see the Phase 1 entry above
+  and spec Phase 10.4) — is logged and passed to the ranking as a real
+  per-trade signal; a sub-floor range pick is capped at starter size, and
+  only a ratio that cannot be measured at all is refused. Measured, the book's stops
   were sitting a median 1.7 ATRs from entry, which both fired exits inside
   noise and forced the 20% clamp above to bind at nearly every conviction
   level. `config/prompts/portfolio_manager.md`'s conviction bands and
@@ -768,11 +772,13 @@ See `docs/WORK.md` for the active contract and exact Research Intelligence accep
 
 ## Note, 2026-09-02 — the reward:risk floor was not a floor
 
-Appended, not a rewrite of the Phase 2b paragraph above, which is now
-slightly stale and needs an owner pass. That paragraph says the constructor
-"rejects the trade if the widened stop drops reward:risk below
-`risk.min_reward_risk_after_widening` (1.5)". True — and until 2026-09-02
-that was ALL it did. The check sat inside the widening branches, behind
+Appended, not a rewrite of the Phase 2b paragraph above (that paragraph
+has since had its pass, 2026-09-12 — the rejection described below was
+itself removed on 2026-09-11, see docs/WORK.md item 1(d); what follows is
+the history of the floor as it stood on 2026-09-02). That paragraph then
+said the constructor "rejects the trade if the widened stop drops
+reward:risk below `risk.min_reward_risk_after_widening` (1.5)". True at the
+time — and until 2026-09-02 that was ALL it did. The check sat inside the widening branches, behind
 early returns for "stop already outside the noise band" and "no ATR
 reading", so an entry whose stop was wide enough to begin with was never
 judged against the floor at all.
