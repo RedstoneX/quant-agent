@@ -110,7 +110,7 @@ here once written up in `docs/INCIDENT_HISTORY.md` — this list is what is
 still wrong, not a history of what was.
 
 **4. News analyst seat data quality — PARTIALLY FIXED, one gap open.**
-**7. PM-input shape/volume redesign (bounded recommendation, not raw reasoning) — NOT STARTED.**
+**7. PM-input shape/volume redesign — MEASURED and the null-content slice SHIPPED 2026-09-13; two named pieces left, neither of them volume.** The step that was actually missing — nobody had counted the CURRENT prompt, only the 2026-09-02 one — is done: the frozen `run_64290730` fixture rendered through the live `build_user_message` is 100,968 chars over 25 sections, and 22,094 of them (21.9%) were content-free. Full per-section table and the confirmation of item 18's "70%" (it was exactly 70.4%) in `docs/INCIDENT_HISTORY.md` ("item 18d"). Prompt is now 85,933 chars. **What is left is not volume:** (a) macro is the one seat still couriering full reasoning — its 6-paragraph `reasoning_chain` (2,287 chars) is verbatim, deliberately, under "audit these for logic errors"; deciding whether the audit hook is worth a non-bounded seat is a PROMPT change and needs the paid `--replay-run` benchmark, which the rig cannot substitute for; (b) the two largest remaining sections, Technical Analysis (16,736) and Independent Source Agreement (11,902), are both already bounded and both scale linearly with the number of candidates covered — there is no honest cap to put on either, so the lever is how many names get covered, not how each one renders. Earnings, news and tech all now hand over call + conviction + thesis + falsifier. Do NOT re-open this as a size problem.
 **8. Every past model-comparison benchmark may be contaminated by bad seat data — OPEN, no re-run yet.** Same shape as the already-known spend-baseline contamination: a benchmark run before tonight's data-honesty fixes could have scored a model on how well it coped with (or quietly hid) empty/wrong input, not on real analytical quality. Combine with the PM model test itself — same re-run, same gate, not two separate jobs.
 
 Detail below, under "DATA QUALITY AUDIT" and "PM-INPUT ARCHITECTURE".
@@ -759,9 +759,12 @@ re-measuring before relying on it again.
 **Still genuinely open, not solved by the above:**
   - `familiarity_bias` is graded but never stated in the PROMPT (the
     catalyst-door existence-vs-direction gap itself was fixed 2026-09-03).
-  - Earnings is still the single largest prompt section post-fix (~35
-    filings/day at 4 lines each is real volume) — cutting/summarising it
-    further is queued, not done.
+  - ~~Earnings is still the single largest prompt section post-fix~~ —
+    DONE 2026-09-13. 38 of 65 filings were rendering a four-line verdict
+    block with no direction, no thesis and the literal words "not disclosed
+    by the analyst"; they are one roll-up line each now. Earnings
+    32.5%→21.5% of the prompt and no longer the largest section. See the PM
+    TEST GATE item 7 line above for what that leaves.
   - Section reorder (BUY eligibility to the top) deliberately NOT done —
     needs a paid `--replay-run` benchmark to verify, not authorised yet.
   - Whether R/R and net evidence join the production ranking composite —
@@ -963,11 +966,21 @@ No DECIDE BY — revisit only if it recurs.
 
 **DECIDED 2026-09-12 by the owner: rank-ordered, best first.** His words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The budget is spent on the best-ranked eligible candidates until it is exhausted; the remainder are not taken, and are not silently shrunk to fit. Proportional scale-down was explicitly rejected in the recommendation he accepted, on the grounds that sizing everyone smaller turns every strong idea into a weak one. **Still to BUILD** — `allocate_risk_budget` today spends in whatever order it happens to process in, which is the defect; the decision above is not yet implemented. Whether a partially-affordable candidate at the cut line is taken at a reduced size or skipped entirely is the one sub-question the decision does not settle, and must be raised with the owner rather than assumed.
 
-**52. Insider-cluster size should be relative to a filer's holdings, not an absolute dollar filter — OPEN, owner call, carried out of deleted item 38.** The paper item 38's window fix was taken from also says the size test should be relative to what the insider already holds. QAMC has no holdings-size data for filers, so this cannot simply be implemented — acquiring or approximating that data is the decision.
+**52. What, if anything, should gate an insider trade on its SIZE — REFRAMED 2026-09-13, no longer an owner call.** *Was: "insider-cluster size should be relative to a filer's holdings, not an absolute dollar filter — owner call." The premise has changed and the item is restated rather than closed.*
+
+**The question, answerable:** should an insider transaction be admitted or refused on any measure of its size — absolute dollars, or size relative to the filer's own holdings — and if so, read off what?
+
+**Where the current numbers came from:** invented. `min_transaction_value_usd: 100000` and `external_min_transaction_value_usd: 250000` in `config/settings.yaml` are flat dollar cutoffs with no source beside either. They are the desk's only size test.
+
+**Already searched and ruled out — do not repeat this.** The Alldredge & Blank paper (J. Financial Research, 2019) that corrected the cluster window is the same paper previously cited for "judge size relative to the insider's own holdings". Read properly, its size bands are **net, per stock, per quarter** — an aggregate over a filer's whole quarter in one name. They do not license a per-transaction admission cutoff of any size, relative or absolute, and a per-transaction gate built from them would be that paper's number used for a job it never measured. An admission gate was therefore deliberately NOT built on 2026-09-13; that restraint was correct and is not the open part. Also already established: QAMC fetches no holdings-size data for filers, so a relative test is not merely unimplemented, it is unmeasurable on present data.
+
+**What would settle it:** a published study that measures the predictive content of a SINGLE insider transaction as a function of its size — per transaction, not netted per quarter. Failing that, this desk's own record once enough Form 4 observations exist to compare outcomes above and below a candidate cutoff (which is FITTING, so it settles nothing on its own and is named here only to be ruled out). Best outcome is a reformulation that needs no cutoff: the classification path already sorts routine from opportunistic filings on non-size grounds, and the honest answer may be that size gates nothing and the flat dollar filters should be deleted.
+
+**Cost while unanswered:** two invented dollar cutoffs silently discard insider filings, and nobody can say whether they discard signal or noise. A $90,000 purchase by an officer whose entire position is $200,000 is thrown away; a $300,000 purchase by someone holding $80m is kept. The direction of the error is unknown, which is the actual problem.
 
 **53. A paused desk leaves part of every fractional position with NO stop, and nothing said so — OPEN, owner call, found 2026-09-12.** The alarm is built; what to do with the remainder is the decision. Verified live 2026-09-12: ORCL 5.3089 shares held, one stop-limit at the broker for 5.0. The 0.3089-share DAY leg lapsed at the close on 2026-09-02 exactly as §11.1 designs, and the trading timers were disabled before the 09-03 open, so the session sweep that re-places it never ran — six full sessions (09-03 to 09-11) with $46 of a $798 position unprotected, and every record on the box calling it "expected overnight". NOT a flooring bug: `_split_protective_qty` is working as designed. NOT fixable at the broker: fractional orders must be DAY (measured 2026-09-01, code 42210000; Alpaca's fractional-trading page says the same) — no durable fractional stop exists. Shipped: `src/coverage_watchdog.py`, run from the 06:15 ET alert-heartbeat unit (fires whether or not trading timers are on); alerts once per trading day when broker coverage is short of held AND no session ran during the last cash session. Read-only. **The decision (BOARD_NOTES 53):** what to do with the remainder while paused — close it, accept it with the alert, or go whole-share (owner already declined whole-share on 2026-09-02). Also found, NOT fixed: the repo's silence-watchdog timer unit is not installed on the box (no state file, absent from the timer list), so item 17c's alarm has never actually run in production. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-12.
 
-**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 11, 12, 14, 16, 25, 28, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
+**Retired item numbers — never reuse.** 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20, 24, 25, 28, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 50, 51, 52, 54, 55, 56, 57, 58, 59, 60, 67, 90, 101, 200 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
 
 ## Evidence-only follow-ups
 
