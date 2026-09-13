@@ -32,13 +32,24 @@ from dataclasses import dataclass, asdict
 import numpy as np
 
 from src.models import OHLCV
-from src.data.technical import atr_series
+from src.data.technical import ATR_PERIOD, atr_series
 from src.risk.constants import is_trend_trade
 
 # A pivot is a bar whose high (or low) is the most extreme within this many
 # bars either side. 5 keeps genuine swing structure while ignoring single-bar
 # wiggles; smaller values produce noise, larger ones miss real turning points.
 PIVOT_WINDOW = 5
+
+# The fewest CLEAN bars the level scan can run over — READ from the scan's
+# own two preconditions, never chosen here: a single pivot needs
+# ``PIVOT_WINDOW * 2 + 1`` bars (the pivot and its window either side), and
+# since 2026-09-12 the relevance window needs an ATR, which needs
+# ``ATR_PERIOD`` bars (`src/data/technical.py::atr_series` returns nothing
+# below that). Whichever is larger is the scan's real minimum, and both
+# `find_structural_levels` and `structure_coverage` read it from here so
+# they can never disagree about whether the scan could have run. (Before
+# this was unified, the scan needed 14 and the coverage check said 11.)
+MIN_SCAN_BARS = max(PIVOT_WINDOW * 2 + 1, ATR_PERIOD)
 
 # Two pivots within this percentage of each other are the same level. Price
 # does not respect a number to the cent — it respects a zone.
@@ -302,7 +313,7 @@ def find_structural_levels(
     the trade, never as "no structure exists".
     """
     clean = _clean_bars(bars)
-    if len(clean) < pivot_window * 2 + 1:
+    if len(clean) < max(pivot_window * 2 + 1, MIN_SCAN_BARS):
         return [], []
 
     last_close = clean[-1].close
@@ -543,35 +554,132 @@ BREAKOUT_PROJECTION_ATR_MULTIPLE = 1.0
 
 #: Refusal codes. Each names a DIFFERENT thing being wrong, because "no
 #: trade" without a reason is what let the original defect survive unnoticed.
-REFUSAL_NO_ENTRY = "no_entry_price"
-REFUSAL_NO_VOLATILITY = "no_volatility_reading"
+#:
+#: A REFUSAL is a judgement about the trade: real inputs were measured and
+#: the trade's geometry does not work. It belongs in the desk's "why didn't
+#: we trade" statistics.
 REFUSAL_NO_HORIZON = "no_expected_horizon"
 REFUSAL_NO_STRUCTURE = "no_structural_levels"
 REFUSAL_NO_LEVEL_IN_DIRECTION = "no_level_in_direction"
 REFUSAL_PROJECTION_IMPLAUSIBLE = "projection_implausible"
 
+#: DATA FAULT codes (2026-09-12). These are NOT trade judgements. A listed
+#: instrument always has a price, always has volatility and always has
+#: bars; when this desk holds none of them, the desk's own data acquisition
+#: or computation failed. Until 2026-09-12 these were REFUSAL_* codes and
+#: went into the record as "the trade was rejected", so a dead feed and a
+#: trade that failed its rules were the same class of outcome and nobody
+#: could count either. They are now carried on `TargetDerivation.fault`
+#: (never `.refusal`), recorded as `data_fault` rather than
+#: `constructor_dropped`, and paged to the owner through `send_owner_alert`
+#: (`src/pipeline_stages.py::_alert_unmeasurable_symbols`).
+#:
+#: The safety posture is unchanged: a symbol the desk cannot measure is
+#: NOT traded. Only its classification, record and alerting changed.
+FAULT_NO_ENTRY = "entry_price_missing"
+FAULT_NO_VOLATILITY = "volatility_reading_missing"
+FAULT_NO_STRUCTURE = "price_history_unusable"
+#: Raised by the constructor, not here: the desk holds NO technical analysis
+#: for a symbol it was asked to size. Every input below is absent at once,
+#: so naming the first one ("no ATR") would misdescribe it.
+FAULT_NO_ANALYSIS = "analysis_missing"
+
+#: Kept for historical logs and the census: the two codes that used to name
+#: the entry and volatility faults as refusals. Never produced any more.
+REFUSAL_NO_ENTRY = "no_entry_price"
+REFUSAL_NO_VOLATILITY = "no_volatility_reading"
+
+#: Structural-level COVERAGE — what the bar history behind an empty
+#: `computed_levels` list actually was. Same idea as
+#: `src/data/macro.py::SeriesFreshness`: a separate axis from the reading
+#: itself, so an absent reading is never passed off as a real one and a real
+#: one is never mistaken for an outage. `find_structural_levels` returns the
+#: same `[]` for "the feed gave us four bars" and for "three hundred clean
+#: bars with no repeated turning point within reach", and the derivation
+#: cannot tell which without this. Recorded by the tech analyst, which has
+#: the bars, onto `TechAnalysisResult.levels_coverage`.
+COVERAGE_MEASURED = "measured"                    # scan ran; an empty result is about the chart
+COVERAGE_NO_BARS = "no_bars"                      # the feed returned nothing
+COVERAGE_UNUSABLE_BARS = "unusable_bars"          # bars arrived; fewer clean ones than MIN_SCAN_BARS
+COVERAGE_UNKNOWN = "unknown"                      # not recorded (older row, hand-built object)
+
+#: There is deliberately NO "insufficient_history" coverage state. A
+#: listing too YOUNG to measure is a trade REFUSAL, not a data fault, and
+#: it is named by the constructor before this derivation ever runs
+#: (`src/portfolio_constructor.py::_require_sufficient_history`, docs/
+#: WORK.md item 54: fewer completed sessions than the analyst's own
+#: 200-session window, `LONGEST_INDICATOR_WINDOW`). Every history shorter
+#: than `MIN_SCAN_BARS` is shorter than that window, so a separate
+#: short-history fault here could only ever fire when the session count
+#: was not recorded at all — and then `unusable_bars` says the true thing:
+#: the bars the desk holds cannot run the scan.
+#:
+#: The coverage states under which an empty level list is a DATA fault. The
+#: honest reading of `unknown` is "cannot claim the chart was measured", so
+#: it is classified with the faults: fail-closed for the trade either way,
+#: and the alert names the coverage so an `unknown` that recurs is visible.
+_FAULT_COVERAGE = frozenset({
+    COVERAGE_NO_BARS, COVERAGE_UNUSABLE_BARS, COVERAGE_UNKNOWN,
+})
+
+
+def structure_coverage(
+    bars: Sequence[OHLCV] | None, *, pivot_window: int = PIVOT_WINDOW,
+) -> str:
+    """Which COVERAGE_* state this bar history is in, read from the bars.
+
+    The minimum is `find_structural_levels`'s own precondition
+    (`MIN_SCAN_BARS` clean bars — enough for one pivot AND one ATR
+    reading, the two things the scan needs), not a threshold chosen here.
+    Below it the scan cannot run, whether too few bars arrived or cleaning
+    removed them — either way the desk holds no usable chart; at or above
+    it the scan runs and whatever it finds, including nothing, is a
+    measurement of the chart.
+    """
+    if not bars:
+        return COVERAGE_NO_BARS
+    minimum = max(pivot_window * 2 + 1, MIN_SCAN_BARS)
+    if len(_clean_bars(list(bars))) < minimum:
+        return COVERAGE_UNUSABLE_BARS
+    return COVERAGE_MEASURED
+
 
 @dataclass(frozen=True)
 class TargetDerivation:
-    """Outcome of deriving a target. ``price is None`` means REFUSED.
+    """Outcome of deriving a target. ``price is None`` means NO TRADE.
 
-    `refusal` is machine-readable and `detail` is the one line a human (or a
-    downstream model reading the order's reasoning) needs to tell a refusal
-    about missing data apart from a refusal about the trade's geometry.
+    Exactly one of two things explains a ``None`` price, and they are
+    carried on DIFFERENT fields so they can never be confused in the record:
+
+    * `refusal` — a trade judgement (a REFUSAL_* code): real inputs were
+      measured and the trade's geometry does not work.
+    * `fault` — a data fault (a FAULT_* code): the desk could not obtain
+      the input a real market always has. The symbol is UNMEASURABLE, not
+      judged.
+
+    `detail` is the one line a human (or a downstream model reading the
+    order's reasoning) needs in either case.
     """
 
     price: float | None
-    basis: str = ""          # "structural_level" | "measured_move" | "" (refused)
-    refusal: str = ""        # one of the REFUSAL_* codes; "" on success
+    basis: str = ""          # "structural_level" | "measured_move" | "" (no trade)
+    refusal: str = ""        # one of the REFUSAL_* codes; "" otherwise
     detail: str = ""
     level_used: float | None = None
     horizon_reach: float | None = None      # ATR * sqrt(H) * max_reach_atr_multiple
     model_target: float | None = None       # the LLM's guess, kept as evidence
     divergence_pct: float | None = None     # computed vs. the model's guess
+    fault: str = ""          # one of the FAULT_* codes; "" otherwise
 
     @property
     def refused(self) -> bool:
+        """No trade — for EITHER reason. Callers that need to tell the two
+        apart read `unmeasurable` / `fault` and `refusal`."""
         return self.price is None
+
+    @property
+    def unmeasurable(self) -> bool:
+        return bool(self.fault)
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -580,6 +688,12 @@ class TargetDerivation:
 def _refused(code: str, detail: str, model_target: float | None) -> TargetDerivation:
     return TargetDerivation(
         price=None, refusal=code, detail=detail, model_target=model_target,
+    )
+
+
+def _faulted(code: str, detail: str, model_target: float | None) -> TargetDerivation:
+    return TargetDerivation(
+        price=None, fault=code, detail=detail, model_target=model_target,
     )
 
 
@@ -631,8 +745,15 @@ def derive_structural_target(
     breakout_projection_atr_multiple: float = BREAKOUT_PROJECTION_ATR_MULTIPLE,
     max_reach_atr_multiple: float = MAX_REACH_ATR_MULTIPLE,
     max_horizon_sessions: int = MAX_HORIZON_SESSIONS,
+    levels_coverage: str = COVERAGE_UNKNOWN,
 ) -> TargetDerivation:
-    """Compute where the instrument actually travels, or refuse by name.
+    """Compute where the instrument actually travels, or decline by name.
+
+    Two classes of "no target", on two fields (see `TargetDerivation`):
+    a data FAULT when an input a real market always has is missing (entry
+    price, ATR, usable bars), a REFUSAL when the inputs are real and the
+    trade's geometry does not work. `levels_coverage` is what separates an
+    empty `levels` list into those two — see the COVERAGE_* constants.
 
     Works both directions. For a long the target is ABOVE entry and drawn
     from levels above it; for a short it is BELOW entry and drawn from levels
@@ -655,14 +776,26 @@ def derive_structural_target(
 
     entry = _finite_positive(entry_price)
     if entry is None:
-        return _refused(REFUSAL_NO_ENTRY, "no usable entry price", guess)
+        # A listed instrument always has a price. Not having one is a quote
+        # or analysis-acquisition failure on this desk's side.
+        return _faulted(
+            FAULT_NO_ENTRY,
+            "DATA FAULT: no usable entry price was obtained (no live quote "
+            "and no analyst entry) — the symbol cannot be measured",
+            guess,
+        )
 
     volatility = _finite_positive(atr)
     if volatility is None:
-        return _refused(
-            REFUSAL_NO_VOLATILITY,
-            "no ATR reading, so neither the noise floor nor the reachable "
-            "distance can be measured",
+        # ATR is computed by this desk from its own bars
+        # (`src/data/technical.py`), never read from a model. A real market
+        # always has volatility; a missing reading means the bar history
+        # was too short for the calculation or the indicator never ran.
+        return _faulted(
+            FAULT_NO_VOLATILITY,
+            "DATA FAULT: no ATR reading was computed from the bar history, "
+            "so neither the noise floor nor the reachable distance can be "
+            "measured — the symbol cannot be measured",
             guess,
         )
 
@@ -700,14 +833,31 @@ def derive_structural_target(
 
     usable = [p for p in (_finite_positive(lv) for lv in levels or ()) if p is not None]
     if not usable:
-        # No structure at all is NOT the same as "no ceiling overhead". It
-        # means the history was too short or too dirty to say anything, which
-        # is what `find_structural_levels` returning empty lists is
-        # documented to mean. Refuse, whatever the setup claims.
+        # No structure at all is NOT the same as "no ceiling overhead", and
+        # it is not one thing either. `find_structural_levels` returns the
+        # same `[]` when the history was too short or too dirty for the
+        # pivot scan to run at all (a DATA fault: the desk did not obtain a
+        # usable chart) and when the scan ran over enough clean bars and
+        # found no level with the minimum touches within reach (a
+        # measurement of the chart: a relentless trend, or every repeated
+        # turn further away than the instrument can travel). Only the coverage
+        # recorded beside the levels tells them apart. Neither trades —
+        # a stop needs a level to sit on — but they go into the record and
+        # to the owner as different things.
+        coverage = str(levels_coverage or COVERAGE_UNKNOWN).strip().lower()
+        if coverage in _FAULT_COVERAGE:
+            return _faulted(
+                FAULT_NO_STRUCTURE,
+                f"DATA FAULT: no structural levels could be computed because "
+                f"the price history was unusable (coverage={coverage}) — the "
+                f"symbol cannot be measured",
+                guess,
+            )
         return _refused(
             REFUSAL_NO_STRUCTURE,
-            "no structural levels could be computed from the price history "
-            "(insufficient or unusable bars)",
+            "the price history was measured and holds no structural level "
+            "(no repeated turning point within reach of the current price), "
+            "so there is nothing for a stop or a target to sit on",
             guess,
         )
 

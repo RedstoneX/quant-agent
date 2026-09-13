@@ -187,6 +187,14 @@ _RECORDED_REASON_KINDS: dict[tuple[str, str, str], str] = {
     # persists kind='verdict' when a verdict object exists), so every
     # symbol on that plan used to fall through to `order_not_placed` too.
     ("risk", "failed", "risk_manager_unparseable_output"): "risk_manager_unparseable_output",
+    # 2026-09-12 — the constructor could not MEASURE the symbol: no price,
+    # no ATR, no usable bar history, or no analysis at all. Until this date
+    # these were logged as "rejected — no target could be computed" and
+    # filed under `constructor_dropped`, so a dead data feed was counted as
+    # a trade the desk judged. They are a DATA fault, not a refusal, and
+    # get their own bucket; `_load_recorded_reasons` appends the FAULT_*
+    # code so an outage and a missing analysis do not merge into one line.
+    ("deterministic_gate", "unmeasurable", "data_fault"): "data_fault",
     # 2026-09-12 — a trade the constructor refused BY NAME and recorded as
     # data (`PortfolioConstructor.last_refusals`), not recovered from a log
     # line. Today the codes are `stop_wider_than_instrument_reach`
@@ -225,6 +233,8 @@ def _load_recorded_reasons(con: sqlite3.Connection) -> dict[tuple[str, str], str
         )
         if label is None:
             continue
+        if label == "data_fault":
+            label = f"data_fault:{d.get('fault') or 'unknown'}"
         if label == "constructor_refused":
             label = f"constructor_refused:{d.get('refusal') or 'unknown'}"
         key = (r["decision_id"], (r["symbol"] or "").strip().upper())
