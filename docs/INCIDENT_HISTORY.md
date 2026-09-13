@@ -22,6 +22,63 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — item 17 closed: the desk-wide silence alarm's own systemd timer was finally installed on the production box, ten days after it started warning about itself
+
+**In plain words:** item 17 was "the desk can switch itself off silently."
+Three code fixes shipped for it back on 2026-09-03. This entry closes out the
+one part that was still genuinely open: whether those fixes were actually
+running on the live box, not just merged into the repository.
+
+**What was found.** A 2026-09-12 check (recorded under WORK.md item 53 /
+BOARD_NOTES 53) reported that the desk-wide silence watchdog's own systemd
+timer (item 17c, `quant-agent-silence-heartbeat.timer`) had no state file and
+was absent from the box's timer list — so the alarm built specifically to
+catch "the desk went quiet and nobody noticed" had, itself, never run in
+production. Re-checked today, read-only, directly on `/home/qamc/quant-agent`
+(a separate checkout from this one, `qamc` user, detached HEAD at the same
+commit as `origin/main`):
+
+- The box's own `quant-agent-unit-drift.service` — a separate, already-running
+  watchdog that diffs installed systemd units against the repository — had
+  been alerting on exactly this gap every day from at least 2026-09-07 through
+  2026-09-13 12:50 UTC ("In the repository but NOT installed:
+  quant-agent-silence-heartbeat.service/.timer"). Ten days of daily alerts.
+- Sometime between that 12:50 UTC alert and 18:31 UTC the same day, the
+  missing units were installed on the box (`~/.config/systemd/user/`, files
+  dated 17:50 UTC) and the timer was enabled (symlink into
+  `timers.target.wants/`, dated 18:31 UTC) — the exact `cp scripts/systemd/*
+  ~/.config/systemd/user/ && systemctl --user daemon-reload` step the
+  unit-drift alert itself names as the fix. This did not go through a commit;
+  the box's git log is unchanged. It was a manual operator action, taken in
+  response to the drift alarm, outside this PR.
+- It has run as designed since: `systemctl --user status
+  quant-agent-silence-heartbeat.timer` shows it enabled and active, the
+  `.service` has completed successfully on its 30-minute cadence since
+  18:31:16, and `data/alerting/silence_heartbeat.json` is being updated on
+  every run. Because the trading timers are deliberately paused, the checks
+  since installation correctly take the "desk paused on purpose" branch
+  (`check_paused_desk`) rather than the silence-alert branch — the same
+  paused-desk behavior this file's other 2026-09-13 entry on item 11
+  describes, and exactly what the once-per-weekday paused-desk reminder is
+  for.
+
+**What this closes, and what it does not.** Items 17a and 17c are fully
+closed: the code shipped 2026-09-03, and the production deployment gap
+flagged 2026-09-12 is now verified fixed and running. Item 17b's code (the
+failed-alert-persists-and-retries fix) was also shipped 2026-09-03 and is
+unaffected by this finding. The one thing item 17 still names as open — a
+genuine second alert channel beyond Telegram — was never a code defect; it is
+an unresolved owner decision, unchanged by today's check, and stays recorded
+under `docs/BOARD_NOTES.md` ("item 17").
+
+**What would catch a repeat of the ten-day gap.** Nothing new was built for
+this — `scripts/check_unit_drift.py` already did its job, alerting every day
+the gap existed. The ten days between "flagged" and "fixed" was a human
+response-time gap, not a missing alarm, and no number is invented here to
+police how fast an alert must be acted on.
+
+---
+
 ### 2026-09-13 — a prompt limit that was wrong the moment it was written, and the drift-immune phrasing it replaced
 
 **In plain words:** the desk's risk reviewer is briefed by a written
@@ -112,6 +169,7 @@ does not make the class of defect impossible.
 
 ---
 
+||||||| 7a168ecd
 ### 2026-09-13 — a fifth of what the trade-picking seat reads said nothing at all (item 18d / PM gate item 7)
 
 **In plain words:** the seat that actually picks the trades reads a long
