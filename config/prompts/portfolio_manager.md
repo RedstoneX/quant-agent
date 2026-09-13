@@ -480,7 +480,7 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   binds, the order's reasoning will say so; that is expected, not an
   error, exactly like the single-name notional clamp above.
 
-**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (intact R/R ≥ 2.0, not flagged extended), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 75% per-side sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
+**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; for a `range` setup also intact R/R ≥ 2.0 — a `breakout` leader is not judged on reward:risk at all, per "Adjust by Risk/Reward" below), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 75% per-side sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
 **Adjust by Risk/Reward — AND IT DEPENDS ON THE SETUP TYPE.** Rewritten
 2026-09-11 (owner decision, docs/WORK.md item 1(d)). Read the trade's
@@ -880,9 +880,12 @@ Per the autonomy boundary in Guardrails: no `entry_price`, `stop_loss`,
   "conviction": "high",           // drives size scaling + RM audit
   "thesis": "AI capex supercycle; all 3 currently available sources support",
   "thesis_invalid_if": "price breaks MA50 or MACD flips to negative",
-  "catalyst": "",                 // only when overriding R/R<1.5 discipline;
-                                  // must cite the ISO date of an Active News
-                                  // State Change row that names this symbol,
+  "catalyst": "",                 // only for a `range` pick whose real R/R
+                                  // CANNOT BE MEASURED (a thin ratio is not
+                                  // overridden — it is kept and capped at
+                                  // starter size); must cite the ISO date of
+                                  // an Active News State Change row that
+                                  // names this symbol,
                                   // e.g. "2026-08-31: Anthropic/Lambda deal"
   "provenance": [
     {

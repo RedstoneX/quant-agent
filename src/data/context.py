@@ -167,6 +167,14 @@ def _find_unfilled_gaps(bars: list[OHLCV], limit: int) -> list[Gap]:
     Walks backwards from the most recent bar so the nearest gaps are found
     first, and stops once `limit` are collected — older gaps matter less and
     the list is meant to be read, not exhaustive.
+
+    Reported to the analyst as context, and nothing more (docs/WORK.md item
+    54, 2026-09-12): for one day a level on the far side of one of these
+    gaps was ruled "not a floor". Bulkowski's measurement is the other way
+    round — a rising window holds as support only ~20% of the time
+    (https://thepatternsite.com/GaugingGaps.html) — so the gap is the weak
+    floor and the level beneath it is MORE reachable, not void. No rule
+    reads this list any more.
     """
     out: list[Gap] = []
     n = len(bars)

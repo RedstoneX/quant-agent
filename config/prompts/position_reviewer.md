@@ -87,8 +87,8 @@ short's `qty` is negative and its economics run OPPOSITE a long's:
 
 4. **Don't double-trim the same name in one day.**
    When the prompt's `Already Trimmed Today` section lists a symbol, that
-   position has ALREADY been reduced or sold earlier today (by auto-take-
-   profit, by the midday session, by force-delever, or by emergency sell).
+   position has ALREADY been reduced or sold earlier today (by the midday
+   session, by force-delever, or by emergency sell).
    At a SECOND session that same day, the default for those symbols is
    HOLD — even if `TARGET_BREACH` is still flashing or the macro tape
    turned uglier. The earlier trim already harvested those signals.

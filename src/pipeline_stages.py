@@ -55,7 +55,10 @@ from src.models import (
     parse_telemetry, reward_to_risk,
 )
 from src.nominations import select_nominations
-from src.portfolio_constructor import LEVEL_BACKED_STOP_RULES
+from src.portfolio_constructor import (
+    CONSTRUCTOR_REFUSED_EVENT_REASON,
+    LEVEL_BACKED_STOP_RULES,
+)
 from src.pipeline_context import RunContext
 from src.risk.constants import (
     REWARD_RISK_FLOOR,
@@ -1118,6 +1121,14 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
         faults = dict(drain() if callable(drain) else {})
         dropped = [str(s).upper() for s in (portfolio_decision.constructor_dropped or [])]
         drop_reasons = getattr(constructor, "last_drop_reasons", {})
+        # 2026-09-12 (docs/WORK.md item 54): a refusal the constructor
+        # recorded AS DATA (`PortfolioConstructor.last_refusals` — today a
+        # stop wider than the instrument's reach, or too little history) is
+        # filed under its own reason with the code beside it, never through
+        # the log-text regex, whose pattern several messages miss. A data
+        # fault is checked FIRST: it is not a judgement at all.
+        drain_refusals = getattr(constructor, "drain_refusals", None)
+        refusals = dict(drain_refusals() if callable(drain_refusals) else {})
         for sym in dropped:
             fault = faults.get(sym)
             if fault:
@@ -1125,6 +1136,15 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
                     pipeline, ctx, sym, "deterministic_gate", "unmeasurable",
                     "data_fault", fault=fault.get("fault", ""),
                     detail=fault.get("detail", ""), targeted=True,
+                )
+                continue
+            refusal = refusals.get(sym)
+            if refusal:
+                _record_pipeline_event(
+                    pipeline, ctx, sym, "deterministic_gate", "blocked",
+                    CONSTRUCTOR_REFUSED_EVENT_REASON,
+                    refusal=refusal.get("refusal", ""),
+                    detail=refusal.get("detail", ""), targeted=True,
                 )
                 continue
             # Falls back to a generic label only if a future refactor adds
@@ -1135,6 +1155,9 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
                 "constructor_dropped",
                 detail=drop_reasons.get(sym, "no matching constructor log line captured"),
             )
+        # Faults and refusals on names the PM never targeted come from the
+        # eligibility preview over every analysed symbol; recorded so "why
+        # was X never even proposed" has a durable, named answer.
         for sym, fault in faults.items():
             if sym in dropped:
                 continue
@@ -1142,6 +1165,15 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
                 pipeline, ctx, sym, "deterministic_gate", "unmeasurable",
                 "data_fault", fault=fault.get("fault", ""),
                 detail=fault.get("detail", ""), targeted=False,
+            )
+        for sym, refusal in refusals.items():
+            if sym in dropped or sym in faults:
+                continue
+            _record_pipeline_event(
+                pipeline, ctx, sym, "deterministic_gate", "blocked",
+                CONSTRUCTOR_REFUSED_EVENT_REASON,
+                refusal=refusal.get("refusal", ""),
+                detail=refusal.get("detail", ""), targeted=False,
             )
     except Exception as exc:  # noqa: BLE001
         logger.error("constructor drop/fault recording failed: %s", exc)
@@ -3931,6 +3963,18 @@ class DecisionStage:
                     _a, _direction, regime=_regime_for_preview,
                 )
             )
+        # Item 54 (2026-09-12): the preview above also RECORDS, by code, the
+        # names the one shared funnel refused (`last_refusals` — stop wider
+        # than the instrument's reach, or too young to measure). A
+        # snapshot, not a drain: DecisionStage drains once per session
+        # after construction, so the same refusal is filed exactly once.
+        constructor_refusals_by_symbol = {
+            str(sym).upper(): dict(refusal)
+            for sym, refusal in dict(getattr(
+                getattr(pipeline, "portfolio_constructor", None),
+                "last_refusals", {},
+            ) or {}).items()
+        }
 
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             analyses=analyses,
@@ -3989,6 +4033,7 @@ class DecisionStage:
             # Phase 14b: wording only — see `_apply_rotation_execution`.
             rotation_execute_enabled=_rotation_execution_enabled(pipeline),
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
+            constructor_refusals_by_symbol=constructor_refusals_by_symbol,
         )
 
         if portfolio_decision and portfolio_decision.reasoning_chain:

@@ -358,17 +358,18 @@ def test_construct_orders_skips_sell_when_position_market_value_is_nan():
     assert sells == []
 
 
-def test_resolve_stop_returns_none_when_no_structural_stop_supplied_high_vol(caplog):
-    """High-vol name with no structural stop from either source: `_resolve_stop`
-    returns None + WARNING log so the BUY gets rejected upstream rather than
-    silently sized against an invented stop.
+def test_resolve_stop_returns_none_and_the_funnel_reads_one_from_the_instrument(caplog):
+    """A missing stop is no longer a refusal (docs/WORK.md item 54,
+    2026-09-12). `_resolve_stop` still returns None when neither the PM nor
+    the analyst typed one — it only ranks the two typed sources — but it
+    logs that the stop WILL be read from the instrument, and
+    `_widen_stop_past_noise` then places it at the ATR noise band (or the
+    signal bar's edge when that is wider). Nothing is a flat percentage:
+    the pre-2026-08-27 `entry * 0.95` tier stays gone.
 
-    Previously (before 2026-08-27) this exercised the "2*ATR >= entry_price"
-    edge case of the now-deleted ATR fallback (`entry - 2*ATR` going
-    non-positive at ATR=60 on a $100 stock). That whole fallback tier is
-    gone, so any missing-stop case — high-vol or not — takes this same
-    None-returning path now. Renamed from
-    `test_resolve_stop_returns_none_when_atr_too_wide_for_entry`.
+    Previously this pinned "no structural stop → None → the BUY is
+    rejected", the Phase 1 rule replaced when sourced research showed no
+    published method refuses a trade for lack of a level under it.
     """
     import logging
     from types import SimpleNamespace
@@ -377,19 +378,23 @@ def test_resolve_stop_returns_none_when_no_structural_stop_supplied_high_vol(cap
         symbol="MICRO", target_weight_pct=3.0,
         conviction="low", thesis="too volatile",
     )
-    fake_analysis = SimpleNamespace(stop_loss=None, atr_14=60.0)
-
-    with caplog.at_level(logging.WARNING):
-        stop = constructor._resolve_stop(target, fake_analysis, entry_price=100.0)
-
-    assert stop is None, (
-        "no structural stop from either source must reject rather than "
-        "invent one"
+    fake_analysis = SimpleNamespace(
+        stop_loss=None, atr_14=2.0, setup_type="range",
+        expected_horizon_sessions=20, computed_levels=[], signal_bar_low=None,
     )
+
+    with caplog.at_level(logging.INFO):
+        stop = constructor._resolve_stop(target, fake_analysis, entry_price=100.0)
+    assert stop is None, "nothing typed: `_resolve_stop` ranks typed sources only"
     assert any(
-        "no structural stop" in r.message and target.symbol in r.message
+        "read from the instrument" in r.message and target.symbol in r.message
         for r in caplog.records
-    ), "rejection must log the reason so the operator can see why the BUY was dropped"
+    )
+    placed = constructor._widen_stop_past_noise(
+        "MICRO", fake_analysis, 100.0, None, direction="long", target_price=110.0,
+    )
+    band = 100.0 - constructor._stop_atr_multiple(fake_analysis, None) * 2.0
+    assert placed is not None and abs(placed - band) < 1e-9
 
 
 def test_resolve_stop_returns_none_when_genuinely_no_stop_information():
@@ -660,8 +665,11 @@ def test_short_thesis_invalid_if_survives_full_length_unlike_embedded_reasoning(
         symbol="TSLA", rating="sell", entry_price=250.0, stop_loss=262.5,
         reference_target=200.0, reasoning="test",
         support_levels=[200.0], resistance_levels=[262.5],
-        computed_levels=[200.0],
-        computed_level_touches={200.0: 5},
+        # 375 is a distant computed ceiling: a short needs a level ABOVE
+        # entry to have a stop rest on ("no floor, no trade", 2026-09-12);
+        # it is nowhere near the 262.5 stop, so the stop stays unbacked.
+        computed_levels=[200.0, 375.0],
+        computed_level_touches={200.0: 5, 375.0: 5},
         setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=_tech_rc(),
         atr_14=(262.5 - 250.0) / 3.5,

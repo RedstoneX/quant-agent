@@ -424,7 +424,6 @@ def test_position_review_hides_vehicle_and_parks_at_end(tmp_path):
     p.macro_store.load_last_state.return_value = None
     p.config.llm = MagicMock()
     p.config.llm.position_reviewer_model = "test-model"
-    p._auto_take_profit = MagicMock(return_value=[])
     p._handle_ex_dividends = MagicMock(return_value=[])
     p._run_news_update = MagicMock(return_value=(None, None))
     p._load_earnings_analyses = MagicMock(return_value=(None, []))
@@ -502,7 +501,6 @@ def _position_review_fixture(tmp_path):
     p.macro_store.load_last_state.return_value = None
     p.config.llm = MagicMock()
     p.config.llm.position_reviewer_model = "test-model"
-    p._auto_take_profit = MagicMock(return_value=[])
     p._handle_ex_dividends = MagicMock(return_value=[])
     p._run_news_update = MagicMock(return_value=(None, None))
     p._load_earnings_analyses = MagicMock(return_value=(None, []))

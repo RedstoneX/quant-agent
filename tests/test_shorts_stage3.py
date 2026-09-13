@@ -102,7 +102,14 @@ def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
     docs/RESEARCH_FINDINGS.md §7) unless a test overrides it to exercise
     the gate below the bar.
     """
-    levels = [target] if computed is None else computed
+    levels = list([target] if computed is None else computed)
+    # 2026-09-12, "no floor, no trade" — for a short the floor is OVERHEAD.
+    # The constructor refuses a short with no computed level above entry,
+    # so a DISTANT ceiling at 1.5x entry is added when none is listed: far
+    # outside `level_match_atr_tolerance` of any stop here, so the stop
+    # stays unbacked and the widening tests still test widening.
+    if not any(float(p) > float(entry) for p in levels):
+        levels.append(round(float(entry) * 1.5, 2))
     default_touches = {price: 5 for price in levels}
     return TechAnalysisResult(
         symbol=symbol, rating="sell", entry_price=entry, stop_loss=stop,
