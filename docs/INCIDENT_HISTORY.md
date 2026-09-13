@@ -22,7 +22,7 @@ what would catch it next time.
 
 ---
 
-### 2026-09-13 — the insider holdings data the board said we did not have was already being downloaded, parsed and stored (item 52)
+### 2026-09-13 — the insider holdings data the board said we did not have was already being downloaded, parsed and stored — and the filter using it was throwing away the one band the research calls a buy signal (item 52)
 
 **In plain words:** the board carried an open owner decision asking whether to
 go and buy, or somehow approximate, data on how much stock an insider already
@@ -76,25 +76,90 @@ materiality filter that admits a symbol is untouched. A test pins this: two
 purchases identical in dollars but at opposite ends of the holdings range
 both survive admission unchanged.
 
-**What did change behaviour.** The one live decision the ratio drives — the
-routine/opportunistic sell test — moved from the invented 0.05 to the
-paper's own 0.10. Sales between 5% and 10% of a position now read as
-proportional noise rather than as a directional view, which is what the
-measurement supports.
+**The first attempt at the fix was also wrong, and this is the part worth
+remembering.** The obvious repair was to move the cutoff from the invented
+0.05 to 0.10, the paper's lowest band edge. That was written, reviewed
+adversarially, and rejected before it merged. Three things were wrong with
+it, and all three are visible in the paper itself.
+
+*The desk's question was not the paper's question.* The setting asks "below
+what fraction of a holding is a sale not a directional view". The only place
+the paper's prose marks a significance boundary is at half, not a tenth:
+"The group of stocks with net total sales exceeding 100,000 shares had an
+average excess return of −0.55 percent, but of that group, those stocks for
+which shares sold accounted for more than half of shares owned had average
+excess return of −1.17 percent. Excess returns on stocks with the same level
+of shares sold but a lower percentage of holdings were negative but
+statistically insignificant." A band edge on a results table is a place the
+authors chose to cut a column. It is not a measured threshold, and 10% was
+being read as one purely because it was the smallest number printed.
+
+*The label being applied stated the opposite of the evidence.* "Small sales
+that represented small percentages of shares owned not only did not predict
+poor performance but were associated with significantly positive abnormal
+returns." ROUTINE, in this classifier, means Cohen/Malloy/Pomorski's "carries
+no predictive power", and carries weight 0.0 — which is both the ranking sort
+key and the dollar multiplier deciding what the analyst seat ever sees. So a
+row the source measures at +0.68% with 1% significance was being labelled
+"no information" and then deleted from the ranking. The detail string the
+rejected version generated even said the paper finds these mildly positive,
+one line above the code that discarded the row for it.
+
+*The PR had already made the correct argument, for purchases only.* It
+refused to gate buys on the same bands, on the ground that the paper's ratio
+is a net per-stock-quarter figure over a six-month window against holdings
+aggregated across insiders, which is not the same object as one Form 4 row.
+That refusal is owed to sells too. Applying it to one direction and not the
+other was inconsistency, not judgement.
+
+**What was actually done.** The cutoff was removed, not moved, and no
+replacement was invented. `insider_min_material_sell_fraction` is deleted
+from the config model, from settings.yaml, from the classifier thresholds and
+from the provider and pipeline wiring; a test now fails if it reappears on
+either the thresholds dataclass or the config model. A sale that survives the
+two Cohen/Malloy/Pomorski routine tests is `discretionary_sale`, and carries
+its holdings ratio, its band, and — new — the sign the paper measured for
+that band, so the seat is handed the direction of the evidence and not just a
+number. Under 10%: mildly bullish, +0.68%. 10–50%: +0.44%. Over 50%: the only
+band that predicts negative returns, and only above 100,000 shares, −0.81%.
+
+**What this costs, stated plainly.** A proportionally tiny sale now ranks at
+weight 1.0 alongside an insider liquidating most of a position. That is not
+right either — the paper says their signs differ. It is less wrong than
+weight 0.0, which asserts the row is uninformative when the source says it is
+informative and positive, and it does not require inventing a number. The
+real gap is structural: `signal_weight` is a single "how much attention"
+scalar with no way to express "attention, and the sign is the other way".
+That is now WORK.md item 55, and it is deliberately left open rather than
+closed by choosing a multiplier.
+
+**The 10b5-1 branch went with it.** A small planned sale used to be demoted
+to routine. That branch existed only to reinforce the immateriality cutoff —
+the research note is explicit that the flag is not a clean noise filter, and
+nothing in it licenses demoting a sale on the flag alone. With no cutoff, the
+flag demotes nothing and is reported in the detail text instead.
 
 **Also corrected.** The research note's "size relative to holdings" bullet had
 been carrying the conclusion with no source behind it since it was written.
-It now names Scott & Xu, the sample, the bands and the numbers, so the next
-reader does not have to re-derive where the claim came from.
+It now names Scott & Xu, the sample, the bands, the numbers and the two
+sentences above, so the next reader does not have to re-derive where the
+claim came from — or repeat the mistake of reading a column edge as a
+finding.
+
+**What would catch it next time.** The tell was available without reading the
+paper: the code's own generated text contradicted the code's own decision in
+adjacent lines. When a detail string explains why a row matters and the
+branch it sits in throws that row away, one of the two is wrong. The second
+tell was a citation used at the wrong altitude — the paper was quoted
+accurately, every figure checked out, and the conclusion still did not
+follow, because nobody asked whether the paper had measured the boundary the
+setting needed or merely printed a number near it.
 
 **Decision recorded, closing the item.** No owner call is needed: nothing had
-to be acquired, nothing paid for, and the one number that changed was
-replaced by a published one rather than chosen. Item 52 is deleted.
+to be acquired and nothing paid for. Item 52 is deleted; the residue is item
+55.
 
 ---
-
-
-
 
 
 ### 2026-09-13 — a prompt limit that was wrong the moment it was written, and the drift-immune phrasing it replaced

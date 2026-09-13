@@ -1312,20 +1312,18 @@ class SmartMoneyConfig(BaseModel):
     # 0.25 admits a monthly or quarterly programme that drifts by a few days;
     # it rejects lumpy, irregularly-spaced discretionary trading.
     insider_cadence_max_gap_dispersion: float = Field(default=0.25, gt=0, le=2.0)
-    # A disposition smaller than this share of the insider's pre-transaction
-    # holding is diversification/liquidity noise rather than a directional
-    # view. 0.10 is Scott & Xu's own lowest band edge (*Some Insider Sales
-    # Are Positive Signals*, Financial Analysts Journal 60(3), 2004): sales
-    # under 10% of shares owned earn a positive size/B-P-adjusted excess
-    # return (+0.68% quarterly, significant at 1%), and only the over-50%
-    # band is significantly negative. Corrected 2026-09-13 from 0.05, which
-    # matched no published band and was this desk's own invention — see the
-    # `docs/INCIDENT_HISTORY.md` entry closing WORK.md item 52. Deliberately
-    # NOT combined with the 10b5-1 flag on its own: a large planned sale is
-    # never demoted to routine by this filter, only a proportionally small
-    # one may additionally cite the plan (see `insider_signal.py` module
-    # docstring, departure #1).
-    insider_min_material_sell_fraction: float = Field(default=0.10, ge=0.0, le=1.0)
+    # REMOVED 2026-09-13: `insider_min_material_sell_fraction`. It relabelled
+    # a sale below some fraction of the insider's holding as ROUTINE, weight
+    # 0.0 — dropping it out of the seat's ranking entirely. Its 0.05 default
+    # matched no published band, and the source behind the rule (Scott & Xu,
+    # FAJ 2004) marks only 50% as a significance boundary and measures the
+    # sub-10% band as significantly POSITIVE, so no edge of it is a "not a
+    # directional view" line. The ratio is now reported on every observation
+    # (`holdings_fraction`, `holdings_fraction_band`) and gates nothing. Do
+    # not reintroduce a cutoff here without a source that measures one; the
+    # open question is WORK.md item 55. See `src/data/insider_signal.py`
+    # departure #3 and the 2026-09-13 `docs/INCIDENT_HISTORY.md` entry.
+    #
     # How long `data/smart_money/insider_history.json` retains a trade date
     # before it is pruned. Must comfortably exceed the calendar-routine
     # lookback (`insider_calendar_routine_years` years) with slack for late

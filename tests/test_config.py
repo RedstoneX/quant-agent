@@ -267,11 +267,12 @@ def test_smart_money_insider_thresholds_default_to_pre_config_values():
     module hardcoded before the change, or unconfigured behavior changes
     silently.
 
-    One exception, deliberate: `insider_min_material_sell_fraction` was
-    0.05, which matched no published band and was this desk's own invention.
-    It is now Scott & Xu's (FAJ 2004) own lowest band edge, 0.10. The point
-    of this test is that a default never drifts unnoticed, not that a
-    sourced number can never replace an unsourced one — see the 2026-09-13
+    One field is deliberately gone rather than changed:
+    `insider_min_material_sell_fraction` was deleted on 2026-09-13. It was a
+    cutoff no cited source measures, and it relabelled a band Scott & Xu (FAJ
+    2004) find significantly POSITIVE as routine noise at weight 0.0. The
+    point of this test is that a default never drifts unnoticed, not that an
+    unsourced knob has to be kept alive — see the 2026-09-13
     `docs/INCIDENT_HISTORY.md` entry closing WORK.md item 52."""
     from src.config import SmartMoneyConfig
 
@@ -281,7 +282,6 @@ def test_smart_money_insider_thresholds_default_to_pre_config_values():
     assert config.insider_cadence_min_mean_gap_days == 20.0
     assert config.insider_cadence_max_mean_gap_days == 120.0
     assert config.insider_cadence_max_gap_dispersion == 0.25
-    assert config.insider_min_material_sell_fraction == 0.10
     assert config.insider_history_retention_days == 5 * 366
 
 
@@ -296,11 +296,9 @@ def test_smart_money_insider_thresholds_are_operator_overridable():
         insider_cadence_min_mean_gap_days=25.0,
         insider_cadence_max_mean_gap_days=100.0,
         insider_cadence_max_gap_dispersion=0.15,
-        insider_min_material_sell_fraction=0.10,
         insider_history_retention_days=1000,
     )
     assert config.insider_calendar_routine_years == 2
-    assert config.insider_min_material_sell_fraction == 0.10
     assert config.insider_history_retention_days == 1000
 
 

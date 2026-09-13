@@ -154,7 +154,6 @@ class SECForm4Provider:
         insider_cadence_min_mean_gap_days: float = 20.0,
         insider_cadence_max_mean_gap_days: float = 120.0,
         insider_cadence_max_gap_dispersion: float = 0.25,
-        insider_min_material_sell_fraction: float = 0.05,
         insider_history_retention_days: int = _DEFAULT_HISTORY_RETENTION_DAYS,
     ):
         self.data_dir = Path(data_dir)
@@ -195,7 +194,6 @@ class SECForm4Provider:
             cadence_min_mean_gap_days=max(0.0, float(insider_cadence_min_mean_gap_days)),
             cadence_max_mean_gap_days=max(0.0, float(insider_cadence_max_mean_gap_days)),
             cadence_max_gap_dispersion=max(0.0, float(insider_cadence_max_gap_dispersion)),
-            min_material_sell_fraction=max(0.0, float(insider_min_material_sell_fraction)),
         )
 
     def _load_json(self, path: Path, fallback):
