@@ -499,6 +499,31 @@ ship a stop/target edit that broke the R/R or noise-band floor a fresh
 decision would have to clear. Both guards now live in
 `_apply_risk_modifications`. Full detail and tests: `docs/INCIDENT_HISTORY.md`.
 
+### Landed 2026-09-13 — the Risk Manager's limits are read, not typed, FIXED
+
+The reviewer's standing sheet stated every limit as hand-typed prose and had
+drifted twice: it taught a **33%** long single-name ceiling against a live
+`risk.max_position_pct` of **65** (stale since the owner override of
+2026-09-11), and a **0.5%** per-trade risk budget against a ratified
+`max_position_risk_pct` of **5** — the constructor-cap sentence had never been
+moved off the pre-2026-08-27 default. Same defect class as the reward:risk
+floor text (PR #341): a limit with two homes, only one of them enforced.
+
+`config/prompts/risk_manager.md` now carries `{{risk.<setting>}}` placeholders
+that `src/agents/prompt_limits.py` renders from the same `config.risk` the
+engine is built from; an unresolvable placeholder raises rather than rendering
+blank. `tests/test_risk_prompt_limits_live.py` fails the build when a number
+is typed next to a risk setting's name. Worked arithmetic in an example is
+explicitly allowed and is covered by a negative test.
+
+**NOT done, scoped separately:** `config/prompts/portfolio_manager.md`
+restates six risk settings in prose (`max_position_pct`,
+`max_single_short_pct`, `max_gross_bearish_pct`, `max_gross_exposure_x`,
+`short_gap_risk_multiple`, `min_stop_atr_multiple`) and `tech_analyst.md`
+restates `min_stop_atr_multiple`. All are currently CORRECT — the same
+architecture, not yet drifted. The other eight seat prompts state no risk
+setting's value.
+
 ### Ordered backlog — RESUME POINT
 
 ## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost

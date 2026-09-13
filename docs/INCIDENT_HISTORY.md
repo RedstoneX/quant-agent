@@ -22,6 +22,55 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — the risk reviewer was auditing against a single-name ceiling less than half the real one
+
+**In plain words:** the desk's risk reviewer is briefed by a written
+instruction sheet. The limits on that sheet were typed by hand, and nothing
+made them match the settings the machine actually enforces. It had been
+telling the reviewer that no single holding may exceed 33% of the book. The
+real limit was 65%, and had been since the owner set it on 2026-09-11. For two
+days the reviewer was policing a ceiling that did not exist.
+
+**A second one on the same sheet, older and larger in ratio.** The sheet told
+the reviewer the constructor caps a stop-out at 0.5% of equity. The ratified
+per-trade risk unit is 5% (`max_position_risk_pct`, 2026-08-27); 0.5 is a
+different setting entirely (`min_position_risk_pct`, the starter-size floor).
+The sentence had never been moved off the pre-ratification constructor
+default, so the reviewer was reading every allocation against a risk budget
+one tenth of the real one.
+
+**What the real cause was.** Not "somebody forgot to update the prompt". A
+limit had TWO homes — `config/settings.yaml`, which is enforced, and the
+instruction sheet, which is not — and only one of them could ever be checked.
+Every restatement of a number in prose is a copy that will go stale on a
+schedule nobody controls. This is the same defect as the reward:risk floor
+text corrected earlier the same day (PR #341, whose stale sentence was the
+named cause of three of the four whole-plan vetoes in the archived database);
+the floor was the symptom that got noticed, the hand-typed copy was the
+mechanism.
+
+**What was ruled out.** Not a model failure: the reviewer applied the number
+it was given, correctly. Not a settings error: `max_position_pct: 65` was
+right in every place the engine reads. Not the pipeline: the value reached the
+deterministic gate intact. Only the briefing was wrong, and the briefing is
+the one input nothing compared against anything.
+
+**What catches it next time.** The sheet no longer contains limit values, only
+`{{risk.<setting>}}` placeholders rendered at run time from the same config
+object the engine is built from; a placeholder naming no setting raises rather
+than rendering blank, at pipeline startup, before capital is at risk. A test
+fails the build when a number is typed next to a risk setting's name in the
+sheet. The check is deliberately narrow — it keys on the setting's NAME, so
+worked arithmetic in an illustration does not trip it — and it therefore does
+NOT catch a limit restated far from its setting's name; the second check, that
+every wired setting still has a live placeholder, is what covers that.
+
+**Still open, not fixed here.** `config/prompts/portfolio_manager.md` restates
+six risk settings in prose and `tech_analyst.md` restates one. All are
+currently correct. They are the same architecture and will drift the same way.
+
+---
+
 ### 2026-09-13 — the whole-plan veto: what actually caused it, and the two holes left in the fix (item 7)
 
 **In plain words:** the AI risk reviewer can refuse a whole day's plan rather

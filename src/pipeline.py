@@ -607,6 +607,12 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.risk_manager_provider,
             provider_order=config.llm.get_provider_order("risk_manager"),
+            # The reviewer's standing sheet renders its limits from THIS
+            # object (`{{risk.*}}` placeholders, src/agents/prompt_limits.py),
+            # which is the same `config.risk` the engine below is built from.
+            # Passing it explicitly means the seat cannot be briefed against a
+            # settings file other than the one this process is running on.
+            risk_config=config.risk,
         )
         self.risk_engine = RiskRuleEngine(RiskConfig(
             max_position_pct=config.risk.max_position_pct,

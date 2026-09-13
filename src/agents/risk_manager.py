@@ -4,6 +4,9 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.agents.base import BaseAgent
+from src.agents.prompt_limits import (
+    load_risk_config_from_settings, render_prompt_limits,
+)
 from src.models import (
     NewsIntelligenceReport, PortfolioDecision, Position, RiskModification,
     RiskVerdict, SymbolRejection, TechAnalysisResult,
@@ -13,7 +16,9 @@ from src.risk.rules import RiskViolation
 
 logger = logging.getLogger(__name__)
 
-PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "risk_manager.md"
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROMPT_PATH = PROJECT_ROOT / "config" / "prompts" / "risk_manager.md"
+SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.yaml"
 
 
 def _fmt_or_na(value, suffix: str = "") -> str:
@@ -26,6 +31,35 @@ def _fmt_or_na(value, suffix: str = "") -> str:
 
 
 class RiskManagerAgent(BaseAgent):
+    # The reviewer is SHOWN the desk's limits, not TOLD them. Every numeric
+    # ceiling in `config/prompts/risk_manager.md` is a `{{risk.*}}`
+    # placeholder rendered from this config at run time — see
+    # `src/agents/prompt_limits.py` for why, and for the two documented
+    # drifts that motivated it. Optional so every existing call site and
+    # test fixture keeps working; absent, it is loaded from the SAME
+    # `config/settings.yaml` the engine is built from, not from a default
+    # typed into this file.
+    def __init__(self, *args, risk_config=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._risk_config = risk_config
+
+    @property
+    def risk_config(self):
+        """The live risk settings this seat's briefing renders from.
+
+        Lazily loaded (and cached) from `config/settings.yaml` when the
+        caller passed none. A missing or malformed file raises rather than
+        substituting a default — a risk sheet quoting a number nobody
+        configured is the failure this whole change removes.
+        """
+        # `getattr`, not attribute access: several tests build this agent
+        # with `RiskManagerAgent.__new__` to exercise `build_user_message`
+        # without a live LLM client, so `__init__` never runs. Absent the
+        # attribute is the same case as absent the config — load it.
+        if getattr(self, "_risk_config", None) is None:
+            self._risk_config = load_risk_config_from_settings(SETTINGS_PATH)
+        return self._risk_config
+
     @property
     def name(self) -> str:
         return "risk_manager"
@@ -33,7 +67,7 @@ class RiskManagerAgent(BaseAgent):
     @property
     def system_prompt(self) -> str:
         if PROMPT_PATH.exists():
-            return PROMPT_PATH.read_text()
+            return render_prompt_limits(PROMPT_PATH.read_text(), self.risk_config)
         return "You are a risk manager. Respond with JSON."
 
     def build_user_message(self, **kwargs) -> str:
@@ -67,7 +101,15 @@ class RiskManagerAgent(BaseAgent):
         # different question: a 15% position stopped 3% away risks less than a
         # 5% position stopped 20% away. None when the heat build failed.
         heat = kwargs.get("heat")
-        risk_ceiling_pct: float = float(kwargs.get("risk_ceiling_pct") or 25.0)
+        # The total at-risk ceiling shown in the Portfolio Risk block. The
+        # fallback used to be a hand-typed 25.0 — a second copy of
+        # `risk.max_portfolio_risk_pct` that nothing kept in step with the
+        # setting. It now reads the live value, so a caller that passes
+        # nothing shows the reviewer the ceiling the engine enforces.
+        risk_ceiling_pct: float = float(
+            kwargs.get("risk_ceiling_pct")
+            or self.risk_config.max_portfolio_risk_pct
+        )
         # `reasoning_chain.event_risk` is a REQUIRED field asking whether an
         # earnings report or a macro release lands in the next few sessions.
         # Until this block existed nothing fetched either fact, so the answer
@@ -500,7 +542,7 @@ Review these proposed trades and provide your verdict as JSON."""
                position_history: dict | None = None,
                recent_performance: dict | None = None,
                heat=None,
-               risk_ceiling_pct: float = 25.0,
+               risk_ceiling_pct: float | None = None,
                event_risk_block: str | None = None) -> tuple[RiskVerdict | None, "AgentResult"]:
         # audit round 2 #5: total_value / cash are optional so existing call
         # sites keep working; when omitted, build_user_message approximates
