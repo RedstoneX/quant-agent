@@ -4785,8 +4785,11 @@ class RiskStage:
             # Audit §1.3 — same heat object PM sized against, so RM audits the
             # book's real risk instead of re-deriving it from notional weights.
             heat=getattr(ctx.facts, "heat", None) if ctx.facts else None,
+            # None, not a hand-typed 25.0: absent facts, the agent resolves
+            # the ceiling from `risk.max_portfolio_risk_pct` in the live
+            # settings rather than from a literal copied into this call site.
             risk_ceiling_pct=(
-                getattr(ctx.facts, "risk_ceiling_pct", 25.0) if ctx.facts else 25.0
+                getattr(ctx.facts, "risk_ceiling_pct", None) if ctx.facts else None
             ),
             # The fetched answer to `reasoning_chain.event_risk` — see
             # RiskStage._build_event_risk_block.
