@@ -93,7 +93,6 @@ its threshold was "a placeholder pending owner confirmation". It was ratified
 
 ---
 
-||||||| 9f137c65
 
 ### 2026-09-13 — a "close enough to the level" tolerance was measured in the wrong unit, and was narrower than the thing it claimed to cover on every ordinary stock
 
