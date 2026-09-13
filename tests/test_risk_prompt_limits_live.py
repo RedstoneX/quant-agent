@@ -79,6 +79,8 @@ from src.agents.prompt_limits import (
     PLACEHOLDER_RE, PromptPlaceholderError, load_risk_config_from_settings,
     placeholders_in, render_prompt_limits, resolve_placeholder,
 )
+from src.agents.portfolio_manager import PortfolioManagerAgent
+from src.agents.portfolio_manager import PROMPT_PATH as PM_PROMPT_PATH
 from src.agents.risk_manager import PROMPT_PATH, SETTINGS_PATH, RiskManagerAgent
 from src.config import RiskConfig
 
@@ -100,6 +102,23 @@ WIRED_SETTINGS = (
     "max_gross_bearish_pct",
 )
 
+#: Settings the Portfolio Manager's sheet states. PM SIZES under these where
+#: the reviewer AUDITS against them, so the two lists differ: PM needs the
+#: cluster share and the gross-exposure multiple it sizes into, RM does not.
+PM_WIRED_SETTINGS = (
+    "max_position_pct",
+    "max_position_risk_pct",
+    "min_position_risk_pct",
+    "max_portfolio_risk_pct",
+    "max_cluster_risk_share_pct",
+    "max_sector_pct",
+    "max_gross_exposure_x",
+    "max_single_short_pct",
+    "max_gross_bearish_pct",
+    "short_gap_risk_multiple",
+)
+
+
 #: Nouns that mark a numeral as being stated AS a limit rather than used in an
 #: illustration. This is the pattern that catches the 2026-09-11 shape.
 _LIMIT_NOUN = r"(?:ceiling|caps?|budget|limit|maximum|floor|allowance)\b"
@@ -109,17 +128,42 @@ _LIMIT_PHRASE = re.compile(
     r"(?<![\w.$])(\d+(?:\.\d+)?)\s*%?[^.\n]{0,32}?" + _LIMIT_NOUN, re.I,
 )
 
-#: Phrases the limit-noun check must not flag, each with the reason it is not
-#: a limit statement. Kept explicit and short: an exemption is a hole, so it
-#: should be readable in one screen and argued for individually.
-_LIMIT_PHRASE_EXEMPTIONS = (
-    # The sheet states TWICE that the 1.5 reward:risk floor no longer exists,
-    # once as a forbidden phrasing to quote back. Both are negations of a
-    # removed gate, not statements of a live limit, and there is no setting
-    # to render (the gate was deleted, not reconfigured — PR #341).
-    "1.5 floor",
-    "1.5\nfloor",
-)
+#: Phrases each sheet's checks must not flag, with the reason each is not a
+#: statement of a live limit. Kept explicit, short and per-sheet: an exemption
+#: is a hole, so it should be readable at a glance and argued for individually.
+#: Every entry here is either (a) a PAST value in a provenance note, which is
+#: history and must stay literal or the note stops meaning anything, or (b) a
+#: rule with no settings key to render.
+_EXEMPTIONS = {
+    "risk_manager.md": (
+        # The sheet states TWICE that the 1.5 reward:risk floor no longer
+        # exists, once as a forbidden phrasing to quote back. Negations of a
+        # REMOVED gate; there is no setting to render (PR #341 deleted the
+        # gate rather than reconfiguring it).
+        "1.5 floor",
+        "1.5\nfloor",
+    ),
+    "portfolio_manager.md": (
+        # (a) PROVENANCE. Past values of settings, in notes explaining why a
+        # limit is what it is. Rendering these would rewrite history every
+        # time a setting moved, which is the opposite of what they are for.
+        "has since moved 3.0 ",     # min_stop_atr_multiple: 3.0 -> 1.5 -> 2.5
+        "20% notional ceiling",     # the pre-2026-09-04 max_position_pct
+        "20% ceiling",              # same, second mention in that narrative
+        "5.0)   # 5% single-name hard cap",   # pseudo-code illustration
+        "1.0\nqueued_cap",          # pseudo-code illustration
+        # (b) NO SETTINGS KEY EXISTS for these; they are prompt-and-pipeline
+        # policy. Rendering them would require inventing a setting, which is
+        # worse than leaving the number in prose.
+        "1% risk cap",              # earnings-queued BUY cap
+        "1.0% risk — the sleeve ceiling",   # starter sleeve, prompt-only
+        "10% floor",                # cash floor, prompt-only
+        # (c) NOT LIMITS AT ALL — a table row number and a coin-flip idiom
+        # that the pattern reads as "<number> ... cap/ceiling".
+        "6 | **Gross exposure ceiling",
+        "50/50 thesis, cluster cap",
+    ),
+}
 
 #: How far past a setting's name a digit still counts as "restating its
 #: value". Short on purpose: `name=65` and `` `name` (10%, `` are the two
@@ -160,7 +204,7 @@ def _risk_setting_names() -> list[str]:
 _RENDERED = "\x00"
 
 
-def _hand_typed_limits(text: str) -> list[str]:
+def _hand_typed_limits(text: str, sheet: str = "risk_manager.md") -> list[str]:
     """Every place a setting's name is followed by a hand-typed value.
 
     Placeholders collapse to a marker rather than to nothing, so
@@ -183,6 +227,8 @@ def _hand_typed_limits(text: str) -> list[str]:
                 continue
             claimed.append((match.start(), match.end()))
             window = _NOT_A_LIMIT.sub("", marked[match.end():match.end() + ADJACENCY_CHARS])
+            if any(ex in window for ex in _EXEMPTIONS.get(sheet, ())):
+                continue
             digit = re.search(r"\d", window)
             if digit is None:
                 continue
@@ -192,7 +238,7 @@ def _hand_typed_limits(text: str) -> list[str]:
     return findings
 
 
-def _unrendered_limit_phrases(text: str) -> list[str]:
+def _unrendered_limit_phrases(text: str, sheet: str = "risk_manager.md") -> list[str]:
     """Every numeral stated as the value of a limit noun without being
     rendered.
 
@@ -206,9 +252,10 @@ def _unrendered_limit_phrases(text: str) -> list[str]:
     # stated at 9.4.
     marked = re.sub(r"§\s*[\d.]+", "", PLACEHOLDER_RE.sub(_RENDERED, text))
     findings = []
+    exempt = _EXEMPTIONS.get(sheet, ())
     for match in _LIMIT_PHRASE.finditer(marked):
         phrase = match.group(0).replace(_RENDERED, "<rendered>")
-        if any(ex in match.group(0) for ex in _LIMIT_PHRASE_EXEMPTIONS):
+        if any(ex in match.group(0) for ex in exempt):
             continue
         findings.append(phrase)
     return findings
@@ -555,9 +602,9 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
         "something settings.yaml does not say. This is live-wrong, not "
         "latent: " + ", ".join(live_divergence)
     )
-    assert len(omitted) == 18, (
+    assert len(omitted) == 15, (
         f"the engine's hand-enumerated RiskConfig now omits {len(omitted)} "
-        f"settings present in settings.yaml, not 18 — if that grew, thread "
+        f"settings present in settings.yaml, not 15 — if that grew, thread "
         f"the new one; if it shrank, lower this number. Omitted: {omitted}"
     )
 
@@ -572,7 +619,8 @@ def test_a_bad_placeholder_fails_at_construction_not_at_first_llm_call(tmp_path,
     commissioning render in `__init__` moves that failure to startup."""
     broken = tmp_path / "risk_manager.md"
     broken.write_text("ceiling is {{risk.no_such_setting}}%\n")
-    monkeypatch.setattr("src.agents.risk_manager.PROMPT_PATH", broken)
+    # `_prompt_path` is the class attribute the LiveLimitPrompt mixin reads.
+    monkeypatch.setattr(RiskManagerAgent, "_prompt_path", broken)
     with pytest.raises(PromptPlaceholderError):
         RiskManagerAgent(api_key="k", model="m")
 
@@ -580,3 +628,91 @@ def test_a_bad_placeholder_fails_at_construction_not_at_first_llm_call(tmp_path,
 def test_a_good_sheet_constructs_cleanly():
     agent = RiskManagerAgent(api_key="k", model="m")
     agent.assert_prompt_renders()  # idempotent, callable by a commissioning script
+
+
+# --------------------------------------------------------------------------
+# 7. The Portfolio Manager's sheet — same treatment, same checks
+# --------------------------------------------------------------------------
+#
+# PM's sheet was CORRECT when the reviewer's went wrong, and that is precisely
+# why it gets the same mechanism rather than a note saying it is fine: commit
+# e1c639a2 edited both sheets and got one right and one wrong, so the human
+# process protecting this copy is exactly as reliable as the one that failed.
+# PM is also the seat that picks the sizes, so a wrong ceiling here shapes the
+# order rather than only the review of it.
+
+
+def _pm_sheet() -> str:
+    return PM_PROMPT_PATH.read_text()
+
+
+def test_pm_sheet_has_no_hand_typed_limit_beside_a_risk_setting():
+    findings = _hand_typed_limits(_pm_sheet(), "portfolio_manager.md")
+    assert not findings, (
+        "A numeric limit is hand-typed next to the setting it restates in "
+        "config/prompts/portfolio_manager.md:\n  " + "\n  ".join(findings)
+    )
+
+
+def test_pm_sheet_has_no_unrendered_limit_phrase():
+    findings = _unrendered_limit_phrases(_pm_sheet(), "portfolio_manager.md")
+    assert not findings, (
+        "A numeral is stated as the value of a limit in "
+        "config/prompts/portfolio_manager.md without being rendered:\n  "
+        + "\n  ".join(findings)
+    )
+
+
+def test_pm_sheet_renders_every_setting_it_states():
+    keys = placeholders_in(_pm_sheet())
+    missing = [s for s in PM_WIRED_SETTINGS if f"risk.{s}" not in keys]
+    assert not missing, (
+        "config/prompts/portfolio_manager.md no longer renders: "
+        + ", ".join(missing)
+        + ". Restore the placeholder; do not type the number back in, and do "
+        "not delete the entry here to make this pass."
+    )
+
+
+def test_pm_sheet_resolves_and_tracks_the_live_config():
+    cfg = _live_risk_config()
+    rendered = render_prompt_limits(_pm_sheet(), cfg)
+    assert "{{" not in rendered
+    for setting in PM_WIRED_SETTINGS:
+        assert f"{getattr(cfg, setting):g}" in rendered, setting
+    moved = cfg.model_copy(update={"max_position_pct": 44.0})
+    after = render_prompt_limits(_pm_sheet(), moved)
+    assert "44% single-name" in after
+    assert "44% single-name" not in rendered
+
+
+def test_pm_agent_renders_at_construction():
+    agent = PortfolioManagerAgent(api_key="k", model="m")
+    assert "{{" not in agent.system_prompt
+    assert (
+        f"{_live_risk_config().max_position_pct:g}% single-name"
+        in agent.system_prompt
+    )
+
+
+def test_pm_bad_placeholder_fails_at_construction(tmp_path, monkeypatch):
+    broken = tmp_path / "portfolio_manager.md"
+    broken.write_text("cap is {{risk.no_such_setting}}%\n")
+    monkeypatch.setattr(PortfolioManagerAgent, "_prompt_path", broken)
+    with pytest.raises(PromptPlaceholderError):
+        PortfolioManagerAgent(api_key="k", model="m")
+
+
+def test_every_setting_pm_renders_is_also_threaded_into_the_engine():
+    """Same parity requirement as the reviewer's sheet: PM must not be shown a
+    settings.yaml value the engine enforces from a class default instead."""
+    threaded = _engine_config_arguments()
+    missing = [
+        s for s in PM_WIRED_SETTINGS
+        if s in RiskConfig.model_fields and s not in threaded
+    ]
+    assert not missing, (
+        "config/prompts/portfolio_manager.md renders these from "
+        "settings.yaml but src/pipeline.py does not pass them to the risk "
+        "engine's RiskConfig: " + ", ".join(missing)
+    )

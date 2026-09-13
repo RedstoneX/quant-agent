@@ -79,9 +79,24 @@ to the pydantic class default and `settings.yaml` is ignored for it. **22 of
 the declared risk settings were in that state.** Today every one of those
 defaults happens to equal its settings value, so nothing was live-wrong — but
 this has bitten before: `allow_margin` was the same omission, defaulting to
-False while settings.yaml said True, and it blocked a user's BUYs. The four
-settings the reviewer's sheet now renders are threaded through; the other 18
-are recorded in `docs/WORK.md` rather than swept in a change nobody asked for.
+False while settings.yaml said True, and it blocked a user's BUYs. The seven
+settings the two sheets now render are threaded through; the other 15 are
+recorded in `docs/WORK.md` rather than swept in a change nobody asked for.
+
+**Why the Portfolio Manager's sheet did NOT go wrong in the same commit — the
+most useful part of this.** That commit edited both sheets. PM's copy of the
+same ceiling stayed right, and NOT because anyone was more careful with it:
+`tests/test_prompts_anchors.py` pinned the literal string "capped at 65%
+single-name" in PM's sheet and had no equivalent value anchor on the
+reviewer's sheet at all. A mechanical check held; an unchecked copy did not.
+That is this desk's own standing lesson restated — everything mechanically
+enforced holds, everything relying on remembering a rule slips.
+
+The anchor held by keeping a THIRD hand-maintained copy of the number
+(settings.yaml, the prompt, and the test's own string), so every change to
+the cap had to touch all three or CI went red on the last one. Both sheets
+now render the value instead, and the anchor is retargeted to pin the
+placeholder rather than the digits.
 
 **What catches it next time, and what does not.** The sheet no longer contains
 limit values, only placeholders rendered from the same config object the

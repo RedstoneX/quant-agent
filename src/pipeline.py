@@ -668,8 +668,8 @@ class TradingPipeline:
             # `allow_margin` directly above is the proof that it does not
             # stay latent forever.
             #
-            # The four threaded here are the ones the Risk Manager's standing
-            # sheet now RENDERS from settings.yaml (see
+            # The seven threaded here are the ones the Risk Manager's and
+            # Portfolio Manager's standing sheets now RENDER from settings.yaml (see
             # src/agents/prompt_limits.py). Rendering a value into the
             # reviewer's briefing while the engine enforced a different
             # object's default would be the same two-homes defect this
@@ -678,13 +678,31 @@ class TradingPipeline:
             # rather than merely intended, and `tests/
             # test_risk_prompt_limits_live.py` now pins it.
             #
-            # The other 18 are NOT touched here: they predate this work, they
+            # The other 15 are NOT touched here: they predate this work, they
             # are not live-wrong, and sweeping them would change enforcement
             # nobody has reviewed. Recorded in docs/WORK.md instead.
-            max_single_short_pct=config.risk.max_single_short_pct,
-            max_gross_bearish_pct=config.risk.max_gross_bearish_pct,
-            min_position_risk_pct=config.risk.min_position_risk_pct,
-            max_portfolio_risk_pct=config.risk.max_portfolio_risk_pct,
+            # Read through `_risk_number`, like every other numeric setting
+            # in this block: many tests build the pipeline against a
+            # MagicMock config, where attribute access auto-creates a child
+            # mock that pydantic then refuses. The fallback is the field's
+            # own documented default, so this is not a fourth home for the
+            # number — it is the same value the omission was silently using.
+            max_single_short_pct=_risk_number(
+                getattr(config.risk, "max_single_short_pct", None), 10.0),
+            max_gross_bearish_pct=_risk_number(
+                getattr(config.risk, "max_gross_bearish_pct", None), 20.0),
+            min_position_risk_pct=_risk_number(
+                getattr(config.risk, "min_position_risk_pct", None), 0.5),
+            max_portfolio_risk_pct=_risk_number(
+                getattr(config.risk, "max_portfolio_risk_pct", None), 25.0),
+            # Rendered into the Portfolio Manager's sheet by the same
+            # mechanism, so they carry the same parity requirement.
+            max_cluster_risk_share_pct=_risk_number(
+                getattr(config.risk, "max_cluster_risk_share_pct", None), 40.0),
+            max_gross_exposure_x=_risk_number(
+                getattr(config.risk, "max_gross_exposure_x", None), 2.0),
+            short_gap_risk_multiple=_risk_number(
+                getattr(config.risk, "short_gap_risk_multiple", None), 1.5),
         # docs/WORK.md item 32 (owner call 2026-09-11). Lets the daily
         # circuit breaker measure a loss against the normal daily move of
         # the book actually held — from its holdings' real market price

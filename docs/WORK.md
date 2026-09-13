@@ -534,10 +534,18 @@ builds the risk engine's `RiskConfig` from a hand-enumerated argument list.
 pydantic class defaults, ignoring settings.yaml. Every one of those defaults
 currently equals its settings value, so nothing is live-wrong — but
 `allow_margin` was the same omission and did bite (it defaulted False while
-settings said True, blocking a user's BUYs). The four settings the sheet
-renders are now threaded; **the remaining 18 are open work**, pinned by a test
+settings said True, blocking a user's BUYs). The seven settings the two sheets
+render are now threaded; **the remaining 15 are open work**, pinned by a test
 that fails if the count grows or if any omitted setting ever diverges from its
 default. Threading them changes enforcement and needs its own review.
+
+**PM's sheet, same treatment, same PR series.** `portfolio_manager.md` now
+renders ten settings and `tests/test_prompts_anchors.py`'s two value anchors
+are retargeted to the placeholders. Correcting an earlier claim in this
+entry: PM's sheet did not stay correct on 2026-09-11 because the human
+process was better — it stayed correct because that anchor test pinned the
+literal and the reviewer's sheet had no such anchor. The check held; it just
+cost a third hand-maintained copy of the number.
 
 **Also open:** `config/settings.yaml`'s own `max_single_short_pct` comment
 still says "At 33 this cap is now roughly a THIRD of the long ceiling" —
