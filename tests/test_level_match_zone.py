@@ -275,18 +275,22 @@ def test_no_atr_multiple_survives_anywhere():
 
 
 def test_cluster_constant_has_exactly_one_definition():
-    """One source of truth, or the drift this item fixed comes straight back."""
+    """One source of truth, or the drift this item fixed comes straight back.
+
+    Asserts WHICH FILE defines it, never which line. A line number in an
+    assertion rots the first time anything above it is edited — this test
+    failed on its own merge for exactly that reason, telling us nothing
+    about the constant it exists to guard.
+    """
     definitions = []
     for root in (REPO / "src", REPO / "config"):
         for path in root.rglob("*"):
             if path.suffix not in {".py", ".yaml", ".yml"} or not path.is_file():
                 continue
-            for lineno, line in enumerate(
-                path.read_text(errors="replace").splitlines(), 1
-            ):
+            for line in path.read_text(errors="replace").splitlines():
                 if line.startswith("CLUSTER_TOLERANCE_PCT"):
-                    definitions.append(f"{path.relative_to(REPO)}:{lineno}")
-    assert definitions == ["src/data/levels.py:56"], definitions
+                    definitions.append(str(path.relative_to(REPO)))
+    assert definitions == ["src/data/levels.py"], definitions
 
 
 # ---------------------------------------------------------------------------
