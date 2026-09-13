@@ -30,7 +30,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.models import (
-    SINGLE_RUNG_MAGNITUDE, SmartMoneyFinding, SmartMoneyObservation,
+    NO_STATED_STRENGTH, SmartMoneyFinding, SmartMoneyObservation,
 )
 
 
@@ -139,7 +139,7 @@ def test_conviction_mapping_reflects_role_even_for_a_neutral_call():
 )
 def test_directional_magnitude_is_flat_regardless_of_role(role):
     v = _finding(stance="bullish", economic_role=role).to_verdict()
-    assert v.magnitude == SINGLE_RUNG_MAGNITUDE
+    assert v.magnitude == NO_STATED_STRENGTH
 
 
 def test_the_role_reaches_the_score_through_conviction_only():
@@ -149,7 +149,7 @@ def test_the_role_reaches_the_score_through_conviction_only():
     top = _finding(stance="bullish", economic_role="actionable").to_verdict()
     bottom = _finding(stance="bullish", economic_role="historical").to_verdict()
     assert top.conviction != bottom.conviction
-    assert top.magnitude == bottom.magnitude == SINGLE_RUNG_MAGNITUDE
+    assert top.magnitude == bottom.magnitude == NO_STATED_STRENGTH
 
 
 def test_neutral_magnitude_is_always_zero_regardless_of_role():
@@ -235,4 +235,4 @@ def test_a_bearish_finding_has_negative_signed_magnitude():
         stance="bearish", economic_role="actionable",
         observations=[_obs(direction="sell")],
     ).to_verdict()
-    assert v.signed_magnitude == -SINGLE_RUNG_MAGNITUDE
+    assert v.signed_magnitude == -NO_STATED_STRENGTH

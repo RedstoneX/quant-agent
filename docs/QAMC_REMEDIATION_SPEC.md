@@ -2390,12 +2390,29 @@ own conviction, macro from its `confidence`, smart_money from the single
 `economic_role` label that also set its conviction), at three different
 unsourced spacings. Those seats therefore entered the composite with one
 signal counted twice before this prior was applied at all. The three tables
-are deleted; every seat but Technical now carries a flat magnitude for a
-directional call, so this prior weights the seat's stated conviction plus a
-constant. Technical keeps a gradient because its rating rungs are a strength
+are deleted; every seat but Technical now carries `NO_STATED_STRENGTH` (0.0)
+for a directional call, so this prior weights exactly the seat's stated
+conviction. Technical keeps a gradient because its rating rungs are a strength
 it actually states, and earnings was already flat for exactly this reason.
 Deleting invented weights, not replacing them. Detail:
 `docs/INCIDENT_HISTORY.md`, 2026-09-13 (retired item 31).
+
+**2026-09-13, same day, ON REVIEW BEFORE MERGE — two corrections to the
+above, one of them load-bearing.** First, the flat magnitude was originally
+0.5 — Technical's `buy` rung, borrowed by four seats that have no rungs. A
+number read off another seat's scale is not read off this seat's instrument,
+so it is now 0.0. Second and far more serious: **`rank_verdicts` aggregated
+seats by weighted AVERAGE, which made a second, fully AGREEING seat LOWER a
+candidate's score** (technical `strong_buy` at high conviction alone scored
+2.0; adding smart_money's strongest possible agreeing verdict scored 1.8).
+Agreement was dilutive, contradicting §0's edge and §9.4's "agreement earns
+size". The aggregation is now a weighted SUM, which introduces no number,
+deletes a divisor, and makes "an agreeing seat can only add" a property of the
+arithmetic rather than a property to test for. The reward:risk tiebreak stays
+a weighted mean: evidence adds, measurements average. Consequences (score no
+longer capped at 2.0; coverage now moves the score, which `src/rotation.py`
+compares on) are recorded as `docs/WORK.md` items 55 and 56. Detail:
+`docs/INCIDENT_HISTORY.md`, 2026-09-13, the entry following retired item 31.
 
 **What did NOT change: the sizing path.** `src/risk/rules.py::SEAT_WEIGHT`
 — the §9.4 signed sum that actually prices position size — is untouched and

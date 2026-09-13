@@ -140,7 +140,110 @@ missing number from the one that existed. Every author flagged their own
 mapping as unmeasured and none of them was wrong to ship it — but a flag in a
 code comment is not a review, and three of them accumulated before anyone
 compared them side by side. When a seat cannot fill a field, the honest fill
-is a constant, not a function of another field.
+is not a function of another field.
+
+**CORRECTED THE SAME DAY, BEFORE MERGE — the sentence above originally ended
+"the honest fill is a constant, not a function of another field", and the fix
+it describes filled the gap with 0.5.** That was wrong in the same way, one
+step quieter, and the two defects it caused are the entry immediately below.
+Read both together; this one is not the whole story.
+
+---
+
+### 2026-09-13 — deleting three invented numbers left a fourth behind, and made a second agreeing analyst LOWER a stock's rank (found on adversarial review of PR #348, before merge)
+
+**In plain words.** The fix above removed three made-up "how strongly does
+this specialist lean" numbers and set those seats to a single flat value
+instead. Two things were wrong with it, and both were caught by reviewing the
+change against the desk's own stated edge rather than against its own
+reasoning.
+
+**Defect 1 — agreement became dilutive. This is the serious one.** The desk
+scores a stock by AVERAGING its specialists' scores. Averaging means a second
+specialist who AGREES can pull the average down, and after the flat value was
+introduced that stopped being a corner case and became the normal case.
+Reproduced against the code, exact arithmetic:
+
+  * technical says `strong_buy` at high confidence, on its own:
+    lean 1.0 + confidence 1.0 = **2.0**.
+  * add smart_money saying `actionable` — the strongest thing that seat can
+    say, agreeing on direction — and the average of the two leans falls to
+    0.8, scoring **1.8**.
+
+A second analyst, agreeing, made the stock rank LOWER. That contradicts the
+desk's own stated edge — breadth x consistency x asymmetry — and
+`docs/OUTCOME.md` §9.4's "agreement earns size". It was not a tuning problem.
+An average answers "how enthusiastic is the average specialist covering this
+name", which is a question nobody asked and which the edge statement never
+mentions.
+
+**The fix: the aggregation is now a SUM, not an average.** Chosen because it
+follows from the edge rather than because it produced nicer numbers:
+
+  * It introduces NO number. It deletes a divisor. Every constant left in the
+    arithmetic was already ratified and is unchanged.
+  * It is monotone by construction — every added term is a positive weight
+    times two non-negative signals — so "an agreeing seat can only add" stops
+    being a property somebody has to remember to test and becomes a property
+    of the arithmetic.
+  * Disagreement cannot leak into it: a stock whose specialists disagree on
+    direction is already dropped whole, before any scoring happens.
+
+The reward-to-risk tiebreak deliberately stays an average. It combines several
+estimates of ONE quantity in a real unit; two specialists both reading 2.0 do
+not make 4.0. Evidence adds, measurements average.
+
+**Defect 2 — 0.5 was not a derivation either.** The flat value was
+Technical's `buy` rung, borrowed by four seats that have no rungs — which is
+the whole reason they were in this fix. Borrowing is not deriving. The four
+seats now carry ZERO stated strength (`NO_STATED_STRENGTH`), which is the
+honest encoding of "states no distance", and they reach the ranking through
+their weighted confidence alone. This only became a coherent option once the
+aggregation was a sum: under the old average a zero would have dragged an
+agreeing stock down, which is exactly why 0.5 looked necessary at the time.
+
+**Two consequences of the sum, stated rather than discovered later.** The
+score is no longer capped at 2.0 and is not comparable to a score recorded
+before today. And coverage now moves the score: a name with a live earnings
+filing and a confirmed institutional flow outranks an otherwise identical name
+with only a chart, and it falls back when that coverage lapses. That is the
+intended reading of breadth, but it means `src/rotation.py`'s comparison of a
+held name against a new one is now partly a comparison of how much coverage
+each has today. The margin is a ratio so the change of scale does not affect
+it; coverage decay on a held name does. Flagged in `docs/WORK.md`, not
+silently absorbed.
+
+**A third finding, verified and INTENDED but undisclosed in the original
+change.** The sector fix in the entry above has a consequence nobody wrote
+down. Macro's verdict used to be the broad market read for every stock, so an
+energy name Technical liked, on a session with a negative broad read, was
+dropped from the ranking as an unadjudicated disagreement. Now the read
+resolves on the sector's own rows, and when those rows contradict each other
+the result is "no opinion" — which the ranking skips, so there is no
+disagreement left to drop the stock for, and it reaches the decision-maker.
+Verified against the code, both before and after.
+
+That behaviour is right: the desk's belief about that sector is genuinely
+unresolved, and an unresolved read is an absence of an opinion, not a
+disagreement. Dropping a stock on the strength of a broad outlook its own
+sector rows contradict was the bug. What was not acceptable was doing it
+invisibly. So a specialist that looked and came back with nothing is now
+recorded on the candidate and printed in the decision-maker's prompt — "no
+lean from: macro" — because "this seat looked and found nothing" and "this
+seat never looked" were previously indistinguishable downstream.
+
+**What is still open.** Whether these four seats should have a real strength
+scale of their own at all is not settled by deleting the fake one. It cannot
+be answered by choosing a number and it must not be answered by fitting one to
+the desk's history. It is `docs/WORK.md` item 55.
+
+**The lesson.** The first fix was right about what to delete and wrong about
+what to leave. Deleting an invented number is only half the job; the other
+half is checking what the SHAPE around it then does, and checking it against
+the desk's stated edge rather than against the change's own reasoning. Here
+the shape had been quietly wrong the whole time and the deletion only made it
+visible — the average was already dilutive whenever a weaker-leaning seat
+agreed, before any of this.
 
 ---
 

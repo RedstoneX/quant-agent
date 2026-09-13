@@ -9,7 +9,7 @@ retired item 31) because `confidence` is also what the verdict reports as
 `conviction`, and `score_verdict` adds magnitude to conviction — so macro's
 confidence was entering the composite twice, at a spacing (0.25/0.5/0.75,
 +0.25) nothing stood behind. Magnitude is now flat
-(`SINGLE_RUNG_MAGNITUDE`) for any directional read, 0.0 for neutral, and
+(`NO_STATED_STRENGTH`) for any directional read, 0.0 for neutral, and
 the tests below pin that it stays flat.
 
 Also pinned here, from the same review: the SECTOR-ADJUSTED direction. A
@@ -25,7 +25,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.models import (
-    SINGLE_RUNG_MAGNITUDE, MacroAnalysis, MacroObservation, MacroPositionGuidance,
+    NO_STATED_STRENGTH, MacroAnalysis, MacroObservation, MacroPositionGuidance,
     MacroReasoningChain,
 )
 
@@ -83,7 +83,7 @@ def test_a_directional_read_carries_the_flat_single_rung_magnitude():
     assert v.seat == "macro"
     assert v.symbol == "SPY"
     assert v.direction == "bullish"
-    assert v.magnitude == SINGLE_RUNG_MAGNITUDE
+    assert v.magnitude == NO_STATED_STRENGTH
     assert v.conviction == "high"
     assert v.invalidation == "Fed pivots dovish and credit spreads snap tighter"
 
@@ -95,7 +95,7 @@ def test_bearish_without_regime_shift_carries_the_same_flat_magnitude():
     )
     v = a.to_verdict("XLE")
     assert v.direction == "bearish"
-    assert v.magnitude == SINGLE_RUNG_MAGNITUDE
+    assert v.magnitude == NO_STATED_STRENGTH
     assert v.conviction == "medium"
     assert v.invalidation == "Core CPI MoM < 0.2% for 2 months"
 
@@ -115,7 +115,7 @@ def test_magnitude_tracks_neither_confidence_nor_regime_shift(confidence, regime
     )
     v = a.to_verdict("QQQ")
     assert v.conviction == confidence
-    assert v.magnitude == SINGLE_RUNG_MAGNITUDE
+    assert v.magnitude == NO_STATED_STRENGTH
 
 
 def test_neutral_outlook_always_maps_to_zero_magnitude_even_with_regime_shift():
@@ -222,7 +222,7 @@ def test_a_full_directional_macro_read_produces_a_valid_verdict():
     assert v.seat == "macro"
     assert v.symbol == "XLF"
     assert (v.direction, v.magnitude, v.conviction) == (
-        "bearish", SINGLE_RUNG_MAGNITUDE, "high",
+        "bearish", NO_STATED_STRENGTH, "high",
     )
     assert v.invalidation == "Credit spreads blow out past 500bps"
     assert len(v.evidence) == 1
@@ -254,7 +254,7 @@ def test_sector_stance_overrides_the_broad_outlook_for_that_sector():
     v = a.to_verdict("XOM", sector="Energy")
     assert v.direction == "bearish"          # NOT the bullish broad read
     assert v.conviction == "high"            # the only confidence the seat states
-    assert v.magnitude == SINGLE_RUNG_MAGNITUDE
+    assert v.magnitude == NO_STATED_STRENGTH
 
 
 def test_a_symbol_in_an_unmentioned_sector_still_gets_the_broad_read():
@@ -312,6 +312,58 @@ def test_disagreeing_sector_rows_resolve_to_neutral_not_to_the_broad_read():
     v = a.to_verdict("XOM", sector="Energy")
     assert v.direction == "neutral"
     assert v.magnitude == 0.0
+
+
+def test_an_unresolved_macro_read_no_longer_silently_conflict_drops_a_candidate():
+    """**The unmentioned consequence of the sector fix, found on adversarial
+    review before PR #348 merged, 2026-09-13. Verified, and it is INTENDED —
+    but it must not be silent.**
+
+    Before the fix, macro's verdict was the broad `equity_outlook` for every
+    symbol. So an energy name that Technical liked, on a session whose broad
+    read was bearish, was dropped from the ranking entirely as a direction
+    conflict for §9.3/§9.4 to adjudicate.
+
+    After the fix, that same read resolves on the SECTOR's own rows. When
+    those rows contradict each other the result is "neutral" — and
+    `rank_verdicts` does not score a neutral verdict, so there is no conflict
+    left to drop the symbol for. The candidate now reaches the Portfolio
+    Manager.
+
+    That is correct: the desk's belief about this sector is genuinely
+    unresolved, and an unresolved read is an absence of an opinion, not a
+    disagreement with Technical. Dropping the name on the strength of a broad
+    outlook the sector rows specifically contradict was the bug. What was NOT
+    acceptable was doing it invisibly, which is why the seat's name is
+    recorded on `neutral_seats` and rendered into the prompt.
+    """
+    from src.models import AnalystVerdict, VerdictEvidence
+    from src.verdicts import rank_verdicts
+
+    a = _macro(
+        "bearish", confidence="high",
+        sector_guidance=[
+            _sector("Energy", "overweight", "refining margins"),
+            _sector("Energy", "underweight", "crude rolling over"),
+        ],
+        bull_triggers=["HY OAS < 300bps"],
+    )
+    tech = AnalystVerdict(
+        seat="technical", symbol="XOM", direction="bullish", magnitude=1.0,
+        conviction="high", invalidation="closes below MA50",
+        evidence=[VerdictEvidence(label="rsi", value=55.0, source="chart")],
+    )
+
+    # The old behaviour, still reachable by asking for the broad read: the
+    # bearish macro verdict conflicts with technical and the name is dropped.
+    assert rank_verdicts([tech, a.to_verdict("XOM")]) == []
+
+    # The new behaviour: unresolved, so it does not conflict — and it is
+    # disclosed rather than dropped without trace.
+    [c] = rank_verdicts([tech, a.to_verdict("XOM", sector="Energy")])
+    assert c.symbol == "XOM"
+    assert c.seats == ["technical"]
+    assert c.neutral_seats == ["macro"]
 
 
 def test_the_deciding_sector_row_is_cited_first_in_the_evidence():

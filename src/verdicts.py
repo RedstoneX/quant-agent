@@ -76,7 +76,7 @@ real, sourced ordinal ranking of confidence. Treat the specific numbers as a
 considered but revisable starting point, not a measured fact.
 
 When more than one seat has a verdict on the same symbol, the per-seat scores
-are averaged AT THIS WEIGHT, so two agreeing seats of different
+are SUMMED AT THIS WEIGHT, so two agreeing seats of different
 trustworthiness are not treated as interchangeable votes. **All five seats
 have produced verdicts since 2026-09-03**, so this weighting has been live
 rather than latent since then — the note here previously still said only
@@ -87,10 +87,16 @@ four of the five seats. `score_verdict` is `magnitude + conviction`, and
 news, macro and smart_money were each deriving `magnitude` from the very
 field they also reported as `conviction` — so those seats fed one signal in
 twice, at three different unsourced spacings, before this weight ever saw
-them. Those tables are deleted; every seat but Technical now carries a flat
-`SINGLE_RUNG_MAGNITUDE` for a directional call, so what this prior weights is
-the seat's stated conviction plus a constant. Technical keeps a real
+them. Those tables are deleted; every seat but Technical now carries
+`NO_STATED_STRENGTH` (0.0) on any call, so what this prior weights for those
+four seats is exactly the seat's stated conviction. Technical keeps a real
 gradient, because its rating rungs are a strength it actually states.
+
+**2026-09-13, same day, ON REVIEW BEFORE MERGE — the aggregation is a SUM,
+not an average, and that is the load-bearing change.** See `rank_verdicts`
+for the argument. In one line: an average of seat scores made a second,
+fully AGREEING seat lower a candidate's rank, which contradicts this desk's
+own stated edge.
 
 **2026-09-04 audit (real-data fix #2).** Ties used to break on `symbol`
 alone. `score_verdict` only ever lands on {0.5, 1.0, 1.5, 2.0} when a single
@@ -201,6 +207,14 @@ class RankedCandidate:
     score: float
     verdicts: list[AnalystVerdict] = field(default_factory=list)
     components: dict[str, float] = field(default_factory=dict)
+    #: Seats that DID report on this symbol and came back with no lean.
+    #: They contribute nothing to `score` (there is nothing to contribute),
+    #: but they are not nothing to a reader: "macro was consulted and its
+    #: own sector rows contradicted each other" is a different state from
+    #: "macro never looked at this name," and before 2026-09-13 the two were
+    #: indistinguishable downstream because neutral verdicts were dropped
+    #: silently. See `rank_verdicts`.
+    neutral_seats: list[str] = field(default_factory=list)
 
     @property
     def seats(self) -> list[str]:
@@ -235,17 +249,73 @@ def rank_verdicts(
     removed at the gate. See `_reward_risk_sort_values` for how an absent
     key is placed neutrally instead.
 
-    Neutral verdicts are not candidates for anything and are skipped. A
-    symbol whose seats disagree on direction is NOT ranked here — that is
-    a conflict for §9.3/§9.4 to adjudicate, and ordering it would hide the
-    disagreement inside a number. It is dropped with the reason recorded on
-    the caller's side (`candidate_eligibility`), never silently.
+    **THE SCORE IS A WEIGHTED SUM ACROSS SEATS, NOT A WEIGHTED AVERAGE —
+    changed 2026-09-13 on adversarial review, before merge. Read this before
+    changing it back.**
+
+    It was an average. An average made a second, fully AGREEING seat LOWER a
+    candidate's rank. Reproduced against the code that day: a technical
+    `strong_buy` at high conviction alone scores magnitude 1.0 + conviction
+    1.0 = 2.0. Add a smart-money `actionable` verdict — the strongest thing
+    that seat can say, agreeing on direction — and the average of the two
+    seats' magnitudes fell to 0.8, scoring 1.8. Agreement was DILUTIVE.
+
+    That is not a tuning problem, it is the wrong shape. It contradicts the
+    desk's own stated edge — breadth x consistency x asymmetry — and
+    `docs/OUTCOME.md` §9.4's "agreement earns size". An average answers "how
+    enthusiastic is the average seat covering this name", a quantity the edge
+    statement never names and nobody asked for. What the edge names is
+    BREADTH: how much independently-sourced, same-direction evidence this
+    candidate has. A sum measures that; an average measures it out.
+
+    Why a sum is the doctrine-clean fix and not just a different arbitrary
+    choice (`qamc-no-arbitrary-numbers-principle`):
+
+      * It introduces NO number. It deletes a divisor. Every constant in the
+        arithmetic afterwards — the seat weights, the conviction ordinal —
+        is one that was already ratified for this module and is unchanged.
+      * It is monotone by construction. Every term is `weight > 0` times a
+        non-negative pair of signals, so an added seat can only ADD.
+        "Agreement can only add" stops being a property to test for and
+        becomes a property of the arithmetic.
+      * Consistency is already enforced upstream of it, not inside it: a
+        group whose directions disagree is dropped whole, below. So a sum can
+        never aggregate disagreement into a bigger number.
+
+    Two consequences worth stating plainly rather than discovering later:
+
+      * The score is no longer bounded at 2.0 and no longer comparable to a
+        score recorded before 2026-09-13. It remains absolute (no
+        cross-candidate normalisation), so a candidate's score still does not
+        move when a peer joins the run.
+      * Coverage now moves the score. A name carrying a live earnings filing
+        and a confirmed smart-money flow outranks an otherwise identical name
+        with only a chart, and it drops back when that coverage expires.
+        That is the intended reading of breadth, and it is what
+        `src/rotation.py`'s relative margin will compare — the margin is a
+        ratio, so it is unaffected by the change of scale, but it IS affected
+        by coverage decay on a held name. Called out in `docs/WORK.md`.
+
+    The reward:risk tiebreak below stays a weighted MEAN, deliberately. It
+    aggregates several seats' estimates of ONE quantity in a real unit; two
+    seats both reading 2.0 do not make 4.0. Evidence adds, measurements
+    average.
+
+    A neutral verdict has no lean and cannot be summed into anything, so it
+    does not enter the score — but as of 2026-09-13 it is no longer dropped
+    without trace: the seat's name is recorded on
+    `RankedCandidate.neutral_seats`, so a reader can tell "this seat looked
+    and came back with nothing" from "this seat never looked". A symbol whose
+    seats disagree on direction is NOT ranked here — that is a conflict for
+    §9.3/§9.4 to adjudicate, and ordering it would hide the disagreement
+    inside a number. It is dropped with the reason recorded on the caller's
+    side (`candidate_eligibility`), never silently.
 
     **One verdict per (symbol, seat).** A caller CAN hand this two verdicts
     from the same seat on the same symbol in one run — e.g. earnings, if two
     filings for one ticker were both analysed the same session (a real,
     if uncommon, case: nothing upstream enforces one-filing-per-symbol-per-
-    run). Averaging every seat's contribution already assumes one vote per
+    run). Aggregating per seat already assumes one vote per
     seat (`SEAT_WEIGHT` is keyed by seat name, not by verdict) — silently
     letting a duplicate through would double that seat's weight without
     anyone deciding it should count twice. Found and fixed 2026-09-03 by an
@@ -257,10 +327,14 @@ def rank_verdicts(
     applied one level finer (per seat, not just per symbol).
     """
     by_symbol: dict[str, dict[str, AnalystVerdict]] = {}
+    neutral_by_symbol: dict[str, dict[str, AnalystVerdict]] = {}
     for verdict in verdicts:
-        if verdict.direction == "neutral":
-            continue
-        by_symbol.setdefault(verdict.symbol.upper(), {})[verdict.seat] = verdict
+        # Same last-wins-per-(symbol, seat) rule on both sides, so a seat
+        # that reported twice cannot appear as both a scorer and a no-lean.
+        target = (
+            neutral_by_symbol if verdict.direction == "neutral" else by_symbol
+        )
+        target.setdefault(verdict.symbol.upper(), {})[verdict.seat] = verdict
 
     ranked: list[RankedCandidate] = []
     for symbol, seat_verdicts in by_symbol.items():
@@ -269,11 +343,12 @@ def rank_verdicts(
         if len(directions) != 1:
             continue
         weights = [seat_weight(v.seat) for v in group]
-        total_weight = sum(weights)
-        magnitude = sum(v.magnitude * w for v, w in zip(group, weights)) / total_weight
+        # SUM, not mean — see the docstring. Adding an agreeing seat adds a
+        # non-negative term and can never reduce the total.
+        magnitude = sum(v.magnitude * w for v, w in zip(group, weights))
         conviction = sum(
             conviction_score(v.conviction) * w for v, w in zip(group, weights)
-        ) / total_weight
+        )
         components = {
             "magnitude": round(magnitude, 4),
             "conviction_score": round(conviction, 4),
@@ -314,6 +389,7 @@ def rank_verdicts(
             score=round(sum(v for k, v in components.items() if k != "risk_reward_tiebreak"), 4),
             verdicts=sorted(group, key=lambda v: v.seat),
             components=components,
+            neutral_seats=sorted(neutral_by_symbol.get(symbol, {})),
         ))
     # Highest composite first; on a tie, highest reward:risk next (real
     # information about the candidate, see module docstring fix #2 and the

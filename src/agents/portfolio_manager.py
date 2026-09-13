@@ -1598,11 +1598,18 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             "The names below passed every rule that can be checked before you "
             "decide (actionable rating; longs BUY-eligible; R/R at or above "
             "the floor, or a current state-change row naming the symbol; net "
-            "independent evidence ≥ 1). They are ORDERED by a composite of "
-            "each reporting seat's direction magnitude and conviction — "
-            "technical and earnings weighted 1.2x, news at 1.0x baseline, "
-            "smart_money and macro at 0.8x, a research-informed prior "
-            "(2026-09-03), not a measurement of THIS desk's own analysts. "
+            "independent evidence ≥ 1). They are ORDERED by the SUM across "
+            "every seat that reported a direction on the name, of that "
+            "seat's stated strength plus its stated conviction — technical "
+            "and earnings weighted 1.2x, news at 1.0x baseline, smart_money "
+            "and macro at 0.8x, a research-informed prior (2026-09-03), not "
+            "a measurement of THIS desk's own analysts. A SUM, so more "
+            "agreeing seats always score higher: breadth is the point, and "
+            "an agreeing seat can never pull a name down. Only technical "
+            "states a strength of its own (its rating rungs); the other four "
+            "seats have no strength scale, so they contribute their "
+            "conviction only. The score is therefore NOT capped at 2.0 and "
+            "not comparable across sessions with different coverage. "
             "This is the tiebreak among equally eligible names: to take a "
             "lower-ranked name over a higher one, say what the ranking does "
             "not see. It is not a size, and it does not waive any rule "
@@ -1615,11 +1622,20 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 invalidation = "; ".join(
                     f"{v.seat}: {v.invalidation}" for v in c.verdicts if v.invalidation
                 )
+                # A seat that looked and came back with no lean is stated,
+                # not omitted (2026-09-13). Otherwise "macro's own sector
+                # rows contradicted each other on this name" is invisible
+                # here and reads exactly like "macro never covered it".
+                no_lean = (
+                    f" | no lean from: {', '.join(c.neutral_seats)}"
+                    if c.neutral_seats else ""
+                )
                 lines.append(
                     f"{i}. {c.symbol} — {c.direction} | score {c.score:.2f} "
-                    f"(magnitude {c.components['magnitude']:.2f} + conviction "
-                    f"{c.components['conviction_score']:.2f}) | seats: {seats} "
-                    f"({convictions}) | invalid if — {invalidation}"
+                    f"(strength {c.components['magnitude']:.2f} + conviction "
+                    f"{c.components['conviction_score']:.2f}, summed over "
+                    f"{len(c.verdicts)} seat(s)) | seats: {seats} "
+                    f"({convictions}){no_lean} | invalid if — {invalidation}"
                 )
         else:
             lines.append("(no name passes every pre-decision rule today)")
