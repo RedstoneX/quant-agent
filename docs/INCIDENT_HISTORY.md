@@ -81,8 +81,10 @@ The desk computes ATR, not ADR; the substitution is stated in the code.
 One narrow refusal survives on different grounds: a listing with fewer
 completed sessions than the analyst's own 200-session trend reference is
 refused as too young to measure, checked first so it is named as such and
-not filed as a dead-feed fault by PR #326's classification, which would
-not have caught it (its own floor is 11 bars).
+not filed as a dead-feed fault by PR #326's classification. (On merging
+#326 the next day its coverage minimum was unified with the scan's own
+14-bar precondition and its short-history fault state dropped as a
+duplicate of this refusal — see the third entry of this date.)
 
 **Verified, not assumed: sizing already shrinks as the stop widens.** The
 risk-based path divides a fixed risk budget by the stop distance on every
@@ -6501,10 +6503,29 @@ them one by one:
 can never be confused: a *refusal* is a judgement about the trade; a
 *fault* means the share could not be measured. The technical analyst now
 records, beside the levels it computed, what the bar history actually was
-(nothing arrived / too few bars / bars arrived but were unusable / enough
-clean bars for the scan to run), read from the bars themselves and from the
+(nothing arrived / too few clean bars for the scan to run / enough clean
+bars for the scan to run), read from the bars themselves and from the
 scan's own minimum window — no chosen threshold. Only "enough clean bars,
 nothing found" stays a refusal.
+
+**Reconciled on merge (2026-09-13) with the same-day stop-width work
+(item 54, PR #331).** Three different "minimum bars" had appeared: this
+work's coverage check used the pivot scan's 11 bars, the level scan itself
+had since come to need 14 (it now reads an ATR for its relevance window),
+and item 54 refuses a listing with fewer than 200 completed sessions (the
+analyst's own longest indicator window). They are now two, and they answer
+two different questions. The scan's precondition is ONE constant read from
+its own two parts (a pivot needs 11 bars, an ATR needs 14, so 14), used by
+both the scan and the coverage check so they cannot disagree. The 200 is
+not a data question at all: a listing too young to measure is a trade
+REFUSAL by name, made by the constructor BEFORE this classification runs,
+exactly as item 54 built it. This work's separate "too few bars" fault
+state was therefore dropped as a duplicate — every history shorter than
+the scan minimum is shorter than 200, so item 54's refusal always names
+it first — and the remaining "bars arrived but cannot run the scan" state
+is the fail-closed backstop for a row whose session count was never
+recorded. A dead feed (no bars at all) is still a fault, which item 54
+deliberately does not judge.
 
 A fault is written to the record under its own name (`data_fault`, with the
 specific fault code) instead of `constructor_dropped`, so the desk's own
