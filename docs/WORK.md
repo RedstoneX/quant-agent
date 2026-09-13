@@ -701,43 +701,39 @@ needs an owner decision between two competing `read_price_bars`
 implementations (`rescue/price-provenance` branch), a real architecture
 choice, not a mechanical merge.
 
-**17. The desk can switch itself off silently — DEFECT. Observed, not theorised.**
+**17. Backup alert channel — OWNER DECISION, not a defect. (Was: "the desk can switch itself off silently.")**
 
-Hit live 2026-09-02 while running a benchmark on a scratch copy. A database
-that could not be opened tripped the paid-analysis emergency latch, which is
-DURABLE — it survives restarts and requires a human to clear a file before
-any paid analysis runs again. **And the alert about it failed too**, printing
-"cost-circuit unavailable alert was not delivered to Telegram".
+The original defect (hit live 2026-09-02: a database fault latched
+paid-analysis off durably, and the alert about the latch also failed to
+send, so the desk sat stopped with nobody told) is closed. All three parts
+shipped 2026-09-03, and the one part left genuinely open — whether the
+production box was actually running the fix, not just carrying it in the
+repository — is now verified closed too (`docs/INCIDENT_HISTORY.md`,
+2026-09-13): the desk-wide silence watchdog's systemd timer went uninstalled
+on the box for over a week after shipping, was caught daily by the separate
+unit-drift watchdog, and was installed and confirmed running 2026-09-13.
 
-So the failure mode is: desk stops thinking, nobody is told, and it stays
-stopped until a person happens to look. On an unattended desk that is a day
-(or a weekend) of no trading that presents as a quiet market.
-
-**Three distinct defects, and they compound:**
-
-  a. **SHIPPED 2026-09-03 — `LLMCostCircuitBreaker._run_with_infra_retry`**
+  a. SHIPPED 2026-09-03 — `LLMCostCircuitBreaker._run_with_infra_retry`
      separates a transient budget-read failure (retries with backoff) from
      a real, measured breach (latches immediately, unchanged). Full
      detail: `docs/INCIDENT_HISTORY.md` ("item 17(a)/(b)").
-  b. **SHIPPED 2026-09-03.** A failed latch alert is now persisted and
+  b. SHIPPED 2026-09-03. A failed latch alert is now persisted and
      retried on any later boundary/process, instead of vanishing after one
-     failed send. A real second notification channel (beyond Telegram) was
-     NOT built — a new dependency/design tradeoff, not a retry-count
-     choice. **DEFERRED, no due date — see the note above.** (This line
-     used to carry its own "DECIDE BY 2026-09-17" text; PR #234 deferred
-     the decision and removed the DECISIONS PENDING copy but missed this
-     duplicate. One status, recorded once, above.)
-  c. **SHIPPED 2026-09-03 — `src/silence_watchdog.py` +
-     `scripts/silence_heartbeat.py`**, alerting on "no completed session in
-     N scheduled windows", desk-wide. Threshold RATIFIED at 2 (~1hr), not
-     the 6 shipped with — see `docs/INCIDENT_HISTORY.md` ("item 17c").
-
-All three parts of item 17 are now shipped; the remaining open point is the
-second-channel decision under (b) above.
+     failed send. The one thing NOT built is a real second notification
+     channel (beyond Telegram) — a new dependency/design tradeoff, not a
+     retry-count choice. **This is the only remaining open point of item
+     17: DEFERRED, no due date.** The decision and recommendation are
+     recorded once, in `docs/BOARD_NOTES.md` ("item 17") — not duplicated
+     here.
+  c. SHIPPED 2026-09-03 — `src/silence_watchdog.py` +
+     `scripts/silence_heartbeat.py`, alerting on "no completed session in
+     N scheduled windows", desk-wide. Threshold RATIFIED at 2 (~1hr).
+     Production deployment gap (timer never installed on the box) found
+     2026-09-12, confirmed fixed 2026-09-13 — see
+     `docs/INCIDENT_HISTORY.md`.
 
 Related: `qamc-openrouter-pricing-spof` records the same latch reachable via
-a stale price list. That path was fixed 2026-09-02; **this one was not** —
-the latch itself is the shared hazard, not any single route into it.
+a stale price list. That path was fixed 2026-09-02.
 
 **18. 70% of the PM's prompt was earnings-filing prose, not a conclusion — MEASURED 2026-09-02, PARTIALLY FIXED, core cause MERGED 2026-09-04 (PR #252), real follow-ons below.**
 
@@ -978,7 +974,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **Cost while unanswered:** two invented dollar cutoffs silently discard insider filings, and nobody can say whether they discard signal or noise. A $90,000 purchase by an officer whose entire position is $200,000 is thrown away; a $300,000 purchase by someone holding $80m is kept. The direction of the error is unknown, which is the actual problem.
 
-**53. A paused desk leaves part of every fractional position with NO stop, and nothing said so — OPEN, owner call, found 2026-09-12.** The alarm is built; what to do with the remainder is the decision. Verified live 2026-09-12: ORCL 5.3089 shares held, one stop-limit at the broker for 5.0. The 0.3089-share DAY leg lapsed at the close on 2026-09-02 exactly as §11.1 designs, and the trading timers were disabled before the 09-03 open, so the session sweep that re-places it never ran — six full sessions (09-03 to 09-11) with $46 of a $798 position unprotected, and every record on the box calling it "expected overnight". NOT a flooring bug: `_split_protective_qty` is working as designed. NOT fixable at the broker: fractional orders must be DAY (measured 2026-09-01, code 42210000; Alpaca's fractional-trading page says the same) — no durable fractional stop exists. Shipped: `src/coverage_watchdog.py`, run from the 06:15 ET alert-heartbeat unit (fires whether or not trading timers are on); alerts once per trading day when broker coverage is short of held AND no session ran during the last cash session. Read-only. **The decision (BOARD_NOTES 53):** what to do with the remainder while paused — close it, accept it with the alert, or go whole-share (owner already declined whole-share on 2026-09-02). Also found, NOT fixed: the repo's silence-watchdog timer unit is not installed on the box (no state file, absent from the timer list), so item 17c's alarm has never actually run in production. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-12.
+**53. A paused desk leaves part of every fractional position with NO stop, and nothing said so — OPEN, owner call, found 2026-09-12.** The alarm is built; what to do with the remainder is the decision. Verified live 2026-09-12: ORCL 5.3089 shares held, one stop-limit at the broker for 5.0. The 0.3089-share DAY leg lapsed at the close on 2026-09-02 exactly as §11.1 designs, and the trading timers were disabled before the 09-03 open, so the session sweep that re-places it never ran — six full sessions (09-03 to 09-11) with $46 of a $798 position unprotected, and every record on the box calling it "expected overnight". NOT a flooring bug: `_split_protective_qty` is working as designed. NOT fixable at the broker: fractional orders must be DAY (measured 2026-09-01, code 42210000; Alpaca's fractional-trading page says the same) — no durable fractional stop exists. Shipped: `src/coverage_watchdog.py`, run from the 06:15 ET alert-heartbeat unit (fires whether or not trading timers are on); alerts once per trading day when broker coverage is short of held AND no session ran during the last cash session. Read-only. **The decision (BOARD_NOTES 53):** what to do with the remainder while paused — close it, accept it with the alert, or go whole-share (owner already declined whole-share on 2026-09-02). Also found on 2026-09-12: the repo's silence-watchdog timer unit was not installed on the box (no state file, absent from the timer list), so item 17c's alarm had never actually run in production. **Fixed 2026-09-13** — installed and confirmed running; see item 17 and `docs/INCIDENT_HISTORY.md`.
 
 **55. What IS a structural level — what makes a turning point, and how wide is its zone? OPEN, no derivation exists for either half. Filed 2026-09-13.** *Consolidates two questions deliberately left unanswered on 2026-09-13; they are one question about one object and must not be split again.*
 
