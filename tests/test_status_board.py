@@ -1752,7 +1752,11 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # stated rule for a resolved item: written up in docs/INCIDENT_HISTORY.md
     # and removed outright, not condensed into a pointer. Their numbers are
     # retired and must never come back under the same key.
-    for rank in (14, 33, 34, 36, 41, 42, 43, 47, 51, 54):
+    #
+    # 28 joined them on 2026-09-13: the permanently-red rehearsal cost-ceiling
+    # test was re-diagnosed and rewritten, written up in
+    # docs/INCIDENT_HISTORY.md, and deleted from the queue.
+    for rank in (14, 28, 33, 34, 36, 41, 42, 43, 47, 51, 54):
         assert rank not in by_rank, (
             f"item {rank} is retired and was deleted from docs/WORK.md; "
             "it must not reappear in the funnel queue"
@@ -1771,8 +1775,9 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     for rank in (18, 32):
         assert by_rank[rank].bucket == "open", rank
         assert by_rank[rank].part_done is True, rank
-    # And the negated lines stay open, as they always did.
-    for rank in (28, 30):
+    # And the negated line stays open, as it always did. (28 was the other
+    # one; it is retired above.)
+    for rank in (30,):
         assert by_rank[rank].bucket == "open", rank
 
 
