@@ -607,6 +607,12 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.risk_manager_provider,
             provider_order=config.llm.get_provider_order("risk_manager"),
+            # The reviewer's standing sheet renders its limits from THIS
+            # object (`{{risk.*}}` placeholders, src/agents/prompt_limits.py),
+            # which is the same `config.risk` the engine below is built from.
+            # Passing it explicitly means the seat cannot be briefed against a
+            # settings file other than the one this process is running on.
+            risk_config=config.risk,
         )
         self.risk_engine = RiskRuleEngine(RiskConfig(
             max_position_pct=config.risk.max_position_pct,
@@ -652,6 +658,33 @@ class TradingPipeline:
             # Result: a user opting in to margin had their BUYs blocked
             # by a hard rule the agent didn't know was active.
             allow_margin=config.risk.allow_margin,
+            # SAME OMISSION CLASS AS `allow_margin` DIRECTLY ABOVE. This
+            # `RiskConfig(...)` is hand-enumerated, so any declared setting
+            # left out of it silently falls back to the pydantic CLASS
+            # DEFAULT and settings.yaml is ignored for that field. 22 of the
+            # declared risk settings were in that state before this change;
+            # today every one of those defaults happens to equal the settings
+            # value, so nothing is live-wrong — it is latent, and
+            # `allow_margin` directly above is the proof that it does not
+            # stay latent forever.
+            #
+            # The four threaded here are the ones the Risk Manager's standing
+            # sheet now RENDERS from settings.yaml (see
+            # src/agents/prompt_limits.py). Rendering a value into the
+            # reviewer's briefing while the engine enforced a different
+            # object's default would be the same two-homes defect this
+            # change removes, pointed the other way. Threading them makes
+            # "the seat is briefed against what the engine enforces" true
+            # rather than merely intended, and `tests/
+            # test_risk_prompt_limits_live.py` now pins it.
+            #
+            # The other 18 are NOT touched here: they predate this work, they
+            # are not live-wrong, and sweeping them would change enforcement
+            # nobody has reviewed. Recorded in docs/WORK.md instead.
+            max_single_short_pct=config.risk.max_single_short_pct,
+            max_gross_bearish_pct=config.risk.max_gross_bearish_pct,
+            min_position_risk_pct=config.risk.min_position_risk_pct,
+            max_portfolio_risk_pct=config.risk.max_portfolio_risk_pct,
         # docs/WORK.md item 32 (owner call 2026-09-11). Lets the daily
         # circuit breaker measure a loss against the normal daily move of
         # the book actually held — from its holdings' real market price

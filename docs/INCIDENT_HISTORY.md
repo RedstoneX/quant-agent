@@ -22,6 +22,82 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — a prompt limit that was wrong the moment it was written, and the drift-immune phrasing it replaced
+
+**In plain words:** the desk's risk reviewer is briefed by a written
+instruction sheet. One sentence on it said no single holding may exceed 33% of
+the book. The real limit is 65%. This was NOT a number that went stale over
+time — it was wrong on the day it was typed.
+
+**What actually happened.** Commit `e1c639a2` (2026-09-11, PR #297, titled
+"single-name cap 100 -> 33") changed `risk.max_position_pct` and edited the
+reviewer's sheet in the same diff, about a hundred lines apart. The change
+landed at **65**, not the 33 in its own title — the owner reviewed the
+derivation and set his own risk-appetite number partway through. One hunk got
+the correction and the other did not. So the sheet said 33 from its first
+minute.
+
+**The harm is smaller than it first looks, and saying so matters.** The SAME
+commit also wrote `max_position_pct=65` correctly into the sheet's hard-rule
+inventory — the more authoritative of the two places. The sheet therefore
+CONTRADICTED ITSELF; it did not uniformly teach a wrong ceiling. No log row,
+no verdict and no modification has been found showing the stale 33 ever
+changed an outcome, and none is claimed. The honest description of what was
+fixed is **"removed an internal contradiction and the mechanism that allowed
+it"**, not "stopped the desk trading against a wrong limit". Overstating a
+finding is the same failure as understating one.
+
+**The part worth learning from.** The line that commit REPLACED read
+"`max_single_short_pct` (10%, **half the long single-name ceiling**". That is
+a RELATION. It names one number and expresses the other as a relationship, so
+it carries no second copy and cannot go wrong when either limit moves. The
+commit swapped a drift-immune phrasing for a hand-typed literal — and the
+literal was wrong immediately. The lesson is not "be more careful when
+copying numbers"; it is that a sentence about how two limits RELATE should
+stay relational, and only a limit the reviewer actually AUDITS against needs
+its value stated at all.
+
+**A second, older one on the same sheet.** It also said the constructor caps
+a stop-out at 0.5% of equity. The ratified per-trade envelope is 5%
+(`max_position_risk_pct`, 2026-08-27); 0.5 is `min_position_risk_pct`, the
+starter-size floor — a different setting. That sentence had genuinely gone
+stale, and it was doubly misleading: at 5% the outer envelope mostly does not
+bind, because the §9.4 agreement ceiling and the portfolio budget allocator
+narrow the real per-trade budget first. A reviewer reconciling a 3% cap-note
+against a sheet naming 5% as THE cap is pointed at the wrong mechanism.
+
+**What was ruled out.** Not a model failure: the reviewer applied the numbers
+it was given. Not a settings error: `max_position_pct: 65` was right
+everywhere the engine reads. Not the pipeline: the value reached the
+deterministic gate intact. Only the briefing was wrong, and the briefing was
+the one input nothing compared against anything.
+
+**A latent defect found while fixing it, worth more than the original.**
+`src/pipeline.py` builds the risk engine's config from a hand-enumerated
+argument list. Any declared setting left out of that list silently falls back
+to the pydantic class default and `settings.yaml` is ignored for it. **22 of
+the declared risk settings were in that state.** Today every one of those
+defaults happens to equal its settings value, so nothing was live-wrong — but
+this has bitten before: `allow_margin` was the same omission, defaulting to
+False while settings.yaml said True, and it blocked a user's BUYs. The four
+settings the reviewer's sheet now renders are threaded through; the other 18
+are recorded in `docs/WORK.md` rather than swept in a change nobody asked for.
+
+**What catches it next time, and what does not.** The sheet no longer contains
+limit values, only placeholders rendered from the same config object the
+engine is built from, checked at agent construction rather than mid-session. A
+test fails the build on two shapes: a number typed beside a setting's name,
+and a number stated as the value of a "ceiling / cap / budget / limit / floor"
+phrase. The second is the one that catches the 2026-09-11 shape; the first,
+tested honestly, does not — that gap is pinned by its own test so nobody
+describes the adjacency check as sufficient. Neither catches a limit restated
+with no setting name and no limit noun, nor a placeholder citing the wrong
+setting for its sentence. This makes the observed defect fail the build. It
+does not make the class of defect impossible.
+
+---
+
+
 ### 2026-09-13 — can the desk still die quietly? Every way it can produce nothing, enumerated (item 11 closed)
 
 **In plain words:** item 11 recorded a day the desk produced no trade ideas at
