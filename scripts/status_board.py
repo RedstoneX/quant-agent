@@ -979,15 +979,25 @@ class QueueItem:
         Reads only `status_tail`, never the whole headline, for the same
         reason: "a fixed-interval poll" describes a mechanism and claims
         nothing.
+
+        The closure-word search itself reads `tail` with every cross-
+        reference to another PR or item stripped first (`_strip_cross_
+        references`) — a status word cited about something ELSE this item's
+        tail happens to mention ("...while PR #343 (merged) repaired...")
+        is not a claim about this item. Negation is still read on the
+        UNSTRIPPED tail: "STILL OPEN" and friends are claims about the item
+        itself and must not depend on whether a reference happens to sit
+        nearby.
         """
         tail = self.status_tail
         if any(w in tail for w in _CLOSURE_NEGATIONS):
             return ""
-        if not _closure_hit(tail, _RENDER_CLOSURE_WORDS):
+        scan = _strip_cross_references(tail)
+        if not _closure_hit(scan, _RENDER_CLOSURE_WORDS):
             return ""
-        if _closure_hit(tail, _RENDER_PART_DONE_WORDS):
+        if _closure_hit(scan, _RENDER_PART_DONE_WORDS):
             return "part_done"
-        if _closure_hit(tail, _RENDER_REVIEW_OWED_WORDS):
+        if _closure_hit(scan, _RENDER_REVIEW_OWED_WORDS):
             return "review_owed"
         return "finished"
 
@@ -1368,6 +1378,35 @@ def _closure_hit(tail: str, words: tuple[str, ...]) -> bool:
     sides costs nothing and removes the whole class of error.
     """
     return any(re.search(r"\b" + re.escape(w) + r"\b", tail) for w in words)
+
+
+#: A closure word describing a DIFFERENT artifact — a pull request, another
+#: item — cited inline in this item's own status tail. Item 60's real tail
+#: is "OPEN, owner call, deferred 2026-09-13 while PR #343 (merged) repaired
+#: the seat's honesty about the exceptions rather than replacing it.": the
+#: item's own word is "OPEN", but "PR #343 (merged)" put "MERGED" — a real
+#: closure word — right next to it, about a PR, not about item 60. Read
+#: naively that put a live, owner-call item in the "finished, not struck
+#: through" bucket, i.e. it looked FINISHED. Same failure family the
+#: `status_tail` split already guards (`status_tail`'s own docstring: reading
+#: the whole headline read "a fixed-interval poll" as a claim of being
+#: fixed) — a closure vocabulary word means nothing until it is confirmed to
+#: be ABOUT this item, not about something this item's own text happens to
+#: mention. Matches "PR #343 (merged)", "#343 (merged)", "item 12 (fixed)" —
+#: a numbered reference immediately followed by its own parenthetical status
+#: — and only that shape, so an item's OWN status is never touched: nothing
+#: here strips a bare "MERGED" or "FIXED" sitting on its own.
+_CROSS_REF_STATUS_RE = re.compile(
+    r"(?:\bPR\s*)?#\d+\s*\([^)]*\)"       # "PR #343 (merged)", "#343 (fixed)"
+    r"|\bitems?\s+#?\d+\s*\([^)]*\)",     # "item 12 (fixed)"
+    re.I)
+
+
+def _strip_cross_references(tail: str) -> str:
+    """`tail` with every parenthetical status about a DIFFERENT numbered
+    artifact removed, so `_closure_hit` can never read one as a claim about
+    the item whose own tail merely cites it. See `_CROSS_REF_STATUS_RE`."""
+    return _CROSS_REF_STATUS_RE.sub(" ", tail)
 
 
 def find_closed_items_not_marked_done(work_md: Path) -> list[str]:

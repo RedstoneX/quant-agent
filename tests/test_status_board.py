@@ -1706,6 +1706,55 @@ def test_an_incidental_use_of_a_new_word_is_not_a_closure_claim(headline):
     assert it.bucket == "open"
 
 
+#: Item 60's real headline, verbatim from `docs/WORK.md` as of 2026-09-13 —
+#: the exact text that classified as `finished_unmarked` before the fix,
+#: because "PR #343 (merged)" put the closure word "MERGED" inside a status
+#: tail whose own word is "OPEN".
+_ITEM_60_REAL_HEADLINE = (
+    "The exit path shares its risk-review seat with the buy plan, wearing "
+    "five stood-down or inverted checklist exceptions — OPEN, owner "
+    "call, deferred 2026-09-13 while PR #343 (merged) repaired the seat's "
+    "honesty about the exceptions rather than replacing it."
+)
+
+
+def test_a_reference_to_another_prs_status_is_not_a_claim_about_this_item():
+    """Regression for the real item 60: a status tail that cites a
+    DIFFERENT pull request's own outcome ("PR #343 (merged)") must not be
+    read as this item's own closure. Before the fix this failed —
+    `closure_claim` returned "finished" and `bucket` was
+    `finished_unmarked`, hiding a live, undecided owner-call item as
+    already-done."""
+    it = sb.QueueItem(60, "t", "", "", None, False,
+                      headline=_ITEM_60_REAL_HEADLINE)
+    assert it.closure_claim == ""
+    assert it.claims_closure is False
+    assert it.bucket != "finished_unmarked"
+
+
+@pytest.mark.parametrize("tail,removed", [
+    ("OPEN, deferred while PR #343 (merged) repaired part of it.", "MERGED"),
+    ("OPEN, deferred while #343 (merged) repaired part of it.", "MERGED"),
+    ("OPEN, see item 12 (fixed) for the related repair.", "FIXED"),
+])
+def test_strip_cross_references_removes_only_the_referenced_status(tail, removed):
+    """The stripped text still contains the item's OWN status word ("OPEN")
+    — this only removes the parenthetical describing something else."""
+    scanned = sb._strip_cross_references(tail)
+    assert "OPEN" in scanned
+    assert removed not in scanned.upper()
+
+
+def test_a_bare_closure_word_is_still_read_when_it_is_not_a_cross_reference():
+    """The fix must not go blind to a real closure word just because a
+    number appears nearby — only a number IMMEDIATELY followed by its own
+    parenthetical status is a cross-reference."""
+    it = sb.QueueItem(1, "t", "", "", None, False,
+                      headline="A thing — FIXED, see item 12 for detail.")
+    assert it.closure_claim == "finished"
+    assert it.claims_closure is True
+
+
 def test_a_word_that_merely_contains_a_closure_word_is_not_one():
     """Substring matching is what makes a growing vocabulary dangerous:
     INCOMPLETE contains COMPLETE, UNRESOLVED contains RESOLVED, and MERGE
