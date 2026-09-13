@@ -543,11 +543,13 @@ def test_hard_trigger_keyword_list_covers_every_prompt_category():
             "circuit breaker",
             "Daily-loss circuit breaker engaged at -3.2%.",
         ),
-        (
-            "Correlation cluster breach",
-            "correlation cluster breach",
-            "Correlation cluster breach: AI book over 55% with this name.",
-        ),
+        # "Correlation cluster breach" was a category here until 2026-09-13
+        # (WORK.md item 44). It was removed from BOTH sides — prompt and
+        # keyword list — because nothing in the desk computes a
+        # correlation-breach event, so the phrase passed on wording alone.
+        # The negative probe below keeps this test honest about that: it
+        # pins the removal on both sides the same way the positive probes
+        # pin the presence of the rest.
         (
             "Stop level hit",
             "Stop level hit",
@@ -567,6 +569,21 @@ def test_hard_trigger_keyword_list_covers_every_prompt_category():
             f"'{label}' category — a legitimate override would be blocked. "
             f"Sample reason that should have matched: {llm_reason!r}"
         )
+
+    # Negative probe — the one category deliberately removed from both sides.
+    assert "which no part of the desk can verify" in prompt_text.lower(), (
+        "the prompt no longer states that 'correlation breach' does NOT "
+        "match the phrase gate. It was removed as an accepted trigger "
+        "2026-09-13 (WORK.md item 44) because nothing can verify it, and the "
+        "prompt must keep saying so. See docs/INCIDENT_HISTORY.md."
+    )
+    assert not _reason_cites_hard_trigger(
+        "Correlation cluster breach: AI book over 55% with this name."
+    ), (
+        "the executor accepts a correlation-breach reason again — this is an "
+        "exit trigger that no part of the desk can check. See "
+        "docs/INCIDENT_HISTORY.md, 2026-09-13."
+    )
 
 
 def test_symbols_already_trimmed_today_pulls_sell_actions(tmp_path):

@@ -301,8 +301,15 @@ _EXIT_TRIGGER_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "regime shift", "regime flip", "regime flipped", "risk-off", "risk off",
     )),
     ("risk_management_hard_stop", (
-        "daily loss", "daily-loss", "circuit breaker", "correlation breach",
-        "correlation cluster breach",
+        "daily loss", "daily-loss", "circuit breaker",
+        # The two correlation phrases stay HERE deliberately, even though
+        # they were removed from the live exit gate 2026-09-13 (WORK.md item
+        # 44). This function is descriptive, not a gate: it categorises rows
+        # that already exist, and dropping the phrases would silently
+        # re-label historical exits as "uncategorised". No NEW exit can carry
+        # them — `pipeline._HARD_TRIGGER_KEYWORDS` rejects the reason before
+        # a trades row is ever written.
+        "correlation breach", "correlation cluster breach",
     )),
     ("broker_stop_fill", ("stop hit", "stopped out")),
 )

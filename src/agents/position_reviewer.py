@@ -587,7 +587,7 @@ class PositionReviewerAgent(BaseAgent):
                 "cited level, fundamental signal flipped, etc.)\n"
                 "  - HIGH-conviction bearish stock-specific state_change reversal landed today\n"
                 "  - Bearish earnings filing analysis posted today for this symbol\n"
-                "  - Daily-loss circuit breaker engaged / correlation cluster breach\n\n"
+                "  - Daily-loss circuit breaker engaged\n\n"
                 "`TARGET_BREACH`, slowing pace, geopolitical noise, valuation stretch, "
                 "concentration drift — these are NOT hard triggers. The earlier action "
                 "already harvested them. Trimming a second time on the same flag is the "

@@ -221,13 +221,6 @@ this line, one heading per item.
 **Example —** If the desk is already near its risk ceiling and a strong new opportunity appears, the decision-maker is shown its own weakest current holding side by side with the new idea, but nothing forces a trade either way.
 
 
-## item 44
-
-**Plain language —** To sell a position it is supposed to keep holding, the desk's AI must name a real reason, and only a short list of reasons is accepted. Two of them — the market regime flipped, or bad news changed the story — are now checked against real data before the sale goes through. The third, "correlation breach", is accepted on the wording alone, because nothing anywhere in the system ever works out whether correlations actually broke. The words are the whole test.
-**Example —** The desk holds a position it is meant to keep for another week. The AI writes "exiting on correlation breach" and the sale executes. Had it written "exiting on regime shift" instead, the system would have checked whether the regime really shifted that day and blocked the sale when it had not. The correlation wording is never checked, so it always works. It is the one phrase that reliably opens the door.
-**The decision —** Whether to build something that can actually detect a correlation breach, or to stop accepting the phrase as a reason.
-**Recommendation —** Stop accepting the phrase. Building a detector means first deciding which correlation, measured over how many days, and how large a change counts as broken — three numbers nobody can derive for you, exactly the position you were in with the drawdown sensitivity. A reason that cannot be checked should not be an accepted reason, and removing it costs nothing because the two checkable reasons still cover a genuine change of circumstances.
-
 ## item 45
 
 **Plain language —** Two parts of the desk look for the same thing on a chart: a swing low, meaning a dip with higher prices on both sides of it. One part requires three higher days on each side before it counts. The other requires five. A note written beside the first one claims the two match, so that a swing low means the same thing everywhere. They do not match, and that note has been wrong the whole time.

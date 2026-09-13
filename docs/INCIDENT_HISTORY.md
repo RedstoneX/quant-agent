@@ -22,6 +22,90 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — "correlation breach" was a password, not a reason, and has been removed from the accepted exit vocabulary
+
+**In plain words:** to sell a position it is supposed to keep holding, the
+desk's AI has to name a reason from a short accepted list. One of those
+reasons — "correlation breach" — was accepted on the wording alone. Nothing
+anywhere in the desk ever worked out whether correlations had actually broken,
+so the phrase always worked. It was the one entry on the list that could not
+fail. It has been taken off the list.
+
+**What the audit found, and one thing it got wrong.** The audit (WORK.md item
+44) reported that the claim reached the holding-discipline checker and came
+back "unverifiable by construction", which by design passes without blocking.
+That is not what happened. The checker has no branch for a correlation claim
+at all — it only ever examines a claimed regime flip and a claimed
+HIGH-conviction bearish state change. A correlation claim returned the plain
+"ok" verdict, meaning *nothing to say*. So the phrase was not merely
+unverified, it was **unrecorded**: an "unverifiable" verdict at least writes an
+audit-trail row a human could later read, and a correlation exit wrote none.
+The hole was one notch deeper than the item described.
+
+**Why removal rather than building a detector.** The item concluded that
+building a verifier requires deciding which correlation, over what window,
+and how large a change counts as broken — three numbers — and that this was
+therefore an owner decision. That conclusion conflicts with the owner's own
+standing instruction never to be asked to pick a market-structure number:
+research the published literature, or leave the thing switched off. So the
+literature was searched before anything was written.
+
+**What the search found.** No published source consulted gives an operational
+definition of a correlation-breakdown *event* with a stated measurement window
+and a stated numeric threshold:
+
+- AnalystPrep's FRM Part 2 note on correlation basics and correlation risk
+  (fetched 2026-09-13) defines correlation risk conceptually — a loss arising
+  because realised correlation differed from anticipated correlation — and
+  gives no window, no threshold, and no trigger point.
+- *Notes on Correlation Stress Tests* (arXiv 2503.16200, fetched 2026-09-13)
+  addresses stress-testing correlation assumptions rather than declaring
+  breakdown events, and states no such definition.
+- The contagion literature the search surfaced — Forbes & Rigobon, *No
+  Contagion, Only Interdependence* (2002), and Longin & Solnik (2001) on
+  extreme correlation — tests whether correlation *changed* around a crisis
+  date that is supplied from outside the test, retrospectively, with a
+  heteroskedasticity adjustment. That is a research question about a period
+  already known to have been a crisis. It is not, and cannot be turned into,
+  a same-day per-position exit trigger.
+- What the search did surface with concrete numbers were vendor charting
+  indicators with user-configurable lookback, stability window and threshold
+  inputs. Configurable is the opposite of derived: those are the three
+  invented numbers the owner's rule forbids, wearing a product name.
+
+**The second, independent reason.** Even a correlation you could measure is
+computed *from the price series*. `exit_guard` kept a separate list of
+triggers that come from OUTSIDE the tape, which are allowed to bypass the
+1×ATR noise band on the grounds that an earnings miss is an earnings miss
+whatever the price did. "Correlation breach" was on that list and never
+belonged there: a correlation number *is* the tape. So the phrase was also
+buying a noise-band bypass it had no claim to.
+
+**Ruled out.** Reusing the desk's existing cluster machinery was considered
+and rejected. `src/data/correlation.py` groups holdings into |r| >= 0.7
+clusters at decision time; it has no notion of a break, only of a grouping.
+Its 0.7 cutoff is itself carried in the repo with no source behind it, so
+building a breach detector on top of it would have compounded one unsourced
+number rather than replacing it. Also rejected: keeping the phrase but
+logging it. A logged free pass is still a free pass.
+
+**What changed.** Both phrasings were removed from the hard-trigger
+vocabulary in the pipeline and from the external-information list in
+`exit_guard`, and from the position-reviewer prompt so the model is not being
+invited to emit a phrase that will now be dropped. The exit-reason
+*categoriser* in the storage layer deliberately still recognises them, because
+it describes rows that already exist and dropping the phrases there would
+silently re-label historical exits as uncategorised.
+
+**What would catch it next time.** The general shape of this defect is an
+accepted claim with no corresponding recorded fact. Every other entry on the
+trigger list names something the desk writes down — a news row, an earnings
+row, a macro regime read, a broker fill, a deterministic circuit breaker.
+That is the test to apply before adding a trigger: name the row that proves
+it happened. `tests/test_correlation_breach_not_a_trigger.py` pins the
+removal, the noise-band classification, the fact that no other trigger was
+narrowed, and the end-to-end exit that used to slip through.
+
 ### 2026-09-12 — opportunity-cost rotation stopped only describing the problem and started acting on it, and was enabled rather than shipped dark
 
 **In plain words:** the desk could already see when money was tied up in a

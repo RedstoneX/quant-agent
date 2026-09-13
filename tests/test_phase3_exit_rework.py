@@ -252,7 +252,7 @@ def test_deterioration_claims_are_recognised(reason):
     "bearish earnings — revenue missed by 8%",
     "macro regime flipped to risk-off today",
     "high-conviction bearish state change on the sector",
-    "correlation breach: now 3 names in one cluster",
+    "sector shock — the whole group gapped down together",
 ])
 def test_new_information_exits_are_not_deterioration_claims(reason):
     assert is_deterioration_claim(reason) is False
@@ -463,7 +463,6 @@ def test_trigger_vocabulary_covers_every_category_spec_38_sanctions():
         "regime flip confirmed this morning",
         "macro flipped risk-off today",
         "daily loss circuit breaker fired",
-        "correlation breach: three names now one cluster",
         "stopped out at the broker",
     ):
         assert _reason_cites_hard_trigger(reason) is True, reason
@@ -781,7 +780,6 @@ def test_external_information_bypasses_the_noise_band():
         "adverse news: FDA rejection",
         "sector shock hit the whole group",
         "macro regime flip to risk-off",
-        "correlation breach across the cluster",
         "stopped out at the broker",
     ):
         assert cites_external_information(reason) is True, reason
