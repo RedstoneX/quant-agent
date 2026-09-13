@@ -604,7 +604,7 @@ def test_there_is_no_sell_fraction_threshold_left_to_configure():
     cutoff no cited source measures; the fix was to delete it rather than to
     move it, so the field must not quietly reappear on either the classifier
     thresholds or the config model. If a future change needs one, it needs a
-    source that measures a boundary first — WORK.md item 55."""
+    source that measures a boundary first — WORK.md item 62."""
     from src.config import SmartMoneyConfig
 
     assert not hasattr(InsiderSignalThresholds(), "min_material_sell_fraction")

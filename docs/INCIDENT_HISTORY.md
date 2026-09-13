@@ -130,7 +130,7 @@ weight 0.0, which asserts the row is uninformative when the source says it is
 informative and positive, and it does not require inventing a number. The
 real gap is structural: `signal_weight` is a single "how much attention"
 scalar with no way to express "attention, and the sign is the other way".
-That is now WORK.md item 55, and it is deliberately left open rather than
+That is now WORK.md item 62, and it is deliberately left open rather than
 closed by choosing a multiplier.
 
 **The 10b5-1 branch went with it.** A small planned sale used to be demoted
@@ -155,12 +155,122 @@ accurately, every figure checked out, and the conclusion still did not
 follow, because nobody asked whether the paper had measured the boundary the
 setting needed or merely printed a number near it.
 
-**Decision recorded, closing the item.** No owner call is needed: nothing had
-to be acquired and nothing paid for. Item 52 is deleted; the residue is item
-55.
+**Decision recorded.** No owner call is needed: nothing had to be acquired and
+nothing paid for. Item 52 is NOT deleted — it was independently reframed on
+main the same day into a different, genuinely open question (should an insider
+trade be admitted or refused on ANY measure of its size), which this work does
+not answer and deliberately did not build. What this work does settle is that
+item's original premise: the holdings data exists, and the relative measure is
+computed and reported. That correction is written into item 52, and the one
+piece that cannot be settled by any source found is filed separately as item
+62.
 
 ---
 
+### 2026-09-13 — a fifth of what the trade-picking seat reads said nothing at all (item 18d / PM gate item 7)
+
+**In plain words:** the seat that actually picks the trades reads a long
+briefing assembled from every other seat's work. Nobody had ever counted what
+is in the CURRENT briefing — the only count anyone had was from 2026-09-02,
+before the earnings fix. Counting it found that about a fifth of everything
+that seat reads is filler: entries for companies where the analyst read the
+filing, reached no view, and still got four lines of space to say so, and
+entries for stocks with no tradeable setup that spent four fields printing the
+word "None". Those are now one line each. The briefing is 15% shorter and
+nothing was thrown away — every company is still named, and the reason it has
+no view is still stated next to its name.
+
+**The measurement, so nobody has to redo it.** The frozen `run_64290730`
+fixture rendered through the live `build_user_message`: **100,968 characters
+across 25 sections.** Section shares before the change:
+
+| Section | chars | % | conclusion or raw material |
+|---|---|---|---|
+| Earnings Analysis | 32,850 | 32.5% | conclusion (call/conviction/thesis/falsifier) — but see below |
+| Technical Analysis Reports | 17,408 | 17.2% | conclusion (rating/conviction/geometry/falsifier + 1 sentence) |
+| Independent Source Agreement | 11,902 | 11.8% | conclusion (deterministic arithmetic) |
+| Candidate Ranking | 8,753 | 8.7% | conclusion (deterministic) |
+| Canonical Evidence Registry | 6,869 | 6.8% | conclusion (machine-readable stances) |
+| Macro Analysis | 5,798 | 5.7% | mixed — 2,287 of it is a verbatim 6-paragraph reasoning chain |
+| News Intelligence | 3,247 | 3.2% | conclusion |
+| Current Positions | 2,433 | 2.4% | fact |
+| Prior Evening Insights | 2,192 | 2.2% | conclusion |
+| Portfolio Narrative | 1,822 | 1.8% | fact |
+| Active News State Changes | 1,313 | 1.3% | conclusion |
+| Recurring Missed Themes | 1,037 | 1.0% | conclusion |
+| Risk Manager Verdicts | 995 | 1.0% | conclusion |
+| Your Recent Decisions | 888 | 0.9% | fact |
+| Deterministic BUY Eligibility | 852 | 0.8% | conclusion |
+| Account Status | 568 | 0.6% | fact |
+| Projected Book Preview | 476 | 0.5% | fact |
+| Macro Regime Trajectory | 375 | 0.4% | fact |
+| Recent Loss Pits | 311 | 0.3% | conclusion |
+| Trade Calibration | 198 | 0.2% | fact |
+| Recent System Performance | 197 | 0.2% | fact |
+| Opportunity Rotation | 175 | 0.2% | conclusion |
+| Margin Policy | 125 | 0.1% | rule |
+| Smart Money Evidence | 92 | 0.1% | conclusion |
+| Proposal Conversion | 68 | 0.1% | fact |
+
+**Item 18's "70%" claim is CONFIRMED, not corrected.** The archived
+2026-09-02 render (`PM_PROMPT_run64290730_rendered.txt`, 199,139 chars) breaks
+down as 140,107 chars of Earnings Analysis = **70.4%**. The claim was right to
+one decimal place. It is now 21.5%.
+
+**What the count actually found, which is not what item 18 said was left.**
+Item 18's surviving bullet said earnings was still the biggest section and
+needed "cutting/summarising further". That framing was wrong. Earnings was
+already in the bounded shape PR #252 gave it — the problem was not that the
+conclusions were too long, it was that **38 of the 65 analysed filings had no
+conclusion in them.** The seat returned `sentiment: neutral`, and
+`EarningsAnalysis.to_verdict()` renders no invalidation for a non-directional
+read, so each of those 38 spent four lines on a direction the PM cannot trade,
+a thesis the analyst did not write, and the literal string "Invalidated if:
+not disclosed by the analyst". 16,885 chars — **16.7% of the entire
+briefing** — of an analyst saying nothing, formatted to look like analysis.
+The same shape appeared in the technical section: 21 of 59 reads were
+`neutral`, which by construction means no entry, no stop, no target and
+`risk_reward is None`, so each printed "Entry: None | Stop: None | Target:
+None" and "Invalid if: (not specified)". Another 5.2%.
+
+**Why this is a shape change and not a truncation limit.** There is no length
+threshold anywhere in the fix and no cap on how many entries survive. The
+partition is read from the data: a filing rolls up if and only if its
+collapsed stance is non-directional, and a technical read compacts if and only
+if it is neutral AND has no reward/risk. On a day where every seat reaches a
+call, nothing is shortened at all. No number was invented and none was fitted
+to this desk's history.
+
+**What was deliberately preserved, because losing it would have been the
+regression.** Every rolled-up symbol is still named on its own line with its
+form, filing date, conviction and cache/staleness marker, so "read, concluded
+nothing" stays distinguishable from "never read" — a saving that made coverage
+invisible would have been worse than the filler. A `mixed` stance is NOT
+rolled up: mixed is a disagreement between sources, not an absence of one, and
+a summary that hides a split is worse for the decision seat than the prose it
+replaces. And the whole dissent path is untouched — a neutral earnings read
+still lands in the Canonical Evidence Registry and still subtracts in the
+Independent Source Agreement net score that ceilings position size, so
+shortening the prompt cannot quietly have RAISED sizing. There are tests
+asserting each of those three things against the real fixture.
+
+**What was NOT done, and why.** Macro is the one seat still couriering full
+reasoning: its 6-paragraph `reasoning_chain` goes in verbatim under "audit
+these for logic errors". That is deliberate, it is only 2,287 chars, and
+removing it is a PROMPT change — which the rehearsal rig provably cannot
+validate (it replays recorded answers into a changed prompt and passes
+regardless). It needs the paid `--replay-run` benchmark, which was not
+authorised for this work. The two biggest remaining sections, Technical
+Analysis and Independent Source Agreement, are both already bounded and both
+scale with how many names got covered; there is no honest cap to put on
+either, so the lever there is coverage breadth, not rendering.
+
+**Standing warning, unchanged from item 18a/18b/18c:** this is a measured
+reduction in what the model READS. Nobody has measured whether it decides any
+better. Model-behaviour fixes on this desk have repeatedly measured as
+no-change, and a shorter prompt is not evidence of a better one.
+
+---
 
 ### 2026-09-13 — a prompt limit that was wrong the moment it was written, and the drift-immune phrasing it replaced
 
