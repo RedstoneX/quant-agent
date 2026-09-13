@@ -21,7 +21,10 @@
 
 **Role matters, and not as expected.** CFO purchases outperform CEO purchases — CFOs see the numbers first. Trades by "star" CEOs carry no signal.
 
-**Size relative to holdings, not absolute size.** On the sell side only large sales that are *also* large relative to the insider's total position predict negative returns; small proportional sales are liquidity and diversification noise.
+**Size relative to holdings, not absolute size.** Scott & Xu, *Some Insider Sales Are Positive Signals* (Financial Analysts Journal 60(3), 2004): 512,133 combined transactions, 80,742 company-quarters, 1987–2002, sorted by "shares traded as a percentage of shares owned" into bands of under 10%, 10–50% and over 50%. Size- and B/P-adjusted quarterly excess returns — sales over 100,000 shares: −0.06%, +0.08%, **−0.81%** (only the over-50% band is significant); sales under 100,000 shares: **+0.68%**, **+0.44%**, +0.06% — so a proportionally small sale is a mildly *positive* signal, not merely a neutral one. Purchases scale the same way: +0.38%, **+1.06%**, **+1.42%**; initial purchases, where no prior holding exists, earn an insignificant +0.10%. This is measurement, not assertion. Their ratio is a *net, per-stock-quarter* one over a six-month formation window, so its band returns do not transfer to a single-filing admission gate.
+<https://rpc.cfainstitute.org/research/financial-analysts-journal/2004/some-insider-sales-are-positive-signals>
+
+QAMC parses `sharesOwnedFollowingTransaction` from every Form 4 it downloads, so the ratio needs no new data source (verified 2026-09-13 against a live EDGAR daily index: 77 of 77 open-market P/S rows carried the field). It is computed for buys and sells and reported on every observation; the only place it changes a decision is the routine/opportunistic sell test, whose boundary is Scott & Xu's own 10%.
 
 **Decay.** Roughly 25% of the abnormal return accrues within five days, ~50% within a month, with some persistence to six months.
 

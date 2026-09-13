@@ -26,7 +26,28 @@ taken from ``RESEARCH_FINDINGS.md`` rather than from intuition:
 
 3. **Sell materiality is proportional, not absolute.** "On the sell side only
    large sales that are *also* large relative to the insider's total position
-   predict negative returns."
+   predict negative returns." The primary source behind that line is Scott &
+   Xu, *Some Insider Sales Are Positive Signals* (Financial Analysts Journal
+   60(3), 2004) — 512,133 combined transactions, 80,742 company-quarters,
+   1987-2002 — which measures "shares traded as a percentage of shares
+   owned" in three bands: under 10%, 10-50% and over 50% of the holding.
+   Their size- and B/P-adjusted result: sales over 100,000 shares earn
+   -0.81% quarterly excess return only in the over-50% band (-0.06% and
+   +0.08% in the two lower bands, insignificant), while sales under 100,000
+   shares in the under-10% band earn a *positive* +0.68%. The same variable
+   also differentiates purchases: +0.38% / +1.06% / +1.42% across the three
+   bands, and initial purchases (no prior holding, so no ratio exists) earn
+   an insignificant +0.10%.
+   <https://rpc.cfainstitute.org/research/financial-analysts-journal/2004/some-insider-sales-are-positive-signals>
+
+   Two things follow, and both are honoured here. The materiality boundary
+   is the paper's own lowest band edge (10%), not a number of this desk's
+   invention. And the ratio itself is *reported* on every row, purchases
+   included, rather than being turned into an extra admission cutoff: the
+   paper measures net shares traded per stock-quarter against holdings
+   aggregated across insiders over a six-month formation window, which is
+   not the same object as one Form 4 row, so its band returns do not
+   transfer to a per-transaction gate.
 
 The classifier is pure Python, deterministic, and makes no model call.
 
@@ -80,7 +101,7 @@ class InsiderSignalThresholds:
     cadence_min_mean_gap_days: float = 20.0
     cadence_max_mean_gap_days: float = 120.0
     cadence_max_gap_dispersion: float = 0.25
-    min_material_sell_fraction: float = 0.05
+    min_material_sell_fraction: float = 0.10
 
 
 _DEFAULT_THRESHOLDS = InsiderSignalThresholds()
@@ -169,6 +190,26 @@ class InsiderSignalClass:
         return cls(label=label, reason=reason, detail=detail, weight=_WEIGHTS[label])
 
 
+# Scott & Xu (FAJ 2004) report their percentage-of-shares-owned result in
+# exactly these three bands. They are the paper's own column boundaries, so
+# they are module constants rather than operator-tunable settings: moving
+# them would silently detach the band label from the citation it exists to
+# carry. Nothing downstream gates on them — see BANDS_ARE_REPORTING_ONLY.
+_BAND_LOW = 0.10
+_BAND_HIGH = 0.50
+
+# The bands label a row; they never admit or reject one. The only relative
+# number that changes a classification is
+# ``InsiderSignalThresholds.min_material_sell_fraction``.
+BANDS_ARE_REPORTING_ONLY = True
+
+BAND_UNDER_LOW = "under_10pct"
+BAND_MID = "10_to_50pct"
+BAND_OVER_HIGH = "over_50pct"
+BAND_NO_PRIOR_HOLDING = "no_prior_holding"
+BAND_UNKNOWN = ""
+
+
 def _sell_fraction(shares: float | None, post_shares: float | None) -> float | None:
     """Fraction of the insider's pre-transaction holding that was disposed."""
     if shares is None or post_shares is None or shares <= 0:
@@ -177,6 +218,70 @@ def _sell_fraction(shares: float | None, post_shares: float | None) -> float | N
     if pre_shares <= 0:
         return None
     return shares / pre_shares
+
+
+def _buy_fraction(shares: float | None, post_shares: float | None) -> float | None:
+    """Purchase size as a fraction of the holding the insider already had.
+
+    Scott & Xu's purchase measure is "net insider purchases as a percentage
+    of shares already owned", so the denominator is the *pre*-transaction
+    holding — ``post - shares`` for an acquisition. A non-positive
+    denominator means the insider held nothing beforehand; that is the
+    paper's separately-reported "initial purchase" case, which has no ratio,
+    so ``None`` is returned and the band says so rather than pretending the
+    fraction is infinite.
+    """
+    if shares is None or post_shares is None or shares <= 0:
+        return None
+    pre_shares = post_shares - shares
+    if pre_shares <= 0:
+        return None
+    return shares / pre_shares
+
+
+def _band(fraction: float | None, *, no_prior_holding: bool) -> str:
+    if fraction is None:
+        return BAND_NO_PRIOR_HOLDING if no_prior_holding else BAND_UNKNOWN
+    if fraction < _BAND_LOW:
+        return BAND_UNDER_LOW
+    if fraction <= _BAND_HIGH:
+        return BAND_MID
+    return BAND_OVER_HIGH
+
+
+def holdings_fraction(observation) -> tuple[float | None, str]:
+    """Trade size relative to the insider's own holding, plus its band.
+
+    Reported for both directions and for every row, independently of which
+    classification rule fired: the ratio is evidence the seat should see even
+    when the label was decided by something else (a calendar-routine sale
+    still has a size relative to the position). ``(None, "")`` means the
+    filing did not carry enough to compute one.
+
+    Sells use the pre-transaction holding ``shares + post_transaction_shares``
+    as the denominator; buys use ``post_transaction_shares - shares``. Both
+    reconstruct the same quantity — what the insider held before acting —
+    from the two numbers SEC Form 4 always reports.
+    """
+    if str(getattr(observation, "stream", "") or "") != "insider":
+        return None, BAND_UNKNOWN
+    direction = str(getattr(observation, "direction", "") or "")
+    shares = getattr(observation, "shares", None)
+    post_shares = getattr(observation, "post_transaction_shares", None)
+    if direction == "sell":
+        fraction = _sell_fraction(shares, post_shares)
+        return fraction, _band(fraction, no_prior_holding=False)
+    if direction == "buy":
+        fraction = _buy_fraction(shares, post_shares)
+        no_prior = (
+            fraction is None
+            and shares is not None
+            and post_shares is not None
+            and shares > 0
+            and post_shares - shares <= 0
+        )
+        return fraction, _band(fraction, no_prior_holding=no_prior)
+    return None, BAND_UNKNOWN
 
 
 def _has_inside_role(roles) -> bool:
@@ -324,8 +429,9 @@ def classify_transaction(
                 )
             return InsiderSignalClass.of(
                 ROUTINE, "immaterial_stake_sale",
-                f"Sold {fraction:.1%} of the holding; only sales that are large "
-                "relative to the insider's position predict negative returns.",
+                f"Sold {fraction:.1%} of the holding; Scott & Xu find sales "
+                "below 10% of shares owned do not predict negative returns "
+                "(small ones predict positive returns).",
             )
         planned = (
             " The 10b5-1 flag is set but is deliberately not treated as a "
@@ -344,10 +450,26 @@ def classify_transaction(
         else " Reporting owner holds no officer, director or 10% role, so the "
         "signal is weaker than a named-officer purchase."
     )
+    # Reported, never gated on: Scott & Xu find purchase excess returns rise
+    # with the fraction of the existing holding added, but their measure is a
+    # net per-stock-quarter one and does not license a per-row cutoff.
+    buy_fraction, buy_band = holdings_fraction(observation)
+    if buy_fraction is not None:
+        size_note = (
+            f" Adds {buy_fraction:.1%} to the insider's existing holding."
+        )
+    elif buy_band == BAND_NO_PRIOR_HOLDING:
+        size_note = (
+            " The insider held none of this stock beforehand, so there is no "
+            "size-relative-to-holdings ratio; Scott & Xu report initial "
+            "purchases earning no significant excess return."
+        )
+    else:
+        size_note = ""
     return InsiderSignalClass.of(
         OPPORTUNISTIC, "opportunistic_purchase",
         f"Discretionary open-market purchase of ${value:,.0f} matching no "
-        f"routine pattern.{role_note}",
+        f"routine pattern.{size_note}{role_note}",
     )
 
 
@@ -369,10 +491,13 @@ def classify_observations(
     classified = []
     for row in rows:
         verdict = classify_transaction(row, index, thresholds)
+        fraction, band = holdings_fraction(row)
         classified.append(row.model_copy(update={
             "signal_class": verdict.label,
             "signal_class_reason": verdict.reason,
             "signal_class_detail": verdict.detail,
             "signal_weight": verdict.weight,
+            "holdings_fraction": fraction,
+            "holdings_fraction_band": band,
         }))
     return classified

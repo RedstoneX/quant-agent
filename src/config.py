@@ -1279,13 +1279,18 @@ class SmartMoneyConfig(BaseModel):
     insider_cadence_max_gap_dispersion: float = Field(default=0.25, gt=0, le=2.0)
     # A disposition smaller than this share of the insider's pre-transaction
     # holding is diversification/liquidity noise rather than a directional
-    # view — RESEARCH_FINDINGS.md: "only sales that are also large relative
-    # to the insider's total position predict negative returns." Deliberately
+    # view. 0.10 is Scott & Xu's own lowest band edge (*Some Insider Sales
+    # Are Positive Signals*, Financial Analysts Journal 60(3), 2004): sales
+    # under 10% of shares owned earn a positive size/B-P-adjusted excess
+    # return (+0.68% quarterly, significant at 1%), and only the over-50%
+    # band is significantly negative. Corrected 2026-09-13 from 0.05, which
+    # matched no published band and was this desk's own invention — see the
+    # `docs/INCIDENT_HISTORY.md` entry closing WORK.md item 52. Deliberately
     # NOT combined with the 10b5-1 flag on its own: a large planned sale is
     # never demoted to routine by this filter, only a proportionally small
     # one may additionally cite the plan (see `insider_signal.py` module
     # docstring, departure #1).
-    insider_min_material_sell_fraction: float = Field(default=0.05, ge=0.0, le=1.0)
+    insider_min_material_sell_fraction: float = Field(default=0.10, ge=0.0, le=1.0)
     # How long `data/smart_money/insider_history.json` retains a trade date
     # before it is pruned. Must comfortably exceed the calendar-routine
     # lookback (`insider_calendar_routine_years` years) with slack for late

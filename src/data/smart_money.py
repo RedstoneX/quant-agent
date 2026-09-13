@@ -27,6 +27,7 @@ from src.data.insider_signal import (
     InsiderPriorTrade,
     InsiderSignalThresholds,
     classify_transaction,
+    holdings_fraction,
 )
 from src.data.smart_money_cluster import cluster_survivors, observation_key
 from src.models import SmartMoneyObservation
@@ -705,11 +706,14 @@ class SECForm4Provider:
             if item.stream != "insider" or item.disclosure_age_days > self.lookback_days:
                 continue
             verdict = classify_transaction(item, history, self._signal_thresholds)
+            fraction, band = holdings_fraction(item)
             item = item.model_copy(update={
                 "signal_class": verdict.label,
                 "signal_class_reason": verdict.reason,
                 "signal_class_detail": verdict.detail,
                 "signal_weight": verdict.weight,
+                "holdings_fraction": fraction,
+                "holdings_fraction_band": band,
             })
             age_days = max(0, (et_today() - item.disclosure_date).days)
             freshness = "fresh" if age_days <= 7 else (

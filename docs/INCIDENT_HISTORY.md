@@ -22,6 +22,77 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — the insider holdings data the board said we did not have was already being downloaded, parsed and stored (item 52)
+
+**In plain words:** the board carried an open owner decision asking whether to
+go and buy, or somehow approximate, data on how much stock an insider already
+owns — because judging a sale by its dollar size is weaker than judging it by
+what share of the person's own position it represents. The premise was wrong.
+Every SEC Form 4 the desk downloads already states the filer's holding
+immediately after the trade, the desk already parses that number, and it
+already stores it on every observation. This was never an acquisition
+problem. It was a wiring problem, and the wiring was half done.
+
+**How the premise was checked rather than assumed.** Pulled the SEC EDGAR
+daily index for 2026-09-11 (895 Form 4 filings), downloaded the first 120
+submissions and parsed them with the desk's own XPath. Of 77 open-market
+purchase/sale rows across those filings, 77 carried
+`postTransactionAmounts/sharesOwnedFollowingTransaction` — 100%, no gaps. The
+ratio needs no new source, no subscription and no approximation.
+
+**What was already half-built.** The routine/opportunistic classifier has had
+a proportional sell test since it was written: it reconstructs the
+pre-transaction holding and asks what fraction was sold. So the item's
+substance was partly live already. What was missing: purchases had no such
+measure at all, and nothing outside that one classifier branch ever saw the
+ratio — the number was computed, used for a single yes/no, and thrown away
+before the analyst seat or the operator could weigh it.
+
+**The number that filter used was invented.** The materiality boundary was
+0.05. Traced through the code comments and the research notes, that 5%
+matches no published band anywhere; the research note it cites carried the
+claim with no citation attached at all. Chasing the claim to its actual
+source: Scott & Xu, *Some Insider Sales Are Positive Signals*, Financial
+Analysts Journal 60(3), 2004 — 512,133 transactions, 80,742 company-quarters,
+1987-2002, and genuinely a measurement rather than an assertion. They cut
+"shares traded as a percentage of shares owned" at **10% and 50%**, not 5%.
+Their size- and book-to-price-adjusted quarterly excess returns: sales over
+100,000 shares are significantly negative only in the over-50% band (-0.81%);
+in the two lower bands they are -0.06% and +0.08%, both insignificant. Sales
+under 100,000 shares in the under-10% band are significantly *positive*
+(+0.68%) — a proportionally small sale is a mildly good sign, not a neutral
+one. Purchases scale the same way: +0.38% / +1.06% / +1.42% across the three
+bands, with initial purchases (no prior holding, so no ratio exists) earning
+an insignificant +0.10%.
+
+**What the source does NOT license, and was therefore not built.** Their
+ratio is a net, per-stock-quarter figure, computed over a six-month formation
+window against holdings aggregated across every insider in that stock who
+reported a holding. One Form 4 row is not that object. So their band returns
+do not carry over to a per-transaction admission gate, and no second cutoff
+was invented to fill the gap. The ratio is reported on every row, for buys
+and sells alike, and banded with the paper's own boundaries; the dollar
+materiality filter that admits a symbol is untouched. A test pins this: two
+purchases identical in dollars but at opposite ends of the holdings range
+both survive admission unchanged.
+
+**What did change behaviour.** The one live decision the ratio drives — the
+routine/opportunistic sell test — moved from the invented 0.05 to the
+paper's own 0.10. Sales between 5% and 10% of a position now read as
+proportional noise rather than as a directional view, which is what the
+measurement supports.
+
+**Also corrected.** The research note's "size relative to holdings" bullet had
+been carrying the conclusion with no source behind it since it was written.
+It now names Scott & Xu, the sample, the bands and the numbers, so the next
+reader does not have to re-derive where the claim came from.
+
+**Decision recorded, closing the item.** No owner call is needed: nothing had
+to be acquired, nothing paid for, and the one number that changed was
+replaced by a published one rather than chosen. Item 52 is deleted.
+
+---
+
 ### 2026-09-13 — the whole-plan veto: what actually caused it, and the two holes left in the fix (item 7)
 
 **In plain words:** the AI risk reviewer can refuse a whole day's plan rather

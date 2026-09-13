@@ -1054,7 +1054,8 @@ smart_money:
   insider_cadence_min_mean_gap_days: 20
   insider_cadence_max_mean_gap_days: 120
   insider_cadence_max_gap_dispersion: 0.25
-  insider_min_material_sell_fraction: 0.05
+  # Scott & Xu (FAJ 2004) lowest band edge; was 0.05, an unsourced number.
+  insider_min_material_sell_fraction: 0.10
   insider_history_retention_days: 1830
 
 nominations:

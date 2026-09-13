@@ -15,6 +15,7 @@ from src.data.insider_signal import (
     InsiderSignalThresholds,
     classify_observations,
     classify_transaction,
+    holdings_fraction,
 )
 from src.data.smart_money import SECForm4Provider
 from src.models import SmartMoneyObservation
@@ -287,7 +288,7 @@ def test_10b5_1_purchase_is_not_routine():
 
 def test_sale_at_exactly_the_materiality_fraction_is_opportunistic():
     verdict = classify_transaction(
-        _row(direction="sell", shares=5_000.0, post_shares=95_000.0),
+        _row(direction="sell", shares=10_000.0, post_shares=90_000.0),
         InsiderHistory(),
     )
 
@@ -296,7 +297,7 @@ def test_sale_at_exactly_the_materiality_fraction_is_opportunistic():
 
 def test_sale_just_under_the_materiality_fraction_is_routine():
     verdict = classify_transaction(
-        _row(direction="sell", shares=4_999.0, post_shares=95_001.0),
+        _row(direction="sell", shares=9_999.0, post_shares=90_001.0),
         InsiderHistory(),
     )
 
@@ -547,7 +548,7 @@ def test_indeterminate_filing_from_missing_amounts_is_not_downgraded_to_routine(
 # the verdict actually moves, which a hardcoded number could not do.
 
 def test_custom_sell_fraction_threshold_changes_the_verdict():
-    """The same 3% sale is routine noise under the 5% default but material
+    """The same 3% sale is routine noise under the 10% default but material
     (opportunistic) under a stricter 1% threshold — proving the boundary is
     read from ``thresholds``, not compiled into the function."""
     row = _row(direction="sell", shares=3_000.0, post_shares=97_000.0)
@@ -600,3 +601,132 @@ def test_provider_threading_a_custom_sell_fraction_reaches_fetch(tmp_path):
     _cached(strict, [row])
     observations, _ = strict.fetch(["NVDA"])
     assert [obs.signal_class for obs in observations] == ["routine"]
+
+
+# --- Trade size relative to the insider's own holding (WORK.md item 52) ----
+#
+# The board's item 52 assumed the desk had no holdings data for filers. It
+# does: SEC Form 4 carries `postTransactionAmounts/sharesOwnedFollowingTransaction`
+# on every open-market row, `SECForm4Provider._parse_submission` already
+# parses it, and `SmartMoneyObservation.post_transaction_shares` already
+# stores it. These tests pin the ratio that fact makes computable — reported
+# for both directions, and never used as an admission cutoff.
+#
+# Bands are Scott & Xu's own (FAJ 2004): under 10%, 10-50%, over 50% of
+# shares owned. See `src/data/insider_signal.py` module docstring.
+
+def test_sell_fraction_is_measured_against_the_pre_transaction_holding():
+    """Sold 25,000 of a 100,000-share holding is 25%, not 33% of what is left."""
+    fraction, band = holdings_fraction(
+        _row(direction="sell", shares=25_000.0, post_shares=75_000.0)
+    )
+
+    assert fraction == 0.25
+    assert band == "10_to_50pct"
+
+
+def test_buy_fraction_is_measured_against_what_the_insider_already_held():
+    """Bought 20,000 on top of an existing 80,000 is 25% added, not 20%."""
+    fraction, band = holdings_fraction(
+        _row(direction="buy", shares=20_000.0, post_shares=100_000.0)
+    )
+
+    assert fraction == 0.25
+    assert band == "10_to_50pct"
+
+
+def test_purchase_by_an_insider_holding_nothing_is_a_distinct_band_not_a_gap():
+    """Scott & Xu report initial purchases separately (no ratio exists), so
+    an insider who held none beforehand must not read as missing data."""
+    fraction, band = holdings_fraction(
+        _row(direction="buy", shares=5_000.0, post_shares=5_000.0)
+    )
+
+    assert fraction is None
+    assert band == "no_prior_holding"
+
+
+def test_missing_post_transaction_shares_reports_no_band_at_all():
+    fraction, band = holdings_fraction(
+        _row(direction="sell", shares=1_000.0, post_shares=None)
+    )
+
+    assert fraction is None
+    assert band == ""
+
+
+def test_bands_follow_the_papers_own_boundaries():
+    """Under 10% / 10-50% / over 50%, inclusive at the upper edge of the
+    middle band, exactly as the paper's columns are cut."""
+    def band_for(shares, post):
+        return holdings_fraction(
+            _row(direction="sell", shares=shares, post_shares=post)
+        )[1]
+
+    assert band_for(9_999.0, 90_001.0) == "under_10pct"
+    assert band_for(10_000.0, 90_000.0) == "10_to_50pct"
+    assert band_for(50_000.0, 50_000.0) == "10_to_50pct"
+    assert band_for(50_001.0, 49_999.0) == "over_50pct"
+
+
+def test_materiality_boundary_is_the_papers_ten_percent_not_an_invented_five():
+    """A 7% disposition sits between the old unsourced 0.05 and Scott & Xu's
+    0.10, so it is the one case that proves which number is live."""
+    row = _row(direction="sell", shares=7_000.0, post_shares=93_000.0)
+
+    assert classify_transaction(row, InsiderHistory()).reason == "immaterial_stake_sale"
+
+    old = classify_transaction(
+        row, InsiderHistory(),
+        InsiderSignalThresholds(min_material_sell_fraction=0.05),
+    )
+    assert old.reason == "material_stake_sale"
+
+
+def test_classified_rows_carry_the_ratio_even_when_another_rule_decided():
+    """A calendar-routine sale is still sized against the position: the label
+    came from the routine rule, but the ratio is reported regardless."""
+    history = _history(direction="sell", days=[
+        date(2025, 8, 14), date(2024, 8, 11), date(2023, 8, 9),
+    ])
+    row = _row(direction="sell", shares=30_000.0, post_shares=70_000.0)
+
+    classified = classify_observations([row], history)
+
+    assert classified[0].signal_class_reason == "calendar_routine"
+    assert classified[0].holdings_fraction == 0.30
+    assert classified[0].holdings_fraction_band == "10_to_50pct"
+
+
+def test_purchase_detail_names_the_added_fraction_for_the_seat():
+    verdict = classify_transaction(
+        _row(direction="buy", shares=20_000.0, post_shares=100_000.0),
+        InsiderHistory(),
+    )
+
+    assert verdict.label == "opportunistic"
+    assert "25.0%" in verdict.detail
+
+
+def test_the_ratio_never_admits_or_rejects_a_row(tmp_path):
+    """Item 52's decision: report the ratio, do not build a second gate on
+    it. Two purchases identical in dollars but far apart in holdings share
+    must both survive the provider's admission and materiality filters."""
+    today = date.today()
+    tiny = _row(symbol="AAPL", owner="1", direction="buy", transaction_date=today,
+                shares=1_000.0, price=100.0, post_shares=1_000_000.0,
+                accession="0000000001-26-000101")
+    huge = _row(symbol="AAPL", owner="2", direction="buy", transaction_date=today,
+                shares=1_000.0, price=100.0, post_shares=1_500.0,
+                accession="0000000001-26-000102", row=1)
+
+    provider = _provider(tmp_path / "ratio", min_transaction_value_usd=50_000)
+    _cached(provider, [tiny, huge])
+    observations, _ = provider.fetch(["AAPL"])
+
+    assert {obs.accession_number for obs in observations} == {
+        "0000000001-26-000101", "0000000001-26-000102",
+    }
+    bands = {obs.accession_number: obs.holdings_fraction_band for obs in observations}
+    assert bands["0000000001-26-000101"] == "under_10pct"
+    assert bands["0000000001-26-000102"] == "over_50pct"
