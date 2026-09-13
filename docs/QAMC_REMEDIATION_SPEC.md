@@ -585,6 +585,19 @@ nothing to derive from. That is precisely why the dissent change could ship
 before this question is settled: with weights pinned at 1, the dissent rule has
 no constant to inherit.
 
+**Two findings about the ceiling schedule itself, 2026-09-13 — not acted on,
+owner call (`docs/WORK.md` item 30).** First, `risk.agreement_ceiling_pct`
+(`[3.0, 4.0, 5.0, 5.0, 5.0]`) has no derivation behind its rungs: the
+measurement cited beside it counted how OFTEN each rung is reached across 75
+real targets, which is coverage, not a value. The stated reasoning fixes only
+a range for rung 1. Second, four of the five rungs cannot bind as configured
+— `max_position_risk_pct` is 5 and the PM's restored conviction bands top out
+at 4, so rungs 3-5 (all 5.0) sit at or above the hard ceiling and rung 2
+(4.0) can only bite on a request the prompt already forbids. Only rung 1
+(3.0) can reduce anything. This has a direct bearing on the open weighting
+question above: weighting the count that indexes this schedule would require
+inventing an interpolation rule to look up a table that was itself chosen.
+
 **Correction, 2026-09-02.** The owner removed conviction weighting from the
 ledger's credit on 2026-08-31 for two stated reasons (see §9.5 item 3a).
 Reason 2 — "a confident call already earns a larger position through the §9.4
@@ -2368,6 +2381,21 @@ Applied as modest, bounded multipliers in `src/verdicts.py::SEAT_WEIGHT`:
 technical 1.2, earnings 1.2, news 1.0, smart_money 0.8, macro 0.8. No source
 handed over an exact cross-category ratio — only a real, sourced ranking —
 so these are deliberately modest, not aggressive.
+
+**2026-09-13 — what this weight multiplies was itself unsound for four of
+the five seats, and has been corrected.** `score_verdict` is
+`magnitude + conviction`. News, macro and smart_money were each DERIVING
+`magnitude` from the same field they reported as `conviction` (news from its
+own conviction, macro from its `confidence`, smart_money from the single
+`economic_role` label that also set its conviction), at three different
+unsourced spacings. Those seats therefore entered the composite with one
+signal counted twice before this prior was applied at all. The three tables
+are deleted; every seat but Technical now carries a flat magnitude for a
+directional call, so this prior weights the seat's stated conviction plus a
+constant. Technical keeps a gradient because its rating rungs are a strength
+it actually states, and earnings was already flat for exactly this reason.
+Deleting invented weights, not replacing them. Detail:
+`docs/INCIDENT_HISTORY.md`, 2026-09-13 (retired item 31).
 
 **What did NOT change: the sizing path.** `src/risk/rules.py::SEAT_WEIGHT`
 — the §9.4 signed sum that actually prices position size — is untouched and

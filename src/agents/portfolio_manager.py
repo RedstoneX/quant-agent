@@ -535,6 +535,10 @@ class PortfolioManagerAgent(BaseAgent):
             smart_money_findings=smart_money_findings,
             real_reward_risk_by_symbol=kwargs.get("real_reward_risk_by_symbol"),
             constructor_refusals_by_symbol=kwargs.get("constructor_refusals_by_symbol"),
+            # The same mapping `build_evidence_registry` is given a few lines
+            # above, so macro's ranked verdict and macro's registry stance
+            # resolve one symbol's sector identically (item 31, 2026-09-13).
+            symbol_sectors=kwargs.get("symbol_sectors") or {},
         )
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
@@ -1355,6 +1359,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         macro_analysis: dict | None,
         earnings_analyses: list[dict],
         smart_money_findings: list[SmartMoneyFinding] | None,
+        symbol_sectors: dict[str, str] | None = None,
     ) -> list[AnalystVerdict]:
         """Every seat's Phase 13 verdict, best-effort, one bad entry never
         drops another's or the run's.
@@ -1382,17 +1387,28 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         never-block-the-run posture already established by
         `_record_seat_stances` and `_check_levels_coverage`.
 
-        Macro is applied via its OWN plain `equity_outlook`, the same for
-        every symbol — NOT the sector-adjusted stance
-        `build_evidence_registry` computes for the evidence-registry prompt
-        section. Those two can disagree for a symbol whose sector view
-        differs from the broad market view (see
-        `build_evidence_registry`'s sector-guidance branch). Known
-        simplification, not an oversight — `MacroAnalysis` carries one
-        conviction/evidence/invalidation set for its whole read, not one per
-        sector, so there is nothing sector-specific to attach to a
-        sector-overridden direction without inventing content. Flagged in
-        `docs/WORK.md` as a follow-up, not resolved here.
+        **2026-09-13, retired item 31 — macro is now sector-adjusted.**
+        It used to be applied via its plain `equity_outlook`, the same for
+        every symbol, while `build_evidence_registry` — the same macro read,
+        rendered into the same prompt — already resolved a per-symbol stance
+        from `sector_guidance`. The two could and did disagree for any symbol
+        whose sector view differed from the broad market view: one belief,
+        two answers, in one prompt.
+
+        `symbol_sectors` (the same mapping `build_evidence_registry` takes,
+        from the same `pipeline._last_symbol_sectors` cache) is now passed
+        per symbol into `MacroAnalysis.to_verdict`, which resolves the sector
+        stance through the identical `collapse_stances` reduction the
+        registry uses and falls back to `equity_outlook` when the read stated
+        nothing for that sector. See that method for why the old objection
+        ("nothing sector-specific to attach") only held for conviction, and
+        what is done about it.
+
+        Sectors arrive keyed however the caller had them; matching is
+        case-insensitive on the symbol, so a lower-case key still resolves.
+        A symbol absent from the mapping simply gets the broad read, exactly
+        as before — this can only ever make a verdict agree with the
+        registry, never introduce a stance neither of them held.
         """
         verdicts: list[AnalystVerdict] = []
 
@@ -1425,10 +1441,16 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 macro = None
                 logger.warning("Phase 13: macro_analysis failed to parse", exc_info=True)
             if macro is not None:
+                sectors = {
+                    str(k).strip().upper(): str(v)
+                    for k, v in (symbol_sectors or {}).items()
+                }
                 symbols = {a.symbol.upper() for a in analyses}
                 for symbol in symbols:
                     try:
-                        verdicts.append(macro.to_verdict(symbol))
+                        verdicts.append(
+                            macro.to_verdict(symbol, sector=sectors.get(symbol)),
+                        )
                     except Exception:
                         logger.warning(
                             "Phase 13: macro verdict failed for %s", symbol, exc_info=True,
@@ -1500,6 +1522,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         smart_money_findings: list[SmartMoneyFinding] | None = None,
         real_reward_risk_by_symbol: dict[str, float | None] | None = None,
         constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
+        symbol_sectors: dict[str, str] | None = None,
     ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
         """The eligible names in ranked order, plus the blocked names with
         their reasons. Ordering is `src/verdicts.py::rank_verdicts` over
@@ -1542,6 +1565,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             macro_analysis=macro_analysis,
             earnings_analyses=earnings_analyses or [],
             smart_money_findings=smart_money_findings,
+            symbol_sectors=symbol_sectors,
         )
         eligible_verdicts = [
             v for v in all_verdicts

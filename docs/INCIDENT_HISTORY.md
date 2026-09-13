@@ -22,6 +22,192 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — the board said the trade-sizing bands were still awaiting sign-off; they had been merged by the owner three days earlier (item 32 record correction)
+
+**In plain words:** the desk's decision-maker is given bands for how much of
+the account a trade may risk depending on how convinced it is. Those bands
+had been narrowed in August to compensate for a separate bug, and the
+proposal to widen them back was recorded on the board as "still awaiting the
+owner's actual sign-off". It was not. The owner merged the change himself on
+10 September, and the wider bands have been the live instruction ever since.
+The board went on describing a settled thing as undecided.
+
+**How the two came apart.** The original pull request was mechanically
+auto-closed by GitHub when an unrelated branch it was stacked on was deleted
+— nobody rejected it. Its content was restored on a fresh pull request, and
+the "PENDING REVIEW, the owner never saw this" note was written at that
+point, correctly. What went wrong is that when the replacement was merged,
+the merge updated one part of the board and not the other: the same item
+ended up carrying a line saying the question was DECIDED and, further down,
+the original paragraph still saying it was pending. Both were sitting in the
+same item, contradicting each other, for three days.
+
+**Which was right.** The running configuration. Verified by reading the live
+prompt (the bands are there, 2.0-4.0% and 1.0-2.5%) and the commit that put
+them there (authored and merged by the owner, 2026-09-10). The board text was
+the stale half, and it has been deleted rather than annotated.
+
+**What would catch it next time.** Nothing mechanical exists for this, and it
+is worth being honest that this is the second time a stale board line has
+survived a merge that was supposed to remove it (the item 17(b) duplicate was
+the first). The rule that keeps failing is "update the record in the same
+commit as the change"; the pattern in both cases was a merge that edited the
+summary line and left the detail paragraph. When resolving a board item that
+appears in two places, search the item number, do not edit the paragraph you
+happen to be looking at.
+
+---
+
+### 2026-09-13 — three of the five analyst seats had their "how strongly do you lean" number invented from the same field as their "how sure are you" number, so the ranking counted one opinion twice (item 31, CLOSED)
+
+**In plain words:** when the desk ranks which stock ideas look best, each
+specialist contributes two separate numbers — how strongly it leans, and how
+confident it is — and the desk adds them together. Three of the five
+specialists had no real "how strongly" number to give, because nothing they
+produce measures it. So when those seats were wired into the ranking, someone
+filled the gap by working the lean out from the confidence. That means the
+desk was adding a number to itself: one opinion, counted twice, and the
+multipliers used to do the doubling were picked, not measured or read from
+any published source. A single "insiders are buying right now" label scored
+the highest total the ranking can produce — the same as the one specialist
+that was actually measured to produce real conclusions, at its strongest
+rating and highest confidence, together.
+
+**What each of the four newly-wired seats was doing, and the verdict on each.**
+This is the independent review item 31 asked for.
+
+  * **earnings — CONVENTION, kept unchanged.** Every directional call got one
+    flat number and neutral got zero. This seat states a single
+    bullish/bearish rung with no strength field anywhere, and its author said
+    so and refused to invent a gradient. It is the only one of the four that
+    did not invent a weight, and it is the shape the other three were brought
+    to.
+  * **news — ASSERTED, neutralised.** The lean was a table on the seat's own
+    confidence (low/medium/high -> 0.33/0.67/1.0). Nothing sourced, and it is
+    the same confidence the verdict separately reports.
+  * **macro — ASSERTED, neutralised.** The lean was a table on the seat's own
+    confidence (0.25/0.5/0.75) plus a flat bonus (0.25) when the analyst
+    declared a regime change. Same double-count, plus a second invented
+    constant on top. The regime-change claim is not lost: it still reaches
+    the reader as the analyst's own stated falsifier, in the analyst's own
+    words, rather than as a number nobody derived.
+  * **smart_money — ASSERTED, neutralised.** Both halves — the lean AND the
+    confidence — were tables on one categorical label. Both signals were the
+    same label. The label still sets confidence, which is the one place it
+    has something behind it: the ordering there restates a ranking that
+    already existed in the seat for a different purpose, with the seat's own
+    prompt explaining why.
+
+**What was ruled out.** Finding a published source for any of the three
+spacings — there is nothing to cite for "a high-confidence news item leans
+three times as far as a low-confidence one", and fitting one to this desk's
+own trade history is forbidden and impossible anyway (the book has almost no
+resolved history). The choice was therefore between leaving invented weights
+in place and removing them, and removing them is the standing rule: a number
+must be read from the instrument or from a source, or it should not be there.
+This change DELETES arbitrary numbers rather than replacing them with
+better-argued ones. If a seat is ever measured to deserve a real gradient,
+that is a weight to ratify with the measurement attached.
+
+**The second half of item 31 — macro was answering one question with two
+different answers in the same prompt.** The macro specialist gives a broad
+market view and, separately, a per-sector view. The block of the prompt that
+lists what each specialist thinks about each stock was already using the
+sector view where one existed, falling back to the broad view otherwise. The
+ranking was using the broad view for every stock. So the desk could tell its
+decision-maker "macro is negative on energy" in one part of the prompt and
+rank an energy name on a positive broad read in another part. Now both
+resolve the same way, through the same shared reduction, so one macro read
+gives one answer.
+
+The objection recorded at the time — that there was "nothing sector-specific
+to attach" — was half right. There is no sector-specific *confidence*, so the
+analyst's own overall confidence is still used, unchanged, rather than
+inventing one. But there IS sector-specific *reasoning*: the sector row's own
+stated reason, already on the model, and it is now cited first on the verdict
+and labelled as the thing that decided the direction, so a reader can see why
+this stock's macro read differs from the market's.
+
+**What would catch it next time.** The double-count is now a test in its own
+right for each of the three seats: change only the field the deleted table
+was keyed on, and the lean must not move. That is mechanical, so it holds;
+the comment saying "flagged for review" did not, for ten days.
+
+**The general lesson, which is the part worth keeping.** All three defects
+came from the same move: a seat was wired into a scoring shape that wanted
+two numbers, the seat only had one, and the gap was filled by deriving the
+missing number from the one that existed. Every author flagged their own
+mapping as unmeasured and none of them was wrong to ship it — but a flag in a
+code comment is not a review, and three of them accumulated before anyone
+compared them side by side. When a seat cannot fill a field, the honest fill
+is a constant, not a function of another field.
+
+---
+
+### 2026-09-13 — the schedule that prices "how many analysts agree" has rungs nobody derived, and four of its five rungs cannot bind anything (item 30 finding, NOT resolved — owner decision)
+
+**In plain words:** the desk allows a bigger position when more of its
+specialists agree. It does this with a five-step ladder: one net specialist
+in favour allows 3% of the account at risk, two allows 4%, three or more
+allows 5%. Item 30 asked whether that ladder should start weighting some
+specialists more heavily than others, the way the *ranking* step recently
+started doing. Reading the code turns that into a different question, because
+two things are true that the item did not record.
+
+**First: the ladder's own steps were never derived from anything.** The
+measurement cited beside them measured how OFTEN each step would be reached —
+across 75 real targets, 67% had exactly one net specialist behind them, 29%
+had two, 4% had three, none had four or five. That is a coverage count. It
+says which step matters most; it says nothing about what any step should BE.
+The stated reasoning only fixes a *range* for the first step: near 5% and the
+ladder does nothing, much under 2% and it shrinks nine trades in ten to a
+token. 3% and 4% sit inside that range by choice. So the ladder is a chosen
+shape, not a read one — which means weighting the count that indexes it would
+mean inventing an interpolation rule to look up a table whose entries were
+already invented. That compounds the problem rather than fixing it.
+
+**Second: four of the five steps cannot currently reduce anything.** The
+desk's hard per-trade ceiling is 5% and the decision-maker's own instructions
+cap what it may ask for at 4%. So the three-, four- and five-specialist steps
+(all 5%) sit at or above the hard ceiling and can never bite, and the
+two-specialist step (4%) can only bite on a request the prompt already
+forbids. Exactly one step — the single-specialist 3% — can ever reduce a
+position, and only for a request between 3% and 4%. This became true when the
+conviction bands were restored (item 32); it was not true when the ladder was
+written, and nobody re-checked.
+
+**Third, and this is the part that settles the original question: a per-seat
+weight in the sizing path is already forbidden by a ratified rule with a
+mechanical guard behind it.** The desk's standing rule is that a confidence
+weight may only be DERIVED from measured history, never chosen up front, with
+the minimum set at 20 resolved calls per seat; the book is nowhere near that
+and the closed round-trips it does have record no conviction at all, so there
+is nothing to derive from (the exact count was not re-measured here — the
+spec's own figure was single digits). A test fails if
+anyone introduces a per-seat weight table into the sizing score, and it fails
+on symmetry as well as on the constant, so a table that averages to one is
+caught too. The 2026-09-03 owner amendment that let the RANKING use a
+published prior was scoped, in the owner's own decision, to the ranking
+module and explicitly left this one alone.
+
+**So the code was left alone, deliberately.** Not because equal weights are
+right, but because changing them is not an engineering decision available
+here: it needs the owner to extend that amendment, and even then the thing it
+would index has no derivation behind it. The live incoherence item 30 names
+is real — the desk ranks on one belief about whose opinion counts and sizes
+on another — but porting the weights across would not remove it, because the
+two paths disagree structurally and not just numerically: ranking scores a
+per-seat strength-plus-confidence composite, sizing counts seats as plus-one
+/ minus-one votes and reads a step function. Matching the numbers leaves them
+still measuring different things.
+
+**What is actually left for the owner** is written into `docs/WORK.md` item
+30: not "which weights", but whether a chosen five-step ladder should be
+pricing size at all when four of its steps are inert and none of the five was
+read from anything.
+
+---
+
 ### 2026-09-13 — a "close enough to the level" tolerance was measured in the wrong unit, and was narrower than the thing it claimed to cover on every ordinary stock
 
 **In plain words:** when the desk decides whether a stop is sitting *on* a

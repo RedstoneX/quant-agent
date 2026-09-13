@@ -718,7 +718,7 @@ one: earnings analysts were handing PM a completed extraction FORM instead
 of a call (fixed in PR #252 — seat now returns `key_thesis`, a 2-3 sentence
 call + falsifier; full 8-field extraction stays on disk for audit), and
 there was no ranking rule anywhere in the rulebook at all (fixed 2026-09-03,
-Phase 13, extended to all five seats by item 31). Measured result:
+Phase 13, extended to all five seats 2026-09-03). Measured result:
 205,607→98,351 chars, earnings share 68.1%→33.4%. Live-model check done
 2026-09-04 (real AAPL filing through the real earnings prompt on the real
 OneCLI-proxied model, coherent output, n=1). **Also invalidated by this:**
@@ -825,95 +825,67 @@ one, and do not ship a placeholder.
 
 **28. The offline test that must reproduce a known real cost-limit failure can no longer reproduce it — STILL BROKEN, previously marked fixed in error.** `test_rehearsal_reproduces_cost_ceiling.py` marked FIXED 2026-09-04 (config keys the test forced no longer exist, after the cost-circuit rewrite that deleted the per-call spend reservation) but re-verified directly 2026-09-10, three separate times against a clean `origin/main` checkout: this test still fails, identically, every time. Whatever landed did not actually resolve it, and nobody re-checked the claim before writing FIXED. Needs someone to actually read the failure and re-diagnose it — not re-apply the same fix that already didn't work. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys" for the (incomplete) original diagnosis.
 
-**30. The sizing path still owes the same amendment the ranking path just
-got — deliberately NOT done yet, owner should decide scope first.**
+**30. The agreement ladder that prices position size has rungs nobody
+derived, and four of its five rungs cannot bind — OPEN, owner call, reframed
+2026-09-13.**
 
-2026-09-03: `src/verdicts.py::SEAT_WEIGHT` (ranking/tiebreak only) moved
-from equal-weight to a research-informed prior — owner-amended §13.3.
-`src/risk/rules.py::SEAT_WEIGHT` (the §9.4 signed sum that actually PRICES
-position size) was deliberately left untouched in the same pass, for a real
-reason, not an oversight: `agreement_ceiling_for_score` indexes a discrete
-ceiling schedule by an INTEGER net-agreement count. A per-seat float weight
-turns that into a fractional score, which needs the schedule itself
-redesigned (round to nearest int? interpolate between rungs?) — a second,
-separate risk-logic decision, not a drop-in constant swap. Flagged rather
-than bundled in.
+The item used to read "port the ranking path's per-seat weights onto the
+sizing path". Reading the code changes the question, on three findings — full
+reasoning in `docs/INCIDENT_HISTORY.md`, 2026-09-13.
 
-**31. All five seats now reach the ranking, not just Technical — 2026-09-03.**
-News, macro, earnings, smart_money each got a `to_verdict()`, wired into
-`rank_candidates` via `_collect_seat_verdicts` (one bad entry drops only
-that seat, never the run — caught and fixed a real gap: an
-`EarningsAnalysis`'s own `symbol` is LLM-declared and can diverge from the
-pipeline's ground-truth wrapper symbol, now dropped on mismatch). Known
-simplification: macro's verdict is one broad read applied to every symbol,
-not the sector-adjusted stance `build_evidence_registry` already computes
-elsewhere in the same prompt. Also open: three of the four new seats'
-magnitude mappings are reasoned but unmeasured judgment calls, flagged by
-their own authors, not yet independently reviewed.
+  a. **A per-seat sizing weight is already forbidden, by a ratified rule with
+     a passing guard behind it.** A confidence weight may only be derived
+     from measured history (minimum 20 resolved calls per seat); there is
+     nothing to derive from, and `tests/test_signed_dissent.py` fails on both
+     the constant and the symmetry if anyone adds a weight table. The
+     2026-09-03 amendment that let the RANKING use a published prior was
+     scoped by the owner to the ranking module. Extending it is HIS call, not
+     an engineering one — so nothing was changed here.
+  b. **The ladder's rungs were never derived.** The measurement beside them
+     counted how OFTEN each rung is reached (67% of 75 real targets at one
+     net seat, 29% two, 4% three, none above). That is coverage. The stated
+     reasoning fixes only a range for rung 1 — "not near 5, not much under 2"
+     — and 3.0/4.0 sit inside it by choice. Weighting the count would mean
+     inventing an interpolation rule to index a table that was itself
+     invented.
+  c. **Four of the five rungs are inert as configured.** Per-trade hard
+     ceiling 5%; the PM's own restored conviction bands top out at 4%. Rungs
+     3-5 are all 5.0 and can never reduce anything; rung 2 (4.0) can only
+     bite on a request the prompt already forbids. Only rung 1 (3.0) can
+     ever cut a position, and only over the 3-4% slice. This became true when
+     item 32 restored the bands; nobody re-checked it then.
 
-**32. The ratified 5% per-trade risk envelope was not actually being delivered — MOSTLY FIXED, one real judgment call left.**
+**The decision is therefore not "which weights".** It is whether a chosen
+five-rung ladder should be pricing size at all, when four rungs are inert and
+none of the five was read from anything. Porting the ranking prior across
+would not fix the incoherence the item named either — ranking scores a
+per-seat strength-plus-confidence composite while sizing counts +1/-1 votes
+into a step function, so matching the numbers leaves the two paths still
+measuring different things.
 
-An old, unratified position-size cap bound before real risk-based sizing
-ever did, collapsing delivered risk to ~1%. **Fixed and merged
-2026-09-04**; a portfolio-level volatility-target overlay was investigated
-and REJECTED in the same pass (`docs/OUTCOME.md`). Resolved detail:
-`docs/INCIDENT_HISTORY.md`, 2026-09-04.
+**32. The two drawdown systems have never been reconciled — OPEN, owner call,
+unchanged since 2026-09-11.**
 
-**PM conviction-band restoration — PENDING REVIEW, NOT rejected.**
-Corrected 2026-09-04: the original PR (#259) was mechanically
-auto-closed by GitHub as a side effect of an unrelated branch deletion
-(its base branch was deleted when #258 merged) — the owner never saw or
-judged its content, was asleep at the time, and did not close it. Real
-content restored on a fresh PR from the same commit. Bands proposed to
-widen back to their pre-compression 2.0-4.0%/1.0-2.5% range now that the
-notional-cap bug they were compressed for is fixed. Still needs real
-review and the owner's actual sign-off — treat as open, not decided.
+Everything else once on this item has landed and is written up; what is left
+is one decision, described at the bottom. The 5% envelope itself was restored
+2026-09-04 (an old unratified
+position-size cap was binding first and collapsing delivered risk to ~1%); a
+portfolio-level volatility-target overlay was investigated and REJECTED in the
+same pass (`docs/OUTCOME.md`); the three loss alarms were rebuilt on a
+volatility-relative basis 2026-09-11, owner call, at a PROVISIONAL sensitivity
+of 3.0 that is explicitly not researched and is reversible. The PM conviction
+bands were restored to 2.0-4.0% / 1.0-2.5% / 0.5-1.0% and merged by the owner
+2026-09-10; this file carried a stale "PENDING REVIEW" note against them until
+2026-09-13. Detail for all of it: `docs/INCIDENT_HISTORY.md`, 2026-09-04 and
+2026-09-11.
 
-**Drawdown alarms rebuilt on a volatility-relative basis — FIXED
-2026-09-11, owner call.** The three loss alarms (daily circuit breaker,
-5-day and 20-day brakes) were each a fixed percentage of equity. The
-2026-09-04 fixes made those percentages track the real risk unit and made
-them √time-consistent, but they were still frozen numbers. **The owner
-refused a recalibration**: a fixed percentage is only right for the
-volatility regime it was chosen in, markets are not stationary, and a
-recalibrated frozen number has the identical flaw. So the BASIS changed,
-not the calibration — each alarm now trips at a multiple of how much **the
-book actually held** normally moves in a day, reconstructed from its real
-holdings' market price history at their real weights, recomputed every
-session and scaled per window by √time.
-
-**Corrected same day, before merge — the load-bearing half.** The first
-implementation measured the ACCOUNT's own equity curve. Owner rejected it:
-the post-reset account ramps from cash for weeks, a mostly-cash account
-barely moves, so the measurement would have been far too small and the
-alarms far too tight — firing constantly once actually invested. And the
-account's record is a record of malfunction anyway. Holdings work from day
-one. Reasoning: `docs/INCIDENT_HISTORY.md`, 2026-09-04 and 2026-09-11.
-
-Settled vs. provisional — read before citing either half:
-
-- **SETTLED (architecture).** Stationarity flaw gone, the yardstick never
-  touches the desk's own performance record, no warm-up needed, √time
-  expressed once rather than as drift-prone per-window constants.
-- **PROVISIONAL (sensitivity).** 3.0, owner, 2026-09-11. Reversible and
-  explicitly NOT researched or validated — no citable standard exists. At
-  a ~1%/session book: -3.0% daily, -6.7% over 5d, -13.4% over 20d (was
-  -6.7% / -15% / -20%). It replaced 6.7, which measurement showed left the
-  daily breaker firing only on a ~6.7σ session — dormant.
-- **NOT touched, deliberately.** Position sizing. Volatility here is only
-  the alarm's yardstick; volatility-target sizing stays REJECTED
-  (`docs/OUTCOME.md`).
-
-**STILL OPEN, OWNER CALL — full reconciliation of the two drawdown
-systems.** Unchanged, and the reason all three alarms are capped at the
-§11.2 ladder's -20% owner-alert point: the brakes measure rolling-window
-return, the ladder peak-to-trough, calibrated independently, and nobody
-has decided whether the desk should have one drawdown response or two.
-The cap is a floor on the disagreement, not agreement. At 3.0 it no longer
-binds below ~1.5%/session; it stays as the guarantee for violent regimes.
-
-**Conviction-band question — DECIDED 2026-09-11, owner call:** restore
-the pre-compression bands. See item 32's conviction-band entry below.
+**What is actually left.** The drawdown brakes measure rolling-window return;
+the §11.2 ladder measures peak-to-trough. They were calibrated independently,
+and nobody has decided whether the desk should have one drawdown response or
+two. All three alarms are capped at the ladder's -20% owner-alert point, which
+is a floor on the disagreement rather than agreement between them. At a
+sensitivity of 3.0 that cap no longer binds below roughly 1.5%/session; it
+stays as the guarantee for violent regimes.
 
 **35. A stop-widening was observed in pre-clean-slate trade history (Visa, Aug 2026) — DEFERRED, not investigated further for now.**
 
@@ -928,7 +900,7 @@ dig into this specific historical instance now.
 
 No DECIDE BY — revisit only if it recurs.
 
-**39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
+**39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, the same start-equal posture `SEAT_WEIGHT` holds); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
 
 **49. The risk budget is now the binding constraint on a full day's eligible set, and nothing decides how to ration it — OPEN, surfaced 2026-09-12 by item 1(d).** Measured on `run-64290730` after the reward:risk floor was removed by setup type: eligible names 12 -> 25, and the eligible set's total requested risk is **48% against a 25% `max_portfolio_risk_pct` budget**. The floor was previously doing the rationing by accident — refusing enough candidates that the budget rarely bound. It no longer refuses them, so the budget binds on a normal day and something must decide WHICH permitted trades get the capital. Today that is whatever order `allocate_risk_budget` happens to process in, which is not a decision anybody made. Real options, none costed yet: rank-ordered (best-scored first until exhausted), proportional scale-down (everyone sized smaller), conviction-tiered, or a hard cap on names per session. Each is a different desk, not a tuning knob — owner call. Do NOT resolve by re-tightening the floor that was just removed.
 
@@ -938,7 +910,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **53. A paused desk leaves part of every fractional position with NO stop, and nothing said so — OPEN, owner call, found 2026-09-12.** The alarm is built; what to do with the remainder is the decision. Verified live 2026-09-12: ORCL 5.3089 shares held, one stop-limit at the broker for 5.0. The 0.3089-share DAY leg lapsed at the close on 2026-09-02 exactly as §11.1 designs, and the trading timers were disabled before the 09-03 open, so the session sweep that re-places it never ran — six full sessions (09-03 to 09-11) with $46 of a $798 position unprotected, and every record on the box calling it "expected overnight". NOT a flooring bug: `_split_protective_qty` is working as designed. NOT fixable at the broker: fractional orders must be DAY (measured 2026-09-01, code 42210000; Alpaca's fractional-trading page says the same) — no durable fractional stop exists. Shipped: `src/coverage_watchdog.py`, run from the 06:15 ET alert-heartbeat unit (fires whether or not trading timers are on); alerts once per trading day when broker coverage is short of held AND no session ran during the last cash session. Read-only. **The decision (BOARD_NOTES 53):** what to do with the remainder while paused — close it, accept it with the alert, or go whole-share (owner already declined whole-share on 2026-09-02). Also found, NOT fixed: the repo's silence-watchdog timer unit is not installed on the box (no state file, absent from the timer list), so item 17c's alarm has never actually run in production. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-12.
 
-**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
+**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 12, 14, 16, 25, 29, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52.
 
 ## Evidence-only follow-ups
 

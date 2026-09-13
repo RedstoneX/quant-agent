@@ -20,7 +20,7 @@ import pytest
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import (
-    AnalystVerdict, NEWS_CONVICTION_MAGNITUDE, StockNewsItem,
+    AnalystVerdict, SINGLE_RUNG_MAGNITUDE, StockNewsItem,
     news_verdict_for_symbol,
 )
 from src.quantities import collapse_stances
@@ -49,8 +49,7 @@ def test_all_agree_bullish_collapses_to_bullish():
     assert v.direction == "bullish"
     # conviction: among agreeing items (both agree here), the HIGHEST wins.
     assert v.conviction == "high"
-    assert v.magnitude == NEWS_CONVICTION_MAGNITUDE["high"]
-    assert v.magnitude == 1.0
+    assert v.magnitude == SINGLE_RUNG_MAGNITUDE
     assert v.invalidation  # directional verdict must state one
     assert len(v.evidence) == 2
 
@@ -63,8 +62,20 @@ def test_all_agree_low_conviction_still_has_nonzero_magnitude():
     v = news_verdict_for_symbol("XOM", items)
     assert v.direction == "bearish"
     assert v.conviction == "low"
-    assert v.magnitude == NEWS_CONVICTION_MAGNITUDE["low"]
+    assert v.magnitude == SINGLE_RUNG_MAGNITUDE
     assert v.magnitude > 0.0
+
+
+def test_news_magnitude_does_not_track_conviction():
+    """2026-09-13, item 31 review. `score_verdict` is magnitude + conviction.
+    While news's magnitude was a table on its own conviction, the composite
+    was one signal counted twice at an unsourced spacing. Magnitude is flat
+    now, so conviction enters the score exactly once — this test is the
+    mechanical guard against the table coming back."""
+    low = news_verdict_for_symbol("XOM", [_item("bearish", "low")])
+    high = news_verdict_for_symbol("XOM", [_item("bearish", "high")])
+    assert low.conviction == "low" and high.conviction == "high"
+    assert low.magnitude == high.magnitude == SINGLE_RUNG_MAGNITUDE
 
 
 # ==========================================================================

@@ -3,14 +3,18 @@
 This mapping is HARDER than Technical's (`tests/test_analyst_verdict.py`):
 the finding carries no confidence/magnitude field to restate, and its
 `stance` includes a fourth value ("mixed") the shared `AnalystVerdict`
-shape does not allow. Two things pinned here are genuine NEW judgment, not
-restatement — see `_SMART_MONEY_ROLE_CONVICTION` / `_SMART_MONEY_ROLE_MAGNITUDE`
-in `src/models.py`:
+shape does not allow. ONE thing pinned here is genuine NEW judgment, not
+restatement — see `_SMART_MONEY_ROLE_CONVICTION` in `src/models.py`:
 
 1. `economic_role` -> `conviction` (actionable=high, confirmatory=medium,
    contradictory/historical=low).
-2. `economic_role` -> `magnitude` for a directional stance (equal-spaced,
-   same ordering as (1)).
+
+There used to be a second — `economic_role` -> `magnitude` — deleted
+2026-09-13 on review (retired item 31). `score_verdict` is
+`magnitude + conviction`, so a magnitude keyed on the same `economic_role`
+that already sets conviction made the composite count one categorical label
+twice, at a spacing (1.0/0.6/0.3/0.3) nothing stood behind. Magnitude is now
+flat for any directional stance; the tests below pin that it stays flat.
 
 Also pinned, but this one IS an existing desk convention, not new judgment:
 "mixed" stance collapses onto "neutral" (see `PortfolioManagerAgent.
@@ -25,7 +29,9 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from src.models import SmartMoneyFinding, SmartMoneyObservation
+from src.models import (
+    SINGLE_RUNG_MAGNITUDE, SmartMoneyFinding, SmartMoneyObservation,
+)
 
 
 def _obs(
@@ -122,18 +128,28 @@ def test_conviction_mapping_reflects_role_even_for_a_neutral_call():
 
 
 # ==========================================================================
-# magnitude: economic_role -> magnitude for a directional stance (NEW JUDGMENT)
+# magnitude: FLAT for any directional stance (2026-09-13, item 31 review —
+# the old economic_role -> magnitude table was deleted, because
+# economic_role also sets conviction and `score_verdict` adds the two,
+# so the role was being counted twice at an unsourced spacing).
 # ==========================================================================
 
-@pytest.mark.parametrize("role,expected", [
-    ("actionable", 1.0),
-    ("confirmatory", 0.6),
-    ("contradictory", 0.3),
-    ("historical", 0.3),
-])
-def test_economic_role_maps_to_magnitude_when_directional(role, expected):
+@pytest.mark.parametrize(
+    "role", ["actionable", "confirmatory", "contradictory", "historical"],
+)
+def test_directional_magnitude_is_flat_regardless_of_role(role):
     v = _finding(stance="bullish", economic_role=role).to_verdict()
-    assert v.magnitude == expected
+    assert v.magnitude == SINGLE_RUNG_MAGNITUDE
+
+
+def test_the_role_reaches_the_score_through_conviction_only():
+    """The mechanical guard against the deleted table coming back: two
+    findings that differ ONLY in economic_role must differ in conviction and
+    NOT in magnitude, so `score_verdict` reads the role exactly once."""
+    top = _finding(stance="bullish", economic_role="actionable").to_verdict()
+    bottom = _finding(stance="bullish", economic_role="historical").to_verdict()
+    assert top.conviction != bottom.conviction
+    assert top.magnitude == bottom.magnitude == SINGLE_RUNG_MAGNITUDE
 
 
 def test_neutral_magnitude_is_always_zero_regardless_of_role():
@@ -219,4 +235,4 @@ def test_a_bearish_finding_has_negative_signed_magnitude():
         stance="bearish", economic_role="actionable",
         observations=[_obs(direction="sell")],
     ).to_verdict()
-    assert v.signed_magnitude == -1.0
+    assert v.signed_magnitude == -SINGLE_RUNG_MAGNITUDE

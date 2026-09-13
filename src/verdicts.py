@@ -75,12 +75,22 @@ no source in the research handed over an exact cross-category ratio, only a
 real, sourced ordinal ranking of confidence. Treat the specific numbers as a
 considered but revisable starting point, not a measured fact.
 
-When more than one seat has a verdict on the same symbol (not yet — only
-Technical produces one in this increment, so this weighting has **no
-observable effect on today's ranking** until a second seat is wired in —
-tracked in `docs/WORK.md`), the per-seat scores are averaged AT THIS WEIGHT,
-so two agreeing seats of different trustworthiness are not treated as
-interchangeable votes.
+When more than one seat has a verdict on the same symbol, the per-seat scores
+are averaged AT THIS WEIGHT, so two agreeing seats of different
+trustworthiness are not treated as interchangeable votes. **All five seats
+have produced verdicts since 2026-09-03**, so this weighting has been live
+rather than latent since then — the note here previously still said only
+Technical was wired in, which stopped being true the day the prior landed.
+
+**2026-09-13 (retired item 31).** What this weight multiplies changed for
+four of the five seats. `score_verdict` is `magnitude + conviction`, and
+news, macro and smart_money were each deriving `magnitude` from the very
+field they also reported as `conviction` — so those seats fed one signal in
+twice, at three different unsourced spacings, before this weight ever saw
+them. Those tables are deleted; every seat but Technical now carries a flat
+`SINGLE_RUNG_MAGNITUDE` for a directional call, so what this prior weights is
+the seat's stated conviction plus a constant. Technical keeps a real
+gradient, because its rating rungs are a strength it actually states.
 
 **2026-09-04 audit (real-data fix #2).** Ties used to break on `symbol`
 alone. `score_verdict` only ever lands on {0.5, 1.0, 1.5, 2.0} when a single
