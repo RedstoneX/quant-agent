@@ -196,6 +196,29 @@ def test_insufficient_cash_was_already_correctly_attributed(tmp_path):
     assert ("d1", "JPM") not in recorded_reasons
 
 
+def test_a_data_fault_is_its_own_bucket_not_constructor_dropped(tmp_path):
+    """2026-09-12. A symbol the constructor could not MEASURE (dead feed,
+    no ATR, no analysis) is a data fault, not a trade the desk judged. The
+    census must count it under `data_fault:<code>` — never under
+    `constructor_dropped`, which would put a broken feed into the
+    "why didn't we trade" statistic as a rules failure."""
+    db, path = _db(tmp_path)
+    _target(db, "r1", "d1", "NVDA")
+    _pipeline_event(db, "r1", "d1", "NVDA", "deterministic_gate",
+                    "unmeasurable", "data_fault",
+                    detail="DATA FAULT: no ATR reading")
+    db.conn.execute(
+        "UPDATE specialist_evidence SET evidence_json = json_set(evidence_json, "
+        "'$.fault', 'volatility_reading_missing') WHERE kind='pipeline_event'",
+    )
+    db.conn.commit()
+    ordered, verdicts, skips, fills, recorded = _classify_all(path)
+    reason = classify("d1", "NVDA", ordered=ordered, verdicts=verdicts,
+                      skips=skips, fills=fills, recorded_reasons=recorded)
+    assert reason == "data_fault:volatility_reading_missing"
+    assert reason != "constructor_dropped"
+
+
 def test_constructor_dropped_attribution_is_unchanged(tmp_path):
     """Regression guard for the one cause this script already handled
     (2026-09-03): a constructor drop must still classify as
