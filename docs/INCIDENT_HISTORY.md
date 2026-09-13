@@ -156,6 +156,86 @@ connected.* The tests assert the exit message carries no NOT-PERFORMED banner,
 that the morning path still carries both when genuinely earned, and that the
 two renderings are byte-identical when no review mode is given.
 
+||||||| 9f137c65
+
+### 2026-09-13 — a "close enough to the level" tolerance was measured in the wrong unit, and was narrower than the thing it claimed to cover on every ordinary stock
+
+**In plain words:** when the desk decides whether a stop is sitting *on* a
+support level, it has to allow some slack, because a level is a band of
+prices, not a single number — the desk builds each level by merging together
+past bounces that fall within one percent of each other. The slack it allowed
+was written down in a completely different unit: a fraction of the stock's
+daily trading range, rather than a percentage of its price. The note beside
+the setting claimed the slack was "at least as wide" as that one-percent band.
+It was not. On a typical stock it was about two thirds as wide, so a stop
+placed inside a level's real band was judged not to be on the level at all.
+The desk then pushed that stop wider, off the structure the analyst had
+chosen, and sized the trade against the worse number. Nothing crashed and no
+money was visibly lost; the trades were just quietly worse than intended.
+
+**The arithmetic, which is the whole finding.** The slack was `0.25 x ATR`
+(ATR being the stock's own average daily range). The level band is `1% of
+price`. Setting them equal:
+
+    0.25 x ATR >= 0.01 x price   <=>   ATR >= 4.0% of price
+
+So the written justification was not a fact about the setting at all — it was
+a hidden condition on the *stock*. It held only on names moving 4% or more a
+day. This desk's own comments quote a median ATR of 2.56% of price (measured
+against the live book on 2026-08-27, recorded in prose in
+`docs/QAMC_REMEDIATION_SPEC.md`), at which the slack is 0.64% of price against
+a 1% band — 1.56x too narrow. Verified by direct read of both numbers and both
+consumers, not taken from the audit note.
+
+**Why it mattered beyond tidiness.** A stop that counts as level-backed is
+exempt from the ATR stop floor. Failing the match therefore does not just
+change a label: it moves the stop, which changes the trade's reward:risk and
+its position size, because size is `risk% x entry / (entry - stop)`. This fed
+straight into the reward:risk geometry the desk was already fixing.
+
+**What was ruled out.** Re-tuning the multiple. There is no ATR multiple that
+can be correct, because the quantity it is being compared against is a
+percentage of price and the ratio between the two is a different number for
+every name on every day — any value picked would have been a number fitted to
+one volatility and wrong at every other. Choosing a new "1.5%" or "0.4 ATR"
+would have been exactly the invented constant this desk has banned.
+
+**What was actually done.** The setting was deleted, not replaced. The match
+now reads the tolerance off the level's own zone, derived from the very same
+clustering constant that built that zone, so the tolerance is by construction
+exactly as wide as the thing it is matching against. Two numbers became one,
+and they can no longer disagree because there is only one of them. The
+tolerance is no longer configurable and a settings file still carrying the old
+key is now refused loudly rather than ignored — the same pattern already used
+for other deleted keys, because a silently-ignored risk setting is how an
+operator ends up believing a value they set is in force.
+
+**The ATR argument was not wrong, it was misfiled.** "Is this stop far enough
+out to survive this name's noise" genuinely is a volatility question, and it
+is still asked, by `min_stop_atr_multiple` and `absolute_min_stop_atr_multiple`.
+"Is this stop decisively through the level" is also a volatility question, and
+still uses the ATR noise band. "Which level is this stop sitting on" is an
+identity question about a band defined in percent, and now gets answered in
+percent. The original comment collapsed all three into one number.
+
+**What would catch it next time.** The general lesson is a unit check, not a
+value check: whenever a comment says one number is "at least as wide as"
+another, confirm the two are in the same unit first — if they are not, the
+sentence is a claim about the instrument, not about the setting, and it will
+be true for some names and false for others. `tests/test_level_match_zone.py`
+now pins the relationship directly, reproduces the old arithmetic including
+the 4%-ATR crossover, checks the two independent implementations of the match
+rule agree at the boundary, and fails if the deleted key or a second copy of
+the clustering constant reappears anywhere in the tree.
+
+**One thing left honestly unresolved.** The 1% clustering width itself
+(`CLUSTER_TOLERANCE_PCT`) carries no derivation — its comment says only that
+price respects a zone rather than a number. That is a separate, still-open
+question about what a level zone's real width is, and it was deliberately not
+answered here. This change makes the match tolerance *consistent* with that
+width; it does not claim the width is right. Nothing was invented to paper
+over it.
+
 ### 2026-09-13 — the whole-plan veto: what actually caused it, and the two holes left in the fix (item 7)
 
 **In plain words:** the AI risk reviewer can refuse a whole day's plan rather
@@ -299,7 +379,6 @@ it happened. `tests/test_correlation_breach_not_a_trigger.py` pins the
 removal, the noise-band classification, the fact that no other trigger was
 narrowed, and the end-to-end exit that used to slip through.
 
-||||||| 91302399
 
 ### 2026-09-13 — a comment claimed two parts of the desk agreed on what a "swing low" is; they never have, and the research says nobody can say which is right
 

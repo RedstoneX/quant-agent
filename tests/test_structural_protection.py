@@ -10,10 +10,10 @@ never by elapsed time. Priority order tested below:
 
   1. `thesis_invalid_if`, checked for real via `check_thesis_invalid_if`.
   2. Absent/unparseable (1): the verified structural level backing the
-     stop — level IDENTIFICATION uses the same touch-count/ATR-tolerance
-     rule as `PortfolioConstructor._level_backing_stop`
-     (`min_level_touches`, `level_match_atr_tolerance * atr`), no new
-     constant introduced.
+     stop — level IDENTIFICATION uses the same touch-count/zone rule as
+     `PortfolioConstructor._level_backing_stop` (`min_level_touches`, and
+     the stop falling inside the level's own `CLUSTER_TOLERANCE_PCT`
+     zone), no new constant introduced.
   3. Neither resolves: the existing noise band (`adverse_move_is_noise` /
      `NOISE_BAND_ATR_MULTIPLE`) — NOT an automatic unprotect (owner
      refinement 2026-09-04), so breakout/momentum trades without classic
@@ -24,9 +24,10 @@ intraday quote — a wick that pierces a level and closes back inside is
 noise, not a break (real technical-analysis practice, and the reason this
 module's confirmation gate exists at all). Deciding WHETHER a close counts
 as "beyond" the level reuses `NOISE_BAND_ATR_MULTIPLE` (the same margin
-already ratified for "is an adverse move real"), not the tighter
-`level_match_atr_tolerance` used only to identify which level a stop sits
-on.
+already ratified for "is an adverse move real") — an ATR question. That is
+deliberately NOT the level-zone tolerance used to identify which level a
+stop sits on, which is a percentage-of-price identity question
+(docs/WORK.md item 46).
 
 A break under (1) or (2) must additionally hold on the close of TWO
 CONSECUTIVE TRADING DAYS before it lifts protection (owner refinement,
@@ -41,6 +42,7 @@ Every number below is hand-computed against the real formulas in
 `src/risk/exit_guard.py`, never guessed.
 """
 
+from src.data.levels import CLUSTER_TOLERANCE_PCT
 from src.risk.exit_guard import (
     NOISE_BAND_ATR_MULTIPLE,
     check_structural_protection,
@@ -50,7 +52,14 @@ from src.risk.exit_guard import (
 # Shared level/touch bars used throughout — the already-ratified values
 # (docs/RESEARCH_FINDINGS.md §7), never invented for this test file.
 MIN_TOUCHES = 5
-TOLERANCE_MULT = 0.25   # level_match_atr_tolerance — level IDENTIFICATION only
+# Level IDENTIFICATION only, and NOT a tunable: this is
+# `src.data.levels.CLUSTER_TOLERANCE_PCT`, the same constant
+# `find_structural_levels` uses to cluster pivots into a zone, imported here
+# rather than restated so the test cannot pass against a stale copy. It
+# replaced a 0.25-ATR multiple on 2026-09-13 (docs/WORK.md item 46) — see
+# `tests/test_level_match_zone.py` for why an ATR multiple could never stay
+# consistent with a percentage-of-price zone.
+ZONE_PCT = CLUSTER_TOLERANCE_PCT
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +79,7 @@ def test_thesis_invalid_if_triggered_two_consecutive_closes_lifts_protection():
         stop_loss=90.0,
         atr=2.0,
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
         ma_20=98.0,
         break_seen_prior_close=True,   # yesterday's close was ALSO below MA20
     )
@@ -80,7 +89,7 @@ def test_thesis_invalid_if_triggered_two_consecutive_closes_lifts_protection():
     assert structural_protection_broken(
         thesis_invalid_if="closes below MA20",
         current_price=95.0, entry_price=100.0, stop_loss=90.0, atr=2.0,
-        min_level_touches=MIN_TOUCHES, level_match_atr_tolerance=TOLERANCE_MULT,
+        min_level_touches=MIN_TOUCHES, level_cluster_tolerance_pct=ZONE_PCT,
         ma_20=98.0, break_seen_prior_close=True,
     ) is True
 
@@ -95,7 +104,7 @@ def test_thesis_invalid_if_triggered_single_close_stays_protected():
         stop_loss=90.0,
         atr=2.0,
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
         ma_20=98.0,
         break_seen_prior_close=False,   # no prior confirming close on record
     )
@@ -113,7 +122,7 @@ def test_spring_reversal_the_next_day_does_not_lift_protection():
         thesis_invalid_if="closes below MA20",
         current_price=95.0,        # day 1 close: below MA20 -> broken
         entry_price=100.0, stop_loss=90.0, atr=2.0,
-        min_level_touches=MIN_TOUCHES, level_match_atr_tolerance=TOLERANCE_MULT,
+        min_level_touches=MIN_TOUCHES, level_cluster_tolerance_pct=ZONE_PCT,
         ma_20=98.0, break_seen_prior_close=False,
     )
     assert day1.raw_broken is True
@@ -123,7 +132,7 @@ def test_spring_reversal_the_next_day_does_not_lift_protection():
         thesis_invalid_if="closes below MA20",
         current_price=99.0,        # day 2 close: reclaimed above MA20 (98.0)
         entry_price=100.0, stop_loss=90.0, atr=2.0,
-        min_level_touches=MIN_TOUCHES, level_match_atr_tolerance=TOLERANCE_MULT,
+        min_level_touches=MIN_TOUCHES, level_cluster_tolerance_pct=ZONE_PCT,
         ma_20=98.0, break_seen_prior_close=day1.raw_broken,
     )
     assert day2.raw_broken is False
@@ -134,7 +143,7 @@ def test_spring_reversal_the_next_day_does_not_lift_protection():
         thesis_invalid_if="closes below MA20",
         current_price=95.0,        # breaks again on day 3
         entry_price=100.0, stop_loss=90.0, atr=2.0,
-        min_level_touches=MIN_TOUCHES, level_match_atr_tolerance=TOLERANCE_MULT,
+        min_level_touches=MIN_TOUCHES, level_cluster_tolerance_pct=ZONE_PCT,
         ma_20=98.0, break_seen_prior_close=day2.raw_broken,   # False -> resets
     )
     assert day3.protected is True
@@ -152,7 +161,7 @@ def test_thesis_invalid_if_not_triggered_stays_protected_indefinitely():
         stop_loss=90.0,
         atr=2.0,
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
         ma_20=98.0,
         break_seen_prior_close=True,   # even a stale confirmed break can't matter here
     )
@@ -164,7 +173,7 @@ def test_thesis_invalid_if_not_triggered_stays_protected_indefinitely():
 # ---------------------------------------------------------------------------
 # 2. Structural level backing the stop, when thesis_invalid_if is absent or
 #    unparseable — level IDENTIFICATION as `_level_backing_stop`, break
-#    MARGIN as `NOISE_BAND_ATR_MULTIPLE` (1.0), not `level_match_atr_tolerance`.
+#    MARGIN as `NOISE_BAND_ATR_MULTIPLE` (1.0), not the level-zone tolerance.
 # ---------------------------------------------------------------------------
 
 def test_structural_level_broken_two_consecutive_closes_lifts_protection():
@@ -183,7 +192,7 @@ def test_structural_level_broken_two_consecutive_closes_lifts_protection():
         computed_levels=[90.3],
         computed_level_touches={90.3: 6},
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=True,
     )
     assert result.raw_broken is True
@@ -202,7 +211,7 @@ def test_structural_level_broken_single_close_stays_protected():
         computed_levels=[90.3],
         computed_level_touches={90.3: 6},
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=False,
     )
     assert result.raw_broken is True
@@ -229,7 +238,7 @@ def test_small_close_below_level_within_break_margin_is_not_a_break():
         computed_levels=[90.3],
         computed_level_touches={90.3: 6},
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=True,   # even a stale prior break can't matter — not broken now
     )
     assert result.raw_broken is False
@@ -250,7 +259,7 @@ def test_structural_level_intact_stays_protected_at_30_days_equivalent():
         computed_levels=[90.3],
         computed_level_touches={90.3: 6},
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=False,
     )
     assert result.protected is True
@@ -271,7 +280,7 @@ def test_structural_level_broken_short_side_mirrors_long():
         computed_levels=[109.8],
         computed_level_touches={109.8: 6},
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=True,
     )
     assert result.protected is False
@@ -291,7 +300,7 @@ def test_unparseable_thesis_falls_back_to_structural_level():
         computed_levels=[90.3],
         computed_level_touches={90.3: 6},
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=True,
     )
     assert result.basis == "structural_level_broken"
@@ -315,7 +324,7 @@ def test_no_basis_within_noise_band_stays_protected():
         computed_levels=[],
         computed_level_touches={},
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
     )
     assert result.protected is True
     assert result.basis == "noise_band_intact"
@@ -335,7 +344,7 @@ def test_no_basis_beyond_noise_band_loses_protection_immediately():
         computed_levels=[],
         computed_level_touches={},
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
         break_seen_prior_close=False,   # irrelevant to this basis
     )
     assert result.protected is False
@@ -352,7 +361,7 @@ def test_no_basis_flat_or_winning_stays_protected():
         computed_levels=[],
         computed_level_touches={},
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
     )
     assert result.protected is True
     assert result.basis == "noise_band_intact"
@@ -372,7 +381,7 @@ def test_no_basis_no_price_or_atr_data_fails_toward_protection():
         computed_levels=[],
         computed_level_touches={},
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
     )
     assert result.protected is True
     assert result.basis == "noise_band_intact"
@@ -392,7 +401,7 @@ def test_low_touch_level_does_not_qualify_falls_back_to_noise_band():
         computed_levels=[90.3],
         computed_level_touches={90.3: 2},   # below the 5-touch bar
         min_level_touches=MIN_TOUCHES,
-        level_match_atr_tolerance=TOLERANCE_MULT,
+        level_cluster_tolerance_pct=ZONE_PCT,
     )
     assert result.basis == "noise_band_intact"
     assert result.protected is True

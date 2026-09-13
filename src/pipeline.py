@@ -990,9 +990,9 @@ class TradingPipeline:
             # honoured whatever the band says, down to a deterministic 1x ATR
             # floor. Same "wire from the ratified setting, not the
             # constructor's own default" pattern as every ceiling above.
-            level_match_atr_tolerance=_risk_setting(
-                "level_match_atr_tolerance", 0.25,
-            ),
+            # There is no `level_match_atr_tolerance` to wire any more: item
+            # 46 (2026-09-13) deleted it, and the constructor reads the
+            # match tolerance off the level zone's own definition.
             absolute_min_stop_atr_multiple=_risk_setting(
                 "absolute_min_stop_atr_multiple", 1.0,
             ),
@@ -8121,6 +8121,7 @@ class TradingPipeline:
         separately so a memory hiccup degrades to "unconfirmed" /
         "unpersisted" rather than losing the whole check.
         """
+        from src.data.levels import CLUSTER_TOLERANCE_PCT
         from src.risk.exit_guard import check_structural_protection
         from src.trading_calendar import et_today
 
@@ -8177,7 +8178,6 @@ class TradingPipeline:
         risk_cfg = getattr(self, "risk_engine", None)
         risk_cfg = getattr(risk_cfg, "config", None)
         min_level_touches = getattr(risk_cfg, "min_level_touches_for_stop_honor", 5)
-        level_match_atr_tolerance = getattr(risk_cfg, "level_match_atr_tolerance", 0.25)
 
         check = check_structural_protection(
             thesis_invalid_if=thesis_invalid_if,
@@ -8189,7 +8189,11 @@ class TradingPipeline:
             computed_levels=computed_levels,
             computed_level_touches=computed_level_touches,
             min_level_touches=min_level_touches,
-            level_match_atr_tolerance=level_match_atr_tolerance,
+            # NOT a setting and not a fallback default — this is the exact
+            # constant `find_structural_levels` used to cluster pivots into
+            # the zones being matched against, so the tolerance cannot be
+            # anything else. docs/WORK.md item 46.
+            level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
             ma_20=ma_20, ma_50=ma_50, ma_200=ma_200,
             break_seen_prior_close=break_seen_prior_close,
         )
