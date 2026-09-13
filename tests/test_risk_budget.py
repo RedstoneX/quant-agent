@@ -243,3 +243,126 @@ def test_no_clusters_supplied_falls_back_to_the_total_ceiling_alone():
         _req(OKLO=20.0, CEG=20.0), clusters=None, ceiling_pct=25.0,
     )
     assert alloc.committed_pct == 25.0
+
+
+# --------------------------------------------------------------------------
+# docs/WORK.md item 49 — best-ranked first (owner decision, 2026-09-12)
+# --------------------------------------------------------------------------
+
+def test_budget_is_spent_best_ranked_first_not_largest_request_first():
+    """The item 49 defect, directly.
+
+    WEAK asks for more risk than BEST. Under the pre-decision ordering
+    (largest request first) WEAK took the ceiling and BEST got the remainder.
+    The owner's decision is that the best-ranked idea is served first.
+    """
+    ranked = allocate_risk_budget(
+        _req(WEAK=20.0, BEST=20.0), ceiling_pct=25.0, floor_pct=0.5,
+        priority=["BEST", "WEAK"],
+    )
+    assert ranked.granted("BEST") == 20.0
+    assert ranked.granted("WEAK") == 5.0
+
+    # Same requests, ranking reversed: the ORDER, not the size, decides.
+    reversed_ = allocate_risk_budget(
+        _req(WEAK=20.0, BEST=20.0), ceiling_pct=25.0, floor_pct=0.5,
+        priority=["WEAK", "BEST"],
+    )
+    assert reversed_.granted("WEAK") == 20.0
+    assert reversed_.granted("BEST") == 5.0
+
+
+def test_a_smaller_but_better_ranked_request_beats_a_bigger_worse_one():
+    """The case the old ordering got exactly backwards: the best idea on the
+    sheet asked for less risk than a weaker one, and lost the budget for it."""
+    alloc = allocate_risk_budget(
+        _req(WEAK=24.0, BEST=6.0), ceiling_pct=25.0, floor_pct=0.5,
+        priority=["BEST", "WEAK"],
+    )
+    assert alloc.granted("BEST") == 6.0
+    assert alloc.granted("WEAK") == 19.0
+    assert alloc.grants["WEAK"].limited_by == "total_ceiling"
+
+
+def test_no_ranking_supplied_keeps_the_pre_decision_ordering():
+    """A caller with no ranking view must not have one invented for it: the
+    backtest engine and every existing test path still ration largest-first."""
+    alloc = allocate_risk_budget(_req(SMALL=2.0, BIG=24.0), ceiling_pct=25.0)
+    assert alloc.granted("BIG") == 24.0
+    assert alloc.granted("SMALL") == 1.0  # the remainder, largest served first
+
+
+def test_an_unranked_symbol_never_outranks_a_ranked_one():
+    """A PM target the ranking never scored is served AFTER every ranked
+    name, however large its request — being unscored is not a promotion."""
+    alloc = allocate_risk_budget(
+        _req(UNRANKED=24.0, RANKED=6.0), ceiling_pct=25.0, floor_pct=0.5,
+        priority=["RANKED"],
+    )
+    assert alloc.granted("RANKED") == 6.0
+    assert alloc.granted("UNRANKED") == 19.0
+
+
+def test_ranking_order_beats_listing_order():
+    """Determinism, unchanged: the same decision must produce the same book
+    whichever order the PM happened to emit its targets in."""
+    forward = allocate_risk_budget(
+        _req(A=20.0, B=20.0), ceiling_pct=25.0, priority=["B", "A"],
+    )
+    backward = allocate_risk_budget(
+        _req(B=20.0, A=20.0), ceiling_pct=25.0, priority=["B", "A"],
+    )
+    assert forward.granted("B") == backward.granted("B") == 20.0
+    assert forward.granted("A") == backward.granted("A") == 5.0
+
+
+def test_ranking_is_case_and_whitespace_insensitive():
+    alloc = allocate_risk_budget(
+        _req(BEST=20.0, WEAK=20.0), ceiling_pct=25.0, priority=[" best ", "weak"],
+    )
+    assert alloc.granted("BEST") == 20.0
+
+
+def test_a_closed_name_is_never_starved_by_its_place_in_the_ranking():
+    """A zero request is PM closing the name. It consumes no budget, so its
+    position in the queue cannot change the outcome — and it must never be
+    turned into a refusal, which downstream reads as an order."""
+    alloc = allocate_risk_budget(
+        _req(GONE=0.0, BEST=25.0), existing_pct={"GONE": 10.0},
+        ceiling_pct=25.0, priority=["BEST", "GONE"],
+    )
+    assert alloc.granted("GONE") == 0.0
+    assert alloc.grants["GONE"].limited_by is None
+    assert alloc.granted("BEST") == 25.0
+
+
+# --- the open sub-question, both branches ---------------------------------
+
+def test_partial_fit_ships_as_fill_the_cut_line_candidate_is_reduced():
+    """`PARTIAL_FIT_POLICY == "fill"` — the shipped branch, and the one the
+    allocator has always had. OPEN with the owner (docs/WORK.md item 49)."""
+    from src.risk.budget import PARTIAL_FIT_POLICY
+
+    assert PARTIAL_FIT_POLICY == "fill"
+    alloc = allocate_risk_budget(
+        _req(BEST=20.0, NEXT=10.0), ceiling_pct=25.0, floor_pct=0.5,
+        priority=["BEST", "NEXT"],
+    )
+    assert alloc.granted("NEXT") == 5.0
+    assert alloc.grants["NEXT"].limited_by == "total_ceiling"
+
+
+def test_partial_fit_skip_branch_leaves_the_room_for_the_next_name_that_fits():
+    """The other side of the open question, kept executable so switching it
+    is one line. A skipped name is DENIED, never sized to zero-as-a-close."""
+    alloc = allocate_risk_budget(
+        _req(BEST=20.0, NEXT=10.0, THIRD=4.0), ceiling_pct=25.0, floor_pct=0.5,
+        priority=["BEST", "NEXT", "THIRD"], partial_fit="skip",
+    )
+    assert alloc.granted("BEST") == 20.0
+    assert alloc.granted("NEXT") == 0.0
+    assert alloc.grants["NEXT"].limited_by == "partial_fit_skipped"
+    assert alloc.grants["NEXT"].denied
+    assert "skipped" in alloc.grants["NEXT"].note
+    # The room NEXT did not take is still there for a name that fits in full.
+    assert alloc.granted("THIRD") == 4.0

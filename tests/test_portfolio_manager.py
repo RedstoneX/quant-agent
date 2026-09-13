@@ -412,3 +412,49 @@ def test_earnings_section_falls_back_when_falsifier_undisclosed(mock_cls):
     # No pointer was supplied on the wrapper — a locatable reference is
     # still shown rather than nothing at all.
     assert "ORCL" in section
+
+
+# --------------------------------------------------------------------------
+# docs/WORK.md item 49 — the ranking the budget is spent down must be the
+# ranking the model was shown, not a second evaluation. Owner decision
+# 2026-09-12.
+# --------------------------------------------------------------------------
+
+@patch("anthropic.Anthropic")
+def test_the_ranking_the_prompt_was_rendered_from_is_kept_for_the_constructor(
+    mock_cls, sample_analyses,
+):
+    """`last_candidate_ranking` is what `DecisionStage` hands the constructor
+    as the order to spend the risk budget in. It must be the SAME object the
+    prompt's Candidate Ranking section was rendered from — recomputing it
+    downstream could ration against numbers the model never saw."""
+    agent = PortfolioManagerAgent(api_key="test", model="test-model")
+    assert agent.last_candidate_ranking is None
+
+    msg = agent.build_user_message(
+        analyses=sample_analyses, positions=[], cash_balance=100_000.0,
+        total_value=100_000.0,
+    )
+
+    ranked = agent.last_candidate_ranking
+    assert ranked is not None
+    # Every ranked name appears in the section the model was shown, in the
+    # same order the constructor will now spend the budget down.
+    positions_in_prompt = [msg.find(f" {c.symbol} — ") for c in ranked]
+    assert all(p >= 0 for p in positions_in_prompt)
+    assert positions_in_prompt == sorted(positions_in_prompt)
+    # The neutral name is not a candidate for anything and is never ranked.
+    assert "QQQ" not in [c.symbol for c in ranked]
+
+
+@patch("anthropic.Anthropic")
+def test_a_previous_sessions_ranking_can_never_leak_into_the_next(mock_cls):
+    """Reset before the ranking is recomputed, exactly like
+    `last_rotation_precheck`: a stale order would spend today's budget on
+    yesterday's names."""
+    agent = PortfolioManagerAgent(api_key="test", model="test-model")
+    agent.last_candidate_ranking = ["stale"]
+    agent.build_user_message(
+        analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
+    )
+    assert not agent.last_candidate_ranking

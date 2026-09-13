@@ -22,6 +22,113 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — the desk was choosing which trades to fund by request size, and nobody had chosen that (item 49)
+
+**In plain words:** the desk can only risk so much in total — a quarter of the
+account. Until 2026-09-11 that ceiling almost never got in the way, because
+another rule was throwing out so many trades that there was always room. That
+rule was removed for being wrong, and the number of trades the desk is allowed
+to take roughly doubled. So the ceiling now binds on an ordinary day: the desk
+wants to risk about twice what it is permitted to, and something has to decide
+which trades actually get the money. Nothing did. The money went to whichever
+trade had asked for the BIGGEST amount, which is a measure of size, not of
+quality — a mediocre idea asking for a lot beat an excellent idea asking for a
+little, every time. The owner's decision, 2026-09-12, was best-ranked first:
+spend on the strongest idea, then the next, until the money runs out. That is
+now what happens. A second, smaller problem was found and fixed alongside it:
+a trade that missed out purely because the money ran out was leaving no record
+at all of why — it just vanished from the order list.
+
+**The measured case this was built against.** Run `run-64290730`, after the
+reward:risk floor was removed by setup type: eligible names went 12 → 25, and
+the eligible set asked for **48% of equity at risk against the 25%
+`max_portfolio_risk_pct` ceiling**. Those two aggregates are what was measured;
+the per-name split below is arithmetic on their average (48 / 25 = 1.92% per
+name), NOT recovered per-symbol data, and is labelled as such so nobody quotes
+it back as a measurement.
+
+Worked through at that average, with the desk's own 0.5% minimum tradeable
+size:
+
+- 12 names funded in full at 1.92% each — 23.04% committed.
+- The 13th name finds 1.96% of headroom left, asks 1.92%, and is funded in
+  full — 24.96% committed.
+- The 14th name finds 0.04% left. That is under the 0.5% floor, so it is
+  DENIED rather than shrunk to a token position — unchanged behaviour, and
+  the reason the floor exists.
+- Names 15 through 25 find nothing at all.
+
+So roughly half the eligible sheet cannot be funded on a normal day. **Before
+this change**, the 13 that got funded were the 13 that had asked for the most
+risk, ties broken alphabetically. **After**, they are the top 13 of the desk's
+own candidate ranking. The count funded is identical; which names they are is
+not, and that was the whole point.
+
+**What "best-ranked" actually resolves to, and whether it is sound.** It is
+`src/verdicts.py::rank_verdicts`, reused unchanged — no new score was invented
+and none could be, under the no-arbitrary-numbers rule. Its order is: the
+composite of each reporting seat's direction magnitude and conviction (seats
+weighted by a research-informed prior, 2026-09-03), then the trade's real
+structure-derived reward:risk as a tiebreak, then the symbol name as a final
+stabiliser. Two honest caveats, stated rather than papered over:
+
+- The symbol-name stabiliser is alphabetical. It is only reached when two
+  candidates are equal on BOTH real signals, so this is not the "ranking is
+  mostly alphabetical" defect already recorded against the EXIT path — that
+  one was checked for specifically. Entry ranking does not have it.
+- The seat weights (1.2 technical/earnings, 1.0 news, 0.8 smart_money/macro)
+  are a research-informed prior, not a measurement of THIS desk's analysts.
+  That is already flagged on the board as item 31's posture. It was true
+  before this change and is unchanged by it — but it is now load-bearing for
+  which trades get funded, not only for the order they are listed in, which
+  is a real increase in what that prior decides.
+
+**The ranking that is used is the ranking the model was shown.** It is taken
+from the Portfolio Manager's own prompt-rendering pass and threaded through to
+the allocator, never recomputed downstream. Recomputing would risk rationing
+against numbers the model never saw. Same pattern, and the same reason, as the
+rotation pre-check.
+
+**A candidate that loses the budget is no longer silent.** This was the one
+constructor drop path with no durable per-symbol record. Its log line read
+"Constructor: X produces no order — risk budget granted 0% ...", and the
+drop-reason capture's pattern requires the words rejected/refused/skipped
+after the symbol, so it did not match — every budget-rationed name reached the
+database as the generic `constructor_dropped` with the detail "no matching
+constructor log line captured". Verified directly by running the capture's own
+regex against the real message before changing anything. It now goes through
+the same structured refusal channel every other named constructor refusal
+uses, under the code `risk_budget_exhausted`, with the requested percentage,
+the binding ceiling and the plain statement that nothing is wrong with the
+idea — it passed every gate and lost only the queue. Once the budget binds on
+a normal day, that was about to become the largest unexplained bucket on the
+sheet.
+
+**Not zeroed, dropped.** A 0% risk target is read downstream as "sell it". A
+budget refusal leaves no plan for the symbol at all, so the delta loop skips
+it and a held position is left exactly where it is. Refusing to open is not a
+decision to close. Pinned by a test.
+
+**What was deliberately NOT done.** No new constant was introduced — the
+change is an ordering, and it reads its order off machinery that already
+exists. The reward:risk floor that was just removed was not re-tightened.
+Proportional scale-down, conviction tiers and a names-per-session cap were all
+rejected by the owner's decision and none was built. The backtest engine still
+rations largest-first, because it has no candidate ranking to spend down —
+filed as board item 62 rather than papered over with an invented score.
+
+**Still open, and it is the owner's:** if the next-best candidate only partly
+fits the remaining budget, is it taken at reduced size or skipped? Shipped as
+`PARTIAL_FIT_POLICY = "fill"` — the reduced size, which is what the allocator
+has always done and is still floor-guarded — so this change alters the ORDER
+the budget is spent in and nothing else. The other branch, `"skip"`, is
+written, tested and one line away. It ships as "fill" for a specific reason:
+shipping an unratified change to fill semantics alongside a ratified change to
+ordering would make the two impossible to tell apart in the next session's
+numbers. Board item 49 stays open naming only this question.
+
+---
+
 ### 2026-09-13 — a fifth of what the trade-picking seat reads said nothing at all (item 18d / PM gate item 7)
 
 **In plain words:** the seat that actually picks the trades reads a long

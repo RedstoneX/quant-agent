@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from src.data.levels import (
@@ -165,6 +166,23 @@ STOP_REFUSAL_WIDER_THAN_REACH = "stop_wider_than_instrument_reach"
 #: the bars it actually received; None (older row, hand-built object) is
 #: not judged, because an unknown count is not a short one.
 STOP_REFUSAL_INSUFFICIENT_HISTORY = "insufficient_history"
+#: docs/WORK.md item 49, 2026-09-13. The portfolio risk budget was spent
+#: before this candidate's turn came round. NOT a judgement about the idea:
+#: it passed every gate, and on a day with fewer competing names it would
+#: have been bought. The only reason it produced no order is that better-
+#: ranked names took the 25% ceiling first.
+#:
+#: This exists because the budget denial was the ONE constructor drop path
+#: with no durable per-symbol reason at all: it logged
+#: "Constructor: X produces no order — risk budget granted 0% ...", which
+#: `_DropReasonCapture._SYMBOL` does not match (it requires
+#: rejected|refused|skipped after the symbol), so every budget-rationed name
+#: reached `_record_constructor_drops` as the generic `constructor_dropped`
+#: with detail "no matching constructor log line captured". Once the budget
+#: actually binds on a normal day — which is what item 49 is about — that is
+#: the largest silent bucket on the sheet. Verified on this branch before the
+#: fix by running the capture's own regex against the real message.
+STOP_REFUSAL_BUDGET_EXHAUSTED = "risk_budget_exhausted"
 #: The `pipeline_event` reason under which `pipeline_stages.DecisionStage`
 #: files a structured constructor refusal (`refusal=<code>` beside it).
 #: Distinct from `constructor_dropped`, whose detail is recovered by regex
@@ -717,6 +735,7 @@ class PortfolioConstructor:
         evidence_registry: dict[str, dict[str, str]] | None = None,
         stale_sources: dict[str, frozenset[str]] | None = None,
         gross_ceiling=None,
+        ranking: Sequence[str] | None = None,
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
 
@@ -763,6 +782,14 @@ class PortfolioConstructor:
         rather than none. **This function never trims the held book** — the
         gross ceiling's de-lever is authored in the session preamble, before
         any agent runs, so it cannot depend on a model returning a book.
+
+        `ranking`: docs/WORK.md item 49, owner decision 2026-09-12. The
+        session's candidate order, BEST FIRST — the caller passes the symbols
+        of `PortfolioManagerAgent.last_candidate_ranking`, i.e. exactly the
+        `rank_verdicts` order the PM itself was shown. When the risk budget
+        binds it is spent down this order rather than in whatever order the
+        allocator happened to iterate. Omitted, the allocator's pre-decision
+        ordering applies — no ranking is invented here or there.
         """
         if total_value <= 0:
             return []
@@ -786,6 +813,7 @@ class PortfolioConstructor:
             regime=regime,
             evidence_registry=evidence_registry,
             stale_sources=stale_sources,
+            ranking=ranking,
         )
 
         # Spec §10.3. Held GROSS exposure per sector, carried through the
@@ -966,6 +994,7 @@ class PortfolioConstructor:
         regime: str | None = None,
         evidence_registry: dict[str, dict[str, str]] | None = None,
         stale_sources: dict[str, frozenset[str]] | None = None,
+        ranking: Sequence[str] | None = None,
     ) -> dict[str, RiskPlan]:
         """Turn risk-based targets into notional weights, under the budget.
 
@@ -1223,6 +1252,10 @@ class PortfolioConstructor:
             ceiling_pct=self.cfg.max_portfolio_risk_pct,
             cluster_share_pct=self.cfg.max_cluster_risk_share_pct,
             floor_pct=self.cfg.min_risk_pct,
+            # docs/WORK.md item 49 — best-ranked first. `ranking` is the PM's
+            # own `rank_verdicts` order, threaded through unchanged; the
+            # allocator scores nothing and this module scores nothing.
+            priority=ranking,
         ) if existing_risk_pct is not None else None
 
         plans: dict[str, RiskPlan] = {}
@@ -1250,11 +1283,33 @@ class PortfolioConstructor:
                 if grant and grant.note:
                     note_parts.append(grant.note)
                 if granted <= 0:
-                    logger.info(
-                        "Constructor: %s produces no order — risk budget "
-                        "granted 0%% of the %.2f%% requested (%s)",
-                        sym, requested,
-                        grant.limited_by if grant else "no grant",
+                    # docs/WORK.md item 49, 2026-09-13. This used to be a
+                    # bare `logger.info` whose wording the drop-reason
+                    # capture's regex does not match, so a budget-rationed
+                    # name reached the database as a generic
+                    # `constructor_dropped` with "no matching constructor log
+                    # line captured". `_note_refusal` files the CODE as data
+                    # instead, per symbol, exactly like every other named
+                    # constructor refusal.
+                    #
+                    # The target is DROPPED, not zeroed. A 0% risk target is
+                    # read downstream as "sell it"; refusing to open a
+                    # position is not a decision to close one, and this
+                    # `continue` leaves `plans[sym]` absent so the delta loop
+                    # skips the symbol entirely. `closes` is populated on a
+                    # different path (an explicit PM 0.0 request) and is
+                    # untouched here.
+                    limited_by = grant.limited_by if grant else "no grant"
+                    self._note_refusal(
+                        sym, directions.get(sym, ""),
+                        STOP_REFUSAL_BUDGET_EXHAUSTED,
+                        f"the portfolio risk budget granted 0.00% of the "
+                        f"{requested:.2f}% risk this idea asked for "
+                        f"({limited_by}). Better-ranked candidates took the "
+                        f"{self.cfg.max_portfolio_risk_pct:.2f}% ceiling "
+                        f"first (docs/WORK.md item 49, owner decision "
+                        f"2026-09-12). Nothing is wrong with the idea — it "
+                        f"passed every gate and lost only the queue.",
                     )
                     continue
             else:

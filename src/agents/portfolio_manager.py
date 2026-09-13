@@ -83,6 +83,17 @@ class PortfolioManagerAgent(BaseAgent):
     #: reads it so the desk acts on exactly what the model was shown.
     last_rotation_precheck: RotationPrecheck | None = None
 
+    #: docs/WORK.md item 49, owner decision 2026-09-12 ("best-ranked first").
+    #: The candidate ranking this agent's LAST prompt was rendered from, in
+    #: `rank_verdicts` order, best first. Reset at the top of every
+    #: `build_user_message` exactly like `last_rotation_precheck` above, and
+    #: for the same reason: `pipeline_stages.DecisionStage` reads it to tell
+    #: the constructor which order to spend the risk budget in, and a stale
+    #: ranking from a previous session must never leak into this one. None
+    #: means "no ranking view this session" — the allocator then falls back
+    #: to its pre-decision ordering rather than having one invented for it.
+    last_candidate_ranking: list[RankedCandidate] | None = None
+
     @property
     def name(self) -> str:
         return "portfolio_manager"
@@ -592,6 +603,10 @@ class PortfolioManagerAgent(BaseAgent):
         # shown IN ORDER, so "which of the twelve" is a stated rule rather
         # than whatever the model defaults toward. Names a gate refuses
         # are listed with the gate that refused them and are NOT ordered.
+        # Item 49: reset FIRST, so a raise inside `rank_candidates` leaves no
+        # previous session's ranking behind for the constructor to spend this
+        # session's budget against.
+        self.last_candidate_ranking = None
         ranked, blocked = self.rank_candidates(
             analyses=analyses,
             evidence_registry=evidence_registry,
@@ -606,6 +621,7 @@ class PortfolioManagerAgent(BaseAgent):
             real_reward_risk_by_symbol=kwargs.get("real_reward_risk_by_symbol"),
             constructor_refusals_by_symbol=kwargs.get("constructor_refusals_by_symbol"),
         )
+        self.last_candidate_ranking = list(ranked)
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
         # Phase 14 — opportunity-cost rotation. The ranking above orders

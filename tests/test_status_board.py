@@ -2032,13 +2032,22 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     items, problem = sb.load_funnel_queue(work_md)
     assert problem is None
     by_rank = {i.rank: i for i in items}
-    # Item 1 is IN FLIGHT; 20 and 39 are the owner's own design / request;
-    # 49 was decided by him on 2026-09-12 in a status paragraph.
+    # Item 1 is IN FLIGHT; 20 and 39 are the owner's own design / request.
+    #
+    # Item 49 used to be pinned here as the "decided, not yet built" case —
+    # the owner ruled best-ranked-first on 2026-09-12 in a status paragraph
+    # and the code had not caught up. It was BUILT on 2026-09-13 and the
+    # item was rewritten down to the single sub-question the ruling did not
+    # settle (partial fit at the cut line), which is a genuine open owner
+    # question and not a pending build. So it must now read as plainly OPEN
+    # with no ruling attached — which the final loop below asserts for it
+    # along with everything else in that bucket.
     assert by_rank[1].in_hand_state == "being built"
-    for rank in (20, 39, 49):
+    for rank in (20, 39):
         assert by_rank[rank].in_hand_state == "decided, not yet built", rank
-    for rank in (1, 20, 39, 49):
+    for rank in (1, 20, 39):
         assert by_rank[rank].bucket == "in_hand", rank
+    assert by_rank[49].bucket == "open"
     # Checked and by design.
     for rank in (3, 4, 8):
         assert by_rank[rank].bucket == "no_action", rank

@@ -1086,6 +1086,34 @@ def _alert_unmeasurable_symbols(faults: dict[str, dict]) -> None:
         logger.warning("unmeasurable-symbols alert could not be sent: %s", exc)
 
 
+def _session_candidate_ranking(pipeline) -> list[str] | None:
+    """This session's candidate symbols, BEST FIRST, or None if there is no
+    ranking — docs/WORK.md item 49, owner decision 2026-09-12.
+
+    Reads `PortfolioManagerAgent.last_candidate_ranking`, the exact
+    `rank_verdicts` output the PM's own prompt was rendered from. Same
+    pattern, and same reason, as `last_rotation_precheck` above: the desk
+    must ration the budget against the numbers the model was actually shown,
+    not against a second evaluation.
+
+    Returns None — never `[]` — when there is no ranking, because an EMPTY
+    ranking and an ABSENT one mean the same thing to the allocator (fall back
+    to the pre-decision ordering) and conflating them with a real, empty list
+    would be indistinguishable from "every candidate ranked last".
+    """
+    ranked = getattr(
+        getattr(pipeline, "portfolio_manager", None), "last_candidate_ranking", None,
+    )
+    if not ranked:
+        return None
+    symbols: list[str] = []
+    for candidate in ranked:
+        symbol = str(getattr(candidate, "symbol", "") or "").strip().upper()
+        if symbol:
+            symbols.append(symbol)
+    return symbols or None
+
+
 def _dropped_since_proposal(portfolio_decision) -> list[str]:
     """Symbols the PM proposed that are no longer in the order list.
 
@@ -4251,6 +4279,16 @@ class DecisionStage:
             # here only on a lane where the preamble did not run). The
             # constructor sizes UNDER it; it never trims the held book.
             gross_ceiling=_session_gross_ceiling(pipeline, ctx),
+            # docs/WORK.md item 49, owner decision 2026-09-12: when the risk
+            # budget binds, spend it BEST-RANKED FIRST. This is the PM's own
+            # `rank_verdicts` ordering, taken from the object the PM's prompt
+            # was rendered from this session — never recomputed here, so the
+            # order the budget is spent in is provably the order the model
+            # was shown. None when no ranking was produced (no Technical
+            # reads, or a PM path that never built a prompt): the allocator
+            # then keeps its pre-decision ordering rather than being handed
+            # an invented one.
+            ranking=_session_candidate_ranking(pipeline),
         )
         # Provenance for the AI Risk Manager: which proposed symbols did the
         # deterministic constructor remove? Derived here (targets minus
