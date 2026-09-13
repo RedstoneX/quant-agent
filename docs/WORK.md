@@ -110,7 +110,7 @@ here once written up in `docs/INCIDENT_HISTORY.md` — this list is what is
 still wrong, not a history of what was.
 
 **4. News analyst seat data quality — PARTIALLY FIXED, one gap open.**
-**7. PM-input shape/volume redesign (bounded recommendation, not raw reasoning) — NOT STARTED.**
+**7. PM-input shape/volume redesign — MEASURED and the null-content slice SHIPPED 2026-09-13; two named pieces left, neither of them volume.** The step that was actually missing — nobody had counted the CURRENT prompt, only the 2026-09-02 one — is done: the frozen `run_64290730` fixture rendered through the live `build_user_message` is 100,968 chars over 25 sections, and 22,094 of them (21.9%) were content-free. Full per-section table and the confirmation of item 18's "70%" (it was exactly 70.4%) in `docs/INCIDENT_HISTORY.md` ("item 18d"). Prompt is now 85,933 chars. **What is left is not volume:** (a) macro is the one seat still couriering full reasoning — its 6-paragraph `reasoning_chain` (2,287 chars) is verbatim, deliberately, under "audit these for logic errors"; deciding whether the audit hook is worth a non-bounded seat is a PROMPT change and needs the paid `--replay-run` benchmark, which the rig cannot substitute for; (b) the two largest remaining sections, Technical Analysis (16,736) and Independent Source Agreement (11,902), are both already bounded and both scale linearly with the number of candidates covered — there is no honest cap to put on either, so the lever is how many names get covered, not how each one renders. Earnings, news and tech all now hand over call + conviction + thesis + falsifier. Do NOT re-open this as a size problem.
 **8. Every past model-comparison benchmark may be contaminated by bad seat data — OPEN, no re-run yet.** Same shape as the already-known spend-baseline contamination: a benchmark run before tonight's data-honesty fixes could have scored a model on how well it coped with (or quietly hid) empty/wrong input, not on real analytical quality. Combine with the PM model test itself — same re-run, same gate, not two separate jobs.
 
 Detail below, under "DATA QUALITY AUDIT" and "PM-INPUT ARCHITECTURE".
@@ -729,9 +729,12 @@ re-measuring before relying on it again.
 **Still genuinely open, not solved by the above:**
   - `familiarity_bias` is graded but never stated in the PROMPT (the
     catalyst-door existence-vs-direction gap itself was fixed 2026-09-03).
-  - Earnings is still the single largest prompt section post-fix (~35
-    filings/day at 4 lines each is real volume) — cutting/summarising it
-    further is queued, not done.
+  - ~~Earnings is still the single largest prompt section post-fix~~ —
+    DONE 2026-09-13. 38 of 65 filings were rendering a four-line verdict
+    block with no direction, no thesis and the literal words "not disclosed
+    by the analyst"; they are one roll-up line each now. Earnings
+    32.5%→21.5% of the prompt and no longer the largest section. See the PM
+    TEST GATE item 7 line above for what that leaves.
   - Section reorder (BUY eligibility to the top) deliberately NOT done —
     needs a paid `--replay-run` benchmark to verify, not authorised yet.
   - Whether R/R and net evidence join the production ranking composite —
