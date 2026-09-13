@@ -38,7 +38,25 @@ What it does
        UNREADABLE         the backlog's shape changed and this could not
                           read it — reported loudly, never as "all clear"
 
-  3. In `--stop-hook` mode, answers one question with an exit code: may
+  3. Checks two things about the turn that is ending, which the backlog
+     cannot see:
+
+       * a CLOSURE NOBODY ARGUED AGAINST. The owner's rule is that no board
+         item closes until the adversary agent has argued against closing
+         it; it was skipped on five closures in a row on 2026-09-13. An open
+         pull request that closes an item — it edits the backlog's "Retired
+         item numbers" line, its title names an item, or its description
+         says in words that it closes one — must carry a line
+         beginning `Adversary:` with at least a sentence behind it. GitHub
+         is read credential-free through `src/inflight.py`; a read that
+         FAILS produces nothing, because not being able to look is not
+         evidence that a review is missing.
+       * an UNKEPT PROMISE. If this turn made no tool call at all and its
+         closing line says it is doing something, the promise died with the
+         turn. See `scripts/turn_promises.py` for what it deliberately does
+         not flag and why.
+
+  4. In `--stop-hook` mode, answers one question with an exit code: may
      this session stop? It says no ONLY when all of the following hold,
      and yes in every other case including every case it is unsure about.
 
@@ -51,7 +69,10 @@ names, so "something might still be running" resolves to STOP, never to
 block. The same applies to an unreadable backlog: a parser that cannot
 read the file has no business insisting there is work in it.
 
-The three conditions to block, all required:
+Any of the three checks can block, and the same two escape hatches apply to
+all of them: nothing blocks while a background agent looks alive, and
+nothing blocks on a read that failed. For the backlog check specifically,
+all three of these must hold:
 
   * ACTIONABLE is non-empty. Waiting-external and blocked-on-owner work
     is not a reason to keep a session alive; neither is a backlog that
@@ -72,6 +93,26 @@ first, because the backlog is ranked by measured cost and the owner's
 instruction is explicit: *"Do not reorder it from intuition."* The 35.5
 hour change happened under the opposite habit.
 
+What this does NOT enforce
+--------------------------
+Stated plainly, because a checker that is believed to cover more than it
+does is worse than one nobody trusts:
+
+  * It cannot see a MERGED closure. Both new checks read OPEN pull requests,
+    so an item closed and merged inside one turn is past them.
+  * It does not judge the adversary's argument, only that one is written
+    down. A dishonest `Adversary:` line passes.
+  * It reads only the CLOSING line of the final message, and only when the
+    turn called no tool at all. A promise made mid-message, or in a turn
+    that did some other work, is not flagged — deliberately; see
+    `scripts/turn_promises.py`.
+  * It never blocks while a background agent looks alive, so a promise made
+    in that state is missed rather than caught late.
+  * It only runs where it is installed. The wrapper is safe to install at
+    user level, and until it is, a session started outside this repository
+    is not checked at all — the reason this had never fired once by
+    2026-09-13.
+
 Usage
 -----
     scripts/work_queue.py                  # the four lists, for a human
@@ -82,14 +123,24 @@ Usage
 Exit codes
 ----------
     0  nothing to do, or (in hook mode) the session may stop
-    1  hook mode only: there IS actionable work; stderr says which
-    3  the backlog could not be read at all
+    2  hook mode only: STOP BLOCKED. stderr says which of the three checks
+       spoke — an unkept promise from this turn, a closure nobody argued
+       against, or the next actionable backlog item. 2 is the harness's own
+       and ONLY blocking code; this used to return 1, which the harness
+       treats as a hook error and lets the session end.
+    3  the backlog could not be read at all (report mode)
+
+Switches
+--------
+    WORK_QUEUE_PROMISE_CHECK=0     silence the unkept-promise check
+    WORK_QUEUE_ADVERSARY_CHECK=0   silence the adversarial-review check
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -107,6 +158,13 @@ from scripts.status_board import (  # noqa: E402
     load_funnel_queue,
     load_pending_decisions,
     load_pm_gate,
+)
+from scripts.turn_promises import unkept_promise  # noqa: E402
+from src.inflight import (  # noqa: E402
+    RETIRED_LINE,
+    WORK_MD,
+    OpenPR,
+    read_open_pull_requests,
 )
 
 #: How long after its last write a subagent transcript still counts as a
@@ -281,6 +339,112 @@ def running_agents(session_id: str | None,
 
 
 # ---------------------------------------------------------------------------
+# Was the closure argued against?
+# ---------------------------------------------------------------------------
+
+#: The owner's rule: no board item is closed until the adversary agent
+#: (`.claude/agents/qamc-adversary.md`) has argued against closing it. It was
+#: skipped on five closures in a row on 2026-09-13, and the reason it keeps
+#: being skipped is that work coming back green produces no signal that it
+#: was never challenged. Nothing about "remember to run the adversary" has
+#: held; this is the mechanical version.
+#:
+#: The evidence is a line in the pull request description beginning
+#: `Adversary:` and carrying at least a sentence. A bare `Adversary: yes` is
+#: not evidence of an argument and does not count.
+ADVERSARY_LINE = re.compile(r"^\s*Adversary\s*:\s*(.+)$", re.I | re.M)
+
+#: What counts as "at least a sentence" after the label. Deliberately low —
+#: this is a presence check, not a quality one; judging the argument is the
+#: reader's job, and a threshold high enough to judge would be gamed by
+#: padding anyway.
+MIN_ADVERSARY_WORDS = 6
+
+#: "item 12", "items 30/31/32" — the convention this repository's pull
+#: request titles already use for the item they close.
+ITEM_REF = re.compile(r"\bitems?\s+#?(\d+)\b", re.I)
+
+#: In the BODY the same words are usually a citation, not a claim: PR 351
+#: ("docs: make README match the desk that actually exists") mentions
+#: "item 44" only to explain where a deleted rule came from, and demanding
+#: an adversary line for that is the cried wolf. So a body reference counts
+#: only when a closing verb is attached to it.
+ITEM_CLOSED = re.compile(
+    r"\b(?:closes?|closing|closed|resolves?|resolved|retires?|retired"
+    r"|completes?|completed|finishes?|finished|fixes)\b[^.\n]{0,40}?"
+    r"\bitems?\s+#?(\d+)\b", re.I)
+
+
+def closes_a_board_item(pr: OpenPR) -> str | None:
+    """Why this change looks like a board closure, or None.
+
+    Two independent signals, either of which is enough:
+
+      * it edits the backlog's "Retired item numbers" line — that line is
+        only ever touched to retire an item, so editing it IS a closure
+        whatever the description says; and
+      * its TITLE names a board item by number — this repository's own
+        convention for the item a change closes — or its description says
+        in words that it closes one.
+
+    A change whose files could not be read still gets the second test. It
+    never gets the first, because a read that failed is not evidence.
+    """
+    patch = pr.work_md_patch
+    if patch:
+        for line in patch.splitlines():
+            if line[:1] in "+-" and line[1:2] != line[:1] and RETIRED_LINE in line:
+                return f"it edits the {WORK_MD} line that retires board items"
+    match = ITEM_REF.search(pr.title or "")
+    if match:
+        return f"its title names board item {match.group(1)}"
+    match = ITEM_CLOSED.search(pr.body or "")
+    if match:
+        return f"its description says it closes board item {match.group(1)}"
+    return None
+
+
+def has_adversary_evidence(body: str) -> bool:
+    """Does this description carry a real `Adversary:` line?"""
+    for match in ADVERSARY_LINE.finditer(body or ""):
+        argument = match.group(1).strip()
+        if len(argument.split()) >= MIN_ADVERSARY_WORDS:
+            return True
+    return False
+
+
+def unreviewed_closures(prs: list[OpenPR]) -> list[str]:
+    """One plain sentence per open change that closes an item unchallenged."""
+    out: list[str] = []
+    for pr in prs:
+        why = closes_a_board_item(pr)
+        if why and not has_adversary_evidence(pr.body):
+            out.append(f"PR {pr.number} ({pr.title or 'untitled'}) closes a "
+                       f"board item — {why} — but its description carries no "
+                       f"'Adversary:' line, so nothing argued against closing "
+                       f"it.")
+    return out
+
+
+def adversary_gaps(fetch: Any = None) -> list[str]:
+    """The unreviewed closures, or an empty list if GitHub could not be read.
+
+    A failed read must NEVER manufacture work. "I could not see the pull
+    requests" is not evidence that a review is missing, and a hook that
+    treats it as such would hold sessions open every time GitHub rate-limits
+    this address — which for an unauthenticated reader is routine.
+    """
+    try:
+        prs, problem = (read_open_pull_requests(fetch) if fetch
+                        else read_open_pull_requests())
+    except Exception:  # noqa: BLE001 - this check never breaks a session
+        return []
+    if problem:
+        return []
+    return unreviewed_closures(prs)
+
+
+# ---------------------------------------------------------------------------
 # Hand-back accounting — the loop brake
 # ---------------------------------------------------------------------------
 
@@ -329,6 +493,10 @@ class HookDecision:
 
     block: bool
     reason: str
+    #: Which check spoke. Drives the exit code, so the caller — and the
+    #: reader of a hook log — can tell a dropped backlog item from a broken
+    #: promise without parsing English.
+    kind: str = "queue"
 
 
 def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
@@ -336,10 +504,29 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
            idle_seconds: int = AGENT_IDLE_SECONDS,
            now: float | None = None,
            projects_root: Path | None = None,
-           state_path: Path | None = None) -> HookDecision:
+           state_path: Path | None = None,
+           promise: str | None = None,
+           gaps: list[str] | None = None) -> HookDecision:
     """The whole policy, in one readable function, in the order it is
-    checked. Every branch that is not certain resolves to "stop"."""
-    if not queue.actionable:
+    checked. Every branch that is not certain resolves to "stop".
+
+    `promise` is the unkept commitment this turn ended on, and `gaps` the
+    unreviewed closures, both already gathered by the caller — this function
+    stays free of I/O so the policy can be read and tested on its own.
+
+    Order matters, and it is not the order of importance:
+
+      1. Nothing to say at all → stop. The cheap exit, taken first.
+      2. Something to say, but an agent is alive → stop anyway. The cost
+         trap outranks every finding below it; blocking while a subagent
+         writes re-sends the whole transcript at $1.59 a firing.
+      3. An unkept promise → block. First because it is about THIS turn and
+         costs one sentence to fix, where the others are about other work.
+      4. A closure nobody argued against → block.
+      5. An actionable backlog item → block, subject to the hand-back brake.
+    """
+    gaps = gaps or []
+    if not queue.actionable and not promise and not gaps:
         if queue.unreadable:
             # Loud in the report, permissive here. A parser that cannot read
             # the backlog has no grounds to insist there is work in it.
@@ -353,6 +540,22 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
         return HookDecision(False, f"{len(alive)} background agent(s) still "
                                    "writing; blocking now re-sends the whole "
                                    "transcript on every firing")
+
+    if promise:
+        return HookDecision(
+            True,
+            f"“{promise}” — and the turn made no tool call at all. "
+            "Do it now, or say plainly that it is not being done.",
+            kind="promise")
+
+    if gaps:
+        first = gaps[0]
+        more = (f" ({len(gaps) - 1} more like it.)" if len(gaps) > 1 else "")
+        return HookDecision(
+            True,
+            f"{first} Run the adversary against it and put its argument in "
+            f"the description before this closes.{more}",
+            kind="adversary")
 
     item = queue.next_item
     assert item is not None  # non-empty actionable, checked above
@@ -368,12 +571,36 @@ def decide(queue: Queue, session_id: str | None, stop_hook_active: bool,
                               f"waiting on anyone else: {item.title}")
 
 
+#: The ONLY exit code that stops a Stop hook from stopping. Verified against
+#: the harness's own documentation on 2026-09-13, not remembered: exit 0 ends
+#: the conversation, exit 2 blocks it and feeds stderr back, and every other
+#: non-zero code is reported as a hook ERROR and ends the conversation
+#: anyway. This file previously returned 1 to hand work back, which means
+#: that even in a session where it loaded it could never have blocked.
+BLOCK_EXIT = 2
+
+#: Set to "0"/"off"/"false" to silence the unkept-promise check alone. It is
+#: ON by default: measured against this session's own transcript it fired on
+#: 6 of 169 turns that ended without a single tool call, and every one of
+#: those six was the real thing. The switch exists because a check that
+#: fires on English deserves an off button that does not require an edit.
+PROMISE_CHECK_ENV = "WORK_QUEUE_PROMISE_CHECK"
+
+#: Same, for the adversarial-review check.
+ADVERSARY_CHECK_ENV = "WORK_QUEUE_ADVERSARY_CHECK"
+
+
+def _enabled(env_name: str) -> bool:
+    return os.environ.get(env_name, "1").strip().lower() not in (
+        "0", "off", "false", "no")
+
+
 def run_hook(raw: str, **kw: Any) -> int:
     """Read the harness's hook JSON, print the decision, return an exit code.
 
-    Exit 0 lets the session stop. Exit 1 with a reason on stderr is how this
-    hands the item back. Malformed input stops — an unparseable hook payload
-    is not evidence of outstanding work.
+    Exit 0 lets the session stop; exit 2 blocks it and hands the reason back.
+    Malformed input stops — an unparseable hook payload is not evidence of
+    outstanding work, and neither is a check that threw.
     """
     try:
         payload = json.loads(raw) if raw.strip() else {}
@@ -381,14 +608,35 @@ def run_hook(raw: str, **kw: Any) -> int:
         print("work_queue: could not read the hook payload; allowing stop",
               file=sys.stderr)
         return 0
+    if not isinstance(payload, dict):
+        print("work_queue: the hook payload was not an object; allowing stop",
+              file=sys.stderr)
+        return 0
+
     queue = build_queue()
+
+    promise = None
+    if _enabled(PROMISE_CHECK_ENV):
+        try:
+            promise = unkept_promise(payload.get("transcript_path"))
+        except Exception:  # noqa: BLE001 - never break a session over this
+            promise = None
+
+    gaps: list[str] = []
+    if _enabled(ADVERSARY_CHECK_ENV):
+        gaps = adversary_gaps()
+
     decision = decide(queue, payload.get("session_id"),
-                      bool(payload.get("stop_hook_active")), **kw)
+                      bool(payload.get("stop_hook_active")),
+                      promise=promise, gaps=gaps, **kw)
     if not decision.block:
         return 0
-    print(f"Next in the backlog, oldest first: {decision.reason}",
-          file=sys.stderr)
-    return 1
+    lead = {
+        "promise": "You said you were doing this and the turn did nothing",
+        "adversary": "A closure has not been argued against",
+    }.get(decision.kind, "Next in the backlog, oldest first")
+    print(f"{lead}: {decision.reason}", file=sys.stderr)
+    return BLOCK_EXIT
 
 
 # ---------------------------------------------------------------------------
