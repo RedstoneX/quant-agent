@@ -98,8 +98,52 @@ CHANDELIER_ATR_MULTIPLE = 3.0
 #: day's range. Same value the TRAIL_STOP clamp in `pipeline.py` uses.
 NOISE_BAND_ATR_MULTIPLE = 1.25
 
-#: Bars either side of a candidate swing low. Matches `src/data/levels.py`'s
-#: pivot detection so "a higher low" means the same thing in both places.
+#: Bars either side of a candidate swing low, for THIS module only.
+#:
+#: **This is a convention with no derivation, and it is deliberately not
+#: reconciled with `src/data/levels.py`.** Until 2026-09-13 the comment here
+#: claimed it "matches `src/data/levels.py`'s pivot detection so 'a higher
+#: low' means the same thing in both places". That was false the day it was
+#: written: `src/data/levels.py::PIVOT_WINDOW` is 5, this is 3, and they have
+#: never been equal.
+#:
+#: What the desk adopted is the ARCHETYPE, not anyone's constant: a swing
+#: point is a bar that strictly dominates N bars on BOTH sides, and the
+#: right-hand arm means the verdict arrives N bars late. That is the Williams
+#: fractal / pivot-high-low construction as implemented by TA-Lib's FRACTAL
+#: (`optInLeftBars` / `optInRightBars`, https://ta-lib.org/functions/fractal.html)
+#: and by Pine's `ta.pivothigh` / `ta.pivotlow`.
+#:
+#: The NUMBER is not adopted, because no source derives one:
+#:   * TA-Lib's FRACTAL defaults both arms to 2 and states no rationale; the
+#:     page only notes "Bill Williams' original is the symmetric five-candle
+#:     case" — i.e. 2 either side, which is neither 3 nor 5.
+#:   * MetaTrader 5's own fractal documentation defines the pattern as "at
+#:     least five successive bars ... and two lower HIGHs on both sides" and
+#:     gives no reason for the count
+#:     (https://www.metatrader5.com/en/terminal/help/indicators/bw_indicators/fractals).
+#:   * fxssi records that Williams did NOT require five, and that five became
+#:     standard "due to its inclusion in the list of standard indicators of
+#:     MetaTrader 4 trading terminal" (https://fxssi.com/bill-williams-fractals)
+#:     — i.e. the popular number is a default that shipped, not a measurement.
+#:   * LuxAlgo's swing high/low reference states outright: "There is no
+#:     universally best setting ... different settings produce genuinely
+#:     different structure from the same chart"
+#:     (https://www.luxalgo.com/library/concept/swing-high-low/).
+#: Reviewed 2026-09-13; ~all of this literature is assertion rather than
+#: measurement, and no source fetched offered a derivation for any window.
+#:
+#: So 3 stays, labelled honestly, rather than being changed to a number with
+#: no better claim on being right. Changing it would be picking a number.
+#:
+#: Sole consumers: `_swing_lows` / `_swing_highs` in this file, reached only
+#: through `compute_trailing_stop`. Callers of that are
+#: `src/pipeline.py::_trail_open_positions` and
+#: `src/backtest/engine.py`. Nothing downstream compares a pivot found here
+#: against a level from `src/data/levels.py`, so the two windows disagreeing
+#: is currently harmless — see `src/data/levels.py::PIVOT_WINDOW` for the
+#: other half of this note and `tests/test_pivot_window_independence.py` for
+#: the test that pins it.
 PIVOT_WINDOW = 3
 
 #: How many initial-risk-units (R) of profit a Type A / range trade must

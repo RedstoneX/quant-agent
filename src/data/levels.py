@@ -36,8 +36,30 @@ from src.data.technical import ATR_PERIOD, atr_series
 from src.risk.constants import is_trend_trade
 
 # A pivot is a bar whose high (or low) is the most extreme within this many
-# bars either side. 5 keeps genuine swing structure while ignoring single-bar
-# wiggles; smaller values produce noise, larger ones miss real turning points.
+# bars either side, for THIS module only.
+#
+# **This is a convention with no derivation.** The previous comment here
+# ("5 keeps genuine swing structure while ignoring single-bar wiggles;
+# smaller values produce noise, larger ones miss real turning points") read
+# as a justification but was an unsourced assertion — it states the generic
+# sensitivity tradeoff that applies to ANY window and picks 5 out of it,
+# which is not a derivation of 5.
+#
+# The archetype is adopted, the constant is not. See the long note beside
+# `src/risk/trailing.py::PIVOT_WINDOW` for the fetched sources (TA-Lib
+# FRACTAL, MetaTrader 5, fxssi, LuxAlgo, reviewed 2026-09-13): every one of
+# them states a bar count as convention and none derives it, TA-Lib's own
+# default is 2 either side, and LuxAlgo states there is no universally best
+# setting. So 5 stays, honestly labelled, rather than being changed to
+# another number with no better claim.
+#
+# `src/risk/trailing.py` uses 3, NOT 5, and that is not an error to fix by
+# copying. Consumers of THIS window are `find_structural_levels` and
+# `structure_coverage` in this file (and `MIN_SCAN_BARS` below, which is read
+# from it). Nothing downstream compares a level computed here against a pivot
+# found by `src/risk/trailing.py`, so the disagreement is currently harmless;
+# `tests/test_pivot_window_independence.py` pins both that they differ and
+# that no shared consumer exists.
 PIVOT_WINDOW = 5
 
 # The fewest CLEAN bars the level scan can run over — READ from the scan's

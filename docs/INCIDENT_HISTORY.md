@@ -22,6 +22,79 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — a comment claimed two parts of the desk agreed on what a "swing low" is; they never have, and the research says nobody can say which is right
+
+**What broke, plainly.** Two parts of the desk look for the same shape on a
+chart: a dip with higher prices on both sides. The trailing stop requires
+three higher days either side. The support-level finder requires five. A note
+written beside the trailing stop said the two matched, so that a swing low
+meant the same thing everywhere. It was false the day it was written and
+stayed false for as long as it existed. Nothing lost money; a sentence lied.
+
+**What was actually wrong, and what was not.** The false comment was real.
+The alarm attached to it was not. The item said the mismatch meant one half
+of the desk could protect a floor the other half did not believe in. That
+requires something downstream to compare the two, and nothing does — checked
+by reading every module that imports either one. The trailing window is used
+only by the trailing stop's own pivot scan; the level window is used only by
+the level scan and the coverage check. They never meet. So this was a
+documentation defect wearing a safety defect's clothes.
+
+**One claim in the item is wrong and is corrected here.** It said each
+window could see a low the other misses, "and vice versa". Measured, the
+asymmetry runs one way: a bar that dominates five bars either side
+necessarily dominates three, so every support pivot the level scan finds is
+also a swing low the trailing stop finds. The looser window is the trailing
+one, which sees strictly more. That is the safer direction of the two and is
+now pinned by a test.
+
+**Why the numbers were not reconciled.** The obvious fix — make both 3, or
+both 5 — is picking a number, which this desk does not do. So the literature
+was read first, and it does not support picking one:
+
+* TA-Lib's own `FRACTAL` function takes left and right arms as parameters
+  and defaults both to **2**, with no rationale stated on the page. Two
+  either side is the classic five-candle fractal — which is neither 3 nor 5,
+  so the desk's two constants both already disagree with the archetype's
+  default.
+* MetaTrader 5's fractal documentation defines the pattern as five
+  successive bars with two lower highs on both sides, and gives no reason
+  for the count.
+* Bill Williams did not require five. Five became standard because it
+  shipped as a default indicator in MetaTrader 4. That is a distribution
+  fact, not a measurement.
+* LuxAlgo's swing high/low reference says it outright: there is no
+  universally best setting, and different settings produce genuinely
+  different structure from the same chart.
+
+Roughly all of this literature is assertion rather than measurement. No
+source fetched offered a derivation for any window, and the one source that
+addressed the question directly said no derivation exists. The old comment
+beside the level scan's 5 ("smaller values produce noise, larger ones miss
+real turning points") looked like a justification but was the generic
+sensitivity tradeoff that applies to any window at all — it justifies
+nothing about 5 specifically, and it has been relabelled.
+
+**What was done.** The archetype was adopted and the constants were not.
+Both windows keep their existing values, each now labelled in its own file as
+a convention with no derivation, with the fetched sources cited beside the
+number, the consumers of each named so a future reader can check the
+"they never meet" claim without re-deriving it, and an explicit instruction
+not to "fix" the disagreement by copying. A test file pins all of it,
+including a scan that fails if any module ever imports both windows — the
+event that would turn this back into a real defect.
+
+**A third instance of the same false claim** was found in the trailing-stop
+test suite, whose fixture docstring also said the definition matched the
+level scan's. Fixed with the other two.
+
+**What would catch it next time.** Nothing did catch it, for months, because
+a comment cannot be executed. The test that now asserts what the comments say
+is the mechanism; the general lesson is that a comment claiming two constants
+agree is a claim about code and should be pinned like one.
+
+---
+
 ### 2026-09-12 — opportunity-cost rotation stopped only describing the problem and started acting on it, and was enabled rather than shipped dark
 
 **In plain words:** the desk could already see when money was tied up in a
