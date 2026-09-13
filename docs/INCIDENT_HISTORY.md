@@ -2903,10 +2903,9 @@ never credited to the veto.
 
 ### 2026-09-03 — alerts stop relying on colour
 
-**In plain words:** the owner is red/green colour blind — red, orange and
-green circles are effectively indistinguishable to him. Every critical
-alert on this desk opened with a coloured circle (🔴 critical, 🟠 hold) and
-colour was doing all the work of telling him how bad something was. This is
+**In plain words:** every critical alert on this desk opened with a
+coloured circle (🔴 critical, 🟠 hold) and colour was doing all the work of
+telling the reader how bad something was, with no text fallback. This is
 item 21(b) in `docs/WORK.md`, owner spec 2026-09-02.
 
 **What changed.** Every 🔴/🟠 alert opening in `src/notifier.py`,

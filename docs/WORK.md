@@ -145,9 +145,9 @@ see the struck-through index above for status.)
 **Standing alert-design rule, reiterated by the owner 2026-09-02 (already
 in effect for margin/naked-position alerts, now extended to data quality):
 every failure alerts in its OWN Telegram message, never bundled into a
-normal run summary, and severity is carried in TEXT, never colour — the
-owner is red/green colour blind.** Deliberately not deduplicated: a
-still-broken seat should keep alerting, not go quiet.
+normal run summary, and severity is carried in TEXT, never colour.**
+Deliberately not deduplicated: a still-broken seat should keep alerting,
+not go quiet.
 
 **ITEM 0 CONTINUED — PM-INPUT ARCHITECTURE, owner priority 2026-09-02, NOT
 YET IMPLEMENTED, recorded so it isn't lost.** PM must receive concise
