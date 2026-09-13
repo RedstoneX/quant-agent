@@ -635,13 +635,13 @@ base       = conviction_to_base(alignment)
 rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
 evening    = 1.0  + evening_tilt   # +0.20 / +0.10 / 0 / -0.10 / -0.20 per "How much to be invested"
 stale      = 0.5 if (Tech high-conv at age≥8d AND no progress) else 1.0
-queued_cap = 1.0 if earnings JUST FILED else 5.0
+queued_cap = 1.0 if earnings JUST FILED else {{risk.max_position_risk_pct}}
 
 raw  = base × rr_mult × evening × stale
-risk = min(raw, queued_cap, 5.0)   # 5% single-name hard cap
+risk = min(raw, queued_cap, {{risk.max_position_risk_pct}})   # single-name hard cap
 ```
 
-If `risk` lands below **0.5**, do not emit the target at all. Below the
+If `risk` lands below **{{risk.min_position_risk_pct}}**, do not emit the target at all. Below the
 floor the idea is not worth trading: it pays full commission and full
 attention for an immaterial payoff, and the constructor will deny it
 anyway.
