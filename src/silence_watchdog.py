@@ -89,6 +89,37 @@ row is not something a healthy desk does. Ratified 2026-09-03; the `DECIDE
 BY` line this shipped with has been removed accordingly. Still fully
 parameterised (constructor / CLI argument) so it can be revisited without a
 redesign if real operation shows it needs adjusting either way.
+
+A DELIBERATELY PAUSED DESK STILL HAS TO BE REMEMBERED — ADDED 2026-09-13
+--------------------------------------------------------------------------
+`scripts/run_silence_heartbeat.sh` suppresses the silence check entirely
+when no trading-mode timer is running, because an alarm that pages every
+30 minutes about a state somebody chose on purpose is an alarm that gets
+muted. That suppression is correct and is kept — but on its own it turned
+"the desk is paused" into the one desk-wide condition with NO alarm behind
+it at all. Every other surface is quiet too: the daily channel probe
+sends-and-deletes (the owner sees nothing on a healthy run), the coverage
+watchdog only speaks when a held position is short of stops, and the
+alert-channel `stale` state is a Mission Control colour nobody is pushed.
+A pause plus a flat book was therefore indistinguishable from a working
+desk in a quiet market — which is docs/WORK.md item 11's premise exactly,
+reintroduced by the guard that was meant to reduce noise.
+
+`check_paused_desk` is the answer: while the desk is paused, say so ONCE
+PER ET WEEKDAY, and only after at least one of that day's scheduled
+windows has fully elapsed (so the notice lands after the desk visibly
+failed to do something, not at 00:30). Both of those are read off existing
+facts — `SESSION_WINDOWS` plus `SLACK_MINUTES` for the window, and the
+once-every-24-hours-while-it-stays-broken ruling already applied by
+`src/coverage_watchdog.py` (docs/WORK.md item 41) for the cadence. No new
+threshold is introduced.
+
+KNOWN LIMIT, STATED RATHER THAN HIDDEN: this module has no market-holiday
+calendar (`src/trading_calendar.py` says holiday detection needs a live
+broker connection, which a pure database reader must not take). So a
+paused desk over a US market holiday produces one extra notice for that
+day. One message is the whole cost, and a desk still paused on a holiday
+is still a desk somebody has to remember to restart.
 """
 from __future__ import annotations
 
@@ -113,6 +144,15 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "quant_agent.db"
 #: like `scripts/alert_heartbeat.py`'s `data/alerting/heartbeat.json`.
 STATE_PATH = (
     Path(__file__).resolve().parent.parent / "data" / "alerting" / "silence_heartbeat.json"
+)
+
+#: Separate on-box record for the paused-desk notice. Deliberately NOT the
+#: same file as the silence marker: the two are written on mutually
+#: exclusive runs (the wrapper either finds the desk paused or it does
+#: not), and sharing one file would mean a pause episode could silently
+#: overwrite the `last_known_session_at` the silence check depends on.
+PAUSED_STATE_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "alerting" / "paused_desk.json"
 )
 
 TABLE = "alert_channel_checks"
@@ -377,6 +417,98 @@ def check_silence(
     return status
 
 
+# ---------------------------------------------------------------------------
+# the paused-desk notice — the other half of the wrapper's pause guard
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PausedDeskStatus:
+    """What a paused-desk run found. `should_notify` is the only field
+    callers act on."""
+
+    et_date: str
+    elapsed_windows_today: int
+    already_notified_today: bool
+    is_weekday: bool
+
+    @property
+    def should_notify(self) -> bool:
+        return (
+            self.is_weekday
+            and self.elapsed_windows_today > 0
+            and not self.already_notified_today
+        )
+
+
+def _elapsed_windows_on(now: datetime) -> int:
+    """How many of TODAY's (ET) scheduled windows have already closed,
+    slack included. Zero before the first one — which is why the notice
+    cannot fire in the small hours of a day the desk had not yet been due
+    to do anything on."""
+    now_et = now.astimezone(ET)
+    day = now_et.date()
+    midnight_et = datetime(day.year, day.month, day.day, tzinfo=ET)
+    count = 0
+    for _mode, (_lo, hi) in SESSION_WINDOWS.items():
+        end_et = midnight_et + timedelta(minutes=hi)
+        if end_et.astimezone(timezone.utc) + timedelta(minutes=SLACK_MINUTES) <= now:
+            count += 1
+    return count
+
+
+def check_paused_desk(
+    *,
+    now: datetime | None = None,
+    state_path: Path | None = None,
+) -> PausedDeskStatus:
+    """Decide whether to remind the owner that the desk is deliberately
+    paused, and record that decision. Never raises.
+
+    The caller is responsible for having established that the desk IS
+    paused — that is a deployment fact (`systemctl --user is-active`), and
+    this module stays a pure reader of time and its own on-box record. See
+    the module docstring for why once-per-weekday is the cadence and why it
+    is not a new number.
+    """
+    moment = now or _utc_now()
+    path = state_path or PAUSED_STATE_PATH
+    state = load_state(path)
+    et_date = moment.astimezone(ET).date()
+    is_weekday = et_date.weekday() < 5
+    elapsed_today = _elapsed_windows_on(moment) if is_weekday else 0
+
+    status = PausedDeskStatus(
+        et_date=et_date.isoformat(),
+        elapsed_windows_today=elapsed_today,
+        already_notified_today=state.get("notified_for_date") == et_date.isoformat(),
+        is_weekday=is_weekday,
+    )
+
+    if status.should_notify:
+        state["notified_for_date"] = status.et_date
+    state["updated_at"] = moment.replace(microsecond=0).isoformat()
+    save_state(state, path)
+    return status
+
+
+def paused_alert_text(status: PausedDeskStatus) -> str:
+    """Severity in the leading word, never colour alone — same convention
+    as `alert_text` and `src/notifier.py`."""
+    return (
+        "⏸️ PAUSED: QAMC is not trading — no trading-mode timer is running "
+        f"on the box ({status.et_date} ET).\n\n"
+        f"{status.elapsed_windows_today} of today's scheduled session "
+        "windows have already come and gone with the desk switched off. "
+        "This is not a fault: somebody paused it on purpose. It is a "
+        "reminder, sent at most once per weekday, because a paused desk "
+        "and a working desk in a quiet market produce exactly the same "
+        "silence otherwise.\n\n"
+        "Resume with the trading-mode timers "
+        "(`systemctl --user start quant-agent-<mode>.timer`), or ignore "
+        "this if the pause is still deliberate."
+    )
+
+
 def alert_text(status: SilenceStatus) -> str:
     """Severity is carried in the leading word, never colour alone — matches
     `src/notifier.py`'s convention (`FAILED:`, `SUSPENDED:`)."""
@@ -397,7 +529,5 @@ def alert_text(status: SilenceStatus) -> str:
         "midday/close/evening/earnings_preprocess session, whatever the "
         "cause. Check Mission Control and the systemd journal for the "
         "scheduled units; the desk may be latched, crashing on startup, or "
-        "simply not firing at all.\n\n"
-        "This threshold is a placeholder pending owner confirmation — see "
-        "docs/WORK.md item 17c."
+        "simply not firing at all."
     )
