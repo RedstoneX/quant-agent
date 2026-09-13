@@ -8,6 +8,13 @@ build/
 .venv/
 /data/
 .env
+# Any hand-made copy of it too. A `.env.bak-<date>` sat untracked in the
+# production checkout for thirteen days holding twelve live credentials,
+# including broker keys — one careless `git add .` from being published.
+# The blanket-stage rule that would have prevented that is a habit; this is
+# the mechanical version.
+.env.*
+!.env.example
 .DS_Store
 *.log
 *.log.*

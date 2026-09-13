@@ -143,6 +143,28 @@ class InFlightItem:
 
 
 @dataclass
+class OpenPR:
+    """One open pull request, read for what it CLAIMS rather than for CI.
+
+    `read_in_flight` above answers "what is being built"; this answers "what
+    does this change say about itself" — the title, the description, and the
+    files it touches — which is what a rule about review evidence has to look
+    at. Same reader, same credential-free path, one module.
+
+    `files` and `work_md_patch` are None when the follow-up read failed. That
+    is deliberately distinct from "touches no files": a caller enforcing a
+    rule must never treat a failed read as proof of a violation.
+    """
+    number: int
+    title: str
+    body: str
+    files: tuple[str, ...] | None = None
+    #: The unified diff of docs/WORK.md in this change, when it touches it.
+    work_md_patch: str | None = None
+    detail_problem: str | None = None
+
+
+@dataclass
 class InFlight:
     """Everything the page needs, plus an honest account of how it was got.
 
@@ -273,6 +295,61 @@ def read_in_flight(fetch: Fetch = _http_get, repo: str = REPO,
         items.append(item)
     items.sort(key=lambda i: i.updated_at, reverse=True)
     return InFlight(items=items, read_at=read_at)
+
+
+#: docs/WORK.md is the backlog. A change that edits this line is a change
+#: that closes a board item, whatever its description says.
+WORK_MD = "docs/WORK.md"
+RETIRED_LINE = "Retired item numbers"
+
+
+def read_open_pull_requests(fetch: Fetch = _http_get, repo: str = REPO,
+                            ) -> tuple[list[OpenPR], str | None]:
+    """Every open pull request with its description and the files it touches.
+
+    Returns `(items, problem)`. Exactly one is meaningful: a problem string
+    means GitHub could not be read and the list says nothing — the caller
+    must not read an empty list as "no pull requests". Nothing here raises.
+    """
+    try:
+        raw = _get_json(f"{API}/repos/{repo}/pulls?state=open&per_page=100", fetch)
+    except RuntimeError as exc:
+        return [], str(exc)
+    if not isinstance(raw, list):
+        return [], "GitHub's answer was not a list of changes"
+
+    out: list[OpenPR] = []
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        try:
+            number = int(p["number"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        item = OpenPR(number=number,
+                      title=str(p.get("title") or ""),
+                      body=str(p.get("body") or ""))
+        try:
+            files = _get_json(
+                f"{API}/repos/{repo}/pulls/{number}/files?per_page=100", fetch)
+        except RuntimeError as exc:
+            item.detail_problem = str(exc)
+            out.append(item)
+            continue
+        if isinstance(files, list):
+            names: list[str] = []
+            for f in files:
+                if not isinstance(f, dict):
+                    continue
+                name = str(f.get("filename") or "")
+                names.append(name)
+                if name == WORK_MD:
+                    item.work_md_patch = str(f.get("patch") or "")
+            item.files = tuple(names)
+        else:
+            item.detail_problem = "GitHub's answer was not a list of files"
+        out.append(item)
+    return out, None
 
 
 # --------------------------------------------------------------------------

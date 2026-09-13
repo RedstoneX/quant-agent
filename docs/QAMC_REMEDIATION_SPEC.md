@@ -2411,7 +2411,7 @@ deletes a divisor, and makes "an agreeing seat can only add" a property of the
 arithmetic rather than a property to test for. The reward:risk tiebreak stays
 a weighted mean: evidence adds, measurements average. Consequences (score no
 longer capped at 2.0; coverage now moves the score, which `src/rotation.py`
-compares on) are recorded as `docs/WORK.md` items 55 and 56. Detail:
+compares on) are recorded as `docs/WORK.md` items 62 and 63. Detail:
 `docs/INCIDENT_HISTORY.md`, 2026-09-13, the entry following retired item 31.
 
 **What did NOT change: the sizing path.** `src/risk/rules.py::SEAT_WEIGHT`

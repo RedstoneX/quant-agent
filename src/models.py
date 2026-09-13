@@ -714,7 +714,7 @@ RATING_MAGNITUDE: dict[str, float] = {
 #: If a seat is ever given a real strength scale of its own — measured, or
 #: read from the instrument the way Technical's rungs are — that is a schema
 #: change to RATIFY with the derivation attached, not a constant to restore
-#: here. Tracked as `docs/WORK.md` item 55.
+#: here. Tracked as `docs/WORK.md` item 62.
 NO_STATED_STRENGTH: float = 0.0
 
 RATING_DIRECTION: dict[str, str] = {

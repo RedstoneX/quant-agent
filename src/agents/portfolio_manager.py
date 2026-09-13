@@ -244,6 +244,57 @@ class PortfolioManagerAgent(BaseAgent):
             f"data quality): {pointer}"
         )
 
+    @staticmethod
+    def _render_earnings_no_call_rollup(rows: list[dict]) -> str:
+        """One line per filing the earnings seat read WITHOUT reaching a call.
+
+        PM TEST GATE item 7 (2026-09-13). Measured on the frozen
+        `run_64290730` fixture rendered through this very method's caller:
+        38 of the 65 analysed filings came back `sentiment: neutral`. A
+        neutral earnings sentiment is not a quiet bearish read — it is the
+        seat declining to conclude, and `EarningsAnalysis.to_verdict()`
+        renders no invalidation for one, so the four-line verdict block for
+        such a filing carries a direction the PM cannot trade, a thesis the
+        seat did not write, and the literal words "not disclosed by the
+        analyst". Those 38 blocks were 16,885 of the prompt's 100,968
+        characters — 16.7% of everything the decision seat reads, saying
+        nothing it can act on.
+
+        WHAT THE CUT IS, AND WHY IT IS NOT A TRUNCATION LIMIT. There is no
+        length threshold here and no cap on how many filings survive. The
+        partition is structural and read from the data: a filing is rolled
+        up if and only if its collapsed sentiment is non-directional. If
+        every filing on a given day carries a call, this roll-up is empty
+        and nothing is shortened.
+
+        WHAT SURVIVES. Every rolled-up symbol is still named, on its own
+        line, with its form, its filing date, its conviction, its cache
+        provenance and its staleness marker — so coverage is never
+        silently absent and a reader can always tell "read, no call" from
+        "never read". The stance itself continues to reach the PM through
+        the Canonical Evidence Registry and the Independent Source
+        Agreement block unchanged: a neutral earnings seat still counts as
+        a non-aligned source and still subtracts from the net score that
+        ceilings size. Nothing about dissent or low conviction moves.
+        """
+        if not rows:
+            return ""
+        lines = [
+            "### Read, no call — {n} filing(s)".format(n=len(rows)),
+            "The earnings seat read each of these and did not reach a "
+            "direction, so there is no thesis and no falsifier to show. They "
+            "are listed rather than omitted so that \"covered, concluded "
+            "nothing\" is never mistaken for \"not covered\". Each still "
+            "carries a `neutral` earnings stance in the registry below and "
+            "is counted there against any direction you propose.",
+        ]
+        for row in rows:
+            lines.append(
+                f"- {row['symbol']} | {row['filing_label']} | "
+                f"conviction {row['conviction']}{row['source_note']}"
+            )
+        return "\n".join(lines)
+
     @classmethod
     def stale_evidence_sources(
         cls,
@@ -507,6 +558,25 @@ class PortfolioManagerAgent(BaseAgent):
             invalid = a.thesis_invalid_if or "(not specified)"
             age = getattr(a, "signal_age_days", None)
             age_str = f", age {age}d" if age is not None and age > 0 else ""
+            # PM TEST GATE item 7 — a `neutral` technical read has, by
+            # construction, no entry, no stop, no reference target and
+            # therefore no reward/risk: `TechAnalysisResult.risk_reward` is
+            # None for one. Measured on the frozen run_64290730 fixture: 21
+            # of the 59 reads were neutral, and each spent a full four-field
+            # geometry line printing the word "None" three times plus an
+            # "Invalid if: (not specified)" line — 21 symbols' worth of
+            # fields that exist only to say the field is absent. The
+            # analyst's own one-sentence conclusion is the whole content of
+            # such a read, so that is what is rendered, verbatim and
+            # untruncated. This is a shape change, not a cap: no report is
+            # dropped, no text is shortened, and a read that HAS geometry
+            # still renders every field it has.
+            if a.rating == "neutral" and rr is None:
+                return (
+                    f"- {a.symbol}: neutral ({a.conviction}{age_str}) | "
+                    f"no entry/stop/target, not sizeable this session\n"
+                    f"  Reasoning: {a.reasoning}"
+                )
             return (
                 f"- {a.symbol}: {a.rating} ({a.conviction}{age_str}) | {rr_str} | "
                 f"Entry: {a.entry_price} | Stop: {a.stop_loss} | Target: {a.reference_target}\n"
@@ -786,6 +856,13 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
         # Format earnings analysis section
         if earnings_analyses:
             earnings_items = []
+            # PM TEST GATE item 7 — filings the seat read without reaching a
+            # direction are collected here and rendered as one line each at
+            # the end of the section, instead of a four-line verdict block
+            # whose direction, thesis and falsifier are all absent. See
+            # `_render_earnings_no_call_rollup` for the measurement and for
+            # what is guaranteed to survive.
+            earnings_no_call: list[dict] = []
             for ea in earnings_analyses:
                 sym = ea.get("symbol", "?")
                 # Queued placeholder — new filing dropped today, LLM still analyzing.
@@ -814,12 +891,29 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                         "does NOT count toward the agreement ceiling]"
                     )
 
+                impl = (analysis or {}).get("investment_implications") or {}
+                # Roll up ONLY a non-directional read. "mixed" is a
+                # disagreement, not an absence, and stays a full block: a
+                # summary that hides a split between seats is worse for the
+                # decision seat than the prose it replaces.
+                if self._collapse_stances([impl.get("sentiment")]) in (None, "neutral"):
+                    earnings_no_call.append({
+                        "symbol": sym,
+                        "filing_label": filing_label,
+                        "conviction": impl.get("conviction", "N/A"),
+                        "source_note": source_note,
+                    })
+                    continue
+
                 earnings_items.append(
                     self._render_earnings_verdict(
                         sym=sym, analysis=analysis, filing_label=filing_label,
                         source_note=source_note, analysis_path=ea.get("analysis_path"),
                     )
                 )
+            rollup = self._render_earnings_no_call_rollup(earnings_no_call)
+            if rollup:
+                earnings_items.append(rollup)
             earnings_section = "## Earnings Analysis (from SEC Filings)\n\n" + "\n\n".join(earnings_items)
         else:
             earnings_section = "## Earnings Analysis\nNo recent earnings filings available."
