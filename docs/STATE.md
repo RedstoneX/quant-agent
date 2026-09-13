@@ -514,9 +514,11 @@ limits are **$0.90 per session** and **$2.75 per ET day**, checked against
 real settled spend only, plus `max_calls_per_session` (40, a runaway-loop
 backstop) and a provider-attempt cap per logical call computed in code
 (`provider_attempt_budget()`, `src/agents/base.py`) rather than pinned here.
-**2026-09-02 (item 14):** the per-mode session cap, the separate per-session
-retry/repair-attempt limit, and the cost-reservation layer they existed to
-manage were all deliberately deleted — see `docs/WORK.md` item 14.
+**2026-09-02, the cost-circuit rewrite:** the per-mode session cap, the
+separate per-session retry/repair-attempt limit, and the cost-reservation
+layer they existed to manage were all deliberately deleted — see
+`docs/INCIDENT_HISTORY.md`, 2026-09-03, "item 14: the budget guard was
+stopping the desk on money it never spent".
 
 Expected budget exhaustion creates the narrowest applicable quota hold: the
 current run (`run_id`) for session cost, call-count or provider-attempt
@@ -526,7 +528,8 @@ advances, the new ledger seeds exactly, accounting invariants pass and no
 prior-day attempted reservation remains unresolved. (A `mode_day` hold scope
 still exists in the schema/rearm logic purely to recognize pre-2026-09-02
 historical rows; nothing in the current code can create a new one — see
-`docs/WORK.md` item 14.) Trip and successful rearm each send
+the same 2026-09-03 entry in `docs/INCIDENT_HISTORY.md`.) Trip and
+successful rearm each send
 one deduplicated Telegram alert. Missing/corrupt or inexact accounting, unknown
 pricing/cost, unresolved attempted requests, provider-attempt exhaustion and any
 unrecognized trigger remain a hard global latch requiring an auditable operator

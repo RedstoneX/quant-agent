@@ -143,12 +143,6 @@ this line, one heading per item.
 **Example —** Ten of the fourteen recorded failures happened on a single day, producing a completely empty result indistinguishable, at the time, from an ordinary quiet market — the new watchdog exists specifically to catch a repeat of that day.
 
 
-## item 14
-
-**Plain language —** A cost-safety mechanism used to reserve far more money than an AI call actually used, which could stop the desk over money it was never really going to spend. That over-cautious reservation is gone, replaced by a check against real settled cost plus a simple cap on how many calls can happen in one session. That call-count cap is a first real-data number, not yet confirmed after a longer stretch of live use.
-**Example —** The old guard held back roughly 2.6 times the money a call was expected to cost, so a handful of calls could look like they'd exhausted a day's whole budget even though only a fraction of it had actually been spent.
-
-
 ## item 15
 
 **Plain language —** The desk couldn't always tell whether a price was current or stale, risking decisions made on outdated information. The piece covering stocks it already owns is fixed — it now honestly says "unknown" freshness instead of pretending a price is live when the broker never actually confirms that. The bigger remaining piece is doing the same for live quotes and historical price data, which needs a choice between two different competing ways to build it.
@@ -215,57 +209,16 @@ this line, one heading per item.
 **Recommendation —** Approve restoring the wider bands; they were only narrowed to compensate for a bug that no longer exists. Leave the two-alarm-system question for later since both work independently without conflicting today.
 
 
-## item 33
-
-**Plain language —** Two different steps both checked whether a trade's reward justified its risk, but used disconnected methods, so a trade could pass one and fail the other on the very same idea. On a real trading day, the two checks agreed on zero trades between them. Both now share the same underlying calculation, and a separately-found stop-distance rule that had been rejecting almost every realistic trade was also fixed.
-**Example —** On two real trading days measured before the fix, the stocks passing the first check and the stocks passing the second check had no overlap at all — not one trade cleared both.
-**The decision —** Whether to enable margin, so a tight-stop trade isn't capped at putting 100% of the account into one name.
-**Recommendation —** Hold off until the desk's own estimate of what margin actually costs is checked against real broker charges, so the owner can see the true cost before turning it on.
-
-
-## item 34
-
-**Plain language —** The buffer meant to stop the desk bailing out on ordinary noise was almost exactly as wide as the actual stop-loss, so nearly every real exit was just the stop-loss firing on its own — the smarter exit logic was barely doing anything. Separately, tied ideas were mostly being broken alphabetically by ticker, quietly favouring early-alphabet stocks for no real reason. Both are fixed: the buffer now scales with how long a position has actually been held, and ties break on real reward-to-risk quality instead of the ticker's letter.
-**Example —** A stock starting with an early letter could win a tie over an equally-good stock starting with a later letter purely because of the alphabet — that bias is now removed.
-
-
 ## item 35
 
 **Plain language —** Old trading records show a protective stop on one stock being cancelled and replaced with a looser one — a real event, not a display error. This happened during active development, before the account was deliberately wiped clean to start fresh, so the owner chose not to dig into this one old case now, and to simply watch for a repeat once the desk runs on stable, finished code.
 **Example —** A stop on a Visa position bought in late August was found cancelled and replaced with a wider, less protective one a few days later, during a period of heavy in-progress changes — not treated as reliable evidence of how the desk behaves today.
 
 
-## item 36
-
-**Plain language —** The desk now pulls in public records of stock trades by members of Congress, from two free, cross-checked sources, as one more piece of supporting evidence — it can only confirm an idea the desk already has, never generate a new one by itself. Built and live, but currently switched off.
-**Example —** If a stock the desk is already considering also shows recent buying by members of Congress, that would count as one more piece of supporting evidence for the trade, once switched on.
-**The decision —** Whether to switch on congressional trading data as a supporting signal.
-**Recommendation —** Turn it on for a trial period; since it can only confirm existing ideas and never invents new ones, the downside of trying it is limited.
-
-
 ## item 39
 
 **Plain language —** When the desk's risk budget is nearly maxed out and it can't take a promising new trade, it now shows the AI a direct comparison between its weakest current holding and the strongest new idea being turned away, so it can weigh whether to make room. It only surfaces this comparison — it never automatically swaps one position for another.
 **Example —** If the desk is already near its risk ceiling and a strong new opportunity appears, the decision-maker is shown its own weakest current holding side by side with the new idea, but nothing forces a trade either way.
-
-
-## item 41
-
-**Plain language —** If the broker simply can't return live data for one stock, the scan used to quietly and permanently skip it forever, indistinguishable from that stock just not moving, with no way for the owner to know. Now the desk counts consecutive misses per stock and sends a direct alert once a stock has failed three times in a row, without repeating the alert more than once a day while it stays broken.
-**Example —** A stock the broker can never return live data for used to vanish from every scan forever with zero visibility; now, after about three misses in a row (roughly 90 minutes), the owner gets a specific alert naming that stock.
-
-
-## item 42
-
-**Plain language —** The desk used to repeatedly ask the broker, once a second, whether an order had filled yet, for up to a fixed maximum wait — and that wait had already been stretched twice after real trades were cancelled unfilled while still genuinely working. The desk now watches the broker's real-time fill notifications instead, catching a fill or cancellation the instant it happens, with the old repeated-asking approach kept only as a backup if the real-time connection itself fails.
-**Example —** Two real trades were previously cancelled as unfilled purely because they took longer than the fixed wait allowed, even though they were still actively working — the new approach removes that guesswork in the normal case.
-
-
-## item 43
-
-**Plain language —** A stale insider or Congressional trade older than a week used to be automatically dismissed as merely "historical," regardless of whether it still lined up with what's happening now. The owner's direction: age alone shouldn't decide its weight, agreement with other current evidence should. Real published research backs this — a good share of the value in an insider purchase can still show up weeks later, and major buyout rumours often build months in advance. The lookback window such evidence is even considered from was also widened, from one week to about three months.
-**Example —** An insider purchase from two months ago used to be automatically written off as too old to matter; it's now judged instead on whether at least one other current, independent source agrees on the same direction — if it does, it still counts as real support for a trade.
-
 
 
 ## item 44
@@ -297,13 +250,6 @@ this line, one heading per item.
 **Recommendation —** Best-ranked-first is the most defensible starting point — it uses the ranking the desk already computes, and it means the money goes to the strongest ideas rather than whichever happened to be processed first. Sizing everyone smaller sounds fairer but quietly turns every strong idea into a weak one. Worth your judgement though: this genuinely changes what kind of desk this is, so it shouldn't be picked on my say-so alone.
 **DECIDED — 2026-09-12, by you.** Best-ranked-first. Your words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The money goes to the strongest ideas in order until it runs out; the rest simply don't happen that day, and they are not shrunk down to squeeze in. **Not built yet** — the decision is recorded, the code still spends the budget in arbitrary order. One thing the decision doesn't answer, which will come back to you when it's built: if the next-best idea only half fits in what's left of the budget, does it get taken at half size, or skipped?
 
-## item 51
-
-**Plain language —** Every morning the desk worked out whether something it already owns is worse than something it could buy instead, and then just showed that answer to the manager as a note. If the manager ignored it, nothing happened — the dead position kept the money and the better trade never got taken. Now the desk can actually act: it will close one holding per morning to make room. It is deliberately hard to trigger. It only fires when the account has genuinely run out of room to buy anything, the holding would not be bought today under the desk's own rules, and that holding has already broken its own safety level on two consecutive closes. A position that is simply flat but still doing what it was bought to do is never touched.
-**Example —** The account is fully invested. One holding was bought on a breakout that has since failed — it has closed below the level the whole idea rested on, twice. That morning the desk finds a better-ranked candidate and the manager wants to buy it, but there is no money free. Old behaviour: a note saying "consider selling the weak one", and if nobody acted, no trade. New behaviour: the desk closes the broken holding, buys the better candidate, and sends you a message naming both and the measured reason. If the sale goes through but the purchase then fails, you get a second, separate message — because cash sitting idle after you sold something specifically to fund a trade is the genuinely bad outcome, and it should never happen quietly.
-**The decision —** Already made, by you. It is switched ON rather than shipped switched off, because you said you'd forget otherwise. Your two conditions are built into the logic itself, not left as good intentions: it cannot sell while the portfolio still has room, and it cannot sell a position whose reason for existing is still intact.
-**Recommendation —** One thing to watch, stated plainly: this has never run against a real broker. The desk has been paused since early September, so the first rotation that happens will also be the first proof it works end to end. Worth looking at that first one when the desk restarts.
-
 ## item 53
 
 **Plain language —** The desk buys stocks in fractions of a share, so a position can be, say, 5.3089 shares of Oracle. The broker will only hold a long-lasting protective stop on whole shares; a stop on the fraction has to be a one-day order that expires at the close, and the desk puts a fresh one on each morning. That works as long as the desk is actually running each morning. It has been switched off since 3 September. Nobody realised that switching it off also switched off the morning re-cover, so for six trading days the 0.3089-share slice of Oracle had no stop at all, and every report still described that as a normal overnight state. Nothing lost money this time — the stock went up — but the desk was blind to it. There is now a daily check, at 6:15 each morning, that runs whether or not the desk is switched on: if any position has less stop coverage than shares held AND no session ran the previous trading day to put it back, you get a message with the dollar amount. It only reads; it never places or cancels anything.
@@ -311,10 +257,3 @@ this line, one heading per item.
 **The decision —** While the desk is paused, what should happen to the uncovered fraction? Three real options. One: close the fraction now (sell the 0.3089 shares, about $46) and make that the standing rule whenever the desk is paused with fractional holdings. Two: leave it, accept the exposure, and rely on the new daily message to keep you informed. Three: stop buying fractions altogether — you already turned that down on 2 September because it locks a $10,000 account out of the expensive names the analysts keep picking, and nothing about that reasoning has changed.
 **Recommendation —** Option one as a rule, not a one-off: pausing the desk is a deliberate act, and it should include tidying the fractions, because the protection design assumes the desk is running. Today that means selling 0.3089 Oracle, which I have NOT done — no order has been placed, changed or cancelled. Option two is honest and now visible, but it means a paused desk carries an exposure nobody is managing. If you want the fraction sold, say so and it gets done by hand; the code shipped here is only the alarm.
 
-
-## item 54
-
-**Plain language —** This morning you ruled "no floor, no trade" and it shipped. Within hours the research said the rule was wrong, and you approved replacing it. Three things the sources show. First, nobody who trades this way refuses a trade for lack of support below: the classic stop methods — Chandelier, Parabolic SAR, the Darvas box, Kullamägi's low-of-the-day — all put a stop where there is no level at all, and Darvas only ever bought stocks at new highs, where there is never a floor. Second, the gap rule was backwards, and this is measured, not opinion: Bulkowski's data says a gap holds as support only about one time in five. The gap is the weak floor; the shelf underneath it is the one price actually reaches. Third, and worst, the rule was refusing exactly the stocks the evidence says to buy: a 2004 Journal of Finance study across 20 markets found "how close is it to its 52-week high" predicts returns better than past returns do — and those are the names with nothing beneath them. What the professionals actually constrain is how WIDE the stop is, and their answer to a wide stop is a smaller position, not a refusal. So the desk now always finds a stop (from the stock's own daily range, or under the entry bar's low, whichever is further), refuses only when the stop is so wide the stock could not plausibly reach it during the trade, and shrinks the position as the stop widens. One separate, narrow refusal stays: a stock listed too recently to measure.
-**Example —** Two stocks, same $1,000 you are willing to lose if wrong. A calm stock at $100 with its stop $2 away: you buy 500 shares, because 500 x $2 = $1,000. A volatile stock at $100 with its stop $6 away: you buy 167 shares, because 167 x $6 = $1,000. Same loss if wrong, a third of the position — the wide stop cost you size, not the trade. That is what the desk's sizing already does, and it was checked in the code today. The refusal only fires further out: a stock that moves about $2 a day cannot plausibly travel $20 in a four-week trade, so a stop $20 away is not a stop, and the "small position" that arithmetic would produce is a fiction — refused, and written down as "stop wider than the stock's reach". Real numbers today: 95 of the 101 names pass on a four-week horizon; 4 are refused for width only because the nearest shelf sits 8-9 days' range away (MRVL, VLO, OKLO, NUE) — with a nearer stop they pass; 2 are refused for youth (DRAM, CBRS, under 200 sessions of history). This morning's rule refused 9.
-**The decision —** Yours, made: replace the floor rule with the width rule. One thing to know, stated rather than hidden: Kullamägi's own cap is one day's range. The desk cannot use that literally, because the desk's own ratified fallback stop is two and a half days' range — at his number the desk would refuse its own stop. And the fallback band cannot be the cap either, because you ratified "a wider stop means a smaller position, not a refusal". So the cap is the distance the stock can plausibly travel in the trade, the same arithmetic the desk already uses to decide whether a target is reachable — no new number was invented. If you would rather tighten the whole desk toward his discipline, that is a change to the fallback band, a separate decision.
-**Recommendation —** Nothing needed from you on the rule. Two things to look at: SNDK's price history on the data feed shows a low of about $28 and a close of $1,633 inside eighteen months — almost certainly a stock split or a bad feed, not a real move — so no number on SNDK should be trusted until someone checks the series. And the rehearsal engine still declines a trade with no level beneath it (it always did); it now disagrees with the live desk and should be brought in line as its own item.
