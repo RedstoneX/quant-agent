@@ -302,3 +302,78 @@ def test_ex_dividend_returns_empty_when_the_lookup_hangs(mock_ticker):
 
     mock_ticker.side_effect = _hang
     assert MarketDataProvider().get_upcoming_ex_dividend("AAPL") == {}
+
+
+# --- get_price_chart_events: past-earnings degradation must be loud -------
+#
+# 2026-09-12 incident: `ticker.earnings_dates` (the only source of PAST
+# earnings dates) needs the optional `lxml` package. Production never had
+# it installed, so every call raised ImportError, which the old code
+# swallowed at DEBUG level into the exact same empty result a symbol with
+# genuinely no earnings history produces. These tests pin the fix: a
+# fetch failure on that path must be distinguishable from real emptiness.
+
+class _EarningsDatesRaises:
+    """Minimal yf.Ticker stand-in where `.earnings_dates` raises on access
+    (as it does for real when lxml is missing) but `.dividends` and
+    `.calendar` — which need no optional dependency — behave normally."""
+
+    def __init__(self, calendar=None, error=None):
+        self.dividends = pd.Series(dtype=float)
+        self.calendar = calendar or {}
+        self._error = error or ImportError(
+            "Missing optional dependency 'lxml'. Use pip or conda to install lxml."
+        )
+
+    @property
+    def earnings_dates(self):
+        raise self._error
+
+
+@patch("src.data.market.yf.Ticker")
+def test_past_earnings_fetch_failure_is_flagged_not_silently_empty(mock_ticker):
+    """A real fetch failure (ImportError from a missing dependency) must
+    set `earnings_degraded`, not just return an empty `earnings` list
+    indistinguishable from a symbol with no earnings history."""
+    mock_ticker.return_value = _EarningsDatesRaises(
+        calendar={"Earnings Date": [date(2026, 12, 10)]}
+    )
+    result = MarketDataProvider().get_price_chart_events("ORCL")
+
+    assert result["earnings_degraded"] is not None
+    assert "lxml" in result["earnings_degraded"] or "ImportError" in result["earnings_degraded"]
+    # The single-next-date fallback still works, so the upcoming marker
+    # is present even while the past-earnings source is degraded — this
+    # is exactly the shape that used to look like a fully successful,
+    # if sparse, result.
+    assert result["earnings"] == [{"date": "2026-12-10", "upcoming": True}]
+
+
+@patch("src.data.market.yf.Ticker")
+def test_past_earnings_genuinely_empty_is_not_flagged_degraded(mock_ticker):
+    """Contrast case: `earnings_dates` fetch succeeds and simply has
+    nothing to report (an ETF, a symbol with no earnings history). This
+    must stay a normal empty result, not a manufactured degradation."""
+    ticker = MagicMock()
+    ticker.dividends = pd.Series(dtype=float)
+    ticker.earnings_dates = pd.DataFrame()
+    ticker.calendar = {}
+    mock_ticker.return_value = ticker
+
+    result = MarketDataProvider().get_price_chart_events("SPY")
+
+    assert result["earnings_degraded"] is None
+    assert result["earnings"] == []
+
+
+@patch("src.data.market.yf.Ticker")
+def test_past_earnings_fetch_failure_without_calendar_fallback(mock_ticker):
+    """When both the past-earnings source AND the next-date fallback fail,
+    the result must still carry the degraded signal rather than looking
+    like a clean empty result."""
+    mock_ticker.return_value = _EarningsDatesRaises(calendar=None)
+
+    result = MarketDataProvider().get_price_chart_events("ORCL")
+
+    assert result["earnings_degraded"] is not None
+    assert result["earnings"] == []
