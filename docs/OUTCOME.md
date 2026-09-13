@@ -156,11 +156,28 @@ does even when the arithmetic is correct.
 
 **When a number cannot be read from present data, do not fit one and do not
 quietly leave the feature switched off.** Off is a decision too, and an
-unowned one rots: nobody stated why, nobody owns it, nobody revisits it. The
-work is to REFORMULATE the rule so it needs no constant — "is the trend
-over?" needs a number, "does the last higher low still hold?" does not, and
-the chart supplies the level. If it genuinely cannot be reformulated, it goes
-to the owner as a decision with a date, recorded on the board.
+unowned one rots: nobody stated why, nobody owns it, nobody revisits it.
+There are exactly three permitted outcomes, in this order:
+
+  1. **REFORMULATE the rule so it needs no constant.** "Is the trend over?"
+     needs a number; "does the last higher low still hold?" does not, and the
+     chart supplies the level. Always try this first.
+  2. **Find the number in published research and cite the fetched source
+     beside it.** A citation is not a number that sounds authoritative — it
+     is a URL a later reader can open and check.
+  3. **If neither: a written, owned item on the board.** It must state the
+     exact open question in answerable form, where the current value actually
+     came from (inherited / convention / invented / a platform default), what
+     was already searched and ruled out so the next person does not repeat
+     the work, what evidence would settle it, and what it costs the desk
+     while it stays unanswered.
+
+Outcome 3 is **not** "leave it off and move on", and it is **not** "ask the
+owner". Market-structure questions go to published research or stay open as
+investigation; only money, mandate and risk-appetite questions are his. A
+feature left switched off with an unanswered question behind it is an
+abandoned problem wearing the appearance of discipline. An item may be
+deleted when its question is ANSWERED — never when it is merely declined.
 
 **A number does not become non-arbitrary because it was previously
 approved.** This applies to Claude's own reasoning as much as to the
