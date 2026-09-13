@@ -26,12 +26,37 @@ into a series of false statements on the exit path:
   loop, so the Tech block is absent by construction — the seat was asked to
   verify a claim against a block that cannot exist.
 
-**Why the direction of that bias matters.** A veto on the morning path stops a
-PURCHASE, and not buying costs nothing. A veto on THIS path stops a SALE: a
-position whose thesis has broken stays on the book overnight with only the
-broker stop behind it. Every input above pushed the seat toward refusing, and
+**What the record actually shows — do not overstate this.** The archive holds
+exactly THREE exit-path risk reviews (rows 296, 319, 330). All three carry both
+banners. All three APPROVED, with zero modifications and zero refusals: 8 of 8
+exits allowed. The seat reasoned its way out of the trap every time — row 296:
+"the missing `continuity_check` and `premortem_check` are a concern for PM's
+internal discipline, but the plan itself is sound". So the claim that these
+inputs made the seat refuse an exit is NOT supported: n=3 and the measured
+refusal count is zero. Three reviews is also far too small to show the bias is
+absent. Both statements are true and neither should be dropped.
+
+**The harm the record DOES prove is to the audit trail.** Rows 319 and 330 both
+wrote the falsehood into their own permanent `overall` field — 330: "both
+continuity_check and premortem_check are MISSING — the two mandatory red-team
+steps were skipped" — and 330 set `reason_category: "data_degraded"` on that
+basis, which feeds PM's self-calibration. The system recorded, permanently and
+untruthfully, that an analyst skipped a safety check.
+
+**Why the direction still matters.** A veto on the morning path stops a
+PURCHASE, and not buying costs nothing. A veto on THIS path stops a SALE: the
+position stays on the book overnight with only the broker stop behind it.
 `docs/OUTCOME.md` records under-trading, not over-trading, as this desk's
-measured failure. The bias ran in the dangerous direction.
+measured failure. So the cost of these inputs is asymmetric even where it has
+not yet been paid.
+
+**And the banner has never been right in production.** Across the 15 archived
+MORNING risk reviews it has fired zero times — PM has never actually skipped
+either step. Its entire production output to date is the three false statements
+above. That is a strong argument that the banner should be deleted rather than
+routed around; it is left standing here only because deleting it changes the
+morning seat's behaviour on a case that has not yet occurred, which is a
+separate decision with a separate blast radius. See the PR discussion.
 
 The rule this module exists to hold, and the one thing to preserve if it is
 ever rewritten:
@@ -86,73 +111,67 @@ def is_exit_review(mode) -> bool:
     return normalize(mode) == EXIT_REVIEW
 
 
-#: Header block prepended to the exit-review message. It has to do three jobs:
-#: say which review this is, say what the seat can and cannot see on it, and
-#: say what the deterministic layer has already settled so the seat is not
-#: asked to re-litigate it. All three are statements of fact about the code
-#: path — none of them is a new policy or a new threshold.
-_EXIT_REVIEW_HEADER = """## Review Mode: EXIT REVIEW — this is NOT the morning plan review
+#: Header block prepended to the exit-review message.
+#:
+#: Every line here is a statement of fact about the code path — which review
+#: this is, which lever actually does something, which of the standing
+#: checklist items cannot be answered here and why. None of it is a new
+#: threshold or a new policy.
+#:
+#: It is deliberately short. An earlier draft ran ~3,800 characters against an
+#: archived exit prompt of 7,775-8,428, i.e. it grew the message by half again,
+#: almost all of it negative instruction. Whether that much "do not" improves a
+#: model's judgement is untested in both directions and this desk has no rig
+#: that can test a prompt rewrite (see the memory note on what validates what),
+#: so the standing bias is to say the true thing once and stop.
+_EXIT_REVIEW_HEADER = """## Review Mode: EXIT REVIEW — not the morning plan review
 
 You are reviewing the **position reviewer's decisions to CLOSE or REDUCE
-positions the desk already holds**, on the midday or close loop. Read the
-following before anything else; several standing instructions in your prompt
-were written for the morning plan and do not apply here.
+positions the desk already holds**. Some standing instructions were written for
+the morning plan and are wrong here.
 
-**What a veto does here.** On the morning plan, refusing a trade means not
-buying, which costs nothing. Here, refusing means the position STAYS ON THE
-BOOK — overnight, with only the broker stop behind it. A wrongly-refused exit
-is a live loss, not a missed opportunity. Refuse an exit only when you can
-name what is wrong with THIS exit, from the data you were actually given.
+**Which way a mistake costs.** Refusing a BUY means not buying, which costs
+nothing. Refusing an exit leaves the position ON THE BOOK overnight with only
+the broker stop behind it.
 
-**These sections of your standing prompt do not apply on this path:**
+**Refusal is your only lever.** `modifications` and `scale_all_buys` are
+discarded on this path — nothing applies them. The % is the position reviewer's
+call on its own position; do not size it and do not comment on it. Approve, or
+name the symbol in `rejected_symbols`.
 
-- **Checklist 1 (Reasoning Chain Audit) reads a DIFFERENT chain.** The chain
-  below is the POSITION REVIEWER's, not the Portfolio Manager's. It has its
-  own fields and it has NO `continuity_check` and NO `premortem_check` — those
-  two exist only in the Portfolio Manager's schema. Their absence here is not
-  a skipped audit step, there is no `pm_audit_step_missing` advisory to
-  address, and the "a missing audit step is a finding" guardrail is not in
-  play. Do not say the red-team step did not happen, and do not withhold the
-  benefit of the doubt on that basis.
-- **Checklist 2 and the whole Risk/Reward section do not apply.** These rows
-  are exits. `Entry`, `Stop` and `Target` render as `$0.0` because an exit has
-  no entry geometry to price — that is a structural zero, not a real level and
-  not a data error. There is no reward:risk figure to audit and you must not
-  compute one.
-- **Checklist 5 (Sizing Sanity) and `scale_all_buys` do not apply.** There are
-  no BUYs or SHORTs in this plan. `allocation_pct` on these rows is the % OF
-  THE EXISTING POSITION to close (100 = full close), never a portfolio weight
-  — never compare it to a position cap, and never set it to 0 (0 = silently
-  cancel the exit).
-- **Checklist 8 (Holding-discipline compliance) is not yours on this path.**
-  Do not re-derive it from the reasoning text. See what already ran, below.
+**Does not apply here:**
 
-**What the deterministic layer decides about these exits, without you.** Every
-exit below is independently checked in Python, in the same session, before any
-order can reach the broker:
+- **Checklist 1** — this chain is the POSITION REVIEWER's, not PM's, and has NO
+  `continuity_check` and NO `premortem_check`; those exist only in PM's schema.
+  Their absence is **not a skipped audit step**. Do not write that a red-team
+  step did not happen, and do not tag `data_degraded` for it.
+- **Checklist 2 / Risk-Reward** — `$0.0` entry, stop and target are structural:
+  an exit has no entry geometry. No ratio to audit, none to compute.
+- **Checklist 5** — no BUYs or SHORTs here to size.
+- **Checklist 4** — still answer `event_risk` from the fetched block (mandatory
+  output), but its instruction inverts here. "Downsize or reject" on an event
+  inside the window was written for an entry, where refusing carries LESS risk
+  through the event; refusing HERE carries the position THROUGH it. Event
+  proximity is **not a reason to refuse an exit**. Report the dates, name the
+  unknowns, stop there.
 
-- the **named-trigger gate** — an exit whose reason names no recognised
-  trigger (thesis invalidation, adverse news, earnings, regime shift, sector
-  shock, stop hit) is dropped; price action and soft flags do not qualify;
-- the **noise band** — an adverse move smaller than this position's own
-  volatility-scaled band is dropped, unless the reason cites external
-  information;
-- the **metric-contradiction veto** — an exit claiming deterioration while the
-  desk's own recorded numbers for that position improved is dropped;
-- **`holding_discipline_claim_check`** — a named trigger that the desk's own
-  data shows is PROVABLY FALSE drops the exit. (An unverifiable claim is
-  allowed through on purpose: absence of proof is not proof, and trapping the
-  desk in a losing position is the worse failure.)
+**Checklist 8 still applies and is the substance of your job.** Four Python
+gates run on each exit — but after you speak, and all four are narrow: the
+named-trigger gate checks only that the reason says recognised words, not that
+the claim is true; the noise band is bypassed whenever the reason cites
+external information, which the trigger gate all but requires; the
+metric-contradiction veto does not run at all without recorded prior metrics
+for that symbol; and `holding_discipline_claim_check` examines only a claimed
+regime flip or HIGH-conviction bearish state change, only while the position is
+still structurally protected, and passes every unverifiable claim by design.
+**None of them can catch a plausibly-worded, deterministically-clean exit that
+is simply wrong.** That gap is the job: does the named trigger hold up against
+the blocks you were given, and is closing the right response to it?
 
-Those four are the real gate and they do not need your help. **You are a
-second opinion on exit QUALITY**, and the failure posture on this path is
-FAIL OPEN — an errored or unparseable verdict lets the exits through.
-
-**What you can and cannot see on this path** is stated block by block below.
-Where a block says it is unavailable on this path, that is a fact about the
-code path, not an omission by any analyst, and it is not on its own a reason
-to refuse anything. Say plainly in `reasoning_chain` which questions you could
-not answer, rather than answering them from something you were not shown.
+A block marked unavailable below is a fact about this code path, not an
+analyst's omission, and is not on its own a reason to refuse. Say which
+questions you could not answer rather than answering them from something you
+were not shown.
 """
 
 
@@ -244,30 +263,24 @@ _ABSENT = {
         EXIT_REVIEW: (
             "## Tech Analyst Signals\n"
             "UNAVAILABLE BY DESIGN ON THIS PATH — no TechAnalyst call runs on "
-            "the midday or close review loop, so there are no technical "
-            "signals for these positions this session. Nobody skipped a step. "
-            "Your standing checklist tells you to 'check the News and Tech "
-            "blocks yourself for the trigger the plan claims': the Tech half "
-            "of that instruction cannot be carried out here. Do NOT infer a "
-            "rating, do NOT treat the silence as a bearish or a bullish "
-            "signal, and do NOT refuse an exit for lacking Tech confirmation. "
-            "Say in `signal_fidelity` that no Tech signal was available on "
-            "this path."
+            "the midday or close loop, so there are no technical signals this "
+            "session. Nobody skipped a step. Checklist 8 tells you to check "
+            "the News and Tech blocks for the claimed trigger; the Tech half "
+            "cannot be done here. Do not infer a rating, do not read the "
+            "silence as bearish or bullish, and do not refuse an exit for "
+            "lacking Tech confirmation. Say so in `signal_fidelity`."
         ),
     },
     "news": {
         MORNING_PLAN: "## News Intelligence\n(not provided)\n",
         EXIT_REVIEW: (
             "## News Intelligence\n"
-            "NOT AVAILABLE THIS RUN — the midday/close loop does fetch news "
-            "before the position review, so this block is normally present; "
-            "its absence here means that fetch returned nothing or failed, "
-            "which is recorded in the run's coverage log. Treat today's news "
-            "as UNKNOWN rather than as quiet, and say so in "
-            "`signal_fidelity`. An unverifiable news claim in the reasoning "
-            "below is not, on its own, grounds to refuse an exit — the "
-            "deterministic claim check has already dropped every exit whose "
-            "named trigger the desk's own data shows to be false.\n"
+            "NOT AVAILABLE THIS RUN — this loop does fetch news before the "
+            "position review, so absence here means that fetch returned "
+            "nothing or failed (recorded in the run's coverage log). Treat "
+            "today's news as UNKNOWN rather than as quiet and say so in "
+            "`signal_fidelity`. A news claim you cannot verify is a reason to "
+            "say it is unverified, not on its own a reason to refuse.\n"
         ),
     },
 }

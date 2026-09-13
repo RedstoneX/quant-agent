@@ -128,8 +128,11 @@ def test_exit_review_says_those_fields_belong_to_a_different_schema():
     """Silence would leave the seat to wonder. It is told why they are gone."""
     message = _render(_exit_proposal(),
                       review_mode=risk_review_mode.EXIT_REVIEW)
-    assert "NO `continuity_check` and NO `premortem_check`" in message
-    assert "not a skipped audit step" in message
+    flat = " ".join(message.split())
+    assert "NO `continuity_check` and NO `premortem_check`" in flat
+    assert "not a skipped audit step" in flat
+    # Row 330 tagged `data_degraded` off the false banner. Pin the correction.
+    assert "do not tag `data_degraded` for it" in flat
 
 
 def test_exit_chain_is_labelled_as_the_position_reviewers_not_pms():
@@ -160,7 +163,7 @@ def test_absent_tech_block_is_unavailable_by_design_not_not_provided():
                       review_mode=risk_review_mode.EXIT_REVIEW)
     assert "## Tech Analyst Signals\n(not provided)" not in message
     assert "UNAVAILABLE BY DESIGN ON THIS PATH" in message
-    assert "do NOT refuse an exit for lacking Tech confirmation" in message
+    assert "do not refuse an exit for lacking Tech confirmation" in message
 
 
 def test_absent_news_block_says_unknown_not_quiet():
@@ -173,14 +176,12 @@ def test_absent_news_block_says_unknown_not_quiet():
 def test_exit_header_disapplies_the_checks_that_cannot_apply():
     message = _render(_exit_proposal(),
                       review_mode=risk_review_mode.EXIT_REVIEW)
+    flat = " ".join(message.split())
     assert "## Review Mode: EXIT REVIEW" in message
     # The $0.0 geometry is explained rather than left as an apparent data bug.
-    assert "structural zero" in message
+    assert "`$0.0` entry, stop and target are structural" in flat
     # The veto's real-world direction is stated.
-    assert "A wrongly-refused exit" in message
-    # The deterministic gates that already cover checklist item 8.
-    assert "holding_discipline_claim_check" in message
-    assert "named-trigger gate" in message
+    assert "Refusing an exit leaves the position ON THE BOOK" in flat
 
 
 # --------------------------------------------------------------------------
@@ -401,3 +402,72 @@ def test_verdict_none_still_fails_open():
             macro_summary={},
         )
     assert vetoed == set() and verdict is None
+
+
+# --------------------------------------------------------------------------
+# 6. Regressions found in adversarial review of the first draft.
+# --------------------------------------------------------------------------
+
+def test_event_risk_checklist_cannot_be_read_as_a_reason_to_refuse_an_exit():
+    """Checklist 4 says a fetched event inside the window means "downsize or
+    reject". `_exit_event_risk_block` is what first gives this path a fetched
+    date to trigger on, so the first draft ADDED refusal pressure that did not
+    exist before it. On an entry, refusing carries less risk through the event;
+    here it carries the position THROUGH the event. The instruction inverts."""
+    message = _render(_exit_proposal(),
+                      review_mode=risk_review_mode.EXIT_REVIEW)
+    flat = " ".join(message.split())
+    assert "Event proximity is **not a reason to refuse an exit**" in flat
+    assert "refusing HERE carries the position THROUGH it" in flat
+    # It must still be answered — `event_risk` is a mandatory output field.
+    assert "still answer `event_risk` from the fetched block" in flat
+
+
+def test_checklist_8_is_not_stood_down():
+    """The four Python gates run AFTER this review — which is precisely the
+    reason checklist 8 exists. The first draft used that downstream-ness as
+    grounds to delete the instruction; the same fact cannot be both."""
+    message = _render(_exit_proposal(),
+                      review_mode=risk_review_mode.EXIT_REVIEW)
+    flat = " ".join(message.split())
+    assert "Checklist 8 still applies and is the substance of your job" in flat
+    # Stood-down items are named explicitly; 8 must not be among them.
+    disapplied = flat[flat.index("**Does not apply here:**"):
+                      flat.index("**Checklist 8 still applies")]
+    assert "Checklist 8" not in disapplied
+
+
+def test_the_four_gates_are_described_with_their_real_limits():
+    """The first draft listed them as coverage. Each abstains somewhere."""
+    message = _render(_exit_proposal(),
+                      review_mode=risk_review_mode.EXIT_REVIEW)
+    flat = " ".join(message.split())
+    assert "after you speak" in flat
+    assert "checks only that the reason says recognised words" in flat
+    assert "bypassed whenever the reason cites external information" in flat
+    assert "does not run at all without recorded prior metrics" in flat
+    assert "passes every unverifiable claim by design" in flat
+    assert "None of them can catch a plausibly-worded" in flat
+
+
+def test_seat_is_told_refusal_is_its_only_live_lever():
+    """`_apply_risk_modifications` is called only from the morning stage, and
+    `_risk_review_exits`' verdict is consumed for `rejected_symbols` alone. So
+    `modifications` and `scale_all_buys` are discarded here. Telling the seat
+    how to edit `allocation_pct` on this path is the same class of false
+    statement this change exists to remove."""
+    message = _render(_exit_proposal(),
+                      review_mode=risk_review_mode.EXIT_REVIEW)
+    flat = " ".join(message.split())
+    assert "Refusal is your only lever" in flat
+    assert "`modifications` and `scale_all_buys` are discarded on this path" in flat
+    assert "do not size it and do not comment on it" in flat
+
+
+def test_exit_header_stays_under_its_size_budget():
+    """Archived exit prompts ran 7,775-8,428 characters. A header that grows
+    the message by half again is a real cost with no rig able to measure the
+    benefit, so its size is pinned rather than left to drift."""
+    header = risk_review_mode.mode_header(risk_review_mode.EXIT_REVIEW)
+    assert 0 < len(header) <= 3000, len(header)
+    assert risk_review_mode.mode_header(risk_review_mode.MORNING_PLAN) == ""

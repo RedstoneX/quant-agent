@@ -8553,16 +8553,32 @@ class TradingPipeline:
           then bounded only by the broker stop.
         The deterministic gates — the named-trigger requirement, the noise
         band, the metric-contradiction veto and `holding_discipline_claim_check`
-        — are the real protection. AI Risk here is a second opinion, not the
-        gate.
+        — are the LAST LINE, not full coverage. Each abstains somewhere: the
+        trigger gate checks the words, not the truth of the claim; the noise
+        band is bypassed by any reason citing external information (which the
+        trigger gate all but requires); the metric veto needs recorded prior
+        metrics for that symbol or it does not run; and the claim check looks
+        only at a regime-flip or HIGH-conviction-bearish claim, only on a still-
+        protected position, passing every unverifiable claim by design. A
+        plausibly-worded, deterministically-clean, wrong exit passes all four.
+        That gap is what this seat is for.
 
         **Ordering correction (2026-09-13).** This docstring previously said
         those gates "have already run by this point". They have not: all four
         live in `_midday_execute_llm_actions`, which the caller invokes AFTER
         this method (see `run_position_review`). They still run on every exit
         in the same session before any order can reach the broker, so the
-        substantive claim — that they, not this seat, are the gate — holds;
-        only the word "already" was wrong.
+        substantive claim — that they, not this seat, are the last line —
+        holds; only the word "already" was wrong. That ordering is also
+        precisely why the seat's holding-discipline checklist item is NOT
+        stood down on this path: it exists because the deterministic answer
+        arrives after the seat has spoken.
+
+        **The verdict's only live effect here is `rejected_symbols`.**
+        `modifications` and `scale_all_buys` are discarded — `_apply_risk_modifications`
+        runs only in the morning `RiskStage`, and this method returns a veto
+        set. The seat is told so plainly rather than being given guidance on a
+        lever with no effect.
 
         **What this seat is shown (2026-09-13).** It is told explicitly that it
         is on the EXIT path (`review_mode`), so the renderer no longer stamps
