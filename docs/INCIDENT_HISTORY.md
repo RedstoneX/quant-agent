@@ -22,6 +22,89 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — the risk reviewer was told, on every single exit review, that the analyst had skipped two mandatory checks. It had not; those checks do not exist on that path.
+
+**In plain words:** the same AI risk seat reviews two different things — the
+morning's new purchases, and the decisions to SELL positions the desk already
+holds. It was only ever set up for the first job. When the sell-side review
+reused it, the seat was handed a form with two boxes unfilled, and its
+standing instructions read an unfilled box as "the analyst skipped a mandatory
+safety check — do not give this plan the benefit of the doubt anywhere else".
+Nobody had skipped anything. Those two boxes belong to a different analyst's
+form entirely and cannot exist on the sell side. On top of that, the seat was
+told to go and verify the sell reason against evidence blocks that were not
+merely empty but structurally impossible to fill on that path.
+
+**Why it mattered more than it sounds.** On the buy side, a veto means not
+buying, which costs nothing. On the sell side, a veto means the position
+*stays on the book* — overnight, with only the broker's stop behind it. Every
+one of these false signals pushed the seat toward refusing, and refusing here
+is the expensive direction. `docs/OUTCOME.md` records under-trading, not
+over-trading, as this desk's measured failure.
+
+**The evidence.** Row 330 of the pre-reset archive (2026-09-01 19:32, run
+`close-0e9129f1`, two exits: DIS and V). The stored prompt carries both
+"[MISSING — ... Treat the audit step as NOT PERFORMED]" banners, `Tech Analyst
+Signals (not provided)`, `News Intelligence (not provided)`, `System
+performance: not provided`, and NOT FETCHED on all three event-risk
+sub-blocks. This was not an edge case: it was every exit review ever run.
+
+**The real cause, and what it was not.** Not a bug in the renderer — the
+renderer's [MISSING] banner is correct and load-bearing on the morning path,
+where an empty field really does mean the Portfolio Manager skipped a step its
+own prompt makes mandatory while the schema lets it return "". The cause was
+that the exit call site reused a renderer built for a different caller and a
+different schema, and then papered over the mismatch: it wrote the literal
+string `"n/a"` into six chain fields and a cross-reference sentence into two
+more, to satisfy a `min_length=1` constraint. A fabricated "n/a" reads to the
+seat as a real answer to a question nobody answered — that substitution is
+where the defect started, and it is why the fix does not use placeholders.
+
+**What was done.** The seat is now told which review it is in. On the exit
+path it is given a header that states plainly what it can and cannot see, and
+the renderer stops asking for what does not exist there:
+
+- the two Portfolio-Manager-only audit steps are not rendered at all, and the
+  header says why their absence is not a skipped step;
+- the chain is labelled as the *position reviewer's*, under the reviewer's own
+  field names — previously its execution rationale was being audited under the
+  heading "Sizing logic";
+- the Tech block, which no call on the midday/close loop produces, says
+  "unavailable by design on this path" instead of "(not provided)", and says
+  explicitly that a missing Tech signal is not grounds to refuse an exit;
+- the exit rows' `$0.0` entry/stop/target are explained as structural zeros,
+  not a data fault, and the reward:risk and sizing checklists are stood down
+  because there is no entry geometry and no BUY to size;
+- the header names the four deterministic Python gates that actually decide
+  these exits (named-trigger, noise band, metric-contradiction,
+  `holding_discipline_claim_check`), so the seat is not asked to re-derive
+  holding discipline from prose.
+
+**And what was simply never passed.** Everything the loop had already fetched
+before the position reviewer ran, and then did not forward: today's news,
+earnings, deployable cash and the parked reserve, drawdown state, and holding
+ages. All now passed. Earnings proximity is additionally fetched here, bounded
+by the same timeouts the morning path uses, so the mandatory `event_risk`
+answer has a real input instead of a blanket NOT FETCHED. Genuinely
+unavailable on this path: Tech signals, and the macro-release and FOMC
+calendars (fetched by the morning research stage, which does not run on this
+loop) — those keep the labelled NOT FETCHED form, which is honest.
+
+**A wrong claim in the code, corrected while in there.** `_risk_review_exits`
+documented itself as running *after* the deterministic exit gates. It does
+not: all four live in `_midday_execute_llm_actions`, which the caller invokes
+afterwards. They still run on every exit in the same session before anything
+reaches the broker, so the substantive point — that they, not this seat, are
+the gate — stands. Only the ordering claim was false.
+
+**What would catch it next time.** The rule is now written down where the
+rendering happens, and pinned: *never tell the seat a check was skipped when
+that check does not apply to the path it is on, and never tell it to verify
+against a block that is absent by construction.* The tests assert the exit
+message carries no NOT-PERFORMED banner, that the morning path still carries
+both banners when they are genuinely earned, and that the two renderings are
+byte-identical when no review mode is given.
+
 ### 2026-09-13 — the whole-plan veto: what actually caused it, and the two holes left in the fix (item 7)
 
 **In plain words:** the AI risk reviewer can refuse a whole day's plan rather
