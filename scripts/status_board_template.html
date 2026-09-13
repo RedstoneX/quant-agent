@@ -339,6 +339,16 @@ details.finished>summary::before{content:"\25B8  ";color:var(--faint)}
 details.finished[open]>summary{border-bottom:1px dashed var(--rule);margin-bottom:10px}
 details.finished[open]>summary::before{content:"\25BE  "}
 details.finished table.plan{margin-top:4px}
+/* The one disclosure holding everything finished or parked. Its summary is
+   the only thing he sees unless he opens it, so it wraps rather than
+   truncating, and the lists inside start after a normal gap. */
+details.rest>summary{white-space:normal;line-height:1.5}
+details.rest[open]>h2.sub:first-of-type{margin-top:8px}
+/* An in-flight change is drawn with the in-hand double edge — it is the
+   same "nothing needed from you" state — and its own stamp line sits above
+   the list, never inside a row, so the read time cannot be missed. */
+.inflight-stamp{font-family:"JetBrains Mono",monospace;font-size:12.5px;letter-spacing:.02em}
+.inflight-unread{margin-top:10px}
 
 footer{margin-top:32px;padding-top:16px;border-top:1px solid var(--rule);
   color:var(--faint);font-size:13px;
@@ -362,10 +372,7 @@ footer{margin-top:32px;padding-top:16px;border-top:1px solid var(--rule);
   <nav class="jump">
     <a href="#yours">Waiting on you</a>
     <a href="#order">What&rsquo;s next</a>
-    <a href="#inhand">Decided or being built</a>
-    <a href="#review">Needs a review</a>
-    <a href="#paused">Parked</a>
-    <a href="#done">Finished</a>
+    <a href="#inhand">Being built</a>
   </nav>
 
   {{RIGHT_NOW}}
@@ -390,12 +397,19 @@ footer{margin-top:32px;padding-top:16px;border-top:1px solid var(--rule);
   </section>
 
   <section id="inhand">
-    <h2>Decided or being built &mdash; nothing needed from you</h2>
+    <h2>Being built or already decided &mdash; nothing needed from you</h2>
+    <p class="lede">What is actually under construction right now, read
+      straight off the open changes on GitHub rather than typed in here. Each
+      line says whether it is still being written, being tested, waiting to
+      go in, or blocked. When one goes in it simply drops off this list.</p>
+    {{IN_FLIGHT}}
+
+    <h2 class="sub">Already decided, from the backlog</h2>
     <p class="lede">{{IN_HAND_COUNT}} item(s) where you have already given your
-      answer, or where the work is already under way. Each line says which.
+      answer, or which the backlog marks as under way. Each line says which.
       They used to sit in the running order above, which is what made things
       you had already ruled on come back at you as questions. Nothing here
-      is yours to decide; it moves to &ldquo;finished&rdquo; when it lands.</p>
+      is yours to decide.</p>
     {{IN_HAND}}
   </section>
 
@@ -409,31 +423,6 @@ footer{margin-top:32px;padding-top:16px;border-top:1px solid var(--rule);
       <summary>Feeds already signed off &mdash; expand to review</summary>
       {{PM_GATE_DONE}}
     </details>
-  </section>
-
-  <section id="review">
-    <h2>Finished &mdash; a review is still owed</h2>
-    <p class="lede">{{REVIEW_OWED_COUNT}} item(s) say the work itself is done and
-      that somebody still owes it a look. That is two different facts, so they are
-      kept apart from both live work and signed-off work rather than being called
-      one or the other. Nothing here needs a decision from you.</p>
-    {{REVIEW_OWED}}
-  </section>
-
-  <section id="paused">
-    <h2>Parked &mdash; no decision needed</h2>
-    <p class="lede">{{PAUSED_COUNT}} item(s) are deliberately on hold. Nothing here
-      is waiting on you and nothing here is blocking anything. You can ignore
-      this section; it is listed only so &ldquo;on hold&rdquo; never quietly becomes
-      &ldquo;forgotten&rdquo;.</p>
-    {{PAUSED}}
-
-    <h2 class="sub">Checked &mdash; working as intended</h2>
-    <p class="lede">{{NO_ACTION_COUNT}} cause(s) of trades not happening that
-      were looked into and turned out to be the desk doing what it should.
-      They stay on the list because they are still real reasons a trade did
-      not happen, but there is nothing to fix and nothing to decide.</p>
-    {{NO_ACTION}}
   </section>
 
   <section id="proof">
@@ -462,20 +451,49 @@ footer{margin-top:32px;padding-top:16px;border-top:1px solid var(--rule);
     </div>
   </div>
 
-  <section id="done">
-    <h2>Already resolved &mdash; don&rsquo;t revisit</h2>
-    <p class="lede">{{RESOLVED_COUNT}} item(s) are finished and signed off. They are
-      listed one line each so they stop competing for your attention, and kept
-      rather than deleted so nothing gets re-raised as new work.</p>
-    {{RESOLVED}}
+  <!-- Finished and parked work is NOT a section. The owner's words: "If
+       it's done, it's done and in the past, don't carry it, don't tell me,
+       I don't care." He reads this on a small phone and scrolling is his
+       main complaint, so everything that needs nothing from him and is not
+       being built sits behind ONE closed disclosure: a count in the
+       summary, the lists only if he opens it. The buckets themselves are
+       still computed — the backlog's own tidiness checks depend on them. -->
+  <section id="rest">
+    <details class="finished rest">
+      <summary>Needs nothing from you &mdash; {{PAUSED_COUNT}} parked,
+        {{NO_ACTION_COUNT}} checked and by design, {{REVIEW_OWED_COUNT}} finished
+        awaiting a review, {{RESOLVED_COUNT}} signed off,
+        {{FINISHED_UNMARKED_COUNT}} finished but not ticked off &mdash; expand</summary>
 
-    <h2 class="sub">Finished too &mdash; just not ticked off yet</h2>
-    <p class="lede">{{FINISHED_UNMARKED_COUNT}} item(s) whose own note says the work
-      is finished, in a backlog that has not struck them off. They used to appear
-      above as live work, which is what made the same things keep coming back at
-      you. They are shown here as finished; the untidy line in the backlog is a
-      record-keeping job, not yours.</p>
-    {{FINISHED_UNMARKED}}
+      <h2 class="sub" id="paused">Parked &mdash; no decision needed</h2>
+      <p class="lede">Deliberately on hold. Nothing here is waiting on you and
+        nothing here is blocking anything; it is listed only so &ldquo;on
+        hold&rdquo; never quietly becomes &ldquo;forgotten&rdquo;.</p>
+      {{PAUSED}}
+
+      <h2 class="sub">Checked &mdash; working as intended</h2>
+      <p class="lede">Causes of trades not happening that were looked into and
+        turned out to be the desk doing what it should. Nothing to fix,
+        nothing to decide.</p>
+      {{NO_ACTION}}
+
+      <h2 class="sub" id="review">Finished &mdash; a review is still owed</h2>
+      <p class="lede">The work itself is done and somebody still owes it a
+        look. Two different facts, kept apart from both live work and
+        signed-off work. Nothing here needs a decision from you.</p>
+      {{REVIEW_OWED}}
+
+      <h2 class="sub" id="done">Already resolved &mdash; don&rsquo;t revisit</h2>
+      <p class="lede">Finished and signed off. Kept rather than deleted so
+        nothing gets re-raised as new work.</p>
+      {{RESOLVED}}
+
+      <h2 class="sub">Finished too &mdash; just not ticked off yet</h2>
+      <p class="lede">Their own note says the work is finished; the backlog
+        has not struck them off. The untidy line is a record-keeping job, not
+        yours.</p>
+      {{FINISHED_UNMARKED}}
+    </details>
   </section>
 
   <section id="plan">
@@ -490,7 +508,9 @@ footer{margin-top:32px;padding-top:16px;border-top:1px solid var(--rule);
     <b>Why this page can&rsquo;t go stale.</b> Nothing here is typed into this page by
     hand. The running order, the decisions and the explanations are read straight
     out of the work backlog every time the page is built, and it is rebuilt
-    automatically whenever that backlog changes. Everything that can be proved by
+    automatically whenever that backlog changes. What is being built is read off
+    the open changes on GitHub every time the page is opened, and carries the
+    time it was read. Everything that can be proved by
     machine &mdash; a safeguard that must exist, a setting that must hold a
     particular value &mdash; is re-proved on every build, and if something recorded
     as finished stops proving out it says so at the top. Anything that cannot be
