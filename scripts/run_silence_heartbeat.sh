@@ -75,9 +75,27 @@ if [[ "$paused_ok" -eq 0 ]] && command -v systemctl >/dev/null 2>&1; then
             fi
         done
         if [[ "$live_modes" -eq 0 ]]; then
+            # THE PAUSE IS NOT A FINDING, BUT IT IS NOT NOTHING EITHER.
+            #
+            # Exiting 0 silently here (which is what this did when the guard
+            # first shipped, earlier the same day) made "paused and forgotten"
+            # the one desk-wide state with no alarm behind it: the daily
+            # channel probe sends-and-deletes, the coverage watchdog only
+            # speaks when a held position is short of stops, and a flat book
+            # under a paused desk therefore looked exactly like a working
+            # desk in a quiet market — docs/WORK.md item 11's premise,
+            # reintroduced by the noise guard itself.
+            #
+            # So the silence CHECK is still suppressed (it would page every
+            # 30 minutes), and a once-per-ET-weekday reminder takes its
+            # place. The cadence and the "only after a window has closed"
+            # gate are both derived, not invented — see
+            # src/silence_watchdog.check_paused_desk.
             echo "no trading-mode timer is running: the desk is paused on" \
-                 "purpose, so its silence is not a finding. Nothing checked."
-            exit 0
+                 "purpose, so its silence is not a finding. Sending the" \
+                 "once-a-weekday reminder instead of the silence check."
+            exec "$TIMEOUT" --kill-after=15 60 "$PYTHON" \
+                scripts/silence_heartbeat.py --desk-paused
         fi
     fi
 fi

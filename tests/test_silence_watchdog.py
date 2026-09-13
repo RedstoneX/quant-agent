@@ -276,7 +276,11 @@ def test_alert_text_leads_with_a_plain_english_severity_word():
     )
     text = silence_watchdog.alert_text(status)
     assert "SILENT:" in text.splitlines()[0]
-    assert "item 17c" in text
+    # The alert used to close with "this threshold is a placeholder pending
+    # owner confirmation — see docs/WORK.md item 17c". The threshold was
+    # ratified 2026-09-03; the sentence outlived it. What must survive is
+    # the operator instruction, not the stale caveat.
+    assert "Mission Control" in text
 
 
 # ===========================================================================
@@ -320,4 +324,121 @@ def test_script_exits_0_and_sends_nothing_on_a_healthy_desk(db, state_path, monk
 
     assert code == 0
     assert "OK" in line
+    post.assert_not_called()
+
+
+# ===========================================================================
+# 6. A paused desk that nobody remembers — docs/WORK.md item 11
+#
+# The wrapper's pause guard (scripts/run_silence_heartbeat.sh) correctly
+# suppresses the 30-minute silence alarm while the trading timers are
+# stopped. Shipped on its own, that made "paused and forgotten" the one
+# desk-wide condition with NO alarm behind it: the daily channel probe
+# sends-and-deletes, and the coverage watchdog only speaks when a held
+# position is short of stops — so a paused desk with a flat book was
+# indistinguishable from a working desk in a quiet market. These tests are
+# the other half.
+# ===========================================================================
+
+@pytest.fixture
+def paused_state_path(tmp_path, monkeypatch):
+    path = tmp_path / "alerting" / "paused_desk.json"
+    monkeypatch.setattr(silence_watchdog, "PAUSED_STATE_PATH", path)
+    return path
+
+
+def test_paused_desk_notifies_once_a_weekday(paused_state_path):
+    """THE LOAD-BEARING TEST. A weekday afternoon with the desk paused must
+    produce exactly one reminder, and the second check of the same day must
+    produce none — a reminder every 30 minutes is the muted-alarm failure
+    the pause guard exists to avoid."""
+    afternoon = _et(_MONDAY, 15, 0).astimezone(timezone.utc)
+    first = silence_watchdog.check_paused_desk(now=afternoon)
+    assert first.should_notify
+    assert first.elapsed_windows_today > 0
+
+    later = _et(_MONDAY, 15, 30).astimezone(timezone.utc)
+    second = silence_watchdog.check_paused_desk(now=later)
+    assert not second.should_notify
+    assert second.already_notified_today
+
+
+def test_paused_desk_notifies_again_the_next_weekday(paused_state_path):
+    """One reminder per day, not one per pause episode: every extra day the
+    desk stays off is another day of not trading, and the owner can end it
+    at any time."""
+    silence_watchdog.check_paused_desk(now=_et(_MONDAY, 15, 0).astimezone(timezone.utc))
+    tuesday = _MONDAY + timedelta(days=1)
+    nxt = silence_watchdog.check_paused_desk(
+        now=_et(tuesday, 15, 0).astimezone(timezone.utc),
+    )
+    assert nxt.should_notify
+
+
+def test_paused_desk_says_nothing_before_the_first_window_closes(paused_state_path):
+    """00:30 on a weekday is not evidence of anything: the desk had not yet
+    been due to do a single thing. The gate is read off SESSION_WINDOWS, not
+    from a chosen hour."""
+    small_hours = _et(_MONDAY, 0, 30).astimezone(timezone.utc)
+    status = silence_watchdog.check_paused_desk(now=small_hours)
+    assert not status.should_notify
+    assert status.elapsed_windows_today == 0
+
+
+def test_paused_desk_says_nothing_at_the_weekend(paused_state_path):
+    """A desk that is not trading on a Saturday is not a finding — the
+    trading timers would not have fired either."""
+    saturday = _MONDAY - timedelta(days=2)
+    status = silence_watchdog.check_paused_desk(
+        now=_et(saturday, 15, 0).astimezone(timezone.utc),
+    )
+    assert not status.is_weekday
+    assert not status.should_notify
+
+
+def test_paused_reminder_leads_with_a_word_not_a_colour(paused_state_path):
+    """Owner is red/green colour blind — severity is carried in text."""
+    status = silence_watchdog.check_paused_desk(
+        now=_et(_MONDAY, 15, 0).astimezone(timezone.utc),
+    )
+    text = silence_watchdog.paused_alert_text(status)
+    assert "PAUSED" in text
+    assert status.et_date in text
+
+
+def test_paused_state_never_touches_the_silence_marker(
+    db, state_path, paused_state_path,
+):
+    """The two records must not share a file: a pause episode overwriting
+    `last_known_session_at` would blind the silence check for the day the
+    desk is resumed."""
+    _seed(db, source="morning", when=_et(_MONDAY, 10, 0).astimezone(timezone.utc))
+    silence_watchdog.check_silence(now=_et(_MONDAY, 11, 0).astimezone(timezone.utc))
+    before = state_path.read_text()
+
+    silence_watchdog.check_paused_desk(now=_et(_MONDAY, 15, 0).astimezone(timezone.utc))
+    assert state_path.read_text() == before
+    assert paused_state_path.exists()
+
+
+def test_script_paused_path_sends_once_and_exits_1(paused_state_path, monkeypatch):
+    """End to end through the entry point the wrapper actually execs."""
+    _notifier_env(monkeypatch)
+    from scripts import silence_heartbeat
+
+    fixed_now = _et(_MONDAY, 15, 0).astimezone(timezone.utc)
+    monkeypatch.setattr(silence_watchdog, "_utc_now", lambda: fixed_now)
+
+    with patch("src.notifier.requests.post") as post:
+        post.return_value = MagicMock(
+            status_code=200, json=lambda: {"ok": True, "result": {"message_id": 1}},
+        )
+        code, line = silence_heartbeat.run_paused_notice()
+        assert code == 1
+        assert post.called
+
+        post.reset_mock()
+        code2, line2 = silence_heartbeat.run_paused_notice()
+    assert code2 == 0
+    assert "already reminded" in line2
     post.assert_not_called()

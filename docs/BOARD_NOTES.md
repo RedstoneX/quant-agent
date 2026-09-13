@@ -131,12 +131,6 @@ this line, one heading per item.
 **Recommendation —** Wait for a few more weeks of real data before setting a hard block; there isn't yet enough evidence to know where a fair cutoff belongs.
 
 
-## item 11
-
-**Plain language —** On one day, the desk produced zero trade ideas because of outright technical failures, and nobody noticed at the time — total silence looked exactly like a normal quiet market on every screen available. A watchdog has since been built that tracks how often the desk comes back empty and alerts the owner directly when that happens too often to be coincidence.
-**Example —** Ten of the fourteen recorded failures happened on a single day, producing a completely empty result indistinguishable, at the time, from an ordinary quiet market — the new watchdog exists specifically to catch a repeat of that day.
-
-
 ## item 15
 
 **Plain language —** The desk couldn't always tell whether a price was current or stale, risking decisions made on outdated information. The piece covering stocks it already owns is fixed — it now honestly says "unknown" freshness instead of pretending a price is live when the broker never actually confirms that. The bigger remaining piece is doing the same for live quotes and historical price data, which needs a choice between two different competing ways to build it.
