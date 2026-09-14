@@ -152,7 +152,7 @@ llm:
   # schema's structural cap, without inflating to the 16K sized for the
   # free-text analyst seats (different task shape — this seat returns a
   # short bounded JSON list, not prose).
-  smart_money_analyst_max_tokens: 3000
+  smart_money_analyst_max_tokens: 16000
   portfolio_manager_max_tokens: 16000
   risk_manager_max_tokens: 16000
   position_reviewer_max_tokens: 16000

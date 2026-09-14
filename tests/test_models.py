@@ -1,4 +1,7 @@
 from datetime import datetime, date
+from pathlib import Path
+from typing import get_args, get_origin
+
 import pytest
 from pydantic import ValidationError
 from src.models import (
@@ -12,6 +15,12 @@ from src.models import (
     RiskReasoningChain,
     Position,
     AgentLog,
+    LLMOutputModel,
+    EarningsAnalysis,
+    EarningsRevenue,
+    MacroAnalysis,
+    NewsIntelligenceReport,
+    EveningReport,
 )
 
 
@@ -1049,3 +1058,146 @@ def test_quarterly_meta_reflection_style_self_portrait_optional():
             theme_coverage_report=_valid_theme_coverage(),
             loss_pattern_report=_valid_loss_report(),
         )
+
+
+# ---------------------------------------------------------------------------
+# UNSOURCED token on a list-typed field (VERIFIED DEFECT, 2026-09)
+#
+# config/prompts/earnings_analyst.md told the model to write
+# `[UNSOURCED:<reason>]` for any missing quantitative value, including
+# "revenue (total + YoY + segments)". `EarningsAnalysis.revenue.segments` is
+# a LIST. gemini-2.5-flash-lite obeyed the instruction literally and
+# returned `"segments": "[UNSOURCED:segment_data_not_disclosed]"`; pydantic
+# raised `list_type` and `_validate_analysis` (src/agents/earnings_analyst.py)
+# discarded the ENTIRE earnings analysis ("Invalid llm earnings analysis for
+# MRVL"). Fixed by coercing a bare UNSOURCED token on any `list[...]` field
+# to `[]` in `LLMOutputModel` itself (see `_unsourced_token_on_list_field_means_empty`).
+# ---------------------------------------------------------------------------
+
+
+def _valid_earnings_analysis_dict() -> dict:
+    return {
+        "symbol": "MRVL",
+        "form_type": "10-Q",
+        "filing_date": "2026-03-15",
+        "revenue": {
+            "total": "$10.0 billion",
+            "yoy_growth": "+5%",
+            "segments": "[UNSOURCED:segment_data_not_disclosed]",
+        },
+        "profitability": {
+            "gross_margin": "45%", "operating_margin": "20%",
+            "net_income": "$2.0 billion", "eps": "$1.00 diluted",
+        },
+        "cash_flow": {
+            "operating_cf": "$3.0 billion", "free_cf": "$2.5 billion",
+            "capex": "$0.5 billion",
+        },
+        "balance_sheet": {
+            "cash_and_equivalents": "$4.0 billion", "total_debt": "$1.0 billion",
+            "assessment": "Healthy balance sheet",
+        },
+        "management_highlights": ["Demand remained stable across core products"],
+        "guidance": "Management did not provide numeric guidance",
+        "investment_implications": {
+            "sentiment": "bullish", "conviction": "medium",
+            "reasoning_chain": {
+                "fundamental_quality": "Revenue +5% with margin expansion",
+                "growth_trajectory": "Operating leverage building QoQ",
+                "strategic_risks": "Cloud competition is real but execution on track",
+                "management_execution": "Guidance hit, capex on plan",
+                "valuation_context": "Trades at a reasonable forward multiple",
+            },
+            "key_thesis": "Margins expanded while demand remained resilient",
+        },
+        "data_quality": "Filing text complete through the financial statements and MD&A.",
+    }
+
+
+def test_earnings_revenue_segments_unsourced_token_coerces_to_empty_list():
+    revenue = EarningsRevenue(
+        total="$10.0 billion", yoy_growth="+5%",
+        segments="[UNSOURCED:segment_data_not_disclosed]",
+    )
+    assert revenue.segments == []
+
+
+def test_earnings_analysis_kept_when_segments_is_bare_unsourced_token():
+    """Reproduces the exact failure: the object used to be discarded
+    entirely; it must now be kept with `segments == []`."""
+    analysis = EarningsAnalysis(**_valid_earnings_analysis_dict())
+    assert analysis.revenue.segments == []
+    assert analysis.symbol == "MRVL"
+
+
+# Agents whose prompt instructs the `[UNSOURCED:<reason>]` token, mapped to
+# the top-level model their LLM response is parsed into (the `X(**parsed)`
+# call sites in src/agents/<agent>.py). If mapping prompt -> model were
+# generically derivable this map wouldn't need to be hand-maintained; it
+# isn't, so `test_every_unsourced_prompt_is_mapped_here` fails loudly the
+# day a new prompt starts using the token without a matching entry here.
+_UNSOURCED_PROMPT_TO_MODEL = {
+    "earnings_analyst.md": EarningsAnalysis,
+    "macro_analyst.md": MacroAnalysis,
+    "news_analyst.md": NewsIntelligenceReport,
+    "evening_analyst.md": EveningReport,
+    "portfolio_manager.md": PortfolioDecision,
+}
+
+
+def test_every_unsourced_prompt_is_mapped_here():
+    prompts_dir = Path(__file__).resolve().parents[1] / "config" / "prompts"
+    actual = {
+        p.name for p in prompts_dir.glob("*.md")
+        if "UNSOURCED" in p.read_text()
+    }
+    assert actual == set(_UNSOURCED_PROMPT_TO_MODEL), (
+        "a prompt file's use of the [UNSOURCED:...] token changed — add/"
+        "remove it in _UNSOURCED_PROMPT_TO_MODEL above, and audit its "
+        "result model's non-string fields the same way EarningsRevenue."
+        "segments was audited (see the block comment above)"
+    )
+
+
+def _reachable_llm_output_models(model_cls) -> set[type]:
+    """Every `LLMOutputModel` subclass reachable from `model_cls`'s field
+    annotations, direct or through `list[...]`, breadth-first."""
+    seen: set[type] = set()
+    stack = [model_cls]
+    while stack:
+        cls = stack.pop()
+        if cls in seen:
+            continue
+        seen.add(cls)
+        for field in cls.model_fields.values():
+            candidates = [field.annotation, *get_args(field.annotation)]
+            for candidate in candidates:
+                target = get_origin(candidate) or candidate
+                if isinstance(target, type) and issubclass(target, LLMOutputModel):
+                    stack.append(target)
+    return seen
+
+
+def test_unsourced_prompts_list_fields_tolerate_the_bare_token():
+    """PREVENTION: for every prompt that instructs the UNSOURCED token,
+    every list-typed field on its result model (or any nested
+    `LLMOutputModel` reachable from it) must coerce a bare token string to
+    `[]` rather than raise / discard the whole object — this is exactly the
+    `EarningsRevenue.segments` defect, generalized to every seat.
+    """
+    checked = 0
+    for model_cls in _UNSOURCED_PROMPT_TO_MODEL.values():
+        for sub_cls in _reachable_llm_output_models(model_cls):
+            for field_name, field in sub_cls.model_fields.items():
+                if get_origin(field.annotation) is not list:
+                    continue
+                checked += 1
+                result = sub_cls._unsourced_token_on_list_field_means_empty(
+                    {field_name: "[UNSOURCED:some_reason]"}
+                )
+                assert result[field_name] == [], (
+                    f"{sub_cls.__name__}.{field_name} does not coerce a bare "
+                    "UNSOURCED token to [] — either add coercion or confirm "
+                    "the prompt never instructs the token into this field"
+                )
+    assert checked > 0, "no list-typed fields found — mapping likely stale"
