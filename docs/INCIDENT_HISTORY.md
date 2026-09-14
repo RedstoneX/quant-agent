@@ -22,6 +22,145 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the work-queue hook was deleting words out of the middle of board item titles
+
+**In plain words:** the hook whose entire job is to hand the next piece of
+work back with an accurate description of it was quietly editing the
+descriptions. It handed back, verbatim, "Most ideas die inside the machinery
+with ed reason (no_order_built)". The real title reads "...with **no
+recorded** reason...". Two words had been eaten out of the middle of a
+sentence, leaving a fragment. Not cosmetic: a title with words missing reads
+as a different item, and a renderer that silently deletes text makes every
+message it produces untrustworthy.
+
+**The cause.** Board items can carry their classification inline in the
+headline — "DEFECT", "NO RECORD", "TOO STRICT" and three others — and the
+title renderer strips those labels out so the owner-facing name stays plain
+English instead of shouting a status word. It stripped them as bare
+case-insensitive substrings with no word boundaries. "NO RECORD" therefore
+matched inside the ordinary word "recorded" and took the first nine letters
+of it, leaving "ed". The same bug had a second victim nobody had hit yet:
+"defective" loses its stem to "DEFECT" and becomes "ive".
+
+**What was ruled out first, so nobody re-checks it.** The cross-reference
+stripper, the snake-case jargon detector and the sentence-end handling were
+each checked and none of them touches it; neither does the shell wrapper the
+hook runs through. The rewrite happens in one place only — the title tidier —
+and only when a class name happens to be a prefix of a real English word.
+
+**The fix and what pins it.** Whole-word boundaries on each label. Thirteen
+tests now cover it, the first of them asserting the exact real title that
+produced the mangling, character for character, rather than a
+similar-looking invented one — a paraphrase would not have reproduced the
+bug, because the bug needs the literal letters "no record" followed by "ed".
+The rest pair every class name embedded in an ordinary word (defective,
+defects, recorded, records, too strictly) against the same name standing
+alone as a label, so the stripping still happens where it should and the
+next person cannot fix one direction by breaking the other.
+
+**The general lesson, which this desk keeps relearning.** A substring match
+on a human-readable word is a silent corrupter. It fails on real data, not on
+test data, and it fails by producing something that still looks like a
+sentence.
+
+---
+
+### 2026-09-14 — the trade-picking seat was told to audit the economics seat's logic, and had nowhere to write the answer (item 18e)
+
+**In plain words:** the AI that picks the trades reads a briefing that
+includes the economics seat's full six-paragraph reasoning, under a heading
+telling it to check that reasoning for logic errors. Its answer sheet had no
+box for such a finding — not a field, not a label, nowhere. It was being
+asked to do a piece of work with no way to report the result, and
+unsurprisingly no answer was ever seen. There is a box now.
+
+**Why this is not the same complaint as item 18's original one.** Item 18 was
+opened about BULK: 70% of the briefing was raw earnings prose. That cause is
+closed. This is a different defect that happens to live in the same briefing
+— not text that says nothing, but text that asks for something the machinery
+cannot receive. Bulk you can measure; an unanswerable instruction you can
+only find by reading the schema next to the prompt.
+
+**Re-measured before changing anything, because two items on this board
+turned out to be already done and one was still asking the owner to approve
+something that shipped four days earlier.** The frozen `run_64290730` fixture
+through the live `build_user_message`, on origin/main at 1ff4ec1e:
+**87,016 chars over 25 sections.** All four filler markers the 2026-09-13
+slice removed occur **zero** times, so that fix is genuinely shipped and the
+21.9%-content-free finding is genuinely closed. Residual null words across
+the entire briefing: seven, every one of them a NAMED absence. Earnings
+18,487 (21.2%) · Technical 16,736 (19.2%) · Independent Source Agreement
+11,902 (13.7%) · Candidate Ranking 9,836 (11.3%).
+
+**The count came out 1,083 chars ABOVE the 85,933 recorded on 2026-09-13, and
+that is not a regression.** The whole difference is Candidate Ranking growing
+8,753→9,836, which is item 10's per-drop machine-readable reasons arriving
+the same day. Text that states why an idea died is the exact opposite of the
+thing this item exists to remove. Worth recording because a naive
+size-watching check would have read it as the fix coming undone.
+
+**What was actually wrong, stated so it can be checked rather than
+believed.** Read `ReasoningChain` and `PortfolioDecision`. Between them they
+carry the seat's seven mandatory chain steps, two optional-per-schema
+audit steps, its targets, the constructor's drop list and a prose view. None
+of those is a place to say "paragraph four's conclusion is not supported by
+the numbers it cites". So the heading was asking for an audit the schema
+could not accept. That is a structural claim: it is settled by reading one
+class, not by a benchmark, and it stays true regardless of which model sits
+in the seat.
+
+**The two honest options, and why this one.** Either give the instruction an
+output channel, or stop shipping the six paragraphs. Deleting them would have
+been cheaper and would have saved 2,287 chars, but it declines the question
+rather than answering it, and the paragraphs are not themselves content-free
+— the derivation behind a regime call bears on how much to trust the exposure
+target that comes with it, which is the one thing macro is for on this desk.
+So: a channel. `reasoning_chain.macro_audit`, optional-default at the schema
+layer because every archived log predates it, MANDATORY per the prompt, and
+rendered to the Risk Manager as its own labelled row that reads
+`[MISSING ... treat the audit step as NOT PERFORMED]` when left blank — the
+same pattern the two existing audit steps already use.
+
+**Deliberately NOT `min_length=1`.** Forcing a non-empty string when the
+chain is sound is precisely how the fabricated `or "n/a"` placeholders
+started on this desk, and `ExitReviewChain` already carries the write-up of
+that mistake. The prompt instead asks for one of two real verdicts: name the
+error, or say no logic error was found. The second is an answer, not a
+placeholder.
+
+**The caveat that has to travel with this, in the owner's own framing.** This
+is a PROMPT change and **this desk has no rig able to validate a prompt
+rewrite** — the rehearsal rig replays recorded answers into a changed prompt
+and passes regardless, which is recorded separately as "the rig cannot
+validate a prompt rewrite". So there is no measured improvement here and none
+is claimed. The case is the structural one above, and nothing else.
+
+**What could NOT be verified from this worktree, said plainly rather than
+rounded up.** The supporting finding that across 56 archived PM calls 27
+carried the macro reasoning chain and zero responses ever named a macro logic
+error could not be reproduced: the local database is 0 bytes and the live
+archive directory is not readable by this account. It is also a modest sample
+whose archive ends 2026-09-02. Treat 56/27/0 as **unconfirmed**. It is
+corroboration, not the argument.
+
+**Deliberately not done, with the reason.** The `pm_audit_step_missing`
+engine advisory was not extended to the new field. It would fire on every
+single run until the model starts filling a field it has never been asked
+for, turning a real advisory into noise, and the Risk Manager row already
+makes a blank one visible to the seat whose job is to notice. Extend it once
+there is evidence the field gets filled.
+
+**What is left on item 18, and it is not volume.** Three things: the
+`familiarity_bias` grading criterion is still never stated in any prompt
+(verified again — the string appears only in the grading harness and in docs,
+in no prompt file); the BUY-eligibility section reorder still needs the paid
+benchmark; and the OpenRouter key-level spend cap is still unbuilt. Plus the
+written open question: does the seat use the new channel, and does using it
+change what it decides? Only the paid `--replay-run` benchmark answers that.
+Item 18 stays PARTIALLY FIXED.
+
+---
+
 ### 2026-09-14 — item 10 closed: every way an idea can die inside the machinery now records why, and a test now fails if someone adds a new way that does not
 
 **In plain words:** most trade ideas the desk has never reached the market —

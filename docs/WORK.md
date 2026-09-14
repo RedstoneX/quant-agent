@@ -109,7 +109,7 @@ Index into the audit below, for the board. Cleared seats are deleted from
 here once written up in `docs/INCIDENT_HISTORY.md` — this list is what is
 still wrong, not a history of what was.
 
-**7. PM-input shape/volume redesign — MEASURED and the null-content slice SHIPPED 2026-09-13; two named pieces left, neither of them volume.** The step that was actually missing — nobody had counted the CURRENT prompt, only the 2026-09-02 one — is done: the frozen `run_64290730` fixture rendered through the live `build_user_message` is 100,968 chars over 25 sections, and 22,094 of them (21.9%) were content-free. Full per-section table and the confirmation of item 18's "70%" (it was exactly 70.4%) in `docs/INCIDENT_HISTORY.md` ("item 18d"). Prompt is now 85,933 chars. **What is left is not volume:** (a) macro is the one seat still couriering full reasoning — its 6-paragraph `reasoning_chain` (2,287 chars) is verbatim, deliberately, under "audit these for logic errors"; deciding whether the audit hook is worth a non-bounded seat is a PROMPT change and needs the paid `--replay-run` benchmark, which the rig cannot substitute for; (b) the two largest remaining sections, Technical Analysis (16,736) and Independent Source Agreement (11,902), are both already bounded and both scale linearly with the number of candidates covered — there is no honest cap to put on either, so the lever is how many names get covered, not how each one renders. Earnings, news and tech all now hand over call + conviction + thesis + falsifier. Do NOT re-open this as a size problem.
+**7. PM-input shape/volume redesign — the volume half is DONE and re-measured; ONE piece left and it is not volume.** The null-content slice shipped 2026-09-13 (100,968 chars over 25 sections, of which 22,094 = 21.9% were content-free; the "70%" of item 18 was exactly 70.4%). Per-section table in `docs/INCIDENT_HISTORY.md` ("item 18d"). **Re-measured from scratch 2026-09-14 on origin/main before any change: 87,016 chars, and all four filler markers now occur zero times** — the +1,083 against the 85,933 then recorded is Candidate Ranking growing 8,753→9,836 as item 10's per-drop reasons land, i.e. text that explains an outcome, not filler. Macro's 6-paragraph `reasoning_chain` (2,287 chars) is still couriered verbatim, but the reason it was a problem is fixed: it arrived under "audit these for logic errors" with no output field anywhere that such a finding could go in, and now has one (`reasoning_chain.macro_audit`, see item 18 — a PROMPT change resting on the structural argument, NOT on a measured improvement). **What is left:** whether the seat actually uses that channel, which only the paid `--replay-run` benchmark can answer. The two largest remaining sections, Technical Analysis (16,736) and Independent Source Agreement (11,902), are both already bounded and both scale linearly with the number of candidates covered — there is no honest cap to put on either, so the lever is how many names get covered, not how each one renders. Earnings, news and tech all now hand over call + conviction + thesis + falsifier. Do NOT re-open this as a size problem.
 **8. Every past model-comparison benchmark may be contaminated by bad seat data — OPEN, no re-run yet.** Same shape as the already-known spend-baseline contamination: a benchmark run before tonight's data-honesty fixes could have scored a model on how well it coped with (or quietly hid) empty/wrong input, not on real analytical quality. Combine with the PM model test itself — same re-run, same gate, not two separate jobs.
 
 Detail below, under "DATA QUALITY AUDIT" and "PM-INPUT ARCHITECTURE".
@@ -588,32 +588,59 @@ unit-drift watchdog, and was installed and confirmed running 2026-09-13.
 Related: `qamc-openrouter-pricing-spof` records the same latch reachable via
 a stale price list. That path was fixed 2026-09-02.
 
-**18. 70% of the PM's prompt was earnings-filing prose, not a conclusion — MEASURED 2026-09-02, PARTIALLY FIXED, core cause MERGED 2026-09-04 (PR #252), real follow-ons below.**
+**18. What the trade-picking seat reads that it cannot act on — PARTIALLY FIXED. Two causes closed and re-measured 2026-09-14; three pieces left, none of them volume.**
 
-Rendered the real PM prompt for the first time (nobody ever had): 199,646
-chars, 70% raw SEC-filing extraction from one seat, the actual BUY-eligible
-list buried after it at 853 chars (0.4%). Root cause was two layers, not
-one: earnings analysts were handing PM a completed extraction FORM instead
-of a call (fixed in PR #252 — seat now returns `key_thesis`, a 2-3 sentence
-call + falsifier; full 8-field extraction stays on disk for audit), and
-there was no ranking rule anywhere in the rulebook at all (fixed 2026-09-03,
-Phase 13, extended to all five seats 2026-09-03). Measured result:
-205,607→98,351 chars, earnings share 68.1%→33.4%. Live-model check done
-2026-09-04 (real AAPL filing through the real earnings prompt on the real
-OneCLI-proxied model, coherent output, n=1). **Also invalidated by this:**
-the earlier "analysts can run cheaper models" verdict — that measured
-extraction, an easy task; concluding is a different, harder task and needs
-re-measuring before relying on it again.
+This item was opened as "70% of the PM's prompt is earnings-filing prose".
+That cause is closed: the earnings seat hands over a call, and the
+content-free slice is gone. The item now names only the residue. **The whole
+history — the original 199,646-char render, PR #252, the 2026-09-13
+null-content count and its per-section table — is in
+`docs/INCIDENT_HISTORY.md` ("item 18a/18b/18c/18d"). Do not re-derive it.**
 
-**Still genuinely open, not solved by the above:**
-  - `familiarity_bias` is graded but never stated in the PROMPT (the
-    catalyst-door existence-vs-direction gap itself was fixed 2026-09-03).
-  - ~~Earnings is still the single largest prompt section post-fix~~ —
-    DONE 2026-09-13. 38 of 65 filings were rendering a four-line verdict
-    block with no direction, no thesis and the literal words "not disclosed
-    by the analyst"; they are one roll-up line each now. Earnings
-    32.5%→21.5% of the prompt and no longer the largest section. See the PM
-    TEST GATE item 7 line above for what that leaves.
+**Re-measured independently 2026-09-14, on origin/main at 1ff4ec1e, before
+touching anything** — the same frozen `run_64290730` fixture through the live
+`build_user_message`: **87,016 chars over 25 sections.** All four filler
+markers the 2026-09-13 slice removed (`Invalidated if: not disclosed by the
+analyst`, `Invalid if: (not specified)`, `Entry: None`, `not disclosed`) now
+occur **zero** times; total residual null words in the whole prompt is 7
+(3 "unavailable", 2 "unknown", 1 each "None"/"N/A"), all of them named
+absences rather than filler. Earnings is 18,487 (21.2%), Technical 16,736
+(19.2%), Independent Source Agreement 11,902 (13.7%), Candidate Ranking
+9,836 (11.3%). **That is 1,083 chars ABOVE the 85,933 the 2026-09-13 write-up
+recorded, and it is not a regression:** the growth is all in Candidate
+Ranking (8,753→9,836), which is item 10's per-drop machine-readable reasons
+arriving — text that says why an idea died is the opposite of filler.
+**Do NOT re-open this as a size problem** (see PM TEST GATE item 7): the two
+largest remaining sections are already bounded and scale with how many names
+got covered, so the lever is coverage, not rendering, and there is no honest
+cap to put on either.
+
+**FIXED 2026-09-14 — the macro audit instruction had nowhere to send an
+answer.** PM's briefing ships the macro seat's full six-paragraph
+`reasoning_chain` verbatim under the heading "audit these for logic errors",
+and `PortfolioDecision`/`ReasoningChain` had **no field of any kind** such a
+finding could land in. An instruction whose answer the schema cannot receive
+is worse than bulk: it is bulk that also asks for work. It now has a channel
+— `reasoning_chain.macro_audit`, optional-default at the schema layer (every
+archived log predates it) and MANDATORY per the prompt, rendered to the Risk
+Manager as its own labelled row that reads `[MISSING ... NOT PERFORMED]` when
+PM leaves it blank. Deliberately NOT `min_length=1`: forcing a string when
+the chain is sound is how the fabricated `or "n/a"` placeholders started.
+**This is a PROMPT change and this desk has no rig that can validate one** —
+the rehearsal rig replays recorded answers into a changed prompt and passes
+regardless. The claim therefore rests entirely on the structural argument
+(no field existed, which anyone can check by reading the class) and **not**
+on any measured improvement in decisions. The supporting evidence that no
+archived response ever named a macro logic error is recorded but was **NOT
+re-verifiable** from this worktree: the local database is 0 bytes and the
+live archive is not readable by this account. Treat 56/27/0 as unconfirmed.
+
+**Still genuinely open, not solved by any of the above:**
+  - `familiarity_bias` is graded but never stated in the PROMPT. Verified
+    still true 2026-09-14: the string exists only in the model-policy
+    grading harness and in docs, and in **no** prompt file. That harness is
+    another agent's working area, so the prompt half is the part that
+    belongs here.
   - Section reorder (BUY eligibility to the top) deliberately NOT done —
     needs a paid `--replay-run` benchmark to verify, not authorised yet.
   - Whether R/R and net evidence join the production ranking composite —
@@ -627,11 +654,23 @@ re-measuring before relying on it again.
     shipped; `cost_circuit.py` carries the flag. Needs the provider's exact
     limit options verified first.
 
-Full trace, the rules-as-code reproduction (`python -m
-ops.model_policy.deterministic_selection`), all exact figures, and the
-standing warnings (model-behaviour fixes have repeatedly measured as
-no-change; do not summarise from code comments, they've been wrong
-before): `docs/INCIDENT_HISTORY.md` ("item 18a/18b/18c").
+**Open question, written rather than switched off —** does PM actually use
+the macro audit channel now that one exists, and does using it change
+anything it decides? Searched: the whole prompt tree for any existing place
+to report such a finding (none), and the output schema (none). What would
+settle it: the paid `--replay-run` benchmark on this seat, reading
+`reasoning_chain.macro_audit` across the runs. Nothing cheaper answers it,
+and the alternative — deleting the six paragraphs — would have declined the
+question instead of answering it. **What was deliberately NOT done:** the
+`pm_audit_step_missing` engine advisory was not extended to `macro_audit`.
+It would fire on every run until the model starts filling a field it has
+never been asked for, and the Risk Manager row already makes a blank one
+visible. Extend it once there is evidence the field gets filled.
+
+Standing warnings, unchanged: model-behaviour fixes on this desk have
+repeatedly measured as no-change, and a shorter or better-shaped prompt is
+not evidence of a better decision. Do not summarise this item from code
+comments — they have been wrong before.
 
 **19. The model's consistency is an ASSET — three uses. Do not start these before item 18.**
 
