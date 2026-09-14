@@ -4092,7 +4092,7 @@ class TradingPipeline:
                         run_id=event_run_id,
                         agent_name="pipeline", kind="pipeline_event", scope="symbol",
                         symbol=row.get("symbol"), decision_id=row.get("decision_id"),
-                        evidence_json=json.dumps({
+                        evidence_json=_json.dumps({
                             "stage": "position_management",
                             "outcome": "exited" if requested <= 0 or actual + 1e-9 >= requested else "partially_exited",
                             "reason": action.lower(), "broker_status": status,
@@ -8137,11 +8137,23 @@ class TradingPipeline:
         stop_loss: float | None,
         is_short: bool,
         run_id: str,
+        persist: bool = True,
     ):
         """Fresh, close-based structural-protection read for one held
         position, including the cross-day confirmation lookup and the
         persist of today's read for the NEXT trading day to confirm
         against. Returns the `StructuralProtectionCheck`.
+
+        `persist=False` makes the call READ-ONLY: the cross-day lookup
+        still runs, but today's `raw_broken` is not filed, so this read can
+        never become the prior-day half of a future confirmation. Callers
+        that are consulting the check purely for the audit trail must pass
+        it. Filing a break from a NEW call site would let a break confirm a
+        day earlier than it does today, which lifts `protected` a day
+        earlier, which can turn a currently-BLOCKED holding-discipline exit
+        into an allowed one on the following session — a loosening, by
+        side-effect, of a gate this repo deliberately keeps tight
+        (docs/WORK.md item 60).
 
         Spec item 25 (2026-09-03/04, corrected same day) — replaces the
         flat `days_held < 5` holding-discipline window with a data-driven
@@ -8253,10 +8265,11 @@ class TradingPipeline:
         )
 
         try:
-            self.db.save_holding_protection_break(
-                run_id=run_id, symbol=symbol, raw_broken=check.raw_broken,
-                bar_date=effective_bar_date,
-            )
+            if persist:
+                self.db.save_holding_protection_break(
+                    run_id=run_id, symbol=symbol, raw_broken=check.raw_broken,
+                    bar_date=effective_bar_date,
+                )
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "structural protection: failed to persist today's read for "
@@ -8331,18 +8344,49 @@ class TradingPipeline:
         from src.risk.exit_guard import (
             claims_bearish_state_change,
             claims_regime_flip,
+            claims_thesis_invalidation,
             holding_discipline_claim_check,
         )
 
         if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
             return None
-        # Behaviour-preserving short-circuit, not a second rule: with
-        # neither claim present `holding_discipline_claim_check` returns
-        # "ok" regardless of everything else it is passed, so there is no
-        # verdict to lose by skipping it — and skipping it avoids a bars
-        # fetch, an indicator recompute and a protection-state persist per
-        # exit that was never going to be adjudicated.
-        if not (claims_regime_flip(reason) or claims_bearish_state_change(reason)):
+        # (b)/(c): the two claims `holding_discipline_claim_check` can
+        # actually adjudicate. With neither present it returns "ok"
+        # regardless of everything else it is passed, so its verdict is not
+        # what the thesis branch below is here for.
+        adjudicable_claim = (
+            claims_regime_flip(reason) or claims_bearish_state_change(reason)
+        )
+        # (a) thesis invalidation. Until 2026-09-14 this fell through the
+        # short-circuit above and the structural check was NEVER consulted
+        # on it — on the one exit class where "did the level backing this
+        # stop actually break?" is the whole question, and the only exit
+        # class for which the ATR noise band is not already redundant (21
+        # of the 26 hard-trigger keywords also match
+        # `EXTERNAL_INFORMATION_PATTERNS` and skip the band outright, so
+        # these five are its entire non-redundant domain). The desk already
+        # computes the answer; it simply was not asked here.
+        # docs/WORK.md item 60.
+        #
+        # This branch is STRICTLY ADDITIVE and is designed so that it
+        # cannot change which exits execute:
+        #   - the read is taken with `persist=False`, so it can never
+        #     become the prior-day half of a future confirmation and so can
+        #     never lift `protected` a session earlier than it does today;
+        #   - its verdict is recorded and logged, and is NOT fed to
+        #     `holding_discipline_claim_check` (which still leaves (a)
+        #     unjudged) and NOT returned to the caller as a verdict;
+        #   - on a thesis-only reason this method still returns None,
+        #     exactly as it did before, so the caller's block/allow path is
+        #     byte-for-byte the behaviour it had.
+        # A "the level did break" answer is corroboration for the evening
+        # grade and the audit trail; an "intact" or "cannot tell" answer
+        # changes nothing at all. Tightening the sell path on an intact
+        # level was considered and deliberately NOT done here: it is a
+        # separate, ratifiable decision, not a side effect of wiring up a
+        # check that should always have been consulted.
+        thesis_claim = claims_thesis_invalidation(reason)
+        if not (adjudicable_claim or thesis_claim):
             return None
 
         symbol_u = (symbol or "").strip().upper()
@@ -8360,12 +8404,63 @@ class TradingPipeline:
             stop_loss=hist.get("stop_loss"),
             is_short=bool(pos is not None and pos.qty < 0),
             run_id=run_id,
+            # Read-only unless a (b)/(c) claim is present, i.e. unless this
+            # call site would have run anyway. See `persist`'s docstring.
+            persist=adjudicable_claim,
         )
         logger.info(
             "Holding-discipline structural protection for %s: protected=%s "
             "basis=%s — %s",
             symbol_u, protection.protected, protection.basis, protection.detail,
         )
+
+        if thesis_claim:
+            # Durable, per-symbol, machine-readable record of what the
+            # structural check actually said about a thesis-invalidation
+            # exit — the answer this surface used to discard. Written as
+            # append-only specialist evidence rather than into
+            # `intraday_evaluations`, whose (symbol, run_id) upsert would
+            # let this observation overwrite, or be overwritten by, a real
+            # gate's verdict for the same symbol and run.
+            corroborated = not protection.protected
+            logger.info(
+                "Thesis-invalidation exit %s %s: structural check says "
+                "%s (basis=%s). Recorded, not acted on — this observation "
+                "neither blocks nor releases the exit. %s",
+                action, symbol_u,
+                "the backing level HAS broken (exit corroborated)"
+                if corroborated else
+                "the backing level is INTACT (exit not corroborated)",
+                protection.basis, protection.detail,
+            )
+            try:
+                self.db.insert_specialist_evidence(
+                    run_id=run_id, agent_name="risk_manager",
+                    kind="thesis_invalidation_structural_check",
+                    scope="symbol", symbol=symbol_u,
+                    evidence_json=_json.dumps({
+                        "action": str(action).upper(),
+                        "protected": bool(protection.protected),
+                        "raw_broken": bool(protection.raw_broken),
+                        "basis": protection.basis,
+                        "detail": str(protection.detail)[:400],
+                        "corroborates_exit": corroborated,
+                        "reason": str(reason)[:400],
+                        "advisory_only": True,
+                    }),
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "thesis-invalidation structural check: evidence write "
+                    "failed for %s (%s) — the check still ran and is in "
+                    "the log above", symbol_u, e,
+                )
+
+        if not adjudicable_claim:
+            # Nothing for `holding_discipline_claim_check` to adjudicate:
+            # it would return "ok" for any (a)-only reason. Same None the
+            # caller received before this branch existed.
+            return None
 
         # This morning's macro read, or nothing. `_carry_forward_macro` is
         # already the producer of the `carried_from_morning` status

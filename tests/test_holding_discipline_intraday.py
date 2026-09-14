@@ -326,11 +326,21 @@ def test_an_unprotected_position_is_not_this_gates_business():
 # 4. The check buys nothing it does not need
 # ---------------------------------------------------------------------------
 
-def test_a_reason_making_no_checkable_claim_never_reads_protection_state():
-    """A thesis-invalidation exit makes neither of the two claims this checker
-    can adjudicate, so the verdict would be "ok" regardless. Short-circuiting
-    it is behaviour-preserving and saves a bars fetch, an indicator recompute
-    and a protection-state persist on every such exit."""
+def test_a_thesis_invalidation_exit_now_consults_the_structural_check():
+    """THE 2026-09-14 DEFECT (WORK.md item 60), reproduced by inversion.
+
+    A thesis-invalidation exit makes neither claim
+    `holding_discipline_claim_check` can adjudicate, and the assembler used
+    to return before the structural read on that basis. But thesis
+    invalidation is precisely the exit class where "did the level backing
+    this stop actually break?" IS the question — and the only class for
+    which the ATR noise band is not already redundant (21 of the 26
+    hard-trigger keywords bypass the band via
+    `cites_external_information`). The desk computes the answer and threw
+    it away here.
+
+    The read now happens, READ-ONLY, and lands in the evidence ledger.
+    """
     pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=True)
 
     _execute(
@@ -339,9 +349,68 @@ def test_a_reason_making_no_checkable_claim_never_reads_protection_state():
         "midday-2026-09-11",
     )
 
+    pipeline._structural_protection_for_holding.assert_called_once()
+    # Read-only: filing today's break from this NEW call site would let a
+    # break confirm a session early, which lifts `protected` a session
+    # early, which can release an exit that is blocked today.
+    assert pipeline._structural_protection_for_holding.call_args.kwargs[
+        "persist"
+    ] is False
+    kinds = [
+        call.kwargs.get("kind")
+        for call in pipeline.db.insert_specialist_evidence.call_args_list
+    ]
+    assert "thesis_invalidation_structural_check" in kinds
+
+
+def test_the_thesis_invalidation_read_never_blocks_or_releases_an_exit():
+    """Strictly additive. Whatever the structural check says, the exit is
+    handled exactly as it was before this branch existed: the assembler
+    still returns None for an (a)-only reason, so no verdict reaches the
+    caller and no audit row claims one."""
+    for protected in (True, False):
+        pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=protected)
+
+        verdict = pipeline._holding_discipline_check_for_exit(
+            symbol="AAA", action="SELL",
+            reason="thesis_invalid_if triggered on the close",
+            positions=[_position("AAA")], run_id="midday-2026-09-11",
+            position_history={"AAA": {}},
+        )
+
+        assert verdict is None
+        statuses = _statuses(pipeline)
+        assert "exit_blocked_holding_discipline_claim_false" not in statuses
+        assert "holding_discipline_claim_unverified" not in statuses
+
+
+def test_a_reason_making_no_recognised_claim_at_all_still_short_circuits():
+    """The cost-saving short-circuit survives for reasons that name neither
+    (a), (b) nor (c) — there is still nothing for the structural read to
+    inform."""
+    pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=True)
+
+    pipeline._holding_discipline_check_for_exit(
+        symbol="AAA", action="SELL", reason="stopped out at the broker",
+        positions=[_position("AAA")], run_id="midday-2026-09-11",
+        position_history={"AAA": {}},
+    )
+
     pipeline._structural_protection_for_holding.assert_not_called()
-    statuses = _statuses(pipeline)
-    assert "exit_blocked_holding_discipline_claim_false" not in statuses
+
+
+def test_a_denied_thesis_invalidation_is_not_a_claim():
+    """Same negation handling the other two claim predicates get: "no thesis
+    invalidation has occurred" asserts nothing."""
+    from src.risk.exit_guard import claims_thesis_invalidation
+
+    assert claims_thesis_invalidation("thesis_invalid_if triggered") is True
+    assert claims_thesis_invalidation("thesis invalidated on the close") is True
+    assert claims_thesis_invalidation("broken thesis") is True
+    assert claims_thesis_invalidation(
+        "no thesis invalidation has occurred"
+    ) is False
+    assert claims_thesis_invalidation("trimming into strength") is False
 
 
 def test_a_hold_only_review_buys_no_entry_context_reads():
