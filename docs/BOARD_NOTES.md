@@ -299,3 +299,18 @@ coverage should never stop a decision at all.
 **Example —** A stock whose average daily range is $4 has to move $4 against you before the desk stops calling it noise, and separately, its stop is refused if it sits closer than $4 away. Those two rules constrain each other in a way nobody chose, and the reason they line up is that somebody typed 1.0 twice.
 **The decision —** Nothing to decide right now. This was found while fixing something else in the same file and deliberately left alone rather than swept into that change. It is here so the duplication is on the record instead of being rediscovered a third time.
 **Recommendation —** Treat them as two separate questions, because they are. Each needs either a published measurement of the thing it claims to bound, or a decision that the limit should not exist. Making them one shared constant would be tidier code and no more justified.
+
+## item 73
+
+**Plain language —** If the desk bets against a stock and the protective order on that bet goes missing, nothing puts it back. When the same thing happens on a stock the desk bought, it is repaired automatically every half hour. For bets against a stock, both repair checks notice the gap, write it down, and walk away. The reason given in the code — that the desk cannot place such bets yet, and has no record of where the protection should sit — is wrong on both counts: it can, and the level is on record.
+**Example —** The desk bets against a stock and the protective order expires overnight. The morning check spots it and reports it. The position then carries no protection at all until someone notices, while an identical gap on a stock the desk owns would already have been closed.
+**The decision —** None for you. It is a fault, and it is the most important one of the three found on 11 September because it is the only one that can leave a live position unprotected.
+**Recommendation —** Fix it before the desk trades again. The level is already recorded, so this needs no judgement call — only the repair made to work in both directions, with a test that removes the protection and checks it comes back.
+
+## item 74
+
+**Plain language —** The desk is meant to stop itself cutting the same holding twice in a day. It still can, if the reason is a genuine one — a midday cut on bad earnings can be followed by a second cut at the close on those same earnings. The instructions the reviewer reads do say this is allowed. What is not settled is whether it should be.
+**Example —** A holding is trimmed at midday on a poor earnings report. At the close the reviewer reads the same report again and trims again. One piece of news, two cuts.
+**The decision —** None for you yet. There is a fair case both ways: a second look at the same report can genuinely find it worse, and forbidding that would be its own mistake. It is on the board so it gets thought through rather than left as a warning in the log.
+**Recommendation —** Decide whether a reason is used up once it has been acted on that day, and if not, what separates a worse reading from the same reading used twice.
+
