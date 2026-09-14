@@ -302,7 +302,15 @@ coverage should never stop a decision at all.
 
 ## item 73
 
-**Plain language —** Three problems found by the audit on 11 September were never written down anywhere, so they would have vanished when that session closed. First: if a short position loses its protective stop, the desk notices but cannot put it back — it only knows how to rebuild stops for things it bought, and the note explaining why says shorts cannot be opened, which stopped being true. Second: the rule meant to stop the desk cutting the same holding twice in one day on one piece of news still lets it happen, as long as the news is a genuine reason. Third: about twenty settings that decide whether and how much the desk trades have no source, no measurement and no dated decision from you behind them.
-**Example —** The desk shorts a stock and the stop order goes missing overnight. The morning check spots the gap, reports it, and leaves the short with no protection at all — the same gap on a stock the desk bought would be repaired automatically. Separately: a holding is trimmed at midday on bad earnings, then trimmed again at the close on the same bad earnings, turning one piece of news into two cuts.
-**The decision —** Nothing to rule on for the first two; they are faults to fix. For the twenty settings, which ones get researched first.
-**Recommendation —** Fix the short-stop gap first, because it is the only one that can leave a live position with no protection at all. Then close the double cut. Take the settings in the order they most directly decide whether a trade happens — the stop-distance multipliers and the insider-trade admission thresholds first — and confirm each is still open before starting, because some may already have been settled since.
+**Plain language —** If the desk bets against a stock and the protective order on that bet goes missing, nothing puts it back. When the same thing happens on a stock the desk bought, it is repaired automatically every half hour. For bets against a stock, both repair checks notice the gap, write it down, and walk away. The reason given in the code — that the desk cannot place such bets yet, and has no record of where the protection should sit — is wrong on both counts: it can, and the level is on record.
+**Example —** The desk bets against a stock and the protective order expires overnight. The morning check spots it and reports it. The position then carries no protection at all until someone notices, while an identical gap on a stock the desk owns would already have been closed.
+**The decision —** None for you. It is a fault, and it is the most important one of the three found on 11 September because it is the only one that can leave a live position unprotected.
+**Recommendation —** Fix it before the desk trades again. The level is already recorded, so this needs no judgement call — only the repair made to work in both directions, with a test that removes the protection and checks it comes back.
+
+## item 74
+
+**Plain language —** The desk is meant to stop itself cutting the same holding twice in a day. It still can, if the reason is a genuine one — a midday cut on bad earnings can be followed by a second cut at the close on those same earnings. The instructions the reviewer reads do say this is allowed. What is not settled is whether it should be.
+**Example —** A holding is trimmed at midday on a poor earnings report. At the close the reviewer reads the same report again and trims again. One piece of news, two cuts.
+**The decision —** None for you yet. There is a fair case both ways: a second look at the same report can genuinely find it worse, and forbidding that would be its own mistake. It is on the board so it gets thought through rather than left as a warning in the log.
+**Recommendation —** Decide whether a reason is used up once it has been acted on that day, and if not, what separates a worse reading from the same reading used twice.
+
