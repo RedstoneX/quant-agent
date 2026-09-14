@@ -1,231 +1,125 @@
 # Future ideas
 
-**Status: CONCEPTUAL / NOT AUTHORIZED.** Owner ideas parked for later. Nothing here is work, nothing here authorizes work, and nothing goes into WORK.md until the owner schedules it.
+**Status: CONCEPTUAL / NOT AUTHORIZED.** Owner ideas parked for later. Nothing here is work, authorizes work, or describes something that exists. Nothing moves to WORK.md until the owner schedules it.
 
-## Options desk cloned from QAMC
+## 1. Options desk cloned from QAMC
 
-**Recorded 2026-09-14. Owner idea.**
+*Recorded 2026-09-14.*
 
-**Verdict: a new desk, not a setting.** The plumbing is bounded. The trading logic is most of the work.
+**A new desk, not a setting.** Plumbing is bounded; the trading logic is most of the work.
 
-### Broker facts (Alpaca docs, fetched 2026-09-14)
-
+**Broker facts (Alpaca docs, fetched 2026-09-14)**
 - Paper accounts have options enabled by default.
-- Levels: 1 = covered calls / cash-secured puts; 2 = + buying calls and puts; 3 = + spreads.
-- Orders: market, limit, stop, stop-limit. Stops single-leg only. Time-in-force day or gtc only.
+- Levels: 1 = covered calls / cash-secured puts; 2 = + buy calls and puts; 3 = + spreads.
+- Orders: market, limit, stop, stop-limit. Stops single-leg only. Day or gtc only.
 - Whole contracts only. No extended hours.
-- In-the-money contracts auto-exercise at expiry; assignment is visible by REST polling only, no websocket.
-- Data: free "indicative" feed (quotes modified, trades delayed 15 min); real OPRA feed is paid. Chain snapshots return Greeks and implied volatility on both.
-- Historical options data only goes back to February 2024.
+- In-the-money contracts auto-exercise at expiry. Assignment is visible by REST polling only.
+- Data: free "indicative" feed (quotes modified, trades 15 min delayed); real OPRA feed is paid. Both return Greeks and implied volatility.
+- Historical options data starts February 2024.
 
-### Plumbing (mechanical)
+**Plumbing**
+- Options data client (chains, snapshots, contract symbols). The code uses stock data clients only today.
+- Orders in contracts: x100 multiplier, no fractional, no overnight session.
+- Positions, P&L, journal: premium, expiry, exercise and assignment.
+- 47 source files touch share quantity, fractional or stop logic (measured 2026-09-14).
 
-- Options data client: chains, snapshots, contract symbols. Today the code uses stock data clients only.
-- Order path: contract quantities, x100 multiplier, no fractional, no overnight-session orders.
-- Positions, P&L and journal: premium, expiry dates, exercise and assignment handling.
-- Measured 2026-09-14: 47 source files touch share quantity, fractional or stop logic.
+**Hard part**
+- Every agent, gate and grader reasons in stock price levels. Options add strike, expiry, implied volatility, time decay.
+- Sizing and R/R change shape: a bought option's maximum loss is the premium, not the stop distance.
+- Time decay works against the horizon; broker stops on option prices are unproven here.
+- Rig and benchmark need options fixtures; history is short.
+- Real quotes need paid OPRA — an owner decision.
 
-### Hard part (judgement)
-
-- Every agent, gate and grader reasons in stock price levels. Options add strike, expiry, implied volatility and time decay.
-- R/R and sizing change shape: a bought option's maximum loss is the premium, not stop distance.
-- Exits change: time decay works against the horizon; broker stops on option prices are unproven for this desk.
-- Validation rig and benchmark need new options fixtures; history is short (Feb 2024).
-- Real quotes need the paid OPRA feed — a paid-dependency decision for the owner.
-
-### Suggested cheapest first step (unratified)
-
-- Keep QAMC's stock analysis unchanged. Add one translation layer: stock thesis -> buy a call or put (Level 2 only).
+**Cheapest first step (unratified)**
+- Keep stock analysis unchanged. Add one layer: stock thesis -> buy a call or put (level 2).
 - No spreads, no selling options, paper only, until that layer has its own evidence.
 
-## Live trading safety architecture
+## 2. Live trading safety architecture
 
-**Status: CONCEPTUAL / NOT AUTHORIZED FOR IMPLEMENTATION OR LIVE TRADING.**
+Applies only if QAMC earns real capital. Changes nothing about the paper-only boundary.
 
-This section records the intended security architecture if QAMC eventually demonstrates sufficient out-of-sample and paper-trading evidence to justify risking real capital. It does not authorize live trading, alter the current paper-only safety boundary, or add work to the current milestone roadmap. Activation requires explicit operator approval.
-
-### Core principle
-
-A live QAMC deployment must treat the strategy/AI system as an **untrusted strategy generator enclosed inside a trusted financial-control system**.
-
-AI may propose trades. AI must never be the final authority over live capital. Deterministic controls, an isolated execution authority, broker-side constraints, and an independent Sentinel must be capable of rejecting or stopping trading without cooperation from the AI system.
+**Core principle.** The AI is an untrusted strategy generator inside a trusted control system. It may propose trades; it is never the final authority. Deterministic controls, an isolated executor, broker-side limits and an independent Sentinel must each be able to stop trading without the AI's cooperation.
 
 ```text
 Research / AI zone
-        |
         | trade proposal
         v
 Deterministic Risk Engine A
-        |
         | approved intent
         v
-================ HARD SECURITY BOUNDARY ================
-        |
-        v
+========== HARD SECURITY BOUNDARY ==========
 Live Execution Governor
-        |
-        +-- independent account/broker state read
-        +-- deterministic Risk Engine B
-        +-- idempotency / duplicate-order protection
+        +-- independent broker state read
+        +-- Risk Engine B
+        +-- duplicate-order protection
         +-- order-rate and exposure limits
         +-- circuit breakers / kill switch
-        |
         | live broker credential exists only here
         v
-      Alpaca
-        ^
-        |
- Independent Sentinel VPS
+      Alpaca  <---  Independent Sentinel VPS
 ```
 
-### 1. Live Execution Governor
+**Execution Governor.** One small service holds the live broker key — not agents, the PM, Mission Control or general tooling. It accepts only structured approved intents, re-reads broker state, revalidates right before submitting, and exposes a narrow interface, so a compromised AI or dashboard cannot send arbitrary orders.
 
-The live broker credential should belong to one deliberately small execution service, not to research agents, the Portfolio Manager, Mission Control, or general-purpose tooling.
+**Two independent risk checks.** Engine A is today's risk layer. Engine B inside the governor re-checks the safety-critical subset: sizing, cash/leverage, gross and net exposure, concentration, loss limits, stale prices, liquidity/spread, duplicates, order frequency, state consistency. They must not share enough code for one bug to defeat both. Uncertainty fails closed for new exposure.
 
-The governor accepts only structured, previously approved trade intents. It independently obtains current broker/account state and revalidates the proposed action immediately before execution.
-
-The governor should expose a narrow domain-specific interface rather than arbitrary broker API access. A compromised AI or dashboard therefore cannot manufacture unrestricted live broker requests.
-
-### 2. Independent deterministic validation
-
-Critical live controls should be intentionally redundant.
-
-Risk Engine A remains the main QAMC deterministic risk layer. The Execution Governor contains a smaller independent Risk Engine B that validates the safety-critical subset again immediately before broker submission.
-
-At minimum, live validation should cover position sizing, available cash/leverage, gross and net exposure, concentration, daily/rolling loss limits, stale prices, liquidity/spread constraints, duplicate orders, abnormal order frequency, and state consistency.
-
-The two layers should not share so much implementation that one defect automatically defeats both.
-
-Uncertainty in a safety-critical check must fail closed for new exposure.
-
-### 3. Circuit-breaker states
-
-Live operation should use explicit deterministic safety states rather than a single on/off flag. Exact thresholds are to be designed and validated before live authorization.
+**Circuit-breaker states** (thresholds designed before live):
 
 ```text
-GREEN   normal operation
-YELLOW  degraded / reduced-risk operation
-ORANGE  exits only; no new exposure
-RED     cancel pending entries; trading halted
+GREEN   normal
+YELLOW  degraded / reduced risk
+ORANGE  exits only
+RED     cancel pending entries; halted
 BLACK   emergency flatten under predefined conditions
 ```
 
-Potential breaker inputs include daily realized/unrealized loss, rolling drawdown, unexpected leverage, concentration/exposure violations, abnormal turnover/order rate, excessive slippage, spread/liquidity deterioration, stale market data, broker/local-state disagreement, rejected-order bursts, repeated partial fills, protection failure, provider/model anomalies, heartbeat loss, and clock/time-integrity failure.
+Inputs could include loss and drawdown, unexpected leverage or exposure, abnormal turnover, slippage, spread or liquidity deterioration, stale data, broker/local disagreement, rejected-order bursts, partial fills, protection failure, provider anomalies, heartbeat loss, clock integrity. An infrastructure blip must not liquidate a healthy protected book: losing the control plane is not the same as capital danger.
 
-A transient infrastructure failure should not automatically liquidate a healthy protected portfolio. Escalation policy must distinguish loss of control-plane availability from actual capital danger.
+**Broker-side protection.** Protection that must survive a QAMC crash lives at the broker. A position needing a stop is never naked beyond a short, bounded window; failing to verify it escalates (exits-only, repair, or flatten by policy). Restrict the live account as far as the broker allows — no leverage, shorting, options or overnight exposure until each is validated. Paper and live credentials stay strictly separate; going live must never be a casual config toggle.
 
-### 4. Broker-side protection and constraints
-
-Safety that can survive a QAMC crash should live at the broker where practical.
-
-Protective orders should be broker-resident whenever the strategy requires them. A position that requires protection must not remain unintentionally naked beyond a tightly bounded transition window. Failure to verify required protection should trigger deterministic escalation such as exits-only, protection repair, or flattening according to predefined policy.
-
-Live account capabilities should be constrained as aggressively as the broker supports. Initial live operation should avoid unnecessary leverage, shorting, options, overnight exposure, or other capabilities until explicitly validated and authorized.
-
-Paper and live credentials/configuration must remain strongly separated. Live activation must not be reducible to an accidental casual configuration toggle.
-
-### 5. Sentinel
-
-A live deployment should include a separate, very small **Sentinel** service on an independent VPS, preferably using a different infrastructure provider and failure domain from the main QAMC host.
-
-Sentinel is not a second trading engine and must never become a competing trading brain. It performs no stock selection, portfolio optimization, model inference, or discretionary trade reasoning.
-
-Sentinel's responsibilities are deterministic:
-
-- monitor heartbeats from the main QAMC host and Execution Governor;
-- query Alpaca independently for actual account, position, order, and equity state;
-- independently verify required broker-side protection;
-- compare actual broker state with expected QAMC state;
-- detect unexpected positions/orders, exposure, loss, or order activity;
-- detect stale/dead main-system control paths;
-- alert on anomalies;
-- invoke a deliberately tiny set of predefined emergency actions when policy requires it.
-
-Its permitted action vocabulary should remain narrow, conceptually:
+**Sentinel.** A tiny deterministic service on a separate VPS, ideally a different provider. Not a trading brain: no selection, optimisation or model calls. It monitors heartbeats, reads Alpaca directly, verifies protection, compares broker state to what QAMC claims, detects unexpected positions, orders, losses or dead control paths, alerts, and can take only these actions:
 
 ```text
-OBSERVE
-WARN
-FREEZE_NEW_TRADES
-CANCEL_OPEN_ENTRIES
-EXITS_ONLY
-RESTORE_PROTECTION
-EMERGENCY_FLATTEN
+OBSERVE  WARN  FREEZE_NEW_TRADES  CANCEL_OPEN_ENTRIES
+EXITS_ONLY  RESTORE_PROTECTION  EMERGENCY_FLATTEN
 ```
 
-Sentinel should independently validate claims sent by QAMC rather than treating the main system as authoritative. For example, QAMC may report expected positions and protective orders, but Sentinel verifies them directly against Alpaca.
+- **Heartbeat:** QAMC sends a signed health message (version, trading state, expected positions and protections, risk state, last reconciliation). Heartbeat loss alone escalates by policy, never an automatic flatten: if the book is protected, hold and alert; loss plus missing protection justifies stronger action.
+- **Access:** control traffic over a private network (Tailscale). Any emergency broker authority is as narrow as the broker allows, exposed only as the predefined actions.
 
-#### Dead-man / heartbeat protocol
+**Hardened live host.** Separate from dev and research. Minimal: no AI coding environment, dev tooling, public dashboard, broad GitHub write keys or unrelated services. Default-deny networking, private admin access, key auth, MFA on infrastructure and broker, encrypted storage where it fits, controlled updates, reviewed deployments, runtime secret injection, durable audit logs.
 
-The main system should periodically provide Sentinel with a small signed or authenticated health/state message containing information such as deployment/version identity, trading state, expected positions/protections, risk state, and last successful broker reconciliation.
+**Mission Control** sits beside the execution path, never in it; its failure cannot touch protection. It shows Sentinel health, reconciliation, protection checks, governor health, breaker state and live/paper identity.
 
-Heartbeat loss alone should trigger a deterministic escalation policy, not an unconditional flatten. If the main system disappears while all positions remain correctly protected and the broker account is otherwise safe, Sentinel may hold and alert. Heartbeat loss combined with missing protection or other dangerous state can justify stronger action.
+**Kill switch.** An unmistakable button, but the backend is the boundary, not the UI: block new exposure, cancel pending entries, exits-only, and flatten only when explicitly requested or required by policy. Broker-level suspension, where it exists, is an extra layer, not a replacement.
 
-#### Sentinel connectivity and authority
+**Credential isolation.** Research and AI workers never hold live broker keys. The live Alpaca key stays in the governor, not behind a general credential proxy such as OneCLI.
 
-Main-to-Sentinel administrative/control communication should use a private network such as Tailscale rather than a publicly exposed management interface.
+**Change control.** Model, prompt, provider, strategy or risk changes never flow straight to meaningful capital. They pass replay, out-of-sample, paper/shadow, review and a small live canary. A candidate can shadow production for continuous comparison. Risk ceilings and emergency controls stay outside autonomous evolution.
 
-If Sentinel requires emergency broker authority, its credential/capability should be as constrained as technically possible. Its software interface should expose predefined safety operations rather than general trading functionality.
+**Graduated capital.** Paper success does not justify equal real capital. Start small; promote through explicit gates (observation period, trade count, reliability, realised behaviour, no open anomalies). Levels are set from the validated strategy at the time, not here. Capital allocation is itself a safety boundary.
 
-### 6. Hardened live environment
+**Before any live work is authorized**, a live-readiness review covering:
+- evidence the strategy has earned live capital;
+- broker capabilities at that time;
+- threat model and credential design;
+- governor and Sentinel specs, with failure modes;
+- breaker thresholds and escalation matrix;
+- broker/local reconciliation;
+- stop-lifecycle, network, VPS, provider, split-brain and stale-state failure tests;
+- deployment, change-control, incident and recovery procedures;
+- capital promotion criteria;
+- explicit owner approval.
 
-Live execution should run separately from development/research infrastructure. The live host should be deliberately boring and minimal: no interactive AI coding environment, no unnecessary development tooling, no public dashboard endpoint, no broad GitHub write credentials, and no unrelated services.
+Until then: **paper trading only; live trading is not authorized.**
 
-Security posture should include default-deny networking, private administrative access, key-based authentication, MFA around infrastructure and broker accounts, encrypted storage where appropriate, controlled updates, reproducible/reviewed deployments, runtime secret injection, and durable audit logs.
+## 3. Mission Control security panel
 
-Mission Control should sit beside the execution path, not become part of the authority chain. Dashboard failure must not compromise broker-side protection or deterministic safety.
+A read-only panel showing host and network security next to trading state, so posture is visible from the cockpit instead of over SSH. Background: `ops/security/vps-hardening-plan.md`.
 
-Mission Control should prominently expose Sentinel health, broker reconciliation, protection verification, execution-governor health, current circuit-breaker state, and the live/paper environment identity.
+**Could show:** SSH attack attempts (failure rate, source IPs), fail2ban bans, firewall events, active connections, listening ports and interfaces, service health, unusual resource or network activity.
 
-### 7. Kill switch
-
-Live Mission Control should eventually expose an unmistakable emergency control, but the UI itself is not the safety boundary.
-
-The privileged backend control path should be capable of deterministic actions such as blocking new exposure, cancelling pending entry orders, switching to exits-only, and—only when explicitly requested or predefined emergency policy requires it—flattening positions.
-
-Where broker-level trading suspension or equivalent controls exist and are appropriate, they should be considered an additional independent layer rather than a replacement for QAMC controls.
-
-### 8. Credential isolation
-
-Research/AI workers should not possess live broker credentials. External research/data/LLM credentials should also be isolated from agents where practical.
-
-A credential gateway/vault technology such as OneCLI may be evaluated later for less-trusted agent/tool credentials. It is a candidate, not an architectural dependency. The Alpaca live credential should preferentially remain confined to the narrow Execution Governor rather than being broadly available through a generic credential proxy.
-
-### 9. Production change control
-
-Autonomous model, prompt, provider, strategy, or risk changes must not flow directly into a meaningful-capital live deployment.
-
-Candidate changes should progress through evidence-producing stages such as historical/replay evaluation, out-of-sample testing, paper/shadow operation, review, and small live canary exposure before promotion.
-
-A candidate strategy/model can shadow the production system without touching capital so that production and next-generation decisions can be compared continuously.
-
-Protected deterministic risk ceilings and emergency controls remain outside autonomous evolution.
-
-### 10. Graduated capital deployment
-
-Successful paper trading does not justify immediately deploying equivalent real capital. Live deployment should begin with deliberately small capital and progress through explicit gates based on observation period, trade count, operational reliability, realized behavior, and absence of unresolved anomalies.
-
-Exact capital levels and promotion criteria are intentionally not fixed in this conceptual document; they must be defined from the validated strategy and account conditions at the time live trading is considered.
-
-Capital allocation itself is a safety boundary.
-
-### 11. Preconditions for live authorization
-
-Before any live implementation or activation is authorized, QAMC should require a dedicated live-readiness design/review covering at least:
-
-- evidence that the strategy has earned consideration for live capital;
-- broker API/account capabilities as they exist at that time;
-- threat model and credential architecture;
-- independent Execution Governor specification;
-- independent Sentinel specification and failure-mode analysis;
-- deterministic circuit-breaker thresholds and escalation matrix;
-- broker/local-state reconciliation behavior;
-- stop/protection lifecycle failure testing;
-- network/VPS/provider failure testing;
-- split-brain and stale-state testing;
-- deployment/change-control procedure;
-- incident response and recovery procedure;
-- staged-capital promotion criteria;
-- explicit operator approval.
-
-Until that review occurs, the existing QAMC safety boundary remains unchanged: **paper trading only; live trading is not authorized.**
+**Non-goals**
+- No Grafana, Prometheus, Loki or other monitoring stack. First evaluate a small read-only pull into the existing Mission Control API.
+- Display only: no ban/unban, firewall edits or restarts from the UI.
+- Not part of current work; dashboard work follows deployed-MVP acceptance (`docs/OUTCOME.md`, MVP lifecycle principle).
