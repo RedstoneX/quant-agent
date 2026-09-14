@@ -79,24 +79,20 @@ PM's stated target, and the order's reasoning carries a
 `[constructor: ...]` note naming the cap when this happened.
 
 **Read the `[constructor: ...]` note for WHICH cap bound — do not assume it
-was the outer envelope.** Three narrow the request, in this order, and the
-first two usually bind before the last one is reached:
+was the outer envelope.** Two narrow the request, in this order:
 
-1. **The §9.4 agreement ceiling** (`agreement_ceiling_pct`, a five-rung
-   schedule indexed by how many independent sources agree). Each rung is
-   the outer envelope scaled by the square root of (agreeing seats / 5
-   seats), so only UNANIMOUS agreement reaches the full envelope and every
-   lower rung genuinely narrows it. At the low net scores that are
-   ordinary, this is the real per-trade budget, and it is SMALLER than the
-   outer envelope below. A note citing a figure under that
-   envelope has almost certainly been cut here, and that is the expected
-   path, not an anomaly.
-2. **The portfolio risk-budget allocator**, which rations what is left under
+1. **The portfolio risk-budget allocator**, which rations what is left under
    the book-wide at-risk ceiling across everything asked for this session.
-3. **The outer per-trade envelope** (`max_position_risk_pct`,
+2. **The outer per-trade envelope** (`max_position_risk_pct`,
    {{risk.max_position_risk_pct}}% of equity) — a backstop that mostly does
    NOT bind on an ordinary trade, and separately `max_position_pct`, which
    clamps the resulting NOTIONAL after the risk figure is settled.
+
+§9.4 agreement no longer caps size at all (retired 2026-09-14): a net
+independent source score at or below zero REFUSES the trade outright and
+produces no order, and any positive net imposes no size restriction of its
+own. If a note reports a net score, read it as evidence quality, not as a
+size cut.
 
 So a cap-note quoting a number below the outer envelope is not evidence that
 something went wrong upstream, and it is not PM contradicting its own stated

@@ -536,8 +536,9 @@ S   = sum(s_i)       equal weight, unit magnitude
 
 `signed_source_score` computes `S` as `aligned - opposed` (the difference of
 the two counts, not a second traversal — one definition of "aligned", the
-`stance_is_aligned` one), and `agreement_ceiling_for_score` indexes the
-existing schedule by `S`. **Doctrine:** counting only agreers has no support in
+`stance_is_aligned` one), and `agreement_refuses_trade` turns `S` into one
+yes/no refusal (until 2026-09-14 it indexed a graduated ceiling schedule —
+retired, see below). **Doctrine:** counting only agreers has no support in
 any published composite methodology. MSCI-style index construction and Grinold
 & Kahn's `alpha = volatility x IC x score` both admit a disagreeing input as a
 NEGATIVE number in a signed sum. Equal unit weighting is not a placeholder —
@@ -546,16 +547,14 @@ reduces to when per-source skill is equal.
 
 Three properties, all falling out of the arithmetic rather than bolted on:
 
-- **Unanimous cases are unchanged.** With nothing opposed, `S` IS the aligned
-  count, so `S=1` prices at `schedule[0]`, `S=2` at `schedule[1]`, and so on.
-  The ratified risk envelope still stands; the schedule itself is now
-  DERIVED from it (2026-09-14, retired items 30/57).
-- **A dissenter costs exactly one rung.** Three aligned against one opposed is
-  `S=2` and sizes at the two-seat rung, not the three-seat one.
+- **`S >= 1` imposes no size restriction of its own** (since 2026-09-14). The
+  ratified per-trade envelope and the portfolio budget allocator are the only
+  bounds. A dissenter no longer costs a rung, because there are no rungs.
+- **A dissenter can still refuse the trade**, by pulling `S` to zero or below.
+  That is the only thing dissent now does to size, and it is binary.
 - **`S <= 0` produces no order at all.** There is deliberately NO standalone
-  veto rule: the schedule's first rung prices one NET source and there is no
-  rung below it, so the same lookup that sizes the trade is the one that
-  refuses it. A separate veto would charge the same dissenter twice. A blocked
+  veto rule: the sign of the net IS the rule. A separate veto would charge the
+  same dissenter twice. A blocked
   target leaves any existing position untouched — refusing to open is not a
   decision to sell, and a zero-weight plan would read to the delta loop as an
   instruction to liquidate.
@@ -585,23 +584,37 @@ nothing to derive from. That is precisely why the dissent change could ship
 before this question is settled: with weights pinned at 1, the dissent rule has
 no constant to inherit.
 
-**The ceiling schedule is DERIVED, not chosen — 2026-09-14, retired items
-30 and 57.** `risk.agreement_ceiling_pct` is now
-`ceiling(n) = max_position_risk_pct x sqrt(n / 5 seats)` =
-`[2.236, 3.162, 3.873, 4.472, 5.0]`, computed by
-`src/risk/constants.py::derive_agreement_ceiling_schedule` and pinned to
-`config/settings.yaml` by test. It replaced a hand-typed
-`[3.0, 4.0, 5.0, 5.0, 5.0]` whose only support was a COVERAGE count (how
-often each rung is reached, not what a rung should be) and four of whose
-five rungs could not bind: rungs 3-5 all equalled `max_position_risk_pct`
-and rung 2 sat at the top of the PM's own conviction band. The square root
-is the published shape for combining independent estimates (variance falls
-as 1/N, so believable size rises as sqrt(N); the same root Grinold's law
-puts on breadth); both constants in the formula are this desk's own — the
-ratified envelope and the seat roster. Full derivation and every source, in
-`docs/INCIDENT_HISTORY.md`, 2026-09-14. **The weighting question above is
-unaffected:** all five seats still count 1, and a per-seat sizing weight is
-still refused for want of measured history.
+**The graduated ceiling is RETIRED — owner decision, 2026-09-14.**
+`risk.agreement_ceiling_pct` and `derive_agreement_ceiling_schedule` are
+DELETED; the settings key is rejected on load so a stale deployment cannot
+resurrect it. What replaced it is nothing: a net score of 1 or more imposes
+no size restriction beyond `max_position_risk_pct`.
+
+Why. Earlier the same day the schedule had been made a DERIVED
+`ceiling(n) = max_position_risk_pct x sqrt(n / 5 seats)` (retired items
+30/57), on the published law that independent estimates combine as 1/N in
+variance. That law's one precondition is INDEPENDENCE, and this desk's five
+seats are not independent — they read overlapping evidence (the same tape,
+the same bars, the same filings) and several are the same underlying model
+behind different prompts. No honest correlation haircut is available to
+tighten it with; inventing one would be the arbitrary number the derivation
+was meant to remove. Secondarily, a graduated ceiling cannot distinguish
+"the seats disagreed" from "the seats had nothing to look at" — a thinly
+covered name and a contested one land on the same low rung. That is the same
+defect already fixed in the rotation rule (retired board item 66).
+
+Measured bite, before deletion: over the archived sized targets on the
+2026-08-28..2026-09-02 snapshot, the graduated rungs capped **zero** targets.
+Every rung sat above what the PM ever asked for (largest request 2.80% risk
+against a rung-1 ceiling of 2.236% that only a net of exactly +1 would have
+reached). Only the refusal ever bit — 1 target, UNH on 2026-09-02 at net 0.
+The ladder was a rule that had never once changed a size.
+
+**Agreement keeps its real job.** It ORDERS which candidates get funded
+first, through `src/verdicts.py::rank_verdicts` and `allocate_risk_budget`'s
+`priority` (retired item 49). **The weighting question above is unaffected:**
+all five seats still count 1, and a per-seat sizing weight is still refused
+for want of measured history.
 
 **Correction, 2026-09-02.** The owner removed conviction weighting from the
 ledger's credit on 2026-08-31 for two stated reasons (see §9.5 item 3a).
@@ -705,7 +718,7 @@ alone:*
    `src/storage/db.py` and §7.2); under weighting, that finding would have
    been hidden inside the score.
 2. **It double-counts.** A confident call already earns a larger position
-   through the §9.4 agreement ceiling, and a larger position already produces
+   through the §9.4 agreement ceiling (retired 2026-09-14), and a larger position already produces
    a proportionally larger R. Weighting the credit again charges confidence a
    second time for the same fact.
 
@@ -917,7 +930,7 @@ Verified by reading the current code, not assumed:
   read.
 - **Seat alignment counting.** `count_aligned_sources`,
   `count_opposing_sources`, `signed_source_score` and
-  `agreement_ceiling_for_score` (`src/risk/rules.py`) already turn per-seat
+  `agreement_refuses_trade` (`src/risk/rules.py`) already turn per-seat
   stances into a deterministic signed score and a sizing ceiling (§9.4,
   shipped in PR #160; signed 2026-09-02).
 - **R computation.** `src/risk/metrics.py::r_multiple` already turns

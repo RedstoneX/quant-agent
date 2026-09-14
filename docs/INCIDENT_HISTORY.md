@@ -22,6 +22,82 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the desk was shrinking positions by a rule of thumb that only works when its five analysts think independently, and they do not (agreement sizing ladder RETIRED)
+
+**In plain words:** the desk had five analyst seats — chart, news, earnings,
+big-picture, and institutional-flow — and it shrank a trade when fewer of
+them agreed. The maths behind that shrinkage assumes the five are looking at
+five separate things. They are not. They read the same tape, the same price
+bars and the same filings, and several of them are literally the same AI
+model asked a different question. Agreement between them is much weaker
+evidence than the formula assumed, so the formula could not be justified at
+any setting. It has been deleted. What survives, unchanged, is the refusal:
+if the evidence does not net out in favour of a trade, the desk does not
+take it at all.
+
+**What the rule was.** `risk.agreement_ceiling_pct` scaled the risk a
+position was allowed to carry by the net number of agreeing seats:
+`max_position_risk_pct x sqrt(n / 5)`. It had been improved earlier the same
+day — retired items 30/57 replaced a hand-typed `[3, 4, 5, 5, 5]` with that
+derived square-root curve. The derivation was honest about its own
+precondition and stated it in the docstring: the square-root law is the
+statistics of averaging INDEPENDENT estimates. The owner read that caveat and
+ruled that a precondition the desk knowingly fails is not a caveat, it is a
+disqualification. Correlated seats earn less than sqrt(N) credit, and there
+is no measured correlation on this desk to haircut it with — inventing one
+would have been the arbitrary number the derivation had just removed.
+
+**The second reason, which is the same defect the rotation rule already
+had.** A graduated ceiling cannot tell "the seats disagreed" from "the seats
+had nothing to look at". A thinly covered small-cap with one chart read and a
+heavily covered name where the macro seat is arguing the other way arrive at
+the same low net score and were sized identically. Retired board item 66 had
+already established that a scarcity of evidence and a conflict of evidence
+are different facts. The refusal is the only place that distinction is safe
+to act on, because at or below zero the desk declines to take a view either
+way.
+
+**The measured bite, read from the data rather than estimated.** Over the
+archived sized targets in the pre-reset production database (25 targets on
+2026-08-31..2026-09-02 with an archived canonical seat-stance snapshot; 30
+targets on 2026-08-28..2026-09-02 counting those whose net could only be
+recovered from the PM's own provenance), the graduated rungs capped **zero**
+of them. Every rung sat above every ask: the largest single request in the
+whole window was 2.80% risk at a net of +3, against a rung-3 ceiling of
+3.873%, and the only rung that could plausibly have bitten (rung 1, 2.236%)
+was never reached by a net-+1 request larger than 1.50%. The **refusal** bit
+once — UNH on 2026-09-02, net 0. On the separate `run-64290730` audit fixture
+the ladder did cap the theoretical MAXIMUM permitted risk of 6 of 25 eligible
+candidates, 3.51 points out of 60.0, but that is a cap on what the rules
+permit rather than on anything the PM asked for. In short: the ladder had
+never once changed a real position size. This is stated plainly because the
+opposite finding — "it was cutting most positions by a quarter" — was the
+outcome the owner asked to be checked for, and it is not what the data says.
+
+**What agreement still does.** It orders which candidates get funded first,
+through `rank_verdicts` and the risk-budget allocator's priority (retired
+item 49). Agreement earns the queue position. It does not set the size.
+
+**What would catch a regression.** `risk.agreement_ceiling_pct` is now
+REJECTED on config load — a stale deployment whose settings file still
+carries the list fails loudly rather than loading a ladder nothing reads,
+the same posture already taken for the deleted repeg key. A test asserts
+that no agreement-keyed sequence of size numbers exists anywhere: not in the
+risk constants, not as a field on either config model, not in
+`config/settings.yaml`.
+
+**Adversary:** argued that deleting the ladder loosens risk on exactly the
+thinly-evidenced names it was meant to restrain, and that a measured bite of
+zero could be an artefact of a book that never asked for size in the first
+place. Both are conceded as true statements and neither changes the
+decision: the per-trade envelope, the portfolio at-risk ceiling, the cluster
+share cap and the notional single-name cap all still bind, and a rule whose
+justification is unsound should not be kept merely because it is currently
+inert — an inert wrong rule becomes an active wrong rule the moment the PM
+asks for more size.
+
+---
+
 ### 2026-09-14 — the model exam was still marking against a rule the desk deleted three days earlier, and the reason it was blocked was a contamination that never existed (PM test gate item 8, CLOSED)
 
 **In plain words:** we want to find out which AI model should run the seat

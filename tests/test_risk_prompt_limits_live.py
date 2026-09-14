@@ -264,7 +264,7 @@ def _unrendered_limit_phrases(text: str, sheet: str = "risk_manager.md") -> list
     check (a) misses entirely.
     """
     # Spec section references (§9.4, §12.3) are numbered pointers, not
-    # values; blanked so "§9.4 agreement ceiling" does not read as a limit
+    # values; blanked so a §9.4 mention does not read as a limit
     # stated at 9.4.
     marked = re.sub(r"§\s*[\d.]+", "", PLACEHOLDER_RE.sub(_RENDERED, text))
     findings = []
@@ -716,8 +716,8 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
     live_divergence = [
         f for f in omitted
         # `get_default(call_default_factory=True)` — a field declared with a
-        # default_factory (agreement_ceiling_pct) reports `.default` as
-        # PydanticUndefined, which would read as a false divergence.
+        # default_factory reports `.default` as PydanticUndefined, which
+        # would read as a false divergence.
         if raw[f] != RiskConfig.model_fields[f].get_default(
             call_default_factory=True,
         )
@@ -734,9 +734,11 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
     # threaded through `ConstructorConfig` in `pipeline.py`, not engine
     # `RiskConfig` fields — the new one is omitted here for exactly the same
     # reason its sibling directly above it in this list always was.
-    assert len(omitted) == 16, (
+    # 16 -> 15 on 2026-09-14: `agreement_ceiling_pct` was deleted outright
+    # with the graduated agreement sizing ladder.
+    assert len(omitted) == 15, (
         f"the engine's hand-enumerated RiskConfig now omits {len(omitted)} "
-        f"settings present in settings.yaml, not 16 — if that grew, thread "
+        f"settings present in settings.yaml, not 15 — if that grew, thread "
         f"the new one; if it shrank, lower this number. Omitted: {omitted}"
     )
 

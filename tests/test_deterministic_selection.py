@@ -12,7 +12,6 @@ import yaml
 
 from ops.model_policy import scenarios as S
 from ops.model_policy.deterministic_selection import (
-    AGREEMENT_CEILING_PCT,
     MAX_POSITION_RISK_PCT,
     CONVICTION_BANDS,
     CONVICTION_SCORE,
@@ -40,8 +39,10 @@ def rows():
 
 def test_constants_match_production_config():
     """The audit must gate on the desk's numbers, not a second opinion."""
-    assert AGREEMENT_CEILING_PCT == _SETTINGS["risk"]["agreement_ceiling_pct"]
     assert MAX_POSITION_RISK_PCT == float(_SETTINGS["risk"]["max_position_risk_pct"])
+    # The agreement sizing ladder is retired (2026-09-14) — the audit must
+    # not carry a private copy of one either.
+    assert "agreement_ceiling_pct" not in _SETTINGS["risk"]
 
 
 def test_conviction_bands_match_the_live_prompt():
@@ -104,13 +105,18 @@ def test_rules_admit_twentyfive_names_and_rank_none_of_them(rows):
     # between permitted names. `allocate_risk_budget` rations it; the rule
     # set still names no single pick.
     #
-    # 48.0 -> 47.24 on 2026-09-14, items 30/57: the agreement ceiling is now
-    # derived from the envelope rather than hand-typed, so its first rung is
-    # 2.236% instead of 3.0%. On this real day the ceiling binds on very
-    # little — the drop is 0.76 points across 25 names — because most
-    # eligible names were already asking under the old rung. That is itself
-    # the measured answer to "how much does this change cost": on the one
-    # day with good records, almost nothing in aggregate.
+    # 48.0 -> 47.24 on 2026-09-14, items 30/57: the agreement ceiling was
+    # derived from the envelope rather than hand-typed, so its first rung
+    # became 2.236% instead of 3.0%. It bound on very little — 0.76 points
+    # across 25 names.
+    #
+    # 56.49 -> 60.0 on 2026-09-14: the graduated agreement ceiling is
+    # RETIRED (owner decision). Measured on this exact real day, it had been
+    # capping the theoretical maximum risk of 6 of the 25 eligible
+    # candidates, worth 3.51 of 60.0 points in aggregate. That is a cap on
+    # what the rules PERMIT, not on what the PM asked for: over the archived
+    # sized targets of 2026-08-28..2026-09-02 the ladder capped ZERO real
+    # requests, because every rung sat above every ask.
     #
     # 47.24 -> 56.49 on 2026-09-14: `CONVICTION_BANDS` was still the pre-
     # 2026-09-10 sheet (high 1.5-3.0 / medium 1.0-2.0) and is now the live one
@@ -119,7 +125,7 @@ def test_rules_admit_twentyfive_names_and_rank_none_of_them(rows):
     # normalisation is unchanged by an affine rescale of the encoding. What
     # moves is how far past the budget the admitted names ask, which makes the
     # finding stronger, not different.
-    assert summary["total_max_risk_pct"] == 56.49
+    assert summary["total_max_risk_pct"] == 60.0
     assert summary["total_max_risk_pct"] > 25.0
     assert summary["rules_name_a_single_pick"] is False
 
@@ -191,8 +197,7 @@ def test_conviction_score_is_read_off_the_desks_own_bands():
 
 def test_ranking_uses_three_independent_signals_at_equal_weight():
     """Ratified default is EQUAL weight. Derived/collinear fields are out:
-    agreement_ceiling_pct is f(net_sources) and max_risk_pct re-imports the
-    R/R gate, so scoring either would double-count."""
+    max_risk_pct re-imports the R/R gate, so scoring it would double-count."""
     assert RANKING_SIGNALS == ("rr", "net_sources", "conviction_score")
 
 

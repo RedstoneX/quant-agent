@@ -495,7 +495,7 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             # staleness is carried alongside rather than inside them.
             stale_registry_note = (
                 "\n\nSTALE (still real coverage, still citable as provenance, "
-                "but NOT counted toward the agreement ceiling below — the "
+                "but NOT counted toward the agreement score below — the "
                 f"filing is more than {EARNINGS_STANCE_MAX_AGE_DAYS} days old):\n"
                 + "\n".join(
                     f"- {symbol}: {', '.join(sorted(sources))}"
@@ -940,7 +940,7 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                 if "earnings" in stale_sources.get(str(sym).strip().upper(), frozenset()):
                     source_note += (
                         f" [STALE >{EARNINGS_STANCE_MAX_AGE_DAYS}d — context only; "
-                        "does NOT count toward the agreement ceiling]"
+                        "does NOT count toward the agreement score]"
                     )
 
                 impl = (analysis or {}).get("investment_implications") or {}
@@ -1340,30 +1340,29 @@ For every target, cite only source/stance pairs present for that exact symbol
 in this registry and copy the stance string exactly. Omit unavailable sources.
 Memory and narrative sections are context, never current specialist coverage.
 
-## Independent Source Agreement (deterministic ceiling — Step 5)
+## Independent Source Agreement (deterministic refusal — Step 5)
 {agreement_text}
-`risk_allocation_pct` is CEILINGED — never raised — by the NET score above:
-independent sources ALIGNED with the direction you propose, MINUS those
-opposed to it, computed from this registry, not from what you write in
-provenance. Ask for what the idea has earned; the ceiling only ever refuses
-size it did not earn. A source whose stance is marked stale is in neither
-count: an old filing is still worth reading, but it has not confirmed
-anything about today, and it has not contradicted anything either.
+The NET score above — independent sources ALIGNED with the direction you
+propose, MINUS those opposed to it, computed from this registry and not from
+what you write in provenance — is a GO/NO-GO, not a size dial. A source whose
+stance is marked stale is in neither count: an old filing is still worth
+reading, but it has not confirmed anything about today, and it has not
+contradicted anything either.
 
-A seat arguing the OTHER way SUBTRACTS. Three aligned against one opposed is
-a net +2 and is sized as a two-source idea, not a three-source one.
+A seat arguing the OTHER way SUBTRACTS from the net.
 **A net score of zero or below produces NO ORDER AT ALL** — not a small
-position, no position. That is the same arithmetic, not an extra veto: the
-schedule's first rung prices one net source, and there is no rung below it.
-Anything already held is left alone; refusing to open is not a decision to
-sell.
+position, no position. Anything already held is left alone; refusing to open
+is not a decision to sell.
 
-So a name your own earnings or macro seat is arguing against needs more
-confirmation elsewhere to reach the same size, and a name with one seat for
-and one against is not tradeable today. If you believe a dissenting seat is
-wrong, say why in your reasoning — but expect the size to reflect the split,
-because the constructor computes this from the registry and cannot read your
-argument.
+**A net of +1 or more imposes no size restriction of its own** (the graduated
+ceiling was retired 2026-09-14: it scaled size by the square root of the seat
+count, which is the statistics of INDEPENDENT estimates, and these seats read
+overlapping evidence). Size the idea on its own merits and the risk side,
+within the ratified per-trade envelope. Do NOT shrink an idea because it has
+fewer agreeing seats — but a name with one seat for and one against is not
+tradeable today at any size. If you believe a dissenting seat is wrong, say
+why in your reasoning; the constructor computes this from the registry and
+cannot read your argument.
 
 Based on all the above (memory of past decisions + environment trajectory + today's signals), what trades should we execute? Respond as JSON."""
 
@@ -1418,8 +1417,8 @@ Based on all the above (memory of past decisions + environment trajectory + toda
               starter-size CAP (never a refusal).
           R5  net independent source score ≥ 1 for the proposed direction
               (`signed_source_score`; §9.4 refuses net ≤ 0 outright —
-              `agreement_ceiling_for_score` is 0.0 for any score ≤ 0
-              whatever the schedule, so no config is needed here)
+              `agreement_refuses_trade`, a refusal gate with no schedule
+              and no config behind it since 2026-09-14)
           R6  the constructor's own preview REFUSED this name by code
               (`constructor_refusals_by_symbol`, a snapshot of
               `PortfolioConstructor.last_refusals` taken after
