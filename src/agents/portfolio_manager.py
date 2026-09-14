@@ -782,7 +782,7 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
             if rc:
                 reasoning_section = f"""
 
-### Macro Reasoning Chain (audit these for logic errors)
+### Macro Reasoning Chain (audit these for logic errors — report in `reasoning_chain.macro_audit`)
 - Volatility: {rc.get('volatility_analysis', 'N/A')}
 - Yield curve: {rc.get('yield_curve_analysis', 'N/A')}
 - Monetary policy: {rc.get('monetary_policy_analysis', 'N/A')}

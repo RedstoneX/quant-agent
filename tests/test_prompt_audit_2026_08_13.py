@@ -120,20 +120,34 @@ def test_pm_reasoning_chain_field_count_matches_schema() -> None:
     A model told to produce 7 of 9 fields has been handed a reason to skip
     two — and the two it would skip are `continuity_check` and
     `premortem_check`, the only ones that validate when empty.
+
+    2026-09-14: the schema grew a tenth field, `macro_audit` (item 18e —
+    the briefing told PM to audit macro's reasoning chain for logic errors
+    and no field existed to report one in). This test used to hard-code the
+    number, which meant every schema change failed it and someone had to
+    edit the literal in two prompts and here. It now DERIVES the count and
+    asserts the prompts state that number — so the count cannot drift again
+    without CI saying which file is stale, and no wrong count can be stated
+    anywhere.
     """
     from src.models import ReasoningChain
 
     field_count = len(ReasoningChain.model_fields)
-    assert field_count == 9, (
-        f"ReasoningChain now has {field_count} fields; update the prompts "
-        f"and this test together."
-    )
     for prompt_name in ("portfolio_manager.md", "risk_manager.md"):
         text = (PROMPT_DIR / prompt_name).read_text()
-        assert "7-field `reasoning_chain`" not in text, (
-            f"{prompt_name} describes PM's reasoning_chain as 7-field; the "
-            f"schema has {field_count}. An undercount invites skipped fields."
+        assert f"{field_count}-field `reasoning_chain`" in text, (
+            f"{prompt_name} never states the real field count; the schema "
+            f"has {field_count}. A missing or wrong count invites skipped "
+            f"fields."
         )
+        for wrong in range(1, 20):
+            if wrong == field_count:
+                continue
+            assert f"{wrong}-field `reasoning_chain`" not in text, (
+                f"{prompt_name} describes PM's reasoning_chain as "
+                f"{wrong}-field; the schema has {field_count}. An "
+                f"undercount invites skipped fields."
+            )
 
 
 def test_pm_names_every_reasoning_chain_field() -> None:

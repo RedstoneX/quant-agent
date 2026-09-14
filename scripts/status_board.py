@@ -1203,8 +1203,17 @@ def _tidy_title(rest: str) -> str:
     title = rest.split("\u2014", 1)[0]
     # An item with no em dash carries its classification inline; strip it
     # so the title stays a plain-English name and never shouts a label.
+    #
+    # WHOLE WORDS ONLY. Without the boundaries this matched a class name
+    # INSIDE an ordinary English word and silently deleted letters out of
+    # the middle of a title. It was not hypothetical: the work-queue Stop
+    # hook handed back "Most ideas die inside the machinery with ed reason
+    # (no_order_built)" because "NO RECORD" matched inside "no recorded".
+    # "defective" lost its stem to "DEFECT" the same way. A renderer whose
+    # whole job is to hand work back by an accurate name cannot delete
+    # words from that name — a mangled title reads as a different item.
     for c in _QUEUE_CLASSES:
-        title = re.sub(re.escape(c) + r"\.?", "", title, flags=re.I)
+        title = re.sub(r"\b" + re.escape(c) + r"\b\.?", "", title, flags=re.I)
     # Stripping a mid-sentence label leaves orphaned punctuation
     # ("misattributes vetoes. , pre-existing"); tidy it so the board never
     # shows the seam where a label used to be.

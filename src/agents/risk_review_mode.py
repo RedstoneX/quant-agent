@@ -255,6 +255,10 @@ _CHAIN_ROWS = {
         ("Cash target", "cash_target", False),
         ("Continuity check", "continuity_check", True),
         ("Pre-mortem check", "premortem_check", True),
+        # The macro seat's reasoning chain reaches PM verbatim under "audit
+        # these for logic errors". This row is where PM's answer arrives, so
+        # the seat that audits PM can see whether the audit happened at all.
+        ("Macro logic audit", "macro_audit", True),
     ),
     EXIT_REVIEW: (
         ("Macro continuity check", "macro_filter", False),

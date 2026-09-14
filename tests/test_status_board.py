@@ -3183,3 +3183,61 @@ def test_the_server_re_reads_in_flight_on_every_request(monkeypatch):
         raise RuntimeError("unexpected")
     monkeypatch.setattr(inflight, "read_in_flight", boom)
     assert api_server._refresh_in_flight(page) == page
+
+
+# ---------------------------------------------------------------------------
+# The hook's own title rendering — a renderer must not delete words
+# ---------------------------------------------------------------------------
+
+#: The real board title of item 10, verbatim, as it stood in docs/WORK.md
+#: before the item closed. `_tidy_title` matched the queue class "NO RECORD"
+#: inside the ordinary English word "recorded" and handed back
+#: "...with ed reason (no_order_built)". The work-queue Stop hook renders
+#: item titles into the message it uses to hand work back, so this was not
+#: cosmetic: the hook was describing an item by a name that is not its name.
+_REAL_MANGLED_TITLE = (
+    "Most ideas die inside the machinery with no recorded reason "
+    "(no_order_built)."
+)
+
+
+def test_a_class_name_inside_an_english_word_is_not_stripped_from_a_title():
+    """Regression, with the exact title that produced the mangling."""
+    got = sb._tidy_title(_REAL_MANGLED_TITLE)
+    assert got == (
+        "Most ideas die inside the machinery with no recorded reason "
+        "(no_order_built)"
+    )
+    # The specific corruption, named so a re-break is unmistakable.
+    assert "ed reason" not in got.replace("recorded reason", "")
+    assert "no recorded reason" in got
+
+
+@pytest.mark.parametrize("title, expect", [
+    # Every queue class, embedded in a longer word that must survive whole.
+    ("a defective stop", "a defective stop"),
+    ("counts the defects", "counts the defects"),
+    ("with no recorded reason", "with no recorded reason"),
+    ("no records were kept", "no records were kept"),
+    ("sized too strictly", "sized too strictly"),
+    # An undiagnosed thing contains no class token at all, but guards the
+    # near-miss: only the exact phrase is a label.
+    ("not yet diagnosable", "not yet diagnosable"),
+])
+def test_ordinary_words_containing_a_class_token_survive(title, expect):
+    assert sb._tidy_title(title) == expect
+
+
+@pytest.mark.parametrize("title, expect", [
+    # The label itself still goes, wherever in the line it sits.
+    ("DEFECT. Constructor misattributes vetoes",
+     "Constructor misattributes vetoes"),
+    ("Stops refuse level-backed exits TOO STRICT",
+     "Stops refuse level-backed exits"),
+    ("NO RECORD of why an idea died", "of why an idea died"),
+    ("Ranking is NOT YET DIAGNOSED", "Ranking is"),
+    ("Brake is WORKING AS INTENDED", "Brake is"),
+    ("Item TOO NEW TO CLASSIFY", "Item"),
+])
+def test_an_inline_classification_label_is_still_stripped(title, expect):
+    assert sb._tidy_title(title) == expect
