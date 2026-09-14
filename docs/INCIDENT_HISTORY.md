@@ -22,6 +22,81 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — the Risk Manager's and Portfolio Manager's prompt sheets now render their limits from settings, not hand-typed prose
+
+The reviewer's standing sheet stated its limits as hand-typed prose. It said
+the long single-name ceiling was **33%** against a real `max_position_pct` of
+**65** — and that was **wrong at birth, not drift**: commit `e1c639a2`
+(PR #297, titled "single-name cap 100 -> 33") set the setting to 65 and typed
+33 into the sheet in the same diff. The same commit ALSO wrote
+`max_position_pct=65` correctly into the sheet's hard-rule inventory, so the
+sheet contradicted itself from minute one. **No verdict or log row has been
+found showing the stale 33 changed an outcome, and none is claimed** — what
+was fixed is an internal contradiction and the mechanism that allowed it.
+
+The line that commit replaced was relational ("half the long single-name
+ceiling") and therefore drift-immune; it was swapped for a literal. That
+sentence is now relational again. A second, genuinely stale one said the
+constructor caps a stop-out at 0.5% of equity against a ratified
+`max_position_risk_pct` of 5 — and it named the wrong binding mechanism as
+well, since the §9.4 agreement ceiling and the budget allocator narrow the
+real per-trade budget before the 5% envelope is reached. Rewritten to name
+what binds first.
+
+The sheet now carries `{{risk.<setting>}}` placeholders rendered by
+`src/agents/prompt_limits.py` from the same config object the engine is built
+from, **at agent construction** (not on first LLM call, which is the risk
+stage — after the whole day's analysis is paid for). Two build checks: a
+number beside a setting's name, and a number stated as the value of a
+ceiling/cap/budget/limit/floor phrase. Only the second catches the 2026-09-11
+shape; that gap is pinned by its own test.
+
+**FOUND WHILE FIXING — pre-existing, latent, NOT swept.** `src/pipeline.py`
+builds the risk engine's `RiskConfig` from a hand-enumerated argument list.
+**22 declared risk settings were absent from it** and silently fell back to
+pydantic class defaults, ignoring settings.yaml. Every one of those defaults
+currently equals its settings value, so nothing is live-wrong — but
+`allow_margin` was the same omission and did bite (it defaulted False while
+settings said True, blocking a user's BUYs). The seven settings the two sheets
+render are now threaded; **the remaining 15 are open work**, pinned by a test
+that fails if the count grows or if any omitted setting ever diverges from its
+default. Threading them changes enforcement and needs its own review.
+
+**PM's sheet, same treatment, same PR series.** `portfolio_manager.md` now
+renders ten settings and `tests/test_prompts_anchors.py`'s two value anchors
+are retargeted to the placeholders. Correcting an earlier claim in this
+entry: PM's sheet did not stay correct on 2026-09-11 because the human
+process was better — it stayed correct because that anchor test pinned the
+literal and the reviewer's sheet had no such anchor. The check held; it just
+cost a third hand-maintained copy of the number.
+
+**PM's parity is against TWO objects, not one.** `src/risk/rules.py` contains
+no reference at all to `max_cluster_risk_share_pct`, `short_gap_risk_multiple`,
+`min_position_risk_pct` or `max_portfolio_risk_pct` — those four are enforced
+by `PortfolioConstructor` from a separately built `ConstructorConfig`. The
+parity tests now build BOTH objects through the pipeline's own extracted
+builders (`build_risk_config`, `build_constructor_config`) and check that
+MOVING a setting moves what the objects carry, rather than scanning
+`src/pipeline.py` for a keyword name — a scan a hard-coded
+`max_gross_bearish_pct=20.0` would have satisfied.
+
+**Still open, pre-existing:** `build_constructor_config`'s `_risk_setting(name,
+default)` pattern types a literal fallback for roughly twenty settings, so each
+of those keeps a home in `src/pipeline.py` on top of settings.yaml and the
+dataclass field default. Not touched here — sweeping it changes sizing
+fallbacks nobody has reviewed. The equivalent literals on the risk engine's
+side were removed in this PR (`_threaded_risk_settings` omits a non-numeric
+read instead of substituting a number), and `min_position_risk_pct` now passes
+a legal **0** through both paths rather than being swallowed into a default.
+
+**Also open:** `config/settings.yaml`'s own `max_single_short_pct` comment
+still says "At 33 this cap is now roughly a THIRD of the long ceiling" —
+stale from the same commit, in the settings file itself.
+
+
+---
+
+
 ### 2026-09-14 — item 49 closed: the desk was choosing which trades to fund by how much they asked for, and nobody had chosen that
 
 **In plain words:** the desk can only risk so much in total — a quarter of the
@@ -146,6 +221,34 @@ with an invented score.
 
 ---
 
+
+### 2026-09-13 — the rehearsal report attributed trades to the portfolio manager even when it never ran (item 61)
+
+**In plain words:** after a test rehearsal, a summary report would print how
+many trades "the portfolio manager proposed" — but the count included trades
+from other sources that shared the run_id. On one run where the Portfolio
+Manager had failed (returned no valid decision), the report printed "1" when
+the only trade in the database came from emergency liquidation, not the PM.
+Costs nothing in real trading (a rehearsal is offline, no capital at risk),
+but it misleads whoever reads the report to judge whether a rehearsal ran as
+intended.
+
+**The mechanism.** `_collect_counts()` counted trades by querying the `trades`
+table (`SELECT COUNT(*) ... WHERE action IN ('BUY', 'SELL')`), which is wrong
+for two reasons: (1) BUY/SELL trades come from other session stages that share
+the run_id — emergency liquidation at src/pipeline.py:8008 and position reviewer
+exits at :9281 — and get falsely attributed to the PM; (2) when the PM stage
+enters but fails (a common case), its agent_logs entry is still written with the
+failure string as output_summary, so no proxy check on agent_logs can
+distinguish failure from success.
+
+**The fix:** count from `specialist_evidence` rows where `agent_name='portfolio_manager'`
+and `kind='proposed_order'`. These rows are written only AFTER the PM decision
+passes validation (src/pipeline_stages.py:4292-4300), so they correctly capture
+only valid PM proposals and exclude both the failure case and trades from other
+sources. This is shorter, needs no proxy, and is the ground truth.
+
+---
 
 ### 2026-09-13 — the insider holdings data the board said we did not have was already being downloaded, parsed and stored — and the filter using it was throwing away the one band the research calls a buy signal (item 52)
 
