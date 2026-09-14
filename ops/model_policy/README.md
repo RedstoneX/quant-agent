@@ -107,34 +107,43 @@ tell a considered selection from an arbitrary one. That scenario is a valid
 robustness test and is left untouched; this is the missing measurement, not
 a replacement.
 
-The fixture (`fixtures/run_64290730_pm_input.json`) is a verbatim pull of
-production run `run-64290730` from the read-only Mission Control API: 59
-technical reads, 5 held positions, the session's macro, news and earnings
-evidence, and the real BUY-eligibility universe. Nothing is rounded or
-tidied, and the candidates are in the run's own presentation order rather
+The fixture (`fixtures/run_bba4d4f3_pm_input.json`) is a verbatim pull of
+production run `run-bba4d4f3` (2026-09-02) from the read-only Mission Control
+API: 64 technical reads — the API's own rows, 63 of them carrying
+`computed_levels` — 5 held positions, the session's macro, news and earnings
+evidence, and the real BUY-eligibility universe, with account, memory and
+evening insights read out of the run's recorded PM prompt. Nothing is rounded
+or tidied, and the candidates are in the run's own presentation order rather
 than sorted. Its `_provenance.fidelity` block is measured, not asserted:
-rendering the fixture through `build_user_message` and diffing it against
-the recorded prompt gives 18 of 22 shared sections byte-identical. It lists
-what is absent (PMFacts, portfolio heat, company profiles — all computed
-live from the production DB; the smart-money findings, which would have
-required inventing SEC source URLs) and what that changes for a model —
-notably that Energy reads as macro-bullish here where the live session had
-it macro-neutral.
+rendered through today's `build_user_message`, 12 of 22 shared sections are
+byte-identical to the recorded prompt and all 64 technical rows match it on
+rating, conviction, entry, stop and target. It lists what is absent (PMFacts,
+portfolio heat, company profiles, proposal conversion — all computed live;
+the smart-money findings, which would have required inventing SEC source
+URLs) and what that changes for a model.
 
-That day is the desk's own documented failure — 38 actionable signals, zero
-trades, `bearish_hedge_considered=false` — which is why matching what the
-live PM did is graded as failure, not success.
+**Why this day (2026-09-14, `docs/WORK.md` item 72).** The scenario used to
+replay `run-64290730` (2026-09-01), where none of the 59 rows carried
+computed levels. The live admission gate reads a STRUCTURAL reward:risk built
+from those levels, so on that day it could measure no name at all — and,
+measured, the live gate handed those ratios admits 12 names where this grader
+admitted 25. On `run-bba4d4f3` all 34 actionable candidates (14 breakout /
+20 range) have a computable structural ratio, and the live gate and the
+grader admit the identical 25. `tests/test_pm_selection_scenario.py` pins
+both facts so the scenario cannot slide back to a level-less day. The old
+file stays only because three older audits pin their numbers to it.
 
-**Rebuilt 2026-09-14** (`docs/WORK.md` PM-gate item 8). The grader used to
-define its qualified set as `analyst reward/risk >= 1.5` — a floor the owner
-retired on 2026-09-11, so it was scoring obedience to a deleted rule. The
-admitted set now comes from `deterministic_selection.evaluate`, the desk's
-own current admission rules: 25 of the 59 read names, of which exactly two
-are shorts (NKE, FLNC). Two checks were deleted rather than restated
-(`rr_floor_discipline`, and the old majority-clears-the-floor bar), and
-`familiarity_bias` was demoted to a weight-0 diagnostic because all three
-mega-caps with a read this session are names the desk's own rules admit —
-NVDA on a breakout the prompt forbids judging on reward:risk at all.
+The admitted set comes from `deterministic_selection.evaluate`, the desk's
+own current admission rules: 25 of the 64 read names, exactly one of them a
+short (FLNC). Ten bearish names were on offer; the other nine — including
+UNH, the one short the live PM proposed — are refused on net evidence. The
+live PM proposed nine targets and the risk seat approved them, yet the funnel
+recorded zero proposed orders and zero fills; why is not established by the
+pull, and nothing here grades against the live output. The grader stopped
+using the retired `analyst reward/risk >= 1.5` floor on 2026-09-14 (PM-gate
+item 8): `rr_floor_discipline` and the old majority bar were deleted, and
+`familiarity_bias` is a weight-0 diagnostic because AAPL, MSFT and NVDA all
+have a read and are all admitted by the desk's own rules.
 
 **It measures quality of selection. It does not measure profitability** —
 nobody knows which of these picks would have made money, and no check here
@@ -143,10 +152,13 @@ famous as a number on every run, passing or failing; read it as a rate
 across models and repeats, not as a verdict on one run — and note that it
 scores nothing, deliberately.
 
-`default=False`: the rendered prompt is 194,173 characters, 91.4% of the
-live session's, which billed 61,557 input tokens and cost $0.24 on
-`openai/gpt-5.5` — so budget roughly that per call. Opt-in like
-`pm_production_scale`.
+`default=False`, opt-in like `pm_production_scale`. Rendered through today's
+`build_user_message` the prompt is 87,247 characters (measured 2026-09-14;
+the live session's recorded prompt was 214,529, most of the gap being
+renderer changes since that run). The old `run-64290730` fixture renders at
+87,119 characters through the same code, so the earlier 194,173 figure here
+was a 2026-09-01 measurement that the renderer has since overtaken. Token
+count for the new fixture has not been measured.
 
 `tests/test_pm_selection_scenario.py` drives the grader with hand-built
 decisions and keeps it honest without spending anything.

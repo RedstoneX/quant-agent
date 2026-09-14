@@ -22,6 +22,11 @@ from ops.model_policy.deterministic_selection import (
     summarise,
 )
 
+# The level-less 2026-09-01 day this audit's numbers were measured on.
+# `pm_selection` itself moved to run-bba4d4f3 on 2026-09-14; this file
+# stays pinned to the day its write-up describes.
+_LEVEL_LESS = S.load_frozen_selection(S.LEVEL_LESS_SELECTION_FIXTURE)
+
 _SETTINGS = yaml.safe_load(
     (Path(__file__).resolve().parent.parent / "config" / "settings.yaml").read_text()
 )
@@ -30,10 +35,10 @@ _SETTINGS = yaml.safe_load(
 @pytest.fixture(scope="module")
 def rows():
     return evaluate(
-        S._SELECTION,
-        S._SELECTION_ANALYSES,
-        S._SELECTION_POSITIONS,
-        S._SELECTION_NEWS,
+        _LEVEL_LESS.raw,
+        _LEVEL_LESS.analyses,
+        _LEVEL_LESS.positions,
+        _LEVEL_LESS.news,
     )
 
 

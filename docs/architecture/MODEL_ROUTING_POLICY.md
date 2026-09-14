@@ -568,11 +568,14 @@ macro conflict that must be adjudicated rather than logged.
 #### `pm_selection` — built 2026-09-01, NOT YET RUN against any model
 
 The scenario this section asks for now exists, from exactly the material this
-section recommends: a failure the system actually produced. It replays
-production run `run-64290730` — 59 technical reads, 38 actionable signals,
-zero trades placed, `bearish_hedge_considered=false` on a day fifteen
-validated bearish candidates were on the table. See
-`ops/model_policy/README.md` for the design and the run command.
+section recommends: a real day the system actually produced. Since
+2026-09-14 it replays production run `run-bba4d4f3` (2026-09-02) — 64
+technical reads, 63 with computed levels, 34 actionable signals every one of
+which has a computable structural reward:risk, and zero orders placed. It
+used to replay `run-64290730`, which carried no computed levels, so the live
+admission gate could measure no name on it (`docs/INCIDENT_HISTORY.md`,
+2026-09-14). See `ops/model_policy/README.md` for the design and the run
+command.
 
 It measures WHICH candidates a model picks against DIFFERENTIATED evidence,
 which `pm_constrained` and `pm_production_scale` cannot: `_PM_PRODUCTION_
