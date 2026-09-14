@@ -1,0 +1,238 @@
+{
+ "_provenance": {
+  "note": "Raw public facts only: SEC Form 4 submissions discovered through EDGAR full-text search and fetched from the EDGAR archive, plus the SEC's listed-issuer rows for their issuers. Every observation field (direction, value, classification, freshness, admission) is recomputed at exam time by today's SECForm4Provider.",
+  "sections": {
+   "sec_company_tickers_exchange": {
+    "source": "https://www.sec.gov/files/company_tickers_exchange.json",
+    "fetched_on": "2026-09-14",
+    "fetch": "src.data.smart_money.SECForm4Provider._listed_map"
+   },
+   "discovery": {
+    "source": "https://efts.sec.gov/LATEST/search-index",
+    "fetched_on": "2026-09-14",
+    "fetch": "src.data.smart_money.SECForm4Provider._discover (forms=4, one day per query)"
+   }
+  }
+ },
+ "_exam": {
+  "session_date": "2026-08-31",
+  "provider_settings": {
+   "search_url": "https://efts.sec.gov/LATEST/search-index",
+   "archives_url": "https://www.sec.gov/Archives/edgar/data",
+   "user_agent": "QAMC research-intelligence qamc-contact@proton.me",
+   "request_timeout_s": 15,
+   "refresh_deadline_s": 540,
+   "requests_per_second": 8,
+   "lookback_days": 3,
+   "max_filings_per_refresh": 1000,
+   "max_observations": 40,
+   "min_transaction_value_usd": 100000,
+   "external_min_transaction_value_usd": 250000,
+   "cluster_window_days": 2,
+   "min_cluster_owners": 2,
+   "insider_calendar_routine_years": 3,
+   "insider_min_cadence_trades": 3,
+   "insider_cadence_min_mean_gap_days": 20,
+   "insider_cadence_max_mean_gap_days": 120,
+   "insider_cadence_max_gap_dispersion": 0.25,
+   "insider_history_retention_days": 1830
+  },
+  "deviations_from_production": [
+   "Discovery window is 3 days (2026-08-28..31), not production's 365. Production's input is a cache accumulated over many daily refreshes (up to 1,000 filings each); re-crawling a year of Form 4s is not bounded. The exam's observations are therefore a real, today's-code selection from a narrower population, not the population production would have held.",
+   "Insider history is EMPTY. The live classifier's three-year calendar and cadence tests read an index the desk accumulated; it is not re-crawled, so no row can be classified routine by history. On this fixture all 40 surviving rows classify opportunistic.",
+   "The listed-issuer file is SEC's current copy, not an as-of-date copy.",
+   "Only the 24 accessions whose rows survive today's selection are stored (1.9 MB of raw submissions out of 752 processed); tests/test_seat_exam_fixtures.py re-derives the same 40 observations from them."
+  ],
+  "upstream_inputs": [],
+  "refresh_summary": {
+   "status": "ok",
+   "new_observations": 699,
+   "processed_filings": 752,
+   "cached_observations": 699,
+   "error": null
+  }
+ },
+ "_blobs": {
+  "sec_form4_submissions_2026-08-28_to_31.json.gz": {
+   "sha256": "5630779931491a1173485d00ad170ba892c4a8910927cb127f3419031b0497ba",
+   "source": "https://www.sec.gov/Archives/edgar/data/",
+   "fetched_on": "2026-09-14",
+   "fetch": "src.data.smart_money.SECForm4Provider._submission (raw .txt submission per accession)",
+   "bytes_uncompressed": 2020778
+  }
+ },
+ "sec_company_tickers_exchange": {
+  "fields": [
+   "cik",
+   "name",
+   "ticker",
+   "exchange"
+  ],
+  "data": [
+   [
+    354950,
+    "HOME DEPOT, INC.",
+    "HD",
+    "NYSE"
+   ],
+   [
+    87347,
+    "SLB LIMITED/NV",
+    "SLB",
+    "NYSE"
+   ],
+   [
+    1060391,
+    "REPUBLIC SERVICES, INC.",
+    "RSG",
+    "NYSE"
+   ],
+   [
+    1819994,
+    "Rocket Lab Corp",
+    "RKLB",
+    "Nasdaq"
+   ],
+   [
+    1089063,
+    "DICK'S SPORTING GOODS, INC.",
+    "DKS",
+    "NYSE"
+   ],
+   [
+    1869198,
+    "Life Time Group Holdings, Inc.",
+    "LTH",
+    "NYSE"
+   ],
+   [
+    917251,
+    "AGREE REALTY CORP",
+    "ADC",
+    "NYSE"
+   ],
+   [
+    2003292,
+    "Klarna Group plc",
+    "KLAR",
+    "NYSE"
+   ],
+   [
+    1469395,
+    "Pampa Energy Inc.",
+    "PAM",
+    "NYSE"
+   ],
+   [
+    1650729,
+    "SiteOne Landscape Supply, Inc.",
+    "SITE",
+    "NYSE"
+   ],
+   [
+    1704715,
+    "Alpha Metallurgical Resources, Inc.",
+    "AMR",
+    "NYSE"
+   ],
+   [
+    1500217,
+    "American Assets Trust, Inc.",
+    "AAT",
+    "NYSE"
+   ],
+   [
+    1702780,
+    "Optimum Communications, Inc.",
+    "OPTU",
+    "NYSE"
+   ],
+   [
+    1934114,
+    "SUJA LIFE, INC.",
+    "SUJA",
+    "Nasdaq"
+   ],
+   [
+    1867949,
+    "Chicago Atlantic Real Estate Finance, Inc.",
+    "REFI",
+    "Nasdaq"
+   ],
+   [
+    1684693,
+    "Sol-Gel Technologies Ltd.",
+    "SLGL",
+    "Nasdaq"
+   ],
+   [
+    910329,
+    "MEDIFAST INC",
+    "MED",
+    "NYSE"
+   ],
+   [
+    1684425,
+    "TDH Holdings, Inc.",
+    "PETZ",
+    "Nasdaq"
+   ],
+   [
+    82473,
+    "INNSUITES HOSPITALITY TRUST",
+    "IHT",
+    "NYSE"
+   ],
+   [
+    1469395,
+    "Pampa Energy Inc.",
+    "PPENF",
+    "OTC"
+   ],
+   [
+    917251,
+    "AGREE REALTY CORP",
+    "ADC-PA",
+    "NYSE"
+   ],
+   [
+    1254699,
+    "QVC Group, Inc.",
+    "QVCG",
+    "Nasdaq"
+   ]
+  ]
+ },
+ "discovery": {
+  "window": [
+   "2026-08-28",
+   "2026-08-31"
+  ],
+  "accessions": [
+   "0000087347-26-000120",
+   "0000354950-26-000158",
+   "0001104659-26-103265",
+   "0001104659-26-103314",
+   "0001140361-26-034878",
+   "0001193125-26-374170",
+   "0001193125-26-374949",
+   "0001198906-26-000006",
+   "0001213900-26-094862",
+   "0001213900-26-095292",
+   "0001213900-26-095705",
+   "0001221359-26-000053",
+   "0001290936-26-000010",
+   "0001493152-26-040662",
+   "0001493152-26-040835",
+   "0001493152-26-040895",
+   "0001493152-26-040902",
+   "0001510712-26-000010",
+   "0001528153-26-000011",
+   "0001812746-26-000011",
+   "0002001011-26-000132",
+   "0002001011-26-000133",
+   "0002022936-26-000015",
+   "0002097107-26-000004"
+  ]
+ }
+}

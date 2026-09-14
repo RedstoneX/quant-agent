@@ -191,7 +191,7 @@ def test_estimate_over_budget_refuses_without_allow_partial(monkeypatch):
                         lambda *a, **k: pytest.fail("breaker built despite refusal"))
     monkeypatch.setattr(bm, "run_trial",
                         lambda *a, **k: pytest.fail("model called despite refusal"))
-    argv = ["--models", "x/y", "--scenario", "tech_batch", "--budget-usd", "0.01"]
+    argv = ["--models", "x/y", "--scenario", "earnings_filing", "--budget-usd", "0.01"]
     assert bm.main(argv) == 2
 
 
@@ -212,7 +212,7 @@ def test_estimate_over_budget_proceeds_with_allow_partial(monkeypatch, tmp_path)
                         "current_session_cost_usd": 0.0, "suspended": False},
     )
     monkeypatch.setattr(bm, "build_benchmark_circuit", lambda *a, **k: circuit)
-    scen = scenarios_mod.SCENARIOS_BY_KEY["tech_batch"]
+    scen = scenarios_mod.SCENARIOS_BY_KEY["earnings_filing"]
     monkeypatch.setattr(bm, "run_trial",
                         lambda s, m, p, cost_circuit=None: _trial(s, m, 0.0))
     out = tmp_path / "out.json"

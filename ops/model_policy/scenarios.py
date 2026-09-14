@@ -35,13 +35,26 @@ evidence. It stays deterministic and re-runnable for the same reason the
 others do: the fixture is frozen on disk and the correct answer is forced by
 the run's own recorded arithmetic, not by anyone's market opinion.
 
-No secrets live here: scenarios are prices, tickers, and one recorded
-paper-account snapshot.
+**2026-09-14, owner rule — what an exam may be built from.** Everything
+above describes how these scenarios were first built. The owner has since
+ruled that an exam may contain RAW FACTS ONLY, fetched fresh from the original
+public source, with every derived value recomputed by today's code and no
+agent output filled in from a recording or from invented text
+(`ops/model_policy/fixture_policy.py`, docs/INCIDENT_HISTORY.md). Under that
+rule most scenarios in this file cannot run: each now carries either a
+`fixture` the policy checks or a `blocked_reason` naming exactly what is
+missing, and `benchmark_models.py` refuses both before any paid call. The
+runnable, rule-compliant exams are in the "External-source seat exams"
+section near the end.
+
+No secrets live here: scenarios are prices, tickers, public filings, and two
+QUARANTINED paper-account recordings.
 """
 from __future__ import annotations
 
 import json
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -66,6 +79,7 @@ from src.risk.rules import RiskViolation
 # Imported at module level and safe from circularity: that module imports
 # THIS one only inside its operator entry point.
 from ops.model_policy import deterministic_selection as _deterministic_selection
+from ops.model_policy import fixture_policy as _fixture_policy
 
 
 # --------------------------------------------------------------------------
@@ -129,10 +143,33 @@ class Scenario:
     # batch, which is far too expensive to run against every candidate but
     # is the decisive latency measurement for the finalists.
     default: bool = True
+    # Owner rule 2026-09-14. `fixture` names the manifest under fixtures/ this
+    # exam is built on; `fixture_policy.check_fixture` must admit it.
+    # `blocked_reason` says, with citations, why the exam cannot be a valid
+    # test of the live seat today. Either one makes the benchmark refuse the
+    # scenario before any paid call — see `refusal_reason`.
+    fixture: str | None = None
+    blocked_reason: str | None = None
 
     @property
     def max_tokens(self) -> int:
         return production_max_tokens(self.role)
+
+
+def refusal_reason(scenario: "Scenario") -> str | None:
+    """Why `scenario` must not run, or None when it may.
+
+    The single gate `benchmark_models.py` consults. A blocked exam and an exam
+    on a quarantined fixture are refused the same way: loudly, by name, before
+    anything is spent.
+    """
+    if scenario.blocked_reason:
+        return f"{scenario.key}: BLOCKED — {scenario.blocked_reason}"
+    if scenario.fixture:
+        verdict = _fixture_policy.check_fixture(_fixture_policy.FIXTURES_DIR / scenario.fixture)
+        if not verdict.admissible:
+            return f"{scenario.key}: {verdict.reason()}"
+    return None
 
 
 def _bars(
@@ -165,114 +202,10 @@ def _bars(
 
 
 # --------------------------------------------------------------------------
-# 1. tech_analyst — the highest-volume specialist call in the system
+# 1. tech_analyst — see "External-source seat exams" below. The synthetic
+#    3-symbol batch that lived here (invented bars and indicators) was
+#    removed 2026-09-14: invented raw facts break the owner's exam rule.
 # --------------------------------------------------------------------------
-
-_TECH_SYMBOLS = {
-    # symbol: (indicators, bars) — one clean uptrend, one clean downtrend,
-    # one genuinely rangebound name where "neutral" is the honest answer.
-    "AAPL": (
-        TechnicalIndicators(
-            symbol="AAPL", ma_20=196.4, ma_50=188.1, ma_200=175.6, rsi_14=64.2,
-            macd=2.81, macd_signal=1.94, macd_hist=0.87,
-            bb_upper=204.2, bb_middle=196.4, bb_lower=188.6,
-            atr_14=3.45, volume_change_pct=12.4,
-        ),
-        _bars("AAPL", 170.0, 0.55),
-    ),
-    "XLE": (
-        TechnicalIndicators(
-            symbol="XLE", ma_20=82.1, ma_50=86.9, ma_200=91.4, rsi_14=31.8,
-            macd=-1.42, macd_signal=-0.88, macd_hist=-0.54,
-            bb_upper=87.0, bb_middle=82.1, bb_lower=77.2,
-            atr_14=1.62, volume_change_pct=28.9,
-        ),
-        _bars("XLE", 96.0, -0.28),
-    ),
-    "XLU": (
-        TechnicalIndicators(
-            symbol="XLU", ma_20=74.8, ma_50=74.6, ma_200=74.1, rsi_14=50.6,
-            macd=0.04, macd_signal=0.06, macd_hist=-0.02,
-            bb_upper=76.3, bb_middle=74.8, bb_lower=73.3,
-            atr_14=0.71, volume_change_pct=-3.1,
-        ),
-        _bars("XLU", 74.5, 0.01),
-    ),
-}
-
-
-def _tech_invoke(agent):
-    symbols_data = [
-        {"symbol": s, "bars": bars, "indicators": ind}
-        for s, (ind, bars) in _TECH_SYMBOLS.items()
-    ]
-    analyses, _ = agent.analyze_batch(symbols_data=symbols_data)
-    return analyses
-
-
-def _tech_grade(analyses: dict[str, TechAnalysisResult] | None) -> list[Check]:
-    checks: list[Check] = []
-    analyses = analyses or {}
-
-    checks.append(Check(
-        "all_symbols_returned", 0.30,
-        set(analyses) == set(_TECH_SYMBOLS),
-        f"got {sorted(analyses)} want {sorted(_TECH_SYMBOLS)}",
-    ))
-
-    # Directional agreement. Not a market opinion: AAPL is above a rising
-    # 20/50/200 stack with MACD positive, XLE is below a falling stack with
-    # MACD negative. A model that calls AAPL bearish here has misread the
-    # numbers it was handed.
-    aapl = analyses.get("AAPL")
-    checks.append(Check(
-        "uptrend_not_bearish", 0.15,
-        aapl is not None and aapl.rating in ("strong_buy", "buy", "neutral"),
-        f"AAPL rating={getattr(aapl, 'rating', None)}",
-    ))
-    xle = analyses.get("XLE")
-    checks.append(Check(
-        "downtrend_not_bullish", 0.15,
-        xle is not None and xle.rating in ("strong_sell", "sell", "neutral"),
-        f"XLE rating={getattr(xle, 'rating', None)}",
-    ))
-
-    # ATR-based stop discipline is an explicit instruction in
-    # config/prompts/tech_analyst.md. Grade it where it is checkable: an
-    # actionable rating must place its stop a sane multiple of ATR away —
-    # not 0.2 ATR (noise-stopped instantly) and not 12 ATR (no protection).
-    atr_ok, atr_detail = True, []
-    for sym, res in analyses.items():
-        if res.rating == "neutral" or res.entry_price is None or res.stop_loss is None:
-            continue
-        atr = _TECH_SYMBOLS[sym][0].atr_14 or 0.0
-        if atr <= 0:
-            continue
-        mult = abs(res.entry_price - res.stop_loss) / atr
-        if not (0.8 <= mult <= 8.0):
-            atr_ok = False
-            atr_detail.append(f"{sym} stop={mult:.1f}xATR")
-    checks.append(Check(
-        "atr_stop_discipline", 0.20, atr_ok, "; ".join(atr_detail) or "ok",
-    ))
-
-    # thesis_invalid_if is what lets PM/midday exit before the broker stop.
-    # config/prompts/tech_analyst.md asks for it on actionable ratings and
-    # EMPTY on neutral, so both halves are graded: a model that fills it on
-    # a neutral call has not read the instruction either.
-    wrong: list[str] = []
-    for sym, res in analyses.items():
-        filled = bool((res.thesis_invalid_if or "").strip())
-        if res.rating == "neutral" and filled:
-            wrong.append(f"{sym} neutral-but-filled")
-        elif res.rating != "neutral" and not filled:
-            wrong.append(f"{sym} actionable-but-empty")
-    checks.append(Check(
-        "thesis_invalid_if_discipline", 0.20,
-        not wrong and bool(analyses),
-        "; ".join(wrong) or "ok",
-    ))
-    return checks
 
 
 # --------------------------------------------------------------------------
@@ -1646,36 +1579,597 @@ def _review_grade(review) -> list[Check]:
 
 
 # --------------------------------------------------------------------------
+# External-source seat exams (owner rule 2026-09-14)
+# --------------------------------------------------------------------------
+#
+# Built ONLY from raw public facts fetched fresh from the original source
+# (SEC EDGAR, yfinance) and pinned under fixtures/ with per-section
+# provenance. Every value the seat is shown is recomputed at exam time by
+# TODAY's live provider and builder code — nothing derived is stored, and no
+# agent output is filled in. `fixture_policy.check_fixture` must admit the
+# manifest or the scenario is refused.
+
+
+@contextmanager
+def _frozen_today(day: date, *modules):
+    """Pin `et_today` in the given modules to the exam's session date.
+
+    The providers age every fact against the clock (freshness, disclosure
+    age, the discovery window). An exam replayed next month must see the
+    same ages it was built on, so the clock is the one input frozen here.
+    """
+    saved = [(module, module.et_today) for module in modules]
+    for module in modules:
+        module.et_today = (lambda d=day: d)
+    try:
+        yield
+    finally:
+        for module, original in saved:
+            module.et_today = original
+
+
+def _manifest(name: str) -> dict:
+    return json.loads((_fixture_policy.FIXTURES_DIR / name).read_text())
+
+
+# ---- earnings_analyst: one real 10-Q from EDGAR ---------------------------
+
+_EARNINGS_FIXTURE = "sec_mrvl_10q_2026-08-28.json"
+
+#: The only `[UNSOURCED:<reason>]` tokens the prompt defines
+#: (config/prompts/earnings_analyst.md:37 and :83).
+_EARNINGS_UNSOURCED_REASONS = ("not_in_filing", "truncated", "ambiguous", "no_market_data")
+
+
+def earnings_exam_report(scratch: Path | None = None):
+    """The live `EarningsReport`, rebuilt by today's provider from raw EDGAR bytes.
+
+    Mirrors `EarningsDataProvider._check_symbol` (src/data/earnings.py:945-961)
+    step for step — extract text from the filing HTML, fetch XBRL facts,
+    prepend the STRUCTURED FINANCIAL FACTS block — with the one network call
+    replaced by the pinned companyfacts bytes.
+    """
+    import tempfile
+
+    from src.data.earnings import EarningsDataProvider, EarningsReport
+
+    manifest = _manifest(_EARNINGS_FIXTURE)
+    filing = manifest["filing"]
+    html = _fixture_policy.load_blob(_EARNINGS_FIXTURE, "sec_mrvl_10q_2026-08-28.htm.gz")
+    facts = _fixture_policy.load_blob(_EARNINGS_FIXTURE, "sec_mrvl_companyfacts.json.gz")
+    root = Path(scratch or tempfile.mkdtemp(prefix="seat-exam-earnings-"))
+    provider = EarningsDataProvider(data_dir=str(root / "provider"))
+    provider._sec_get = lambda url, **_kw: facts  # pinned bytes, no network
+    html_path = root / f"{filing['form_type']}_{filing['filing_date']}.html"
+    html_path.write_bytes(html)
+    text = provider._extract_text(str(html_path))
+    xbrl_raw = provider._fetch_xbrl_raw(filing["cik"], filing["symbol"], filing["filing_date"])
+    block = provider._format_xbrl_text(xbrl_raw)
+    if block:
+        text = block + "\n" + text
+    analysis_dir = root / "analyses" / filing["symbol"]
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    return EarningsReport(
+        symbol=filing["symbol"], form_type=filing["form_type"],
+        filing_date=filing["filing_date"], filing_path=str(html_path),
+        analysis_path=str(analysis_dir / f"analysis_{filing['form_type']}_{filing['filing_date']}.md"),
+        text_excerpt=text, is_new=True,
+        xbrl_facts=provider._xbrl_comparable_values(xbrl_raw),
+    )
+
+
+def _earnings_invoke(agent):
+    report = earnings_exam_report()
+    results = agent.analyze_reports([report])
+    analysis = results[0]["analysis"] if results else None
+    return SimpleNamespace(analysis=analysis, report=report)
+
+
+def _earnings_grade(output) -> list[Check]:
+    from src.agents.earnings_analyst import _UNSOURCED_VALUATION_DISCLOSURE
+    from src.pipeline_stages import (
+        _earnings_analysis_has_real_figures, _earnings_xbrl_mismatch_fields,
+    )
+
+    analysis = getattr(output, "analysis", None)
+    report = getattr(output, "report", None)
+    checks = [Check(
+        "parsed_and_identifiers_echoed", 0.25, analysis is not None,
+        "survived EarningsAnalystAgent._validate_analysis "
+        "(src/agents/earnings_analyst.py:285): schema, and symbol / form / "
+        "filing date echoed verbatim (config/prompts/earnings_analyst.md:39)",
+    )]
+    if analysis is None:
+        return checks
+
+    checks.append(Check(
+        "has_real_figures", 0.15, _earnings_analysis_has_real_figures(analysis),
+        "src/pipeline_stages.py:1590 — the live content check behind "
+        "data_status['earnings']",
+    ))
+    mismatches = _earnings_xbrl_mismatch_fields(analysis, report.xbrl_facts)
+    checks.append(Check(
+        "figures_match_sec_xbrl", 0.20, not mismatches,
+        f"contradicted={mismatches} (src/pipeline_stages.py:1752; the live desk "
+        f"reports such a filing as figures_contradicted, :1850)",
+    ))
+    bad_tokens = sorted({
+        reason for reason in re.findall(r"\[UNSOURCED:([^\]]*)\]", json.dumps(analysis))
+        if reason not in _EARNINGS_UNSOURCED_REASONS
+    })
+    checks.append(Check(
+        "unsourced_tokens_valid", 0.15, not bad_tokens,
+        f"undefined reasons {bad_tokens} (config/prompts/earnings_analyst.md:37, :83)",
+    ))
+    truncated = "truncated ...]" in report.text_excerpt
+    quality = str(analysis.get("data_quality") or "").lower()
+    checks.append(Check(
+        "truncation_flagged", 0.15, (not truncated) or ("truncat" in quality),
+        f"input truncated={truncated}; data_quality={quality[:80]!r} "
+        f"(config/prompts/earnings_analyst.md:14 — 'must flag truncation')",
+    ))
+    valuation = (
+        ((analysis.get("investment_implications") or {}).get("reasoning_chain") or {})
+        .get("valuation_context") or ""
+    )
+    checks.append(Check(
+        "no_price_derived_valuation_claim", 0.10,
+        valuation != _UNSOURCED_VALUATION_DISCLOSURE,
+        "src/agents/earnings_analyst.py:358 redacted a valuation claim the "
+        "filing cannot ground" if valuation == _UNSOURCED_VALUATION_DISCLOSURE else "ok",
+    ))
+    return checks
+
+
+# ---- smart_money_analyst: real SEC Form 4 submissions ---------------------
+
+_SMART_MONEY_FIXTURE = "sec_form4_2026-08-28_to_31.json"
+_SMART_MONEY_BLOB = "sec_form4_submissions_2026-08-28_to_31.json.gz"
+
+
+def smart_money_exam_observations(scratch: Path | None = None) -> list:
+    """The observations today's `SECForm4Provider` selects from the pinned
+    raw submissions: parse (`_parse_submission`), then classify, age, admit,
+    cluster and cap (`fetch`) — with the session date frozen."""
+    import tempfile
+
+    import yaml
+
+    import src.data.smart_money as smart_money
+
+    manifest = _manifest(_SMART_MONEY_FIXTURE)
+    payload = json.loads(_fixture_policy.load_blob(_SMART_MONEY_FIXTURE, _SMART_MONEY_BLOB))
+    exam = manifest["_exam"]
+    table = manifest["sec_company_tickers_exchange"]
+    fields = table["fields"]
+    listed: dict[str, dict[str, str]] = {}
+    for row in table["data"]:
+        listed.setdefault(str(int(row[fields.index("cik")])), {})[
+            smart_money._symbol(row[fields.index("ticker")])
+        ] = str(row[fields.index("exchange")])
+    settings = Path(__file__).resolve().parents[2] / "config" / "settings.yaml"
+    universe = (yaml.safe_load(settings.read_text()) or {})["trading"]["universe"]
+    root = Path(scratch or tempfile.mkdtemp(prefix="seat-exam-form4-"))
+    with _frozen_today(date.fromisoformat(exam["session_date"]), smart_money):
+        provider = smart_money.SECForm4Provider(data_dir=str(root), **exam["provider_settings"])
+        rows = []
+        for accession in manifest["discovery"]["accessions"]:
+            entry = payload[accession]
+            rows.extend(
+                row.model_dump(mode="json")
+                for row in provider._parse_submission(
+                    entry["submission"], source_url=entry["source_url"], listed=listed,
+                )
+            )
+        (root / "observations.json").write_text(json.dumps(rows))
+        observations, error = provider.fetch(universe)
+    if error:
+        raise RuntimeError(f"smart-money exam fixture did not re-derive cleanly: {error}")
+    return observations
+
+
+def _smart_money_invoke(agent):
+    import tempfile
+
+    observations = smart_money_exam_observations()
+    # Never read or write the desk's synthesis cache: a hit would skip the
+    # model entirely and score a stored answer.
+    agent.synthesis_cache_path = (
+        Path(tempfile.mkdtemp(prefix="seat-exam-synthesis-")) / "synthesis_cache.json"
+    )
+    findings, _result, error = agent.analyze(observations)
+    return SimpleNamespace(
+        findings=findings, error=error,
+        presented=tuple(agent._presented_symbols(observations)),
+    )
+
+
+def _smart_money_grade(output) -> list[Check]:
+    from src.agents.smart_money_analyst import _MAX_FINDING_TEXT_WORDS
+
+    if output is None:
+        return [Check("parsed", 0.30, False, "no output")]
+    error = output.error
+    findings = list(output.findings or [])
+    checks = [Check(
+        "parsed", 0.30, error not in ("analysis_parse_error", "analysis_schema_error"),
+        f"error={error} (src/agents/smart_money_analyst.py:514, :533)",
+    )]
+    checks.append(Check(
+        "no_finding_dropped", 0.40, error is None,
+        f"error={error} — a finding is dropped when its stance contradicts its "
+        f"P/S source rows (config/prompts/smart_money_analyst.md:16-20, enforced "
+        f"at src/agents/smart_money_analyst.py:434) or names a symbol that was "
+        f"not presented or already answered (:449)",
+    ))
+    over = [
+        f.symbol for f in findings
+        if len(f.summary.split()) > _MAX_FINDING_TEXT_WORDS
+        or len(f.why_now.split()) > _MAX_FINDING_TEXT_WORDS
+    ]
+    checks.append(Check(
+        "summary_and_why_now_within_word_limit", 0.30, not over,
+        f"over {_MAX_FINDING_TEXT_WORDS} words: {over} "
+        f"(src/agents/smart_money_analyst.py:91, stated to the model in "
+        f"build_user_message)",
+    ))
+    missing = sorted(set(output.presented) - {f.symbol for f in findings})
+    checks.append(Check(
+        "covers_every_presented_symbol", 0.0, not missing,
+        f"UNSOURCED, reported not scored: the prompt caps findings ('at most 8, "
+        f"one per presented symbol') but requires none. {len(findings)} "
+        f"finding(s); presented but unanswered: {missing}",
+    ))
+    return checks
+
+
+# ---- tech_analyst: real daily bars ------------------------------------
+
+_TECH_FIXTURE = "yf_daily_bars_2026-08-28.json"
+
+
+def tech_exam_symbols_data() -> list[dict]:
+    """`analyze_batch` input rebuilt from raw yfinance bars: indicators by
+    today's `compute_indicators`; levels and market context are computed by
+    today's builder when it renders."""
+    from src.data.technical import compute_indicators
+
+    manifest = _manifest(_TECH_FIXTURE)
+    raw = json.loads(_fixture_policy.load_blob(_TECH_FIXTURE, "yf_daily_bars_2026-08-28.json.gz"))
+    out = []
+    for symbol in manifest["symbols"]:
+        bars = [
+            OHLCV(date=date.fromisoformat(b["date"]), open=b["open"], high=b["high"],
+                  low=b["low"], close=b["close"], volume=int(b["volume"]))
+            for b in raw[symbol]
+        ]
+        out.append({"symbol": symbol, "bars": bars, "indicators": compute_indicators(symbol, bars)})
+    return out
+
+
+def _tech_invoke(agent):
+    analyses, _ = agent.analyze_batch(symbols_data=tech_exam_symbols_data())
+    return analyses
+
+
+def _tech_grade(analyses: dict | None) -> list[Check]:
+    import yaml
+
+    analyses = analyses or {}
+    expected = set(_manifest(_TECH_FIXTURE)["symbols"])
+    settings = Path(__file__).resolve().parents[2] / "config" / "settings.yaml"
+    floor = float((yaml.safe_load(settings.read_text()) or {})["risk"]["absolute_min_stop_atr_multiple"])
+    resolved = {s for s, a in analyses.items() if a is not None}
+    checks = [Check(
+        "all_symbols_resolved", 0.30, resolved == expected,
+        f"unresolved={sorted(expected - resolved)} (a row failing "
+        f"TechAnalysisResult validation resolves to None, "
+        f"src/agents/tech_analyst.py analyze_batch)",
+    )]
+    real = {s: a for s, a in analyses.items() if a is not None}
+    wrong = [
+        s for s, a in real.items()
+        if (a.rating == "neutral") == bool((a.thesis_invalid_if or "").strip())
+    ]
+    checks.append(Check(
+        "thesis_invalid_if_discipline", 0.25, bool(real) and not wrong,
+        f"wrong={wrong} (config/prompts/tech_analyst.md:11 and :133 — filled on "
+        f"actionable, empty on neutral)",
+    ))
+    inside = [
+        s for s, a in real.items()
+        if a.rating != "neutral" and a.entry_price and a.stop_loss and a.atr_14
+        and abs(a.entry_price - a.stop_loss) < floor * a.atr_14
+    ]
+    checks.append(Check(
+        "stop_outside_absolute_atr_floor", 0.20, bool(real) and not inside,
+        f"inside {floor}xATR: {inside} (config/prompts/tech_analyst.md:65, :71; "
+        f"config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)",
+    ))
+    thin = [
+        s for s, a in real.items()
+        if a.rating != "neutral" and a.setup_type == "range"
+        and a.risk_reward is not None and a.risk_reward < 2.0
+    ]
+    checks.append(Check(
+        "range_setups_designed_to_2r", 0.25, bool(real) and not thin,
+        f"range R/R < 2.0: {thin} (config/prompts/tech_analyst.md:83 — 'design "
+        f"the trade so R/R is >= 2.0'; a breakout carries no such rule)",
+    ))
+    return checks
+
+
+# ---- macro_analyst: real FRED series, fetched via the OneCLI gateway ------
+
+_MACRO_FIXTURE = "fred_macro_2026-09-14.json"
+_MACRO_BLOB = "fred_series_2026-09-14.json.gz"
+
+# Same universe shape as the retired synthetic scenario — plain tickers,
+# not fixture-governed data.
+_PUBLIC_MACRO_UNIVERSE = ["SPY", "QQQ", "XLE", "XLU", "XLP", "XLF", "SMH", "AAPL", "NVDA"]
+
+
+def _public_macro_summary():
+    """Today's `MacroDataProvider.get_macro_summary()` (src/data/macro.py:1125),
+    replayed against the pinned raw FRED observations — the fetch (`fred.
+    get_series` / `get_series_info`) is stubbed with the pinned bytes; every
+    computed field (change_pct, trend, percentile, freshness, ...) is
+    produced by today's live provider code, not stored in the fixture.
+    """
+    import pandas as pd
+
+    from src.data.macro import MacroDataProvider
+
+    payload = json.loads(_fixture_policy.load_blob(_MACRO_FIXTURE, _MACRO_BLOB))
+    series_data, series_info = payload["series"], payload["series_info"]
+    provider = MacroDataProvider(api_key="unused-fixture-replay-no-network")
+
+    def _get_series(series_id, **_kw):
+        obs = series_data.get(series_id) or {}
+        return pd.Series(
+            {pd.Timestamp(d): v for d, v in obs.items()}
+        ).sort_index()
+
+    def _get_series_info(series_id):
+        return series_info.get(series_id) or {}
+
+    provider.fred.get_series = _get_series
+    provider.fred.get_series_info = _get_series_info
+    return provider.get_macro_summary()
+
+
+def _public_macro_invoke(agent):
+    analysis, _ = agent.analyze(
+        macro_summary=_public_macro_summary(), universe=_PUBLIC_MACRO_UNIVERSE,
+        last_state=None, news_narrative=None,
+    )
+    return analysis
+
+
+def _public_macro_grade(analysis) -> list[Check]:
+    """Schema/rule compliance only — real market conditions on the fetch
+    date are whatever they are, so there is no forced-arithmetic correct
+    direction to grade against (unlike the retired synthetic `macro_stress`).
+    """
+    checks: list[Check] = [Check(
+        "parsed", 0.40, analysis is not None,
+        "MacroAnalysis validated (src/models.py:2258 — regime/confidence/"
+        "equity_outlook enums enforced by pydantic on parse)",
+    )]
+    if analysis is None:
+        return checks
+
+    pos = getattr(analysis, "position_guidance", None)
+    invested = getattr(pos, "target_invested_pct", None)
+    checks.append(Check(
+        "target_invested_pct_in_range", 0.20,
+        invested is not None and 0.0 <= float(invested) <= 100.0,
+        f"target_invested_pct={invested}",
+    ))
+
+    guidance = getattr(analysis, "sector_guidance", None) or []
+    checks.append(Check(
+        "sector_guidance_present", 0.20,
+        len(guidance) >= 2,
+        f"{len(guidance)} sector calls (config/prompts/macro_analyst.md)",
+    ))
+
+    chain = getattr(analysis, "reasoning_chain", None)
+    checks.append(Check(
+        "reasoning_chain_present", 0.20,
+        chain is not None,
+        "ReasoningChain populated" if chain is not None else "missing",
+    ))
+    return checks
+
+
+# ---- news_analyst: real RSS wires, fetched live at fixture-build time -----
+
+_NEWS_FIXTURE = "rss_feeds_2026-09-14.json"
+_NEWS_BLOB = "rss_feeds_2026-09-14.json.gz"
+
+_PUBLIC_NEWS_UNIVERSE = [
+    "SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "TSLA", "META",
+    "AMD", "MU", "AVGO", "XLE", "XLF", "XLU", "XLK",
+]
+
+
+def _public_news_report(scratch: Path | None = None):
+    """Today's `NewsDataProvider.fetch_news` / `format_for_prompt` /
+    `tag_symbol_mentions` (src/data/news.py), replayed against the pinned
+    raw RSS bytes — `urlopen` is stubbed with the pinned per-feed bytes
+    fetched live at fixture-build time; parsing, dedup, formatting and
+    symbol tagging all run as today's code.
+    """
+    import src.data.news as news_mod
+
+    payload = json.loads(_fixture_policy.load_blob(_NEWS_FIXTURE, _NEWS_BLOB))
+    manifest = _manifest(_NEWS_FIXTURE)
+    feed_urls = {name: v["url"] for name, v in manifest["rss_feeds"].items()}
+
+    def _replay_urlopen(req, timeout=None):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        name = next((n for n, u in feed_urls.items() if u == url), None)
+        raw = (payload.get(name) or "").encode("utf-8")
+
+        class _Replay:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def read(self_inner):
+                return raw
+
+        return _Replay()
+
+    real_urlopen = news_mod.urlopen
+    news_mod.urlopen = _replay_urlopen
+    try:
+        provider = news_mod.NewsDataProvider(feeds=feed_urls, per_symbol_enabled=False)
+        items, coverage = provider.fetch_news(symbols=None)
+    finally:
+        news_mod.urlopen = real_urlopen
+    news_text = provider.format_for_prompt(items, max_items=60)
+    stock_mentions = provider.tag_symbol_mentions(items, _PUBLIC_NEWS_UNIVERSE)
+    return news_text, stock_mentions, coverage
+
+
+def _public_news_invoke(agent):
+    news_text, stock_mentions, coverage = _public_news_report()
+    report, _ = agent.analyze(
+        news_text=news_text, universe=_PUBLIC_NEWS_UNIVERSE,
+        stock_mentions=stock_mentions, previous_narrative=None,
+        session="morning", prior_session_report=None, news_coverage=coverage,
+    )
+    return report
+
+
+def _public_news_grade(report) -> list[Check]:
+    """Rule/schema compliance only, per the owner's 2026-09-14 direction:
+    real fetched news has no engineered correct answer to grade judgement
+    against (unlike the retired synthetic `news_intel`)."""
+    checks: list[Check] = [Check(
+        "parsed", 0.35, report is not None,
+        "NewsIntelligenceReport validated (src/models.py:2758 — enums on "
+        "market_sentiment/confidence/StateChange.conviction/StockNewsItem."
+        "sentiment+conviction all pydantic-enforced on parse)",
+    )]
+    if report is None:
+        return checks
+
+    regime = (getattr(report.macro_narrative, "current_regime", "") or "")
+    checks.append(Check(
+        "macro_narrative_present", 0.20,
+        len(regime.strip()) >= 5,
+        f"current_regime {len(regime.strip())} chars "
+        "(src/models.py:2515 MacroNarrative.current_regime min_length=5)",
+    ))
+
+    universe = set(_PUBLIC_NEWS_UNIVERSE)
+    stock_news_symbols = set(report.stock_news or {})
+    invented_stock_news = sorted(stock_news_symbols - universe)
+    checks.append(Check(
+        "no_invented_stock_news_symbols", 0.25, not invented_stock_news,
+        f"stock_news symbols outside the given universe: {invented_stock_news}",
+    ))
+
+    affected = {
+        s for sc in (report.state_changes or []) for s in (sc.affected_symbols or [])
+    }
+    invented_affected = sorted(affected - universe)
+    checks.append(Check(
+        "no_invented_state_change_symbols", 0.20, not invented_affected,
+        f"state_change affected_symbols outside the given universe: "
+        f"{invented_affected}",
+    ))
+    return checks
+
+
+# --------------------------------------------------------------------------
 # Registry
 # --------------------------------------------------------------------------
 
 SCENARIOS: list[Scenario] = [
+    Scenario(
+        key="earnings_filing",
+        role="earnings_analyst",
+        agent_path="src.agents.earnings_analyst:EarningsAnalystAgent",
+        invoke=_earnings_invoke,
+        grade=_earnings_grade,
+        fixture=_EARNINGS_FIXTURE,
+        description="A real MRVL 10-Q (filed 2026-08-28) fetched from SEC EDGAR; "
+                    "filing text and XBRL facts recomputed by today's provider. "
+                    "Grades identifier echo, real figures, agreement with SEC "
+                    "XBRL, UNSOURCED-token and truncation discipline.",
+    ),
+    Scenario(
+        key="smart_money_form4",
+        role="smart_money_analyst",
+        agent_path="src.agents.smart_money_analyst:SmartMoneyAnalystAgent",
+        invoke=_smart_money_invoke,
+        grade=_smart_money_grade,
+        fixture=_SMART_MONEY_FIXTURE,
+        description="Real SEC Form 4 submissions (2026-08-28..31) run through "
+                    "today's SECForm4Provider. Grades parse survival, stance vs "
+                    "P/S source direction, and the word limit. Narrower "
+                    "discovery window and empty insider history than "
+                    "production — see the fixture's deviations list.",
+    ),
     Scenario(
         key="tech_batch",
         role="tech_analyst",
         agent_path="src.agents.tech_analyst:TechAnalystAgent",
         invoke=_tech_invoke,
         grade=_tech_grade,
-        description="3-symbol batch: uptrend, downtrend, rangebound. Grades "
-                    "schema survival, directional sanity, ATR stop discipline.",
+        fixture=_TECH_FIXTURE,
+        description="Real yfinance bars for 7 symbols (2026-08-28) run through "
+                    "today's compute_indicators and analyze_batch "
+                    "(src/agents/tech_analyst.py:336). Unblocked 2026-09-14: "
+                    "analyze_batch's own signature defaults prior_ratings to "
+                    "{} and prior_macro_regime/prior_macro_outlook to None "
+                    "(src/agents/tech_analyst.py:339-343) — the tech seat's "
+                    "prompt rates chart-driven, not prior-ratings-driven "
+                    "(config/prompts/tech_analyst.md). Valuations and the "
+                    "intraday snapshot are omitted the same way (both "
+                    "optional, default None) rather than invented. Grades "
+                    "symbol resolution, thesis_invalid_if discipline, the "
+                    "absolute ATR stop floor, and range R:R >= 2.0.",
     ),
     Scenario(
         key="macro_stress",
         role="macro_analyst",
         agent_path="src.agents.macro_analyst:MacroAnalystAgent",
-        invoke=_macro_invoke,
-        grade=_macro_grade,
-        description="Stressed macro tape (VIX p88, spreads +63bps). Grades "
-                    "regime read and defensive positioning.",
+        invoke=_public_macro_invoke,
+        grade=_public_macro_grade,
+        fixture=_MACRO_FIXTURE,
+        description="15 real FRED series (2026-09-14), fetched live through the "
+                    "OneCLI credential gateway with a placeholder key — the real "
+                    "FRED_API_KEY never entered this process — then recomputed "
+                    "by today's MacroDataProvider.get_macro_summary "
+                    "(src/data/macro.py:1125). last_state/news_narrative=None "
+                    "(both optional, src/agents/macro_analyst.py:203-204). "
+                    "Unblocked 2026-09-14 — see the retired synthetic-tape note "
+                    "above for why the old scenario was blocked. Grades schema "
+                    "and rule compliance only; real conditions have no forced "
+                    "correct direction to grade against.",
     ),
     Scenario(
         key="news_intel",
         role="news_analyst",
         agent_path="src.agents.news_analyst:NewsAnalystAgent",
-        invoke=_news_invoke,
-        grade=_news_grade,
-        description="7 mixed headlines. Grades structured extraction and "
-                    "per-symbol attribution.",
+        invoke=_public_news_invoke,
+        grade=_public_news_grade,
+        fixture=_NEWS_FIXTURE,
+        description="Real RSS wires (11 feeds, fetched live 2026-09-14) replayed "
+                    "through today's NewsDataProvider.fetch_news / "
+                    "format_for_prompt / tag_symbol_mentions "
+                    "(src/data/news.py). previous_narrative/prior_session_report="
+                    "None (both optional, src/agents/news_analyst.py:376-380). "
+                    "Unblocked 2026-09-14. Grades schema/enum compliance and "
+                    "'no invented tickers not in input' only — no judgement-"
+                    "based answer key for real news.",
     ),
     Scenario(
         key="pm_constrained",
@@ -1703,14 +2197,11 @@ SCENARIOS: list[Scenario] = [
         invoke=_pm_selection_invoke,
         grade=_pm_selection_grade,
         default=False,
-        description="The REAL 2026-09-02 opportunity set (run-bba4d4f3): 64 "
-                    "technical reads, 63 with computed levels, 34 actionable "
-                    "and every one with a computable structural reward:risk, "
-                    "25 admitted by the desk's own rules including one short. "
-                    "Grades WHICH candidates the model picks — including a "
-                    "familiarity_bias number reported on every run. Does NOT "
-                    "measure profitability. Opt-in: the rendered prompt is "
-                    "87,247 characters.",
+        fixture="run_bba4d4f3_pm_input.json",
+        description="The REAL 2026-09-02 opportunity set (run-bba4d4f3). "
+                    "QUARANTINED 2026-09-14: the fixture is a desk recording "
+                    "(analyst outputs and old-code derived values), refused by "
+                    "ops/model_policy/fixture_policy.py.",
     ),
     Scenario(
         key="risk_rr_breach",
@@ -1718,8 +2209,17 @@ SCENARIOS: list[Scenario] = [
         agent_path="src.agents.risk_manager:RiskManagerAgent",
         invoke=_risk_invoke,
         grade=_risk_grade,
-        description="Plan contains a 0.42R BUY at 18% of book. Grades whether "
-                    "the last LLM gate catches and names it.",
+        blocked_reason=(
+            "the plan under review is an invented PM decision and the book is "
+            "invented positions; the live call (src/pipeline_stages.py:4867) "
+            "passes today's PM plan, the tech/news/earnings seats' outputs and "
+            "the broker's positions — agent outputs and desk data. The grader's "
+            "core check rewards acting on a thin range ratio, which "
+            "config/prompts/risk_manager.md:251 says is not by itself grounds; "
+            "its macro dict uses keys the renderer does not read "
+            "(ten_year vs us10y, src/agents/risk_manager.py:503)"
+        ),
+        description="Synthetic 0.42R BUY at 18% of book. BLOCKED.",
     ),
     Scenario(
         key="risk_drawdown_discipline",
@@ -1728,10 +2228,14 @@ SCENARIOS: list[Scenario] = [
         invoke=_risk_drawdown_invoke,
         grade=_risk_drawdown_grade,
         default=False,
-        description="in_drawdown=true with an unhalved 12% BUY, plus a SELL "
-                    "on a 2-day-old position citing only a Tech downgrade. "
-                    "Grades the two rules the 2026-08-13 audit gave RM the "
-                    "evidence for. Opt-in: it informs the risk seat only.",
+        blocked_reason=(
+            "same invented PM plan and book as risk_rr_breach; and the grader "
+            "rewards asking for a drawdown halving that "
+            "config/prompts/risk_manager.md:141 says the engine has already "
+            "applied and the seat must NOT ask for again "
+            "(src/risk/rules.py apply_drawdown_scale)"
+        ),
+        description="Synthetic unhalved drawdown BUY + young-position SELL. BLOCKED.",
     ),
     Scenario(
         key="tech_batch_full",
@@ -1740,9 +2244,12 @@ SCENARIOS: list[Scenario] = [
         invoke=_tech_full_invoke,
         grade=_tech_full_grade,
         default=False,
-        description="One PRODUCTION-scale 25-symbol chunk (1 of the 5 a "
-                    "morning issues). Measures the session's longest pole "
-                    "against the 1200s wrapper kill, plus coverage at scale.",
+        blocked_reason=(
+            "25 symbols of invented bars and indicators; raw facts must come from "
+            "the original source. Rebuild on real yfinance bars once tech_batch's "
+            "upstream inputs exist"
+        ),
+        description="Synthetic 25-symbol latency chunk. BLOCKED.",
     ),
     Scenario(
         key="midday_exit",
@@ -1750,10 +2257,33 @@ SCENARIOS: list[Scenario] = [
         agent_path="src.agents.position_reviewer:PositionReviewerAgent",
         invoke=_review_invoke,
         grade=_review_grade,
-        description="One broken thesis pinned to its stop, one working "
-                    "winner. Grades the exit path in both directions.",
+        blocked_reason=(
+            "positions, stops and entry rows are invented; the live ones are desk "
+            "data, and the live call (src/pipeline.py:11698) also passes the news, "
+            "earnings and macro seats' outputs and the reviewer's own prior "
+            "metrics. The grader's main check rewards SELL/REDUCE/TRAIL_STOP on a "
+            "position near its stop, which config/prompts/position_reviewer.md:247 "
+            "says is never a trigger and the executor drops without a named one "
+            "(src/pipeline.py:9585); its macro regime 'risk_off' is not a "
+            "MacroAnalysis value (src/models.py:2258)"
+        ),
+        description="Synthetic broken thesis + working winner. BLOCKED.",
     ),
 ]
+
+#: Seats with no exam at all, and exactly why (owner rule 2026-09-14).
+NO_EXAM_SEATS: dict[str, str] = {
+    "evening_analyst": (
+        "its inputs are the day's positions and trades (desk data) plus the news "
+        "and earnings seats' outputs, the rolling narrative and the evening's own "
+        "prior grades (src/pipeline.py:13089)"
+    ),
+    "meta_reflector": (
+        "its only input is a quarterly digest built from the desk's own trades, "
+        "grades and outcomes (src/pipeline.py:13595); it has never run in "
+        "production, so no recorded digest exists either"
+    ),
+}
 
 SCENARIOS_BY_KEY = {s.key: s for s in SCENARIOS}
 DEFAULT_SCENARIOS = [s for s in SCENARIOS if s.default]
