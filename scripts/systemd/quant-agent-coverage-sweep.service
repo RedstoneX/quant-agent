@@ -1,0 +1,35 @@
+# Stop-coverage sweep — pairs with quant-agent-coverage-sweep.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-coverage-sweep.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-coverage-sweep.timer
+[Unit]
+Description=quant-agent stop-coverage sweep (no LLM, no trading decisions)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Reads held positions and open protective stops from the broker. While the
+# exchange calendar says the session is OPEN, it re-places the protective
+# stop over any shares the broker is not watching — the same
+# src.execution.stop_repair.repair_stop_coverage a normal session calls, at
+# the level recorded on the position's own BUY. It never sells, resizes,
+# closes or cancels anything, and it makes no LLM call.
+#
+# It exists because a fractional remainder can only carry a DAY stop (the
+# broker refuses any other tif for a fractional quantity), that stop lapses
+# at every close, and the session sweep that used to put it back stopped
+# running when the trading timers were paused on 2026-09-03.
+#
+# What it does NOT fix: the remainder is still unprotected overnight. No
+# durable fractional stop exists at this broker.
+ExecStart=/home/qamc/quant-agent/scripts/run_coverage_sweep.sh
+# Exit 1 means the check could not run at all (broker unreachable, bad
+# credentials). A found-and-alerted coverage gap is exit 0 — the alarm did
+# its job.
+SuccessExitStatus=0
+# Above the wrapper's own 120+15s kill, so the wrapper kills Python before
+# systemd kills the wrapper.
+TimeoutStartSec=180
+StandardOutput=journal
+StandardError=journal
