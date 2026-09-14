@@ -1432,8 +1432,10 @@ class TradingPipeline:
         premise of this method: the stored record is not evidence about stop
         coverage in either direction, so the halt asks the BROKER rather than
         believing anything the desk wrote down. Two live reasons the answer
-        can genuinely be "no" remain: the same audit found stops widened on
-        three positions the desk had just decided it wanted out of, and a
+        can genuinely be "no" remain: a stop can be moved by a maintenance
+        action outside this code, leaving no trade row behind (three were
+        moved that way on 2026-08-31 to lift grandfathered stops to the
+        minimum distance), and a
         sub-share remainder provably cannot hold an overnight stop at this
         broker.
 
