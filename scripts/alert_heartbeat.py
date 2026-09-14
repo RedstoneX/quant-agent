@@ -362,25 +362,87 @@ def _cash_sweep_symbol() -> str:
         return str(CashSweepConfig().symbol)
 
 
+def _last_buy_reader():
+    """`symbol -> the position's own last BUY row`, or None when the trading
+    database cannot be opened.
+
+    This is the ONLY thing the re-placement needs beyond the broker: the stop
+    level the PM/RM agreed, recorded on the BUY. `Database` is used rather
+    than a private read-only query so the executed-trade predicate has one
+    home — a hand-rolled copy of that SQL here is how the repair would start
+    reading a different row from the one the in-session sweep reads.
+
+    Returning None (rather than raising, or guessing a level) means the
+    coverage check stays a pure reader for this run and says so.
+    """
+    try:
+        from src.api.deps import get_db_path
+        from src.storage.db import Database
+
+        db = Database(str(get_db_path()))
+        db.initialize()
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"coverage_watchdog: no recorded-stop lookup available ({exc}) — "
+            "reporting only, placing nothing",
+            file=sys.stderr,
+        )
+        return None
+    return lambda symbol: db.get_symbol_last_buy(symbol, include_in_flight=True)
+
+
 def run_coverage_check(now: datetime | None = None) -> str:
     """Stop-coverage watchdog for a desk that is not running sessions — see
-    `src/coverage_watchdog.py`. Reads the broker and the session record,
-    sends one owner alert when held shares have no stop AND no session ran
-    during the last trading session to put one back. Never places, changes
-    or cancels an order. Returns the journal line; raises only if the
-    broker cannot be built, and `main` contains that."""
-    from src.coverage_watchdog import alert_text, check_coverage, status_line
+    `src/coverage_watchdog.py`.
 
-    status = check_coverage(_build_broker(), now=now, sweep_symbol=_cash_sweep_symbol())
+    Reads the broker and the session record; while the exchange calendar says
+    the session is OPEN it also puts back the protective stop over any shares
+    the broker is not watching, through the same
+    `src.execution.stop_repair.repair_stop_coverage` a normal session uses. It
+    never sells, resizes, closes or cancels anything.
+
+    Two owner alerts, each at most once per trading day: shares still with no
+    stop and no session to have re-placed one, and a placement that was
+    attempted during open hours and did not land. A failed placement is never
+    swallowed.
+
+    Returns the journal line; raises only if the broker cannot be built, and
+    `main` contains that.
+    """
+    from src.coverage_watchdog import (
+        alert_text, check_coverage, repair_failure_text, status_line,
+    )
+
+    status = check_coverage(
+        _build_broker(), now=now, sweep_symbol=_cash_sweep_symbol(),
+        last_buy=_last_buy_reader(),
+    )
     line = status_line(status)
-    if not status.should_alert:
-        return line
-    from src.notifier import send_owner_alert
+    sent: list[str] = []
+    if status.should_alert or status.should_alert_repair_failure:
+        from src.notifier import send_owner_alert
 
-    text = alert_text(status)
-    print(text, file=sys.stderr)
-    delivered = bool(send_owner_alert(text, symbols=[g.symbol for g in status.gaps]))
-    return f"{line}; alert {'delivered' if delivered else 'could NOT be delivered'}"
+        if status.should_alert_repair_failure:
+            text = repair_failure_text(status)
+            print(text, file=sys.stderr)
+            ok = bool(send_owner_alert(
+                text, symbols=[r.symbol for r in status.repair_failures],
+            ))
+            sent.append(
+                f"placement-failure alert "
+                f"{'delivered' if ok else 'could NOT be delivered'}"
+            )
+        if status.should_alert:
+            text = alert_text(status)
+            print(text, file=sys.stderr)
+            ok = bool(send_owner_alert(
+                text, symbols=[g.symbol for g in status.gaps],
+            ))
+            sent.append(
+                f"exposure alert "
+                f"{'delivered' if ok else 'could NOT be delivered'}"
+            )
+    return "; ".join([line, *sent])
 
 
 def run_refusal_signature_check(now: datetime | None = None) -> str:
@@ -415,7 +477,29 @@ def main(argv: list[str] | None = None) -> int:
         "--status", action="store_true",
         help="print the record and exit; sends nothing, exercises nothing",
     )
+    parser.add_argument(
+        "--coverage-only", action="store_true",
+        help=(
+            "run ONLY the stop-coverage check (no channel probe, no Telegram "
+            "self-test). This is what the every-30-minutes coverage-sweep "
+            "unit runs: it puts back a missing protective stop while the "
+            "market is open and does nothing at all while it is shut."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.coverage_only:
+        # The probe is skipped on purpose. This entry point exists to run
+        # OFTEN — the market-hours tick that actually re-places a lapsed
+        # fractional DAY stop — and a channel self-test every 30 minutes
+        # would be 30-odd needless Telegram round trips a day to prove
+        # something the 06:15 run already proves once.
+        try:
+            print(run_coverage_check())
+        except Exception as exc:  # noqa: BLE001
+            print(f"coverage_watchdog: could NOT run ({exc})", file=sys.stderr)
+            return 1
+        return 0
 
     if args.status:
         code, line = run_status()

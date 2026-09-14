@@ -910,6 +910,28 @@ class AlpacaBroker:
         launchd-scheduled midday (13:00-14:30 ET) and close (15:30-15:55 ET)
         sessions would otherwise keep running against an already-shut market.
         """
+        return self._session_edge(on_date, "close")
+
+    def get_session_open(self, on_date: date | None = None):
+        """Return the ET-aware datetime when the regular cash session OPENS
+        today, or None if today is not a trading day or the calendar lookup
+        fails.
+
+        The mirror of `get_session_close`, and added for the same reason it
+        was: a caller that needs to know whether the market is open right
+        now must read BOTH edges from the exchange calendar rather than
+        assume 09:30. Late opens exist, and the desk's rule is that a timing
+        boundary comes from the calendar the broker publishes, never from a
+        number typed here. `src/coverage_watchdog.py` is the caller that
+        needs it — it may only place an order while the session is genuinely
+        open, and it runs from a unit that fires hours before the bell.
+        """
+        return self._session_edge(on_date, "open")
+
+    def _session_edge(self, on_date: date | None, attr: str):
+        """Shared body of `get_session_close` / `get_session_open` — one
+        calendar read, one attribute. Two copies of this would be two places
+        for the naive-datetime bug below to be fixed in."""
         from src.trading_calendar import ET, et_today
         from datetime import datetime as _dt
         target_date = on_date or et_today()
@@ -921,34 +943,34 @@ class AlpacaBroker:
             )
         except Exception as exc:
             logger.warning(
-                "get_session_close: calendar query failed for %s: %s",
-                target_date, exc,
+                "get_session_%s: calendar query failed for %s: %s",
+                attr, target_date, exc,
             )
             return None
         if not calendar:
             return None
         entry = calendar[0]
         entry_date = getattr(entry, "date", None)
-        entry_close = getattr(entry, "close", None)
-        if entry_date is None or entry_close is None:
+        entry_edge = getattr(entry, attr, None)
+        if entry_date is None or entry_edge is None:
             return None
         try:
-            # alpaca-py's Calendar.close is a full naive DATETIME (already
-            # carrying the session date + ET wall clock), NOT a time. The old
-            # code called datetime.combine(date, datetime), which ALWAYS
-            # raised TypeError → logged → returned None → the early-close
-            # guard never fired and midday/close ran against a shut market on
-            # half-days, submitting orders that can only be rejected
-            # (2026-07-16 audit: dead code since it was written; the test that
-            # was supposed to cover it used a MagicMock with a `time`).
-            # Keep the `time` branch for the older SDK shape.
-            if isinstance(entry_close, _dt):
-                return entry_close.replace(tzinfo=ET)
-            return _dt.combine(entry_date, entry_close).replace(tzinfo=ET)
+            # alpaca-py's Calendar.close/.open is a full naive DATETIME
+            # (already carrying the session date + ET wall clock), NOT a
+            # time. The old code called datetime.combine(date, datetime),
+            # which ALWAYS raised TypeError → logged → returned None → the
+            # early-close guard never fired and midday/close ran against a
+            # shut market on half-days, submitting orders that can only be
+            # rejected (2026-07-16 audit: dead code since it was written;
+            # the test that was supposed to cover it used a MagicMock with
+            # a `time`). Keep the `time` branch for the older SDK shape.
+            if isinstance(entry_edge, _dt):
+                return entry_edge.replace(tzinfo=ET)
+            return _dt.combine(entry_date, entry_edge).replace(tzinfo=ET)
         except Exception as exc:
             logger.warning(
-                "get_session_close: failed to resolve date=%s close=%s: %s",
-                entry_date, entry_close, exc,
+                "get_session_%s: failed to resolve date=%s %s=%s: %s",
+                attr, entry_date, attr, entry_edge, exc,
             )
             return None
 
