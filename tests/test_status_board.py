@@ -1830,6 +1830,112 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
         assert by_rank[rank].bucket == "open", rank
 
 
+# ---------------------------------------------------------------------------
+# THE RETIRED-NUMBERS LINE — corrupted by hand twice
+#
+# `docs/WORK.md` ends the funnel queue with one prose line naming every item
+# number ever resolved and deleted, per numbering scheme, so a number is
+# never handed to a new item that used to mean something else. It has been
+# hand-corrupted twice: once by a regex sweep that scraped bare integers out
+# of surrounding prose (which swept in numbers belonging to items that are
+# still live), and earlier by entries that never corresponded to a real item
+# at all. Both failures share one shape: a human editing free text next to a
+# number list. The fix is not editing more carefully — it is a check that
+# fails the build the moment the line and the live items disagree, so this
+# cannot recur silently a third time.
+# ---------------------------------------------------------------------------
+
+_RETIRED_LINE_RE = re.compile(
+    r"\*\*Retired item numbers — never reuse\.\*\*\s*"
+    r"(?P<queue>[0-9, ]*?)\s*in this queue,\s*and\s*"
+    r"(?P<gate>[0-9, ]*?)\s*in the PM test gate",
+)
+
+
+def _parse_retired_numbers(work_md_text: str) -> tuple[list[int], list[int]]:
+    """Pull the two retired-number lists out of the line's own prose.
+
+    Fails loudly (not with a silent empty list) if the line is missing or its
+    number lists do not parse as clean comma-separated integers — a stray
+    value (a stray word, a duplicate separator, anything a regex sweep or a
+    typo could introduce) must break this parse, not slide through as zero
+    retired numbers.
+    """
+    m = _RETIRED_LINE_RE.search(work_md_text)
+    assert m is not None, (
+        "the 'Retired item numbers — never reuse.' line is missing, or no "
+        "longer matches 'N, N, ... in this queue, and N, N, ... in the PM "
+        "test gate' — every consumer of this line needs that exact shape"
+    )
+
+    def _clean_ints(blob: str, label: str) -> list[int]:
+        blob = blob.strip()
+        assert blob, f"the {label} retired-number list is empty"
+        parts = [p.strip() for p in blob.split(",")]
+        for p in parts:
+            assert re.fullmatch(r"[0-9]+", p), (
+                f"the {label} retired-number list contains a non-integer "
+                f"entry ({p!r}); it must be a clean comma-separated list "
+                "of item numbers, nothing else"
+            )
+        numbers = [int(p) for p in parts]
+        assert len(numbers) == len(set(numbers)), (
+            f"the {label} retired-number list repeats a number"
+        )
+        return numbers
+
+    return _clean_ints(m.group("queue"), "funnel-queue"), \
+        _clean_ints(m.group("gate"), "PM-gate")
+
+
+def test_the_retired_numbers_line_parses_as_a_clean_integer_list():
+    """No stray values: a bare word, a double comma, or trailing junk in
+    either list must fail this test rather than parse as a smaller list."""
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    queue_nums, gate_nums = _parse_retired_numbers(work_md.read_text())
+    assert queue_nums, "no funnel-queue numbers were retired numbers at all"
+    assert gate_nums, "no PM-gate numbers were retired numbers at all"
+
+
+def test_no_retired_number_names_an_item_that_is_still_live():
+    """The one property that matters: a number the line calls retired must
+    not simultaneously belong to a live item in the SAME numbering scheme.
+
+    This is the exact shape of both corruptions this line has suffered —
+    items 3, 4, 8, 15 and 20 are open right now in the funnel queue and were
+    swept into its retired list anyway by a regex that could not tell a
+    number that means "item 4" from a number sitting in a sentence about it.
+    4 and 8 are separately, and correctly, retired in the PM TEST GATE scheme
+    — a number can be retired in one scheme and live in another, which is
+    exactly why the two lists are checked against their own scheme's live
+    items, never against each other's.
+    """
+    work_md = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    text = work_md.read_text()
+    queue_retired, gate_retired = _parse_retired_numbers(text)
+
+    queue_items, qp = sb.load_funnel_queue(work_md)
+    gate_items, gp = sb.load_pm_gate(work_md)
+    assert qp is None and gp is None
+
+    live_queue_ranks = {i.rank for i in queue_items}
+    live_gate_ranks = {i.rank for i in gate_items}
+
+    queue_conflicts = sorted(set(queue_retired) & live_queue_ranks)
+    assert not queue_conflicts, (
+        f"item(s) {queue_conflicts} are listed as retired in the funnel "
+        "queue but are also live funnel-queue items right now — a reused "
+        "number silently merges two unrelated pieces of work"
+    )
+
+    gate_conflicts = sorted(set(gate_retired) & live_gate_ranks)
+    assert not gate_conflicts, (
+        f"item(s) {gate_conflicts} are listed as retired in the PM test "
+        "gate but are also live PM-gate items right now — a reused number "
+        "silently merges two unrelated pieces of work"
+    )
+
+
 def test_a_mostly_finished_item_is_labelled_rather_than_hidden():
     """Moving partly-finished work out of the running order would hide live
     work, which is worse than the problem being fixed. It is labelled."""
