@@ -728,9 +728,15 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
         "something settings.yaml does not say. This is live-wrong, not "
         "latent: " + ", ".join(live_divergence)
     )
-    assert len(omitted) == 15, (
+    # 16 since 2026-09-13 (docs/WORK.md item 56): `max_stop_width_reach_atr_
+    # multiple` joined the list when the stop-refusal threshold was split off
+    # from `max_target_reach_atr_multiple`. Both are CONSTRUCTOR settings,
+    # threaded through `ConstructorConfig` in `pipeline.py`, not engine
+    # `RiskConfig` fields — the new one is omitted here for exactly the same
+    # reason its sibling directly above it in this list always was.
+    assert len(omitted) == 16, (
         f"the engine's hand-enumerated RiskConfig now omits {len(omitted)} "
-        f"settings present in settings.yaml, not 15 — if that grew, thread "
+        f"settings present in settings.yaml, not 16 — if that grew, thread "
         f"the new one; if it shrank, lower this number. Omitted: {omitted}"
     )
 

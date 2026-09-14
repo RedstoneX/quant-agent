@@ -552,15 +552,26 @@ class TestStopWidthReadingAndSeparation:
         )
 
     def test_settings_expose_both_multiples(self):
-        """Both knobs exist in the ratified settings model."""
+        """Both knobs are declared AND ratified — model default and YAML.
+
+        Read straight off `config/settings.yaml` rather than through
+        `load_config`, which validates API keys this test has no business
+        needing.
+        """
         from pathlib import Path
 
-        from src.config import load_config
+        import yaml
+
+        from src.config import RiskConfig
+
+        fields = RiskConfig.model_fields
+        assert fields["max_target_reach_atr_multiple"].default == 1.5
+        assert fields["max_stop_width_reach_atr_multiple"].default == 1.5
 
         settings = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
-        risk = load_config(settings).risk
-        assert risk.max_target_reach_atr_multiple == 1.5
-        assert risk.max_stop_width_reach_atr_multiple == 1.5
+        risk = yaml.safe_load(settings.read_text())["risk"]
+        assert risk["max_target_reach_atr_multiple"] == 1.5
+        assert risk["max_stop_width_reach_atr_multiple"] == 1.5
 
     def test_range_to_sigma_constant_is_the_gaussian_one(self):
         """`ATR_PER_SIGMA` is sqrt(8/pi) — a property of the Gaussian.
