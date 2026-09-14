@@ -184,6 +184,53 @@ STOP_REFUSAL_INSUFFICIENT_HISTORY = "insufficient_history"
 #: the largest silent bucket on the sheet. Verified on this branch before the
 #: fix by running the capture's own regex against the real message.
 STOP_REFUSAL_BUDGET_EXHAUSTED = "risk_budget_exhausted"
+#: Board item 10 (2026-09-14): the same defect item 49 fixed for the
+#: PORTFOLIO-level budget allocator, found again by statically running
+#: `_DropReasonCapture._SYMBOL` against every other constructor drop message
+#: in the module (no live data needed — the regex is deterministic and the
+#: messages are compile-time strings). §9.4's OTHER refusal path — the
+#: agreement ceiling landing at or below zero net independent sources — used
+#: the identical "Constructor: X produces no order — ..." phrasing item 49
+#: already found the regex does not match (it requires rejected|refused|
+#: skipped directly after the symbol; "produces" is neither), and reached
+#: `_record_constructor_drops` the same generic way. Fixed the same way:
+#: `_note_refusal` files the code as data instead of relying on the log
+#: scrape ever catching up to a sentence.
+STOP_REFUSAL_AGREEMENT_CEILING = "agreement_ceiling_at_or_below_zero"
+#: Board item 10 (2026-09-14). `_build_buy`/`_build_short` already LOG when
+#: the risk-budget-per-trade cap or the single-name/single-short ceiling
+#: shrinks a request ("alloc capped by risk budget" / "... by the single-
+#: name ceiling"), but neither message contains rejected/refused/skipped, so
+#: the regex never matches them. When one of those caps (or the sector dial
+#: above them) leaves nothing to round to above zero, the order silently
+#: never ships — and unlike the ATR/no-stop path a few lines up, there is no
+#: SECOND log line for the same symbol that happens to match: `_build_buy`
+#: just returns `None`. Filed directly from `cap_note`, which already
+#: carries the deterministic provenance of whichever cap(s) bound.
+STOP_REFUSAL_SIZED_TO_ZERO = "position_sized_to_zero"
+#: Board item 10 (2026-09-14). `apply_gross_ceiling` (`src/risk/rules.py`)
+#: refuses a BUY/SHORT outright — equity unusable, headroom below the
+#: minimum-order floor, or a granted slice that rounds to nothing — and logs
+#: through its OWN `Constructor: %s`-wrapped note (`portfolio_constructor.py`
+#: relays `outcome.notes` verbatim at `logger.warning("Constructor: %s",
+#: note)`). Every one of those notes reads "Constructor: max_gross_exposure:
+#: SYMBOL refused — ..." — the rule name sits BETWEEN "Constructor:" and the
+#: symbol, which `_DropReasonCapture._SYMBOL` requires to follow immediately
+#: (optionally through one of BUY/SHORT/SELL/COVER only). Every gross-ceiling
+#: block was therefore invisible to the regex. `GrossCeilingOutcome.
+#: blocked_detail` now carries the per-symbol reason text out of
+#: `apply_gross_ceiling` so the constructor can file it with `_note_refusal`
+#: directly, the same precedent as every other code in this block.
+STOP_REFUSAL_GROSS_EXPOSURE_CEILING = "gross_exposure_ceiling_refused"
+#: Board item 10 (2026-09-14). The delta loop's churn filter
+#: (`min_trade_weight_delta`) silently `continue`s a brand-new position too
+#: small to bother with — but only records anything when one already exists
+#: to HOLD (`current_pct > 0`). A target asking to open a position below the
+#: threshold (`current_pct <= 0`) left, and still leaves, no `TradeDecision`
+#: row and no log line of any kind — not a regex miss, there was never
+#: anything for the regex to see. Named and filed rather than left mute:
+#: this is not a judgement on the idea, only on its size.
+CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA = "delta_below_min_trade_weight"
 #: The `pipeline_event` reason under which `pipeline_stages.DecisionStage`
 #: files a structured constructor refusal (`refusal=<code>` beside it).
 #: Distinct from `constructor_dropped`, whose detail is recovered by regex
@@ -886,6 +933,25 @@ class PortfolioConstructor:
                 # audit bookkeeping stays long-only for this stage.)
                 if current_pct > 0:
                     buys.append(self._hold_decision(target))
+                else:
+                    # Board item 10 (2026-09-14): a brand-new position too
+                    # small to bother opening got neither a TradeDecision
+                    # row (HOLD is long-only bookkeeping, above) nor any log
+                    # line at all — not a regex miss, there was nothing for
+                    # `_DropReasonCapture` to see. Not a judgement on the
+                    # idea, only on its size against an already-ratified
+                    # config threshold; filed the same way every other named
+                    # non-outcome in this module is.
+                    self._note_refusal(
+                        sym, target.direction,
+                        CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA,
+                        f"the requested change ({delta_pct:+.2f}pp of "
+                        f"equity) is below the "
+                        f"{self.cfg.min_trade_weight_delta:.2f}pp minimum "
+                        f"trade size — not worth the commission and "
+                        f"attention of an immaterial position. No existing "
+                        f"position to record as a HOLD.",
+                    )
                 continue
 
             if delta_pct < 0:
@@ -977,6 +1043,26 @@ class PortfolioConstructor:
         )
         for note in outcome.notes:
             logger.warning("Constructor: %s", note)
+        # Board item 10 (2026-09-14): every note above is relayed through
+        # THIS logger as "Constructor: max_gross_exposure: SYMBOL refused —
+        # ...", which `_DropReasonCapture._SYMBOL` never matches — the rule
+        # name sits between "Constructor:" and the symbol. File the
+        # structured refusal directly from `outcome.blocked_detail` instead
+        # of leaning on the log scrape. Direction is read off the ORIGINAL
+        # decision (before the filter below drops it) so a blocked SHORT is
+        # recorded as a short refusal, not defaulted to BUY.
+        if outcome.blocked:
+            action_by_symbol = {d.symbol: d.action for d in orders}
+            for sym in outcome.blocked:
+                direction = "short" if action_by_symbol.get(sym) == "SHORT" else "long"
+                self._note_refusal(
+                    sym, direction, STOP_REFUSAL_GROSS_EXPOSURE_CEILING,
+                    outcome.blocked_detail.get(
+                        sym,
+                        "the §11.2 gross-exposure ceiling refused this "
+                        "entry outright; no further detail was recorded",
+                    ),
+                )
         # An entry rationed to nothing is dropped rather than emitted as a
         # zero-allocation order — `allocation_pct == 0` means SKIP to the
         # execution stage, and leaving it in the list would show the operator
@@ -1188,14 +1274,21 @@ class PortfolioConstructor:
                 # The two dels are load-bearing, not tidiness: the sizing loop
                 # below iterates `priced` and looks each symbol up in
                 # `requests`, which this target never joins.
-                logger.warning(
-                    "Constructor: %s produces no order — %d aligned / %d "
-                    "opposed = net %+d independent source(s) for this %s. "
-                    "§9.4 prices a signed sum and there is no rung at or "
-                    "below zero: the evidence does not net out in favour of "
-                    "the trade. Any existing position is left untouched.",
-                    sym, agreement_count, opposing_count, source_score,
-                    target.direction,
+                #
+                # `_note_refusal` files the CODE as data (board item 10,
+                # 2026-09-14) instead of a `logger.warning` whose "produces
+                # no order" phrasing `_DropReasonCapture._SYMBOL` does not
+                # match — the same defect item 49 already fixed for the
+                # portfolio-level budget allocator below, found again here by
+                # running the regex against this message.
+                self._note_refusal(
+                    sym, target.direction, STOP_REFUSAL_AGREEMENT_CEILING,
+                    f"{agreement_count} aligned / {opposing_count} opposed = "
+                    f"net {source_score:+d} independent source(s) for this "
+                    f"{target.direction}. §9.4 prices a signed sum and there "
+                    f"is no rung at or below zero: the evidence does not net "
+                    f"out in favour of the trade. Any existing position is "
+                    f"left untouched.",
                 )
                 del priced[sym]
                 del directions[sym]
@@ -2940,6 +3033,24 @@ class PortfolioConstructor:
 
         allocation_pct = max(0.0, round(allocation_pct, 2))
         if allocation_pct <= 0:
+            # Board item 10 (2026-09-14): the risk-budget-per-trade cap and
+            # the single-name ceiling above both LOG when they shrink a
+            # request, but neither message says rejected/refused/skipped, so
+            # `_DropReasonCapture` never sees them — and unlike the ATR/no-
+            # stop path in `_resolve_entry_and_stop`, nothing else logs for
+            # this symbol afterward to compensate. `cap_note` already carries
+            # the deterministic provenance of whichever cap(s) bound (it is
+            # the same text appended to a surviving order's `reasoning`), so
+            # it is reused verbatim as the refusal detail rather than
+            # re-deriving which cap fired.
+            self._note_refusal(
+                target.symbol, target.direction, STOP_REFUSAL_SIZED_TO_ZERO,
+                (cap_note.strip() or (
+                    "the position sizing chain (risk budget, single-name "
+                    "ceiling, sector crowding) left nothing to round to "
+                    "above zero"
+                )),
+            )
             return None
 
         reasoning = target.thesis
@@ -3127,6 +3238,19 @@ class PortfolioConstructor:
 
         allocation_pct = max(0.0, round(allocation_pct, 2))
         if allocation_pct <= 0:
+            # Board item 10 (2026-09-14) — see the identical comment in
+            # `_build_buy`. The risk-budget-per-trade cap and the single-
+            # short ceiling above both LOG when they shrink a request
+            # without saying rejected/refused/skipped, so nothing here would
+            # otherwise reach `_DropReasonCapture` or `last_refusals`.
+            self._note_refusal(
+                target.symbol, target.direction, STOP_REFUSAL_SIZED_TO_ZERO,
+                (cap_note.strip() or (
+                    "the position sizing chain (risk budget, single-short "
+                    "ceiling, sector crowding) left nothing to round to "
+                    "above zero"
+                )),
+            )
             return None
 
         reasoning = target.thesis

@@ -1511,6 +1511,18 @@ class GrossCeilingOutcome:
     notes: list = field(default_factory=list)
     #: Symbols whose new exposure was refused outright.
     blocked: list = field(default_factory=list)
+    #: {symbol: reason}, one entry per name in `blocked` — the SAME text
+    #: appended to `notes`, without the "{GROSS_EXPOSURE_RULE}: {symbol}
+    #: refused — " prefix. Board item 10 (2026-09-14): `notes` is relayed
+    #: verbatim by `PortfolioConstructor` as `logger.warning("Constructor:
+    #: %s", note)`, and every note built that way reads "Constructor:
+    #: max_gross_exposure: SYMBOL refused — ..." — the rule name sits
+    #: BETWEEN "Constructor:" and the symbol, which `_DropReasonCapture.
+    #: _SYMBOL` requires to follow immediately. Every gross-ceiling block was
+    #: therefore invisible to that regex. This field lets the constructor
+    #: file a structured `_note_refusal` per blocked symbol instead of
+    #: relying on the log scrape.
+    blocked_detail: dict = field(default_factory=dict)
     ceiling: GrossCeiling | None = None
     ceiling_usd: float = 0.0
     held_gross: float = 0.0
@@ -1584,11 +1596,14 @@ def apply_gross_ceiling(
             if decision.action in ("BUY", "SHORT") and decision.allocation_pct > 0:
                 decision.allocation_pct = 0.0
                 out.blocked.append(decision.symbol)
-                out.notes.append(
-                    f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — the "
-                    f"account equity figure ({equity}) is not usable, so the "
-                    f"gross-exposure ceiling cannot be computed. No new "
+                detail = (
+                    f"the account equity figure ({equity}) is not usable, so "
+                    f"the gross-exposure ceiling cannot be computed. No new "
                     f"position opens on an unreadable account."
+                )
+                out.blocked_detail[decision.symbol] = detail
+                out.notes.append(
+                    f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {detail}"
                 )
         if out.notes:
             logger.warning(
@@ -1676,12 +1691,13 @@ def apply_gross_ceiling(
         if (available / multiplier) < max(0.0, min_order_usd):
             decision.allocation_pct = 0.0
             out.blocked.append(decision.symbol)
-            out.notes.append(
-                f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {reason}, "
-                f"and what the ceiling still allows is below the "
+            detail = (
+                f"{reason}, and what the ceiling still allows is below the "
                 f"${min_order_usd:,.0f} minimum worth trading. "
                 f"{ceiling.reason}"
             )
+            out.blocked_detail[decision.symbol] = detail
+            out.notes.append(f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {detail}")
             continue
         # Round DOWN to 2dp so the granted size can never land back above the
         # headroom that permitted it.
@@ -1691,12 +1707,13 @@ def apply_gross_ceiling(
         if after <= 0 or (equity * (after / 100.0)) < min_order_usd:
             decision.allocation_pct = 0.0
             out.blocked.append(decision.symbol)
-            out.notes.append(
-                f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {reason}, "
-                f"and what the ceiling still allows is below the "
+            detail = (
+                f"{reason}, and what the ceiling still allows is below the "
                 f"${min_order_usd:,.0f} minimum worth trading. "
                 f"{ceiling.reason}"
             )
+            out.blocked_detail[decision.symbol] = detail
+            out.notes.append(f"{GROSS_EXPOSURE_RULE}: {decision.symbol} refused — {detail}")
             continue
         decision.allocation_pct = after
         decision.reasoning = (

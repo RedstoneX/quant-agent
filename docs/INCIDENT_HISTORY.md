@@ -22,6 +22,95 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — board item 10: "we can't know why most trade ideas die until the desk runs again" was checked, and it was wrong
+
+**In plain words:** most of the time a trade idea disappears somewhere
+inside the machinery, nothing on record says why — that bucket
+(`no_order_built`) is 16 of the last 25 blocked ideas, 64%, the single
+biggest cause of a proposed trade never happening. The board note said this
+could not be investigated further until the desk started trading again and
+produced fresh examples to look at. That turned out to be false: the
+question could be, and was, settled by reading the code, with no trading and
+no new data required.
+
+**Why the "wait for new data" belief was wrong.** The mechanism that is
+supposed to recover a dropped trade's reason works by scanning the
+constructor's own log text with a pattern-matching rule (a regex) looking
+for the word "rejected", "refused" or "skipped" right after a stock symbol.
+Both the rule and every sentence it is supposed to catch already exist in
+the code, unchanged whether or not the desk is trading — so whether the rule
+actually catches each sentence is answerable today, by running the real
+rule against the real sentences, exactly the way board item 49 (rationed
+risk budget) settled its own version of this same question a few hours
+earlier without a live run either. Nobody had asked whether item 49's
+method applied to the OTHER ~24 places in the same file that can drop a
+trade with nothing built. It did.
+
+**What was found — five more places losing the reason, all fixed the same
+way item 49 was.**
+
+1. `_plan_risk_targets`'s "agreement ceiling" refusal (a trade an analyst
+   liked, but the desk's OTHER analysts collectively disagreed with more
+   than they agreed) logged the phrase "produces no order" — the *exact*
+   wording item 49 already found the pattern-matcher does not catch,
+   present a second time in the same file and missed the first time around.
+2. `_build_buy` silently gives up when either the per-trade risk cap or the
+   single-name position ceiling shrinks a request down to exactly nothing.
+   It does log when it shrinks a request, but never using one of the three
+   watched words, and nothing else logs afterward to compensate.
+3. `_build_short` — the identical gap, on the short-side ceiling.
+4. The portfolio-wide gross-exposure ceiling (a separate module,
+   `src/risk/rules.py`) refusing a trade outright — unusable account equity,
+   or what little room remains is below the $500 minimum worth trading. Its
+   message is relayed through the constructor's own log line, but with the
+   RULE'S name sitting between the word "Constructor:" and the stock symbol,
+   which is exactly the one shape the pattern-matcher cannot see through.
+5. A brand-new position too small to bother opening (below the minimum
+   trade-size threshold) got no database row of any kind and no log line
+   whatsoever — not a pattern-matching miss, there was nothing to miss.
+
+Every other place in the same file that can drop a trade either already
+logs in a way the pattern-matcher catches, or is followed by a SECOND log
+line for the same drop that does catch it (so the reason still survives,
+just not in the most specific wording) — those were read and left alone,
+named here so the check does not need repeating: the "no ATR reading, no
+stop at all" branch inside the stop-widening step always falls through to a
+second "rejected — no valid stop" line one function up, which does match.
+
+**The fix, and why it is not "a bigger regex".** Widening the pattern to
+catch more sentences would have kept the actual defect in place — a trade's
+fate living in a sentence written for a human to read, hoping software can
+parse it back out later. Instead, each of the five spots above now writes
+its reason directly as a structured, named code the instant it happens,
+the same way item 49's fix did for the risk-budget case a few hours before
+this one. The pattern-matcher is left exactly as it was; the five fixed
+spots simply no longer depend on it.
+
+**Verified no trade outcome changed.** Every one of the five fixes adds a
+single new line of bookkeeping immediately beside an existing "give up on
+this trade" point in the code — none of the arithmetic or conditions that
+decide whether a trade happens or not were touched. The full automated test
+suite (5,899 tests) passed before and after, unchanged, and six new tests
+were added that specifically pin each of the five fixes and prove, using
+the actual pattern-matching rule from the code (not a hand-copied version of
+it), that the sentences it used to look at for these five cases really were
+being missed.
+
+**What this does and does not fix.** From the next time the desk actually
+trades onward, these five specific ways a trade can vanish will leave a
+named, readable reason instead of a shrug. It does NOT go back and recover
+the 16 already-blocked trades sitting in the historical record today — those
+happened before this fix existed and their specific reason is genuinely
+gone. The five are believed to be the complete list for this file as of this
+pass (every relevant spot in it was read and tested), but that belief itself
+is checkable the same way: if the "we don't know why" bucket is still
+non-trivial after this ships and the desk has traded again, that is the
+signal a sixth spot exists somewhere and needs the identical treatment —
+run the real rule against the real sentence, do not guess, and do not wait
+for more data before checking.
+
+---
+
 ### 2026-09-14 — item 56 narrowed: one number was estimating price targets AND refusing trades, and the "two published rules contradict each other" premise turned out to be false
 
 **In plain words:** when there is no obvious place on the chart to put a stop,

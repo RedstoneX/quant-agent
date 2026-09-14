@@ -613,73 +613,63 @@ merged 2026-09-02 via `feat/blocked-trade-memory`) gives the PM a
 conversion rate. What remains open is not the memory and not a gate — it is
 what the census found underneath.
 
-**(a) THE LIVE DEFECT — OPEN.** Census re-run read-only over the archive
-(`scripts/blocked_proposals_census.py`): 65 entry proposals, 14 filled,
-51 blocked. Grouped by cause, machinery ABSENCE — `no_order_built`,
-`order_not_placed`, `qty_zero` — is 27 of the 51; execution/price events
-(`order_canceled`, `insufficient_cash`, `slippage_gated`) are only 7.
-Restricted to proposals after the limit-is-ceiling fix (`0eb4a115`,
-2026-08-27 14:18:58Z), 28 proposals, 3 filled, 25 blocked, of which
-`no_order_built` alone is 16 — and exactly ONE broker cancel. So under
-current code the dominant outcome of a trade idea is that it evaporates
-inside the pipeline, and **for every measured row the cause is
-unrecoverable**: reason-capture (`ffce5766` / `4b5445eb`, PR #222 and
-#226, 2026-09-03) postdates all of them. That is the open question: a
-majority of ideas dying with no reason on record.
+**(a) THE LIVE DEFECT — STILL OPEN, but the "wait for live data" conclusion
+below is RETRACTED (2026-09-14, second pass; full writeup in
+`docs/INCIDENT_HISTORY.md`, dated 2026-09-14, "board item 10").** Census
+re-run read-only over the archive (`scripts/blocked_proposals_census.py`):
+65 entry proposals, 14 filled, 51 blocked, machinery ABSENCE 27 of the 51.
+Restricted to post-`0eb4a115` (2026-08-27) proposals: 28 proposals, 3
+filled, 25 blocked, `no_order_built` alone 16 (64%). Those 16 specific rows
+stay unrecoverable (they predate the 2026-09-03 reason-capture) — but the
+NEXT claim this file made, "the cause is unrecoverable until the desk
+produces new proposals," was never actually checked and turned out to be
+false: the regex the capture uses and every candidate log message are both
+compile-time strings, so which drop paths it silently loses is answerable
+by running the real regex against them, with zero live data.
 
-**What would settle it.** The 2026-09-03 drop-reason capture has NEVER been
-measured, because the desk has produced no proposals since. Re-run the
-census once post-2026-09-03 proposals exist; `no_order_built` should then
-resolve into named constructor reasons. Until then nothing about the cause
-should be asserted. Two known undercounts must be carried into any re-run
-(`docs/AGENT_ROLE_AUDIT.md` §1.6): roughly 7% of sized targets never reach
-`specialist_evidence`, and 10 decisions carry no evidence rows at all.
+Did exactly that — read every `return None`/`continue` that produces no
+order in `src/portfolio_constructor.py` (~25 sites) and tested the real
+`_DropReasonCapture._SYMBOL` against each one's log message. Five were
+silently losing their reason, all now fixed by filing a structured code
+directly (item 49's precedent): the §9.4 agreement-ceiling refusal
+(`_plan_risk_targets`, the SAME "produces no order" phrasing item 49 found
+unmatched a first time, unfixed a second time in the same file); `_build_buy`
+/ `_build_short` rounding to exactly zero after the risk-budget or single-
+name/short ceiling (the cap logs, but never with rejected/refused/skipped);
+`apply_gross_ceiling`'s (`src/risk/rules.py`) outright refusals, whose
+relayed note reads "Constructor: max_gross_exposure: SYMBOL refused — ...",
+the rule name between "Constructor:" and the symbol defeating the regex;
+and the churn filter's (`min_trade_weight_delta`) silent skip of a brand-new
+position too small to open, which had no log line AT ALL. Everything else
+in the module either already matched, or is compensated by a second,
+matching log line the same drop always also fires. New codes:
+`STOP_REFUSAL_AGREEMENT_CEILING`, `STOP_REFUSAL_SIZED_TO_ZERO`,
+`STOP_REFUSAL_GROSS_EXPOSURE_CEILING`, `CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA`.
 
-**(b) A COUNT-BASED RE-PROPOSAL GATE — ANSWERED NO. Not deferred, not
-switched off: answered.** No threshold is proposed and none is needed,
-because the question dissolves on partition. The reasoning, so nobody
-re-derives it:
+**No verdict changed** — every fix only adds a `_note_refusal` call beside
+an existing `return None`/`continue`. Full suite green unchanged (5,899
+passed, 1 skipped) plus 6 new tests pinning the fixes and the regex's
+behaviour on the exact phrasing each used to emit.
 
-- *The conversion rate is not a fact about the instrument.* It is a
-  self-portrait of the desk's own gates and its own broken plumbing.
-  The three repeat zero-fill names — JPM, VLO, PATH — record not one
-  spread, book or partial-fill event between them; their causes are
-  `order_not_placed`, `order_canceled`, `no_order_built`, `geometry_rr`,
-  `rr_fail`. Gating on that blacklists a name for a bug.
-- *VLO is the proof.* Two of its three strikes are `order_canceled`, on
-  2026-08-21 and 2026-08-27 13:36 — both BEFORE the limit-is-ceiling fix
-  landed at 14:18 the same day, and the comment shipping that fix names
-  VLO explicitly as the trade it was written for. A conversion gate would
-  blacklist a symbol for a defect that no longer exists.
-- *NVDA is the cost.* Proposed 8 times across six distinct failure causes,
-  and it FILLED on the 8th — at 2.75% risk and high conviction, the largest
-  and most confident ask in the whole record. Any three-strikes rule kills
-  that trade. XLE: 6 proposals, one fill. §1.6 already records that XLE and
-  NVDA "have each since recorded one fill and are no longer zero-fill under
-  any count."
-- *The offender list churns daily.* 2026-09-01 named XLE and NVDA;
-  2026-09-02 named VLO, COP, JPM, XLF, CRM, PATH. A gate whose input turns
-  over completely in a day is gating on noise.
-- *Partition by refusal cause and no class needs a counter.* Deterministic
-  refusals (`geometry_rr`, `qty_zero`, `rr_fail`, constructor refusals)
-  re-fire on their own against an unchanged repeat, in the same session,
-  consuming zero capital — a counter adds nothing; and a repeat with
-  CHANGED geometry SHOULD pass, which is exactly what NVDA did. Machinery
-  absences are a bug to fix, not a name to blacklist — see (a). Execution
-  events are fixed at the execution layer, per-order, not per-symbol.
-- *The prompt already carries the better shape, and a threshold cannot
-  express it* (`src/agents/portfolio_manager.py`): "re-proposing it
-  unchanged will fail the same way again — either fix what the reason
-  names … or drop the name. This is information, not a prohibition." The
-  conditional on UNCHANGED is the whole point; a count has no way to say it.
+**What this settles, what it does not.** The NEXT session's
+`no_order_built` bucket resolves these five paths into named reasons
+without new proposals first — the fix is static. It does NOT retroactively
+recover the 16 rows already on record. These five are believed the complete
+set for this module as of this pass; if `no_order_built` still appears
+post-fix, that is the signal a sixth path was missed — check it the same
+way before assuming live data is needed again. Two known undercounts still
+apply to any re-run (`docs/AGENT_ROLE_AUDIT.md` §1.6): ~7% of sized targets
+never reach `specialist_evidence`, and 10 decisions carry no evidence rows.
 
-**(c) "Slots burned" was a false premise — VERIFIED 2026-09-14.** There is
-no position-count cap in `config/settings.yaml` and no target-count cap in
-the PM; `docs/OUTCOME.md` records position count as "Not fixed. Determined
-dynamically by the risk budget." A blocked proposal consumes zero risk
-budget, so it burns no slot. Whether a repeat displaces a fresh candidate
-inside the PM's own shortlist is UNMEASURED — recorded as unmeasured, not
-asserted either way.
+**(b) A count-based re-proposal gate — ANSWERED NO**, and **(c) "slots
+burned" was a false premise — VERIFIED**, both closed 2026-09-14. Full
+reasoning archived in `docs/INCIDENT_HISTORY.md` (2026-09-14 entry, board
+item 10) rather than repeated here — WORK.md is at its byte cap. Short
+version: no re-proposal threshold is needed because the conversion rate is
+a self-portrait of the desk's own bugs, not a fact about the instrument
+(NVDA filled on its 8th try at the largest size in the record); and there
+is no position-count or target-count cap anywhere in the code for a repeat
+to burn, so nothing is being "wasted".
 
 **17. Backup alert channel — OWNER DECISION, not a defect. (Was: "the desk can switch itself off silently.")**
 
