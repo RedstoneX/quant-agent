@@ -835,6 +835,196 @@ def test_volatility_is_never_used_to_size_a_position():
         )
 
 
+# ==========================================================================
+# 2026-09-14, docs/WORK.md item 32 — the two measurement defects the halt
+# change also fixed. Both are about the breaker comparing two things that
+# were never the same object.
+# ==========================================================================
+
+def _pos(symbol, market_value, *, intraday=0.0, qty=1.0):
+    from src.models import Position
+    return Position(
+        symbol=symbol, qty=qty, avg_entry=100.0, current_price=100.0,
+        market_value=market_value, unrealized_pnl=0.0,
+        unrealized_intraday_pnl=intraday, sector="ETF",
+    )
+
+
+def test_the_cash_park_is_excluded_from_the_volatility_yardstick():
+    """`gross_exposure`, `book_exposure`, `sector_side_gross`, the
+    stop-coverage audit and every LLM-facing view all drop the sweep
+    vehicle. `normalized_holding_weights` was the one risk calculation that
+    did not, so the daily breaker's denominator was neither the risk book
+    nor the account but a third object: on the archived book the park was
+    78% of the gross weight it was measured over."""
+    positions = [_pos("SGOV", 7530.0), _pos("MSFT", 501.0), _pos("V", 374.0)]
+    equity = 9822.37
+
+    with_park = normalized_holding_weights(positions, equity)
+    without = normalized_holding_weights(
+        positions, equity, cash_park_symbol="SGOV",
+    )
+
+    assert "SGOV" in with_park, "no cash_park_symbol given → nothing excluded"
+    assert "SGOV" not in without
+    assert set(without) == {"MSFT", "V"}
+    # The real holdings keep their weights: this excludes, it does not
+    # renormalise. Renormalising would destroy the deployment-scaling the
+    # whole design rests on.
+    assert without["MSFT"] == pytest.approx(with_park["MSFT"])
+    assert without["V"] == pytest.approx(with_park["V"])
+
+
+def test_the_park_exclusion_uses_the_configured_symbol_not_a_hardcoded_one():
+    positions = [_pos("BIL", 5000.0), _pos("SGOV", 1000.0)]
+    weights = normalized_holding_weights(
+        positions, 10_000.0, cash_park_symbol="bil",
+    )
+    assert set(weights) == {"SGOV"}
+
+
+def test_excluding_the_park_can_only_tighten_the_threshold_never_loosen_it():
+    """Parked cash barely moves, so dropping it from the basket makes the
+    measured volatility SMALLER, which makes the threshold TIGHTER — the
+    alarm fires sooner. That direction is the safe one for a brake, and it
+    is the reason this fix needed no owner sign-off on a trip level."""
+    days = [date(2026, 1, 1) + timedelta(days=i) for i in range(40)]
+
+    def bars(series):
+        return [{"date": d, "close": c} for d, c in zip(days, series)]
+
+    rng = random.Random(11)
+    # A real holding that moves, and a park that essentially does not.
+    real = [100.0]
+    park = [100.0]
+    for _ in range(39):
+        real.append(real[-1] * (1 + rng.gauss(0, 0.012)))
+        park.append(park[-1] * (1 + rng.gauss(0, 0.00005)))
+    by_symbol = {"MSFT": bars(real), "SGOV": bars(park)}
+
+    positions = [_pos("SGOV", 7530.0), _pos("MSFT", 2000.0)]
+    equity = 10_000.0
+    with_park = measure_portfolio_daily_vol(
+        normalized_holding_weights(positions, equity), by_symbol,
+    )
+    without = measure_portfolio_daily_vol(
+        normalized_holding_weights(
+            positions, equity, cash_park_symbol="SGOV",
+        ), by_symbol,
+    )
+
+    assert without.daily_vol_pct <= with_park.daily_vol_pct
+
+
+# ---- numerator and denominator must measure the same object -------------
+
+def test_held_book_daily_pnl_sums_the_book_and_drops_the_park():
+    from src.risk.rules import held_book_daily_pnl
+    positions = [
+        _pos("SGOV", 7530.0, intraday=-1.0),
+        _pos("MSFT", 500.0, intraday=-40.0),
+        _pos("V", 370.0, intraday=-10.0),
+    ]
+    pnl, measurable = held_book_daily_pnl(positions, cash_park_symbol="SGOV")
+    assert measurable is True
+    assert pnl == pytest.approx(-50.0)
+
+
+def test_an_unreadable_intraday_change_is_not_treated_as_flat():
+    """A holding whose day change cannot be read is not assumed to have not
+    moved — assuming flat understates a loss and delays a brake."""
+    from src.risk.rules import held_book_daily_pnl
+
+    class Opaque:
+        symbol = "XYZ"
+        unrealized_intraday_pnl = float("nan")
+
+    pnl, measurable = held_book_daily_pnl(
+        [_pos("MSFT", 500.0, intraday=-40.0), Opaque()],
+    )
+    assert measurable is False
+    assert pnl == pytest.approx(-40.0)
+
+
+def test_the_numerator_is_the_held_book_when_the_threshold_is_vol_relative():
+    """The defect: the threshold was built from the held book's own
+    volatility while the loss tested against it was the whole ACCOUNT's day
+    change — realized losses on already-closed positions, commissions and
+    spread included, none of which the denominator models."""
+    from src.risk.rules import daily_loss_numerator
+    positions = [_pos("MSFT", 500.0, intraday=-40.0)]
+
+    pnl, basis = daily_loss_numerator(
+        -900.0, positions, vol_relative=True, cash_park_symbol="SGOV",
+    )
+    assert basis == "held_book"
+    assert pnl == pytest.approx(-40.0)
+
+
+def test_the_numerator_is_the_account_when_the_threshold_is_a_fixed_percent():
+    """The same rule pointed the other way, and the reason it is a rule
+    rather than a preference. Rungs 1 and 3 of `daily_loss_limit_pct` are
+    percentages OF THE ACCOUNT; feeding the held book's loss to those would
+    be the identical mismatch reversed."""
+    from src.risk.rules import daily_loss_numerator
+    positions = [_pos("MSFT", 500.0, intraday=-40.0)]
+
+    pnl, basis = daily_loss_numerator(
+        -900.0, positions, vol_relative=False, cash_park_symbol="SGOV",
+    )
+    assert basis == "account"
+    assert pnl == pytest.approx(-900.0)
+
+
+def test_a_flat_held_book_on_a_losing_account_falls_back_to_the_account():
+    """A broker that omits the intraday field reports exactly $0.00 on every
+    position, and nothing downstream can tell that apart from a genuinely
+    unmoved book. So a flat read is not trusted to SUPPRESS a breach the
+    account-wide number raises — fail toward not trading."""
+    from src.risk.rules import daily_loss_numerator
+    positions = [_pos("MSFT", 500.0, intraday=0.0)]
+
+    pnl, basis = daily_loss_numerator(-900.0, positions, vol_relative=True)
+    assert basis == "account"
+    assert pnl == pytest.approx(-900.0)
+
+
+def test_a_flat_held_book_on_a_flat_account_stays_on_the_held_book():
+    """The mirror: with nothing to disagree about there is no reason to
+    degrade the basis."""
+    from src.risk.rules import daily_loss_numerator
+    pnl, basis = daily_loss_numerator(
+        0.0, [_pos("MSFT", 500.0, intraday=0.0)], vol_relative=True,
+    )
+    assert basis == "held_book"
+    assert pnl == pytest.approx(0.0)
+
+
+def test_an_empty_book_reports_no_held_book_loss():
+    from src.risk.rules import daily_loss_numerator
+    pnl, basis = daily_loss_numerator(-900.0, [], vol_relative=True)
+    assert basis == "held_book"
+    assert pnl == pytest.approx(0.0)
+
+
+def test_the_limit_reports_which_rung_produced_it():
+    """`daily_loss_limit_pct` has three rungs and reading the number no
+    longer tells you which one fired. The numerator has to match, so the
+    basis is reported rather than guessed."""
+    engine = RiskRuleEngine(_cfg())
+    assert engine.daily_loss_limit_basis() == RiskRuleEngine.FIXED_BASIS
+
+    engine_vol = RiskRuleEngine(_cfg(), portfolio_vol_provider=lambda: 0.25)
+    assert engine_vol.daily_loss_limit_basis() == RiskRuleEngine.VOL_RELATIVE_BASIS
+    assert engine_vol.daily_loss_limit_pct == pytest.approx(0.75, abs=0.01)
+
+    explicit = RiskRuleEngine(
+        _cfg(max_daily_loss_pct=3.0), portfolio_vol_provider=lambda: 0.25,
+    )
+    assert explicit.daily_loss_limit_basis() == RiskRuleEngine.FIXED_BASIS
+    assert explicit.daily_loss_limit_pct == pytest.approx(3.0)
+
+
 # ---------------------------------------------------------------------------
 # docs/WORK.md item 32, reconciliation pass 2026-09-14.
 #

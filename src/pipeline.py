@@ -462,6 +462,24 @@ def _market_is_open_now(broker) -> bool:
     return True
 
 
+def _limit_is_vol_relative(risk_engine) -> bool:
+    """Is the daily-loss limit currently the HELD BOOK's volatility-relative
+    one, rather than a fixed percentage of the account?
+
+    docs/WORK.md item 32 — decides which day-change number `daily_loss_
+    numerator` compares. Read defensively: an engine that cannot answer (an
+    older stub, a Mock in a fixture) is treated as fixed-percentage, which
+    is the pre-2026-09-14 behaviour and the more-negative numerator on any
+    day with realized losses.
+    """
+    from src.risk.rules import RiskRuleEngine
+    try:
+        basis = risk_engine.daily_loss_limit_basis()
+    except Exception:  # noqa: BLE001
+        return False
+    return basis == RiskRuleEngine.VOL_RELATIVE_BASIS
+
+
 def _position_notional(position, qty: float) -> float:
     """Dollar value of `qty` shares of `position`, or 0.0 if unknowable.
 
@@ -1329,6 +1347,438 @@ class TradingPipeline:
     # correct sign per side, rather than two independently hand-picked
     # numbers for the two directions.
     _EMERGENCY_LIMIT_CUSHION_PCT = 0.01
+
+    #: Session status when the daily-loss breaker trips. **Replaces
+    #: "emergency_sold" for that breaker only** (2026-09-14, docs/WORK.md
+    #: item 32). The breaker no longer sells anything: it stops the desk
+    #: taking new risk and verifies that what is held is protected. The
+    #: string changed with the behaviour on purpose — a payload that still
+    #: said "emergency_sold" while nothing had been sold would be the kind of
+    #: record this desk has been burned by. `_force_delever` and the §11.2
+    #: gross-exposure ladder still sell, still tag their rows
+    #: FORCE_DELEVER, and are untouched by this.
+    DAILY_LOSS_HALT_STATUS = "daily_loss_halted"
+    #: The durable, per-symbol, machine-readable reason a held name records
+    #: when the halt refuses further risk on it. Not a drop of a target and
+    #: not a resize — see `_halt_on_daily_loss_breach`.
+    DAILY_LOSS_HALT_REASON = "daily_loss_halt"
+
+    def _daily_loss_breach(self, account, positions):
+        """`(violation_or_None, baseline, pnl_compared, basis)` for the daily
+        circuit breaker — ONE place that decides what number is compared.
+
+        **The defect this closes** (2026-09-14, docs/WORK.md item 32): the
+        breaker's threshold is measured from the HELD BOOK's own realized
+        volatility, and the loss tested against it was
+        `total_value - last_equity` — the whole account's day change,
+        including realized losses on positions already closed today,
+        commissions and spread. Numerator and denominator did not measure the
+        same object, so the breaker could trip (or not) on movement the
+        threshold never modelled. Both sides now read the held book, with the
+        cash park excluded from each of them.
+
+        `basis` is recorded, never inferred later: ``"held_book"`` when every
+        non-park holding exposed a finite intraday change, ``"account"`` when
+        any did not. The account fallback is the more negative number on any
+        day with realized losses, so it trips SOONER — fail toward not
+        trading. It is also used when a book is held but its intraday change
+        reads as exactly flat, because a broker that omits the field reports
+        precisely that and there is no way to tell the two apart from here;
+        a flat read on a held book is therefore not trusted to suppress a
+        breach the account-wide number would raise.
+        """
+        from src.risk.rules import daily_loss_numerator
+
+        total_value = account["portfolio_value"] if isinstance(
+            account, dict,
+        ) else getattr(account, "portfolio_value", None)
+        last_equity = (
+            account.get("last_equity", total_value) if isinstance(account, dict)
+            else getattr(account, "last_equity", total_value)
+        )
+        try:
+            baseline = float(last_equity)
+            account_pnl = float(total_value) - baseline
+        except (TypeError, ValueError):
+            # Unreadable snapshot — `check_daily_loss` owns the non-finite
+            # path and logs the bypass; hand it through unchanged.
+            return (
+                self.risk_engine.check_daily_loss(float("nan"), float("nan")),
+                float("nan"), float("nan"), "unreadable",
+            )
+        pnl, basis = daily_loss_numerator(
+            account_pnl, positions,
+            vol_relative=_limit_is_vol_relative(self.risk_engine),
+            cash_park_symbol=self._sweep_symbol(),
+        )
+        return (
+            self.risk_engine.check_daily_loss(baseline, pnl),
+            baseline, pnl, basis,
+        )
+
+    def _verify_stop_coverage_at_halt(self, positions) -> list[dict]:
+        """Per-symbol stop-coverage truth, read from the broker, for a halt.
+
+        **This is the precondition of the halt, not a report attached to
+        it.** Halting instead of liquidating is only safe if the
+        per-position stops are genuinely live at the broker, and the desk's
+        own records cannot be trusted to answer that question. The
+        `trades.stop_loss` column is written once at entry and nothing writes
+        it back when a stop is cancelled and replaced, so the archive can
+        show a position sitting below "its" stop while the live stop is ten
+        dollars lower and perfectly intact — which is exactly what the
+        2026-09-14 broker audit found for the Visa and Disney cases (WORK.md
+        items 35 and 69, both closed). The lesson from that audit is the
+        premise of this method: the stored record is not evidence about stop
+        coverage in either direction, so the halt asks the BROKER rather than
+        believing anything the desk wrote down. Two live reasons the answer
+        can genuinely be "no" remain: the same audit found stops widened on
+        three positions the desk had just decided it wanted out of, and a
+        sub-share remainder provably cannot hold an overnight stop at this
+        broker.
+
+        Three outcomes per holding, and the third is the one that exists
+        because of that archive:
+
+          ``covered``     open protective stops at least equal the held qty.
+          ``uncovered``   they do not — with the shortfall named by
+                          `_classify_coverage_gap`, the same classifier the
+                          session coverage audit uses, so an expected
+                          overnight sub-share lapse is not reported as a
+                          naked position.
+          ``unverified``  the broker could not be asked. **Never treated as
+                          covered.** `_reconcile_stop_coverage` `continue`s
+                          past this case and the symbol vanishes from its
+                          gap list; a halt that inherited that would
+                          silently assume protection exists.
+
+        The cash park is excluded — it is deliberately stopless
+        cash-equivalent, the same exemption the session audit makes.
+        """
+        out: list[dict] = []
+        park = (self._sweep_symbol() or "").strip().upper()
+        for p in positions or ():
+            symbol = str(getattr(p, "symbol", "") or "").strip().upper()
+            if not symbol or (park and symbol == park):
+                continue
+            try:
+                qty = float(getattr(p, "qty", 0) or 0)
+            except (TypeError, ValueError):
+                qty = 0.0
+            if qty == 0:
+                continue
+            is_short = qty < 0
+            held = abs(qty)
+            try:
+                _ok, specs = self.broker.snapshot_protective_stops(
+                    symbol, side=("buy" if is_short else "sell"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.critical(
+                    "HALT COVERAGE CHECK UNREADABLE: %s — the broker could "
+                    "not be asked whether a protective stop is live (%s). "
+                    "Reported as UNVERIFIED, never as covered.", symbol, exc,
+                )
+                out.append({
+                    "symbol": symbol, "held_qty": held, "covered_qty": None,
+                    "state": "unverified", "detail": str(exc)[:200],
+                })
+                continue
+            covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
+            if covered + 1e-6 >= held:
+                out.append({
+                    "symbol": symbol, "held_qty": held,
+                    "covered_qty": covered, "state": "covered",
+                })
+                continue
+            coverage, frac_uncovered = _classify_coverage_gap(
+                held=held, covered=covered,
+            )
+            out.append({
+                "symbol": symbol, "held_qty": held, "covered_qty": covered,
+                "state": "uncovered", "coverage": coverage,
+                "uncovered_qty": (
+                    frac_uncovered if coverage == "fractional" else held - covered
+                ),
+                "unprotected_value": _position_notional(
+                    p,
+                    frac_uncovered if coverage == "fractional"
+                    else held - covered,
+                ),
+            })
+        return out
+
+    @staticmethod
+    def _halt_coverage_shortfalls(coverage: list[dict]) -> list[dict]:
+        """The entries a halt must SHOUT about, not merely record.
+
+        A holding whose protection could not be verified, or whose durable
+        whole-share stop is missing or mis-sized. An expected overnight
+        sub-share lapse (`'fractional'`) is excluded for the same reason the
+        session audit excludes it — the durable leg is intact and the
+        remainder's DAY stop is gone by broker design every night; reporting
+        it as a naked position is how a banner gets tuned out. Its exposure
+        is still carried in the halt payload as a number.
+        """
+        return [
+            c for c in coverage
+            if c.get("state") == "unverified"
+            or (c.get("state") == "uncovered"
+                and c.get("coverage") in ("none", "partial"))
+        ]
+
+    def _halt_on_daily_loss_breach(
+        self, positions, loss_violation, run_id: str, *,
+        where: str, basis: str = "held_book", ctx=None,
+    ) -> dict:
+        """**Stop taking risk. Do not sell anything.** The daily-loss
+        circuit breaker's whole response, replacing the force-liquidation of
+        the entire book (2026-09-14, docs/WORK.md item 32).
+
+        WHY THE LIQUIDATION IS GONE. It submitted LIMIT orders 1% through the
+        market (`_EMERGENCY_LIMIT_CUSHION_PCT`), then called
+        `_finalize_pending_protections`, which restores the original stops on
+        any leg that did not fill. On a correlated gap — the only day a
+        whole-book dump could be argued for — a limit 1% through does not
+        fill, so the sequence was: cancel every protective stop, fail to
+        sell, put the stops back. An unprotected window, and nothing
+        achieved. On an ordinary day it filled fine, which is to say it
+        worked only when it was not needed. It also never once fired in
+        production: zero EMERGENCY_SELL/EMERGENCY_COVER rows in the archive
+        across 13 days of P&L whose worst day was -0.46% against a
+        reconstructed trip point near -0.70% of equity.
+
+        And the proportionate response already exists. `_enforce_gross_ceiling`
+        runs in the session preamble, trims only the EXCESS down to a
+        drawdown-scaled ceiling, and works with margin on. (`_force_delever`
+        is not it — it returns `[]` whenever `allow_margin` is true, which it
+        has been since 2026-09-02.) Nor is this breaker the defence against a
+        broker-initiated liquidation: at `max_gross_exposure_x: 2.0` against a
+        25% maintenance requirement the book can fall 33.3% before a margin
+        call, which is a week, not a day.
+
+        WHAT IT DOES INSTEAD, in order:
+
+          1. Reconcile fills, so every judgement below is made against
+             broker truth rather than a stale 'submitted' row.
+          2. Cancel every resting entry order. A working DAY entry limit is a
+             standing intention to add risk; refusing new risk has to mean
+             pending intentions too. Best-effort, and a failure is reported
+             in the alert rather than swallowed.
+          3. Run the session stop-coverage audit, which repairs a
+             recoverable long in place.
+          4. VERIFY coverage per held position against the broker
+             (`_verify_stop_coverage_at_halt`) — the precondition, see there.
+          5. File a durable, per-symbol, machine-readable refusal for every
+             holding, carrying its verified coverage state.
+          6. Alert the owner, escalating hard when any coverage is short or
+             unverifiable.
+
+        NOTHING HERE CLOSES, RESIZES OR ZEROES A POSITION, and nothing here
+        places an order except the coverage audit's stop REPAIR, which can
+        only ADD protection. A held name is refused, not sold; its target is
+        dropped, never set to zero (a 0% target reads as "sell it" on this
+        desk).
+
+        WHEN A POSITION HAS NO LIVE STOP AT THE MOMENT OF HALT: the halt
+        still halts — it must, because the alternative response was the
+        broken liquidation — but it does NOT halt quietly. The audit in step
+        3 first tries to re-place the stop from the level recorded on the
+        position's own BUY. If that fails, or if the broker could not be
+        asked at all, the symbol lands in `_halt_coverage_shortfalls`, the
+        owner alert leads with it by name and held quantity, and the returned
+        payload carries `stop_coverage_verified` plus
+        `unprotected_at_halt` so the feed, Mission Control and the evening
+        probe all see it. The desk does not sell the position to protect it:
+        selling on a breach day is exactly the behaviour being removed, and a
+        naked position is an operator escalation, not an excuse to fire the
+        mechanism that did not work.
+        """
+        held = list(positions or ())
+        logger.critical(
+            "DAILY LOSS HALT (%s): %s — refusing NEW RISK for the rest of "
+            "the session. %d position(s) are being kept and verified, not "
+            "sold (loss basis: %s).",
+            where, loss_violation.message, len(held), basis,
+        )
+        # 1. Broker truth before any judgement.
+        try:
+            self._reconcile_fills()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("daily-loss halt: fill reconcile failed: %s", exc)
+        # 2. Resting entry orders are standing intentions to add risk.
+        entries_cancelled = True
+        try:
+            self.broker.cancel_open_entry_orders()
+        except Exception as exc:  # noqa: BLE001
+            entries_cancelled = False
+            logger.error(
+                "DAILY LOSS HALT: could not cancel resting entry orders (%s) "
+                "— a working entry limit can still add risk during the halt. "
+                "Escalated to the owner.", exc,
+            )
+        # 3. The audit, which repairs a recoverable long in place.
+        try:
+            coverage_gaps = self._reconcile_stop_coverage()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("daily-loss halt: coverage audit failed: %s", exc)
+            coverage_gaps = []
+        # 4. Verify, per position, against the broker.
+        coverage = self._verify_stop_coverage_at_halt(held)
+        shortfalls = self._halt_coverage_shortfalls(coverage)
+        # 5. Durable per-symbol refusal.
+        self._record_daily_loss_halt_refusals(
+            coverage, loss_violation, run_id=run_id, where=where, ctx=ctx,
+        )
+        # 6. Alert.
+        self._alert_owner_daily_loss_halt(
+            loss_violation, coverage, shortfalls, held,
+            where=where, basis=basis, entries_cancelled=entries_cancelled,
+        )
+        return {
+            "status": self.DAILY_LOSS_HALT_STATUS,
+            "halted": True,
+            "halt_reason": self.DAILY_LOSS_HALT_REASON,
+            "halt_where": where,
+            "daily_loss_basis": basis,
+            "positions": len(held),
+            # Explicitly empty and explicitly present: a reader must be able
+            # to see that the breaker placed no orders, rather than infer it
+            # from a missing key. A call site that already holds the session's
+            # own earlier orders (deterministic trails, say) overwrites this
+            # key so the feed still renders them; `halted` / `halt_reason`
+            # remain the record that the BREAKER sold nothing, and the
+            # invariant that this method never appends an order is tested.
+            "orders": [],
+            "stop_coverage_gaps": coverage_gaps,
+            "stop_coverage_verified": coverage,
+            "unprotected_at_halt": [
+                str(c.get("symbol")) for c in shortfalls if c.get("symbol")
+            ],
+            "entry_orders_cancelled": entries_cancelled,
+            "run_id": run_id,
+        }
+
+    def _record_daily_loss_halt_refusals(
+        self, coverage: list[dict], loss_violation, *,
+        run_id: str, where: str, ctx=None,
+    ) -> None:
+        """One durable, machine-readable row per held symbol. Never raises.
+
+        The desk's rule is that anything refused leaves a per-symbol reason a
+        machine can read, not a sentence in a log file. A halt refuses every
+        held name further risk, so every held name gets a row — carrying its
+        verified coverage state, which is the fact an operator will actually
+        need afterwards.
+        """
+        from src.pipeline_stages import _persist_evidence
+        import json as _json
+
+        decision_id = getattr(ctx, "decision_id", None)
+        for entry in coverage or ():
+            symbol = entry.get("symbol")
+            if not symbol:
+                continue
+            try:
+                _persist_evidence(
+                    self.db, run_id=run_id, agent_name="pipeline",
+                    kind="pipeline_event", scope="symbol", symbol=symbol,
+                    decision_id=decision_id,
+                    evidence_json=_json.dumps({
+                        "stage": "daily_loss_halt",
+                        "outcome": "no_new_risk",
+                        "reason": self.DAILY_LOSS_HALT_REASON,
+                        "where": where,
+                        "detail": loss_violation.message,
+                        "stop_coverage": entry.get("state"),
+                        "coverage_shortfall": entry.get("coverage"),
+                        "held_qty": entry.get("held_qty"),
+                        "covered_qty": entry.get("covered_qty"),
+                    }, sort_keys=True),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "daily-loss halt: could not record the refusal reason "
+                    "for %s: %s", symbol, exc,
+                )
+
+    def _alert_owner_daily_loss_halt(
+        self, loss_violation, coverage: list[dict], shortfalls: list[dict],
+        positions, *, where: str, basis: str, entries_cancelled: bool,
+    ) -> None:
+        """Push the halt to the owner. Never raises.
+
+        Two different messages on purpose. A halt with every position
+        verifiably protected is a serious but orderly event. A halt with a
+        position that has no live stop, or one the broker could not be asked
+        about, is the state that ends a desk — it leads the message, by name,
+        and is never folded into the same sentence as the orderly case.
+        """
+        try:
+            from src import notifier as _notifier
+
+            lines = [
+                "🛑 DAILY LOSS HALT — NO NEW RISK THIS SESSION",
+                f"{loss_violation.message}",
+                f"Tripped at: {where}. Loss measured on: "
+                f"{'the held book' if basis == 'held_book' else 'the whole account'}.",
+                "",
+                "Nothing was sold. Every position is being KEPT. Resting "
+                "entry orders were "
+                + ("cancelled." if entries_cancelled
+                   else "NOT cancelled — the cancel failed, see below."),
+            ]
+            if shortfalls:
+                lines += [
+                    "",
+                    f"⚠️ {len(shortfalls)} POSITION(S) ARE NOT VERIFIABLY "
+                    "PROTECTED RIGHT NOW. A halt assumes the per-position "
+                    "stops are live at the broker. For these, that is not "
+                    "established:",
+                ]
+                for c in shortfalls:
+                    if c.get("state") == "unverified":
+                        lines.append(
+                            f"  {c.get('symbol')}: held {c.get('held_qty')} — "
+                            "the broker could NOT be asked whether a stop is "
+                            "live. Not the same as 'no stop'; it means "
+                            "unknown."
+                        )
+                    else:
+                        lines.append(
+                            f"  {c.get('symbol')}: held {c.get('held_qty')}, "
+                            f"covered {c.get('covered_qty')} "
+                            f"({c.get('coverage')}) — "
+                            f"${float(c.get('unprotected_value') or 0):.2f} "
+                            "unprotected."
+                        )
+                lines.append(
+                    "The desk did NOT sell these to protect them — selling on "
+                    "a breach day is the behaviour that was removed. Place a "
+                    "stop manually or flatten, by hand."
+                )
+            else:
+                covered = [c for c in coverage if c.get("state") == "covered"]
+                lines += [
+                    "",
+                    f"Stop coverage verified at the broker on all "
+                    f"{len(covered)} position(s).",
+                ]
+            if not entries_cancelled:
+                lines += [
+                    "",
+                    "⚠️ The resting-entry cancel FAILED. A working entry "
+                    "limit can still add risk while the desk is halted — "
+                    "check open orders by hand.",
+                ]
+            _notifier.send_owner_alert(
+                "\n".join(lines),
+                symbols=[
+                    str(c.get("symbol")) for c in shortfalls if c.get("symbol")
+                ],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("daily-loss halt owner alert failed: %s", exc)
 
     @staticmethod
     def _forced_close_side_and_qty(position_qty: float) -> tuple[str, float] | None:
@@ -7651,7 +8101,14 @@ class TradingPipeline:
                 or getattr(account, "equity", None)
                 or 0.0
             )
-            weights = normalized_holding_weights(positions, equity)
+            # 2026-09-14, docs/WORK.md item 32: the cash park is excluded
+            # here, exactly as `gross_exposure` already excludes it. Parked
+            # cash was 78% of the gross weight this yardstick was measured
+            # over on the archived book, which made the breaker's denominator
+            # neither the risk book nor the account.
+            weights = normalized_holding_weights(
+                positions, equity, cash_park_symbol=self._sweep_symbol(),
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Could not read the held book for the volatility-relative "
@@ -7933,11 +8390,12 @@ class TradingPipeline:
     # and calling the method directly.
     # ---------------------------------------------------------------
 
-    def _check_late_breach_and_emergency_liquidate(
-        self, run_id: str, where: str,
+    def _check_late_breach_and_halt(
+        self, run_id: str, where: str, ctx=None,
     ) -> dict | None:
-        """Refresh broker state and emergency-liquidate if the daily-loss
-        limit was crossed mid-session.
+        """Refresh broker state and HALT if the daily-loss limit was crossed
+        mid-session. Renamed with the behaviour change — it no longer
+        liquidates; see `_halt_on_daily_loss_breach`.
 
         Used by morning at the post-research checkpoint and (potentially)
         by other long-running phases to close the gap between the
@@ -7946,9 +8404,9 @@ class TradingPipeline:
         of time for the tape to gap through the limit while morning is
         still computing.
 
-        Returns the emergency-sold response dict on breach, None to
-        proceed. ``where`` is a short tag for the log message
-        (post-research / post-decision / etc).
+        Returns the halt response dict on breach, None to proceed. ``where``
+        is a short tag for the log message (post-research / post-decision /
+        etc).
         """
         try:
             account = self.broker.get_account()
@@ -7960,130 +8418,28 @@ class TradingPipeline:
             )
             return None
 
-        total_value = account["portfolio_value"]
-        last_equity = account.get("last_equity", total_value)
-        daily_pnl = total_value - last_equity
-
-        loss_violation = self.risk_engine.check_daily_loss(last_equity, daily_pnl)
+        loss_violation, _baseline, _pnl, basis = self._daily_loss_breach(
+            account, positions,
+        )
         if not (loss_violation and positions):
             return None
 
-        logger.warning(
-            "Morning late-breach (%s): %s — force-liquidating before "
-            "early-return; intra would otherwise wait 30 min",
-            where, loss_violation.message,
+        return self._halt_on_daily_loss_breach(
+            positions, loss_violation, run_id,
+            where=f"morning late-breach ({where})", basis=basis, ctx=ctx,
         )
-        orders = self._midday_emergency_liquidate(positions, loss_violation, run_id)
-        return {
-            "status": "emergency_sold",
-            "orders": orders,
-            "run_id": run_id,
-        }
 
-    def _midday_emergency_liquidate(
-        self, positions, loss_violation, run_id: str,
-    ) -> list[dict]:
-        """Force-close every position when daily loss breaches the cap —
-        a long is SOLD, a short is BOUGHT-TO-COVER.
-
-        Isolated from run_midday so the midday execution flow stays
-        readable. Uses a 1% slippage cushion on the limit (vs the 0.5%
-        used for ordinary sells) because the tape is usually ugly when
-        this fires — mirrored above/below the reference price by side (see
-        ``_EMERGENCY_LIMIT_CUSHION_PCT``).
-
-        Before this fix, a short position could ONLY ever be closed by its
-        own stop order — this loop's gate (`_full_sell_qty`) refused any
-        negative qty outright, so a held short was silently skipped on
-        every breach, with no log line and no operator signal. If that
-        short's stop had been cancelled, rejected, or the position needed
-        closing for a reason other than price, there was no mechanism at
-        all to get out of it. `_forced_close_side_and_qty` closes that gap
-        by reading the position's OWN sign to pick a side rather than
-        assuming SELL; see its docstring for why an indeterminate qty
-        refuses outright rather than guessing.
-        """
-        logger.warning(
-            "MIDDAY RISK ALERT: %s — force-closing all positions",
-            loss_violation.message,
-        )
-        # Reconcile pending fills BEFORE the per-symbol idempotence dedupe.
-        # Without this, a stale 'submitted' row whose broker order was
-        # actually cancelled/expired/rejected (e.g., halted symbol, day-order
-        # expiry) would falsely mask the symbol as "still in flight" and
-        # block this fresh emergency exit — the circuit breaker would
-        # silently stop trying to sell. Reconciliation flips terminal
-        # statuses in DB so has_pending_action_for_symbol sees truth.
-        self._reconcile_fills()
-        # Cancel the day's resting entry BUY limits BEFORE selling (audit
-        # round 2): a DAY entry order left working would re-buy into the very
-        # crash the breaker is liquidating — "force-close everything" must
-        # mean pending intentions too. Best-effort; preserves protective legs.
-        try:
-            self.broker.cancel_open_entry_orders()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("emergency liquidate: entry-order cancel failed: %s", exc)
-        orders: list[dict] = []
-        pending_protections: list[dict] = []
-        for p in positions:
-            try:
-                closing = self._forced_close_side_and_qty(p.qty)
-                if closing is None:
-                    logger.error(
-                        "Midday emergency liquidate: %s has an "
-                        "indeterminate position qty (%r) — refusing to "
-                        "guess SELL vs BUY-to-cover. A wrong guess here "
-                        "would ADD to the exposure instead of closing it. "
-                        "Left untouched; needs operator attention.",
-                        p.symbol, p.qty,
-                    )
-                    continue
-                side, qty = closing
-                action = "EMERGENCY_SELL" if side == "sell" else "EMERGENCY_COVER"
-                if self.db.has_pending_action_for_symbol(p.symbol, action):
-                    logger.info(
-                        "Midday emergency %s: skipping %s — prior "
-                        "%s submission still pending at broker",
-                        side, p.symbol, action,
-                    )
-                    continue
-                cushion = self._EMERGENCY_LIMIT_CUSHION_PCT
-                emergency_limit = round(
-                    p.current_price * ((1 + cushion) if side == "buy" else (1 - cushion)),
-                    2,
-                )
-                # audit F1 review #1: snapshot -> persist WAL -> cancel.
-                sale = self._submit_protected_sell(
-                    symbol=p.symbol, qty=qty, limit_price=emergency_limit,
-                    reference_price=p.current_price, position_qty_before_sell=qty,
-                    label=action, side=side,
-                )
-                if sale is None:
-                    continue
-                order, prot = sale
-                pending_protections.append(prot)
-                orders.append(order)
-                self.db.insert_trade(
-                    symbol=p.symbol, action=action, qty=qty,
-                    price=emergency_limit,
-                    reasoning=f"Daily loss limit breached: {loss_violation.message}",
-                    run_id=run_id,
-                    broker_order_id=order.get("id"),
-                    fill_status="submitted",
-                )
-                logger.info(
-                    "Emergency %s: %s %s @ limit $%.2f",
-                    "sell" if side == "sell" else "buy-to-cover",
-                    self._format_qty(qty), p.symbol, emergency_limit,
-                )
-            except Exception as e:
-                logger.error("Emergency liquidate failed for %s: %s", p.symbol, e)
-        # Wait + finalize: if any limit didn't fill, restore the original
-        # stops so the position doesn't ride the rest of the session naked.
-        self._finalize_pending_protections(
-            pending_protections, context="Midday emergency",
-        )
-        return orders
+    # `_midday_emergency_liquidate` was DELETED 2026-09-14 (docs/WORK.md
+    # item 32). It force-closed the entire book on a daily-loss breach with
+    # LIMIT orders 1% through the market and then restored the original
+    # stops on any leg that did not fill — so on a correlated gap, the one
+    # day a whole-book dump could be argued for, it cancelled every
+    # protective stop, failed to sell, and put the stops back. It never
+    # fired in production. `_halt_on_daily_loss_breach` replaces it: the
+    # breaker now refuses new risk and VERIFIES the stops it is relying on,
+    # and the proportionate leverage response stays where it already was,
+    # in `_enforce_gross_ceiling`. The EMERGENCY_SELL / EMERGENCY_COVER
+    # action tags remain recognised everywhere for historical rows.
 
     def _symbols_already_trimmed_today(self) -> set[str]:
         """Symbols that received a sell-side action earlier today (ET).
@@ -9478,9 +9834,12 @@ class TradingPipeline:
         in to `allow_margin=False` want structural enforcement, not an LLM
         nudge. Speed and safety > LLM judgment here.
 
-        Sell limit uses a 1% below-market buffer (same as
-        `_midday_emergency_liquidate`) because we prioritize fill over price
-        when clearing an unintended margin position.
+        Sell limit uses a 1% below-market buffer
+        (`_EMERGENCY_LIMIT_CUSHION_PCT`) because we prioritize fill over
+        price when clearing an unintended margin position. Note the contrast
+        with the deleted daily-loss liquidator (docs/WORK.md item 32): this
+        path clears a MEASURED cash deficit of known size, not a whole book
+        on a gap day, and it is reached only when `allow_margin` is false.
 
         Returns the submitted orders list (empty when no de-lever is needed).
         ctx.cash / positions / total_value are refreshed from broker after
@@ -10054,21 +10413,23 @@ class TradingPipeline:
         """Recheck deterministic loss protection before a suspension return."""
 
         existing_orders = list(orders or [])
-        emergency = self._check_late_breach_and_emergency_liquidate(run_id, where)
-        if emergency is not None:
+        halt = self._check_late_breach_and_halt(run_id, where)
+        if halt is not None:
             if session == "morning":
-                # A liquidation supersedes any PM checkpoint written before
-                # the breaker opened (for example while entering RM).  Never
-                # allow that pre-liquidation plan to resume after a reset.
+                # A halt supersedes any PM checkpoint written before the
+                # breaker opened (for example while entering RM). Never allow
+                # that pre-halt plan to resume after a reset.
                 from src import decision_checkpoint as _dc
                 _dc.mark_consumed("morning")
-                _dc.write_status("morning", "emergency_sold")
-            emergency["orders"] = existing_orders + list(emergency.get("orders") or [])
-            emergency["paid_analysis_suspended"] = True
-            emergency["suspension_error"] = str(error)
+                _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
+            # The halt itself placed no orders; these are the session's own,
+            # carried through so the feed still renders them.
+            halt["orders"] = existing_orders + list(halt.get("orders") or [])
+            halt["paid_analysis_suspended"] = True
+            halt["suspension_error"] = str(error)
             if extra:
-                emergency.update(extra)
-            return emergency
+                halt.update(extra)
+            return halt
         payload = self._paid_suspended_payload(
             run_id, orders=existing_orders, error=error,
         )
@@ -10315,27 +10676,25 @@ class TradingPipeline:
             last_equity = ctx.last_equity
 
             # Hard circuit breaker before any LLM/research work. If the account
-            # opens through the daily-loss limit, deterministic liquidation must
-            # not depend on PM/RM producing a tradeable plan later in the run.
-            daily_pnl = total_value - last_equity
-            loss_violation = self.risk_engine.check_daily_loss(last_equity, daily_pnl)
+            # opens through the daily-loss limit, the deterministic response
+            # must not depend on PM/RM producing a tradeable plan later in the
+            # run. That response is a HALT, not a liquidation — docs/WORK.md
+            # item 32, see `_halt_on_daily_loss_breach`.
+            loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
+                account, positions,
+            )
             if loss_violation and positions:
-                logger.warning(
-                    "Morning risk alert before research: %s — force-closing all positions",
-                    loss_violation.message,
+                halt = self._halt_on_daily_loss_breach(
+                    positions, loss_violation, run_id,
+                    where="morning pre-research", basis=loss_basis, ctx=ctx,
                 )
-                orders = self._midday_emergency_liquidate(positions, loss_violation, run_id)
-                # Any same-day plan is superseded by the liquidation — a
-                # stale unconsumed checkpoint must not resume, and the
-                # dead-man probe must not read this as a killed morning.
+                # Any same-day plan is superseded by the halt — a stale
+                # unconsumed checkpoint must not resume, and the dead-man
+                # probe must not read this as a killed morning.
                 from src import decision_checkpoint as _dc
                 _dc.mark_consumed("morning")
-                _dc.write_status("morning", "emergency_sold")
-                return {
-                    "status": "emergency_sold",
-                    "orders": orders,
-                    "run_id": run_id,
-                }
+                _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
+                return halt
 
             # All broker-resident and deterministic safety work above runs
             # even while the paid-analysis circuit is latched. Only now, at
@@ -10420,13 +10779,13 @@ class TradingPipeline:
                 # daily-loss limit DURING research and the morning would
                 # otherwise bail to no_data/no_trades, leaving the breach for
                 # the next intra tick (30 min away). Mirror the pre-research
-                # bypass: deterministic emergency liquidate, no LLM dependency.
-                late_breach = self._check_late_breach_and_emergency_liquidate(
-                    run_id, "post-research",
+                # bypass: deterministic HALT, no LLM dependency.
+                late_breach = self._check_late_breach_and_halt(
+                    run_id, "post-research", ctx=ctx,
                 )
                 if late_breach is not None:
                     _dc.mark_consumed("morning")
-                    _dc.write_status("morning", "emergency_sold")
+                    _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
                     return late_breach
 
                 if not analyses:
@@ -10466,18 +10825,18 @@ class TradingPipeline:
                 # Second late-breach check: PM is itself a multi-second LLM
                 # call (memory layers + Constructor sizing). The post-research
                 # check (#60) caught breaches during research but a parse-fail
-                # or empty-plan exit at this point would still skip
-                # deterministic liquidation until the next intra tick. Codex
+                # or empty-plan exit at this point would still skip the
+                # deterministic halt until the next intra tick. Codex
                 # r8 #1 caught this gap — same fix as #60, just one stage
                 # later in the pipeline.
-                late_breach = self._check_late_breach_and_emergency_liquidate(
-                    run_id, "post-decision",
+                late_breach = self._check_late_breach_and_halt(
+                    run_id, "post-decision", ctx=ctx,
                 )
                 if late_breach is not None:
-                    # The just-written checkpoint is superseded by the
-                    # emergency liquidation — never resume it.
+                    # The just-written checkpoint is superseded by the halt —
+                    # never resume it.
                     _dc.mark_consumed("morning")
-                    _dc.write_status("morning", "emergency_sold")
+                    _dc.write_status("morning", self.DAILY_LOSS_HALT_STATUS)
                     return late_breach
 
             if not portfolio_decision:
@@ -11066,27 +11425,26 @@ class TradingPipeline:
         last_equity = ctx.last_equity
 
         # Hard circuit breaker: if the session is already through the daily-loss
-        # limit, bypass all LLM/news/earnings work and force-liquidate
-        # immediately. This keeps the deterministic safety path alive even when
-        # the reviewer model/provider is unavailable.
-        daily_pnl = total_value - last_equity
-        loss_violation = self.risk_engine.check_daily_loss(last_equity, daily_pnl)
+        # limit, bypass all LLM/news/earnings work and HALT (docs/WORK.md item
+        # 32 — the force-liquidation this used to do is deleted). Keeps the
+        # deterministic safety path alive even when the reviewer
+        # model/provider is unavailable.
+        loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
+            ctx.account, positions,
+        )
         if loss_violation and positions:
             logger.warning(
-                "%s risk alert before LLM review: %s — bypassing reviewer and force-closing all positions",
-                session_type.capitalize(),
+                "%s risk alert before LLM review: %s — bypassing reviewer and "
+                "halting new risk", session_type.capitalize(),
                 loss_violation.message,
             )
-            orders = self._midday_emergency_liquidate(positions, loss_violation, run_id)
-            self._reconcile_fills()
-            return {
-                "status": "emergency_sold",
-                "session": session_type,
-                "positions": len(positions),
-                "review": None,
-                "orders": orders,
-                "run_id": run_id,
-            }
+            halt = self._halt_on_daily_loss_breach(
+                positions, loss_violation, run_id,
+                where=f"{session_type} pre-review", basis=loss_basis, ctx=ctx,
+            )
+            halt["session"] = session_type
+            halt["review"] = None
+            return halt
 
         # 1b. (DELETED 2026-09-12, owner decision.) A midday "auto take-profit"
         # used to sit here: sell 15% of any position once its unrealised
@@ -11350,44 +11708,50 @@ class TradingPipeline:
                 **review_log_kwargs,
             )
 
-            # Risk check: if daily loss limit breached, force-sell all. Else:
-            # dispatch the LLM's per-position action list.
-            daily_pnl = total_value - last_equity
-            loss_violation = self.risk_engine.check_daily_loss(last_equity, daily_pnl)
+            # Risk check: if the daily loss limit is breached, HALT — refuse
+            # further risk and verify the stops. Else dispatch the LLM's
+            # per-position action list. (docs/WORK.md item 32: this used to
+            # force-sell the whole book.)
+            #
+            # Refresh FIRST, then measure: the locals here date from BEFORE
+            # the LLM review (minutes of crash tape ago), and the loss
+            # numerator is now read off the held positions themselves, so a
+            # stale position list would be a stale measurement. Falls back to
+            # the pre-review snapshot if the refresh fails — a breach must
+            # still be judged, on the best truth available.
+            fresh_account = ctx.account
+            try:
+                fresh_account = self.broker.get_account() or ctx.account
+                fresh_positions = self.broker.get_positions()
+                if fresh_positions:
+                    positions = fresh_positions
+            except Exception as e:  # noqa: BLE001
+                logger.warning("post-review breach check: refresh failed "
+                               "(using pre-review snapshot): %s", e)
+            loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
+                fresh_account, positions,
+            )
             if loss_violation:
-                # Review fix: this branch previously FELL THROUGH to the park
-                # bookend — the system would buy SGOV with ~all equity minutes
-                # after force-selling everything, and the next intra tick
-                # would emergency-sell the fresh SGOV lot (spurious 🚨 alert +
-                # a full round-trip on the worst possible day). Mirror the
-                # pre-review breaker: reconcile and return, never park.
-                #
-                # audit round 2: refresh positions first — the locals here
-                # date from BEFORE the LLM review (minutes of crash tape ago);
-                # emergency limits priced off stale current_price can be
-                # unfillable on the very day fills matter most.
-                try:
-                    fresh_positions = self.broker.get_positions()
-                    if fresh_positions:
-                        positions = fresh_positions
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("post-review breach: position refresh failed "
-                                   "(using pre-review snapshot): %s", e)
-                orders.extend(self._midday_emergency_liquidate(
+                # Review fix, still load-bearing: this branch previously FELL
+                # THROUGH to the park bookend — the system would buy SGOV with
+                # ~all equity on a breach day and the next intra tick would
+                # act on the fresh SGOV lot. Mirror the pre-review breaker:
+                # return, never park.
+                halt = self._halt_on_daily_loss_breach(
                     positions, loss_violation, run_id,
-                ))
-                self._reconcile_fills()
-                return {
-                    "status": "emergency_sold",
-                    "session": session_type,
-                    "positions": len(positions),
-                    "review": review.model_dump() if review else None,
-                    "orders": orders,
-                    "run_id": run_id,
-                    "stop_coverage_gaps": coverage_gaps,
-                    # Spec §11.2 — gross exposure and its ceiling.
-                    "leverage": dict(ctx.leverage),
-                }
+                    where=f"{session_type} post-review", basis=loss_basis,
+                    ctx=ctx,
+                )
+                halt["session"] = session_type
+                halt["review"] = review.model_dump() if review else None
+                # The session's own earlier orders (deterministic trails and
+                # the like) are preserved for the feed. The halt itself
+                # placed none — `halted` / `halt_reason` are the record of
+                # that, and the invariant is tested.
+                halt["orders"] = list(orders)
+                # Spec §11.2 — gross exposure and its ceiling.
+                halt["leverage"] = dict(ctx.leverage)
+                return halt
             else:
                 # Phase 3.7 — deterministic trailing FIRST, before the LLM's
                 # discretionary TRAIL_STOP is considered. Arithmetic does not
@@ -11717,7 +12081,14 @@ class TradingPipeline:
             total_value, last_equity, daily_pnl, daily_return_pct, len(positions),
         )
 
-        loss_violation = self.risk_engine.check_daily_loss(last_equity, daily_pnl)
+        # `daily_pnl` above stays the ACCOUNT's day change — that is what the
+        # snapshot log, the dashboard and this payload report, and it is not
+        # changing. The BREACH TEST reads the held book instead, so that it
+        # is measured against the same object its threshold is built from
+        # (docs/WORK.md item 32, `_daily_loss_breach`).
+        loss_violation, _bl, _pnl, loss_basis = self._daily_loss_breach(
+            account, positions,
+        )
         if not loss_violation or not positions:
             result = {
                 "status": "ok",
@@ -11767,101 +12138,20 @@ class TradingPipeline:
                     result["intraday_scan"] = scan_result
             return result
 
-        logger.warning(
-            "INTRA RISK ALERT: %s — force-closing all %d positions",
-            loss_violation.message, len(positions),
+        # docs/WORK.md item 32 (2026-09-14): this was a near-verbatim copy of
+        # `_midday_emergency_liquidate` — the same 1%-through-the-market LIMIT
+        # orders, the same `_finalize_pending_protections` restore on no-fill.
+        # Both are gone. The intra breaker now HALTS: it cancels resting
+        # entries, verifies that every held position really is stop-covered
+        # at the broker, files a per-symbol refusal, and alerts. It sells
+        # nothing. See `_halt_on_daily_loss_breach`.
+        halt = self._halt_on_daily_loss_breach(
+            positions, loss_violation, run_id,
+            where="intra_check", basis=loss_basis, ctx=ctx,
         )
-        # Reconcile before per-symbol dedupe — see _midday_emergency_liquidate
-        # for full rationale. Critical for intra specifically because intra
-        # ticks every 30 min: a stale 'submitted' row from an earlier tick
-        # whose limit got cancelled at the broker would otherwise lock out
-        # every subsequent tick until end-of-day, silently disabling the
-        # circuit breaker for the rest of the session.
-        self._reconcile_fills()
-        # Cancel the day's resting entry BUY limits BEFORE selling (audit
-        # round 2): a DAY entry order left working would re-buy into the very
-        # crash the breaker is liquidating — "force-close everything" must
-        # mean pending intentions too. Best-effort; preserves protective legs.
-        try:
-            self.broker.cancel_open_entry_orders()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("emergency liquidate: entry-order cancel failed: %s", exc)
-        orders: list[dict] = []
-        pending_protections: list[dict] = []
-        for p in positions:
-            try:
-                # Direction-aware forced close (long → SELL, short → BUY-
-                # to-cover); see _midday_emergency_liquidate and
-                # _forced_close_side_and_qty for the full rationale — this
-                # loop used to be the near-verbatim twin of that one and
-                # inherits the same gap fix.
-                closing = self._forced_close_side_and_qty(p.qty)
-                if closing is None:
-                    logger.error(
-                        "Intra emergency liquidate: %s has an "
-                        "indeterminate position qty (%r) — refusing to "
-                        "guess SELL vs BUY-to-cover. A wrong guess here "
-                        "would ADD to the exposure instead of closing it. "
-                        "Left untouched; needs operator attention.",
-                        p.symbol, p.qty,
-                    )
-                    continue
-                side, qty = closing
-                action = "EMERGENCY_SELL" if side == "sell" else "EMERGENCY_COVER"
-                if self.db.has_pending_action_for_symbol(p.symbol, action):
-                    logger.info(
-                        "Intra emergency %s: skipping %s — prior "
-                        "%s submission still pending at broker",
-                        side, p.symbol, action,
-                    )
-                    continue
-                cushion = self._EMERGENCY_LIMIT_CUSHION_PCT
-                emergency_limit = round(
-                    p.current_price * ((1 + cushion) if side == "buy" else (1 - cushion)),
-                    2,
-                )
-                # audit F1 review #1: snapshot -> persist WAL -> cancel.
-                sale = self._submit_protected_sell(
-                    symbol=p.symbol, qty=qty, limit_price=emergency_limit,
-                    reference_price=p.current_price, position_qty_before_sell=qty,
-                    label=action, side=side,
-                )
-                if sale is None:
-                    continue
-                order, prot = sale
-                pending_protections.append(prot)
-                orders.append(order)
-                self.db.insert_trade(
-                    symbol=p.symbol, action=action, qty=qty,
-                    price=emergency_limit,
-                    reasoning=(
-                        f"Intra-session daily-loss breach: {loss_violation.message}"
-                    ),
-                    run_id=run_id,
-                    broker_order_id=order.get("id"),
-                    fill_status="submitted",
-                )
-                logger.info(
-                    "Intra emergency %s: %s %s @ limit $%.2f",
-                    "sell" if side == "sell" else "buy-to-cover",
-                    self._format_qty(qty), p.symbol, emergency_limit,
-                )
-            except Exception as e:
-                logger.error("Intra emergency liquidate failed for %s: %s", p.symbol, e)
-
-        # Wait + finalize: restore originals on any no-fill terminal.
-        self._finalize_pending_protections(
-            pending_protections, context="Intra emergency",
-        )
-
-        return {
-            "status": "emergency_sold",
-            "daily_pnl": daily_pnl,
-            "daily_return_pct": daily_return_pct,
-            "orders": orders,
-            "run_id": run_id,
-            "stop_coverage_gaps": coverage_gaps,
-        }
+        halt["daily_pnl"] = daily_pnl
+        halt["daily_return_pct"] = daily_return_pct
+        return halt
 
     def _recently_intraday_evaluated(self, symbol: str, cooldown_hours: float) -> bool:
         """True when the explicit evaluation ledger says this symbol ran.
@@ -13104,8 +13394,8 @@ class TradingPipeline:
         # kill, so 13 straight days of morning deaths passed this check and
         # the 🔴 banner never fired. Two sharper probes:
         if "morning" not in missing and "run" in present:
-            # A legit PM-less completion (no_data / emergency_sold) records a
-            # status marker — skip both probes for it.
+            # A legit PM-less completion (no_data / daily_loss_halted)
+            # records a status marker — skip both probes for it.
             try:
                 from src import decision_checkpoint as _dc0
                 legit_early_exit = _dc0.read_status("morning") is not None
