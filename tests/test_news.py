@@ -6,6 +6,14 @@ import pytest
 
 from src.data.news import NewsDataProvider, NewsItem
 from src.agents.news_analyst import NewsAnalystAgent
+from src.models import parse_telemetry
+
+
+@pytest.fixture(autouse=True)
+def _clean_telemetry():
+    parse_telemetry.reset()
+    yield
+    parse_telemetry.reset()
 
 
 # === NewsDataProvider tests ===
@@ -164,6 +172,117 @@ def test_news_analyst_analyze(mock_cls):
     assert "NVDA" in report.stock_news
     assert report.macro_narrative.current_regime == "Risk-on with caution"
     assert agent_result.tokens_used == 2500
+    assert report.dropped_news_symbols == []
+
+
+@patch("anthropic.Anthropic")
+def test_news_analyst_analyze_flags_symbol_dropped_from_response(mock_cls):
+    """PM TEST GATE item 4, second half. `stock_mentions` proves AMD had
+    real headline content shown to the model (the deterministic, pre-LLM
+    half of the comparison — see `NewsDataProvider.tag_symbol_mentions`),
+    but the model's `stock_news` never mentions AMD at all — exactly the
+    shape of the 2026-08-25 production incident (a dropped `"AMD": [`
+    opener spliced onto a neighbouring symbol). Before this fix that loss
+    was invisible: `stock_news` simply had no AMD key, indistinguishable
+    from "AMD had no news today"."""
+    response_json = json.dumps({
+        "macro_narrative": {
+            "last_updated": "2026-04-15",
+            "era_themes": ["AI supercycle"],
+            "current_regime": "Risk-on",
+            "key_state_tracker": {},
+        },
+        "state_changes": [],
+        "stock_news": {
+            "NVDA": [
+                {
+                    "headline": "New chip announcement",
+                    "sentiment": "bullish",
+                    "conviction": "medium",
+                    "impact_summary": "Next-gen GPU may accelerate AI adoption",
+                }
+            ]
+        },
+        "pm_briefing": "NVDA new chip bullish.",
+        "market_sentiment": "bullish",
+        "confidence": "medium",
+    })
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=response_json)]
+    mock_response.usage.input_tokens = 2000
+    mock_response.usage.output_tokens = 500
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    amd_item = NewsItem(
+        title="AMD announces new datacenter chip", summary="",
+        source="wire", published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+        link="",
+    )
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    report, _ = agent.analyze(
+        news_text="AMD announces new datacenter chip...",
+        universe=["SPY", "NVDA", "AMD"],
+        stock_mentions={"AMD": [amd_item], "NVDA": [amd_item]},
+    )
+
+    assert report is not None
+    assert "AMD" not in report.stock_news
+    assert report.dropped_news_symbols == ["AMD"]
+    assert parse_telemetry.dropped_snapshot() == {("StockNewsItem", "AMD"): 1}
+
+
+@patch("anthropic.Anthropic")
+def test_news_analyst_analyze_no_symbols_dropped_when_response_covers_every_mention(mock_cls):
+    """Control case: every symbol shown real headline content is answered
+    for, so nothing is flagged and nothing is recorded."""
+    response_json = json.dumps({
+        "macro_narrative": {
+            "last_updated": "2026-04-15",
+            "era_themes": ["AI supercycle"],
+            "current_regime": "Risk-on",
+            "key_state_tracker": {},
+        },
+        "state_changes": [],
+        "stock_news": {
+            "NVDA": [
+                {
+                    "headline": "New chip announcement",
+                    "sentiment": "bullish",
+                    "conviction": "medium",
+                    "impact_summary": "Accelerates AI adoption",
+                }
+            ]
+        },
+        "pm_briefing": "NVDA bullish.",
+        "market_sentiment": "bullish",
+        "confidence": "medium",
+    })
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=response_json)]
+    mock_response.usage.input_tokens = 2000
+    mock_response.usage.output_tokens = 500
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    nvda_item = NewsItem(
+        title="NVDA new chip", summary="", source="wire",
+        published=datetime(2026, 4, 12, tzinfo=timezone.utc), link="",
+    )
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    report, _ = agent.analyze(
+        news_text="NVDA new chip...",
+        universe=["SPY", "NVDA"],
+        stock_mentions={"NVDA": [nvda_item]},
+    )
+
+    assert report is not None
+    assert report.dropped_news_symbols == []
+    assert parse_telemetry.dropped_snapshot() == {}
 
 
 def _make_news_intel_report(state_changes: list[dict]):

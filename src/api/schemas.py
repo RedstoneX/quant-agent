@@ -211,6 +211,7 @@ PriceKind = Literal[
     "current_quote",
     "delayed_quote",
     "historical_daily_close",
+    "historical_intraday_close",
     "unknown",
 ]
 
@@ -317,6 +318,12 @@ class PriceBar(BaseModel):
     low: float
     close: float
     volume: int
+    # Provenance for `close` (docs/WORK.md item 15): market_as_of is this
+    # bar's OWN date/timestamp as the provider reports it, freshness is
+    # always "historical" — a bar is a look-back structure by construction,
+    # never a claim about "right now". `None` only if this bar predates the
+    # provenance rollout (should not happen for a freshly-served response).
+    close_price: PriceObservation | None = None
 
 
 class PriceBarsResponse(BaseModel):
@@ -381,6 +388,17 @@ class LiveQuote(BaseModel):
     never fabricated."""
     symbol: str
     last_price: float | None = None
+    # Provenance for `last_price` (docs/WORK.md item 15 — "we cannot tell a
+    # stale price from a live one"). `market_as_of` is Alpaca's own
+    # `latest_trade.timestamp` — a real per-trade exchange timestamp the
+    # SDK actually carries. `freshness` is derived from today's regular-
+    # session open (an exchange session boundary Alpaca's own calendar
+    # supplies), never an invented elapsed-minutes cutoff: "stale" means
+    # the last trade predates today's session open (or today isn't a
+    # trading day, or the calendar lookup failed) — this desk's IEX feed
+    # can otherwise go quiet for an illiquid name without anything else
+    # telling you. `None` only when `last_price` itself is `None`.
+    quote: PriceObservation | None = None
     prev_close: float | None = None
     session_open: float | None = None
     session_high: float | None = None
@@ -390,9 +408,10 @@ class LiveQuote(BaseModel):
 class LiveQuotesResponse(BaseModel):
     quotes: list[LiveQuote] = []
     # When Mission Control read Alpaca for this response — a fetch-time
-    # timestamp, not a per-trade exchange timestamp (Alpaca's snapshot SDK
-    # object doesn't expose one cleanly here). Lets the client label a
-    # quote "as of HH:MM:SS" instead of presenting it as unqualified live.
+    # timestamp. Each quote's own `market_as_of` (above) is the per-trade
+    # exchange timestamp; this `as_of` is deliberately kept separate so
+    # retrieval time never gets to make an old market observation look
+    # current (same split as `PriceObservation.retrieved_at`).
     as_of: str
     source: str = "alpaca_market_data"
     error: str | None = None

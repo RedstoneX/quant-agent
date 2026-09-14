@@ -4,7 +4,7 @@ import threading
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, date
-from typing import Any, ClassVar, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, computed_field, field_validator, model_validator
 
@@ -661,6 +661,62 @@ RATING_MAGNITUDE: dict[str, float] = {
     "strong_buy": 1.0, "buy": 0.5, "neutral": 0.0, "sell": 0.5, "strong_sell": 1.0,
 }
 
+#: `AnalystVerdict.magnitude` for a DIRECTIONAL verdict from a seat that
+#: states no independent strength of its own. The same "ordinary conviction"
+#: rung `RATING_MAGNITUDE` gives Technical's single-strength buy/sell, reused
+#: rather than respelled, so there is one number here and not four.
+#:
+#: WHY THIS IS FLAT, 2026-09-13 (see `docs/INCIDENT_HISTORY.md`, retired
+#: item 31). `score_verdict`
+#: (`src/verdicts.py`) is `magnitude + conviction_score(conviction)` — TWO
+#: signals, weight 1 each. Three seats used to derive `magnitude` from the
+#: very field they also hand to `conviction`:
+#:
+#:   * news       — magnitude was a table on `conviction` itself;
+#:   * macro      — magnitude was a table on `confidence`, which IS the
+#:                  conviction it reports;
+#:   * smart_money— magnitude AND conviction were both tables on the single
+#:                  `economic_role` label.
+#:
+#: For those seats the composite was not two signals averaged, it was one
+#: signal counted twice, at a spacing (0.33/0.67/1.0 for news, 0.25/0.5/0.75
+#: for macro, 1.0/0.6/0.3 for smart_money) that no source and no measurement
+#: stood behind — three different unsourced encodings of the same 3-rung
+#: scale. A "actionable" smart-money label alone scored 2.0, the maximum the
+#: composite can produce, equal to a strong_buy at high conviction from the
+#: one seat that was measured (item 18) as actually concluding.
+#:
+#: The rule now: magnitude carries information ONLY where a seat states a
+#: strength independent of its confidence. Technical does (its rating rungs).
+#: Nothing else on this desk does, so nothing else claims one. This REMOVES
+#: invented numbers rather than replacing them with better-argued ones —
+#: `qamc-no-arbitrary-numbers-principle`. The dropped inputs are not lost to
+#: the reader: macro's `regime_shift`/`shift_reason` still reach the verdict
+#: as evidence and invalidation, and smart_money's `economic_role` still sets
+#: conviction via `_SMART_MONEY_ROLE_CONVICTION`, whose ordering is a
+#: restatement of the pre-existing `_ROLE_RANK`, not a new judgment.
+#:
+#: AND WHY IT IS ZERO, not 0.5 — corrected 2026-09-13, same day, on
+#: adversarial review before merge. The first version of this deletion set the
+#: four rungless seats to 0.5, "Technical's `buy` rung, reused rather than
+#: respelled". Borrowing is not deriving: 0.5 is a number read off ANOTHER
+#: seat's scale, and these four seats do not have that scale — that is the
+#: whole reason they are here. A seat that states no strength states no
+#: strength, and the honest encoding of "no distance claimed" is no distance.
+#:
+#: This is only coherent because `rank_verdicts` no longer AVERAGES seats (see
+#: `src/verdicts.py`): such a seat still contributes its own weighted
+#: conviction to the total, so a directional read with nothing behind it is
+#: not silently equal to no coverage at all — it is equal to exactly what it
+#: is worth, its conviction. Under the old weighted average a zero here would
+#: have DRAGGED an agreeing candidate down; under a sum it cannot.
+#:
+#: If a seat is ever given a real strength scale of its own — measured, or
+#: read from the instrument the way Technical's rungs are — that is a schema
+#: change to RATIFY with the derivation attached, not a constant to restore
+#: here. Tracked as `docs/WORK.md` item 62.
+NO_STATED_STRENGTH: float = 0.0
+
 RATING_DIRECTION: dict[str, str] = {
     "strong_buy": "bullish", "buy": "bullish", "neutral": "neutral",
     "sell": "bearish", "strong_sell": "bearish",
@@ -1215,6 +1271,29 @@ class ReasoningChain(LLMOutputModel):
     premortem_check: str = ""
 
 
+class ExitReviewChain(ReasoningChain):
+    """The POSITION REVIEWER's chain, in the container the risk seat reads.
+
+    `_risk_review_exits` carries the reviewer's own six checks in a
+    `ReasoningChain` because that is the container `RiskManagerAgent` renders;
+    `risk_review_mode._CHAIN_ROWS[EXIT_REVIEW]` relabels each slot with the
+    reviewer's real field name. One PM slot has no counterpart at all —
+    `news_check` — and is not rendered to the seat on this path. It was
+    nonetheless being filled with a placeholder string ("[unused on the
+    exit-review path...]") for one reason only: `ReasoningChain` makes it
+    `min_length=1`. Inventing content to satisfy a constraint that does not
+    apply is how the fabricated `or "n/a"` placeholders started.
+
+    So this subclass relaxes exactly that one field, and only for the exit
+    path. It is a deliberate narrowing of a parent constraint, kept to a
+    single field so the relaxation is legible: the MORNING path never
+    constructs this class, and `ReasoningChain.news_check` stays mandatory
+    there. `continuity_check` and `premortem_check` are already optional on
+    the parent and are never rendered on this path.
+    """
+    news_check: str = ""
+
+
 class AnalystProvenance(LLMOutputModel):
     """Machine-checkable specialist claim supporting a PM target.
 
@@ -1360,19 +1439,15 @@ _SMART_MONEY_ROLE_CONVICTION: dict[str, str] = {
     "historical": "low",
 }
 
-#: `SmartMoneyFinding.economic_role` -> `AnalystVerdict.magnitude` for a
-#: directional (non-neutral) stance. Also NEW JUDGMENT: no field on this
-#: model measures how far the seat leans. Reuses the same conviction-style
-#: ordering as `_SMART_MONEY_ROLE_CONVICTION` above, equal-spaced in the
-#: style of `RATING_MAGNITUDE` (Phase 13 §13.3: start equal, adjust only on
-#: out-of-sample proof) — nothing here has been measured either. Flag for
-#: review.
-_SMART_MONEY_ROLE_MAGNITUDE: dict[str, float] = {
-    "actionable": 1.0,
-    "confirmatory": 0.6,
-    "contradictory": 0.3,
-    "historical": 0.3,
-}
+#: DELETED 2026-09-13 (retired item 31): `_SMART_MONEY_ROLE_MAGNITUDE`,
+#: an unsourced {actionable 1.0, confirmatory 0.6, contradictory 0.3,
+#: historical 0.3} table keyed on the SAME `economic_role` that
+#: `_SMART_MONEY_ROLE_CONVICTION` above is keyed on. Both halves of
+#: `score_verdict` therefore read one categorical label, so the composite
+#: counted it twice and an "actionable" finding alone scored the maximum.
+#: Magnitude is now `NO_STATED_STRENGTH` (0.0 — this seat has no strength
+#: scale of its own, and does not borrow one); the role still sets
+#: conviction, which is the one place it has a derivation behind it.
 
 
 class SmartMoneyFinding(LLMOutputModel):
@@ -1475,10 +1550,10 @@ class SmartMoneyFinding(LLMOutputModel):
         """This finding, restated in the shared Phase 13 verdict shape.
 
         UNLIKE `TechAnalysisResult.to_verdict`, this is only a PARTIAL
-        restatement — see `_SMART_MONEY_ROLE_CONVICTION` and
-        `_SMART_MONEY_ROLE_MAGNITUDE` above for the two fields that are new
-        judgment, not a value already sitting on this model. Flagged for
-        review.
+        restatement — see `_SMART_MONEY_ROLE_CONVICTION` above for the one
+        field that is new judgment rather than a value already sitting on
+        this model. (There used to be a second, `_SMART_MONEY_ROLE_MAGNITUDE`;
+        it was deleted on review — see the note where it stood.)
 
         direction    — `stance`, with "mixed" folded into "neutral". This
                        is a restatement of existing desk convention, not a
@@ -1489,9 +1564,15 @@ class SmartMoneyFinding(LLMOutputModel):
                        "mixed" and "neutral" as the same non-directional
                        bucket — conflicting buy/sell activity supports
                        neither a bullish nor a bearish call.
-        magnitude    — 0.0 for neutral (including former "mixed"); else
-                       `_SMART_MONEY_ROLE_MAGNITUDE[economic_role]`. New
-                       judgment.
+        magnitude    — `NO_STATED_STRENGTH` (0.0), directional or not. This
+                       seat states no strength independent of
+                       `economic_role`, and `economic_role` already drives
+                       conviction, so a magnitude derived from it would be
+                       the same signal counted twice — and a magnitude
+                       borrowed off Technical's rungs would be a number this
+                       seat has no scale for. The seat still reaches the
+                       ranking through its weighted conviction; see
+                       `NO_STATED_STRENGTH` and `src/verdicts.py`.
         conviction   — `_SMART_MONEY_ROLE_CONVICTION[economic_role]`. New
                        judgment.
         evidence     — `summary` and `why_now`, each as one labelled item
@@ -1507,7 +1588,9 @@ class SmartMoneyFinding(LLMOutputModel):
                        for review, not presented as a restatement.
         """
         stance = "neutral" if self.stance in ("neutral", "mixed") else self.stance
-        magnitude = 0.0 if stance == "neutral" else _SMART_MONEY_ROLE_MAGNITUDE[self.economic_role]
+        # 0.0 either way — a neutral read has no lean, and a directional
+        # read from this seat states no distance. See `NO_STATED_STRENGTH`.
+        magnitude = NO_STATED_STRENGTH
         conviction = _SMART_MONEY_ROLE_CONVICTION[self.economic_role]
 
         evidence: list[VerdictEvidence] = []
@@ -1872,10 +1955,54 @@ class SymbolRejection(LLMOutputModel):
         return _normalize_symbol(v)
 
 
+#: The one label a risk verdict carries, shared by both verdict shapes.
+#: Extracted so the exit-path verdict cannot drift a category out of step with
+#: the morning one — `portfolio_manager` reads this field's recent history to
+#: self-calibrate and a category it does not know is a silently dropped signal.
+RiskReasonCategory = Literal[
+    "clean",             # approved untouched, no mods
+    "oversized",         # sizing too aggressive vs conviction
+    "rr_fail",           # legacy label: a range BUY cut/refused with reward:risk as a named factor (no universal floor since 2026-09-11; never applies to a breakout)
+    "concentration",     # sector / single-name too heavy
+    "correlation_risk",  # theme/factor clustering flagged
+    "event_risk",        # pre-earnings / FOMC / macro event volatility
+    "macro_misalign",    # PM's net exposure deviates from Macro target
+    "data_degraded",     # multiple upstream sources failed
+    "signal_fidelity",   # PM contradicts TechAnalyst without explanation
+    "other",             # doesn't fit the above
+]
+
+
+class _PerSymbolRejections:
+    """`rejections_by_symbol()` for both risk verdict shapes.
+
+    A plain mixin, deliberately carrying NO annotations: pydantic collects
+    field annotations from every base, so declaring `rejected_symbols` here
+    would reorder the fields of `RiskVerdict`, which is serialised into
+    archived agent logs.
+    """
+
+    def rejections_by_symbol(self) -> dict[str, str]:
+        """`{SYMBOL: reason}` for every per-symbol refusal in this verdict.
+
+        First entry wins on a duplicated symbol — two reasons for refusing
+        the same name still refuse it once, and the first is the one the
+        audit trail carries.
+        """
+        out: dict[str, str] = {}
+        for rejection in self.rejected_symbols:
+            out.setdefault(rejection.symbol, rejection.reason)
+        return out
+
+
 class RiskReasoningChain(LLMOutputModel):
     """6-step CoT for the risk manager — forces audit trail on the last gate.
     Every field has `min_length=1` so the LLM can't skip a step by sending
     `""`. Matches the discipline on the other CoT chains.
+
+    MORNING PLAN path only. The exit review uses `ExitRiskReasoningChain`,
+    which is this chain minus the three steps the exit prompt itself stands
+    down or inverts — see that class.
     """
     rr_audit: str = Field(min_length=1)             # setup-aware since 2026-09-11: breakouts carry no R/R judgement; a range trade's real ratio is an input, not a floor
     signal_fidelity: str = Field(min_length=1)      # does PM's action align with Tech/Macro/News? silent contradictions?
@@ -1885,7 +2012,80 @@ class RiskReasoningChain(LLMOutputModel):
     overall: str = Field(min_length=1)              # final synthesis and why approved/rejected/modified
 
 
-class RiskVerdict(LLMOutputModel):
+class ExitRiskReasoningChain(LLMOutputModel):
+    """The risk seat's chain on the EXIT-REVIEW path.
+
+    Same six steps as `RiskReasoningChain`, but three of them are no longer
+    MANDATORY, because the exit prompt itself already tells the seat they do
+    not apply here (`src/agents/risk_review_mode._EXIT_REVIEW_HEADER`), and a
+    `min_length=1` field is a demand for an answer:
+
+    - `rr_audit` — checklist 2 is stood down. An exit has no entry geometry:
+      `_risk_review_exits` sends entry, stop and target as `0.0` because there
+      is no such thing to send. There is no ratio to audit.
+    - `sizing_sanity` — checklist 5 is stood down. No BUY or SHORT reaches
+      this path, and the % on an exit is the position reviewer's call on its
+      own position.
+    - `event_risk` — checklist 4 INVERTS here. "A binary event inside the
+      window, so downsize or reject" was written for an ENTRY, where refusing
+      carries LESS risk through the event. On an exit, refusing carries the
+      position THROUGH it. Compelling an answer to a question whose standing
+      instruction points the wrong way is not a safeguard; it produced the one
+      measured harm on this path. Archived row 330 (2026-09-01, `close-`
+      `0e9129f1`) answered "next earnings dates were NOT FETCHED this run" and
+      then set `reason_category: "data_degraded"` on that basis — a label
+      `portfolio_manager` reads back to self-calibrate. Optional here means
+      the seat may still report the dates it was given; it is no longer forced
+      to manufacture a paragraph about them.
+
+    `signal_fidelity`, `correlation_check` and `overall` stay mandatory: all
+    three are live questions on an exit, and `overall` is the audit trail.
+
+    Nothing here touches the morning BUY path — `RiskReasoningChain` is
+    unchanged and all six of its fields remain mandatory.
+    """
+    rr_audit: str = ""                              # stood down on this path (no entry geometry)
+    signal_fidelity: str = Field(min_length=1)      # does the reviewer's exit align with News/Macro? silent contradictions?
+    correlation_check: str = Field(min_length=1)    # what closing these leaves the book concentrated in
+    event_risk: str = ""                            # instruction inverts on this path; report, never compelled
+    sizing_sanity: str = ""                         # stood down on this path (nothing to size)
+    overall: str = Field(min_length=1)              # final synthesis and why approved/refused
+
+
+class ExitRiskVerdict(_PerSymbolRejections, LLMOutputModel):
+    """The risk seat's verdict on the EXIT-REVIEW path.
+
+    `RiskVerdict` minus the two levers that do nothing here. `modifications`
+    and `scale_all_buys` are applied ONLY by `_apply_risk_modifications`,
+    which is called ONLY from the morning `RiskStage`
+    (`src/pipeline_stages.py`); `_risk_review_exits` returns a veto SET and
+    reads neither. They were emitted, parsed, stored and discarded. A field
+    the seat is asked to fill and no code consumes is not a harmless extra —
+    it is an instruction to spend judgement on a lever that is not connected.
+
+    Refusal is the whole lever here: `approved=False` refuses every exit in
+    the batch (the book is what failed), `rejected_symbols` refuses one name
+    and lets the rest through. Per doctrine a refusal DROPS the exit from the
+    batch with a durable per-symbol reason; nothing on this path zeroes a
+    target.
+    """
+    approved: bool
+    reasoning_chain: ExitRiskReasoningChain
+    # Same semantics as on `RiskVerdict`: each entry kills exactly one exit
+    # and leaves the others standing. The `reason` is the per-symbol audit
+    # trail written to `specialist_evidence`.
+    rejected_symbols: list[SymbolRejection] = []
+    reason_category: RiskReasonCategory = "clean"
+    reasoning: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_enum_case(cls, values):
+        values = _normalize_rejected_symbols_field(values)
+        return _normalize_enum_case_fields(values, lower_fields=("reason_category",))
+
+
+class RiskVerdict(_PerSymbolRejections, LLMOutputModel):
     # BOOK-level verdict. `approved=False` still refuses the ENTIRE plan and
     # always will: correlation clusters, total exposure and drawdown state are
     # properties of the whole account, so when the BOOK is what fails, killing
@@ -1921,18 +2121,7 @@ class RiskVerdict(LLMOutputModel):
     # history of this field to self-calibrate in a targeted way: repeated
     # `oversized` means cut base allocations; repeated `rr_fail` means trust
     # TA's R/R math more literally; etc. One label per verdict.
-    reason_category: Literal[
-        "clean",             # approved untouched, no mods
-        "oversized",         # sizing too aggressive vs conviction
-        "rr_fail",           # legacy label: a range BUY cut/refused with reward:risk as a named factor (no universal floor since 2026-09-11; never applies to a breakout)
-        "concentration",     # sector / single-name too heavy
-        "correlation_risk",  # theme/factor clustering flagged
-        "event_risk",        # pre-earnings / FOMC / macro event volatility
-        "macro_misalign",    # PM's net exposure deviates from Macro target
-        "data_degraded",     # multiple upstream sources failed
-        "signal_fidelity",   # PM contradicts TechAnalyst without explanation
-        "other",             # doesn't fit the above
-    ] = "clean"
+    reason_category: RiskReasonCategory = "clean"
     reasoning: str
 
     @model_validator(mode="before")
@@ -1940,18 +2129,6 @@ class RiskVerdict(LLMOutputModel):
     def _normalize_enum_case(cls, values):
         values = _normalize_rejected_symbols_field(values)
         return _normalize_enum_case_fields(values, lower_fields=("reason_category",))
-
-    def rejections_by_symbol(self) -> dict[str, str]:
-        """`{SYMBOL: reason}` for every per-symbol refusal in this verdict.
-
-        First entry wins on a duplicated symbol — two reasons for refusing
-        the same name still refuse it once, and the first is the one the
-        audit trail carries.
-        """
-        out: dict[str, str] = {}
-        for rejection in self.rejected_symbols:
-            out.setdefault(rejection.symbol, rejection.reason)
-        return out
 
 
 class MacroObservation(LLMOutputModel):
@@ -2078,20 +2255,17 @@ class MacroAnalysis(LLMOutputModel):
     # see src/nominations.py.
     nominations: list[Nomination] = []
 
-    #: `regime_shift=True` is the macro analyst declaring the world just
-    #: changed underneath the position, not routine commentary — a strictly
-    #: stronger claim than an ordinary directional read at the same
-    #: confidence. Encoded as a magnitude BONUS on top of the confidence-based
-    #: base rate below, same "equal-spacing, nothing tuned" posture as
-    #: `RATING_MAGNITUDE` (Phase 13 §13.3: start equal, adjust only on
-    #: out-of-sample proof). NOT independently measured — flagged for review
-    #: in the PR that introduces this mapping.
-    _MAGNITUDE_BY_CONFIDENCE: ClassVar[dict[str, float]] = {
-        "high": 0.75, "medium": 0.5, "low": 0.25,
-    }
-    _REGIME_SHIFT_BONUS: ClassVar[float] = 0.25
+    # DELETED 2026-09-13 (retired item 31): `_MAGNITUDE_BY_CONFIDENCE`
+    # ({high 0.75, medium 0.5, low 0.25}) and `_REGIME_SHIFT_BONUS` (0.25).
+    # The first was a table on `confidence`, which is the very field this
+    # verdict hands to `conviction` — so `score_verdict`'s two-signal
+    # composite was counting macro's confidence twice, at an unsourced
+    # spacing. The second was an unsourced constant on top of it. Magnitude
+    # is now `NO_STATED_STRENGTH` (0.0); `regime_shift`/`shift_reason`
+    # still reach the reader through `invalidation` below, where they are the
+    # analyst's own words rather than a number nobody derived.
 
-    def to_verdict(self, symbol: str) -> "AnalystVerdict":
+    def to_verdict(self, symbol: str, *, sector: str | None = None) -> "AnalystVerdict":
         """This read, restated in the shared Phase 13 verdict shape.
 
         A RESTATEMENT, not a second opinion, mirroring
@@ -2102,27 +2276,64 @@ class MacroAnalysis(LLMOutputModel):
         on this model — see the evidence-registry seat-name comment
         threaded through `PortfolioManagerAgent.build_evidence_registry`,
         which already applies one macro read to many symbols). The caller
-        supplies which symbol this verdict is being cast for.
+        supplies which symbol this verdict is being cast for, and — as of
+        2026-09-13 — which SECTOR that symbol belongs to.
 
-        direction    — `equity_outlook` verbatim; already bullish/bearish/
-                       neutral, the same vocabulary `AnalystVerdict` uses.
+        direction    — `sector`'s own stance from `sector_guidance` when this
+                       read stated one for it; otherwise `equity_outlook`.
+
+                       **2026-09-13, retired item 31.** This used to be
+                       `equity_outlook` for every symbol, while
+                       `build_evidence_registry` — the SAME macro read, in
+                       the same prompt — already resolved a per-symbol stance
+                       from `sector_guidance` and only fell back to the broad
+                       outlook when the sector had no row. So the desk could
+                       tell the PM "macro is bearish energy" in the evidence
+                       registry and simultaneously rank an energy name on a
+                       bullish broad read. One belief, two answers.
+
+                       The resolution here is deliberately the registry's
+                       own, not a second rule: the matching rows' stances go
+                       through the identical `collapse_stances` reduction
+                       (`src/quantities.py`, the one definition both call),
+                       and the result is translated tilt -> direction by
+                       `normalize_sector_stance` — the module-level map that
+                       exists precisely so overweight/underweight is not
+                       respelled per consumer. An unresolved split across
+                       rows ("mixed") normalizes to None and is treated as
+                       NEUTRAL, matching the registry, where "mixed" fails
+                       `stance_is_aligned` and supports nothing. Nothing is
+                       invented and no number is introduced.
+
+                       The objection this method used to record — that
+                       `MacroAnalysis` "carries one conviction/evidence/
+                       invalidation set for its whole read, so there is
+                       nothing sector-specific to attach" — is only half
+                       true, and the true half does not block this. Evidence
+                       IS sector-specific: the matching row's own `reason`,
+                       already on the model, is surfaced first and labelled
+                       as the stance that decided the direction. Conviction
+                       is not, so `confidence` is still used unchanged — it
+                       is the only confidence this seat states, it is what
+                       the broad read used too, and substituting a
+                       sector-specific one would mean inventing it.
         conviction   — `confidence` verbatim; already high/medium/low.
-        magnitude    — MacroAnalysis carries no numeric magnitude field
-                       (unlike Technical's rating rungs), so one is DERIVED:
-                       a confidence-keyed base rate (`_MAGNITUDE_BY_CONFIDENCE`)
-                       plus a fixed bonus when `regime_shift` is True (a
-                       claimed regime change is a stronger claim than routine
-                       commentary at the same confidence level), clamped to
-                       1.0. Neutral is always 0.0 regardless of confidence or
-                       regime_shift — `AnalystVerdict` refuses a neutral
-                       verdict with nonzero magnitude, and a "neutral, but
-                       shifting" read is a contradiction in terms this method
-                       does not try to resolve silently.
-                       THIS MAPPING IS UNMEASURED — same posture as
-                       `RATING_MAGNITUDE`, called out explicitly for owner
-                       review before it feeds a ranking or a netting rule.
-        evidence     — `key_observations` (indicator/reading/interpretation,
-                       one VerdictEvidence each), `sector_guidance` (sector +
+        magnitude    — `NO_STATED_STRENGTH` (0.0), directional or not. See
+                       that constant for why the previous confidence-keyed
+                       table and regime-shift bonus were deleted rather than
+                       re-derived, and why nothing was borrowed in their
+                       place. `regime_shift` in particular changes nothing
+                       here — `AnalystVerdict` refuses a neutral verdict with
+                       nonzero magnitude anyway, and a "neutral, but
+                       shifting" read is a contradiction in terms this
+                       method does not try to resolve silently. This seat
+                       reaches the ranking through its weighted conviction.
+        evidence     — the deciding `sector_guidance` row first when a sector
+                       stance was applied (labelled `sector_stance:<sector>`,
+                       so a reader can see WHY this symbol's direction
+                       differs from the broad one), then `key_observations`
+                       (indicator/reading/interpretation, one VerdictEvidence
+                       each), the full `sector_guidance` list (sector +
                        stance + reason), and `risk_factors` (one per item).
                        All qualitative (`text=`); MacroAnalysis carries no
                        evidence-shaped numbers to attach as `value=`.
@@ -2143,15 +2354,41 @@ class MacroAnalysis(LLMOutputModel):
                        raises `ValidationError` otherwise, so an empty string
                        is only ever valid here for a neutral outlook.
         """
-        direction = self.equity_outlook
-        if direction == "neutral":
-            magnitude = 0.0
-        else:
-            magnitude = self._MAGNITUDE_BY_CONFIDENCE[self.confidence]
-            if self.regime_shift:
-                magnitude = min(1.0, magnitude + self._REGIME_SHIFT_BONUS)
+        # The sector rows this read stated for the symbol's own sector, if
+        # the caller supplied one. Matched on the canonical `sector` Literal
+        # (`_sanitize_sector_guidance` has already aliased it), case- and
+        # whitespace-insensitively, the same way `build_evidence_registry`
+        # keys its own lookup.
+        wanted = (sector or "").strip().lower()
+        sector_rows = [
+            row for row in self.sector_guidance
+            if wanted and row.sector.strip().lower() == wanted
+        ]
+        sector_direction = (
+            normalize_sector_stance(collapse_stances(row.stance for row in sector_rows))
+            if sector_rows else None
+        )
+        if sector_rows and sector_direction is None:
+            # `collapse_stances` returned "mixed" — the sector's own rows
+            # disagree. The registry treats that as supporting nothing, so
+            # this does too, rather than quietly falling back to the broad
+            # read the sector rows were specifically contradicting.
+            sector_direction = "neutral"
+
+        direction = sector_direction or self.equity_outlook
+        # 0.0 either way — see `NO_STATED_STRENGTH`.
+        magnitude = NO_STATED_STRENGTH
 
         evidence: list[VerdictEvidence] = []
+        for row in sector_rows:
+            evidence.append(VerdictEvidence(
+                label=f"sector_stance:{row.sector}",
+                text=(
+                    f"{row.stance} — {row.reason} (this sector stance sets "
+                    f"{symbol}'s macro direction; broad equity_outlook is "
+                    f"{self.equity_outlook})"
+                ),
+            ))
         for obs in self.key_observations:
             evidence.append(VerdictEvidence(
                 label=obs.indicator,
@@ -2350,9 +2587,14 @@ class StockNewsItem(LLMOutputModel):
 #: `AnalystVerdict` validator reserves for a real neutral read — keeps "low
 #: conviction" a genuine (if weak) lean instead of a silent no-lean that
 #: would rank identically to a symbol nobody covered.
-NEWS_CONVICTION_MAGNITUDE: dict[str, float] = {
-    "low": round(1 / 3, 2), "medium": round(2 / 3, 2), "high": 1.0,
-}
+#: DELETED 2026-09-13 (retired item 31): `NEWS_CONVICTION_MAGNITUDE`,
+#: {low 0.33, medium 0.67, high 1.0}. It was a table on `conviction` — the
+#: same field this verdict already reports as `conviction` — so
+#: `score_verdict`'s two-signal composite counted news's conviction twice, at
+#: a spacing nothing stood behind. Magnitude is now `NO_STATED_STRENGTH`
+#: (0.0 — this seat has no strength scale of its own and does not borrow
+#: Technical's); the conviction it was derived from is unchanged and still
+#: carried, and is what reaches the ranking.
 
 #: Same ordinal `_CONVICTION_RANK` idea as `src/nominations.py` and
 #: `CONVICTION_SCORE` in `src/verdicts.py` (low < medium < high), kept as a
@@ -2404,10 +2646,13 @@ def news_verdict_for_symbol(symbol: str, items: list["StockNewsItem"]) -> "Analy
     "low" — the weakest assertion the scale offers, since there is
     nothing here to be confident ABOUT.
 
-    **magnitude** — `NEWS_CONVICTION_MAGNITUDE[conviction]` for a
-    directional verdict (see that table's docstring for the mapping and why
-    it is a judgment call), or 0.0 for neutral — `AnalystVerdict` refuses a
-    neutral verdict with any other magnitude.
+    **magnitude** — `NO_STATED_STRENGTH` (0.0), directional or not. A news
+    item states a sentiment and a conviction, and nothing else about how far
+    it leans: a magnitude derived from that conviction would be the same
+    signal counted twice in `score_verdict`, and a magnitude borrowed off
+    Technical's rungs would be a scale this seat does not have. The seat
+    still reaches the ranking through its weighted conviction. See
+    `NO_STATED_STRENGTH` for the full reasoning and what was deleted.
 
     **evidence** — one `VerdictEvidence(label="headline", text=...)` per
     item, `headline` and `impact_summary` joined so the check is visible
@@ -2464,7 +2709,7 @@ def news_verdict_for_symbol(symbol: str, items: list["StockNewsItem"]) -> "Analy
     else:
         agreeing = [item.conviction for item in items if item.sentiment == direction]
         conviction = max(agreeing, key=lambda c: _NEWS_CONVICTION_RANK.get(c, -1)) if agreeing else "low"
-        magnitude = NEWS_CONVICTION_MAGNITUDE[conviction]
+        magnitude = NO_STATED_STRENGTH
         # No opposing item to quote — see the docstring's invalidation
         # section for why that is provably always true here, not merely
         # true of the fixtures this happens to have been tested against.
@@ -2501,6 +2746,21 @@ class NewsIntelligenceReport(LLMOutputModel):
     # even when the symbol never tripped the tech prefilter. Default []
     # so an old persisted/replayed report parses unchanged.
     nominations: list[Nomination] = []
+    # PM TEST GATE item 4, second half (2026-09-14). Computed by
+    # `NewsAnalystAgent.analyze()` AFTER parsing, exactly like
+    # `TechAnalysisResult.computed_levels` — never asked of the model,
+    # never invented from it either. Holds every symbol `stock_mentions`
+    # (the deterministic, pre-LLM word-boundary match over real wire text —
+    # see `NewsDataProvider.tag_symbol_mentions`) proves had real headline
+    # content shown to the model, but which has no key at all in `stock_news`
+    # above. This is the presence/absence check the 2026-09-03 incident
+    # ("a dropped `\"AMD\": [`-style opener spliced one symbol's news items
+    # onto another's") needed and did not have: that failure produces
+    # syntactically valid JSON, so it is invisible to any parser-level
+    # check and can only be caught by comparing what the model was shown
+    # against what it returned. Default `[]` so an old persisted/replayed
+    # report — and every caller that hasn't been updated — parses unchanged.
+    dropped_news_symbols: list[str] = []
 
     @model_validator(mode="before")
     @classmethod
@@ -2656,10 +2916,17 @@ class EarningsAnalysis(LLMOutputModel):
                      is unstructured lists of free-text risks, and
                      `data_quality` is free prose, not a graded scale.
                      Inventing a gradient from either would be a fake
-                     precision this seat cannot back. So every directional
-                     call gets one flat magnitude (0.5, the same "ordinary
-                     conviction" rung Technical uses for its single-strength
-                     buy/sell), and neutral gets 0.0. Flagged for review.
+                     precision this seat cannot back. So every call carries
+                     `NO_STATED_STRENGTH` (0.0) — no distance claimed, rather
+                     than a distance borrowed off Technical's scale. The seat
+                     still reaches the ranking through its weighted
+                     conviction.
+
+                     REVIEWED 2026-09-13 (retired item 31) and KEPT
+                     unchanged — this was the only one of the four new seats
+                     that did not invent a gradient, and the other three were
+                     brought to this shape rather than the reverse. The bare
+                     0.5 became the shared constant so there is one number.
         evidence   — `key_thesis` (the seat's own summary of its call) plus
                      the five reasoning-chain steps, labelled, plus
                      `data_quality` when the analyst said anything past the
@@ -2681,7 +2948,8 @@ class EarningsAnalysis(LLMOutputModel):
         """
         impl = self.investment_implications
         direction = impl.sentiment
-        magnitude = 0.0 if direction == "neutral" else 0.5
+        # 0.0 either way — see `NO_STATED_STRENGTH`.
+        magnitude = NO_STATED_STRENGTH
 
         evidence: list[VerdictEvidence] = []
         if impl.key_thesis.strip():

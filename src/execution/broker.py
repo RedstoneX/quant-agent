@@ -432,6 +432,12 @@ class AlpacaBroker:
         # process lifetime is still fine (1 entry per calendar day ≈ a
         # few KB / year).
         self._trading_day_cache: dict[date, bool] = {}
+        # Per-date cache for get_session_open, same lifetime/invariance
+        # argument as `_trading_day_cache` above — the exchange's regular
+        # session open (including early-close-day exceptions) is fixed by
+        # the calendar in advance. Backs `broker_reads._quote_freshness`
+        # (docs/WORK.md item 15), which may run on every /quotes read.
+        self._session_open_cache: dict[date, "datetime | None"] = {}
         # Stage 3 (shorts, D6). Per-run cache, same shape/lifetime as
         # `_trading_day_cache` above — a symbol's shortable/easy_to_borrow
         # flags don't change intra-session, so one asset-directory lookup
@@ -904,6 +910,28 @@ class AlpacaBroker:
         launchd-scheduled midday (13:00-14:30 ET) and close (15:30-15:55 ET)
         sessions would otherwise keep running against an already-shut market.
         """
+        return self._session_edge(on_date, "close")
+
+    def get_session_open(self, on_date: date | None = None):
+        """Return the ET-aware datetime when the regular cash session OPENS
+        today, or None if today is not a trading day or the calendar lookup
+        fails.
+
+        The mirror of `get_session_close`, and added for the same reason it
+        was: a caller that needs to know whether the market is open right
+        now must read BOTH edges from the exchange calendar rather than
+        assume 09:30. Late opens exist, and the desk's rule is that a timing
+        boundary comes from the calendar the broker publishes, never from a
+        number typed here. `src/coverage_watchdog.py` is the caller that
+        needs it — it may only place an order while the session is genuinely
+        open, and it runs from a unit that fires hours before the bell.
+        """
+        return self._session_edge(on_date, "open")
+
+    def _session_edge(self, on_date: date | None, attr: str):
+        """Shared body of `get_session_close` / `get_session_open` — one
+        calendar read, one attribute. Two copies of this would be two places
+        for the naive-datetime bug below to be fixed in."""
         from src.trading_calendar import ET, et_today
         from datetime import datetime as _dt
         target_date = on_date or et_today()
@@ -915,36 +943,94 @@ class AlpacaBroker:
             )
         except Exception as exc:
             logger.warning(
-                "get_session_close: calendar query failed for %s: %s",
-                target_date, exc,
+                "get_session_%s: calendar query failed for %s: %s",
+                attr, target_date, exc,
             )
             return None
         if not calendar:
             return None
         entry = calendar[0]
         entry_date = getattr(entry, "date", None)
-        entry_close = getattr(entry, "close", None)
-        if entry_date is None or entry_close is None:
+        entry_edge = getattr(entry, attr, None)
+        if entry_date is None or entry_edge is None:
             return None
         try:
-            # alpaca-py's Calendar.close is a full naive DATETIME (already
-            # carrying the session date + ET wall clock), NOT a time. The old
-            # code called datetime.combine(date, datetime), which ALWAYS
-            # raised TypeError → logged → returned None → the early-close
-            # guard never fired and midday/close ran against a shut market on
-            # half-days, submitting orders that can only be rejected
-            # (2026-07-16 audit: dead code since it was written; the test that
-            # was supposed to cover it used a MagicMock with a `time`).
-            # Keep the `time` branch for the older SDK shape.
-            if isinstance(entry_close, _dt):
-                return entry_close.replace(tzinfo=ET)
-            return _dt.combine(entry_date, entry_close).replace(tzinfo=ET)
+            # alpaca-py's Calendar.close/.open is a full naive DATETIME
+            # (already carrying the session date + ET wall clock), NOT a
+            # time. The old code called datetime.combine(date, datetime),
+            # which ALWAYS raised TypeError → logged → returned None → the
+            # early-close guard never fired and midday/close ran against a
+            # shut market on half-days, submitting orders that can only be
+            # rejected (2026-07-16 audit: dead code since it was written;
+            # the test that was supposed to cover it used a MagicMock with
+            # a `time`). Keep the `time` branch for the older SDK shape.
+            if isinstance(entry_edge, _dt):
+                return entry_edge.replace(tzinfo=ET)
+            return _dt.combine(entry_date, entry_edge).replace(tzinfo=ET)
         except Exception as exc:
             logger.warning(
-                "get_session_close: failed to resolve date=%s close=%s: %s",
-                entry_date, entry_close, exc,
+                "get_session_%s: failed to resolve date=%s %s=%s: %s",
+                attr, entry_date, attr, entry_edge, exc,
             )
             return None
+
+    def get_session_open(self, on_date: date | None = None):
+        """Return the ET-aware datetime when the regular cash session opens
+        on `on_date` (default today), or None if `on_date` is not a trading
+        day (weekend / holiday) or the calendar lookup fails.
+
+        Mirrors `get_session_close` (same Alpaca calendar entry, same
+        naive-datetime-vs-time SDK-shape handling), but answers "when did
+        the session START" rather than "when does it end" — needed to tell
+        a genuinely stale quote from a live one (docs/WORK.md item 15):
+        a last-trade timestamp from BEFORE today's session open, seen while
+        the market is open, means nothing has traded for this symbol yet
+        today, not that the feed is current. This is an exchange session
+        boundary Alpaca's own calendar supplies — never a fitted duration.
+
+        Cached per-date (a trading day's open time is fixed by the exchange
+        calendar in advance, same invariance argument as `is_trading_day`)
+        since this may be called on every `/quotes` read.
+        """
+        from src.trading_calendar import ET, et_today
+        from datetime import datetime as _dt
+        target_date = on_date or et_today()
+        if target_date in self._session_open_cache:
+            return self._session_open_cache[target_date]
+        try:
+            from alpaca.trading.requests import GetCalendarRequest
+
+            calendar = self.client.get_calendar(
+                GetCalendarRequest(start=target_date, end=target_date)
+            )
+        except Exception as exc:
+            logger.warning(
+                "get_session_open: calendar query failed for %s: %s",
+                target_date, exc,
+            )
+            return None  # transient failure — do not cache
+        if not calendar:
+            self._session_open_cache[target_date] = None
+            return None
+        entry = calendar[0]
+        entry_date = getattr(entry, "date", None)
+        entry_open = getattr(entry, "open", None)
+        if entry_date is None or entry_open is None:
+            self._session_open_cache[target_date] = None
+            return None
+        try:
+            if isinstance(entry_open, _dt):
+                result = entry_open.replace(tzinfo=ET)
+            else:
+                result = _dt.combine(entry_date, entry_open).replace(tzinfo=ET)
+        except Exception as exc:
+            logger.warning(
+                "get_session_open: failed to resolve date=%s open=%s: %s",
+                entry_date, entry_open, exc,
+            )
+            result = None
+        self._session_open_cache[target_date] = result
+        return result
 
     def get_top_movers(self, n: int = 15) -> list[dict]:
         """Return today's top-`n` gainers from Alpaca's screener.
@@ -1398,8 +1484,12 @@ class AlpacaBroker:
         facts needed both to detect a material move and to give Tech
         truthful intraday evidence:
 
-            {"last_price", "prev_close",
+            {"last_price", "last_trade_at", "prev_close",
              "session_open", "session_high", "session_low", "session_volume"}
+
+        `last_trade_at` is the raw provider datetime (or None) for the
+        latest trade's own `timestamp` field — used by `broker_reads.py`
+        to tell a stale last_price from a live one (docs/WORK.md item 15).
 
         The `session_*` fields come from Alpaca's TODAY bar, which is an
         INCOMPLETE, still-forming bar — callers must present it as such and
@@ -1488,8 +1578,15 @@ class AlpacaBroker:
             # `session_*` namespace so no caller can mistake it for a
             # completed daily bar (2026-08-19 intraday-evidence fix).
             today_bar = getattr(snap, "daily_bar", None) if snap is not None else None
+            # Alpaca's Trade model DOES carry its own `timestamp` field
+            # (verified against the installed SDK, 2026-09-13) — this is
+            # the provider's own market timestamp for the last print, not
+            # a guess. Kept as the raw datetime (or None); broker_reads.py
+            # serializes it and derives freshness from it.
+            last_trade_at = getattr(trade, "timestamp", None) if trade is not None else None
             out[symbol] = {
                 "last_price": _num(trade, "price"),
+                "last_trade_at": last_trade_at,
                 "prev_close": _num(prev_bar, "close"),
                 "session_open": _num(today_bar, "open"),
                 "session_high": _num(today_bar, "high"),
