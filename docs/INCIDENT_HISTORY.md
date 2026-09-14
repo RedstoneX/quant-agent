@@ -36,9 +36,12 @@ which model is best at following a deleted rule.
 
 **What was actually wrong, verified rather than assumed.**
 
-* Roughly half the selection score hung off that retired number. The "did it
-  pick from the qualified set" mark and the "did it take a qualified short"
-  mark both defined "qualified" as a ratio of 1.5 or better.
+* **Four of the six marks — 0.80 of the score out of 1.00 — hung off that
+  retired number.** Only "did it produce valid output" and "did it do
+  anything at all", 0.10 each, were clean. A first pass at this called it
+  "roughly half"; counting the weights rather than eyeballing them is what
+  corrected it, and the same pass corrected "16 prompt changes since" to 25
+  commits.
 * On the one real trading day the exam is built from, that definition is
   wrong three separate ways. Twelve of the 38 tradeable candidates are
   breakout setups, which the desk now says carry no reward-to-risk judgement
@@ -51,6 +54,12 @@ which model is best at following a deleted rule.
 * A third mark, "every thin pick names a catalyst", was grading a
   requirement that no longer exists: a catalyst is now required only when a
   trade's payoff cannot be measured at all, not when it is merely thin.
+* **The sharpest single case: SLB.** Ten of the twelve breakout candidates
+  sit below the retired 1.5, SLB among them at 1.28 — and `docs/OUTCOME.md`
+  names SLB that exact morning as the flagship trade the desk WRONGLY
+  REFUSED, because a 3x-ATR stop makes 1.29 the best ratio arithmetic allows
+  over the hold. The exam was set to mark a model DOWN for making the trade
+  the desk's own doctrine says it should have made.
 
 **What the fix does.** The exam no longer holds any opinion of its own about
 what makes a candidate qualified. It asks the desk's own admission rules —
@@ -79,6 +88,31 @@ blocker on a premise that was impossible by construction, while the actual
 blocker sat in the code unwritten-down. Nobody had checked; the wording
 sounded plausible next to a real spend-baseline contamination that did
 exist, and the resemblance was doing the work of evidence.
+
+**What this exam still cannot tell us, said plainly.** The rule that replaced
+the floor reads a reward-to-risk worked out from the desk's own measured
+price levels, not from the analyst's guessed target. **Not one of the 59 rows
+in the frozen fixture carries those levels** — the field did not exist when
+the copy was taken — so that number cannot be computed for any name on it,
+and no substitute would be the real one. It does not stop the exam working:
+nothing on that day is refused by the payoff rule that is not already refused
+for having no view at all, so admission is decided by coverage, rating,
+eligibility and how many analysts agree, none of which need a ratio. But it
+does mean the exam cannot say whether a model reads payoff geometry the way
+the desk now does, and nobody should claim it can. A day that WOULD support
+that question already exists in the archive — 2026-09-02, where 63 of 64
+readings carry the levels and every one of the 34 tradeable candidates has a
+computable structural ratio. Capturing it as a second fixture is unstarted
+work.
+
+**A stale number found in the same sweep, unrelated but worth the line.** The
+plain-Python replay of the desk's rules was still sizing positions off the
+conviction bands the trade-picking sheet used BEFORE 2026-09-10 (high
+1.5-3.0% rather than the live 2.0-4.0%). Nobody had named it. It changes no
+decision about which names are admitted — conviction only sizes — but it did
+mean the audit understated how far past the risk budget the admitted names
+collectively ask: 47.24% of equity, not the 56.49% they really ask. The bands
+are now parsed out of the live sheet by a test, so they cannot drift again.
 
 **What would catch it next time.** The grader's checks are now pinned by a
 test that fails if any check name reintroduces the retired floor, and the

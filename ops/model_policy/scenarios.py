@@ -696,6 +696,28 @@ def _pm_production_grade(decision: PortfolioDecision | None) -> list[Check]:
 # one production would actually make. Nothing here is tuned, and this file
 # introduces no threshold of its own.
 #
+# WHAT THIS FIXTURE CANNOT MEASURE, STATED RATHER THAN PAPERED OVER.
+# The rule that replaced the floor reads a STRUCTURAL reward:risk — derived
+# from the desk's own computed levels, not from the analyst's guessed target.
+# **Zero of this fixture's 59 rows carry `computed_levels`** (the key is
+# absent entirely; the field post-dates the pull), so
+# `PortfolioConstructor.real_reward_risk_preview` returns None for every name
+# on it. The quantity the current rule reads simply is not in this file, and
+# no constant swapped in for it would be the real one. Two consequences, and
+# the first is why this scenario is still usable:
+#   * The admitted set does NOT depend on it. Measured: not one name on this
+#     fixture is blocked by the payoff rule that is not already blocked for a
+#     neutral rating. Admission here is decided by coverage, rating,
+#     BUY-eligibility and net evidence — none of which need a ratio.
+#   * Whether a model READS payoff geometry the way the desk now does is
+#     therefore NOT measured here, and must not be claimed from this scenario.
+#     Scoring that needs a fixture carrying `computed_levels` and
+#     `setup_type`. One exists in the archive — production `run-bba4d4f3`,
+#     2026-09-02, where 63 of 64 analyses carry computed levels and all 34
+#     actionable candidates have a computable structural ratio (14 breakout /
+#     20 range). It has not been captured as a fixture, and doing so is its
+#     own job, not this one.
+#
 # WHY IT STILL SEPARATES EVIDENCE FROM FAMILIARITY. Thirteen bearish names
 # the desk refuses, two it admits, and a live session that took neither — the
 # bearish gap is real and is keyed entirely off ratings and evidence, not off

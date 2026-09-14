@@ -67,7 +67,15 @@ MAX_POSITION_RISK_PCT = 5.0
 # `pm_selection` grader ended up scoring models against a deleted rule.
 RR_FLOOR = REWARD_RISK_FLOOR
 SUBFLOOR_CATALYST_RISK_PCT = STARTER_POSITION_RISK_PCT
-CONVICTION_BANDS = {"high": (1.5, 3.0), "medium": (1.0, 2.0), "low": (0.5, 1.0)}
+# **CORRECTED 2026-09-14.** These were `high (1.5, 3.0) / medium (1.0, 2.0)`,
+# the bands `config/prompts/portfolio_manager.md` stated BEFORE 2026-09-10.
+# The live sheet has said 2.0-4.0 / 1.0-2.5 / 0.5-1.0 since, so this audit had
+# been sizing its replay off a prompt the desk no longer runs — and, because
+# `CONVICTION_SCORE` below is read off the band tops, ranking off it too.
+# Nobody had named it. `tests/test_deterministic_selection.py` now parses the
+# bands straight out of the live prompt and fails if these drift again, which
+# is the only version of this that holds.
+CONVICTION_BANDS = {"high": (2.0, 4.0), "medium": (1.0, 2.5), "low": (0.5, 1.0)}
 
 # `- [2026-08-27] headline → NVDA, SMH, SOXX` — the row shape Rule Priority
 # row 7 resolves a sub-floor catalyst against. Only the symbol list after the

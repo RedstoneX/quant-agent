@@ -51,10 +51,16 @@ settled. Restored:**
   `config/prompts/portfolio_manager.md` hashes to `00ca991d...` and no result
   file in the repo was produced against it. Deciding without a re-run would be
   picking a model from numbers already written down as invalid.
-  **The blocking dependency is a benchmark re-run, and it SPENDS OPENROUTER
-  CREDITS — real money, and the owner's single stated financial concern.** It
-  is therefore an owner call to authorise, not an agent one, and that is why
-  this line moved rather than resolved. Weight it against the fact that the
+  **STRUCK 2026-09-14 — this paragraph used to say "the blocking dependency
+  is a benchmark re-run … therefore an owner call to authorise", and that
+  framing is stale and was actively harmful.** It invited exactly the
+  proposal he had already refused: on 2026-09-13 he ruled that no model test
+  runs while any PM-gate item is open, and the recommendation to spend ~$5
+  and settle it was put to him once already and was wrong. The spend is of
+  course his money and nobody may spend it without him — that is not in
+  question and does not need restating as a pending "authorisation" he owes
+  anyone. **Nobody proposes this run to him. He raises it or it does not
+  happen.** Weight it against the fact that the
   `portfolio_manager` seat is ~93% of the LLM bill, so this is also the
   largest available saving. See `qamc-llm-cost-concentration`.
   **NOT DECIDED, and it is a FIRST run — not a re-run. Corrected 2026-09-14
@@ -68,8 +74,9 @@ settled. Restored:**
   ever been run against ONE model. Re-scoring the stored outputs instead is
   not available: they are truncated to the first 1,500 characters and 3 of 8
   trials carry nothing at all. **What actually invalidated the old numbers**
-  is prompt churn (16 changes to `config/prompts/portfolio_manager.md` since,
-  and roughly a fifth longer) plus a grader keyed to the retired reward:risk
+  is prompt churn (25 commits have touched
+  `config/prompts/portfolio_manager.md` since 2026-09-01, and it is roughly a
+  fifth longer) plus a grader keyed to the retired reward:risk
   floor — the second of those is FIXED as of 2026-09-14, gate item 8. The
   incumbent `openai/gpt-5.5` stays until a first run exists.
 
@@ -119,16 +126,30 @@ here once written up in `docs/INCIDENT_HISTORY.md` — this list is what is
 still wrong, not a history of what was.
 
 **7. PM-input shape/volume redesign — NOT A GATE ON THE MODEL TEST (corrected 2026-09-14); open WORK with two named pieces left, neither of them volume.** **Why it is not a gate:** a model comparison shows every candidate model the IDENTICAL frozen input, macro block included, so the size or shape of that block cannot change which model wins. It is a one-model prompt question, not a between-model one. The line that said this needed "the paid `--replay-run` benchmark" named something that does not exist: `--replay-run` is a flag on the REHEARSAL RIG (`scripts/rehearse.py`), and `ops/model_policy/benchmark_models.py` has no such flag. What a prompt change actually needs is a benchmark run on the same scenario before and after — and that is not the owner's to authorise, because it is not the model decision he ruled on. **The macro audit-hook evidence, recorded here so it is not lost:** across 56 archived `portfolio_manager` calls, 27 carried macro's full `reasoning_chain` under an instruction to audit it for logic errors, and ZERO responses named that chain or reported a macro logic error. The structural reason is that the PM's output schema has no field a macro audit finding could go in, so there is nowhere to put one. **Caveat, stated rather than buried:** the archive ends 2026-09-02 and 27 calls is a modest sample — that is "no evidence it works", not proof it cannot. The step that was actually missing — nobody had counted the CURRENT prompt, only the 2026-09-02 one — is done: the frozen `run_64290730` fixture rendered through the live `build_user_message` is 100,968 chars over 25 sections, and 22,094 of them (21.9%) were content-free. Full per-section table and the confirmation of item 18's "70%" (it was exactly 70.4%) in `docs/INCIDENT_HISTORY.md` ("item 18d"). Prompt is now 85,933 chars. **What is left is not volume:** (a) macro is the one seat still couriering full reasoning — its 6-paragraph `reasoning_chain` (2,287 chars) is verbatim, deliberately, under "audit these for logic errors"; deciding whether the audit hook is worth a non-bounded seat is a PROMPT change and needs a paid before/after benchmark run on one model, which the rig cannot substitute for (item 1's own lesson); (b) the two largest remaining sections, Technical Analysis (16,736) and Independent Source Agreement (11,902), are both already bounded and both scale linearly with the number of candidates covered — there is no honest cap to put on either, so the lever is how many names get covered, not how each one renders. Earnings, news and tech all now hand over call + conviction + thesis + falsifier. Do NOT re-open this as a size problem.
-**NOTHING HERE BLOCKS THE MODEL TEST ANY MORE — 2026-09-14.** Item 8 closed
-(`docs/INCIDENT_HISTORY.md`, 2026-09-14) and item 7 was never a gate on it —
-a comparison shows every model the identical frozen input, so the shape of
-that input cannot change which model wins. Item 7 stays listed here, under
-its own number, because it is genuine open work and because the board reads
-this section by number; it is not a blocker. **This does not authorise
-running the benchmark.** The one remaining condition is the owner's and it is
-only the spend — see the `DECIDE BY` line at the top of this file. Do not
-invent a new gate item to keep the gate alive; if a real input defect turns
-up, write it up on its own evidence.
+**ITEM 8 CLOSED 2026-09-14** (`docs/INCIDENT_HISTORY.md`). Its premise was
+false by construction — every benchmark input is frozen on disk and no live
+seat is called anywhere in the harness — and the real defect it was standing
+in front of, a grader still marking against the retired reward:risk floor, is
+fixed. **Item 7 is NOT a gate on the model test** and the claim that it was
+has been struck from it: a comparison shows every model the identical frozen
+input, so the shape of that input cannot change which model wins. It stays
+listed here under its own number because it is genuine open work and the
+board reads this section by number.
+
+**None of this authorises running the benchmark, and nobody proposes it to
+the owner.** He ruled on 2026-09-13 that no model test runs while any PM-gate
+item is open; item 7 is open. **A known limit on what the test would measure,
+recorded 2026-09-14 so it is not discovered mid-spend:** the only
+real-day scenario, `pm_selection`, runs on a fixture where zero of 59 rows
+carry `computed_levels`, so the STRUCTURAL reward:risk the current rule reads
+cannot be computed for any name on it. Admission does not depend on that
+quantity (verified — nothing is refused by the payoff rule that a neutral
+rating does not already refuse), so the scenario still measures selection
+against the desk's live admission rules; what it CANNOT measure is whether a
+model reads payoff geometry the way the desk now does. A fixture that could
+exists in the archive — production `run-bba4d4f3`, 2026-09-02, 63 of 64
+analyses carrying computed levels and all 34 actionable candidates with a
+computable structural ratio — and capturing it is unstarted work, not a gate.
 
 Detail below, under "DATA QUALITY AUDIT" and "PM-INPUT ARCHITECTURE".
 
