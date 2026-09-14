@@ -531,8 +531,14 @@ class TestDataFaultsAtTheConstructor:
         )
         assert decisions == []
         assert constructor.last_data_faults == {}
-        assert "rejected" in constructor.last_drop_reasons["NVDA"]
+        # Board item 10 (2026-09-14, second pass): the word changed from
+        # "rejected" to "refused" when this path started filing a STRUCTURED
+        # refusal instead of leaning on the log scrape. The verdict did not
+        # change — still dropped, still not a data fault — so the assertion
+        # is strengthened to the durable record rather than loosened to the
+        # new adjective.
         assert REFUSAL_NO_STRUCTURE in constructor.last_drop_reasons["NVDA"]
+        assert constructor.last_refusals["NVDA"]["refusal"] == REFUSAL_NO_STRUCTURE
 
     def test_the_eligibility_preview_records_faults_too(self):
         """A symbol becomes unanalysable BEFORE the PM ever sees it: the

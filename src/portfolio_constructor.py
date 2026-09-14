@@ -231,6 +231,53 @@ STOP_REFUSAL_GROSS_EXPOSURE_CEILING = "gross_exposure_ceiling_refused"
 #: anything for the regex to see. Named and filed rather than left mute:
 #: this is not a judgement on the idea, only on its size.
 CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA = "delta_below_min_trade_weight"
+#: Board item 10, second pass (2026-09-14). The five fixes above closed every
+#: path that reached `_record_constructor_drops` as the literal "no matching
+#: constructor log line captured". They did NOT make every drop path
+#: MACHINE-READABLE: eight more sites still ended a candidate with nothing but
+#: a sentence in a log line, recovered by regex into a generic
+#: `constructor_dropped` row whose `reason` column is the same for all of
+#: them. One of those eight — no typed stop AND no ATR to read one from — the
+#: regex misses outright ("Constructor: BUY SYM has no stop ...", and the
+#: pattern requires rejected|refused|skipped straight after the symbol), so
+#: the "five is the complete set" claim was wrong on its own terms. Codes
+#: below, one per site, filed with `_note_refusal` exactly like the rest. The
+#: rule this whole item is about, stated once: a candidate is never dropped
+#: without a durable, per-symbol, machine-readable reason.
+#:
+#: The stop the analyst typed, or the entry it is measured from, is not a
+#: finite number. Not a trade judgement and not a data fault either — an
+#: input arrived and is nonsense, so it is refused rather than compared.
+STOP_REFUSAL_STOP_NOT_FINITE = "stop_price_not_finite"
+STOP_REFUSAL_ENTRY_NOT_FINITE = "entry_price_not_finite"
+#: Nothing typed a stop and there is no ATR reading to derive one from, so
+#: there is no stop at all to judge. The ONE path the regex never saw.
+STOP_REFUSAL_NO_STOP_NO_VOLATILITY = "no_stop_and_no_volatility_reading"
+#: `_resolve_entry_and_stop`'s terminal side check: whatever the stop rules
+#: above produced is absent, non-positive, or on the wrong side of entry.
+#: Filed only when no more specific refusal was already recorded for this
+#: symbol this call — the specific reason always wins over the generic one.
+STOP_REFUSAL_NO_VALID_STOP = "no_valid_stop_against_entry"
+#: `derive_structural_target` refused (not a data fault) and the trade has no
+#: take-profit to measure against. The code filed is the derivation's OWN
+#: `refusal` (`no_structural_levels`, `no_level_in_direction`,
+#: `no_expected_horizon`, `projection_implausible` — `src/data/levels.py`),
+#: because it is already a machine code and inventing a second name for it
+#: here would just be a synonym to keep in sync. This constant is the
+#: fallback for the impossible case of a refusal with no code on it.
+STOP_REFUSAL_NO_STRUCTURAL_TARGET = "no_structural_target"
+#: The derivation produced a price, but on the wrong side of the entry — a
+#: long whose computed target sits at or below entry, a short whose sits at
+#: or above it. Distinct from the above: structure was measurable, and what
+#: it measured does not pay for this direction.
+STOP_REFUSAL_TARGET_NOT_ABOVE_ENTRY = "target_not_above_entry"
+STOP_REFUSAL_TARGET_NOT_BELOW_ENTRY = "target_not_below_entry"
+#: §10.3's two sector-crowding refusals. The dial normally SHRINKS a trade;
+#: these are the two ends where it has nothing left to shrink to. Both
+#: already logged a sentence the regex happened to match, which is how they
+#: escaped the first pass — a matched sentence is still not a code.
+STOP_REFUSAL_SECTOR_AT_HARD_CEILING = "sector_at_absolute_ceiling"
+STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER = "sector_crowding_leaves_below_min_order"
 #: The `pipeline_event` reason under which `pipeline_stages.DecisionStage`
 #: files a structured constructor refusal (`refusal=<code>` beside it).
 #: Distinct from `constructor_dropped`, whose detail is recovered by regex
@@ -692,6 +739,7 @@ class PortfolioConstructor:
 
     def _note_refusal(
         self, symbol: str, direction: str, refusal: str, detail: str,
+        *, only_if_unrecorded: bool = False,
     ) -> None:
         """Record and log one NAMED trade refusal. Never raises.
 
@@ -699,9 +747,23 @@ class PortfolioConstructor:
         up (the symbol is never absent from `last_drop_reasons`), but the
         durable record is the structured entry — the caller reads
         `last_refusals` FIRST and files the code as data.
+
+        `only_if_unrecorded` is for the BACKSTOP callers (board item 10,
+        2026-09-14): a terminal check that fires after a more specific rule
+        has already refused the same symbol — `_resolve_entry_and_stop`'s
+        side check running on a `None` that `_widen_stop_past_noise` just
+        refused by name, say. The specific reason must win, so the backstop
+        writes nothing (and logs nothing) when this symbol already carries a
+        refusal or a data fault from this call. Without it the generic code
+        would overwrite the precise one and the fix would make the record
+        worse, not better.
         """
+        key = str(symbol or "").strip().upper()
+        if only_if_unrecorded and (
+            key in self.last_refusals or key in self.last_data_faults
+        ):
+            return
         try:
-            key = str(symbol or "").strip().upper()
             self.last_refusals[key] = {
                 "refusal": str(refusal), "detail": str(detail),
                 "direction": str(direction or ""),
@@ -885,7 +947,10 @@ class PortfolioConstructor:
                 plan = risk_plan.get(sym)
                 if plan is None:
                     # No stop, no entry, or the budget refused it outright.
-                    # _plan_risk_targets has already logged which.
+                    # drop-reason: delegated — `_plan_risk_targets` files the
+                    # named refusal (agreement ceiling, budget exhausted) or
+                    # `_resolve_entry_and_stop` filed the fault/refusal that
+                    # left this symbol without a plan in the first place.
                     continue
                 target_mag = plan.target_weight_pct  # unsigned magnitude
             else:
@@ -952,6 +1017,9 @@ class PortfolioConstructor:
                         f"attention of an immaterial position. No existing "
                         f"position to record as a HOLD.",
                     )
+                # drop-reason: both arms above are accounted for — a held
+                # position leaves a HOLD row (the symbol survives), a
+                # brand-new one files CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA.
                 continue
 
             if delta_pct < 0:
@@ -1140,6 +1208,9 @@ class PortfolioConstructor:
 
         for target in targets:
             if target.risk_allocation_pct is None:
+                # drop-reason: NOT a drop. A legacy notional target simply
+                # gets no RiskPlan; the delta loop still sizes it the old
+                # way and still builds its order.
                 continue  # legacy notional target — sized the old way
             sym = target.symbol
             if target.risk_allocation_pct == 0.0:
@@ -1164,12 +1235,17 @@ class PortfolioConstructor:
                 # BUY); a granted size on an unfilled close is the same
                 # exposure a trim-then-add plan has always carried.
                 requests.append(RiskRequest(sym, 0.0))
+                # drop-reason: NOT a drop. This is PM asking to CLOSE the
+                # name; it goes to the exit builder, not to nowhere.
                 continue
             analysis = analyses_by_sym.get(sym)
             entry, stop = self._resolve_entry_and_stop(
                 target, analysis, price_map.get(sym), regime=regime,
             )
             if entry is None or stop is None:
+                # drop-reason: delegated. `_resolve_entry_and_stop` has
+                # already filed the fault or the named refusal for this
+                # symbol — every one of its own exits does.
                 continue  # already logged; no stop means no honest size
             priced[sym] = (entry, stop)
             directions[sym] = target.direction
@@ -1608,6 +1684,8 @@ class PortfolioConstructor:
         if not self._require_sufficient_history(
             target.symbol, analysis, target.direction,
         ):
+            # drop-reason: delegated — `_require_sufficient_history` files
+            # STOP_REFUSAL_INSUFFICIENT_HISTORY before returning False.
             return (None, None)
 
         # The target is derived BEFORE the stop is finalised, because the
@@ -1622,11 +1700,19 @@ class PortfolioConstructor:
             # UNMEASURABLE by `_derive_target`; only a genuine refusal is
             # logged here as a rejection. Both fail closed.
             if not derivation.fault:
-                logger.warning(
-                    "Constructor: %s %s rejected — no target could be computed "
-                    "from structure [%s]: %s",
-                    "SHORT" if is_short else "BUY", target.symbol,
-                    derivation.refusal, derivation.detail,
+                # Board item 10 (2026-09-14, second pass): this used to be a
+                # bare `logger.warning`. It DOES match the capture's regex,
+                # so the drop was never invisible — but it reached the
+                # database as a generic `constructor_dropped` row carrying a
+                # sentence, indistinguishable by `reason` from six other
+                # causes. `derivation.refusal` is already a machine code
+                # (`src/data/levels.py`), so file that one rather than mint
+                # a synonym for it.
+                self._note_refusal(
+                    target.symbol, target.direction,
+                    derivation.refusal or STOP_REFUSAL_NO_STRUCTURAL_TARGET,
+                    f"no take-profit could be computed from structure at the "
+                    f"${entry_price:,.2f} entry: {derivation.detail}",
                 )
             return (None, None)
 
@@ -1658,6 +1744,23 @@ class PortfolioConstructor:
         else:
             invalid = stop_loss is None or stop_loss <= 0 or stop_loss >= entry_price
         if invalid:
+            # Board item 10 (2026-09-14, second pass). THE BACKSTOP. Every
+            # named stop refusal in `_widen_stop_past_noise` arrives here as
+            # a plain `None`, so this line is the last thing many drops say
+            # — and it said it only in prose. Filed as a code now, but
+            # `only_if_unrecorded` so the precise upstream reason (wrong
+            # side, wider than reach, no volatility reading, ...) is never
+            # overwritten by this generic one. What reaches here with
+            # nothing already recorded is a stop that is genuinely just on
+            # the wrong side of, or equal to, the entry.
+            self._note_refusal(
+                target.symbol, target.direction, STOP_REFUSAL_NO_VALID_STOP,
+                f"no valid stop {'above' if is_short else 'below'} the "
+                f"${entry_price:,.2f} entry (stop={stop_loss}). A stop that "
+                f"does not sit on the protective side of the entry protects "
+                f"nothing, so the trade is refused rather than shipped.",
+                only_if_unrecorded=True,
+            )
             logger.warning(
                 "Constructor: %s %s rejected — no valid stop %s entry "
                 "(entry=$%.2f, stop=%s)",
@@ -2100,18 +2203,19 @@ class PortfolioConstructor:
         # every one of them is permissive, which is why this is a refusal
         # and not a passthrough.
         if stop_loss is not None and not math.isfinite(stop_loss):
-            logger.warning(
-                "Constructor: %s %s refused — the stop is not a finite number "
-                "(%r). Refusing rather than letting it through comparisons "
-                "that a NaN silently passes.",
-                "SHORT" if direction == "short" else "BUY", symbol, stop_loss,
+            self._note_refusal(
+                symbol, direction, STOP_REFUSAL_STOP_NOT_FINITE,
+                f"the stop price supplied for this trade is not a finite "
+                f"number ({stop_loss!r}), so no distance can be measured "
+                f"from it. Refused rather than let through comparisons a "
+                f"NaN silently passes.",
             )
             return None
         if not math.isfinite(entry_price):
-            logger.warning(
-                "Constructor: %s %s refused — the entry price is not a finite "
-                "number (%r), so no stop distance can be measured from it.",
-                "SHORT" if direction == "short" else "BUY", symbol, entry_price,
+            self._note_refusal(
+                symbol, direction, STOP_REFUSAL_ENTRY_NOT_FINITE,
+                f"the entry price is not a finite number ({entry_price!r}), "
+                f"so no stop distance can be measured from it.",
             )
             return None
         # Unchanged legacy passthrough: a non-positive stop or entry is the
@@ -2136,19 +2240,19 @@ class PortfolioConstructor:
         if stop_loss is None:
             pass  # nothing typed: derived from the instrument below
         elif is_short and stop_loss <= entry_price:
-            logger.warning(
-                "Constructor: SHORT %s refused [%s] — the stop $%.2f is at or "
-                "below the entry $%.2f, so it protects nothing. Refusing "
-                "rather than widening it into validity.",
-                symbol, STOP_REFUSAL_WRONG_SIDE, stop_loss, entry_price,
+            self._note_refusal(
+                symbol, direction, STOP_REFUSAL_WRONG_SIDE,
+                f"the stop ${stop_loss:,.2f} is at or below the "
+                f"${entry_price:,.2f} entry on a SHORT, so it protects "
+                f"nothing. Refused rather than widened into validity.",
             )
             return None
         elif not is_short and stop_loss >= entry_price:
-            logger.warning(
-                "Constructor: BUY %s refused [%s] — the stop $%.2f is at or "
-                "above the entry $%.2f, so it protects nothing. Refusing "
-                "rather than widening it into validity.",
-                symbol, STOP_REFUSAL_WRONG_SIDE, stop_loss, entry_price,
+            self._note_refusal(
+                symbol, direction, STOP_REFUSAL_WRONG_SIDE,
+                f"the stop ${stop_loss:,.2f} is at or above the "
+                f"${entry_price:,.2f} entry on a BUY, so it protects "
+                f"nothing. Refused rather than widened into validity.",
             )
             return None
 
@@ -2190,10 +2294,19 @@ class PortfolioConstructor:
             # the trade's payoff clears the floor. With nothing typed AND
             # nothing to read, there is no stop: the caller rejects None.
             if stop_loss is None:
-                logger.warning(
-                    "Constructor: %s %s has no stop from the PM or the "
-                    "analyst and no ATR reading to derive one from — "
-                    "rejecting.", side_label, symbol,
+                # Board item 10 (2026-09-14, second pass). THE ONE PATH THE
+                # REGEX NEVER SAW: this message puts "has" straight after the
+                # symbol, and `_DropReasonCapture._SYMBOL` requires
+                # rejected|refused|skipped there. A candidate dropped here
+                # reached the record as the literal "no matching constructor
+                # log line captured" — the exact signature the first pass
+                # went looking for and reported as fully eliminated.
+                self._note_refusal(
+                    symbol, direction, STOP_REFUSAL_NO_STOP_NO_VOLATILITY,
+                    "no stop was typed by the PM or the analyst and there is "
+                    "no ATR reading to derive one from, so this trade has no "
+                    "stop at all to judge. Not a view on the idea: nothing "
+                    "measurable was available to protect it with.",
                 )
                 return None
             honoured, rule, level = stop_loss, STOP_RULE_NO_VOLATILITY, None
@@ -2457,13 +2570,13 @@ class PortfolioConstructor:
             # No target at all remains "no opinion" (the legacy backtest
             # shim), which is a different thing from a broken one.
             if had_target:
-                logger.warning(
-                    "Constructor: %s %s refused [%s] — a target was supplied "
-                    "(%r) but reward:risk against the shipping stop $%.2f "
-                    "[%s] at the $%.2f entry cannot be measured. Refusing "
-                    "rather than treating an unmeasurable ratio as passing.",
-                    side_label, symbol, STOP_REFUSAL_GEOMETRY_UNMEASURABLE,
-                    target_price, honoured, rule, entry_price,
+                self._note_refusal(
+                    symbol, direction, STOP_REFUSAL_GEOMETRY_UNMEASURABLE,
+                    f"a target was supplied ({target_price!r}) but "
+                    f"reward:risk against the shipping stop ${honoured:,.2f} "
+                    f"[{rule}] at the ${entry_price:,.2f} entry cannot be "
+                    f"measured. Refused rather than treating an unmeasurable "
+                    f"ratio as passing.",
                 )
                 return None
         elif reward_risk < floor:
@@ -2686,11 +2799,20 @@ class PortfolioConstructor:
             return allocation_pct, ""
 
         if scale <= 0.0 or allowance_raw <= 0.0:
-            logger.info(
-                "Constructor: %s refused — sector '%s' %s side is at %.1f%% "
-                "gross, at or past the %.0f%% absolute ceiling; no size is "
-                "available.",
-                symbol, sector, side, current_pct, self.cfg.max_sector_hard_pct,
+            # Board item 10 (2026-09-14, second pass). Both dial refusals
+            # logged a sentence the capture's regex happens to match, so
+            # they were never invisible — but a matched sentence lands as a
+            # generic `constructor_dropped` row, not as a code the funnel
+            # can count. Filed here rather than at the two `return None`
+            # sites in the builders, because only this method knows WHICH
+            # of the two ends fired.
+            self._note_refusal(
+                symbol, "short" if side == "short" else "long",
+                STOP_REFUSAL_SECTOR_AT_HARD_CEILING,
+                f"sector '{sector}' ({side} side) is at {current_pct:.1f}% of "
+                f"equity, at or past the {self.cfg.max_sector_hard_pct:.0f}% "
+                f"absolute ceiling; no size is available. Concentration "
+                f"scales size, but not without end.",
             )
             return -1.0, (
                 f" [constructor: REFUSED — sector '{sector}' ({side} side) is "
@@ -2702,11 +2824,17 @@ class PortfolioConstructor:
         # The floor. A position this small cannot pay for its own risk.
         notional = total_value * final / 100
         if notional < self.cfg.min_order_usd:
-            logger.info(
-                "Constructor: %s refused — sector '%s' at %.1f%% leaves only "
-                "%.2f%% (~$%.0f), under the $%.0f minimum order.",
-                symbol, sector, current_pct, final, notional,
-                self.cfg.min_order_usd,
+            # Board item 10 (2026-09-14, second pass) — see the sibling
+            # refusal above.
+            self._note_refusal(
+                symbol, "short" if side == "short" else "long",
+                STOP_REFUSAL_SECTOR_BELOW_MIN_ORDER,
+                f"sector '{sector}' ({side} side) is at {current_pct:.1f}% of "
+                f"equity, so crowding leaves only {final:.2f}% "
+                f"(~${notional:,.0f}) — under the "
+                f"${self.cfg.min_order_usd:,.0f} minimum order. A position "
+                f"this small pays full commission and full attention for an "
+                f"immaterial payoff, so it is not taken at all.",
             )
             return -1.0, (
                 f" [constructor: REFUSED — sector '{sector}' ({side} side) is "
@@ -2901,6 +3029,8 @@ class PortfolioConstructor:
                 target, analysis, market_price, regime=regime,
             )
             if entry_price is None or stop_loss is None:
+                # drop-reason: delegated — every exit from
+                # `_resolve_entry_and_stop` files a fault or a named refusal.
                 return None
 
         # Take-profit is COMPUTED from structure (2026-09-01), not read from
@@ -2919,11 +3049,18 @@ class PortfolioConstructor:
             # A data fault is already recorded/logged as UNMEASURABLE by
             # `_derive_target`; only a real refusal is a rejection here.
             if not derivation.fault:
-                logger.warning(
-                    "Constructor: BUY %s rejected — no target could be computed "
-                    "above entry $%.2f [%s]: %s",
-                    target.symbol, entry_price,
-                    derivation.refusal or "target_not_above_entry", derivation.detail,
+                # Board item 10 (2026-09-14, second pass) — same treatment as
+                # the identical check in `_resolve_entry_and_stop`. The
+                # derivation's own refusal code wins when it has one; the
+                # fallback names the case where a price WAS computed and it
+                # simply does not sit above the entry.
+                self._note_refusal(
+                    target.symbol, target.direction,
+                    derivation.refusal or STOP_REFUSAL_TARGET_NOT_ABOVE_ENTRY,
+                    f"no take-profit could be computed above the "
+                    f"${entry_price:,.2f} entry for this long"
+                    + (f": {derivation.detail}" if derivation.detail else
+                       f" (computed {derivation.price})"),
                 )
             return None
         take_profit = float(derivation.price)
@@ -3029,6 +3166,8 @@ class PortfolioConstructor:
             )
             cap_note += sector_note
             if allocation_pct < 0:
+                # drop-reason: delegated — `_apply_sector_dial` files the
+                # refusal, because only it knows which of its two ends fired.
                 return None
 
         allocation_pct = max(0.0, round(allocation_pct, 2))
@@ -3128,6 +3267,8 @@ class PortfolioConstructor:
                 target, analysis, market_price, regime=regime,
             )
             if entry_price is None or stop_loss is None:
+                # drop-reason: delegated — every exit from
+                # `_resolve_entry_and_stop` files a fault or a named refusal.
                 return None
 
         # Take-profit: COMPUTED from structure and BELOW entry for a short
@@ -3144,11 +3285,15 @@ class PortfolioConstructor:
             # Mirror of `_build_buy`: a data fault is already recorded and
             # logged as UNMEASURABLE; only a real refusal is a rejection.
             if not derivation.fault:
-                logger.warning(
-                    "Constructor: SHORT %s rejected — no target could be computed "
-                    "below entry $%.2f [%s]: %s",
-                    target.symbol, entry_price,
-                    derivation.refusal or "target_not_below_entry", derivation.detail,
+                # Board item 10 (2026-09-14, second pass) — mirror of
+                # `_build_buy`. See the comment there.
+                self._note_refusal(
+                    target.symbol, target.direction,
+                    derivation.refusal or STOP_REFUSAL_TARGET_NOT_BELOW_ENTRY,
+                    f"no take-profit could be computed below the "
+                    f"${entry_price:,.2f} entry for this short"
+                    + (f": {derivation.detail}" if derivation.detail else
+                       f" (computed {derivation.price})"),
                 )
             return None
         take_profit = float(derivation.price)
@@ -3234,6 +3379,8 @@ class PortfolioConstructor:
             )
             cap_note += sector_note
             if allocation_pct < 0:
+                # drop-reason: delegated — `_apply_sector_dial` files the
+                # refusal, because only it knows which of its two ends fired.
                 return None
 
         allocation_pct = max(0.0, round(allocation_pct, 2))

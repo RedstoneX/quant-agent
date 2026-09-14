@@ -134,21 +134,6 @@ this line, one heading per item.
 **Example —** An idea forms when a stock is at $100 with a stop at $98; moments later, by the time the order is assembled, the price has already dropped to $97 — the same stop now sits above the price, and the trade is correctly refused.
 
 
-## item 10
-
-**Plain language —** This started as "the desk keeps re-suggesting stocks that never actually get bought, using up trade slots." That part is settled and closed — see below. What is still open, and what this update is about: most ideas die inside our own machinery with no reason recorded, and we previously told you that could not be investigated further until the desk started trading again. That was wrong, and we found it out by checking rather than waiting.
-
-Second, and more useful: when we counted why ideas die, they are overwhelmingly not dying at the market. Of all the ideas that fail, only about one in seven fails because of a real price or broker event. The rest fail inside our own machinery. Under the current code the single biggest cause is an idea that simply never becomes an order at all — 64% of all blocked ideas recently — no reason recorded, it just stops.
-
-**What changed since the last update —** the reason-recording system works by scanning our own log messages for tell-tale words ("rejected", "refused", "skipped") right next to a stock's name. Both that scanning rule and every message it is supposed to catch already sit in the code whether or not the desk is trading, so we could — and did — check today, with no trading required, exactly which messages the rule actually catches and which it silently misses. It missed five. Four of them were places where a trade gets shrunk down to nothing by a safety cap and the code says so, just not in words the scanner watches for; the fifth was a portfolio-wide exposure limit whose message has the rule's own name sandwiched in a spot the scanner doesn't expect. All five now write their reason directly, the same fix already used earlier today for a sixth case (the risk-budget queue). Every other place we checked already worked correctly, or was quietly covered by a second message nearby.
-
-**Example —** One stock was suggested eight times, turned down seven times across six different causes — then on the eighth it was bought, at the largest size and the highest confidence in the whole record. A "three strikes and you're out" rule would have killed the desk's best-conviction trade of the period (this is the closed part, below). On the still-open part: a trade that gets shrunk to nothing by, say, "you already own the maximum allowed of this stock" used to vanish with nothing recorded except a generic "unknown" tag; it will now say exactly that.
-
-**The decision —** None. This is no longer yours, on either half. The re-suggestion question was settled 2026-09-02/03: you said the blocking proposal was a hack rather than a solution and told us to settle it without you; it is settled and closed — **no blocking rule was added.** The reasoning is on file so nobody re-opens it: how often a stock converts is not a fact about the stock, it is a portrait of our own broken plumbing.
-
-**Recommendation —** Nothing to approve. What we verified today did not change which trades happen — it only makes the reason visible where it used to be silent — and we checked that carefully rather than taking it on faith. What is still genuinely unrecoverable is the specific handful of already-blocked ideas sitting in the historical record from before any of this reason-recording existed; those stay unexplained. Everything from here forward, on the five paths we found today, will not.
-
-
 ## item 17
 
 **Plain language —** If the desk's own record-keeping breaks, a safety switch can shut down all further AI-based decisions completely, and it stays off until a person manually clears it — working as intended. The real problem, observed live, was that the alert meant to warn someone about it also failed to send, so the desk could sit switched off for a full day or a weekend with nobody aware, looking exactly like an ordinary quiet market.

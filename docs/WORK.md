@@ -554,75 +554,6 @@ Full reasoning + test: `docs/INCIDENT_HISTORY.md`. Stop is
 sided correctly at ingestion; the quote moves before construction —
 refusal stands.
 
-**10. Most ideas die inside the machinery with no recorded reason
-(`no_order_built`). OPEN. The gating half of the old item is ANSWERED NO —
-2026-09-14, closed, do not re-open.**
-
-*Was: "Slots burned re-proposing names that never fill."* The memory gap
-that titled it is fixed: `_build_blocked_proposals` (`src/pipeline.py`,
-merged 2026-09-02 via `feat/blocked-trade-memory`) gives the PM a
-`## Proposal Conversion` section naming its own repeat-offender names and
-conversion rate. What remains open is not the memory and not a gate — it is
-what the census found underneath.
-
-**(a) THE LIVE DEFECT — STILL OPEN, but the "wait for live data" conclusion
-below is RETRACTED (2026-09-14, second pass; full writeup in
-`docs/INCIDENT_HISTORY.md`, dated 2026-09-14, "board item 10").** Census
-re-run read-only over the archive (`scripts/blocked_proposals_census.py`):
-65 entry proposals, 14 filled, 51 blocked, machinery ABSENCE 27 of the 51.
-Restricted to post-`0eb4a115` (2026-08-27) proposals: 28 proposals, 3
-filled, 25 blocked, `no_order_built` alone 16 (64%). Those 16 specific rows
-stay unrecoverable (they predate the 2026-09-03 reason-capture) — but the
-NEXT claim this file made, "the cause is unrecoverable until the desk
-produces new proposals," was never actually checked and turned out to be
-false: the regex the capture uses and every candidate log message are both
-compile-time strings, so which drop paths it silently loses is answerable
-by running the real regex against them, with zero live data.
-
-Did exactly that — read every `return None`/`continue` that produces no
-order in `src/portfolio_constructor.py` (~25 sites) and tested the real
-`_DropReasonCapture._SYMBOL` against each one's log message. Five were
-silently losing their reason, all now fixed by filing a structured code
-directly (item 49's precedent): the §9.4 agreement-ceiling refusal
-(`_plan_risk_targets`, the SAME "produces no order" phrasing item 49 found
-unmatched a first time, unfixed a second time in the same file); `_build_buy`
-/ `_build_short` rounding to exactly zero after the risk-budget or single-
-name/short ceiling (the cap logs, but never with rejected/refused/skipped);
-`apply_gross_ceiling`'s (`src/risk/rules.py`) outright refusals, whose
-relayed note reads "Constructor: max_gross_exposure: SYMBOL refused — ...",
-the rule name between "Constructor:" and the symbol defeating the regex;
-and the churn filter's (`min_trade_weight_delta`) silent skip of a brand-new
-position too small to open, which had no log line AT ALL. Everything else
-in the module either already matched, or is compensated by a second,
-matching log line the same drop always also fires. New codes:
-`STOP_REFUSAL_AGREEMENT_CEILING`, `STOP_REFUSAL_SIZED_TO_ZERO`,
-`STOP_REFUSAL_GROSS_EXPOSURE_CEILING`, `CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA`.
-
-**No verdict changed** — every fix only adds a `_note_refusal` call beside
-an existing `return None`/`continue`. Full suite green unchanged (5,899
-passed, 1 skipped) plus 6 new tests pinning the fixes and the regex's
-behaviour on the exact phrasing each used to emit.
-
-**What this settles, what it does not.** The NEXT session's
-`no_order_built` bucket resolves these five paths into named reasons
-without new proposals first — the fix is static. It does NOT retroactively
-recover the 16 rows already on record. These five are believed the complete
-set for this module as of this pass; if `no_order_built` still appears
-post-fix, that is the signal a sixth path was missed — check it the same
-way before assuming live data is needed again. Two known undercounts still
-apply to any re-run (`docs/AGENT_ROLE_AUDIT.md` §1.6): ~7% of sized targets
-never reach `specialist_evidence`, and 10 decisions carry no evidence rows.
-
-**(b) A count-based re-proposal gate — ANSWERED NO**, and **(c) "slots
-burned" was a false premise — VERIFIED**, both closed 2026-09-14. Full
-reasoning archived in `docs/INCIDENT_HISTORY.md` (2026-09-14 entry, board
-item 10) rather than repeated here — WORK.md is at its byte cap. Short
-version: no re-proposal threshold is needed because the conversion rate is
-a self-portrait of the desk's own bugs, not a fact about the instrument
-(NVDA filled on its 8th try at the largest size in the record); and there
-is no position-count or target-count cap anywhere in the code for a repeat
-to burn, so nothing is being "wasted".
-
 **17. Backup alert channel — OWNER DECISION, not a defect. (Was: "the desk can switch itself off silently.")**
 
 The original defect (hit live 2026-09-02: a database fault latched
@@ -992,7 +923,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **70. One underived `1.0` is doing two different jobs in the exit path, and neither is read off anything — OPEN, filed 2026-09-14 while wiring the structural check into thesis-invalidation exits (item 60).** `NOISE_BAND_ATR_MULTIPLE = 1.0` in `src/risk/exit_guard.py` sets how far an adverse move must travel before it stops being noise, and is reused inside `check_structural_protection` as the margin a close must clear to count as beyond its backing level. `absolute_min_stop_atr_multiple: 1.0` in `config/settings.yaml` sets how tight a stop is allowed to be. They are the same round number in the same unit answering two different questions, and neither has a derivation or a cited source on record. That they agree is a coincidence of both being 1, not a relationship anyone established — nothing in the code ties one to the other, so a future change to either silently breaks whatever alignment is being assumed. **Deliberately NOT fixed in the item-60 PR**, which adds information to a gate and changes no number. **What would settle it:** for each of the two independently, a published measurement of the quantity it claims to bound (an ATR multiple at which adverse moves stop being noise; an ATR multiple below which a stop sits inside ordinary daily range), or a decision that one of them should be derived from the other and made a single named constant. Nothing has been searched for yet beyond confirming that neither number is referenced to anything in-repo.
 
-**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 58, 59, 61, 66, 68 in this queue, and 1, 2, 3, 4, 5, 6 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Item 38's open follow-up survives as item 52, whose own unresolvable residue is item 63. Reconstructed from git history 2026-09-14 after corruption; 1, 3, 8, 10 and 20 are NOT retired in this queue (live items; 8 is live here AND retired in the PM test gate, a legitimate cross-scheme split); 67, 90, 101, 200 never existed. PM test gate's own item 4 (news analyst data quality) closed 2026-09-14 and is retired in that scheme only — the funnel queue's own item 4 is unrelated and stays live. Full account, and every renumbering the corruption forced (62/63, then 65, then 68/69/70): `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
+**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 58, 59, 61, 66, 68 in this queue, and 1, 2, 3, 4, 5, 6 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Item 10 retired 2026-09-14 (`docs/INCIDENT_HISTORY.md`, that date) — every constructor drop path files a machine-readable reason and an AST guard fails on a new one that does not. Item 38's open follow-up survives as item 52, whose own unresolvable residue is item 63. Reconstructed from git history 2026-09-14 after corruption; 1, 3, 8 and 20 are NOT retired in this queue (live items; 8 is live here AND retired in the PM test gate, a legitimate cross-scheme split); 67, 90, 101, 200 never existed. PM test gate's own item 4 (news analyst data quality) closed 2026-09-14 and is retired in that scheme only — the funnel queue's own item 4 is unrelated and stays live. Full account, and every renumbering the corruption forced (62/63, then 65, then 68/69/70): `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
 
 ## Evidence-only follow-ups
 
