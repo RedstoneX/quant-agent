@@ -833,3 +833,109 @@ def test_volatility_is_never_used_to_size_a_position():
             f"`{key}` looks like volatility-based SIZING leaking out of the "
             f"drawdown alarm — that technique is rejected for this desk"
         )
+
+
+# ---------------------------------------------------------------------------
+# docs/WORK.md item 32, reconciliation pass 2026-09-14.
+#
+# Neither test below moves a trip level. Both pin a place where the machinery
+# could report something untrue: a yardstick that outlives the session it was
+# measured in, and a brake that says nothing when it cannot see.
+# ---------------------------------------------------------------------------
+
+def test_the_volatility_memo_cannot_outlive_the_session_it_measured():
+    """The memo keys on the TRADING DATE as well as the book.
+
+    `src/scheduler.py` holds ONE `TradingPipeline` for the life of the
+    process, so this memo outlives a session. Keyed on holdings and weights
+    alone, a book whose weights round to the same 4dp on two consecutive days
+    would be priced today against yesterday's volatility — every one of the
+    three loss alarms silently reading a stale yardstick. The comment on the
+    memo claimed a date component the key did not have; this pins the code.
+    """
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.config = SimpleNamespace(
+        risk=_cfg(), trading=SimpleNamespace(lookback_days=1800),
+    )
+    pipeline.broker = MagicMock()
+    pipeline.broker.get_account.return_value = SimpleNamespace(
+        portfolio_value=100_000.0,
+    )
+    pipeline.broker.get_positions.return_value = [
+        SimpleNamespace(symbol="NVDA", market_value=40_000.0, current_price=10.0),
+    ]
+    moves = [1.0 if i % 2 else -1.0 for i in range(30)]
+    pipeline.market = MagicMock()
+    pipeline.market.get_ohlcv.side_effect = lambda sym, days: _bars(moves)
+
+    first = pipeline.measure_held_book_daily_vol()
+    assert first.daily_vol_pct is not None
+    assert pipeline.market.get_ohlcv.call_count == 1
+
+    # Same day, identical book: served from the memo, no second fetch.
+    pipeline.measure_held_book_daily_vol()
+    assert pipeline.market.get_ohlcv.call_count == 1
+
+    # A new trading date with a book whose weights round identically must
+    # re-measure rather than serve yesterday's number.
+    stored_key, stored_estimate = pipeline._held_book_vol_memo
+    assert isinstance(stored_key, tuple) and len(stored_key) == 2
+    pipeline._held_book_vol_memo = (
+        ("1999-01-04", stored_key[1]), stored_estimate,
+    )
+    pipeline.measure_held_book_daily_vol()
+    assert pipeline.market.get_ohlcv.call_count == 2, (
+        "a yardstick measured on another date was served to today's alarms"
+    )
+
+
+def test_an_unmeasurable_rolling_window_is_stated_not_printed_as_a_null():
+    """A brake that cannot see must not read as an all-clear.
+
+    `_compute_recent_performance` returns None for a window with too little
+    equity history (it reads rows[5] / rows[20], so it needs 6 and 21
+    recorded sessions). Rendered as "None%" in the Portfolio Manager's
+    prompt that reads to a model as a number near zero, i.e. as "we are not
+    in drawdown", when the truth is that the brake is blind. The desk is in
+    exactly that state after the 2026-09-02 reset: rows are written only by
+    an evening run, so a paused desk does not accrue them.
+    """
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+    from src.models import Position, TechAnalysisResult, TechReasoningChain
+
+    agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6-20250725")
+    analyses = [
+        TechAnalysisResult(
+            symbol="SPY", rating="buy", entry_price=500.0,
+            reference_target=530.0, stop_loss=485.0,
+            support_levels=[485.0], resistance_levels=[530.0],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning="x",
+            reasoning_chain=TechReasoningChain(
+                trend="x", momentum="x", volatility="x", volume="x",
+                support_resistance="x",
+            ),
+        ),
+    ]
+    positions = [
+        Position(symbol="AAPL", qty=5, avg_entry=180.0, current_price=190.0,
+                 market_value=950.0, unrealized_pnl=50.0, sector="Technology"),
+    ]
+    message = agent.build_user_message(
+        analyses=analyses, positions=positions, macro_analysis=None,
+        cash_balance=9050.0, total_value=10000.0,
+        recent_performance={
+            "rolling_5d_pct": None,
+            "rolling_20d_pct": None,
+            "in_drawdown": False,
+            "trailing_days": 1,
+            "drawdown_5d_threshold_pct": -6.7,
+            "drawdown_20d_threshold_pct": -13.4,
+        },
+    )
+    assert "NOT YET MEASURABLE" in message
+    assert "None%" not in message
+    assert "do not read it as zero" in message
+    # The thresholds themselves are still reported: the brake is blind, the
+    # level it would fire at is not a secret.
+    assert "-6.7" in message and "-13.4" in message
