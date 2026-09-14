@@ -1044,10 +1044,11 @@ cash_sweep:
 # call and the normal Specialist -> PM -> AI Risk -> deterministic gate ->
 # execution chain. See src/config.py::IntradayScanConfig.
 #
-# Left DISABLED here deliberately: this is new autonomous-decision surface
-# added mid-tranche, not yet operator-reviewed against real soak behavior.
-# Flip `enabled: true` after reviewing this PR (same rollout pattern
-# cash_sweep followed: built once, enabled in a later explicit step).
+# ENABLED. This comment used to say the scan was left disabled pending
+# operator review; the flag below has been `true` since that step was taken,
+# and the stale wording was corrected 2026-09-14. Its two thresholds (3% move,
+# 3h cooldown) carry no source — see docs/INCIDENT_HISTORY.md, 2026-09-14,
+# "the 2026-09-11 audit's unsourced numbers, checked one by one".
 intraday_scan:
   enabled: true
   move_threshold_pct: 3.0   # min |% move| since last close to qualify
