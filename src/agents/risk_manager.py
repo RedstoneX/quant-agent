@@ -7,8 +7,8 @@ from src.agents import risk_review_mode
 from src.agents.base import BaseAgent
 from src.agents.prompt_limits import LiveLimitPrompt
 from src.models import (
-    NewsIntelligenceReport, PortfolioDecision, Position, RiskModification,
-    RiskVerdict, SymbolRejection, TechAnalysisResult,
+    ExitRiskVerdict, NewsIntelligenceReport, PortfolioDecision, Position,
+    RiskModification, RiskVerdict, SymbolRejection, TechAnalysisResult,
 )
 from src.risk.constants import reward_risk_floor_applies
 from src.risk.rules import RiskViolation
@@ -524,7 +524,7 @@ Review these proposed trades and provide your verdict as JSON."""
                risk_ceiling_pct: float | None = None,
                event_risk_block: str | None = None,
                review_mode: str = risk_review_mode.MORNING_PLAN,
-               ) -> tuple[RiskVerdict | None, "AgentResult"]:
+               ) -> tuple["RiskVerdict | ExitRiskVerdict | None", "AgentResult"]:
         # audit round 2 #5: total_value / cash are optional so existing call
         # sites keep working; when omitted, build_user_message approximates
         # the book denominator from the sum of position market values.
@@ -558,6 +558,22 @@ Review these proposed trades and provide your verdict as JSON."""
             # renders byte-identically. See src/agents/risk_review_mode.py.
             review_mode=review_mode,
         )
+        # WHICH verdict shape this path returns. The exit review's schema is
+        # `RiskVerdict` minus `modifications` and `scale_all_buys`: nothing on
+        # that path applies either (`_apply_risk_modifications` is called only
+        # from the morning `RiskStage`), so they are not asked for and not
+        # stored. See `src/models.ExitRiskVerdict`.
+        exit_mode = risk_review_mode.is_exit_review(review_mode)
+        verdict_model = ExitRiskVerdict if exit_mode else RiskVerdict
+        schema_name = verdict_model.__name__
+        # `modifications` and `scale_all_buys` are decision-bearing ONLY where
+        # they decide something. On the exit path they are not fields at all,
+        # so a repair that "changed" one changed nothing that can reach the
+        # broker — treating that as an unauthorized re-decision would fail a
+        # sound verdict closed, and on THIS path failing closed blocks a SALE.
+        decision_fields = (
+            self._EXIT_DECISION_FIELDS if exit_mode else self._DECISION_FIELDS
+        )
         parsed = result.parse_json()
         if parsed is None:
             logger.error("Risk manager returned non-JSON response")
@@ -578,10 +594,10 @@ Review these proposed trades and provide your verdict as JSON."""
         # (`SymbolRejection._coerce_shorthand`) and lets anything that does
         # not fail validation — which, `rejected_symbols` being decision-
         # bearing, fails the whole verdict closed.
-        if isinstance(parsed, dict):
+        if isinstance(parsed, dict) and not exit_mode:
             parsed = self._drop_invalid_modifications(parsed)
         try:
-            return RiskVerdict(**parsed), result
+            return verdict_model(**parsed), result
         except ValidationError as e:
             # 2026-08-18 incident: an APPROVING verdict with three sound
             # modifications died because two reasoning_chain prose fields
@@ -598,33 +614,37 @@ Review these proposed trades and provide your verdict as JSON."""
             # decision-bearing fields must be byte-identical to the
             # pre-repair parse; any drift is treated as an unauthorized
             # re-decision and also fails closed.
-            if self.validation_error_touches(e, self._DECISION_FIELDS):
+            if self.validation_error_touches(e, decision_fields):
                 logger.error(
                     "Risk verdict validation failure is rooted in a "
                     "decision-bearing field (%s) — not schema-repairable; "
                     "failing closed: %s",
-                    ", ".join(self._DECISION_FIELDS), e,
+                    ", ".join(decision_fields), e,
                 )
                 return None, result
-            repaired = self.repair_reprompt(result, e, "RiskVerdict")
+            repaired = self.repair_reprompt(result, e, schema_name)
             reparsed = repaired.parse_json()
             if isinstance(reparsed, dict):
-                reparsed = self._drop_invalid_modifications(reparsed)
-                if not self._decision_fields_unchanged(parsed, reparsed):
+                if not exit_mode:
+                    reparsed = self._drop_invalid_modifications(reparsed)
+                if not self._decision_fields_unchanged(
+                    parsed, reparsed, fields=decision_fields,
+                ):
                     logger.error(
                         "Risk verdict repair changed decision-bearing "
-                        "content (approved/modifications/rejected_symbols/"
-                        "scale_all_buys/reason_category) instead of only "
-                        "completing the schema — treating as an unauthorized "
-                        "re-decision and failing closed.",
+                        "content (%s) instead of only completing the schema "
+                        "— treating as an unauthorized re-decision and "
+                        "failing closed.",
+                        "/".join(decision_fields),
                     )
                     return None, repaired
                 try:
-                    verdict = RiskVerdict(**reparsed)
+                    verdict = verdict_model(**reparsed)
                     logger.info(
-                        "Risk verdict repair succeeded (approved=%s, %d mods, "
+                        "%s repair succeeded (approved=%s, %d mods, "
                         "%d per-symbol refusals)",
-                        verdict.approved, len(verdict.modifications),
+                        schema_name, verdict.approved,
+                        len(getattr(verdict, "modifications", ())),
                         len(verdict.rejected_symbols),
                     )
                     return verdict, repaired
@@ -651,6 +671,16 @@ Review these proposed trades and provide your verdict as JSON."""
     _DECISION_FIELDS = (
         "approved", "modifications", "rejected_symbols",
         "scale_all_buys", "reason_category",
+    )
+
+    #: The same list on the EXIT-REVIEW path, minus the two levers that are
+    #: not fields of `ExitRiskVerdict` at all. Nothing applies a modification
+    #: or a scale factor to an exit, so neither can re-decide anything there;
+    #: keeping them would fail a repairable verdict CLOSED, and a fail-closed
+    #: exit leaves a broken-thesis position on the book (the exact asymmetry
+    #: `_risk_review_exits` fails OPEN for, owner-ratified 2026-08-27).
+    _EXIT_DECISION_FIELDS = (
+        "approved", "rejected_symbols", "reason_category",
     )
 
     @staticmethod
@@ -721,7 +751,9 @@ Review these proposed trades and provide your verdict as JSON."""
         )
 
     @classmethod
-    def _decision_fields_unchanged(cls, original: dict, repaired: dict) -> bool:
+    def _decision_fields_unchanged(
+        cls, original: dict, repaired: dict, *, fields: tuple[str, ...] | None = None,
+    ) -> bool:
         """True iff every decision-bearing field survived a schema
         repair unchanged. `original` and `repaired` are both already
         post-`_drop_invalid_modifications` for a fair comparison.
@@ -733,7 +765,15 @@ Review these proposed trades and provide your verdict as JSON."""
         a real, meaningful value — RM's explicit "kill all BUYs" veto —
         not an absent one; collapsing it to 1.0 would silently accept a
         repair that reinstated every BUY the original verdict killed).
+
+        `fields` names which of them decide anything on the calling path;
+        it defaults to `_DECISION_FIELDS` (the morning plan). The exit path
+        passes `_EXIT_DECISION_FIELDS`, because `modifications` and
+        `scale_all_buys` are not fields of `ExitRiskVerdict` and nothing
+        there applies them — comparing them would fail a sound verdict
+        closed over content that cannot reach the broker.
         """
+        fields = fields or cls._DECISION_FIELDS
         orig_approved = original.get("approved")
         rep_approved = repaired.get("approved")
         if type(orig_approved) is not bool or type(rep_approved) is not bool:
@@ -741,10 +781,11 @@ Review these proposed trades and provide your verdict as JSON."""
         if orig_approved != rep_approved:
             return False
 
-        orig_mods = cls._canonical_modifications(original.get("modifications"))
-        rep_mods = cls._canonical_modifications(repaired.get("modifications"))
-        if orig_mods is None or rep_mods is None or orig_mods != rep_mods:
-            return False
+        if "modifications" in fields:
+            orig_mods = cls._canonical_modifications(original.get("modifications"))
+            rep_mods = cls._canonical_modifications(repaired.get("modifications"))
+            if orig_mods is None or rep_mods is None or orig_mods != rep_mods:
+                return False
 
         # Phase 10.1: a repair that quietly reinstates a refused symbol, or
         # newly refuses one, has changed which trades die.
@@ -753,14 +794,15 @@ Review these proposed trades and provide your verdict as JSON."""
         if orig_rej is None or rep_rej is None or orig_rej != rep_rej:
             return False
 
-        orig_scale = original.get("scale_all_buys", 1.0)
-        rep_scale = repaired.get("scale_all_buys", 1.0)
-        if isinstance(orig_scale, bool) or isinstance(rep_scale, bool):
-            return False
-        if not isinstance(orig_scale, (int, float)) or not isinstance(rep_scale, (int, float)):
-            return False
-        if round(float(orig_scale), 6) != round(float(rep_scale), 6):
-            return False
+        if "scale_all_buys" in fields:
+            orig_scale = original.get("scale_all_buys", 1.0)
+            rep_scale = repaired.get("scale_all_buys", 1.0)
+            if isinstance(orig_scale, bool) or isinstance(rep_scale, bool):
+                return False
+            if not isinstance(orig_scale, (int, float)) or not isinstance(rep_scale, (int, float)):
+                return False
+            if round(float(orig_scale), 6) != round(float(rep_scale), 6):
+                return False
 
         return original.get("reason_category") == repaired.get("reason_category")
 

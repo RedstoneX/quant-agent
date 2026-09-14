@@ -49,6 +49,7 @@ __all__ = [
     "TRUSTED_MACRO_STATUSES",
     "claims_regime_flip",
     "claims_bearish_state_change",
+    "claims_thesis_invalidation",
     "holding_discipline_false_claim",
     "HoldingDisciplineClaimCheck",
     "holding_discipline_claim_check",
@@ -736,6 +737,36 @@ _BEARISH_STATE_CHANGE_CLAIM_RE = re.compile(
 #: is exactly as trustworthy as "ok" for this purpose.
 TRUSTED_MACRO_STATUSES = frozenset({"ok", "carried_from_morning"})
 
+#: Phrases that assert the trade's thesis has been INVALIDATED. Deliberately
+#: the same five phrases `pipeline._HARD_TRIGGER_KEYWORDS` accepts under its
+#: "Thesis invalidation" heading and no others, so "does this reason claim a
+#: thesis invalidation" is answered by one definition rather than two that
+#: can silently diverge.
+#:
+#: Why this predicate exists at all (2026-09-14, docs/WORK.md item 60). Of
+#: the 26 hard-trigger keywords, 21 also match
+#: `EXTERNAL_INFORMATION_PATTERNS` and therefore skip the ATR noise band
+#: outright; these five are the only ones that do not. Thesis invalidation
+#: is thus the entire non-redundant domain of that band — and it was also
+#: the one exit class on which `check_structural_protection` was never
+#: consulted, because the intraday assembler short-circuited on the absence
+#: of a (b)/(c) claim. "Has the level backing this stop closed beyond it on
+#: two consecutive sessions" is a checkable fact and is the actual question
+#: a thesis-invalidation exit is asserting an answer to; "this move is
+#: bigger than one ATR" is not an answer to the same question.
+#:
+#: Over-matching here is safe BY CONSTRUCTION and under-matching is not: a
+#: match only buys a read-only structural read plus an audit row, and can
+#: neither block an exit nor release one.
+_THESIS_INVALIDATION_CLAIM_RE = re.compile(
+    # No trailing \b after "invalid": the keyword list matches by plain
+    # substring, so "thesis_invalid_if triggered" and "thesis invalidated"
+    # are both hard triggers today and must both be recognised here.
+    r"\bthesis[_ ]invalid|\binvalidation triggered\b|"
+    r"\bbroken thesis\b|\bthesis broken\b",
+    re.IGNORECASE,
+)
+
 #: A negation cue in the ~6 words immediately before a matched phrase flips
 #: what the phrase means — "regime shift to risk-off" asserts one, "NO
 #: regime shift to risk-off has occurred" denies it, and the bare pattern
@@ -783,6 +814,22 @@ def claims_bearish_state_change(reason: str) -> bool:
     if not reason:
         return False
     match = _BEARISH_STATE_CHANGE_CLAIM_RE.search(reason)
+    return bool(match) and not _is_negated(reason, match)
+
+
+def claims_thesis_invalidation(reason: str) -> bool:
+    """True when `reason` asserts (not denies) that the thesis is invalid.
+
+    Purely a ROUTING predicate — see `_THESIS_INVALIDATION_CLAIM_RE`. It
+    decides whether the structural check is worth consulting and recording
+    for this exit; it is deliberately NOT an input to
+    `holding_discipline_claim_check`, which continues to leave (a)
+    `thesis_invalid_if` unjudged. Nothing gates a block or a release on
+    this function.
+    """
+    if not reason:
+        return False
+    match = _THESIS_INVALIDATION_CLAIM_RE.search(reason)
     return bool(match) and not _is_negated(reason, match)
 
 

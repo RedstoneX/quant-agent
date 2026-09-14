@@ -50,13 +50,35 @@ position stays on the book overnight with only the broker stop behind it.
 measured failure. So the cost of these inputs is asymmetric even where it has
 not yet been paid.
 
-**And the banner has never been right in production.** Across the 15 archived
+**And the banner has never been right in production.** Across the 14 archived
 MORNING risk reviews it has fired zero times — PM has never actually skipped
-either step. Its entire production output to date is the three false statements
-above. That is a strong argument that the banner should be deleted rather than
+either step. (Corrected 2026-09-14: this read "15". The archive holds 17
+`risk_manager` rows, 3 of them the exit reviews below, so the morning count is
+14. The banner text "NOT PERFORMED" appears in the stored `input_message` of
+exactly those 3 rows and none of the 14.) Its entire production output to date
+is the three false statements above. That is a strong argument that the banner should be deleted rather than
 routed around; it is left standing here only because deleting it changes the
 morning seat's behaviour on a case that has not yet occurred, which is a
 separate decision with a separate blast radius. See the PR discussion.
+
+**The schema followed the prompt on 2026-09-14.** PR #343 gave this path its
+own header and its own `_CHAIN_ROWS`, but both seats still answered one
+schema, so the exit seat was still being ASKED for things this file had just
+told it were inapplicable: `modifications` and `scale_all_buys`, which only
+`_apply_risk_modifications` applies and which it is called only from the
+morning `RiskStage`; and mandatory `min_length=1` answers to `rr_audit`,
+`sizing_sanity` and `event_risk`, the three steps the header above stands down
+or inverts. The exit path now answers `models.ExitRiskVerdict` /
+`ExitRiskReasoningChain`, which are the morning shapes minus exactly those.
+`models.ExitReviewChain` does the same on the INPUT side for `news_check`, the
+one PM slot with no exit counterpart and no rendered row, which was carrying a
+placeholder string only to satisfy `min_length=1`. `RiskVerdict`,
+`RiskReasoningChain` and `ReasoningChain` are unchanged.
+
+`NOT_AUTHORED` below is deliberately NOT part of that cleanup. It is not
+residue: it marks a field the position reviewer's OWN schema makes mandatory,
+so an empty one really does mean the reviewer's output degraded, and saying so
+is true.
 
 The rule this module exists to hold, and the one thing to preserve if it is
 ever rewritten:
@@ -87,11 +109,6 @@ NOT_AUTHORED = (
     "reviewer skipped a step. Treat this step as unavailable to you and say "
     "so; it is not an omission to hold against the exit.]"
 )
-
-#: A PM-schema field with no counterpart on the exit path. Never rendered to
-#: the seat (it is absent from `_CHAIN_ROWS[EXIT_REVIEW]`); it exists only to
-#: satisfy `min_length=1` and to be unmistakable in a stored agent log.
-UNUSED_SLOT = "[unused on the exit-review path — PM-schema field, no counterpart]"
 
 VALID_MODES = (MORNING_PLAN, EXIT_REVIEW)
 
@@ -134,12 +151,14 @@ the morning plan and are wrong here.
 nothing. Refusing an exit leaves the position ON THE BOOK overnight with only
 the broker stop behind it.
 
-**Refusal is your only lever.** `modifications` and `scale_all_buys` are
-discarded on this path — nothing applies them. The % is the position reviewer's
-call on its own position; do not size it and do not comment on it. Approve, or
-name the symbol in `rejected_symbols`.
+**Refusal is your only lever.** `modifications` and `scale_all_buys` are **not
+fields of this path's output** — do not emit them; nothing applies either. The
+% is the position reviewer's call on its own position; do not size it and do
+not comment on it. Approve, or name the symbol in `rejected_symbols`.
 
-**Does not apply here:**
+**Does not apply here.** `rr_audit`, `sizing_sanity` and `event_risk` are
+OPTIONAL here — omit them rather than explaining why they do not apply.
+`signal_fidelity`, `correlation_check` and `overall` are still required.
 
 - **Checklist 1** — this chain is the POSITION REVIEWER's, not PM's, and has NO
   `continuity_check` and NO `premortem_check`; those exist only in PM's schema.
@@ -148,12 +167,11 @@ name the symbol in `rejected_symbols`.
 - **Checklist 2 / Risk-Reward** — `$0.0` entry, stop and target are structural:
   an exit has no entry geometry. No ratio to audit, none to compute.
 - **Checklist 5** — no BUYs or SHORTs here to size.
-- **Checklist 4** — still answer `event_risk` from the fetched block (mandatory
-  output), but its instruction inverts here. "Downsize or reject" on an event
+- **Checklist 4** — the instruction INVERTS. "Downsize or reject" on an event
   inside the window was written for an entry, where refusing carries LESS risk
   through the event; refusing HERE carries the position THROUGH it. Event
-  proximity is **not a reason to refuse an exit**. Report the dates, name the
-  unknowns, stop there.
+  proximity is **not a reason to refuse an exit**, and an unfetched calendar is
+  **not `data_degraded`** here. Report a date that bears on the exit, or omit.
 
 **Checklist 8 still applies and is the substance of your job.** Four Python
 gates run on each exit — but after you speak, and all four are narrow: the
