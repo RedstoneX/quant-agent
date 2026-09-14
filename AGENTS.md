@@ -57,6 +57,55 @@ Parallelism is an efficiency tool, not an agent-count target.
 - Do not infer current defects from historical notes. Reopen a resolved area only from current operator or production evidence.
 - Private preview/browser verification is standing-authorized for relevant engineering work.
 
+## Standing rules for dispatched agents
+
+Every subagent brief was pasting the same block of rules by hand, and an
+omission has cost real time more than once. Point a brief at this section
+instead of restating it — the source facts mostly already live in
+`docs/WORK.md`'s "Engineering setup" and "Operational facts" notes and in
+`README.md`'s "Install" section; this section adds only what those do not
+already say.
+
+- **Foreground only. Never background a run and end the turn waiting on it.**
+  Nothing wakes an agent that stalls that way — it has happened to six agents
+  in one night.
+- **Interpreter, git-add/git-stash, `gh pr edit`, branch protection and the
+  doc merge driver:** see `docs/WORK.md`, "Engineering setup" and "Operational
+  facts". One completion to the `gh` note there: the PATCH needs a field flag
+  to carry a body from a file, not just `-X PATCH` —
+  `gh api -X PATCH repos/RedstoneX/quant-agent/pulls/<n> -F body=@<file>`.
+  The merge driver's one-time per-clone `git config` command is in
+  `README.md`, "Install".
+- **A green check from the docs/GitBook integration is not CI.** Confirm the
+  `tests` workflow actually queued with `gh run list --branch <branch>`; if
+  nothing queued, trigger it with `gh workflow run tests --ref <branch>`.
+  Two branches shipped with no run at all.
+- **The `Adversary:` line the closure gate looks for must be a line, not a
+  heading** — `scripts/work_queue.py`'s `ADVERSARY_LINE` regex
+  (`^\s*Adversary\s*:\s*(.+)$`) matches `Adversary: <argument>` and does not
+  match `## Adversary`. Four agents got this wrong in one night. Verify with
+  `gh pr view <n> --json body --jq '.body|test("(?im)^\\s*Adversary\\s*:")'`
+  — it must print `true`. See `.claude/agents/qamc-adversary.md` for who
+  produces the argument, and the closure rule below Governance ratification.
+- **No board item closes without the adversary agent arguing against closing
+  it first** (`.claude/agents/qamc-adversary.md`) — it has found something
+  real on every run.
+- **An item is deleted only when its question is answered**, never when it is
+  merely declined or has gone quiet. Turning a feature off and writing "no
+  source exists" is not an answer.
+- **After any doc merge, count item numbers per section.** `docs/WORK.md`
+  holds independently numbered lists; the same number legitimately repeats
+  across sections but never within one. On a collision, renumber one item —
+  never delete either — and update its `docs/BOARD_NOTES.md` key in the same
+  commit (see "The owner's board" below).
+- **Never contact the owner directly, never create task chips, never spawn
+  further subagents.** An unverified agent claim reaching him as an
+  actionable task defeats the point of routing through a lead agent.
+- **Verify the load-bearing claim in anything you are told, including by the
+  agent that dispatched you.** Roughly one confident claim in three at this
+  desk has not survived checking. Get dates and durations from git, logs or
+  the filesystem — never from impression.
+
 ## Git and continuity
 
 Use dedicated branches/PRs for substantive work. Do not force-push or push implementation directly to `main`. Paper-beta autonomy includes merging the agent's own verified PR and deploying it. Keep rollback possible. Bundle production preflight/deploy/restart/acceptance into the shortest safe intervention.
