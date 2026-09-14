@@ -22,6 +22,74 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the model exam was still marking against a rule the desk deleted three days earlier, and the reason it was blocked was a contamination that never existed (PM test gate item 8, CLOSED)
+
+**In plain words:** we want to find out which AI model should run the seat
+that actually picks the trades. That test was blocked on the board by a
+worry that its input data might be dirty. The worry was groundless — but the
+test really was broken, for a completely different reason nobody had written
+down: the exam paper still had the old answer key. On 2026-09-11 the owner
+retired the rule that every trade must promise at least 1.5 times as much
+reward as risk. The exam went on marking models on how well they obeyed it.
+Running the comparison in that state would have paid real money to discover
+which model is best at following a deleted rule.
+
+**What was actually wrong, verified rather than assumed.**
+
+* Roughly half the selection score hung off that retired number. The "did it
+  pick from the qualified set" mark and the "did it take a qualified short"
+  mark both defined "qualified" as a ratio of 1.5 or better.
+* On the one real trading day the exam is built from, that definition is
+  wrong three separate ways. Twelve of the 38 tradeable candidates are
+  breakout setups, which the desk now says carry no reward-to-risk judgement
+  at all — including NVDA, the single name this whole line of work was
+  written about. Three of the five "qualified shorts" the exam rewarded are
+  ones the desk refuses outright on a different rule entirely, so it was
+  handing out marks for trades the desk would never place. And every famous
+  mega-cap the exam penalised as "weak" is in fact a name the desk's own
+  rules admit.
+* A third mark, "every thin pick names a catalyst", was grading a
+  requirement that no longer exists: a catalyst is now required only when a
+  trade's payoff cannot be measured at all, not when it is merely thin.
+
+**What the fix does.** The exam no longer holds any opinion of its own about
+what makes a candidate qualified. It asks the desk's own admission rules —
+the same plain-Python replay of them that already shadows production — and
+scores the model on whether it picked names the desk would actually have
+admitted. On this day that is 25 of the 59 names read, of which exactly two
+are shorts. Nothing in the exam is a number anyone typed; every threshold it
+still uses is imported from the live configuration.
+
+**Two marks were deleted rather than reworded**, which is the part worth
+remembering: when a rule is gone, a check that quietly redefines itself to
+survive is worse than no check. The catalyst-discipline mark is gone
+outright. The familiarity mark — "did it reach for the mega-cap it knows" —
+is kept as a REPORTED NUMBER worth nothing, because the three mega-caps in
+question are all names the desk permits, and failing a model for taking a
+permitted trade would be inventing a rule the desk does not have.
+
+**The blocking claim itself was false, and that is the second lesson.** The
+item said past benchmark runs "may be contaminated by bad seat data". They
+cannot be. Every input the exam uses is frozen on disk — hand-built
+scenarios plus one verbatim copy of a real morning session — and no live
+analyst is called anywhere in the harness, so fixing a seat cannot reach
+backwards into a saved file. The one real fixture was not dirty either:
+every seat returned success on that run. The item had sat on the board as a
+blocker on a premise that was impossible by construction, while the actual
+blocker sat in the code unwritten-down. Nobody had checked; the wording
+sounded plausible next to a real spend-baseline contamination that did
+exist, and the resemblance was doing the work of evidence.
+
+**What would catch it next time.** The grader's checks are now pinned by a
+test that fails if any check name reintroduces the retired floor, and the
+admitted set is asserted equal to the desk's own rule replay — so the exam
+can no longer grow a second opinion about what the desk admits without CI
+saying so. That is the mechanical version of the rule this desk keeps
+relearning: a benchmark that hardcodes a number is a copy of the number, and
+copies go stale silently.
+
+---
+
 ### 2026-09-14 — the ladder that decides how big a trade can be was five invented numbers, four of which did nothing; it is now one formula with no invented number in it (board items 30 and 57, both CLOSED)
 
 **In plain words:** the desk lets a trade risk more of the account when more

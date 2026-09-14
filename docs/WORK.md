@@ -57,12 +57,21 @@ settled. Restored:**
   this line moved rather than resolved. Weight it against the fact that the
   `portfolio_manager` seat is ~93% of the LLM bill, so this is also the
   largest available saving. See `qamc-llm-cost-concentration`.
-  **NOT DECIDED. Do not act on the existing benchmark numbers** — every score in
-  `ops/model_policy/results/*2026-09-01*.json` was measured against the OLD
-  prompt and is stale (see below). Owner's instruction was to RE-MEASURE after
-  the rewritten prompt ships, then decide. The incumbent `openai/gpt-5.5`
-  stays until that re-run exists. Re-running is a re-run, not a rebuild — the
-  rig reads the prompt from disk.
+  **NOT DECIDED, and it is a FIRST run — not a re-run. Corrected 2026-09-14
+  after checking the stored results rather than repeating the wording.**
+  There has never been a PM model comparison on the measurement that matters.
+  Multi-model runs exist only on the hand-built `pm_constrained` scenario,
+  which is saturated (nearly every model scores full marks, so it separates
+  nothing), and on `pm_production_scale`, whose own README says it cannot
+  measure stock-picking because every candidate gets an identical analysis.
+  `pm_selection` — the only scenario built from a real trading day — has only
+  ever been run against ONE model. Re-scoring the stored outputs instead is
+  not available: they are truncated to the first 1,500 characters and 3 of 8
+  trials carry nothing at all. **What actually invalidated the old numbers**
+  is prompt churn (16 changes to `config/prompts/portfolio_manager.md` since,
+  and roughly a fifth longer) plus a grader keyed to the retired reward:risk
+  floor — the second of those is FIXED as of 2026-09-14, gate item 8. The
+  incumbent `openai/gpt-5.5` stays until a first run exists.
 
 - [x] RESOLVED 2026-09-03 — Level quality bar for Phase 12.1 (a stop is
   honoured however tight only when its level has 5+ touches). Detail:
@@ -109,8 +118,17 @@ Index into the audit below, for the board. Cleared seats are deleted from
 here once written up in `docs/INCIDENT_HISTORY.md` — this list is what is
 still wrong, not a history of what was.
 
-**7. PM-input shape/volume redesign — MEASURED and the null-content slice SHIPPED 2026-09-13; two named pieces left, neither of them volume.** The step that was actually missing — nobody had counted the CURRENT prompt, only the 2026-09-02 one — is done: the frozen `run_64290730` fixture rendered through the live `build_user_message` is 100,968 chars over 25 sections, and 22,094 of them (21.9%) were content-free. Full per-section table and the confirmation of item 18's "70%" (it was exactly 70.4%) in `docs/INCIDENT_HISTORY.md` ("item 18d"). Prompt is now 85,933 chars. **What is left is not volume:** (a) macro is the one seat still couriering full reasoning — its 6-paragraph `reasoning_chain` (2,287 chars) is verbatim, deliberately, under "audit these for logic errors"; deciding whether the audit hook is worth a non-bounded seat is a PROMPT change and needs the paid `--replay-run` benchmark, which the rig cannot substitute for; (b) the two largest remaining sections, Technical Analysis (16,736) and Independent Source Agreement (11,902), are both already bounded and both scale linearly with the number of candidates covered — there is no honest cap to put on either, so the lever is how many names get covered, not how each one renders. Earnings, news and tech all now hand over call + conviction + thesis + falsifier. Do NOT re-open this as a size problem.
-**8. Every past model-comparison benchmark may be contaminated by bad seat data — OPEN, no re-run yet.** Same shape as the already-known spend-baseline contamination: a benchmark run before tonight's data-honesty fixes could have scored a model on how well it coped with (or quietly hid) empty/wrong input, not on real analytical quality. Combine with the PM model test itself — same re-run, same gate, not two separate jobs.
+**7. PM-input shape/volume redesign — NOT A GATE ON THE MODEL TEST (corrected 2026-09-14); open WORK with two named pieces left, neither of them volume.** **Why it is not a gate:** a model comparison shows every candidate model the IDENTICAL frozen input, macro block included, so the size or shape of that block cannot change which model wins. It is a one-model prompt question, not a between-model one. The line that said this needed "the paid `--replay-run` benchmark" named something that does not exist: `--replay-run` is a flag on the REHEARSAL RIG (`scripts/rehearse.py`), and `ops/model_policy/benchmark_models.py` has no such flag. What a prompt change actually needs is a benchmark run on the same scenario before and after — and that is not the owner's to authorise, because it is not the model decision he ruled on. **The macro audit-hook evidence, recorded here so it is not lost:** across 56 archived `portfolio_manager` calls, 27 carried macro's full `reasoning_chain` under an instruction to audit it for logic errors, and ZERO responses named that chain or reported a macro logic error. The structural reason is that the PM's output schema has no field a macro audit finding could go in, so there is nowhere to put one. **Caveat, stated rather than buried:** the archive ends 2026-09-02 and 27 calls is a modest sample — that is "no evidence it works", not proof it cannot. The step that was actually missing — nobody had counted the CURRENT prompt, only the 2026-09-02 one — is done: the frozen `run_64290730` fixture rendered through the live `build_user_message` is 100,968 chars over 25 sections, and 22,094 of them (21.9%) were content-free. Full per-section table and the confirmation of item 18's "70%" (it was exactly 70.4%) in `docs/INCIDENT_HISTORY.md` ("item 18d"). Prompt is now 85,933 chars. **What is left is not volume:** (a) macro is the one seat still couriering full reasoning — its 6-paragraph `reasoning_chain` (2,287 chars) is verbatim, deliberately, under "audit these for logic errors"; deciding whether the audit hook is worth a non-bounded seat is a PROMPT change and needs a paid before/after benchmark run on one model, which the rig cannot substitute for (item 1's own lesson); (b) the two largest remaining sections, Technical Analysis (16,736) and Independent Source Agreement (11,902), are both already bounded and both scale linearly with the number of candidates covered — there is no honest cap to put on either, so the lever is how many names get covered, not how each one renders. Earnings, news and tech all now hand over call + conviction + thesis + falsifier. Do NOT re-open this as a size problem.
+**NOTHING HERE BLOCKS THE MODEL TEST ANY MORE — 2026-09-14.** Item 8 closed
+(`docs/INCIDENT_HISTORY.md`, 2026-09-14) and item 7 was never a gate on it —
+a comparison shows every model the identical frozen input, so the shape of
+that input cannot change which model wins. Item 7 stays listed here, under
+its own number, because it is genuine open work and because the board reads
+this section by number; it is not a blocker. **This does not authorise
+running the benchmark.** The one remaining condition is the owner's and it is
+only the spend — see the `DECIDE BY` line at the top of this file. Do not
+invent a new gate item to keep the gate alive; if a real input defect turns
+up, write it up on its own evidence.
 
 Detail below, under "DATA QUALITY AUDIT" and "PM-INPUT ARCHITECTURE".
 
@@ -943,7 +961,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **70. One underived `1.0` is doing two different jobs in the exit path, and neither is read off anything — OPEN, filed 2026-09-14 while wiring the structural check into thesis-invalidation exits (item 60).** `NOISE_BAND_ATR_MULTIPLE = 1.0` in `src/risk/exit_guard.py` sets how far an adverse move must travel before it stops being noise, and is reused inside `check_structural_protection` as the margin a close must clear to count as beyond its backing level. `absolute_min_stop_atr_multiple: 1.0` in `config/settings.yaml` sets how tight a stop is allowed to be. They are the same round number in the same unit answering two different questions, and neither has a derivation or a cited source on record. That they agree is a coincidence of both being 1, not a relationship anyone established — nothing in the code ties one to the other, so a future change to either silently breaks whatever alignment is being assumed. **Deliberately NOT fixed in the item-60 PR**, which adds information to a gate and changes no number. **What would settle it:** for each of the two independently, a published measurement of the quantity it claims to bound (an ATR multiple at which adverse moves stop being noise; an ATR multiple below which a stop sits inside ordinary daily range), or a decision that one of them should be derived from the other and made a single named constant. Nothing has been searched for yet beyond confirming that neither number is referenced to anything in-repo.
 
-**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 57, 58, 59, 61, 66, 68 in this queue, and 1, 2, 3, 4, 5, 6 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Item 38's open follow-up survives as item 52, whose own unresolvable residue is item 63. Reconstructed from git history 2026-09-14 after corruption; 1, 3, 8, 10 and 20 are NOT retired in this queue (live items; 8 is live here AND retired in the PM test gate, a legitimate cross-scheme split); 67, 90, 101, 200 never existed. PM test gate's own item 4 (news analyst data quality) closed 2026-09-14 and is retired in that scheme only — the funnel queue's own item 4 is unrelated and stays live. Full account, and every renumbering the corruption forced (62/63, then 65, then 68/69/70): `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
+**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 57, 58, 59, 61, 66, 68 in this queue, and 1, 2, 3, 4, 5, 6, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Item 38's open follow-up survives as item 52, whose own unresolvable residue is item 63. Reconstructed from git history 2026-09-14 after corruption; 1, 3, 8, 10 and 20 are NOT retired in this queue (live items; 8 is live here AND retired in the PM test gate, a legitimate cross-scheme split); 67, 90, 101, 200 never existed. PM test gate's own item 4 (news analyst data quality) closed 2026-09-14 and is retired in that scheme only — the funnel queue's own item 4 is unrelated and stays live. Full account, and every renumbering the corruption forced (62/63, then 65, then 68/69/70): `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
 
 ## Evidence-only follow-ups
 

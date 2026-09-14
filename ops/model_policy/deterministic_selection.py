@@ -37,7 +37,11 @@ if str(_REPO) not in sys.path:  # pragma: no cover - import convenience
 
 from src.agents.portfolio_manager import PortfolioManagerAgent  # noqa: E402
 from src.portfolio_constructor import PortfolioConstructor  # noqa: E402
-from src.risk.constants import reward_risk_floor_applies  # noqa: E402
+from src.risk.constants import (  # noqa: E402
+    REWARD_RISK_FLOOR,
+    STARTER_POSITION_RISK_PCT,
+    reward_risk_floor_applies,
+)
 from src.risk.rules import (  # noqa: E402
     agreement_ceiling_for_score,
     count_aligned_sources,
@@ -51,8 +55,18 @@ from src.risk.rules import (  # noqa: E402
 # cannot silently desync them.
 AGREEMENT_CEILING_PCT = [2.236, 3.162, 3.873, 4.472, 5.0]
 MAX_POSITION_RISK_PCT = 5.0
-RR_FLOOR = 1.5
-SUBFLOOR_CATALYST_RISK_PCT = 0.5
+
+# **Imported, never retyped (2026-09-14).** These two were literals here, and
+# the 1.5 in particular was the last copy of the retired universal floor left
+# anywhere in the benchmark. It is NOT a pass mark and has not been one since
+# 2026-09-11 (docs/WORK.md item 1(d)): the ONLY thing this number still does,
+# here and in production, is name the reward:risk below which a Type A /
+# range target is capped at the smallest size the desk will hold. Importing
+# the live constants means a change to the cap moves this audit with it
+# instead of leaving a stale duplicate behind — which is exactly how the
+# `pm_selection` grader ended up scoring models against a deleted rule.
+RR_FLOOR = REWARD_RISK_FLOOR
+SUBFLOOR_CATALYST_RISK_PCT = STARTER_POSITION_RISK_PCT
 CONVICTION_BANDS = {"high": (1.5, 3.0), "medium": (1.0, 2.0), "low": (0.5, 1.0)}
 
 # `- [2026-08-27] headline → NVDA, SMH, SOXX` — the row shape Rule Priority
@@ -146,6 +160,16 @@ def evaluate(selection: dict, analyses, positions, news_intel) -> list[dict]:
                     )
             elif rr < RR_FLOOR and symbol.upper() in catalysts:
                 subfloor_catalyst = True
+            # FLAGGED, NOT FIXED (2026-09-14, verified against
+            # `PortfolioManagerAgent._apply_subfloor_catalyst_rule`): live,
+            # EVERY measurable sub-floor range target is capped at starter
+            # size, catalyst or none. Here the cap is still conditional on a
+            # catalyst, so `max_risk_pct` overstates what production would
+            # grant ten of the eligible names on this fixture, and with it
+            # `total_max_risk_pct` (47.24). It does not change ELIGIBILITY,
+            # which is all the `pm_selection` grader consumes, so it is
+            # reported rather than changed under a benchmark fix — closing it
+            # re-derives numbers pinned in docs/WORK.md item 18.
 
         sources = registry.get(symbol, {})  # R5
         ignored = stale.get(symbol)
