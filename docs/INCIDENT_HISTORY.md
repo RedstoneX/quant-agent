@@ -83,6 +83,130 @@ refusal layers), where the over-refusal evidence already lives.
 every cancel/replace, so the archive and the broker cannot silently diverge.
 That is not built.
 
+### 2026-09-14 — three ceilings that decided how big an order could be existed only as sentences in a prompt; all three are now gone, and two of them were duplicating a limit the desk already derives (board item 62, CLOSED)
+
+**In plain words:** three separate size limits lived nowhere but the text the
+sizing seat reads each morning. No setting held them, no code enforced them,
+and nobody had written down where any of the numbers came from. Checked one
+at a time: one was covering a hazard the desk already prices properly, one
+was a second copy of a rule the desk already derives from its own ratified
+envelope, and one was a leftover pointing at a rule that had been deleted from
+the sheet a fortnight earlier. None of the three could be derived and none of
+the three needed to be. All three are deleted.
+
+**The three, and what each turned out to be.**
+
+*(a) The earnings-queued limit — "a name that just filed may only risk one
+percent".* This was a term in the seat's own sizing arithmetic, so it shaped
+every proposal for a name with a fresh SEC filing. Nothing enforced it. The
+one piece of enforcement that exists clamps the resulting position's WEIGHT,
+not its risk — a different quantity, at a different number, and the sheet
+claimed the opposite. A note under the rule stated that "the engine has always
+used 1% when a filing is JUST FILED"; that was false when it was written and
+had stayed in the sheet since 2026-09-01. No engine path has ever applied a
+risk ceiling to a just-filed name.
+
+Two further things were wrong with it. The event was mis-described: the flag
+fires on a 10-Q or 10-K appearing on EDGAR, which for most US issuers arrives
+*after* the earnings press release, so the overnight gap the rule was written
+to defend against has usually already happened by the time the flag turns on.
+And the hazard it actually covers — the desk is holding fundamentals it knows
+to be superseded and has not read — is already handled, deterministically and
+with a derivation: a just-filed name produces no earnings stance at all, so it
+loses that analyst's seat, arrives at the sizing formula with one fewer seat
+agreeing, and the agreement schedule (derived from the ratified envelope two
+days earlier, items 30/57) prices it a rung lower. Sizing it down again
+through a separate number double-counts the same missing evidence.
+
+*(b) The momentum-leader starter sleeve's per-name ceiling.* Prompt text only;
+nothing in the code has ever read it. The sleeve exists to let a name in with
+only the technical analyst confirming — which is exactly one seat of evidence,
+and the derived agreement schedule already prices one seat at its lowest rung.
+The sleeve's own stated intent, "a toe-hold you can add to on confirmation",
+is what the schedule does: a second confirming seat unlocks the next rung. So
+the sleeve figure was a second, tighter, un-derived home for a rule that
+already has a first, derived one. Worth noting because it confused people
+twice: the desk separately holds a *different* starter number for
+sub-floor reward:risk targets, so "starter size" meant two things at once.
+It now means one.
+
+*(c) The cash floor.* This one was not a live rule at all. The regime cash
+floor it referred to (risk-off / transitional / risk-on rungs) was deleted
+from the sheet on 2026-09-01. What survived was a single phrase inside a
+worked example, and its number never matched any rung of the rule it was
+citing. A cross-reference in the macro analyst's sheet still pointed at the
+deleted rule too; that is corrected.
+
+**What was searched, and ruled out by name.** For the earnings limit: Bartov
+and Konchitchki (2017, *Accounting Horizons*) for the filing timetable —
+"In 1970, the SEC began requiring a quarterly Form 10-Q to be filed within 45
+calendar days after quarter-end", since reduced to 40 days for accelerated
+filers — which establishes when the flag can fire but says nothing about
+position size. Li and Ramesh (2009, *The Accounting Review*) and Griffin
+(2003, *Review of Accounting Studies*) on whether the filing date itself moves
+prices; neither abstract could be fetched directly (Springer, SSRN and
+ProQuest all refuse), so both are relied on only through a fetched
+working paper that quotes them: "Examining the market reaction to 10-Ks issued
+separately from the EA, Li and Ramesh (2009) find a market reaction only for
+the 10-Ks filed at calendar quarter-end. Importantly, Li and Ramesh (2009)
+find a more pronounced market reaction to EAs compared to 10-K filings." The
+same paper establishes the ordering the desk had backwards: "the conventional
+disclosure practice of 'stand-alone' earnings announcements (EAs), which
+preempt 10-K filings, is steadily disappearing over time" — steadily
+disappearing, but still the majority case, since the paper measures concurrent
+releases rising only "from a low of four percent to a high of 25 percent".
+None of this yields a position-size number, which is the point: the literature
+is about information content, not about how much to risk.
+
+For the sleeve: Concretum Group's position-sizing research, Curtis Faith's
+Turtle unit sizing, and the practitioner pyramiding guides (TradersPost,
+LuxAlgo, QuantStrategy.io, Titan FX, HeyGoTrade) were all searched and all
+ruled out. Every one of them either targets a constant portfolio volatility —
+a fund goal this desk has already rejected on mandate grounds — or asserts a
+number with no derivation behind it. Importing either is exactly what the
+desk's no-arbitrary-numbers rule forbids.
+
+For the cash floor: Vanguard's 5–10% guidance and the retail wealth pages
+repeating it (U.S. Bank, SmartAsset, Hennion & Walsh, Beanvest) were searched
+and ruled out on goal: every one is written for a preservation or
+decumulation portfolio, and this desk's mandate says in its own first
+paragraph that it is not a preservation vehicle. It did not matter in the end,
+because the rule the number belonged to no longer exists.
+
+**Does anything get sized differently?** Yes, and this is the part that costs
+money rather than tidiness, so it is stated plainly. Nothing *enforced*
+changes: the weight clamp on a just-filed name, the agreement schedule, the
+single-name risk cap, the drawdown halving and every other deterministic gate
+are untouched, and no code path that computes an order quantity was edited.
+What changes is what the sizing seat is *told*. Before, it was instructed to
+cap a just-filed name and a sleeve starter at one percent of equity at risk.
+Now it is instructed to size both on the seats of evidence they actually
+carry, and the derived schedule's lowest rung is more than double one percent.
+So proposals for those two categories can come in larger than they would have
+yesterday, bounded by the schedule and by every enforced gate above it. The
+desk's mandate treats under-deployment as its largest measured drag, so the
+direction is not obviously wrong — but it is a loosening, it was not
+separately ratified, and the owner should know it happened before paper
+trading restarts.
+
+**What was deliberately not fixed.** The weight clamp behind the earnings flag
+carries a hand-typed number in code with no settings key and no derivation of
+its own. It is enforcement, not prompt text, so it was outside this item; it
+is now the only un-derived number left in this area and it should get its own
+review. Nothing was invented to replace it.
+
+**What catches it next time.** The three test exemptions that let these
+ceilings sit outside the hand-typed-limit check are removed, so the check
+covers the sheet again. Four tests were added: one fails if any of the three
+ceilings reappears in the sheet, one fails if the exemptions are quietly
+restored, one pins the mechanism the deletion depends on (a just-filed name
+must produce no earnings stance — if that ever stopped being true, removing
+the earnings figure would have removed a live constraint rather than a
+duplicate one), and one pins that fewer agreeing seats really do buy a
+strictly smaller position.
+
+---
+
 ### 2026-09-14 — the model exam was still marking against a rule the desk deleted three days earlier, and the reason it was blocked was a contamination that never existed (PM test gate item 8, CLOSED)
 
 **In plain words:** we want to find out which AI model should run the seat

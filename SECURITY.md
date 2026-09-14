@@ -22,7 +22,7 @@ Things especially worth flagging:
 - **Stop-protection bypass** — sequences where a SELL leaves a position naked of its protective stop (the five-step `cancel_protective_stops` → `submit` → `_order_accepted` → `wait_for_order_terminal` → `_finalize_protection_after_sell` chain has been the source of repeated bugs)
 - **Hard-rule bypass** — ways to make `cash_only`, daily-loss circuit breaker, or sector concentration caps fail open
 - **Prompt-injection vectors** — content sources (news headlines, SEC filings, web fetches) that could carry instructions the LLM might act on
-- **Schema-validation evasion** — outputs that bypass per-entry isolation or hard caps like `target_weight_pct ≤ 25`
+- **Schema-validation evasion** — outputs that bypass per-entry isolation or hard caps like `target_weight_pct ≤ 20` (`src/models.py`)
 
 ## Out of scope
 
