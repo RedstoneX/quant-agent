@@ -701,8 +701,8 @@ macro; measured test spend; 2 runs each; "-" = not completed):
 | z-ai/glm-5.3 | 92/100/75/90/100 | $0.320 | |
 | z-ai/glm-5.3-flash | 100/0/65/100/100 | $0.026 | calls up to 420s timeout |
 | deepseek/deepseek-v4.1-flash | 90/50/50/50/100 | - | calls hit 420s timeout |
-| deepseek/deepseek-v4-flash-0731 | 42/100/70/-/- | - | 420s timeouts |
-| qwen/qwen3.8-flash | 50/100/0/100/- | - | 420s timeouts |
+| deepseek/deepseek-v4-flash-0731 | 42/100/70/65/100 | - | 420s timeouts |
+| qwen/qwen3.8-flash | 50/100/0/100/100 | - | 420s timeouts |
 | google/gemini-2.5-flash-lite | -/-/65/-/- | - | incomplete |
 
 Label: results are from one public-data day per exam, 2 repeats — small

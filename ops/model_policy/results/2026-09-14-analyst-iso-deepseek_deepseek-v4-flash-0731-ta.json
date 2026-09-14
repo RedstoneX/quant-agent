@@ -1,0 +1,435 @@
+{
+  "generated_at": "2026-09-14T22:02:47Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 24
+  },
+  "estimate_usd": {
+    "per_model": {
+      "deepseek/deepseek-v4-flash-0731": 0.01391268
+    },
+    "tokens": {
+      "tech_batch": {
+        "input": 24814,
+        "output": 18111,
+        "source": "max measured in committed results"
+      },
+      "news_intel": {
+        "input": 4535,
+        "output": 11112,
+        "source": "max measured in committed results"
+      },
+      "macro_stress": {
+        "input": 7028,
+        "output": 10558,
+        "source": "max measured in committed results"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "tech_batch": {
+      "role": "tech_analyst",
+      "description": "Real yfinance bars for 7 symbols (2026-08-28) run through today's compute_indicators and analyze_batch (src/agents/tech_analyst.py:336). Unblocked 2026-09-14: analyze_batch's own signature defaults prior_ratings to {} and prior_macro_regime/prior_macro_outlook to None (src/agents/tech_analyst.py:339-343) \u2014 the tech seat's prompt rates chart-driven, not prior-ratings-driven (config/prompts/tech_analyst.md). Valuations and the intraday snapshot are omitted the same way (both optional, default None) rather than invented. Grades symbol resolution, thesis_invalid_if discipline, the absolute ATR stop floor, and range R:R >= 2.0."
+    },
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "Real RSS wires (11 feeds, fetched live 2026-09-14) replayed through today's NewsDataProvider.fetch_news / format_for_prompt / tag_symbol_mentions (src/data/news.py). previous_narrative/prior_session_report=None (both optional, src/agents/news_analyst.py:376-380). Unblocked 2026-09-14. Grades schema/enum compliance and 'no invented tickers not in input' only \u2014 no judgement-based answer key for real news."
+    },
+    "macro_stress": {
+      "role": "macro_analyst",
+      "description": "15 real FRED series (2026-09-14), fetched live through the OneCLI credential gateway with a placeholder key \u2014 the real FRED_API_KEY never entered this process \u2014 then recomputed by today's MacroDataProvider.get_macro_summary (src/data/macro.py:1125). last_state/news_narrative=None (both optional, src/agents/macro_analyst.py:203-204). Unblocked 2026-09-14 \u2014 see the retired synthetic-tape note above for why the old scenario was blocked. Grades schema and rule compliance only; real conditions have no forced correct direction to grade against."
+    }
+  },
+  "prompts": {
+    "macro_analyst": {
+      "path": "config/prompts/macro_analyst.md",
+      "sha256": "220dd8f07d5c331d417e02db17e12bd4655c0e6de4e6626078e90adf6a43b9ca",
+      "bytes": 25425,
+      "lines": 228
+    },
+    "news_analyst": {
+      "path": "config/prompts/news_analyst.md",
+      "sha256": "e395669444d2e89c37eef6e89d568ea8789d721f8132daaa8c4aae42ac829afd",
+      "bytes": 17453,
+      "lines": 196
+    },
+    "tech_analyst": {
+      "path": "config/prompts/tech_analyst.md",
+      "sha256": "541e4d81a3a78546534b309e0ad03a06ad34063ebe826a93c3bd3799dab4146d",
+      "bytes": 23459,
+      "lines": 216
+    }
+  },
+  "pricing_used": {
+    "deepseek/deepseek-v4-flash-0731": {
+      "input": 0.06,
+      "output": 0.12
+    }
+  },
+  "trials": [
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 0.7,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": false,
+          "detail": "unresolved=['MU', 'NVDA', 'SPY', 'UNH', 'XLE'] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "range R/R < 2.0: [] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 36827,
+      "output_tokens": 7164,
+      "cost_usd": 0.0030692999999999996,
+      "latency_s": 335.05,
+      "error": "",
+      "sample_output": "```json\n[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": null,\n    \"expected_horizon_sessions\": null,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Insufficient data \u2014 MA20/50/200 not provided, cannot assess trend direction or stack.\",\n      \"momentum\": \"MACD line 1.3005 below signal 1.4028, histogram -0.1023 \u2014 short-term bearish momentum, but RSI not available for confirmation.\",\n      \"volatility\": \"Price 62.68 sits between Bollinger middle 61.26 and upper 65.46, ATR 1.16 \u2014 moderate volatility, no squeeze or expansion signal.\",\n      \"volume\": \"Volume change -2.66% \u2014 declining, no confirmation of any price move.\",\n      \"support_resistance\": \"No OHLCV bars provided \u2014 cannot identify concrete historical support/resistance levels.\"\n    },\n    \"reasoning\": \"Data is insufficient to establish a valid technical setup. Missing MAs, RSI, and price action bars prevent any meaningful entry, stop, or target computation, so neutral with null price fields is the only defensible call.\"\n  }\n]\n```",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 0.7,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": false,
+          "detail": "unresolved=['MU', 'NVDA', 'SPY', 'UNH', 'XLE'] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "range R/R < 2.0: [] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 36827,
+      "output_tokens": 8292,
+      "cost_usd": 0.00320466,
+      "latency_s": 378.51,
+      "error": "",
+      "sample_output": " ```json\n[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": null,\n    \"expected_horizon_sessions\": null,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price 62.68 sits above the Bollinger middle band (\u224861.26, the 20-period mean), but MA50/MA200 are absent from the input and no OHLCV block was supplied \u2014 the trend stack (MA20 vs MA50 vs MA200) cannot be verified, so no directional trend call is defensible.\",\n      \"momentum\": \"MACD line 1.3005 is below signal 1.4028 with histogram -0.1023 \u2014 a bearish crossover is in progress. RSI(14) was not provided, so momentum is bearish but unmeasurable against the oversold/overbought scale.\",\n      \"volatility\": \"Price is in the upper half of the Bollinger envelope (mid 61.26, upper 65.46, lower 57.06); band half-width \u2248 2.10, ATR 1.16. No squeeze or expansion evidence is available \u2014 the volatility signal is neutral.\",\n      \"volume\": \"Volume change -2.66% \u2014 mildly contracting, confirming neither the advance nor the MACD rollover. No directional volume confirmation exists.\",\n      \"support_resistance\": \"The only computable levels from the supplied data are the Bollinger envelope: middle/MA20 \u2248 61.26, lower band 57.06, upper band 65.46. With no MA50/MA200, no swing pivots from a 20-bar OHLCV block, and no structural-levels list, there is no l",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 0.55,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 510 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "stock_news symbols outside the given universe: ['ABT', 'ACN', 'AP', 'BKSY', 'COIN', 'CRWD', 'DUOL', 'EFC', 'HL', 'NKE', 'NVO', 'PANW', 'RLGT', 'SITE', 'VRA']"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": false,
+          "detail": "state_change affected_symbols outside the given universe: ['COIN', 'CVX', 'HOOD', 'ITB', 'TLT', 'USO', 'XHB', 'XOM', '^TNX']"
+        }
+      ],
+      "input_tokens": 9477,
+      "output_tokens": 9197,
+      "cost_usd": 0.0016722599999999998,
+      "latency_s": 403.04,
+      "error": "",
+      "sample_output": " {\n  \"confidence\": \"high\",\n  \"macro_narrative\": {\n    \"current_regime\": \"Risk-off pivot driven by a bond market shock (10Y at 5%) colliding with an AI-narrative deflation. The Fed is set to hike again this week while the AI IPO pipeline fractures (Anthropic imminent, Amodei slowdown talk). Capital is rotating from long-duration, AI-exposed tech into cybersecurity, defensive staples, and crypto (regulatory momentum). Oil supply risk from the Saudi pipeline shutdown adds an inflationary overlay, keeping the bias toward caution and active rotation rather than broad risk appetite.\",\n    \"era_themes\": [\n      \"Rates regime shift: 10Y Treasury decisively above 5%, Fed resuming hikes (September +25bp expected) with mortgage rates at 2-year highs (7.17%) \u2014 broad valuation pressure and housing/financials stress\",\n      \"AI trade de-rating: AI IPO pipeline shakeup with Anthropic IPO imminent and Amodei 'AI slowdown' commentary; AI-exposed tech under pressure while cybersecurity becomes the defensive growth pocket\",\n      \"Energy supply shock risk: Saudi East-West pipeline shutdown threatens Saudi export capacity, lifting oil \u2014 an inflationary supply-side shock that complicates the Fed's inflation fight\",\n      \"Crypto regulatory tailwind: Crypto Clarity Act advancing with bipartisan support (Trump ethics agreement), sparking a crypto-sector rally (Coinbase +9%)\",\n      \"Defensive rotation: Money rotating out of rate-sensitive and AI-exposed tech into defensive/cyber/pharma names amid r",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 0.75,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 703 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "stock_news symbols outside the given universe: ['bearish', 'bullish', 'neutral']"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 9477,
+      "output_tokens": 3985,
+      "cost_usd": 0.00104682,
+      "latency_s": 177.91,
+      "error": "",
+      "sample_output": " {\n  \"confidence\": \"medium\",\n  \"macro_narrative\": {\n    \"current_regime\": \"Risk-off start to the week as the 10-year Treasury yield breaches the 5% psychological threshold, mortgage rates hit a 2-year high near 7.17%, and the Fed is broadly expected to hike 25bp at the September meeting amid persistent inflation. The AI trade is undergoing a de-rating: the IPO pipeline has hit a 'major shakeup,' frontier-lab commentary around an 'AI slowdown' and kill-switch requirements is spooking the most AI-exposed tech, while capital rotates into defensive software (cybersecurity) and defensive sectors. Energy is a fresh risk vector as Saudi Arabia's East-West pipeline outage threatens export capacity. Crypto is an outlier strength story on regulatory-clarity hopes (Clarity Act).\",\n    \"era_themes\": [\n      \"Rates re-hiking cycle: Fed tightening again as inflation persists, 10Y at/above 5%, mortgage rates at 2-year highs pressuring housing and rate-sensitive equity.\",\n      \"Fed leadership transition: contested Warsh nomination for Fed chair adds policy-uncertainty premium around the expected September hike.\",\n      \"AI supercycle maturation into a 'digestion/AI slowdown' phase: de-rating of AI-exposed mega-caps, IPO pipeline shakeup, and rotation into cybersecurity/defensive software.\",\n      \"Energy geopolitics: Saudi East-West pipeline outage raises oil-supply risk and inflation passthrough into the rates complex.\",\n      \"Crypto regulatory clarity: Clarity Act legislative progress an",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=80.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 7303,
+      "output_tokens": 5949,
+      "cost_usd": 0.0011520599999999999,
+      "latency_s": 37.19,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"volatility_analysis\": \"VIX 15.84, just above the 15 low-vol threshold; 5-day avg 16.23 with a rising short-term trend. In 'normal' territory (15-20), not yet the sub-15 all-clear. Supportive for equities \u2014 no stress signal \u2014 but the rising trend warrants watching for a break below 15 to confirm the risk-on tape.\",\n    \"yield_curve_analysis\": \"Both curves are positive: 2Y/10Y +0.33% and 3M/10Y +0.89% \u2014 the curve has un-inverted, a growth-expectations-improving signal. Note the level: 10Y at 4.96% and 2Y at 4.63% are high, so the positive slope comes with restrictive absolute rates. The 3M/10Y at +0.89% confirms the 2Y/10Y read \u2014 no divergence between the two curve measures.\",\n    \"monetary_policy_analysis\": \"DFF 3.63%, unchanged over 30 days \u2014 Fed on hold. Real 10Y at 2.6% is high, confirming restrictive real financial conditions; 10Y breakeven at 2.36% is anchored, so the high nominal 10Y is a real-rate/growth story, not an inflation-expectations story. Dollar softening (-0.9 over 30d) is consistent with an on-hold Fed \u2014 no policy-divergence contradiction.\",\n    \"inflation_labor_credit\": \"Core CPI 2.76% YoY with MoM +0.29% (~3.5% annualized) \u2014 sticky above target; headline 3.71% and PCE 3.7% elevated. Labor is healthy: UNRATE 4.1%, -0.2pp over 3m (no Sahm trigger), claims at 206k and falling 6k over 4 weeks \u2014 no early crack. Credit is benign: HY OAS 265bps tightening 6bps, IG 80bps calm \u2014 no hidden stress. Inflation is the lone friction; labor an",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=75.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 9001,
+      "output_tokens": 8026,
+      "cost_usd": 0.0015031799999999998,
+      "latency_s": 370.71,
+      "error": "",
+      "sample_output": " {\n  \"alignment_with_news\": \"Unverifiable this run \u2014 the previous-day News narrative was not available, so I cannot corroborate or contradict it. My regime call rests solely on the numeric indicators.\",\n  \"bear_triggers\": [\n    \"10Y yield closes above 5.0% \u2014 discount-rate shock that compresses multiples broadly and hits long-duration sectors hardest\",\n    \"Headline CPI MoM re-accelerates above 0.4% \u2014 re-inflation forces a hawkish repricing and removes the Fed pause\",\n    \"HY OAS widens above 350bps from current 265bps \u2014 first material credit warning after a tight, tightening tape\",\n    \"UNRATE rises above 4.3% \u2014 labor-market deterioration breaks the strong-employment pillar of the risk-on call\"\n  ],\n  \"bull_triggers\": [\n    \"10Y yield closes below 4.5% \u2014 removes the dominant discount-rate drag\",\n    \"Core CPI MoM prints at or below 0.2% for two consecutive months \u2014 confirms disinflation resumes toward target\",\n    \"HY OAS tightens below 250bps alongside VIX closing below 14 \u2014 unambiguous risk-on confirmation\"\n  ],\n  \"confidence\": \"medium\",\n  \"equity_outlook\": \"bullish\",\n  \"key_observations\": [\n    {\n      \"indicator\": \"VIX\",\n      \"interpretation\": \"15.84 sits in the normal band (15-20), 5-day avg 16.23, mildly rising \u2014 supportive, no crisis premium, but no sub-15 exuberance signal\",\n      \"reading\":  \"15.84\"\n    },\n    {\n      \"indicator\": \"2Y-10Y Spread\",\n      \"interpretation\": \"+0.33% positive \u2014 curve normalized from prior inversion, growth expectations improving\",\n      ",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "deepseek/deepseek-v4-flash-0731|tech_batch": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "tech_batch",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 0.7,
+        "quality_min": 0.7,
+        "cost_mean": 0.003137,
+        "latency_mean": 356.78,
+        "errors": [],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4-flash-0731|news_intel": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 2,
+        "quality_mean": 0.65,
+        "quality_min": 0.55,
+        "cost_mean": 0.00136,
+        "latency_mean": 290.48,
+        "errors": [],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4-flash-0731|macro_stress": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "macro_stress",
+        "role": "macro_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.001328,
+        "latency_mean": 203.95,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "deepseek/deepseek-v4-flash-0731": {
+        "scenarios": {
+          "tech_batch": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "tech_batch",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 0.7,
+            "quality_min": 0.7,
+            "cost_mean": 0.003137,
+            "latency_mean": 356.78,
+            "errors": [],
+            "misattributed": []
+          },
+          "news_intel": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 2,
+            "quality_mean": 0.65,
+            "quality_min": 0.55,
+            "cost_mean": 0.00136,
+            "latency_mean": 290.48,
+            "errors": [],
+            "misattributed": []
+          },
+          "macro_stress": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "macro_stress",
+            "role": "macro_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.001328,
+            "latency_mean": 203.95,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.7833,
+        "quality_worst": 0.65,
+        "quality_worst_run": 0.55,
+        "cost_per_run_mean": 0.001942,
+        "cost_total_usd": 0.011648,
+        "quality_per_dollar": 403.35
+      }
+    }
+  }
+}
