@@ -458,3 +458,73 @@ def test_a_previous_sessions_ranking_can_never_leak_into_the_next(mock_cls):
         analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
     )
     assert not agent.last_candidate_ranking
+
+
+# --------------------------------------------------------------------------
+# PM TEST GATE item 4, second half — a dropped news symbol must be VISIBLE
+# --------------------------------------------------------------------------
+
+def _news_intel_with_dropped_symbols(dropped: list[str]):
+    from src.models import MacroNarrative, NewsIntelligenceReport
+    report = NewsIntelligenceReport(
+        macro_narrative=MacroNarrative(
+            last_updated="2026-09-14", era_themes=["test"],
+            current_regime="risk-on",
+        ),
+        stock_news={
+            "NVDA": [{
+                "headline": "chip news", "sentiment": "bullish",
+                "conviction": "medium", "impact_summary": "positive",
+            }]
+        },
+        pm_briefing="NVDA bullish.",
+        market_sentiment="bullish", confidence="medium",
+    )
+    report.dropped_news_symbols = dropped
+    return report
+
+
+@patch("anthropic.Anthropic")
+def test_dropped_news_symbol_renders_as_lost_not_as_silence(mock_cls):
+    """The seat's own answer for AMD was lost (see
+    `NewsAnalystAgent._find_dropped_news_symbols`). The PM prompt must say
+    so explicitly — the same discipline the earnings 'read, no call' rollup
+    and the ranking table's 'no lean from: {seat}' note already use for a
+    stated absence — never leave AMD silently missing from the news
+    section as if it simply had no news today."""
+    agent = PortfolioManagerAgent(api_key="test", model="test-model")
+    news_intel = _news_intel_with_dropped_symbols(["AMD"])
+
+    msg = agent.build_user_message(
+        analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
+        news_intel=news_intel,
+    )
+
+    start = msg.find("## News Intelligence")
+    end = msg.find("\n## ", start + 3)
+    section = msg[start: end if end != -1 else len(msg)]
+
+    assert "News Answer Lost" in section
+    assert "AMD" in section
+    assert "NOT an absence of news" in section
+    # The lost note must not be confused with genuine "no stock-specific
+    # news" phrasing used elsewhere in the same section.
+    assert "did not survive parsing" in section
+
+
+@patch("anthropic.Anthropic")
+def test_no_dropped_news_symbols_renders_no_lost_section(mock_cls):
+    """Control case: nothing was lost, so nothing is rendered."""
+    agent = PortfolioManagerAgent(api_key="test", model="test-model")
+    news_intel = _news_intel_with_dropped_symbols([])
+
+    msg = agent.build_user_message(
+        analyses=[], positions=[], cash_balance=1000.0, total_value=1000.0,
+        news_intel=news_intel,
+    )
+
+    start = msg.find("## News Intelligence")
+    end = msg.find("\n## ", start + 3)
+    section = msg[start: end if end != -1 else len(msg)]
+
+    assert "News Answer Lost" not in section

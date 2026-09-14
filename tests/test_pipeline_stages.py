@@ -2345,6 +2345,57 @@ def test_morning_research_stage_news_low_self_reported_confidence_marks_status_l
     assert result_ctx.data_status["news"] != "ok"
 
 
+def test_morning_research_stage_news_dropped_symbol_marks_status_symbol_dropped():
+    """PM TEST GATE item 4, second half (2026-09-14). Full coverage and a
+    clean parse, but `NewsAnalystAgent` recorded that the seat's own answer
+    is missing a symbol it was shown real headline coverage for
+    (`dropped_news_symbols`, set by `_find_dropped_news_symbols`). This is a
+    confirmed structural loss, not a self-report, and must page as its own
+    status — not silently absorbed into 'ok' the way a plain missing
+    stock_news entry would be."""
+    report = _minimal_news_report(confidence="high")
+    report.dropped_news_symbols = ["AMD"]
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "symbol_dropped"
+    assert result_ctx.data_status["news"] != "ok"
+
+
+def test_morning_research_stage_news_dropped_symbol_takes_priority_over_low_confidence():
+    """Both signals can be true at once — a structural loss is the worse,
+    more actionable fact and must win the single data_status['news'] slot."""
+    report = _minimal_news_report(confidence="low")
+    report.dropped_news_symbols = ["AMD"]
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "symbol_dropped"
+
+
+def test_morning_research_stage_news_no_dropped_symbols_stays_ok():
+    """Control case: an empty `dropped_news_symbols` (the default) must not
+    itself trip the new status."""
+    report = _minimal_news_report(confidence="high")
+    assert report.dropped_news_symbols == []
+    coverage = NewsCoverage(configured=9, succeeded=9, failed=[])
+    stage = _news_coverage_stage(lambda run_id, session: (report, coverage))
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert result_ctx.data_status["news"] == "ok"
+
+
 def test_morning_research_stage_news_high_confidence_full_coverage_stays_ok():
     """Control case for the confidence check: high self-reported confidence
     on full coverage must NOT be touched by the new override — only 'low'

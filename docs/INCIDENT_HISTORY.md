@@ -22,6 +22,76 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — PM TEST GATE item 4 closed: a stock whose news answer got lost now says so, instead of looking like a quiet day
+
+**In plain words:** on 2026-08-25 the news-reading AI produced a real answer
+for AMD, but a formatting slip in its response caused AMD's whole entry to
+disappear — its stories got merged into a different stock's entry instead.
+Nothing downstream could tell that apart from AMD genuinely having no news
+that day, and those two situations call for opposite trading decisions.
+Fixing the formatting slip itself was ruled out in the earlier half of this
+item (2026-09-03): there is nothing left to safely reconstruct, since the
+model's own words for AMD are gone, not just mis-typed. What was still open
+is a different, buildable job: never let that loss be silent. It now is not.
+
+**What was built.** Before the news seat runs, the desk already knows —
+independently of the AI, from a plain keyword scan of the raw wire text —
+which stocks had real headlines shown to it (`NewsDataProvider.
+tag_symbol_mentions`). After the AI answers, that list is compared against
+the stocks its structured answer actually covers. Any stock that was shown
+real coverage and has no entry in the answer is recorded as LOST, not
+absent — a presence/absence check, no threshold or count involved, matching
+the standing "no arbitrary numbers" rule. This reuses the desk's existing
+per-item loss ledger (`AnalysisParseTelemetry.record_dropped_item`, the same
+mechanism `tech_analyst` already uses when a batch response comes back
+short a symbol), rather than building a second, parallel way to record a
+loss.
+
+**What the Portfolio Manager now sees.** A new "News Answer Lost" block in
+its own briefing, directly under the ordinary Stock-Specific News section,
+naming every lost symbol by ticker and saying plainly that this is NOT an
+absence of news and its coverage should be treated as unknown — the same
+discipline already used for a seat with no lean ("no lean from: {seat}",
+2026-09-13) and for an earnings filing read but not concluded ("read, no
+call", item 7). Nothing is invented for the lost symbol — no headline, no
+sentiment, no direction — only the fact of the loss.
+
+**Alerting.** `data_status["news"]` gains a new value, `symbol_dropped`, set
+whenever this loss is detected on an otherwise-clean run — checked ahead of
+the existing `low_confidence` self-report, since a confirmed loss is worse
+than the model's own stated doubt. That value already pages the owner
+through the standalone data-quality Telegram alert shipped 2026-09-11
+(`maybe_alert_data_quality` — any status other than "ok"/"empty" pages, no
+new alert code was needed).
+
+**Known, accepted false-positive.** The news prompt explicitly permits the
+model to see a stock mentioned in a headline and judge it incidental,
+skipping it on purpose ("Only include symbols with genuinely relevant news.
+Skip mentions that are just incidental."). That legitimate skip is
+indistinguishable, from the outside, from a lost answer, and this check will
+flag both the same way. This is a deliberate choice, not an oversight: the
+owner's framing for this item was that a real loss read as silence is the
+worse of the two failures, so the design accepts an occasional
+over-report rather than risk another silent one. If this proves noisy in
+live running, the fix is narrowing what counts as "real coverage" going
+into the comparison — never suppressing the alert.
+
+**Tests.** New coverage in `tests/test_news.py` (the seat's own detection,
+against a mocked response shaped like the 2026-08-25 incident and a control
+case where nothing is lost), `tests/test_pipeline_stages.py` (the new
+`data_status` value, including priority over `low_confidence`), and
+`tests/test_portfolio_manager.py` (the briefing renders the lost-symbol
+block, and renders nothing when there is nothing to report). All fail
+against the pre-fix code and pass against the fix. Full suite: 5,785 tests
+(5,784 passed + 1 pre-existing failure unrelated to this change, see
+`test_rehearsal_reproduces_cost_ceiling.py`'s own note about reading live
+production state), 1 skipped — no regressions.
+
+**PM TEST GATE item 4 is now fully closed** — see `docs/WORK.md`'s "Retired
+item numbers" line.
+
+---
+
 ### 2026-09-14 — the retired-item-numbers line was quietly corrupted, and it was making the corruption worse
 
 **In plain words:** the one line in the job board that says "these numbers are

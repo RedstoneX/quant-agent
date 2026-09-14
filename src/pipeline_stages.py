@@ -3395,6 +3395,25 @@ class MorningResearchStage:
                 )
             else:
                 data_status["news"] = "ok"
+            # PM TEST GATE item 4, second half (2026-09-14). A structural
+            # loss — the seat had real headline coverage for a symbol and
+            # its answer for that symbol is missing (see
+            # `NewsAnalystAgent._find_dropped_news_symbols`) — is worse than
+            # a self-reported low confidence and is checked first: it is a
+            # confirmed loss, not the model's own honesty signal about
+            # thin/ambiguous input. Only fires on what would otherwise be
+            # "ok" — coverage-driven partial/failed/parse_error above
+            # already say something is wrong and take priority.
+            if data_status["news"] == "ok" and news_intel and news_intel.dropped_news_symbols:
+                data_status["news"] = "symbol_dropped"
+                logger.error(
+                    "News parsed cleanly on sufficient coverage but the "
+                    "seat's own answer is missing %d symbol(s) it was shown "
+                    "real headline coverage for — flagging "
+                    "data_status['news']='symbol_dropped' instead of 'ok': %s",
+                    len(news_intel.dropped_news_symbols),
+                    news_intel.dropped_news_symbols,
+                )
             # Self-reported confidence is a second, independent signal from
             # the coverage check above: coverage measures whether the wire
             # feeds returned data, confidence is the model's own read on
