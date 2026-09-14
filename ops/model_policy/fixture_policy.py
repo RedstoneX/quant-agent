@@ -25,9 +25,13 @@ manifest, itself checked by this same module, that the analyst call was run
 against). Such a section is exempt from the agent-output / old-code-derived
 key ban below, because being agent output is the whole point of it. It is
 NOT exempt from the desk-source check: a fresh analyst call over desk data is
-still refused. This does not relax anything for a fixture that has no such
-`kind` — those sections still need raw external provenance and still ban
-agent-output keys exactly as before.
+still refused. A second `kind`, `"synthetic_account_state"`, covers the one
+other thing a PM fixture legitimately needs that is neither a public fact nor
+an analyst output: a starting account (cash, positions) — a REAL account is
+desk state, so this must be a labelled synthetic one (see
+`SYNTHETIC_ACCOUNT_KIND`). This does not relax anything for a fixture that
+has no such `kind` — those sections still need raw external provenance and
+still ban agent-output keys exactly as before.
 
 Desk-recorded data is not banned forever. It is refused until
 `DESK_DATA_TRUSTED_FROM` is set, and then only for rows dated on or after
@@ -135,6 +139,16 @@ OLD_CODE_DERIVED_KEYS = frozenset({
 #: `source_fixture`.
 FRESH_ANALYST_OUTPUT_KIND = "fresh_analyst_output"
 
+#: A section's provenance entry may instead declare this `kind` for a
+#: labelled SYNTHETIC starting account state (cash + positions) that is
+#: neither a public fact nor an analyst-seat output — a real account is
+#: desk state, which this policy refuses. It must carry a non-empty `label`
+#: naming it synthetic; no source/fetch is meaningful for it, so none is
+#: required. It is still walked by the desk-source and forbidden-key checks
+#: like everything else, and it may not contain a price, quote or news item
+#: (that would be an invented market fact, not an account state).
+SYNTHETIC_ACCOUNT_KIND = "synthetic_account_state"
+
 
 class FixtureQuarantined(RuntimeError):
     """A scenario was asked to run on a fixture that breaks the policy."""
@@ -220,6 +234,10 @@ def check_fixture(path: Path) -> FixtureVerdict:
         sec = sections.get(key)
         if not isinstance(sec, dict):
             problems.append(f"data section `{key}` has no provenance entry")
+            continue
+        if sec.get("kind") == SYNTHETIC_ACCOUNT_KIND:
+            if not str(sec.get("label") or "").strip():
+                problems.append(f"data section `{key}` (synthetic_account_state) names no `label`")
             continue
         if sec.get("kind") == FRESH_ANALYST_OUTPUT_KIND:
             fresh_analyst_sections.add(key)
