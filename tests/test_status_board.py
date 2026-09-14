@@ -320,7 +320,7 @@ def test_the_template_carries_every_placeholder_the_renderer_fills():
                 "{{RESOLVED}}", "{{QUEUE_OPEN}}",
                 "{{QUEUE_TOTAL}}", "{{PAUSED_COUNT}}", "{{RESOLVED_COUNT}}",
                 "{{UNEXPLAINED_NOTE}}", "{{PM_GATE}}",
-                "{{PM_GATE_DONE}}", "{{PM_GATE_OPEN}}", "{{PM_GATE_TOTAL}}"):
+                "{{PM_GATE_DONE}}", "{{PM_GATE_LEDE}}"):
         assert key in template, f"template is missing {key}"
 
 
@@ -1250,28 +1250,73 @@ def test_a_missing_backlog_or_heading_flags_nothing(tmp_path):
 # of hunting through paragraphs.
 # ---------------------------------------------------------------------------
 
-def test_the_real_pm_gate_parses_and_has_at_least_one_open_item():
-    """The shipped docs/WORK.md must actually yield the gate. Not a
-    synthetic fixture — the real file, same reasoning as the funnel-queue
-    equivalent: the thing that breaks is the real file being edited into a
-    shape the parser no longer recognises."""
+def test_the_real_pm_gate_parses_clear_or_declares_at_least_one_open_item():
+    """The shipped docs/WORK.md must actually yield the gate, in one of the
+    two legitimate shapes: either it parses to a declared-empty gate (every
+    item closed, marked with the EMPTY marker so that is a stated fact and
+    not an inferred one), or it parses to at least one item, all still open
+    (a cleared item is DELETED from WORK.md once written up in
+    docs/INCIDENT_HISTORY.md — see the doctrine note below). Either way, the
+    real file being edited into a shape the parser no longer recognises is
+    the thing this test exists to catch."""
     work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
     items, problem = sb.load_pm_gate(work)
     assert problem is None, problem
-    assert items, "the gate parsed nothing — the real file has been edited into a shape the parser no longer recognises"
-    open_items = [i for i in items if not i.done]
-    assert open_items, "the gate reports nothing open — that would mean the PM test is unblocked"
+    if not items:
+        return  # a declared-empty gate (load_pm_gate already checked the marker)
     # No count floor. Owner doctrine 2026-09-12: a cleared gate item is
     # DELETED from docs/WORK.md once it is written up in
     # docs/INCIDENT_HISTORY.md, because every session and every compaction
     # reloads WORK.md and resolved history is paid for again each time. A
     # floor on the number of items would therefore forbid exactly the
     # cleanup the doctrine requires. What must hold is that the section
-    # still parses and still reports something open.
+    # still parses and every item still in it is genuinely open.
     assert all(not i.done for i in items), (
         "a cleared gate item is still in docs/WORK.md; it should have been "
         "deleted once written up in docs/INCIDENT_HISTORY.md"
     )
+
+
+def test_pm_gate_declared_empty_returns_no_items_no_problem(tmp_path):
+    """The gate can be empty on purpose (every item closed). That state must
+    be DECLARED with the exact marker, not merely inferred from an absence
+    of numbered items — see test_pm_gate_zero_items_without_marker_is_still_a_problem."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## PM TEST GATE\n\n"
+        "**The gate is EMPTY as of 2026-09-14. Every item closed.**\n\n"
+        "<!-- END PM TEST GATE -->\n"
+    )
+    items, problem = sb.load_pm_gate(p)
+    assert items == []
+    assert problem is None
+
+
+def test_pm_gate_zero_items_without_marker_is_still_a_problem(tmp_path):
+    """Zero parsed items with no EMPTY declaration must stay a reported
+    problem — this is the guard that catches an edit that broke the
+    section's shape, so it must never be silently read as 'gate clear'."""
+    p = tmp_path / "WORK.md"
+    p.write_text("## PM TEST GATE\n\nSome prose with no numbered items at all.\n")
+    items, problem = sb.load_pm_gate(p)
+    assert items == []
+    assert problem and "shape has changed" in problem
+
+
+def test_pm_gate_marker_plus_items_is_an_inconsistency(tmp_path):
+    """A body that both declares itself EMPTY and still lists numbered items
+    is self-contradictory and must be reported as a problem rather than the
+    parser silently picking a side."""
+    p = tmp_path / "WORK.md"
+    p.write_text(
+        "## PM TEST GATE\n\n"
+        "**The gate is EMPTY.**\n\n"
+        "**1. Still here somehow — OPEN.**\n\n"
+        "<!-- END PM TEST GATE -->\n"
+    )
+    items, problem = sb.load_pm_gate(p)
+    assert items == []
+    assert problem and "inconsistent" in problem
 
 
 def test_a_renamed_pm_gate_heading_says_so_instead_of_rendering_empty(tmp_path):
@@ -1303,6 +1348,33 @@ def test_pm_gate_stops_at_its_own_end_marker_not_the_rest_of_the_file(tmp_path):
     items, problem = sb.load_pm_gate(p)
     assert problem is None
     assert [i.rank for i in items] == [1, 2]
+
+
+def test_render_open_queue_empty_gate_uses_gate_specific_wording():
+    """A declared-empty gate must not render as the generic 'Nothing is
+    queued.' — in the gate section that reads as a blank box / parse
+    failure, not as the deliberate 'gate clear' state it is."""
+    rendered = sb._render_open_queue(
+        [], None, empty_message="Gate clear — nothing is blocking the model test.")
+    assert "Gate clear" in rendered
+    assert "Nothing is queued" not in rendered
+
+
+def test_render_open_queue_default_empty_message_unchanged():
+    """The funnel queue's own empty rendering must not have shifted."""
+    assert "Nothing is queued." in sb._render_open_queue([], None)
+
+
+def test_pm_gate_lede_all_signed_off_reads_as_clear_not_zero_of_zero():
+    """'0 of 0 feeds are still not signed off' reads as broken, not clear.
+    The lede must say the gate is clear in words when both counts are 0."""
+    lede = sb._pm_gate_lede(0, 0)
+    assert "0 of 0" not in lede
+    assert "signed off" in lede or "clear" in lede.lower()
+
+
+def test_pm_gate_lede_open_items_still_uses_the_count_sentence():
+    assert sb._pm_gate_lede(2, 5) == "2 of 5 feeds are still not signed off."
 
 
 def test_pm_gate_items_do_not_leak_into_the_funnel_queue_or_vice_versa(tmp_path):

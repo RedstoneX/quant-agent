@@ -441,6 +441,37 @@ def test_the_real_documents_agree_with_each_other_through_this_tool():
     rdc.assert_notes_agree_with_work(work.read_text(), notes.read_text())
 
 
+WORK_EMPTY_GATE = """\
+# QAMC Current Work
+
+## PM TEST GATE — garbage in, garbage out
+
+**The gate is EMPTY as of 2026-09-14. Every item closed.**
+
+## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
+
+**1. The first queue item — OPEN.** Queue body one.
+
+**2. The second queue item — OPEN.** Queue body two.
+"""
+
+
+def test_resolver_round_trips_a_declared_empty_gate():
+    """The gate can legitimately have zero items (declared EMPTY). The
+    resolver's own post-conditions must not assert a non-empty gate — a
+    merge of an empty gate with itself must succeed and the board's own
+    parser must read it back as ([], None), i.e. clear, not a problem."""
+    merged = rdc.resolve_work(WORK_EMPTY_GATE, WORK_EMPTY_GATE, WORK_EMPTY_GATE)
+    assert merged == WORK_EMPTY_GATE
+    sb = rdc.status_board()
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "WORK.md"
+        p.write_text(merged)
+        gate, gate_problem = sb.load_pm_gate(p)
+    assert gate == []
+    assert gate_problem is None
+
+
 def test_the_merged_file_is_read_back_with_the_boards_own_parsers():
     """Not a fourth way to read WORK.md: the post-condition is asserted with
     `status_board.load_funnel_queue` / `load_pm_gate`, so this tool and the
