@@ -402,13 +402,28 @@ that X actually produces the symptom.
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
 - **Never hand-resolve a conflict in `docs/WORK.md`, `docs/BOARD_NOTES.md` or
-  `docs/INCIDENT_HISTORY.md`.** Run `scripts/resolve_doc_conflict.py
-  --from-index` during the merge. It merges numbered ITEMS rather than blocks
-  of text, refuses to write unless every item on either side survives exactly
-  once in its own list, and stops for a human on a number collision — which is
-  a renumber, never a delete. Refusing is a correct outcome; resolving it by
-  hand instead is how five live items were deleted (item 68, closed
-  2026-09-14, `docs/INCIDENT_HISTORY.md`).
+  `docs/INCIDENT_HISTORY.md`.** These three files are wired to
+  `scripts/resolve_doc_conflict.py` as a git merge driver (`.gitattributes` +
+  `scripts/git_merge_driver_docs.sh`), so a normal `git merge`/`git rebase`
+  runs it automatically once the clone has registered the driver — the
+  one-time, per-clone `git config` command is in README.md "### Install".
+  **A clone that skips that command is unaffected**, not silently unsafe: git
+  falls back to its own ordinary conflicted merge (real conflict markers, a
+  human resolves by hand) for these three files exactly as it would for any
+  other file, because a merge driver named in `.gitattributes` with no
+  matching `merge.<name>.driver` configured is simply not used. If a merge on
+  these files ever surfaces plain conflict markers instead of a clean
+  auto-resolve or a `REFUSING TO WRITE` message, that means the driver is not
+  registered in this clone — check `git config --get merge.docsmerge.driver`
+  before resolving by hand. The resolver merges numbered ITEMS rather than
+  blocks of text, refuses to write unless every item on either side survives
+  exactly once in its own list, and stops for a human on a number collision —
+  which is a renumber, never a delete. Refusing is a correct outcome;
+  resolving it by hand instead is how five live items were deleted (item 68,
+  closed 2026-09-14, `docs/INCIDENT_HISTORY.md`). The explicit CLI
+  (`--from-index`, or `--kind`/`--base`/`--ours`/`--theirs`/`--out`) still
+  works directly, for a merge run somewhere the driver isn't configured, or
+  for a dry run.
 ### Ordered backlog — RESUME POINT
 
 ## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
