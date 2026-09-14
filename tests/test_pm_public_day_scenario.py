@@ -8,6 +8,7 @@ on the live PM builder (`src/pipeline_stages.py::decide()` call site).
 from __future__ import annotations
 
 import importlib
+import json
 
 from src.models import PortfolioDecision, ReasoningChain, TargetPosition
 
@@ -71,12 +72,19 @@ def test_scenario_is_not_refused():
     assert scenarios.refusal_reason(scenarios.SCENARIOS_BY_KEY["pm_public_day"]) is None
 
 
-def test_fixture_has_five_actionable_and_two_neutral_names():
+def test_fixture_matches_real_day_scale():
+    """2026-09-14 OWNER RULING: real-day scale and shape, not a 5/2
+    hand-pick. 62/47/15 are MEASURED against the live-derived 101-symbol
+    universe (config/settings.yaml:1192) and its live prefilter
+    (`TradingPipeline._has_actionable_signal_fn`, src/pipeline.py:2694) on
+    2026-09-14 — see test_fixture_scale_matches_live_derived_values below
+    for the guard against this silently shrinking again."""
     manifest, analyses, *_ = scenarios._pm_public_day_inputs()
     actionable = [a for a in analyses if a.rating != "neutral"]
     neutral = [a for a in analyses if a.rating == "neutral"]
-    assert len(actionable) == 5
-    assert len(neutral) == 2
+    assert len(actionable) == 15
+    assert len(neutral) == 47
+    assert len(manifest["earnings_analyses"]) == 49
 
 
 def test_eligible_set_matches_the_live_candidate_eligibility_gate():
@@ -98,8 +106,49 @@ def test_eligible_set_matches_the_live_candidate_eligibility_gate():
     )
     assert eligible == replay
     admitted = {s for s, why in eligible.items() if not why}
-    assert admitted == {"NVDA", "SPY", "JPM", "XLE", "MU"}
-    assert eligible["UNH"] and eligible["CAT"]  # neutral, refused
+    assert admitted == {
+        "AAPL", "AGX", "BRK-B", "COP", "CVX", "EQNR", "JPM", "MU",
+        "NEE", "NET", "OKLO", "ONDS", "OXY", "TSM", "ZS",
+    }
+    assert eligible["UNH"] and eligible["AMZN"]  # neutral, refused
+
+
+def test_fixture_scale_matches_live_derived_values():
+    """OWNER RULING (2026-09-14): the exam must be derived from TODAY's live
+    code/config, not a fixed number that can quietly drift from it. This
+    reads the universe size and the earnings/insider windows straight out
+    of the live config and code paths, and checks the raw-fact fixtures'
+    own `_exam` blocks against them — so a future edit to
+    config/settings.yaml's `trading.universe` or `smart_money.lookback_days`,
+    or to `EarningsDataProvider`'s default `lookback_days`, fails this test
+    instead of silently going unnoticed."""
+    import yaml
+
+    from src.data.earnings import EarningsDataProvider
+
+    settings = yaml.safe_load(
+        (fixture_policy.FIXTURES_DIR / ".." / ".." / ".." / "config" / "settings.yaml")
+        .resolve().read_text()
+    )
+    universe = settings["trading"]["universe"]
+    assert len(universe) == 101
+
+    tech_manifest = json.loads(
+        (fixture_policy.FIXTURES_DIR / "yf_daily_bars_pm_public_day_2026-09-14.json").read_text()
+    )
+    assert tech_manifest["_exam"]["universe_size"] == len(universe)
+    assert tech_manifest["_exam"]["lookback_days"] == settings["trading"]["lookback_days"]
+
+    earnings_manifest = json.loads(
+        (fixture_policy.FIXTURES_DIR / "sec_10q10k_pm_public_day_2026-09-14.json").read_text()
+    )
+    assert earnings_manifest["_exam"]["lookback_days"] == EarningsDataProvider().lookback_days
+    assert earnings_manifest["_exam"]["universe_size"] == len(universe)
+
+    form4_manifest = json.loads(
+        (fixture_policy.FIXTURES_DIR / "sec_form4_pm_public_day_2026-09-14.json").read_text()
+    )
+    assert form4_manifest["_exam"]["configured_lookback_days"] == settings["smart_money"]["lookback_days"]
 
 
 # --------------------------------------------------------------------------
@@ -112,20 +161,20 @@ def test_none_decision_scores_zero():
 
 
 def test_eligible_only_picks_with_full_reasoning_chain_scores_1():
-    decision = _decision(_target("NVDA"), _target("XLE"))
+    decision = _decision(_target("JPM"), _target("MU"))
     checks = scenarios._pm_public_day_grade(decision)
     assert _score(checks) == 1.0, [c.detail for c in checks if not c.passed]
 
 
 def test_picking_a_neutral_name_fails_the_eligibility_check():
-    decision = _decision(_target("NVDA"), _target("UNH"))
+    decision = _decision(_target("JPM"), _target("UNH"))
     checks = _by_name(scenarios._pm_public_day_grade(decision))
     assert checks["opens_only_from_eligible_set"].passed is False
     assert "UNH" in checks["opens_only_from_eligible_set"].detail
 
 
 def test_missing_reasoning_chain_field_fails_the_schema_check():
-    decision = _decision(_target("NVDA"), chain=_chain(macro_audit=""))
+    decision = _decision(_target("JPM"), chain=_chain(macro_audit=""))
     checks = _by_name(scenarios._pm_public_day_grade(decision))
     assert checks["reasoning_chain_all_ten_fields"].passed is False
     assert "macro_audit" in checks["reasoning_chain_all_ten_fields"].detail
