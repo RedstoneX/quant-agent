@@ -22,6 +22,182 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the ladder that decides how big a trade can be was five invented numbers, four of which did nothing; it is now one formula with no invented number in it (board items 30 and 57, both CLOSED)
+
+**In plain words:** the desk lets a trade risk more of the account when more
+of its five analysts agree. The amount allowed at each level of agreement was
+a list of five numbers somebody typed — 3%, 4%, 5%, 5%, 5%. Two things were
+wrong with it. Nobody could say why 3 rather than 2 or 4. And because the
+desk's absolute per-trade limit is 5% and the decision-maker is separately
+told never to ask for more than 4%, four of those five numbers could not
+reduce anything at all — they were decoration. Only the first one, the 3%
+that prices roughly two thirds of everything this desk sizes, ever did any
+work.
+
+Those five numbers are gone. In their place is one line of arithmetic:
+
+> the risk a trade may take is the desk's own ratified per-trade limit,
+> scaled by the square root of (how many analysts agree ÷ how many analysts
+> there are).
+
+Nothing in that sentence was invented here. The per-trade limit is the 5% the
+owner ratified. The analyst count is five because the desk has five seats.
+The square root is the shape published research gives for this exact
+situation. There is no third number to choose, and that is the point.
+
+**What it produces:** 2.236% at one agreeing seat, 3.162% at two, 3.873% at
+three, 4.472% at four, and the full 5% only when all five agree. Every rung
+is now a different number, every rung below the top genuinely narrows the
+trade, and unanimity — the strongest evidence this desk can ever assemble —
+is the only thing that earns the whole envelope.
+
+**Both items were the same object seen twice.** Item 57 asked what the risk
+ceiling should be at each level of agreement. Item 30 asked whether a ladder
+nobody derived should be pricing size at all. They are answered together or
+not at all, and they are answered together here.
+
+---
+
+**Was the "four rungs cannot bind" claim still true?** Yes — re-verified
+against the live config today, not taken from the item text. Two things had
+moved since the claim was written and both were checked. PR #348 (merged
+2026-09-13) touched this area but left the five values untouched; it only
+rewrote the comment above them. The Portfolio Manager's conviction bands were
+restored 2026-09-10 and top out at 4.0% risk for a high-conviction idea. So
+against a 5% hard cap and a 4% top band: rungs 3, 4 and 5 all read 5.0 and
+could narrow nothing; rung 2 read 4.0 and could only bite a request the
+prompt already forbade. Only rung 1 could ever cut a position, and only over
+the 3–4% slice. The premise held.
+
+**Was the measurement quoted beside the numbers a derivation?** No, and the
+config comment admitted as much. It counted, against production logs
+2026-08-25 to 08-28, how OFTEN each rung is reached — 67% of opening or
+increasing targets carried exactly one aligned seat (always technical), 29%
+two, 4% three, none ever four or five. That is coverage. It says where the
+ladder bites; it never said what a rung should be. It is kept in the config
+comment for what it genuinely is — the best description of where this
+schedule actually applies — and is no longer offered as a justification.
+
+---
+
+**The derivation, and every source it rests on.** Both academic and vendor
+literature were searched, because a previous research item on this board
+failed by searching only vendor documentation.
+
+1. **Independent estimates of one quantity combine as 1/N in variance.**
+   Fetched: "Optimal blending of multiple independent prediction models"
+   (PMC9998929), which states the bound for N independent models with
+   variances at most σ²_M: *"if we combine infinite independent models with
+   distributions Ri~N(0,σi²), where variance σi² ≤ σM², we get variance:
+   σB² = … ≤ limN→+∞ σM²/N = 0"*. Variance falling as 1/N means the standard
+   error of the consensus falls as 1/√N — so how much of the consensus you
+   can believe rises as √N. That is the whole shape, and it is a statistical
+   result, not a market claim.
+
+2. **The applied statement of the same thing.** Fetched: Hyndman &
+   Athanasopoulos, *Forecasting: Principles and Practice* 2nd ed. §12.4 —
+   *"combining multiple forecasts leads to increased forecast accuracy"* and
+   *"using a simple average has proven hard to beat"*.
+
+3. **Finance already prices this as a square root of independent
+   estimates.** Fetched: AnalystPrep's CFA Level 2 notes on Grinold's
+   fundamental law — *"IR\* = IC × √BR"*, with breadth defined as *"the
+   number of independent estimates of exceptional returns made at a given
+   frequency in a year"*, and the square root *"indicating diminishing
+   returns as you increase the number of opportunities"*. The **mandate
+   check** matters here and was done: Grinold's law is a fund-level
+   statement about a manager's information ratio, and this desk is a single
+   account, not a fund. What is taken from it is the SHAPE — √(independent
+   estimates) — and explicitly not its constants, its objective, or any
+   portfolio-construction machinery. A CTA-style portfolio-volatility
+   overlay was rejected on those same grounds earlier and stays rejected.
+
+4. **Does agreement earn anything at all?** This was item 57's underlying
+   question and it now has a published answer in the right direction.
+   Fetched: Diether, Malloy & Scherbina, "Differences of Opinion and the
+   Cross Section of Stock Returns", *Journal of Finance* 57(5), 2002 —
+   *"We provide evidence that stocks with higher dispersion in analysts'
+   earnings forecasts earn lower future returns than otherwise similar
+   stocks."* Disagreement among independent forecasters on one name is a
+   negative. That does not license a number, and none was taken from it —
+   it licenses the direction the ladder already runs in.
+
+5. **Vendor / practitioner side, searched as required.** Rob Carver's
+   forecast diversification multiplier is the same object in a live sizing
+   system: combining several forecasts weakens the combined signal, so it is
+   multiplied back up, and for uncorrelated forecasts that multiplier is the
+   square root of their number. Carver's own blog (`qoppac.blogspot.com`)
+   could not be fetched — Google interposed a consent page — so the
+   secondary summary at `the7circles.uk` was fetched instead and quoted:
+   *"As less than perfectly correlated assets/rules are added to the
+   portfolio/set of rules, the volatility will fall."* Treated as
+   corroboration that the shape is in production use, not as the derivation.
+
+**Searched and NOT used, by name, so nobody repeats it:**
+Ludger Hentschel, "The Limits of Diversification" (2026) — directly on point
+for how positive correlation between signals caps the √N benefit, but the PDF
+returned 404 on every fetch attempt, so nothing from it is relied on and the
+correlation caveat below is argued structurally rather than cited.
+Goldman Sachs Asset Management, "How to Combine Investment Signals in
+Long/Short Strategies" — 403 Forbidden, not fetched, not used.
+Grinold (1989) in the *Journal of Portfolio Management*, and the JOIM and
+NYU reproductions of it — all paywalled or unreadable PDFs; the law is cited
+through the fetched AnalystPrep notes instead, which is a secondary source
+and is labelled as one.
+Bates & Granger (1969) and the Wang & Hyndman forecast-combination review —
+correct subject, but their content is about optimal WEIGHTS between forecasts
+of differing quality, which is a different question from how a consensus
+scales a position, and neither PDF was machine-readable anyway.
+**This desk's own trading record** — one live trade and ~53 archived rows.
+Ruled out on principle, not on availability: fitting a constant to the desk's
+own outcomes is forbidden here and there is nothing to fit to even if it were
+not.
+
+**The caveat, stated rather than buried.** √N is the credit for genuinely
+INDEPENDENT estimates. These five seats read overlapping public information,
+so their errors are certainly correlated and the true credit is smaller than
+√N. That makes this schedule the loosest defensible one rather than a tight
+one, and it errs toward the ratified envelope, which is separately hard-
+capped. It is deliberately NOT tightened by a guessed correlation number,
+because guessing one would be exactly the invented constant this replaces.
+
+---
+
+**What actually changes in the desk's behaviour.** Every rung is now lower
+than or equal to what it was, so this can only reduce position sizes, never
+raise one. The rung that matters is the first: a target with one net
+agreeing seat is capped at 2.236% risk instead of 3.0%, a 25% reduction, and
+the coverage count says that is about two thirds of everything this desk
+sizes. Concretely, at a $30-per-share stop on a $100 stock and a $100,000
+account, a single-seat idea that used to be built as a 10.00% position is now
+built as a 7.45% one. Rungs 2 through 5 now bind where they previously could
+not: two seats 3.162% (was an unreachable 4.0), three seats 3.873% (was an
+inert 5.0), four seats 4.472% (was an inert 5.0). Nothing about which trades
+are ALLOWED changes — this ceiling only ever narrows a size, and the
+refusal at zero or negative net agreement is untouched.
+
+**Why this cannot rot the same way twice.** The five numbers are no longer
+storable independently of the cap that constrains them. `RiskConfig` derives
+the whole schedule from its own `max_position_risk_pct` when the key is
+absent, a test recomputes the shipped `config/settings.yaml` list from that
+file's own cap and fails on any hand-edit, and a further test pins the curve
+to `cap × √(n/seats)` so a future edit that quietly reshapes it (linear, or a
+fudged exponent) fails rather than passes. Move the 5% envelope and every
+rung moves with it. A rung creeping up to equal the cap and going inert —
+the exact failure items 30 and 57 described — is now unrepresentable.
+
+**What was deliberately NOT done.** Item 30's original question — porting the
+ranking path's per-seat weights onto the sizing path — stays refused, for the
+reason already recorded: a per-seat sizing weight may only come from measured
+history, there is none, and the owner scoped the 2026-09-03 published-prior
+amendment to the ranking module. Nothing here weights one seat above another;
+all five count 1. The ladder was also not deleted, and not switched off. Both
+were live options and both were rejected on the same finding: agreement does
+have published support as a signal, so collapsing the ladder to the hard cap
+would have thrown away a real effect to avoid deriving a number.
+
+---
+
 ### 2026-09-14 — item 66 closed: the swap rule could sell a healthy position because the specialists who liked it had moved on, not because anything about it got worse
 
 **In plain words:** the desk scores an idea by adding up what each specialist

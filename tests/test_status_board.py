@@ -1836,7 +1836,12 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # 28 joined them on 2026-09-13: the permanently-red rehearsal cost-ceiling
     # test was re-diagnosed and rewritten, written up in
     # docs/INCIDENT_HISTORY.md, and deleted from the queue.
-    for rank in (14, 28, 33, 34, 36, 41, 42, 43, 47, 51, 54):
+    #
+    # 30 and 57 joined them on 2026-09-14: they were the same object seen
+    # twice (the agreement ladder's rungs), were answered together by
+    # deriving the schedule from the ratified envelope rather than picking
+    # rungs, written up in docs/INCIDENT_HISTORY.md, and deleted.
+    for rank in (14, 28, 30, 33, 34, 36, 41, 42, 43, 47, 51, 54, 57):
         assert rank not in by_rank, (
             f"item {rank} is retired and was deleted from docs/WORK.md; "
             "it must not reappear in the funnel queue"
@@ -1864,7 +1869,7 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # entire content is one open owner decision is `open`, not part_done —
     # a part_done label would be claiming outstanding BUILD work that no
     # longer exists.
-    for rank in (30, 32):
+    for rank in (32,):
         assert by_rank[rank].bucket == "open", rank
         assert by_rank[rank].part_done is False, rank
 

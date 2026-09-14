@@ -687,7 +687,9 @@ re-measuring before relying on it again.
     needs a paid `--replay-run` benchmark to verify, not authorised yet.
   - Whether R/R and net evidence join the production ranking composite —
     not decided, not an owner call (label removed 2026-09-14, see
-    `docs/INCIDENT_HISTORY.md`). Sizing-path parity is item 30.
+    `docs/INCIDENT_HISTORY.md`). Sizing-path parity is settled and no
+    longer an item: retired items 30/57 derived the sizing ladder from
+    the ratified envelope, and per-seat WEIGHTS there stay refused.
   - A spend cap on the OpenRouter key (mine to set via browser access, not
     the owner's) — still NOT built. This is an API-key-level cap outside
     our own code, the one leg of the cost-circuit replacement that never
@@ -815,45 +817,6 @@ the PM as prose, which is what this item asked for.
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**30. The agreement ladder that prices position size has rungs nobody
-derived, and four of its five rungs cannot bind — OPEN, reframed
-2026-09-13.** *Owner-call label removed 2026-09-14, see
-`docs/INCIDENT_HISTORY.md`.*
-
-The item used to read "port the ranking path's per-seat weights onto the
-sizing path". Reading the code changes the question, on three findings — full
-reasoning in `docs/INCIDENT_HISTORY.md`, 2026-09-13.
-
-  a. **A per-seat sizing weight is already forbidden, by a ratified rule with
-     a passing guard behind it.** A confidence weight may only be derived
-     from measured history (minimum 20 resolved calls per seat); there is
-     nothing to derive from, and `tests/test_signed_dissent.py` fails on both
-     the constant and the symmetry if anyone adds a weight table. The
-     2026-09-03 amendment that let the RANKING use a published prior was
-     scoped by the owner to the ranking module. Extending it is HIS call, not
-     an engineering one — so nothing was changed here.
-  b. **The ladder's rungs were never derived.** The measurement beside them
-     counted how OFTEN each rung is reached (67% of 75 real targets at one
-     net seat, 29% two, 4% three, none above). That is coverage. The stated
-     reasoning fixes only a range for rung 1 — "not near 5, not much under 2"
-     — and 3.0/4.0 sit inside it by choice. Weighting the count would mean
-     inventing an interpolation rule to index a table that was itself
-     invented.
-  c. **Four of the five rungs are inert as configured.** Per-trade hard
-     ceiling 5%; the PM's own restored conviction bands top out at 4%. Rungs
-     3-5 are all 5.0 and can never reduce anything; rung 2 (4.0) can only
-     bite on a request the prompt already forbids. Only rung 1 (3.0) can
-     ever cut a position, and only over the 3-4% slice. This became true when
-     item 32 restored the bands; nobody re-checked it then.
-
-**The decision is therefore not "which weights".** It is whether a chosen
-five-rung ladder should be pricing size at all, when four rungs are inert and
-none of the five was read from anything. Porting the ranking prior across
-would not fix the incoherence the item named either — ranking scores a
-per-seat strength-plus-confidence composite while sizing counts +1/-1 votes
-into a step function, so matching the numbers leaves the two paths still
-measuring different things.
-
 **32. The two drawdown systems have never been reconciled — OPEN,
 unchanged since 2026-09-11.** *Owner-call label removed 2026-09-14, see
 `docs/INCIDENT_HISTORY.md`.*
@@ -949,18 +912,6 @@ No DECIDE BY — revisit only if it recurs.
 
 **Cost while unanswered:** small, now quantified — the gate fires only past 6.7x ATR on a three-week trade and never on the desk's own fallback, so it under-refuses. Whether anything SHOULD be blocked is uncosted.
 
-**57. Four of the agreement ceiling's five rungs cannot bind, and the measurement quoted beside it is not a derivation. OPEN, filed 2026-09-13.**
-
-**The question, answerable:** what should the risk ceiling be at each level of seat agreement — and should the schedule have five rungs at all, given four of them are unreachable?
-
-**Where the current numbers came from:** invented, with a real measurement standing next to them that does not derive them. `agreement_ceiling_pct: [3.0, 4.0, 5.0, 5.0, 5.0]` in `config/settings.yaml`, spec §9.4, signed 2026-09-02.
-
-**Already searched and ruled out — do not repeat this.** The measurement in the comment is real but is a COVERAGE COUNT, not a derivation: against production `agent_logs` 2026-08-25..28, 67% of opening/increasing targets carried exactly one aligned source (always technical), 29% two, 4% three, and none ever reached four or five. It says how often each rung is used; it says nothing about what the ceiling at that rung should be. Two structural facts make most of the schedule inert and should not be rediscovered: rungs 3-5 all read 5.0, which is the hard `max_position_risk_pct` cap, so they narrow nothing; and no observation in the measured window reached rung 4 or 5 at all. Only rungs 1 and 2 have ever bound. Note also that the top rung sits at 5.0 against a 4% top conviction band elsewhere in the config — check that interaction before treating rung 3 as live either.
-
-**What would settle it:** evidence that independent-seat agreement predicts outcome — either published work on analyst/signal-agreement and forecast accuracy, or this desk's own record once it has enough rung-2 and rung-3 observations to compare. Better still, a reformulation: if agreement cannot be shown to earn size, the schedule should collapse to the hard cap and be deleted, which is a real and permitted answer.
-
-**Cost while unanswered:** 67% of all targets are sized against an invented 3.0% ceiling rather than the ratified 5% envelope — that single rung is doing almost all the sizing on this desk, and no one can say why it is 3 and not 2 or 4. Meanwhile the schedule reads as a five-tier design and is really a two-tier one, so anyone reading it forms a false picture of how size is decided.
-
 **60. The exit path's two refusal layers point in OPPOSITE directions, and this item asked for both at once. OPEN; re-scoped 2026-09-14 — the schema half shipped, the contradiction is what is left.** As written it could not be answered. It named the hole as UNDER-refusal — no deterministic gate "can catch a plausibly-worded, deterministically-clean, wrong exit" — then gave OVER-refusal as the reason for caution: a refused sale leaves a broken-thesis position on the book overnight behind only the broker stop. Closing the named hole needs MORE refusal; the caution needs less. Both cannot be the priority, and choosing neither produced the deferral. **The measured record says the direction was assumed backwards.** Re-verified 2026-09-14 against the archived database: three exit-path risk reviews exist in all — rows 296 (2026-08-31 19:32:50, `close-100065e1`), 319 (2026-09-01 17:03:31, `midday-a40ca27b`) and 330 (2026-09-01 19:32:32, `close-0e9129f1`). The AI seat saw 8 exits and approved 8 — zero refusals, zero modifications. The deterministic layer, which runs AFTER it speaks, blocked the SAME 8: `intraday_evaluations` holds 7 `exit_blocked_inside_atr_noise_band` and 1 `exit_blocked_no_named_trigger` across those three run ids and no other status on them. So the AI refused 0 of 8, Python refused 8 of 8, and **no discretionary exit has ever reached the broker through this path.** The only refusal behaviour ever measured here is over-refusal by the deterministic layer — the opposite failure from the one named. The under-refusal hole describes the gates truthfully but is unreachable until an exit survives them; none has. **A related incoherence, verified 2026-09-14 in `pipeline.py`.** An unavailable, unparseable or verdict-less model makes `_risk_review_exits` FAIL OPEN — every exit proceeds unreviewed, owner-ratified 2026-08-27 so an outage cannot trap a dead position. But `_reason_cites_hard_trigger` is a case-insensitive SUBSTRING match over the reviewer's prose, and a miss DROPS the exit — FAILS CLOSED (archived row 135, V, `close-0e9129f1`). The desk trusts an exit MORE when the model is absent than when it is present and phrases its reason without a recognised keyword. However the fail direction is settled, it must be the same answer in both places. **"Wait until real trading produces more exit reviews" is NOT valid and must not be re-proposed.** More approvals cannot settle a prompt or seat question: `src/agents/risk_review_mode.py` and the 2026-09-13 `docs/INCIDENT_HISTORY.md` entry both record that no rig here can validate a prompt rewrite — it replays recorded answers into a changed prompt and passes regardless. And the sample is SELECTED by the gates under question: those 8 exits are what the upstream reviewer produced, and every outcome was set by the gates being judged — the self-referential shape `docs/OUTCOME.md` names as the `pace` failure, the desk's largest identified P&L defect. **Settled.** "A buy-plan auditor wearing exceptions" no longer holds: PR #343 gave this path its own prompt, this PR its own schema (`src/agents/risk_review_mode.py` carries the account), and neither needed new data. **The ARCHITECTURE question left:** which layer owns refusal here, and can the two be made coherent about fail direction? Not "should the exit path get its own reviewer" — it has one. A deterministic keyword layer overrides an AI seat that has never once disagreed with it, refuses on the words rather than the claim, and fails CLOSED where the seat it overrides fails OPEN. **What would settle it:** reconciling the two fail directions — no new data needed, both are stated desk positions and they contradict each other; and why the noise band blocked 7 of 8 exits, a live over-refusal question with real evidence, unlike the under-refusal hole, which has none. **Owner's, kept separate:** how readily the desk should block a SALE at all — risk appetite, unreadable off any instrument. The architecture and market-structure halves are NOT his. No number is proposed here.
 
 **60 — a related gate hole is CLOSED (2026-09-14): the ATR band's only non-redundant domain now consults `check_structural_protection`, additively.** `docs/INCIDENT_HISTORY.md`, 2026-09-14. **Still open:** the questions above, and the band's own multiple (item 70).
@@ -992,7 +943,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **70. One underived `1.0` is doing two different jobs in the exit path, and neither is read off anything — OPEN, filed 2026-09-14 while wiring the structural check into thesis-invalidation exits (item 60).** `NOISE_BAND_ATR_MULTIPLE = 1.0` in `src/risk/exit_guard.py` sets how far an adverse move must travel before it stops being noise, and is reused inside `check_structural_protection` as the margin a close must clear to count as beyond its backing level. `absolute_min_stop_atr_multiple: 1.0` in `config/settings.yaml` sets how tight a stop is allowed to be. They are the same round number in the same unit answering two different questions, and neither has a derivation or a cited source on record. That they agree is a coincidence of both being 1, not a relationship anyone established — nothing in the code ties one to the other, so a future change to either silently breaks whatever alignment is being assumed. **Deliberately NOT fixed in the item-60 PR**, which adds information to a gate and changes no number. **What would settle it:** for each of the two independently, a published measurement of the quantity it claims to bound (an ATR multiple at which adverse moves stop being noise; an ATR multiple below which a stop sits inside ordinary daily range), or a decision that one of them should be derived from the other and made a single named constant. Nothing has been searched for yet beyond confirming that neither number is referenced to anything in-repo.
 
-**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 58, 59, 61, 66, 68 in this queue, and 1, 2, 3, 4, 5, 6 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Item 38's open follow-up survives as item 52, whose own unresolvable residue is item 63. Reconstructed from git history 2026-09-14 after corruption; 1, 3, 8, 10 and 20 are NOT retired in this queue (live items; 8 is live here AND retired in the PM test gate, a legitimate cross-scheme split); 67, 90, 101, 200 never existed. PM test gate's own item 4 (news analyst data quality) closed 2026-09-14 and is retired in that scheme only — the funnel queue's own item 4 is unrelated and stays live. Full account, and every renumbering the corruption forced (62/63, then 65, then 68/69/70): `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
+**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 57, 58, 59, 61, 66, 68 in this queue, and 1, 2, 3, 4, 5, 6 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Item 38's open follow-up survives as item 52, whose own unresolvable residue is item 63. Reconstructed from git history 2026-09-14 after corruption; 1, 3, 8, 10 and 20 are NOT retired in this queue (live items; 8 is live here AND retired in the PM test gate, a legitimate cross-scheme split); 67, 90, 101, 200 never existed. PM test gate's own item 4 (news analyst data quality) closed 2026-09-14 and is retired in that scheme only — the funnel queue's own item 4 is unrelated and stays live. Full account, and every renumbering the corruption forced (62/63, then 65, then 68/69/70): `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
 
 ## Evidence-only follow-ups
 

@@ -43,7 +43,11 @@ from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
     Position, TargetPosition, TechAnalysisResult, TradeDecision, reward_to_risk,
 )
-from src.risk.constants import reward_risk_floor_applies
+from src.risk.constants import (
+    INDEPENDENT_SEAT_COUNT,
+    derive_agreement_ceiling_schedule,
+    reward_risk_floor_applies,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -401,7 +405,12 @@ class ConstructorConfig:
     # target receives, never raise it, and never past `risk_budget_pct`.
     # Kept in sync with `risk.agreement_ceiling_pct` — pipeline.py wires
     # them from the same setting, same pattern as every other ceiling here.
-    agreement_ceiling_pct: tuple[float, ...] = (3.0, 4.0, 5.0, 5.0, 5.0)
+    # DERIVED from the envelope, never typed — see
+    # `src/risk/constants.py::derive_agreement_ceiling_schedule`
+    # (docs/WORK.md items 30/57, retired 2026-09-14).
+    agreement_ceiling_pct: tuple[float, ...] = tuple(
+        derive_agreement_ceiling_schedule(5.0, INDEPENDENT_SEAT_COUNT)
+    )
     # Minimum stop distance, in ATRs. A stop inside ordinary volatility is not
     # a thesis invalidation, it is a coin flip on noise — Phase 3 already
     # established 1.25 ATR as one ordinary day's range for a TRAILING stop,
