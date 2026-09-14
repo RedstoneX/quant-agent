@@ -22,6 +22,98 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the four numbers that describe every chart to every analyst seat were all round figures somebody liked; they are now read off the stock itself (item 58)
+
+**In plain words:** before any analyst seat looks at a chart, the desk writes
+it a short description — has this stock gapped, is it going sideways. Four
+round numbers decided what got written: a gap had to be at least 2% to be
+mentioned, and "going sideways" meant a total range under 8% across 15
+sessions with a small net move. None of them came from anywhere. The problem
+is not that they are wrong, it is that they mean different things on
+different stocks: a 2% gap on a sleepy utility is a real event, a 2% gap on a
+high-volatility name is an ordinary Tuesday, and both were reported to the
+seats in exactly the same words. Every number in that description is now
+measured against the stock's own recent behaviour instead, so there is no
+percentage left in it at all.
+
+**What each number actually moved, established before any of it was changed.**
+This mattered more than the fix. Nothing in the trading rules reads the gap
+list or the consolidation flag directly — no gate, no stop, no size. Both
+reach a real decision only one way: they are sentences in the Technical
+Analyst's prompt, and that analyst's own `setup_type` verdict *does* move
+real machinery downstream (a sizing multiplier, whether the reward/risk floor
+applies at all, and how the position is tracked after entry). So the honest
+answer is that these constants can change a trade taken or refused in a live
+session, but only by persuading a model, never by mechanically refusing
+anything. The one place a constant does gate deterministically is the
+backtest engine, which substitutes the consolidation flag for the analyst's
+chart read; that path does not touch live trading.
+
+**What replaced them.**
+
+* *Gap worth reporting.* Bulkowski's definition of a gap is purely structural
+  and carries no size floor: today's low above yesterday's high, or today's
+  high below yesterday's low. The detection code was already exactly that;
+  the 2% was a second screen bolted on top, justified in a comment as
+  "smaller ones are noise that ordinary intraday movement fills within
+  hours". That sentence is now the test, measured: a gap is reported when it
+  is wider than one ordinary day's trading range for that name — which is
+  what ATR is — so ordinary intraday movement demonstrably cannot close it in
+  a session. The published prescription is to express gap size in ATR rather
+  than to threshold it, so the multiple is now printed on the line and the
+  seat can see the significance for itself.
+* *Consolidation.* Two tests, neither containing a number. First, the
+  trailing window's high-low envelope must be no wider than the envelope of
+  the equal-length stretch immediately before it — Toby Crabel's narrow-range
+  shape (NR4/NR7: the narrowest range of the last four or seven bars) lifted
+  from a single bar to a window, and the same idea as Minervini's volatility
+  contraction. It is a comparison against the name's own immediate past, so
+  it means the same thing on a utility and on a high-beta name. Second, the
+  window must be sideways rather than drifting: the range is spent either on
+  net drift or on oscillation, and a base oscillates more than it drifts.
+  That second test is arithmetically identical to the old
+  `_CONSOLIDATION_MAX_DRIFT_RATIO = 0.5` — the 0.5 turned out not to be a
+  tuned cut at all but the break-even point between drift-dominated and
+  oscillation-dominated. Behaviour unchanged; only the framing was arbitrary.
+* *Window length.* The 15 is now the ATR period the same file already reads
+  volatility over. A stretch shorter than one full volatility-measurement
+  period has no volatility reading of its own to be judged tight against, so
+  there is nothing to compare it to. The window sets a minimum and a
+  resolution, not a pass/fail line: the detector already extends the base
+  backwards for as long as price stays inside the envelope, so the base
+  length that gets reported is read off the instrument either way.
+
+**What was ruled out, by name.** O'Neil's flat base ("roughly five weeks or
+more of sideways trade with a correction of no more than about 15 percent")
+was rejected because the same source says outright that "Both numbers are
+conventions from studies of past leaders, not laws" — adopting them would
+swap one convention for another with a citation stapled to it, which is the
+same unsourced act in the other direction. Also rejected: picking any ATR
+multiple for the gap floor, the move already refused for the level-match
+tolerance. The multiple used is one, and one is not a tuned parameter — it is
+the identity "wider than an ordinary day". The academic route was searched
+too, after the item 55 precedent: the one directly relevant rule-based
+recognizer for horizontal/rectangle consolidation patterns is Tsinaslanidis
+and Zapranis' 2016 Springer book, whose identification criteria are behind a
+paywall and could not be fetched. It is recorded here as unread, not as
+unsupportive.
+
+**Known weakness, stated rather than hidden.** A purely relative contraction
+test flags dead tape as consolidating, because in a dead market every stretch
+is narrow and nothing is coiled. That is a real limitation of the shape and
+the usual remedy is to add an absolute floor as some fraction of ATR — a
+fraction nobody can source, so it was not added. It bites less here than it
+would elsewhere: this flag tells the analyst "range-bound, not breakout",
+and a dead stock genuinely is range-bound. The flag would be wrong if it
+were read as "expansion is imminent". Nothing reads it that way today; if
+something ever does, this is the paragraph to come back to.
+
+**What catches it next time.** A test asserts the three deleted constants
+have not reappeared under any name, and another asserts the consolidation
+window is still the ATR period rather than a figure of its own. Two more
+feed the same percentage gap to a quiet name and to a volatile one and
+require opposite answers, which no flat threshold can pass.
+
 ### 2026-09-13 — the insider holdings data the board said we did not have was already being downloaded, parsed and stored — and the filter using it was throwing away the one band the research calls a buy signal (item 52)
 
 **In plain words:** the board carried an open owner decision asking whether to
