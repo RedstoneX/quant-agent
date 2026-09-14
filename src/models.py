@@ -1269,6 +1269,26 @@ class ReasoningChain(LLMOutputModel):
     # (same pattern as continuity_check) but MANDATORY per the prompt — its job
     # is to catch the systematic directional bias a forward-only CoT misses.
     premortem_check: str = ""
+    # Macro logic audit — the answer to a question the prompt had been asking
+    # with nowhere to put the reply. PM's rendered briefing ships the macro
+    # seat's full six-paragraph `reasoning_chain` verbatim under the heading
+    # "audit these for logic errors", and until 2026-09-14 this schema had no
+    # field of any kind that such a finding could land in. Across the archived
+    # PM calls that carried those paragraphs, no response ever named a macro
+    # logic error — which is what an instruction with no output channel looks
+    # like from the outside. That is a structural argument, not a measured
+    # improvement: this desk has no rig that can validate a prompt rewrite
+    # (the rehearsal rig replays recorded answers into a changed prompt and
+    # passes regardless), so the claim rests on "no field existed", which is
+    # checkable by reading this class, and not on a benchmark.
+    #
+    # Optional-default at the schema layer for the same reason as the two
+    # fields above — every archived log predates it — but MANDATORY per the
+    # prompt. Deliberately NOT `min_length=1`: forcing a non-empty string
+    # when the chain is sound is how the fabricated `or "n/a"` placeholders
+    # started (see `ExitReviewChain`). "No logic error found" is a real
+    # verdict and the prompt asks for it; an invented one is not.
+    macro_audit: str = ""
 
 
 class ExitReviewChain(ReasoningChain):

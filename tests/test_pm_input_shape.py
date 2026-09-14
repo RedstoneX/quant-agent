@@ -262,3 +262,77 @@ def test_a_no_call_earnings_stance_still_reaches_the_registry(rendered):
     for symbol in covered:
         block = registry_section[registry_section.index(f'"{symbol}"'):][:400]
         assert '"earnings"' in block, symbol
+
+
+# ---------------------------------------------------------------------------
+# item 18e — an instruction in the briefing must have somewhere to send its
+# answer
+# ---------------------------------------------------------------------------
+
+def test_the_macro_audit_instruction_has_an_output_field(rendered: str) -> None:
+    """The briefing ships the macro seat's whole reasoning chain verbatim
+    and tells the seat to audit it for logic errors. Until 2026-09-14 the
+    output schema had no field of any kind such a finding could go in, so
+    the instruction asked for work with nowhere to put the answer — which is
+    worse than bulk, because it is bulk that also asks for effort.
+
+    This is the whole of the claim, and it is deliberately structural: this
+    desk has no rig able to validate a prompt rewrite (the rehearsal rig
+    replays recorded answers into a changed prompt and passes regardless),
+    so what is asserted here is that the channel EXISTS, never that the
+    seat decides any better for having it.
+    """
+    from src.models import ReasoningChain
+
+    assert "audit these for logic errors" in rendered, (
+        "the briefing no longer asks PM to audit macro's reasoning; if that "
+        "was deliberate, this test and `macro_audit` should go with it"
+    )
+    assert "macro_audit" in ReasoningChain.model_fields, (
+        "the briefing asks PM to audit macro's reasoning chain for logic "
+        "errors and the schema has nowhere to report one"
+    )
+    # The instruction must name the field, or the seat has to guess where an
+    # answer goes — which is the same defect one step removed.
+    assert "reasoning_chain.macro_audit" in rendered
+
+
+def test_macro_audit_is_not_mandatory_at_the_schema_layer() -> None:
+    """Deliberately NOT `min_length=1`. Forcing a non-empty string when the
+    macro chain is sound is exactly how the fabricated `or "n/a"`
+    placeholders started on this desk (see `ExitReviewChain`). The prompt
+    asks for a real verdict either way — name the error, or say none was
+    found — and "no logic error found" is an answer, not a placeholder.
+
+    It is also what keeps every archived log parseable: all of them predate
+    the field.
+    """
+    from src.models import ReasoningChain
+
+    field = ReasoningChain.model_fields["macro_audit"]
+    assert field.default == "", "macro_audit must validate when absent"
+    assert ReasoningChain.model_validate({
+        "macro_filter": "m", "news_check": "n", "earnings_check": "e",
+        "signal_conflicts": "s", "sizing_logic": "z",
+        "portfolio_balance": "b", "cash_target": "c",
+    }).macro_audit == ""
+
+
+def test_the_risk_seat_can_see_whether_the_macro_audit_happened() -> None:
+    """A channel nobody reads is not a channel. The seat whose job is to
+    audit PM gets `macro_audit` as its own labelled row, and a blank one
+    renders as NOT PERFORMED rather than silently as nothing."""
+    from src.agents import risk_review_mode
+
+    rows = risk_review_mode.chain_rows(risk_review_mode.MORNING_PLAN)
+    by_attr = {attr: (label, mandatory) for label, attr, mandatory in rows}
+    assert "macro_audit" in by_attr, (
+        "the risk seat never sees PM's macro audit, so nothing downstream "
+        "can tell a performed audit from a skipped one"
+    )
+    label, mandatory = by_attr["macro_audit"]
+    assert mandatory, (
+        "macro_audit is mandatory in PM's prompt and optional in the "
+        "schema, so a blank one must banner as NOT PERFORMED"
+    )
+    assert "macro" in label.lower() and "audit" in label.lower()

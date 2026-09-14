@@ -246,10 +246,32 @@ def test_morning_plan_rendering_is_unchanged_by_default():
 
 def test_morning_plan_still_banners_a_genuinely_skipped_pm_audit_step():
     """The banner is CORRECT on the morning path and must survive. PM's own
-    prompt makes both fields mandatory while the schema defaults them to ""."""
+    prompt makes these fields mandatory while the schema defaults them to "".
+
+    Counted from the schema rather than hard-coded: `macro_audit` became the
+    third such field on 2026-09-14 (item 18e) and a literal `== 2` here was
+    the only thing that noticed. What matters is that EVERY field which
+    validates when empty banners when empty — not that there happen to be
+    two of them.
+    """
+    from src.models import ReasoningChain
+
+    expected = sum(
+        1 for label, attr, mandatory
+        in risk_review_mode.chain_rows(risk_review_mode.MORNING_PLAN)
+        if mandatory
+    )
+    optional_in_schema = sum(
+        1 for name, f in ReasoningChain.model_fields.items() if f.default == ""
+    )
+    assert expected == optional_in_schema, (
+        "every reasoning-chain field the schema lets default to \"\" must "
+        "have a morning row that banners it, or a skipped audit step is "
+        "invisible to the seat that audits PM"
+    )
     message = _render(_morning_proposal(),
                       review_mode=risk_review_mode.MORNING_PLAN)
-    assert message.count(NOT_PERFORMED) == 2
+    assert message.count(NOT_PERFORMED) == expected
 
 
 def test_explicit_morning_mode_is_byte_identical_to_no_mode_at_all():
