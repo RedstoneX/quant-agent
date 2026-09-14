@@ -15,6 +15,20 @@ today's live code when the exam runs. A fixture that breaks any of these
 rules is QUARANTINED: `ops/model_policy/benchmark_models.py` refuses to run a
 scenario built on it, and names why.
 
+**2026-09-14, PM practice-day extension.** A PM-input fixture legitimately
+needs analyst-seat OUTPUT (analyses, macro_analysis, news_intel, ...) — that
+is what the live PM actually reads. A section may declare
+`"kind": "fresh_analyst_output"` in its `_provenance.sections` entry instead
+of the raw-facts `source`/`fetched_on`/`fetch` triple; that entry must then
+name `model`, `route`, `timestamp` (ISO) and `source_fixture` (the raw-facts
+manifest, itself checked by this same module, that the analyst call was run
+against). Such a section is exempt from the agent-output / old-code-derived
+key ban below, because being agent output is the whole point of it. It is
+NOT exempt from the desk-source check: a fresh analyst call over desk data is
+still refused. This does not relax anything for a fixture that has no such
+`kind` — those sections still need raw external provenance and still ban
+agent-output keys exactly as before.
+
 Desk-recorded data is not banned forever. It is refused until
 `DESK_DATA_TRUSTED_FROM` is set, and then only for rows dated on or after
 that date. Setting it is a reviewed change: `tests/test_fixture_policy.py`
@@ -115,6 +129,13 @@ OLD_CODE_DERIVED_KEYS = frozenset({
 })
 
 
+#: A section's provenance entry may declare this `kind` instead of the raw
+#: source/fetched_on/fetch triple (see module docstring, "PM practice-day
+#: extension"). It must then carry `model`, `route`, `timestamp` and
+#: `source_fixture`.
+FRESH_ANALYST_OUTPUT_KIND = "fresh_analyst_output"
+
+
 class FixtureQuarantined(RuntimeError):
     """A scenario was asked to run on a fixture that breaks the policy."""
 
@@ -189,13 +210,45 @@ def check_fixture(path: Path) -> FixtureVerdict:
         problems.append("`_provenance.sections` missing: no external source is named per data section")
         sections = {}
 
-    # (a) every data section names an external source and a fetch date.
+    # (a) every data section names an external source and a fetch date —
+    # OR declares itself fresh analyst output over an already-checked
+    # raw-facts fixture (see FRESH_ANALYST_OUTPUT_KIND).
+    fresh_analyst_sections: set[str] = set()
     for key in data:
         if key.startswith("_"):
             continue
         sec = sections.get(key)
         if not isinstance(sec, dict):
             problems.append(f"data section `{key}` has no provenance entry")
+            continue
+        if sec.get("kind") == FRESH_ANALYST_OUTPUT_KIND:
+            fresh_analyst_sections.add(key)
+            if not str(sec.get("model") or "").strip():
+                problems.append(f"data section `{key}` (fresh_analyst_output) names no `model`")
+            if not str(sec.get("route") or "").strip():
+                problems.append(f"data section `{key}` (fresh_analyst_output) names no `route`")
+            try:
+                date.fromisoformat(str(sec.get("timestamp"))[:10])
+            except (TypeError, ValueError):
+                problems.append(f"data section `{key}` (fresh_analyst_output) has no ISO `timestamp`")
+            source_fixture = str(sec.get("source_fixture") or "").strip()
+            if not source_fixture:
+                problems.append(
+                    f"data section `{key}` (fresh_analyst_output) names no `source_fixture`"
+                )
+            else:
+                source_path = FIXTURES_DIR / source_fixture
+                if not source_path.exists():
+                    problems.append(
+                        f"data section `{key}`'s source_fixture `{source_fixture}` does not exist"
+                    )
+                elif source_path.resolve() != path.resolve():
+                    source_verdict = check_fixture(source_path)
+                    if not source_verdict.admissible:
+                        problems.append(
+                            f"data section `{key}`'s source_fixture `{source_fixture}` is itself "
+                            f"QUARANTINED: {'; '.join(source_verdict.problems)}"
+                        )
             continue
         source = str(sec.get("source") or "")
         if not source.startswith(EXTERNAL_SOURCES):
@@ -223,9 +276,17 @@ def check_fixture(path: Path) -> FixtureVerdict:
                 + (f" (+{len(desk_hits) - 5} more)" if len(desk_hits) > 5 else "")
             )
 
-    # (c) no agent-output or old-code-derived fields.
+    # (c) no agent-output or old-code-derived fields — except inside a
+    # section declared `fresh_analyst_output` above, where being agent
+    # output is the point.
+    def _under_fresh_section(json_path: str) -> bool:
+        top = json_path.split(".", 1)[0].split("[", 1)[0]
+        return top in fresh_analyst_sections
+
     for json_path, key, _value in _walk(data):
         if key is None or json_path.startswith("_provenance"):
+            continue
+        if _under_fresh_section(json_path):
             continue
         if key in AGENT_OUTPUT_KEYS:
             problems.append(f"agent-output field `{json_path}`")
