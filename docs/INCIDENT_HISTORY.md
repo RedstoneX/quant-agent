@@ -292,6 +292,94 @@ piece that cannot be settled by any source found is filed separately as item
 
 ---
 
+### 2026-09-13 — the permanently-red cost-ceiling test: what it was actually failing on, and why the September fix could not have worked (item 28)
+
+**In plain words:** one automated check had been failing every single run for
+over a week, and everyone had learned to read "1 failed" as normal. It was
+declared fixed on 2026-09-04 and it was not. The reason it kept failing had
+nothing to do with money or with the cost limit it was supposed to be
+guarding — it was failing because it demanded that a rehearsal of an old
+trading morning use exactly as many AI calls as that morning did, and the
+desk now watches more stocks than it did then, so it needs more.
+
+**What the check exists for.** On the morning of 2026-08-28 the desk's
+spending circuit refused the Portfolio Manager's call outright, so no trade
+was proposed at all. The refusal was based on a *projection* of what the call
+might cost: it guessed the session would reach $1.9118 against a $1.80
+ceiling. The four analyst calls that had actually run that morning had settled
+at $0.0460784 between them. The circuit stopped the desk on an estimate forty
+times the real spend. The check's job is to be able to reproduce that class of
+failure offline, on demand, for free.
+
+**Why the 2026-09-04 fix could not have worked.** That fix deleted a second
+test function that set two config keys the cost-circuit rewrite had removed,
+and rewrote the surviving test's comments. Its recorded verification was that
+the file "compiles and can be collected" — it was never run. Two separate
+things were wrong underneath and neither was touched:
+
+1. *The surviving assertions guarded nothing.* All three trigger codes it
+   checked for had been deleted from the codebase along with the projection
+   layer. Asserting that three non-existent codes do not appear is true of any
+   run of any code.
+2. *The failure was somewhere else entirely.* The test insisted the technical
+   analyst never run out of recorded answers to replay. The rehearsal harness
+   snapshots production as it stands **today** and replays answers recorded on
+   2026-08-28; today's watchlist needs one more chunked call than that
+   morning's recording contains. The harness's own documentation says a
+   rehearsal is "a fresh session against a snapshot of production's state, not
+   a re-enactment of a past one" — so the test was asserting against the
+   harness's stated design, and would have stayed red however the cost circuit
+   behaved.
+
+**This was already written down, and the fix ignored it.** `docs/WORK.md` has
+carried the correct symptom since 2026-09-02, in the handoff text above the
+backlog: "today's pipeline makes more `tech_analyst` chunk calls than
+`run-be9f8f06` recorded ('all 4 recorded response(s) were already replayed')".
+Two days later the item was closed against a different theory without anyone
+running the test to see which of the two it actually was.
+
+**What was ruled out.** Not a production defect: the cost circuit is behaving
+as item 14 intended. Not a stale-config problem either — that was the
+2026-09-04 diagnosis and it was already resolved by then. Not deletable: the
+2026-08-28 failure *class* — the ceiling refusing the Portfolio Manager before
+it can spend — is still reachable, just through a different mechanism, so
+there was nothing to prove structurally impossible.
+
+**What the check does now.** It runs the same rehearsal twice against
+byte-identical inputs. The first run uses production's own configured ceiling
+and must reach the Portfolio Manager; it then reads out of that run's own
+cost ledger what had really settled by that point. The second run repeats the
+session with the ceiling set to that measured figure and nothing else changed,
+and requires that the settled-cost circuit fires and that the Portfolio
+Manager never reaches the provider at all. No number is invented: the ceiling
+is measured from the run it is applied to. The two runs read the same bytes
+because the second works from a copy of the prepared sandbox rather than a
+fresh snapshot of a production database that keeps moving.
+
+The tech-analyst assertion is gone on purpose, and the reason is written into
+the test: running out of recorded chunks is expected drift between a snapshot
+taken now and a recording made in August, and it is reported as a finding
+rather than treated as a defect. What still guards the chunk un-merge fix —
+before which replay ran dry on the second chunk and the session died nowhere
+near the Portfolio Manager — is the first run having to reach the Portfolio
+Manager at all.
+
+**Proof it still bites.** With the settled-session-spend branch of
+`_enforce_settled_limits_locked` disabled, the check fails on exactly the
+assertion that matters (the ceiling never fires and the Portfolio Manager
+reaches the provider). Restored, it passes.
+
+**The lesson worth keeping.** A test recorded as fixed without being run is
+not fixed, and a permanently-red test trains everyone to ignore the failure
+count — which is the same as having no test at all, plus a hiding place for
+the next one to break. "Compiles and can be collected" is not verification.
+
+---
+
+
+
+
+
 ### 2026-09-13 — item 17 closed: the desk-wide silence alarm's own systemd timer was finally installed on the production box, ten days after it started warning about itself
 
 **In plain words:** item 17 was "the desk can switch itself off silently."

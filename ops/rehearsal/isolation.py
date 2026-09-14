@@ -155,6 +155,46 @@ class Sandbox:
             notes=notes,
         )
 
+    # ----------------------------------------------------------------- fork
+
+    def fork(self, root: str | Path) -> "Sandbox":
+        """Copy this *prepared, not yet run* sandbox to a second root.
+
+        Two rehearsals that must be compared against each other have to start
+        from the same bytes. `prepare()` cannot give that: it snapshots
+        production as it stands right now, and production moves — a watchlist
+        row written between two `prepare()` calls changes how many chunks
+        tech_analyst asks for, which changes how much the session spends
+        before the Portfolio Manager is reached. Any conclusion drawn by
+        setting a limit measured in the first run and applying it in the
+        second would then be comparing two different inputs.
+
+        Forking a prepared sandbox removes that variable entirely: the second
+        run reads a byte-for-byte copy of what the first one read. Call this
+        BEFORE `run_rehearsal` — a sandbox a session has already written to is
+        no longer the state that session started from.
+
+        See `tests/test_rehearsal_reproduces_cost_ceiling.py`, which measures a
+        run's real settled spend and then re-runs the same session with the
+        cost ceiling set to it.
+        """
+        root = Path(root).resolve()
+        if root.exists():
+            raise FileExistsError(f"fork destination already exists: {root}")
+        shutil.copytree(self.root, root, symlinks=True)
+        return Sandbox(
+            root=root,
+            db_path=root / self.db_path.relative_to(self.root),
+            data_dir=root / self.data_dir.relative_to(self.root),
+            source_db=self.source_db,
+            source_data_dir=self.source_data_dir,
+            copied_bytes=self.copied_bytes,
+            notes=list(self.notes) + [
+                f"forked from an already-prepared sandbox at {self.root} so "
+                "both runs read identical bytes"
+            ],
+        )
+
     # ------------------------------------------------------------- activate
 
     @contextmanager
