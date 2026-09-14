@@ -1672,7 +1672,12 @@ different analyst's form and cannot exist on the sell side. The seat believed
 it, said so, and the statement is now permanently in the desk's own records.
 
 **What the record proves, and what it does not.** The archive holds exactly
-three exit-path risk reviews (rows 296, 319, 330 — 2026-09-01). All three
+three exit-path risk reviews (row 296 — 2026-08-31 19:32:50, run
+`close-100065e1`; rows 319 and 330 — 2026-09-01). *[Date corrected
+2026-09-14: this read "rows 296, 319, 330 — 2026-09-01". Row 296 is the
+2026-08-31 close, not the 2026-09-01 one. Nothing else in this entry turns on
+it — the count, the approvals and the 8-of-8 all re-verified against the same
+archive.]* All three
 carry both false banners. All three **approved**, with zero modifications and
 zero refusals: 8 of 8 exits allowed. The seat talked itself out of the trap
 every time; row 296 wrote that the missing steps "are a concern for PM's
@@ -1707,8 +1712,13 @@ question nobody answered. That substitution is where the defect started, and
 it is why the fix uses no placeholders.
 
 **A finding worth its own decision: the banner has never once been right.**
-Across the 15 archived MORNING risk reviews the banner has fired **zero**
-times — PM has never actually skipped either step. Its entire production
+Across the 14 archived MORNING risk reviews the banner has fired **zero**
+times — PM has never actually skipped either step. *[Count corrected
+2026-09-14: this read "15". The archive holds 17 `risk_manager` rows in
+`agent_logs`, three of which are the exit reviews above, so the morning count
+is 14. The banner string "NOT PERFORMED" appears in the stored `input_message`
+of exactly those three rows and none of the fourteen, so the "fired zero
+times" claim is unaffected — only the denominator was wrong.]* Its entire production
 output to date is the three false statements above. On the evidence, deleting
 it outright is the better fix than routing around it. It was left standing
 because removing it changes the morning seat's behaviour on a case that has
