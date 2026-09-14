@@ -22,6 +22,80 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the one exit class the ATR noise band actually judges was the one class nobody checked the chart for
+
+**In plain words:** when the desk decides to sell because "the reason I bought
+this has been proven wrong", there is a fact that either happened or did not:
+has the price actually closed beyond the level the stop was resting on, two
+sessions running? The desk works that out. It just never asked, on exactly
+those sells. Instead the only thing standing there was a rule of thumb about
+whether the move was bigger than an average day. Those are not the same
+question, and only one of them is checkable. The check is now consulted, its
+answer is written down against the symbol, and — deliberately — nothing else
+changed: no sell that is refused today gets through because of this.
+
+**How the gap stayed invisible.** Two separate pieces of the exit path each
+looked reasonable alone.
+
+* The noise band looks like a general filter on every discretionary exit. It
+  is not. Twenty-one of the twenty-six accepted trigger phrases also count as
+  "cites external information", and any reason that does skips the band
+  entirely. Each of the twenty-six was run through that predicate rather than
+  eyeballed; the five survivors are all thesis-invalidation phrasings. So the
+  band's whole non-redundant job is judging thesis-invalidation exits.
+* The claim-checker that sits behind the band returns early unless the reason
+  claims a regime flip or a bearish news state change. That early return was
+  correct on its own terms — the checker genuinely has no branch for a thesis
+  claim — but the structural read it was skipping is not part of the checker.
+  It is the desk's answer to the very question a thesis-invalidation exit is
+  asserting, and it was being skipped along with the checker.
+
+Put together: on the only exit class the band exists for, the desk had a
+checkable fact available and threw it away, and answered with a rule of thumb
+in a different unit instead.
+
+**What was deliberately NOT done, and why.** Three tempting moves were all
+refused. (1) Widening or removing the band — the evidence does not support it:
+all eight blocked discretionary exits in the archive independently fail the
+named-trigger gate as well, so the band has never once been the reason an exit
+did not happen. (2) Blocking a thesis-invalidation exit when the level comes
+back intact — that is a real tightening of the sell path and a decision the
+owner should take on purpose, not a side effect of wiring up a check. (3)
+Filing the new read into the confirmation ledger. This one is the subtle one
+and it is the reason the change is safe: a break only lifts protection once
+it holds on two consecutive closes, so filing a read from a NEW call site
+would let a break confirm a session earlier than it does today, lift
+protection a session earlier, and quietly release an exit that is blocked
+today. The new read is therefore explicitly read-only.
+
+**What would catch it next time.** The predicate that made the gap measurable
+— run every accepted trigger phrase through the bypass and see which ones are
+left — is a one-line experiment that nobody had run in the year this code has
+existed. Any gate expressed as a keyword list deserves it: list the inputs
+that actually reach the gate, not the inputs it appears to cover.
+
+**Also filed today, not fixed.** Two archive discrepancies that need an
+account-side lookup nobody here can do (WORK.md items 35 and 68): a Visa
+position recorded 63c below its own stop and still open, and a Disney review
+reasoning with a distance-to-stop an order of magnitude away from what the
+desk's own trades table implies. And one arbitrary-number finding (item 67):
+the same underived `1.0` is the noise-band ATR multiple and the absolute
+minimum stop width — one round number doing two unrelated jobs, agreeing by
+coincidence rather than by construction.
+
+**Moved out of docs/WORK.md today for the 100,000-byte cap — verbatim, nothing
+deleted.** Both belong to item 55 and are summarised in place there.
+
+*Item 55, part (c), as it stood in WORK.md:*
+
+**Part (c) is CLOSED — 2026-09-13, second pass.** `MIN_TOUCHES = 2` in `src/data/levels.py` is no longer a convention. Two points are the fewest that can define a horizontal line at all, and the published construction of this exact object uses the same figure: Tsinaslanidis, *Technical Trading Strategies, Pattern Recognition and Financial Risk Management* (PhD thesis, University of Macedonia, 2012 — the published method of Zapranis & Tsinaslanidis 2012a, *Applied Financial Economics* 22(19)), §4.4: "Only price areas (bins) with frequencies greater or equal to two are considered as HSAR." Raising it is excluded by that work's own MEASUREMENT rather than by preference (§4.6.1, 733 NASDAQ/NYSE names, 1990-2010): "results indicate that these 'strengths' play no major role in predicting trend interruptions" — on NASDAQ, two-local levels were hit 26,868 times and bounced 60.99%, three-local levels 6,661 times and bounced 61.04%. Pinned by `tests/test_level_match_zone.py::test_min_touches_is_two_and_that_one_is_sourced`. Do not re-open and do not "tighten" it to 3.
+
+*Item 55, "already searched and ruled out", as it stood in WORK.md:*
+
+**Already searched and ruled out — do not repeat any of this.** *First pass, 2026-09-13, the window:* TA-Lib's `FRACTAL` defaults both arms to 2 with no rationale stated; MetaTrader 5's fractal doc defines five bars and gives no reason; fxssi records that five became standard because it shipped as a MetaTrader 4 default, which is a distribution fact and not a measurement; LuxAlgo's swing reference says outright there is no universally best setting. *Second pass, 2026-09-13, the zone, every source named so nobody re-fetches them:* Osler (2000), *Support for Resistance*, FRBNY Economic Policy Review — the origin of the bounce-frequency test and cited by everything downstream, but it evaluates levels PUBLISHED by six dealing firms and so never has to define a zone width of its own; ruled out as a source for (b). Osler (2003), *Currency Orders and Exchange Rate Dynamics*, FRBNY Staff Report 125 — explains WHY zones exist (stop-loss and take-profit orders cluster at round numbers) and gives no width; ruled out. Zapranis & Tsinaslanidis (2012) / Tsinaslanidis (2012) — the closest match to this desk's construction and the source of everything above; leaves x a user input; ruled out as a derivation, kept as a placement. Bulkowski, `thepatternsite.com/SAR.html` and `/TallCandleSAR.html` — the "thick bands of molasses" phrase originates with him and he quantifies nothing; his tall-candle study reports only "Reversals are evenly distributed over the candle body", which says no sub-location within a bar is privileged but gives no zone width; ruled out. Brock, Lakonishok & LeBaron (1992) — the canonical 1% band in this literature is a whipsaw filter on a moving-average crossover, not a support-zone width, and is chosen not derived; ruled out, and do not treat the coincidence with the desk's 1% as a source. `arXiv:2507.01971` (DeepSupp) — states a 3% figure only as an evaluation tolerance for one metric and derives nothing; ruled out. *Structural facts, settled, not to be re-derived:* the two windows never meet — no module imports both, pinned by `tests/test_pivot_window_independence.py` — and a bar dominating 5 bars either side necessarily dominates 3, so the trailing window sees strictly more. Making both 3 or both 5 was rejected: that is picking a number. Moving `CLUSTER_TOLERANCE_PCT` to the literature's illustrative 3% is rejected for the same reason — adopting a foreign default is the same unsourced act in the other direction. Re-tuning the *match tolerance* against the width was ruled out earlier and the tolerance is instead derived from the width itself (`level_zone_halfwidth`), which made the pair CONSISTENT and did not make the width RIGHT.
+
+---
+
 ### 2026-09-14 — the four numbers that describe every chart to every analyst seat were all round figures somebody liked; they are now read off the stock itself (item 58)
 
 **In plain words:** before any analyst seat looks at a chart, the desk writes
