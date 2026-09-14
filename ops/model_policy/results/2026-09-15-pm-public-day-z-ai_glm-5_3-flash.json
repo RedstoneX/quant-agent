@@ -1,0 +1,164 @@
+{
+  "generated_at": "2026-09-14T23:25:33Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.05,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.05,
+    "max_calls_per_session": 8
+  },
+  "estimate_usd": {
+    "per_model": {
+      "z-ai/glm-5.3-flash": 0.0212932
+    },
+    "tokens": {
+      "pm_public_day": {
+        "input": 17644,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "pm_public_day": {
+      "role": "portfolio_manager",
+      "description": "A valid PM practice day under the owner's raw-facts-only rule: tech/macro/news/earnings/smart-money analyses run FRESH (google-direct gemini-3.5-flash-lite) over the existing public-fact exam fixtures, a flat labelled SYNTHETIC ACCOUNT STATE (no positions, no desk memory), so every memory/history field is left at decide()'s own documented default. Grades live grounding, whether every opened target is in the desk's own pre-decision eligible set (candidate_eligibility), and reasoning_chain schema completeness \u2014 no judgement answer key."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "f10fb88f38a8d1e9e0be1a73ae5f2928e6855c1d3a0ec1853fc35f591c0585c8",
+      "bytes": 70578,
+      "lines": 1140
+    }
+  },
+  "pricing_used": {
+    "z-ai/glm-5.3-flash": {
+      "input": 0.15,
+      "output": 0.5
+    }
+  },
+  "trials": [
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": false,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        }
+      ],
+      "input_tokens": 30033,
+      "output_tokens": 6020,
+      "cost_usd": 0.007514949999999999,
+      "latency_s": 95.11,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro seat says risk-on/bullish/medium with target_invested_pct=75%, but the News Intelligence layer reads risk-off transitional with HIGH-confidence bearish overall sentiment (10Y touching 5%, >92% hike probability). Two seats disagree on regime; macro was stable-in-time (no trajectory data, first session) while the state changes flipped TODAY. Per the fresh-flip sizing rule I discount the macro target toward the lower edge: I target ~74% invested (within the 1.20x-1.70x transitional band on a cash-only book), not the full 75%+ the macro call alone would earn. Sector guidance honored: overweight financials, neutral tech, and the Saudi pipeline state change adds energy.\",\n    \"news_check\": \"NARRATIVE: Fed hawkish pivot, 10Y at 5%, mortgage 7.17% \u2014 bearish broad/growth tech. STATE CHANGES: [HIGH] 10Y hits 5% \u2192 bearish SPY/QQQ/XLK, bullish XLF/XLU defensives. [HIGH] Saudi East-West pipeline shutdown \u2192 bullish energy (COP, CVX, EQNR, OXY), bearish transports. STOCKS: AAPL [MEDIUM] bullish Siri/iPhone 18 catalyst; GOOGL [MEDIUM] bullish breakout setup but Tech seat is neutral so it is not tradeable today. Overall sentiment bearish (high confidence) \u2014 this is why the book is sized modestly despite the risk-on macro label.\",\n    \"earnings_check\": \"No SEC filings analyzed this session and no queued-unread filings \u2014 the earnings seat is simply absent from every registry entry, so all agreement counts are computed on technical/news/macro/s",
+      "actual_model": "z-ai/glm-5.3-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "8/8 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 30033,
+      "output_tokens": 4379,
+      "cost_usd": 0.00669445,
+      "latency_s": 78.34,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro seat calls risk-on (VIX 15.84, HY OAS 265bps, uninverted curve) targeting 75% invested, but today's news layer is a HIGH state change the other way: 10Y touched 5%, mortgage 7.17%, hike probability >92% \u2014 bearish broad/growth, bullish financials and energy, plus a bullish Saudi pipeline shock for energy. Regime did not flip in the trajectory (no prior snapshots), so I do not emergency-de-risk; I weight the book toward Financials and Energy (the sectors both macro guidance and the HIGH yield news favor) and keep growth-tech names sized on their own confirmed uptrends rather than suppressed \u2014 macro set exposure, not trade selection. First session: no rolling drawdown data [UNSOURCED:no_drawdown_data], so the ladder sits at the standing rung.\",\n    \"news_check\": \"NARRATIVE: rate-hike repricing and 5% 10Y dominate; overall news sentiment bearish (high confidence). STATE CHANGES: [HIGH] 10Y at 5% \u2192 bearish growth/long-duration, bullish financials and defensives; [HIGH] Saudi East-West pipeline shutdown \u2192 bullish energy. STOCK: AAPL [MEDIUM] bullish (AI Siri ahead of iPhone 18); GOOGL [MEDIUM] bullish but Tech is neutral/not sizeable, so no target. Resolution: longs concentrated in rate beneficiaries (JPM) and energy (CVX, COP); tech longs taken smaller because the sector-level news is against them even where the single-name news supports.\",\n    \"earnings_check\": \"[UNSOURCED:no_rm_history] and no SEC filing reads surfaced this ses",
+      "actual_model": "z-ai/glm-5.3-flash",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:BRK-B",
+        "TARGET:COP",
+        "TARGET:CVX",
+        "TARGET:JPM",
+        "TARGET:NET",
+        "TARGET:TSM",
+        "TARGET:ZS"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "z-ai/glm-5.3-flash|pm_public_day": {
+        "model": "z-ai/glm-5.3-flash",
+        "scenario": "pm_public_day",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 0.5,
+        "quality_min": 0.0,
+        "cost_mean": 0.007105,
+        "latency_mean": 86.72,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "z-ai/glm-5.3-flash": {
+        "scenarios": {
+          "pm_public_day": {
+            "model": "z-ai/glm-5.3-flash",
+            "scenario": "pm_public_day",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 0.5,
+            "quality_min": 0.0,
+            "cost_mean": 0.007105,
+            "latency_mean": 86.72,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.5,
+        "quality_worst": 0.5,
+        "quality_worst_run": 0.0,
+        "cost_per_run_mean": 0.007105,
+        "cost_total_usd": 0.014209,
+        "quality_per_dollar": 70.37
+      }
+    }
+  }
+}

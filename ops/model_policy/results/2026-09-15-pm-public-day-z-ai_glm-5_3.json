@@ -1,0 +1,143 @@
+{
+  "generated_at": "2026-09-14T23:25:09Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.25,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.25,
+    "max_calls_per_session": 8
+  },
+  "estimate_usd": {
+    "per_model": {
+      "z-ai/glm-5.3": 0.19020320000000002
+    },
+    "tokens": {
+      "pm_public_day": {
+        "input": 17644,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "pm_public_day": {
+      "role": "portfolio_manager",
+      "description": "A valid PM practice day under the owner's raw-facts-only rule: tech/macro/news/earnings/smart-money analyses run FRESH (google-direct gemini-3.5-flash-lite) over the existing public-fact exam fixtures, a flat labelled SYNTHETIC ACCOUNT STATE (no positions, no desk memory), so every memory/history field is left at decide()'s own documented default. Grades live grounding, whether every opened target is in the desk's own pre-decision eligible set (candidate_eligibility), and reasoning_chain schema completeness \u2014 no judgement answer key."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "f10fb88f38a8d1e9e0be1a73ae5f2928e6855c1d3a0ec1853fc35f591c0585c8",
+      "bytes": 70578,
+      "lines": 1140
+    }
+  },
+  "pricing_used": {
+    "z-ai/glm-5.3": {
+      "input": 1.4,
+      "output": 4.4
+    }
+  },
+  "trials": [
+    {
+      "model": "z-ai/glm-5.3",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": false,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        }
+      ],
+      "input_tokens": 30033,
+      "output_tokens": 5529,
+      "cost_usd": 0.0663738,
+      "latency_s": 81.61,
+      "error": "",
+      "sample_output": "{\n  \"constructor_dropped\": [],\n  \"decisions\": [],\n  \"portfolio_view\": \"Fresh $100k cash-only account in a macro risk-on regime (target 75% invested) with a bearish news overlay (10Y at 5%, >92% rate-hike odds). Building an initial diversified book of 8 qualified candidates \u2014 leading with AAPL (only 3-source name), energy breakouts with the Saudi pipeline catalyst, quality range setups (MU, JPM), and one software momentum leader (NET) \u2014 sized by conviction and clustered sensibly.\",\n  \"reasoning_chain\": {\n    \"cash_target\": \"Current invested 0.0% of equity against macro's 75% target \u2014 the deployment gap is fully open on a fresh account. These eight targets are chosen to close most of it (constructor will fit actual notional to available cash since margin is disabled). Residual gaps are named per-slot: ZS skipped (cluster overlap with NET + cash constraint); EQNR/CVX skipped (energy cluster cap with COP+OXY already taken); GOOGL skipped (neutral Tech, no entry); no shorts available (all bearish names have net evidence +0).\",\n    \"continuity_check\": \"No prior PM decisions, no positions, no narrative arc \u2014 first session, nothing to be consistent or flip-floppy against. No RM verdicts ([UNSOURCED:no_rm_history]) and no closed trades ([UNSOURCED:no_calibration]), so today's sizing runs entirely on conviction bands and inherited priors, both named as such.\",\n    \"earnings_check\": \"No earnings coverage for any candidate this session (Earnings Analysis section is empty) \u2014 no seat is ad",
+      "actual_model": "z-ai/glm-5.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    },
+    {
+      "model": "z-ai/glm-5.3",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": false,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        }
+      ],
+      "input_tokens": 30033,
+      "output_tokens": 6497,
+      "cost_usd": 0.070633,
+      "latency_s": 64.94,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro seat calls risk-on, bullish, medium confidence, target invested 75% with 25% cash (Macro Analysis: Position Guidance). VIX 15.84 normal, both curve spreads positive, HY OAS 265bps tight \u2014 the risk-on derivation is supported. But the news briefing describes a risk-off transitional tape (10Y touching 5%, hike odds >92%, VIX 18 in narrative) that materially diverges from the macro seat's picture; I take the macro seat's 75% invested target with a leaning toward the upper-middle of the band rather than max deployment, and note the divergence explicitly. Cash-only account caps BUYs at $100k \u2014 target gross exposure near 70-75% of equity.\",\n    \"news_check\": \"NARRATIVE: news seat paints risk-off transition \u2014 [HIGH] 10Y hitting 5% bearish broad equities/growth tech; [HIGH] Saudi East-West pipeline shutdown bullish energy. STOCKS: AAPL [MEDIUM] bullish Siri/iPhone 18; GOOGL [MEDIUM] bullish but Tech neutral (not sizeable). The energy-supply state change directly supports the COP/CVX/EQNR/OXY longs. Overall news sentiment bearish (high confidence) \u2014 named as the main conflict against today's long tilt.\",\n    \"earnings_check\": \"Earnings analysis section is empty this session \u2014 no earnings stances available for any symbol [UNSOURCED:no_calibration]. No JUST-FILED flags; no earnings seat participates in any agreement count today.\",\n    \"signal_conflicts\": \"AAPL: available=macro=bullish, news=bullish, technical=buy. Conflict: news-macro n",
+      "actual_model": "z-ai/glm-5.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "z-ai/glm-5.3|pm_public_day": {
+        "model": "z-ai/glm-5.3",
+        "scenario": "pm_public_day",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 0.0,
+        "quality_min": 0.0,
+        "cost_mean": 0.068503,
+        "latency_mean": 73.28,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "z-ai/glm-5.3": {
+        "scenarios": {
+          "pm_public_day": {
+            "model": "z-ai/glm-5.3",
+            "scenario": "pm_public_day",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 0.0,
+            "quality_min": 0.0,
+            "cost_mean": 0.068503,
+            "latency_mean": 73.28,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.0,
+        "quality_worst": 0.0,
+        "quality_worst_run": 0.0,
+        "cost_per_run_mean": 0.068503,
+        "cost_total_usd": 0.137007,
+        "quality_per_dollar": 0.0
+      }
+    }
+  }
+}

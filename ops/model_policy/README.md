@@ -28,6 +28,49 @@ before any paid call. As of 2026-09-14:
   RSS wires, fetched live at fixture-build time). The last two grade
   schema/rule compliance only — real market conditions and real news have
   no engineered correct answer to grade judgement against.
+- **Runnable, PM seat:** `pm_public_day` — the trade-picking seat needs
+  analyst-seat OUTPUT (analyses, macro/news/earnings/smart-money), which the
+  raw-facts-only rule above bans outright. `fixture_policy.py` gained two
+  narrow provenance `kind`s for this: `fresh_analyst_output` (a section is
+  agent output, but computed FRESH by today's agent classes over an
+  already-checked raw-facts fixture — model/route/timestamp/source_fixture
+  recorded and the source_fixture recursively checked) and
+  `synthetic_account_state` (a labelled synthetic starting account — cash,
+  no positions — since a real account is desk state). Both still ban desk
+  sources. `ops/model_policy/build_pm_public_day_fixture.py` builds
+  `fixtures/pm_public_day_pm_input.json` by running the real tech/macro/
+  news/earnings/smart-money agents over the google-direct route with
+  `gemini-3.5-flash-lite` only (free tier — never OpenRouter or any other
+  paid call). macro/news read the existing `fred_macro_2026-09-14.json` /
+  `rss_feeds_2026-09-14.json` fixtures (neither scales with the trading
+  universe); tech/earnings/smart-money read three dedicated real-day-scale
+  fixtures built fresh for this exam (2026-09-14 OWNER RULING — the old
+  5-actionable/2-neutral, 1-earnings-read, 3-day-insider-window fixture
+  didn't match a real desk day): `yf_daily_bars_pm_public_day_2026-09-14`
+  (yfinance bars for the full live 101-symbol universe,
+  `config/settings.yaml` `trading.universe`), `sec_10q10k_pm_public_day_2026-09-14`
+  (real 10-Q/10-K HTML for every universe symbol with a filing inside the
+  live 45-day earnings window, `EarningsDataProvider`'s default) and
+  `sec_form4_pm_public_day_2026-09-14` (real market-wide SEC Form 4
+  disclosures via the live 365-day-configured insider window — actual
+  coverage achieved is a real but partial 7 days, stated plainly in that
+  fixture's `_exam.actual_coverage`; SEC's own resumable discovery builds
+  full-year coverage over many daily refreshes in production, not one
+  session). The rebuilt fixture measures 62 analyses (15 actionable / 47
+  neutral), 49/49 earnings analyses and 8 smart-money findings over 40
+  reconstructed observations — `test_fixture_scale_matches_live_derived_values`
+  (`tests/test_pm_public_day_scenario.py`) pins the universe size and the
+  earnings/insider windows to the same live config/code these fixtures were
+  built from, so a future edit can't silently shrink the exam again. Every
+  memory/history input `PortfolioManagerAgent.decide()` takes
+  (weekly_narrative, position_history, calibration_note, ...) is left at
+  its own documented empty default, matching what a real first session on a
+  flat account would show — see the fixture's `_provenance` block and
+  `pm_public_day`'s `description` in `scenarios.py` for the full input
+  inventory. Grades live grounding, whether every opened target is in the
+  desk's own pre-decision eligible set (`candidate_eligibility`, reused
+  directly, not re-derived), and `reasoning_chain` schema completeness —
+  no judgement answer key, opt-in like `pm_selection`.
 - **Blocked** (see each `Scenario.blocked_reason` for the exact citation):
   `risk_rr_breach`, `risk_drawdown_discipline`, `midday_exit`,
   `tech_batch_full`.

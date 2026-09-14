@@ -1,0 +1,173 @@
+{
+  "generated_at": "2026-09-14T23:24:50Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.5,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.5,
+    "max_calls_per_session": 8
+  },
+  "estimate_usd": {
+    "per_model": {
+      "openai/gpt-5.6-sol": 0.390576
+    },
+    "tokens": {
+      "pm_public_day": {
+        "input": 17644,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "pm_public_day": {
+      "role": "portfolio_manager",
+      "description": "A valid PM practice day under the owner's raw-facts-only rule: tech/macro/news/earnings/smart-money analyses run FRESH (google-direct gemini-3.5-flash-lite) over the existing public-fact exam fixtures, a flat labelled SYNTHETIC ACCOUNT STATE (no positions, no desk memory), so every memory/history field is left at decide()'s own documented default. Grades live grounding, whether every opened target is in the desk's own pre-decision eligible set (candidate_eligibility), and reasoning_chain schema completeness \u2014 no judgement answer key."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "f10fb88f38a8d1e9e0be1a73ae5f2928e6855c1d3a0ec1853fc35f591c0585c8",
+      "bytes": 70578,
+      "lines": 1140
+    }
+  },
+  "pricing_used": {
+    "openai/gpt-5.6-sol": {
+      "input": 2.0,
+      "output": 10.0
+    }
+  },
+  "trials": [
+    {
+      "model": "openai/gpt-5.6-sol",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "2/2 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 31138,
+      "output_tokens": 3590,
+      "cost_usd": 0.098176,
+      "latency_s": 64.15,
+      "error": "",
+      "sample_output": "{\"reasoning_chain\":{\"macro_filter\":\"Macro calls risk-on with medium confidence and a bullish outlook, but this is the first snapshot and News Intelligence describes a risk-off transition driven by yields and expected tightening. I therefore accept the macro seat's deployment direction but not maximum aggression, targeting two diversified longs rather than a broad growth basket; the account starts at 0.0% invested and cash-only per Account Status.\",\"news_check\":\"The broad news backdrop is high-confidence bearish because the 10-year Treasury touched 5% and rate-hike expectations surged, while the Saudi pipeline shutdown is a high-impact bullish development for energy. This favors pairing one exceptional software breakout with an energy leader rather than stacking duration-sensitive technology names.\",\"earnings_check\":\"No current earnings analyses or queued filings were supplied for NET or COP, so earnings is absent rather than supportive or adverse. Neither position receives credit for an earnings seat.\",\"signal_conflicts\":\"NET: available=macro=bullish, technical=strong_buy. Conflict: none within the canonical registry. Resolution: open a normal high-conviction breakout position, while recognizing the broad yield shock as portfolio context rather than inventing symbol-level news coverage.\\nCOP: available=macro=bullish, technical=buy. Conflict: none within the canonical registry. Resolution: open a normal high-conviction breakout position and use it to diversify the software exp",
+      "actual_model": "openai/gpt-5.6-sol",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:COP",
+        "TARGET:NET"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    },
+    {
+      "model": "openai/gpt-5.6-sol",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "2/2 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 31138,
+      "output_tokens": 3978,
+      "cost_usd": 0.102056,
+      "latency_s": 71.87,
+      "error": "",
+      "sample_output": "{\"reasoning_chain\":{\"macro_filter\":\"Macro calls risk-on with medium confidence and a 75.0% invested target (Macro Position Guidance), while Account Status shows 0.0% invested. I am deploying into two qualified longs, but discounting the exposure signal because today's News Intelligence independently describes a risk-off transition driven by the 10-year Treasury touching 5% and heightened rate-hike expectations.\",\"news_check\":\"AAPL has current bullish symbol news for redesigned Siri AI testing, but the broader HIGH-confidence news backdrop is bearish for growth equities as yields touch 5%; this justifies a below-midpoint high-conviction allocation rather than skipping the clean setup. OXY lacks symbol-specific news coverage in the registry, although the HIGH Saudi pipeline shutdown is constructive sector context and also creates headline-reversal risk.\",\"earnings_check\":\"No current earnings analysis or earnings stance was supplied for either target, so earnings is absent rather than treated as confirmation or conflict.\",\"signal_conflicts\":\"AAPL: available=<macro=bullish, news=bullish, technical=buy>. Conflict: none within the canonical registry; broader News Intelligence is bearish for growth technology despite bullish AAPL-specific news. Resolution: open the long but reduce risk below the normal high-conviction midpoint. OXY: available=<macro=bullish, technical=buy>. Conflict: none within the canonical registry. Resolution: open a moderate-risk long while avoiding additional ",
+      "actual_model": "openai/gpt-5.6-sol",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:OXY"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "openai/gpt-5.6-sol|pm_public_day": {
+        "model": "openai/gpt-5.6-sol",
+        "scenario": "pm_public_day",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.100116,
+        "latency_mean": 68.01,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "openai/gpt-5.6-sol": {
+        "scenarios": {
+          "pm_public_day": {
+            "model": "openai/gpt-5.6-sol",
+            "scenario": "pm_public_day",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.100116,
+            "latency_mean": 68.01,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_per_run_mean": 0.100116,
+        "cost_total_usd": 0.200232,
+        "quality_per_dollar": 9.99
+      }
+    }
+  }
+}

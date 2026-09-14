@@ -2087,6 +2087,127 @@ def _public_news_grade(report) -> list[Check]:
     return checks
 
 
+# ---- portfolio_manager: fresh analyst output, public raw facts only ------
+#
+# Built by ops/model_policy/build_pm_public_day_fixture.py: the tech/macro/
+# news/earnings/smart-money agent classes, run FRESH (google-direct,
+# gemini-3.5-flash-lite, free tier — see that script) over the same raw
+# public-fact fixtures the exams above use. Account/positions are a labelled
+# SYNTHETIC ACCOUNT STATE (flat cash, no positions) — a real account is desk
+# state, which the policy refuses. No desk recording, no invented price or
+# news item anywhere in this fixture.
+
+_PM_PUBLIC_DAY_FIXTURE = "pm_public_day_pm_input.json"
+
+
+def _pm_public_day_manifest() -> dict:
+    return _manifest(_PM_PUBLIC_DAY_FIXTURE)
+
+
+def _pm_public_day_inputs():
+    """Typed objects from the fixture manifest, for `agent.decide()`."""
+    manifest = _pm_public_day_manifest()
+    analyses = [TechAnalysisResult.model_validate(a) for a in manifest["analyses"]]
+    news_intel = NewsIntelligenceReport.model_validate(manifest["news_intel"])
+    from src.models import SmartMoneyFinding
+
+    smart_money_findings = [
+        SmartMoneyFinding.model_validate(f) for f in manifest["smart_money_findings"]
+    ]
+    account = manifest["account_state"]
+    return manifest, analyses, news_intel, smart_money_findings, account
+
+
+def _pm_public_day_eligible_set(analyses: list[TechAnalysisResult]) -> dict[str, list[str]]:
+    """The desk's own pre-decision admission gate, replayed with no LLM call.
+
+    `PortfolioManagerAgent.candidate_eligibility` (src/agents/
+    portfolio_manager.py:1376) is the exact function `decide()`'s prompt
+    builder calls to order/label candidates before the model ever sees them
+    — reusing it here (rather than a second copy of the rule) means this
+    scenario's "eligible set" is definitionally the live gate's, not a
+    grader's opinion of it.
+    """
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    evidence_registry = PortfolioManagerAgent.build_evidence_registry(
+        analyses=analyses, positions=[], news_intel=None,
+        earnings_analyses=[], macro_analysis=None, smart_money_findings=[],
+    )
+    # allowed_buy_symbols: every analysed symbol is treated as within the
+    # session's research universe (this fixture has no separate "configured
+    # universe minus admitted" distinction to replay — see the practice-day
+    # input inventory in the PR).
+    allowed = {a.symbol.upper() for a in analyses}
+    return PortfolioManagerAgent.candidate_eligibility(
+        analyses=analyses, evidence_registry=evidence_registry,
+        allowed_buy_symbols=allowed, active_state_changes="",
+    )
+
+
+def _pm_public_day_invoke(agent):
+    manifest, analyses, news_intel, smart_money_findings, account = _pm_public_day_inputs()
+    decision, _ = agent.decide(
+        analyses=analyses,
+        positions=[],
+        macro_analysis=manifest["macro_analysis"],
+        cash_balance=account["cash_balance"],
+        reserve_balance=account["reserve_balance"],
+        total_value=account["total_value"],
+        news_intel=news_intel,
+        earnings_analyses=manifest["earnings_analyses"],
+        smart_money_findings=smart_money_findings,
+        allow_margin=account["allow_margin"],
+        session_type=account["session_type"],
+        allowed_buy_symbols={a.symbol.upper() for a in analyses},
+        transient_admitted_symbols=set(),
+    )
+    return decision
+
+
+def _pm_public_day_grade(decision: PortfolioDecision | None) -> list[Check]:
+    checks: list[Check] = [Check(
+        "parsed_and_grounded", 0.35, decision is not None,
+        "PortfolioDecision passed live grounding validation "
+        "(PortfolioManagerAgent.validate_grounding, "
+        "src/agents/portfolio_manager.py:2328) — every cited symbol, source "
+        "and claim exists in the evidence this session actually built.",
+    )]
+    if decision is None:
+        return checks
+
+    _manifest_, analyses, *_rest = _pm_public_day_inputs()
+    eligible = _pm_public_day_eligible_set(analyses)
+    picks = [t for t in decision.targets if not t.is_close]
+    ineligible = [
+        f"{t.symbol}({','.join(eligible.get(t.symbol.upper(), ['no coverage']))})"
+        for t in picks if eligible.get(t.symbol.upper())
+    ]
+    checks.append(Check(
+        "opens_only_from_eligible_set", 0.40,
+        not ineligible,
+        f"{len(picks) - len(ineligible)}/{len(picks)} target(s) admitted by "
+        "PortfolioManagerAgent.candidate_eligibility "
+        f"(src/agents/portfolio_manager.py:1376); refused: {ineligible or 'none'}; "
+        f"eligible set today: {sorted(s for s, why in eligible.items() if not why)}",
+    ))
+
+    rc = decision.reasoning_chain
+    hard_required = [
+        "macro_filter", "news_check", "earnings_check", "signal_conflicts",
+        "sizing_logic", "portfolio_balance", "cash_target",
+    ]
+    soft_required = ["continuity_check", "premortem_check", "macro_audit"]
+    missing = [f for f in hard_required + soft_required if not str(getattr(rc, f, "") or "").strip()]
+    checks.append(Check(
+        "reasoning_chain_all_ten_fields", 0.25,
+        rc is not None and not missing,
+        "config/prompts/portfolio_manager.md:679 — the 10-field reasoning_chain "
+        f"is MANDATORY; missing/empty: {missing or 'none'}",
+    ))
+    return checks
+
+
 # --------------------------------------------------------------------------
 # Registry
 # --------------------------------------------------------------------------
@@ -2202,6 +2323,25 @@ SCENARIOS: list[Scenario] = [
                     "QUARANTINED 2026-09-14: the fixture is a desk recording "
                     "(analyst outputs and old-code derived values), refused by "
                     "ops/model_policy/fixture_policy.py.",
+    ),
+    Scenario(
+        key="pm_public_day",
+        role="portfolio_manager",
+        agent_path="src.agents.portfolio_manager:PortfolioManagerAgent",
+        invoke=_pm_public_day_invoke,
+        grade=_pm_public_day_grade,
+        default=False,
+        fixture=_PM_PUBLIC_DAY_FIXTURE,
+        description="A valid PM practice day under the owner's raw-facts-only "
+                    "rule: tech/macro/news/earnings/smart-money analyses run "
+                    "FRESH (google-direct gemini-3.5-flash-lite) over the "
+                    "existing public-fact exam fixtures, a flat labelled "
+                    "SYNTHETIC ACCOUNT STATE (no positions, no desk memory), "
+                    "so every memory/history field is left at decide()'s own "
+                    "documented default. Grades live grounding, whether every "
+                    "opened target is in the desk's own pre-decision eligible "
+                    "set (candidate_eligibility), and reasoning_chain schema "
+                    "completeness — no judgement answer key.",
     ),
     Scenario(
         key="risk_rr_breach",

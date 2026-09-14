@@ -728,3 +728,13 @@ NOT deployed to the production box.
 sessions live on the VPS at
 `/home/ubuntu/.claude/projects/-home-ubuntu/memory/` (start with
 `MEMORY.md` and `qamc-resume-2026-09-13.md`).
+
+## 2026-09-15 PM seat test on `pm_public_day` (real-day scale, public data)
+
+- Fixture: 62 fresh analyses (gemini-3.5-flash-lite, Google direct), 49 SEC filings, 15 symbols admitted by the live gate, synthetic cash account. Gap: insider window only 7 of 365 days.
+- Settings identical for all: reasoning effort medium, enforced response format, 1200s trial deadline, one cost-circuit DB per model. 2 runs each. Measured test spend $2.46 (owner cap $6).
+- What the grader measures: the decision passes live grounding validation, every target is in the admitted set, and the 10-field reasoning chain is complete. It does NOT measure whether the picks are good — there is no outcome answer key.
+- Passed both runs: openai/gpt-5.5 ($0.38/run, 7-8 targets), anthropic/claude-opus-5 ($0.43/run, 4-11), openai/gpt-5.6-sol ($0.10/run, 2), deepseek/deepseek-v4.1-flash ($0.01/run, 5-6, ~2 min/call), google-direct gemini-3.5-flash-lite ($0 free, 4-5, ~10s/call).
+- Passed one of two: moonshotai/kimi-k3 ($0.14/run), z-ai/glm-5.3-flash ($0.007/run).
+- Failed both: meta/muse-spark-1.3 and z-ai/glm-5.3 (misstated evidence counts, e.g. "claims 3/3 aligned but provenance proves 2/3" — rejected by live grounding), deepseek/deepseek-v4-flash-0731 (ungrounded targets), qwen/qwen3.8-flash (truncated at 16000 tokens).
+- Open decision for the owner: rule-following narrows the PM to five reliable models; choosing among them on decision QUALITY needs outcomes (e.g. shadow-tracking picks forward), not another rules exam.

@@ -1,0 +1,180 @@
+{
+  "generated_at": "2026-09-14T23:26:50Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.05,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.05,
+    "max_calls_per_session": 8
+  },
+  "estimate_usd": {
+    "per_model": {
+      "deepseek/deepseek-v4.1-flash": 0.0244932
+    },
+    "tokens": {
+      "pm_public_day": {
+        "input": 17644,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "pm_public_day": {
+      "role": "portfolio_manager",
+      "description": "A valid PM practice day under the owner's raw-facts-only rule: tech/macro/news/earnings/smart-money analyses run FRESH (google-direct gemini-3.5-flash-lite) over the existing public-fact exam fixtures, a flat labelled SYNTHETIC ACCOUNT STATE (no positions, no desk memory), so every memory/history field is left at decide()'s own documented default. Grades live grounding, whether every opened target is in the desk's own pre-decision eligible set (candidate_eligibility), and reasoning_chain schema completeness \u2014 no judgement answer key."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "f10fb88f38a8d1e9e0be1a73ae5f2928e6855c1d3a0ec1853fc35f591c0585c8",
+      "bytes": 70578,
+      "lines": 1140
+    }
+  },
+  "pricing_used": {
+    "deepseek/deepseek-v4.1-flash": {
+      "input": 0.15,
+      "output": 0.6
+    }
+  },
+  "trials": [
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "6/6 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 32270,
+      "output_tokens": 5936,
+      "cost_usd": 0.008402100000000001,
+      "latency_s": 125.01,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Regime prints `risk-on`, outlook `bullish`, confidence `medium`, target_invested_pct 75.0% (Quantitative Facts: account 0% invested, $100,000 cash, no margin available). Under the desk's exposure table a `risk-on` regime maps to 1.60x-2.00x gross, but this account is CASH-ONLY this session (Margin Policy: 'BUYs are capped at available cash after prior BUYs this session. Margin is disabled'), so 1.0x is the binding ceiling and 100% invested is unreachable in practice; 75% is the honest target. I am discounting the macro seat's confidence tier rather than its exposure target, because the equity tape is being read two different ways by two desks today: the macro seat has VIX 15.84 and HY OAS 265bps benign, while the News PM Briefing has VIX 18, 10Y touching 5.00%, and >92% probability priced for a September hike. That divergence is a same-session, same-day disagreement between two seats reading the same tape, and it is exactly the kind of ambiguity that argues for taking deployment in steps rather than committing 75% in one print.\",\n    \"news_check\": \"NARRATIVE: two HIGH state changes today \u2014 (1) 10Y Treasury hits 5.00%, 30Y mortgage 7.17%, Sept hike probability >92% \u2192 bearish broad equities and long-duration growth tech, bullish financials and defensives; (2) Saudi East-West pipeline shutdown threatens oil export curtailment \u2192 bullish energy, bearish consumer discretionary/transport. Overall news sentiment is `bearish` at HIGH confi",
+      "actual_model": "deepseek/deepseek-v4.1-flash",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:COP",
+        "TARGET:CVX",
+        "TARGET:EQNR",
+        "TARGET:JPM",
+        "TARGET:MU"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "5/5 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 32337,
+      "output_tokens": 13302,
+      "cost_usd": 0.01283175,
+      "latency_s": 121.2,
+      "error": "",
+      "sample_output": "{\n\"reasoning_chain\": {\n\"macro_filter\": \"Macro seat: risk-on, bullish outlook, medium confidence, target invested 75% / 25% cash, no margin on the account this session. L7 Macro Regime Trajectory is empty, so there is no prior snapshot and NO today-flip can be detected or priced. I anchor on macro's 75% deployment target but discount its confidence, because the News seat's PM Briefing calls a risk-off transition today ([HIGH] 10Y touches 5%, VIX 18, >92% hike odds) \u2014 a genuine, named conflict between the two seats. Net effect: deploy to roughly 75-80% invested, keep ~20% cash as the buffer macro itself recommends, and tilt selection toward names carrying their own per-symbol support (energy + AAPL) rather than pure duration.\",\n\"news_check\": \"State changes today: [HIGH] 10Y yield hits 5%, 30y mortgage 7.17% \u2192 bearish broad equities and growth tech, bullish financials & defensives; [HIGH] Saudi East-West pipeline shutdown \u2192 bullish energy (COP). Stock-specific: AAPL [MED] bullish (redesigned Siri AI ahead of iPhone 18); GOOGL [MED] bullish. Overall sentiment bearish (confidence high). This is the single largest conflict with the macro seat and it is exactly why I am not at 100% invested and why the high-multiple software names (NET, ZS) are sized below what their ranking alone would suggest.\",\n\"earnings_check\": \"No earnings analysis was supplied this run \u2014 the SEC-filings section is empty and no 'JUST FILED' queued names are flagged. The earnings seat therefore carries no curren",
+      "actual_model": "deepseek/deepseek-v4.1-flash",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:COP",
+        "TARGET:NET",
+        "TARGET:TSM",
+        "TARGET:ZS"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "deepseek/deepseek-v4.1-flash|pm_public_day": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "scenario": "pm_public_day",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.010617,
+        "latency_mean": 123.11,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "deepseek/deepseek-v4.1-flash": {
+        "scenarios": {
+          "pm_public_day": {
+            "model": "deepseek/deepseek-v4.1-flash",
+            "scenario": "pm_public_day",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.010617,
+            "latency_mean": 123.11,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_per_run_mean": 0.010617,
+        "cost_total_usd": 0.021234,
+        "quality_per_dollar": 94.19
+      }
+    }
+  }
+}

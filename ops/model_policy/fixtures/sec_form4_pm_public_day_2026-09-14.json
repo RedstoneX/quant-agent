@@ -1,0 +1,37 @@
+{
+  "_blobs": {
+    "sec_form4_pm_public_day_2026-09-14.json.gz": {
+      "bytes_uncompressed": 2655678,
+      "fetch": "SECForm4Provider.refresh() + the raw parsed-disclosure rows its cache (observations.json) held before fetch()'s own classify_transaction/cluster/admit pass -- src/data/smart_money.py:581 (refresh) and :688 (fetch). Real, credentialless SEC EDGAR full-text-search discovery, run market-wide (this provider's own discovery is not scoped to one ticker) against the live smart_money config (config/settings.yaml:1075-1096), including the live lookback_days=365 (config/settings.yaml:1088, src/config.py:1258). Rows still carry SmartMoneyObservation's own unclassified schema defaults for signal_class / economic_role / freshness / admission_eligible -- fetch() overwrites all four for every row regardless (see :688-:744), so the stored value never matters; three of the four have no default and cannot be stripped without breaking reconstruction. This blob is decompressed content, not part of the manifest JSON `fixture_policy.check_fixture` walks for forbidden keys, so no policy exemption is needed.",
+      "fetched_on": "2026-09-14",
+      "sha256": "20a95260d13515ff80e4781120b075609619a075c6bf47ee6840fbff5372600d",
+      "source": "https://efts.sec.gov/"
+    }
+  },
+  "_exam": {
+    "actual_coverage": {
+      "disclosure_date_max": "2026-09-14",
+      "disclosure_date_min": "2026-09-08",
+      "note": "INCOMPLETE vs the configured 365-day window. SECForm4Provider.refresh() is a resumable, accession-keyed MARKET-WIDE scan bounded by refresh_deadline_s=180s and max_filings_per_refresh=1000 per call (config/settings.yaml smart_money block) -- in production this window is built up over many days of cron refreshes, not one pass. Three refresh() passes were run for this fixture (measured: ~140s each, ~1000 filings/pass) and reached real disclosure dates back to 2026-09-08 -- 7 calendar days of the configured 365. Extending further would need on the order of 350+ more passes (~14+ hours); this was stopped and reported rather than padded or faked. Every row present is real SEC-disclosed Form 4 data for that window, not synthesized."
+    },
+    "as_of": "2026-09-14",
+    "configured_lookback_days": 365
+  },
+  "_provenance": {
+    "note": "Raw public facts only: real Form 4 (insider transaction) disclosures parsed by today's SECForm4Provider._parse_submission from live SEC EDGAR filings, market-wide (not filtered to one symbol like the older sec_form4_2026-08-28_to_31 fixture). Classification (signal_class/routineness), clustering and admission are recomputed at exam time by today's SECForm4Provider.fetch() over these rows -- see _exam for the real, INCOMPLETE window actually covered against the configured 365-day target.",
+    "sections": {
+      "distinct_symbols": {
+        "fetch": "SECForm4Provider.refresh (see _blobs)",
+        "fetched_on": "2026-09-14",
+        "source": "https://efts.sec.gov/"
+      },
+      "row_count": {
+        "fetch": "SECForm4Provider.refresh (see _blobs)",
+        "fetched_on": "2026-09-14",
+        "source": "https://efts.sec.gov/"
+      }
+    }
+  },
+  "distinct_symbols": 520,
+  "row_count": 1974
+}

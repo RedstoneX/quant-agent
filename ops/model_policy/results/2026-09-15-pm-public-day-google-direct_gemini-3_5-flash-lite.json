@@ -1,0 +1,181 @@
+{
+  "generated_at": "2026-09-14T23:22:57Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.05,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.05,
+    "max_calls_per_session": 8
+  },
+  "estimate_usd": {
+    "per_model": {
+      "google-direct:gemini-3.5-flash-lite": null
+    },
+    "tokens": {
+      "pm_public_day": {
+        "input": 17644,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "pm_public_day": {
+      "role": "portfolio_manager",
+      "description": "A valid PM practice day under the owner's raw-facts-only rule: tech/macro/news/earnings/smart-money analyses run FRESH (google-direct gemini-3.5-flash-lite) over the existing public-fact exam fixtures, a flat labelled SYNTHETIC ACCOUNT STATE (no positions, no desk memory), so every memory/history field is left at decide()'s own documented default. Grades live grounding, whether every opened target is in the desk's own pre-decision eligible set (candidate_eligibility), and reasoning_chain schema completeness \u2014 no judgement answer key."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "f10fb88f38a8d1e9e0be1a73ae5f2928e6855c1d3a0ec1853fc35f591c0585c8",
+      "bytes": 70578,
+      "lines": 1140
+    }
+  },
+  "pricing_used": {
+    "google-direct:gemini-3.5-flash-lite": null
+  },
+  "trials": [
+    {
+      "model": "google-direct:gemini-3.5-flash-lite",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "4/4 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 31828,
+      "output_tokens": 1389,
+      "cost_usd": null,
+      "latency_s": 10.97,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Risk-on regime with normal volatility and uninverted yield curves supports active capital deployment toward the macro target of 75% invested.\",\n    \"news_check\": \"Macro transition and yield pressures are balanced by strong company-specific catalysts including Apple's AI product pipeline and technical breakouts.\",\n    \"earnings_check\": \"No fresh contradictory earnings filings; relying on validated technical setups and macro context.\",\n    \"signal_conflicts\": \"NET: available=macro=bullish, technical=strong_buy. Conflict: none. Resolution: open at high conviction. AAPL: available=macro=bullish, news=bullish, technical=buy. Conflict: none. Resolution: open long with multi-source confirmation.\",\n    \"sizing_logic\": \"Allocating conviction-based risk sizes between 2.5% and 3.0% for top-ranked qualified leaders NET, AAPL, TSM, and JPM, well within single-name risk and notional caps.\",\n    \"portfolio_balance\": \"Allocations span technology, financials, and semiconductors, respecting sector limits and avoiding correlated overconcentration.\",\n    \"cash_target\": \"Targeting 75% invested to align with macro exposure goals while maintaining a 25% cash buffer against yield headwinds.\",\n    \"continuity_check\": \"First session on this fresh account; no prior history or flip-flops to reconcile.\",\n    \"premortem_check\": \"(1) Biggest bet NET at 3.0% risk. Bear case: tech multiple compression if yields spike. (2) Falsifier: price closes below MA20 on vol",
+      "actual_model": "gemini-3.5-flash-lite",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:JPM",
+        "TARGET:NET",
+        "TARGET:TSM"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "google"
+    },
+    {
+      "model": "google-direct:gemini-3.5-flash-lite",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "5/5 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 31828,
+      "output_tokens": 1600,
+      "cost_usd": null,
+      "latency_s": 10.41,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Risk-on regime with medium confidence, targeting 75% invested capital. Yield curve is uninverted and credit spreads are tight, supporting cyclical and growth exposure.\",\n    \"news_check\": \"Macro narrative notes rising yields touching 5% and pipeline risks, but stock-specific catalysts for AAPL and technical setups for GOOGL/NET remain constructive.\",\n    \"earnings_check\": \"No current earnings surprises or filings actively contradicting selected positions.\",\n    \"signal_conflicts\": \"NET: available=macro=bullish, technical=strong_buy. Conflict: none. Resolution: size at 3.0% risk. ZS: available=macro=bullish, technical=strong_buy. Conflict: none. Resolution: size at 3.0% risk.\",\n    \"sizing_logic\": \"High-conviction technical breakouts with multiple supporting sources receive 3.0% risk allocations. Base risk scaled appropriately by conviction and independent agreement.\",\n    \"portfolio_balance\": \"Deploying toward the 75% target across top-ranked leaders (NET, ZS, AAPL, COP, JPM). Sector weights remain well within the 75% limit.\",\n    \"cash_target\": \"Current cash is 100%. After targets, approximately 25% cash is maintained as recommended by macro guidance to buffer against elevated 10Y Treasury yields.\",\n    \"continuity_check\": \"Fresh account session; no prior history or conflicting decisions to reconcile.\",\n    \"premortem_check\": \"(1) Biggest bet NET at 3.0% risk. Bear case: 10Y yield spike compresses tech multiples. (2) Falsifier: p",
+      "actual_model": "gemini-3.5-flash-lite",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:COP",
+        "TARGET:JPM",
+        "TARGET:NET",
+        "TARGET:ZS"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "google"
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "google-direct:gemini-3.5-flash-lite|pm_public_day": {
+        "model": "google-direct:gemini-3.5-flash-lite",
+        "scenario": "pm_public_day",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": null,
+        "latency_mean": 10.69,
+        "errors": [],
+        "misattributed": [
+          "gemini-3.5-flash-lite",
+          "gemini-3.5-flash-lite"
+        ]
+      }
+    },
+    "models": {
+      "google-direct:gemini-3.5-flash-lite": {
+        "scenarios": {
+          "pm_public_day": {
+            "model": "google-direct:gemini-3.5-flash-lite",
+            "scenario": "pm_public_day",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": null,
+            "latency_mean": 10.69,
+            "errors": [],
+            "misattributed": [
+              "gemini-3.5-flash-lite",
+              "gemini-3.5-flash-lite"
+            ]
+          }
+        },
+        "not_run": false,
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_per_run_mean": null,
+        "cost_total_usd": null,
+        "quality_per_dollar": null
+      }
+    }
+  }
+}
