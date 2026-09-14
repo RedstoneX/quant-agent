@@ -11,12 +11,11 @@
  * what renders. The backend speaks in R; this page converts every figure to
  * the worked-example dollars the explainer defines and never shows the unit.
  *
- * ACCESSIBILITY IS BINDING. The owner has red-green colour blindness. In every
- * graphic on this page the meaning is carried by position against a drawn zero
- * line, an explicit + or − sign, a ▲/▼ glyph, or solid-versus-outlined shape.
- * Colour only ever repeats something one of those already said, and a red and
- * a green element are never placed next to each other as the sole distinction
- * between them.
+ * ACCESSIBILITY IS BINDING. In every graphic on this page the meaning is
+ * carried by position against a drawn zero line, an explicit + or − sign, a
+ * ▲/▼ glyph, or solid-versus-outlined shape. Colour only ever repeats
+ * something one of those already said, and a red and a green element are
+ * never placed next to each other as the sole distinction between them.
  */
 
 import { useMemo, useState } from "react";

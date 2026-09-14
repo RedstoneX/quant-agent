@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.agents.base import BaseAgent
+from src.agents.prompt_limits import LiveLimitPrompt
 from src.models import (
     AnalystVerdict, EarningsAnalysis, MacroAnalysis, NewsIntelligenceReport,
     PortfolioDecision, Position, TargetPosition, TechAnalysisResult,
@@ -42,6 +43,7 @@ from src.verdicts import RankedCandidate, rank_verdicts
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "portfolio_manager.md"
+SETTINGS_PATH = Path(__file__).parent.parent.parent / "config" / "settings.yaml"
 
 # §9.3 — greppable status key for a target dropped over an unadjudicated
 # seat conflict, matching the naming convention of Phase 3.3's
@@ -76,22 +78,42 @@ _SYMBOL_DIRECTION_RE = re.compile(r"^([A-Z0-9.\-]+)\((\w+)\)$")
 _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
-class PortfolioManagerAgent(BaseAgent):
+class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
+    # This seat SIZES under the desk's limits, so it is shown them rather
+    # than told them: `{{risk.*}}` placeholders in
+    # `config/prompts/portfolio_manager.md`, rendered from the live config at
+    # construction time. Same mechanism as the Risk Manager — see
+    # `src/agents/prompt_limits.py`. PM's sheet was CORRECT when the
+    # reviewer's went wrong on 2026-09-11, and the reason is NOT that anyone
+    # was more careful: `tests/test_prompts_anchors.py` pinned the literal
+    # "capped at 65% single-name" here and had no equivalent anchor on the
+    # reviewer's sheet. The mechanical check is what held. It held by keeping
+    # a THIRD hand-maintained copy of the value, which is what this change
+    # removes — the anchor is retargeted to the placeholder.
+    _prompt_path = PROMPT_PATH
+    _settings_path = SETTINGS_PATH
+    _fallback_prompt = "You are a portfolio manager. Respond with JSON."
+
     #: Phase 14b. The rotation comparison this agent's LAST prompt was
     #: rendered from (`rotation_precheck`), reset at the top of every
     #: `build_user_message`. `DecisionStage._apply_rotation_execution`
     #: reads it so the desk acts on exactly what the model was shown.
     last_rotation_precheck: RotationPrecheck | None = None
 
+    #: retired board item 49, owner decision 2026-09-12 (`docs/INCIDENT_HISTORY.md`, 2026-09-14) ("best-ranked first").
+    #: The candidate ranking this agent's LAST prompt was rendered from, in
+    #: `rank_verdicts` order, best first. Reset at the top of every
+    #: `build_user_message` exactly like `last_rotation_precheck` above, and
+    #: for the same reason: `pipeline_stages.DecisionStage` reads it to tell
+    #: the constructor which order to spend the risk budget in, and a stale
+    #: ranking from a previous session must never leak into this one. None
+    #: means "no ranking view this session" — the allocator then falls back
+    #: to its pre-decision ordering rather than having one invented for it.
+    last_candidate_ranking: list[RankedCandidate] | None = None
+
     @property
     def name(self) -> str:
         return "portfolio_manager"
-
-    @property
-    def system_prompt(self) -> str:
-        if PROMPT_PATH.exists():
-            return PROMPT_PATH.read_text()
-        return "You are a portfolio manager. Respond with JSON."
 
     @staticmethod
     def _collapse_stances(values) -> str | None:
@@ -592,6 +614,10 @@ class PortfolioManagerAgent(BaseAgent):
         # shown IN ORDER, so "which of the twelve" is a stated rule rather
         # than whatever the model defaults toward. Names a gate refuses
         # are listed with the gate that refused them and are NOT ordered.
+        # Item 49: reset FIRST, so a raise inside `rank_candidates` leaves no
+        # previous session's ranking behind for the constructor to spend this
+        # session's budget against.
+        self.last_candidate_ranking = None
         ranked, blocked = self.rank_candidates(
             analyses=analyses,
             evidence_registry=evidence_registry,
@@ -606,6 +632,7 @@ class PortfolioManagerAgent(BaseAgent):
             real_reward_risk_by_symbol=kwargs.get("real_reward_risk_by_symbol"),
             constructor_refusals_by_symbol=kwargs.get("constructor_refusals_by_symbol"),
         )
+        self.last_candidate_ranking = list(ranked)
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
         # Phase 14 — opportunity-cost rotation. The ranking above orders
