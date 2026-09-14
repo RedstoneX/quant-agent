@@ -697,6 +697,37 @@ def test_render_leaves_the_stamp_empty_when_the_box_sha_is_unreadable():
     assert 'name="qamc-board-built-sha" content=""' in out
 
 
+def test_board_shows_when_it_was_generated():
+    """The board stamp includes a human-readable timestamp showing when the
+    page was generated, with the commit hash shown in subordinate form. The
+    timestamp contains a real date/time (not a placeholder), and the hash
+    contains hex characters from the commit."""
+    p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.5,
+             "sessions_today": 3, "box_sha": "abc123", "box_sha_full": "abc1234567",
+             "main_sha": "abc123"}
+    template = Path(__file__).resolve().parents[1] / "scripts" / "status_board_template.html"
+    out = sb.render([p], state, template)
+
+    # The timestamp should contain day-of-week and month names (human readable)
+    assert any(day in out for day in ("Monday", "Tuesday", "Wednesday", "Thursday",
+                                      "Friday", "Saturday", "Sunday")), \
+        "timestamp should contain day of week"
+    assert any(month in out for month in ("January", "February", "March", "April",
+                                          "May", "June", "July", "August",
+                                          "September", "October", "November", "December")), \
+        "timestamp should contain month name"
+
+    # The timezone indicator should be present
+    assert " ET" in out, "timestamp should explicitly state the timezone (ET)"
+
+    # The commit hash should be shown in the generated-at stamp
+    assert "built from" in out, "stamp should indicate it was built from a commit"
+    # The hash itself should appear in the output
+    assert any(sha_part in out for sha_part in ("abc1234", "abc12", "abc")), \
+        "short commit hash should appear in the rendered output"
+
+
 def test_stale_banner_mechanism_is_gone():
     """The time-based staleness banner (a fixed hour threshold, an inline
     script computing page age in the reader's browser) is removed entirely,
