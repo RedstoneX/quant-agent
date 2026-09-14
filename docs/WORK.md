@@ -817,30 +817,20 @@ the PM as prose, which is what this item asked for.
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**32. The two drawdown systems have never been reconciled — OPEN,
-unchanged since 2026-09-11.** *Owner-call label removed 2026-09-14, see
-`docs/INCIDENT_HISTORY.md`.*
+**32. Should the desk have ONE drawdown response or two — OWNER CALL, the only thing left on this item.** *Reconciliation half closed 2026-09-14; everything below the question is context for answering it, not work.*
 
-Everything else once on this item has landed and is written up; what is left
-is one decision, described at the bottom. The 5% envelope itself was restored
-2026-09-04 (an old unratified
-position-size cap was binding first and collapsing delivered risk to ~1%); a
-portfolio-level volatility-target overlay was investigated and REJECTED in the
-same pass (`docs/OUTCOME.md`); the three loss alarms were rebuilt on a
-volatility-relative basis 2026-09-11, owner call, at a PROVISIONAL sensitivity
-of 3.0 that is explicitly not researched and is reversible. The PM conviction
-bands were restored to 2.0-4.0% / 1.0-2.5% / 0.5-1.0% and merged by the owner
-2026-09-10; this file carried a stale "PENDING REVIEW" note against them until
-2026-09-13. Detail for all of it: `docs/INCIDENT_HISTORY.md`, 2026-09-04 and
-2026-09-11.
+**The question.** The desk has two drawdown mechanisms. The three loss alarms measure the account's return over a rolling window (today / 5 sessions / 20 sessions) against a multiple of the normal daily move of the book actually held. The §11.2 de-levering ladder measures how far the account is below its own equity high-water mark, against fixed percentages. Should they be merged into one response, or deliberately kept as two?
 
-**What is actually left.** The drawdown brakes measure rolling-window return;
-the §11.2 ladder measures peak-to-trough. They were calibrated independently,
-and nobody has decided whether the desk should have one drawdown response or
-two. All three alarms are capped at the ladder's -20% owner-alert point, which
-is a floor on the disagreement rather than agreement between them. At a
-sensitivity of 3.0 that cap no longer binds below roughly 1.5%/session; it
-stays as the guarantee for violent regimes.
+**Recommendation, unchanged: keep them as two for now.** Merging is a redesign, not a repair, and it means re-deciding trip points already set once. Worth doing when there is live evidence of how each behaves — there is none yet.
+
+**What is now established, so this can be answered without re-deriving it** (full detail, `docs/INCIDENT_HISTORY.md` 2026-09-14):
+
+- **They cannot contradict each other.** A tripped daily breaker cannot block the ladder's de-levering (exits fail open, entries fail closed); the two cannot double-sell the same shares (the ladder runs first and refreshes the broker snapshot before the breaker is evaluated); and all three alarm thresholds are capped at the ladder's -20% owner-alert point, with the 5-day clamped to the 20-day, so `|1d| <= |5d| <= |20d| <= 20%` holds at every volatility. The √time scaling is applied consistently across all three, with no second convention anywhere.
+- **The severity is inverted between them, and that IS a risk-appetite question.** The daily breaker trips soonest (~3 sigma, about a 3% loss on a 1%/session book) and its response is the most drastic the desk has — force-liquidate every position and abandon the session. The ladder's deepest rung, a 20% peak-to-trough drawdown, only halves the allowed exposure. Shallowest trigger, most violent action.
+- **Two things are recorded as open, neither of them a blocker on this decision.** The daily breaker's threshold shrinks with deployment while its response stays liquidation, so during a ramp from cash a single ordinary-looking single-name day can liquidate the book — and its numerator (whole-account daily P&L, including realised losses on positions already closed, commissions and spread) does not measure the same book as its denominator. Separately, the 5-day and 20-day brakes cannot evaluate until 6 and 21 evening runs have been recorded, and a paused desk accrues none; they now say so instead of printing a null.
+- **The inherited anchor.** `drawdown_5d_risk_multiple = 3` is an April-2026-era constant that everything else scales from and has never been validated. `drawdown_vol_sensitivity = 3.0` is an owner risk-appetite value, correctly labelled provisional in five places. The ladder's six numbers (-8/-15/-20 and 1.5/1.0/0.5) are ratified, not derived.
+
+No DECIDE BY. Nothing is blocked on the answer.
 
 **35. A stop-widening was observed in pre-clean-slate trade history (Visa, Aug 2026) — DEFERRED, not investigated further for now.**
 

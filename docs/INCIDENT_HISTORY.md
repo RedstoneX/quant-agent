@@ -22,6 +22,177 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the two drawdown systems, set side by side at last: they do not contradict each other, but the shallowest alarm takes the most drastic action, and one of the three has been unable to see since the reset (board item 32, reconciliation half CLOSED)
+
+**In plain words:** the desk has two separate ways of noticing it is losing
+money, and nobody had ever written them down next to each other. That is now
+done. They do not fight: one cannot block the other, and the order they run
+in is defined. But three things came out of the comparison that were not
+known before, and one of them matters a great deal.
+
+**The two systems, side by side.**
+
+| | **Loss alarms (three of them)** | **§11.2 de-levering ladder** |
+|---|---|---|
+| What it measures | The account's return over a window: today, the last 5 sessions, the last 20 | How far the account is below its own best-ever equity (peak-to-trough) |
+| Against what basis | A multiple of the normal daily move of the book *actually held*, rebuilt every session from the holdings' real price history at their real weights, scaled by √(window) | Fixed percentages of the high-water mark: -8%, -15%, -20% |
+| What it does when it trips | **Daily: force-liquidates every position and abandons the session.** 5-day/20-day: halves the size of every new BUY and SHORT | Cuts the gross-exposure ceiling to 1.5x, then 1.0x, then 0.5x, trimming the held book to fit; alerts the owner at -20% |
+| Can it see today | Daily: **yes** — it reads live broker equity. 5-day/20-day: **no** | Yes, but against a one-day-old high-water mark |
+
+**FINDING 1 — the severity is inverted between the two systems, and this is
+the one worth arguing about.** The alarm that trips soonest takes the most
+violent action. The daily circuit breaker fires at roughly a 3-sigma session —
+about a 3% loss on a book that normally moves 1% — and its response is to sell
+the entire book at market and abandon the session. The ladder's *deepest* rung
+is a 20% peak-to-trough drawdown, an incomparably worse state, and its
+response is only to halve the allowed exposure. So the desk's most drastic
+deterministic action is attached to its shallowest trigger. That is not an
+inconsistency in the arithmetic; it is a risk-appetite ordering, and it is
+therefore the owner's to keep or change, not an agent's. It is recorded here
+because it was not visible anywhere before the two were written down together,
+and because the boardnote's phrase "loss alarm" understates what the daily one
+does — it is a liquidation, not an alarm.
+
+**FINDING 2 — the daily breaker's threshold shrinks with deployment, and its
+response is liquidation. The failure mode the owner rejected on 2026-09-11 can
+re-enter through this door.** The volatility yardstick weights holdings as
+fractions of *equity* and deliberately does not renormalise them, so a book
+that is 5% deployed reconstructs a normal daily move about 5% the size of the
+same basket fully deployed, and the threshold tightens to match. That property
+is intended and is right for a *brake*. Attached to a *liquidation* it reads
+differently. A book holding one name at 5% of equity, that name moving 2% on
+an ordinary day, produces a daily limit of about 0.3% of equity — which that
+one position reaches by falling 6%, an unremarkable single-stock day. The
+response is to liquidate the whole book. The desk is in exactly that state
+right now: paused, mostly cash, about to ramp.
+
+Two things make it worse than the arithmetic alone suggests:
+
+- **The numerator and the denominator do not measure the same book.** The
+  threshold is 3 sigma of what is *still held* at the moment of the check. The
+  loss it is compared against is the account's whole-day P&L, which also
+  contains realised losses on positions *closed earlier that day*,
+  commissions, margin interest, and the spread paid on entries made that
+  morning. None of those shrink with deployment and none of them appear in the
+  yardstick. During a ramp from cash they are the dominant term.
+- **It hides its own trace.** Once the breaker liquidates, the book is
+  all-cash, the yardstick becomes unmeasurable, and the limit reverts to the
+  6.7% fixed fallback. An operator looking afterwards sees a wide limit and no
+  obvious reason the desk sold everything.
+
+This is a genuine failure toward *trading*, not away from it: forced selling of
+a healthy book at a 0.3% loss realises losses and pays a round trip. It was
+NOT fixed here, because every available fix is either a trip level (the
+owner's) or an invented floor (forbidden). It is written as an open question
+below.
+
+**FINDING 3 — the 5-day and 20-day brakes are blind, and will stay blind for
+6 and 21 sessions after the desk restarts.** They read the `daily_pnl` table
+by position — the 5-day return needs a sixth row, the 20-day a twenty-first.
+That table is written only by an evening pipeline run, so a paused desk accrues
+nothing; the live table has held one row since the 2026-09-02 reset. With
+fewer rows both returns come back as "no value", `in_drawdown` stays false, and
+nothing anywhere said the brake could not see. **This is not the same
+"currently blind after the reset" the 2026-09-04 note recorded** — that was
+mis-scaling, and the 2026-09-11 basis change fixed it. This is genuine absence
+of data, and the honest response is to say so, not to invent a reading. The
+brakes' *only* action is to halve new BUYs, so blindness here costs no
+protection that the daily breaker and the ladder are not already providing.
+
+**What the comparison did NOT find, stated because it was the thing most
+worth looking for.** The two systems cannot contradict each other:
+
+- A tripped daily breaker cannot block the ladder's de-levering. `check()`
+  returns an empty violation list for SELL and COVER before any rule runs —
+  exits fail open, entries fail closed.
+- They cannot double-sell the same shares. In the morning path the ladder runs
+  first, refreshes the broker snapshot after its fills, and only then is the
+  daily breaker evaluated against the refreshed positions.
+- The 20-day brake cannot be asleep past the point the ladder halves the book:
+  all three alarm thresholds are capped at the ladder's -20% owner-alert
+  point, and the 5-day threshold is additionally clamped to the 20-day one, so
+  |1-day| ≤ |5-day| ≤ |20-day| ≤ 20% holds at every volatility.
+- The √time scaling IS applied consistently: one sensitivity, scaled by
+  √1, √5 and √20, and the fixed fallbacks (1.34, 3, 4 × the 5% risk unit)
+  stand in the same √time relation with the 20-day one clipped by the ladder
+  cap. No second convention was found anywhere.
+
+**Every multiple in either system, and where it actually came from.** None was
+changed; the point of the list is that it exists.
+
+- `drawdown_vol_sensitivity = 3.0` — **INVENTED, and correctly labelled so.**
+  An owner risk-appetite decision of 2026-09-11. A real search that day found
+  no published convention for "N multiples of recent volatility trips a
+  drawdown alarm". Flagged provisional in five places. Not a defect.
+- `daily_loss_risk_multiple = 1.34` — the fallback only. Derived by √time from
+  the 5-day multiple (3 × √(1/5)). The *relation* is sound; the anchor is not.
+- `drawdown_5d_risk_multiple = 3` — **INHERITED, never derived.** The anchor
+  everything above rests on. It came in as "3 losing max-size trades in a
+  week" from an April-2026-era constant and has never been validated.
+- `drawdown_20d_risk_multiple = 4` — not a derivation at all. It is the ladder
+  cap divided by the risk unit (20 ÷ 5). √time would have put it at 6.
+- `GROSS_LADDER` rungs -8% / -15% / -20% and 1.5x / 1.0x / 0.5x — a ratified
+  owner table. No derivation is recorded for the rungs or the multipliers, and
+  none was found. Six invented numbers, ratified rather than derived.
+- `DRAWDOWN_BUY_SCALE = 0.5` (halve new BUYs in drawdown) — inherited, no
+  derivation recorded.
+
+**What was actually changed, and it is deliberately small.** Neither change
+moves a trip level.
+
+- **A volatility yardstick could outlive the session it was measured in.** The
+  measurement is memoised because the daily breaker fires from six places a
+  session. The comment on the memo said it was keyed on the holdings, their
+  weights, "and the latest bar date seen". It was not — the date was never in
+  the key, and `src/scheduler.py` holds one pipeline object for the life of
+  the process, so the memo outlives a day. A book whose weights rounded to the
+  same 4dp on two consecutive days would have priced today's alarms against
+  yesterday's volatility, silently, under all three of them. The key now
+  carries the trading date, and a clock failure forces a re-measurement rather
+  than reusing anything. Low probability, but it was a comment asserting a
+  protection that did not exist on the risk path.
+- **A blind brake now says it is blind.** The Portfolio Manager's prompt
+  rendered an unmeasurable window as "Trailing 5-day return: None%", which a
+  model reads as a number near zero — that is, as an all-clear. It now states
+  that the window is not yet measurable, how many sessions it needs, how many
+  are on record, and that this must not be read as zero. The threshold it
+  would fire at is still printed.
+
+**Two open questions, both named rather than closed.**
+
+1. **The daily breaker's tightness during the ramp (Finding 2).** *What would
+   settle it:* a decision by the owner on either half — whether the
+   liquidation response belongs on the *daily* alarm at all, or whether the
+   volatility yardstick should be measured on the deployed book rather than on
+   equity when the response is liquidation rather than a brake. Both are risk
+   appetite. What would NOT settle it: inventing a minimum threshold, or
+   fitting the sensitivity to this desk's own record. Searched and ruled out:
+   there is no published convention for a volatility multiple that triggers
+   liquidation as opposed to a size reduction — the 2026-09-11 sweep found
+   none for the alarm case either.
+2. **The inherited anchor `drawdown_5d_risk_multiple = 3` (and with it the
+   1.34 derived from it).** *What would settle it:* a published study of
+   rolling-window loss thresholds expressed in risk units, or a derivation
+   from the desk's own measured per-trade risk that does not read its equity
+   curve. Backtesting against this desk's 53-row archive is fitting and
+   settles nothing; it is named only to be ruled out.
+
+**What would catch a regression.**
+`tests/test_drawdown_vol_relative_brake.py` gains two: that a yardstick
+measured on another date is never served to today's alarms, and that an
+unmeasurable rolling window is stated in words rather than printed as a null.
+The existing 55 in that file and the 11 in
+`tests/test_drawdown_brake_rescale.py` are unchanged and still pin the basis,
+the √time relation, the ladder cap and the severity ordering.
+
+**Still open on board item 32, and it is the owner's alone:** whether the two
+systems should be merged into one drawdown response or deliberately kept as
+two. Nothing above answers that, and nothing above depends on the answer. The
+standing recommendation is unchanged — keep them separate until there is real
+drawdown data, because merging them is a redesign, not a repair.
+
+---
+
 ### 2026-09-14 — the ladder that decides how big a trade can be was five invented numbers, four of which did nothing; it is now one formula with no invented number in it (board items 30 and 57, both CLOSED)
 
 **In plain words:** the desk lets a trade risk more of the account when more
