@@ -15,8 +15,32 @@ The resulting policy and its evidence live in
 ## Benchmarking
 
 ```bash
-.venv/bin/python ops/model_policy/benchmark_models.py --from-onecli --repeats 2
+.venv/bin/python ops/model_policy/benchmark_models.py --from-onecli --repeats 2 \
+  --budget-usd <USD>
 ```
+
+**The benchmark has its own budget.** `--budget-usd` is required for any run
+that calls a model and has no default: the person running it sets it. It
+becomes the session spend cap of the benchmark's own cost-circuit breaker,
+and the call-count backstop is sized from the planned trial count. Both are
+set on a copy of the `llm_cost_circuit` config; the live desk's caps in
+`config/settings.yaml` are untouched. Before the first paid call the run
+prints the trial count, a per-model estimate (live OpenRouter pricing x the
+largest token counts committed results have measured for each scenario) and
+the budget, and refuses to start if the estimate exceeds the budget unless
+`--allow-partial` is passed. The budget must be at or below the live daily
+cap (`LLMCostCircuitConfig` rejects a session cap above it); a larger budget
+is refused before any paid call. It also refuses if the live **daily** cap —
+which the benchmark still shares, because its spend lands on the same day
+row — has less headroom than the run plans to spend. When the budget is
+reached mid-run the remaining trials are recorded `skipped_budget` and the
+table shows `NOT RUN`, never `0.00`. Caps are checked on settled spend before
+each call, so a run can overshoot its budget by at most one call.
+`--report` and `--merge-out` spend nothing and need no budget.
+
+`.env` is loaded automatically when the API-key variables are unset, so no
+`set -a && . ./.env` step is needed; the values are OneCLI placeholders and
+are never printed.
 
 This drives the **real** agent classes (`src/agents/*`) with the **real**
 prompts (`config/prompts/*.md`) over frozen inputs — synthetic for every
@@ -51,7 +75,7 @@ and nothing else. Re-run the seat rather than the sweep:
 .venv/bin/python ops/model_policy/benchmark_models.py --from-onecli \
   --models google/gemini-2.5-flash-lite deepseek/deepseek-v4-pro-0813 \
   --scenario risk_rr_breach --scenario risk_drawdown_discipline \
-  --repeats 3 --out results/rm-rerun-<date>.json
+  --repeats 3 --budget-usd <USD> --out results/rm-rerun-<date>.json
 ```
 
 `tests/test_model_routing_policy.py` reads every file in `results/` and
@@ -71,7 +95,7 @@ candidates the evidence supports, or the tickers it already knows?**
 ```bash
 .venv/bin/python ops/model_policy/benchmark_models.py --from-onecli \
   --scenario pm_selection --models openai/gpt-5.5 --repeats 2 \
-  --out results/pm-selection-<date>.json
+  --budget-usd <USD> --out results/pm-selection-<date>.json
 ```
 
 `pm_production_scale` cannot answer that, and it was never meant to:
@@ -131,10 +155,10 @@ Useful flags:
 
 ```bash
 # one model, one scenario — the fast loop when adding a scenario
-... --models qwen/qwen3.7-flash --scenario risk_rr_breach
+... --models qwen/qwen3.7-flash --scenario risk_rr_breach --budget-usd <USD>
 
 # add a scenario without re-paying for the whole sweep
-... --scenario midday_exit --out results/sweep-midday.json
+... --scenario midday_exit --budget-usd <USD> --out results/sweep-midday.json
 ... --report results/sweep.json results/sweep-midday.json --merge-out results/merged.json
 ```
 

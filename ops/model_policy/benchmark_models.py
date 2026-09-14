@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Benchmark OpenRouter models on QAMC's own agent tasks.
 
-    python ops/model_policy/benchmark_models.py --from-onecli --repeats 2
-    python ops/model_policy/benchmark_models.py --models qwen/qwen3.7-flash --scenario tech_batch
+    python ops/model_policy/benchmark_models.py --from-onecli --repeats 2 --budget-usd <USD>
+    python ops/model_policy/benchmark_models.py --models qwen/qwen3.7-flash --scenario tech_batch --budget-usd <USD>
     python ops/model_policy/benchmark_models.py --report ops/model_policy/results/latest.json
 
 Every candidate is driven through the REAL agent classes with the REAL
@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import contextlib
+import copy
 import hashlib
 import importlib
 import json
@@ -170,6 +171,269 @@ class Trial:
     # AGREED. A seat that scores 1.00 twice while naming disjoint books is
     # not a stable seat, and the score alone cannot show that.
     picks: list[str] = field(default_factory=list)
+    # "run" = the model was called and graded. STATUS_SKIPPED_BUDGET = the
+    # benchmark's own budget was exhausted before this trial started, so the
+    # model was NEVER CALLED. A skipped trial is not a 0.00 score and is
+    # excluded from every quality/cost aggregate. Defaulted so results files
+    # written before this field existed still load.
+    status: str = "run"
+
+
+STATUS_RUN = "run"
+STATUS_SKIPPED_BUDGET = "skipped_budget"
+
+
+def skipped_trial(scenario: Scenario, model: str) -> Trial:
+    return Trial(
+        model=model, scenario=scenario.key, role=scenario.role, ok=False,
+        quality=0.0, status=STATUS_SKIPPED_BUDGET,
+        error="NOT RUN: benchmark budget exhausted before this trial",
+    )
+
+
+# --------------------------------------------------------------------------
+# The benchmark's own budget (2026-09-14)
+# --------------------------------------------------------------------------
+#
+# Until this fix the benchmark built its breaker from the LIVE desk's
+# `llm_cost_circuit` block, so it inherited a trading session's
+# `session_cost_limit_usd` and `max_calls_per_session`. A six-model run spent
+# past that session cap, tripped `PaidAnalysisSuspended`, and every later
+# trial errored and was scored 0.00. The live desk's caps are correct for a
+# trading session and are NOT changed here: the benchmark now builds a
+# modified COPY of that config for its own breaker only.
+
+# Worst-case LOGICAL calls one trial can make, each counted by
+# `LLMCostCircuitBreaker.begin_call` against `max_calls_per_session`:
+#   1 primary call (every scenario is one chunk: tech_batch is 3 symbols,
+#     tech_batch_full is 25 = one `_CHUNK_SIZE` chunk)
+#   + 1 `schema_repair` (`BaseAgent`'s single repair reprompt)
+#   + `_MAX_MISSING_RETRIES` per-chunk missing-symbol recoveries (tech)
+#   + 1 consolidated cross-chunk recovery (tech `analyze_batch`)
+# Provider-level retries/failover inside one logical call are bounded by
+# `max_provider_attempts_per_call`, which is left exactly as configured.
+def logical_calls_per_trial_worst() -> int:
+    from src.agents.tech_analyst import _MAX_MISSING_RETRIES
+    return 1 + 1 + int(_MAX_MISSING_RETRIES) + 1
+
+
+def positive_budget(value: str) -> float:
+    try:
+        budget = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--budget-usd must be a number, got {value!r}")
+    if not (budget > 0 and budget != float("inf")):  # also rejects nan
+        raise argparse.ArgumentTypeError(
+            f"--budget-usd must be a positive, finite dollar amount, got {value!r}"
+        )
+    return budget
+
+
+def benchmark_circuit_config(live_cfg, *, budget_usd: float, planned_trials: int):
+    """A COPY of the live `llm_cost_circuit` config with the benchmark's caps.
+
+    Only `session_cost_limit_usd` and `max_calls_per_session` differ. The
+    daily cap, Telegram requirement, attempt ceilings and pricing grace are
+    inherited unchanged. `live_cfg` is never mutated.
+    """
+    daily_limit = float(live_cfg.daily_cost_limit_usd)
+    if float(budget_usd) > daily_limit:
+        # `LLMCostCircuitConfig` itself rejects session > daily, and the
+        # breaker's settled daily check would stop the run there anyway.
+        # Fail before any paid call; the daily cap is never raised here.
+        raise SystemExit(
+            f"REFUSING TO START: --budget-usd ${float(budget_usd):.2f} is above the "
+            f"live daily LLM cap ${daily_limit:.2f}, which the benchmark shares and "
+            f"does not raise. Use a budget at or below the daily cap."
+        )
+    update = {
+        "session_cost_limit_usd": float(budget_usd),
+        "max_calls_per_session": max(1, int(planned_trials)) * logical_calls_per_trial_worst(),
+    }
+    if hasattr(live_cfg, "model_dump"):
+        # Re-validate so the copy obeys the same field constraints.
+        return type(live_cfg).model_validate({**live_cfg.model_dump(), **update})
+    clone = copy.copy(live_cfg)
+    for key, value in update.items():
+        setattr(clone, key, value)
+    return clone
+
+
+def with_circuit_config(app_config, circuit_cfg):
+    """A shallow copy of `app_config` carrying `circuit_cfg`; original untouched."""
+    if hasattr(app_config, "model_copy"):
+        return app_config.model_copy(update={"llm_cost_circuit": circuit_cfg})
+    clone = copy.copy(app_config)
+    clone.llm_cost_circuit = circuit_cfg
+    return clone
+
+
+def build_benchmark_circuit(app_config, *, budget_usd: float, planned_trials: int,
+                            run_id: str, notifier=None, db_path=None):
+    from src.cost_circuit import activate_paid_call_session
+    cfg = benchmark_circuit_config(
+        app_config.llm_cost_circuit, budget_usd=budget_usd,
+        planned_trials=planned_trials,
+    )
+    return activate_paid_call_session(
+        with_circuit_config(app_config, cfg),
+        run_id=run_id, mode="benchmark", notifier=notifier, db_path=db_path,
+    )
+
+
+# Used only when no committed result has measured a scenario's tokens.
+FALLBACK_CHARS_PER_TOKEN = 4.0
+
+
+def token_assumptions(scenarios, results_dir: Path | None = None) -> dict[str, dict]:
+    """Per-scenario {input, output, source} token assumption for the estimate.
+
+    Taken as the LARGEST input and output token counts any committed trial
+    of that scenario has measured (any model), so the estimate is read from
+    this harness's own data rather than invented. A scenario with no
+    measured trial falls back to prompt bytes / FALLBACK_CHARS_PER_TOKEN for
+    input and the scenario's output cap for output, labelled UNMEASURED.
+    """
+    results_dir = results_dir or (PROJECT_ROOT / "ops" / "model_policy" / "results")
+    seen: dict[str, list[int]] = {}
+    for path in sorted(results_dir.glob("*.json")):
+        try:
+            trials = json.loads(path.read_text()).get("trials") or []
+        except (OSError, ValueError):
+            continue
+        for t in trials:
+            if t.get("status", STATUS_RUN) != STATUS_RUN:
+                continue
+            m = seen.setdefault(t.get("scenario", ""), [0, 0])
+            m[0] = max(m[0], int(t.get("input_tokens") or 0))
+            m[1] = max(m[1], int(t.get("output_tokens") or 0))
+    out = {}
+    for s in scenarios:
+        inp, outp = seen.get(s.key, [0, 0])
+        if inp or outp:
+            out[s.key] = {"input": inp, "output": outp,
+                          "source": "max measured in committed results"}
+        else:
+            try:
+                prompt_bytes = (PROJECT_ROOT / f"config/prompts/{s.role}.md").stat().st_size
+            except OSError:
+                prompt_bytes = 0
+            out[s.key] = {"input": int(prompt_bytes / FALLBACK_CHARS_PER_TOKEN),
+                          "output": int(s.max_tokens),
+                          "source": "UNMEASURED: prompt bytes/4 + output cap"}
+    return out
+
+
+def estimate_costs(models, scenarios, repeats: int, pricing: dict,
+                   tokens: dict[str, dict]) -> dict[str, float | None]:
+    """{model: estimated USD for its trials}, None when the model is unpriced."""
+    out: dict[str, float | None] = {}
+    for model in models:
+        rates = pricing.get(model)
+        if not rates:
+            out[model] = None
+            continue
+        per = sum(
+            (tokens[s.key]["input"] * rates["input"]
+             + tokens[s.key]["output"] * rates["output"]) / 1e6
+            for s in scenarios
+        )
+        out[model] = per * repeats
+    return out
+
+
+def daily_cap_problem(status: dict, daily_limit_usd: float,
+                      planned_spend_usd: float) -> str | None:
+    """Why the live daily cap would stop this run, or None.
+
+    The breaker checks `daily >= daily_cost_limit_usd` against SETTLED spend
+    before every call, and the benchmark's spend is written to the same
+    day row as the desk's. A run that needs more than the remaining daily
+    headroom would therefore trip mid-run after spending. Refuse up front.
+    """
+    daily = float(status.get("current_daily_cost_usd") or 0.0)
+    headroom = float(daily_limit_usd) - daily
+    if planned_spend_usd > headroom:
+        return (
+            f"daily LLM cap ${float(daily_limit_usd):.2f} has ${max(headroom, 0):.4f} "
+            f"left today (${daily:.4f} already spent) but this run plans up to "
+            f"${planned_spend_usd:.4f}. Not starting. Lower --budget-usd or run "
+            f"another day; the daily cap is not raised by the benchmark."
+        )
+    return None
+
+
+def run_sweep(models, scenarios, repeats: int, *, budget_usd: float,
+              run_one, budget_state, log=None) -> tuple[list[Trial], bool]:
+    """Run every planned trial until the budget is reached.
+
+    `run_one(scenario, model) -> Trial`. `budget_state() -> (session_spent_usd,
+    circuit_suspended)`. Once spend reaches the budget, or the breaker
+    suspends paid calls, every remaining trial is recorded as
+    STATUS_SKIPPED_BUDGET without calling the model. A trial that the breaker
+    refused before any tokens were metered is also NOT RUN, not a failure.
+    """
+    log = log or (lambda msg: print(msg, file=sys.stderr))
+    trials: list[Trial] = []
+    total = len(models) * len(scenarios) * repeats
+    stopped = False
+    n = 0
+    for model in models:
+        for scenario in scenarios:
+            for _ in range(repeats):
+                n += 1
+                if stopped:
+                    trials.append(skipped_trial(scenario, model))
+                    continue
+                trial = run_one(scenario, model)
+                spent, suspended = budget_state()
+                if suspended and not (trial.input_tokens or trial.output_tokens):
+                    trial = skipped_trial(scenario, model)
+                trials.append(trial)
+                log(f"[{n}/{total}] {model} :: {scenario.key} "
+                    + ("NOT RUN (budget)" if trial.status != STATUS_RUN else
+                       f"q={trial.quality:.2f} "
+                       + (f"${trial.cost_usd:.4f} " if trial.cost_usd is not None else "$? ")
+                       + f"{trial.latency_s:.0f}s"
+                       + (f" ERR {trial.error[:90]}" if trial.error else "")))
+                if spent >= budget_usd or suspended:
+                    stopped = True
+                    log(f"BUDGET STOP: session spend ${spent:.4f} of ${budget_usd:.2f}"
+                        + (" (cost circuit suspended)" if suspended else "")
+                        + f"; remaining {total - n} trial(s) marked NOT RUN")
+    return trials, stopped
+
+
+_REQUIRED_ENV_KEYS = (
+    "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "FRED_API_KEY",
+    "ALPACA_API_KEY", "ALPACA_SECRET_KEY",
+)
+
+
+def load_env_if_keys_missing(env_path: Path | None = None) -> bool:
+    """Load `.env` when a required key variable is unset or empty.
+
+    Same line-based loader as `scripts/export_alpaca_trades.py` (no
+    python-dotenv). Existing environment wins. Values are OneCLI
+    placeholders; they are never printed. Returns True if the file was read.
+    """
+    if all(os.environ.get(k) for k in _REQUIRED_ENV_KEYS):
+        return False
+    env_path = env_path or (PROJECT_ROOT / ".env")
+    if not env_path.exists():
+        return False
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        k, v = line.split("=", 1)
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        if k and not os.environ.get(k):
+            os.environ[k] = v
+    return True
 
 
 def _load_agent_cls(path: str):
@@ -413,12 +677,29 @@ def prompt_fingerprints(scenarios) -> dict:
 
 
 def aggregate(trials: list[Trial]) -> dict:
-    """Per (model, scenario) means, then per-model rollups."""
+    """Per (model, scenario) means, then per-model rollups.
+
+    NOT-RUN trials (budget skips) never enter a mean. A pair or model with
+    no run trial is published with `not_run: True` and null quality, and
+    renders as NOT RUN — a model that was never called has no score.
+    """
+    all_trials = trials
+    trials = [t for t in all_trials if t.status == STATUS_RUN]
     by_pair: dict[tuple[str, str], list[Trial]] = {}
     for t in trials:
         by_pair.setdefault((t.model, t.scenario), []).append(t)
 
     pairs = {}
+    for t in all_trials:
+        key = (t.model, t.scenario)
+        if key in by_pair:
+            continue
+        pairs[f"{t.model}|{t.scenario}"] = {
+            "model": t.model, "scenario": t.scenario, "role": t.role,
+            "runs": 0, "not_run": True, "quality_mean": None,
+            "quality_min": None, "cost_mean": None, "latency_mean": None,
+            "errors": [], "misattributed": [],
+        }
     for (model, scenario), group in by_pair.items():
         costs = [t.cost_usd for t in group if t.cost_usd is not None]
         pairs[f"{model}|{scenario}"] = {
@@ -443,6 +724,8 @@ def aggregate(trials: list[Trial]) -> dict:
     for entry in pairs.values():
         m = models.setdefault(entry["model"], {"scenarios": {}, "quality": [], "cost": []})
         m["scenarios"][entry["scenario"]] = entry
+        if entry.get("not_run"):
+            continue
         m["quality"].append(entry["quality_mean"])
         if entry["cost_mean"] is not None:
             m["cost"].append(entry["cost_mean"])
@@ -454,8 +737,15 @@ def aggregate(trials: list[Trial]) -> dict:
     for t in trials:
         worst_trial[t.model] = min(worst_trial.get(t.model, 1.0), t.quality)
     for model, m in models.items():
-        m["quality_mean"] = round(statistics.fmean(m["quality"]), 4) if m["quality"] else 0.0
-        m["quality_worst"] = round(min(m["quality"]), 4) if m["quality"] else 0.0
+        if not m["quality"]:
+            m.update(not_run=True, quality_mean=None, quality_worst=None,
+                     quality_worst_run=None, cost_per_run_mean=None,
+                     cost_total_usd=None, quality_per_dollar=None)
+            del m["quality"], m["cost"]
+            continue
+        m["not_run"] = False
+        m["quality_mean"] = round(statistics.fmean(m["quality"]), 4)
+        m["quality_worst"] = round(min(m["quality"]), 4)
         m["quality_worst_run"] = round(worst_trial.get(model, 0.0), 4)
         # `m["cost"]` holds one PER-RUN MEAN per scenario, not per trial, so
         # summing it never produced a total. It was published as
@@ -502,7 +792,9 @@ def render_markdown(report: dict) -> str:
     # reported as a tiebreaker, not as the ranking.
     ordered = sorted(
         models.items(),
-        key=lambda kv: (-kv[1]["quality_mean"], -kv[1]["quality_worst"],
+        key=lambda kv: (bool(kv[1].get("not_run")),
+                        -(kv[1]["quality_mean"] or 0.0),
+                        -(kv[1]["quality_worst"] or 0.0),
                         kv[1]["cost_per_run_mean"]
                         if kv[1]["cost_per_run_mean"] is not None else 1e9),
     )
@@ -510,7 +802,16 @@ def render_markdown(report: dict) -> str:
         cells = []
         for key in scen_keys:
             e = m["scenarios"].get(key)
-            cells.append("—" if e is None else f"{e['quality_mean']:.2f}")
+            if e is None:
+                cells.append("—")
+            elif e.get("not_run"):
+                cells.append("NOT RUN")
+            else:
+                cells.append(f"{e['quality_mean']:.2f}")
+        if m.get("not_run"):
+            lines.append(f"| `{model}` | " + " | ".join(cells)
+                         + " | NOT RUN | NOT RUN | — | — |")
+            continue
         cost = m["cost_per_run_mean"]
         lines.append(
             f"| `{model}` | " + " | ".join(cells)
@@ -544,6 +845,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--merge-out",
                     help="with --report: also write the merged report here")
+    ap.add_argument(
+        "--budget-usd", type=positive_budget, default=None,
+        help="REQUIRED for any run that calls a model: this benchmark's own "
+             "session spend cap in USD. No default -- the person running it "
+             "sets it. Independent of the live desk's caps, which are unchanged.",
+    )
+    ap.add_argument(
+        "--allow-partial", action="store_true",
+        help="start even when the pre-run estimate exceeds --budget-usd (or "
+             "cannot be computed); trials past the budget are recorded NOT RUN",
+    )
     args = ap.parse_args(argv)
 
     if args.report:
@@ -619,6 +931,13 @@ def main(argv: list[str] | None = None) -> int:
         print(render_markdown(report["aggregate"]))
         return 0
 
+    if args.budget_usd is None:
+        ap.error("--budget-usd is required for any run that calls a model "
+                 "(not needed with --report)")
+
+    if load_env_if_keys_missing():
+        print("loaded .env (placeholder keys; values not shown)", file=sys.stderr)
+
     if args.from_onecli:
         source = wire_from_onecli()
     elif os.environ.get("HTTPS_PROXY"):
@@ -628,29 +947,7 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
-    pricing = openrouter_pricing()
-    # The breaker uses the same in-process pinned table. OpenRouter's live
-    # catalog is authoritative for benchmark-only candidates and was fetched
-    # before any completion request.
-    from src.cost_table import PRICING
-    PRICING.update(pricing)
-    from src.config import load_config
-    from src.cost_circuit import activate_paid_call_session
-    config_path = Path(args.config)
-    if not config_path.is_absolute():
-        config_path = PROJECT_ROOT / config_path
-    app_config = load_config(config_path)
-    cost_circuit = activate_paid_call_session(
-        app_config,
-        run_id=f"benchmark-{int(time.time())}", mode="benchmark",
-    )
-    cost_circuit.require_paid_analysis("benchmark_start")
     models = args.models or DEFAULT_CANDIDATES
-    unpriced = [m for m in models if m not in pricing]
-    if unpriced:
-        print(f"WARNING: no catalog price for {unpriced} — their cost will be null.",
-              file=sys.stderr)
-
     # DEFAULT_SCENARIOS, not SCENARIOS: the production-scale tech batch is
     # opt-in, because running it against every candidate costs far more
     # than it informs. Name it explicitly for the finalists.
@@ -658,31 +955,88 @@ def main(argv: list[str] | None = None) -> int:
         [SCENARIOS_BY_KEY[k] for k in args.scenario]
         if args.scenario else DEFAULT_SCENARIOS
     )
-
-    trials: list[Trial] = []
     total = len(models) * len(scenarios) * args.repeats
-    n = 0
-    for model in models:
-        for scenario in scenarios:
-            for _ in range(args.repeats):
-                n += 1
-                print(f"[{n}/{total}] {model} :: {scenario.key} ... ",
-                      end="", flush=True, file=sys.stderr)
-                trial = run_trial(scenario, model, pricing, cost_circuit=cost_circuit)
-                trials.append(trial)
-                print(
-                    f"q={trial.quality:.2f} "
-                    + (f"${trial.cost_usd:.4f} " if trial.cost_usd is not None else "$? ")
-                    + f"{trial.latency_s:.0f}s"
-                    + (f" ERR {trial.error[:90]}" if trial.error else ""),
-                    file=sys.stderr,
-                )
+
+    pricing = openrouter_pricing()
+    unpriced = [m for m in models if m not in pricing]
+    if unpriced:
+        print(f"WARNING: no catalog price for {unpriced} — their cost will be null.",
+              file=sys.stderr)
+
+    # Pre-run plan, before ANY paid call.
+    tokens = token_assumptions(scenarios)
+    estimates = estimate_costs(models, scenarios, args.repeats, pricing, tokens)
+    print(f"PLAN: {len(models)} model(s) x {len(scenarios)} scenario(s) x "
+          f"{args.repeats} repeat(s) = {total} trial(s); budget ${args.budget_usd:.2f}",
+          file=sys.stderr)
+    for key, tok in tokens.items():
+        print(f"  token assumption {key}: in={tok['input']} out={tok['output']} "
+              f"per trial ({tok['source']})", file=sys.stderr)
+    for model, est in estimates.items():
+        print(f"  est {model}: " + (f"${est:.4f}" if est is not None else "? (unpriced)"),
+              file=sys.stderr)
+    known = [e for e in estimates.values() if e is not None]
+    estimate_total = sum(known)
+    estimate_complete = len(known) == len(estimates)
+    print(f"  est total: ${estimate_total:.4f}"
+          + ("" if estimate_complete else " + unpriced model(s)"), file=sys.stderr)
+    if (estimate_total > args.budget_usd or not estimate_complete) and not args.allow_partial:
+        print("REFUSING TO START: the estimate "
+              + ("exceeds" if estimate_complete else "cannot be completed within")
+              + f" --budget-usd ${args.budget_usd:.2f}. Raise the budget, narrow "
+              "the run, or pass --allow-partial to run until the budget is spent.",
+              file=sys.stderr)
+        return 2
+
+    # The breaker uses the same in-process pinned table. OpenRouter's live
+    # catalog is authoritative for benchmark-only candidates and was fetched
+    # before any completion request.
+    from src.cost_table import PRICING
+    PRICING.update(pricing)
+    from src.config import load_config
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = PROJECT_ROOT / config_path
+    app_config = load_config(config_path)
+    cost_circuit = build_benchmark_circuit(
+        app_config, budget_usd=args.budget_usd, planned_trials=total,
+        run_id=f"benchmark-{int(time.time())}",
+    )
+    cost_circuit.require_paid_analysis("benchmark_start")
+
+    planned_spend = (
+        min(args.budget_usd, estimate_total) if estimate_complete else args.budget_usd
+    )
+    problem = daily_cap_problem(
+        cost_circuit.status(), app_config.llm_cost_circuit.daily_cost_limit_usd,
+        planned_spend,
+    )
+    if problem:
+        print(f"REFUSING TO START: {problem}", file=sys.stderr)
+        return 2
+
+    def _budget_state() -> tuple[float, bool]:
+        st = cost_circuit.status()
+        return float(st.get("current_session_cost_usd") or 0.0), bool(st.get("suspended"))
+
+    trials, stopped_on_budget = run_sweep(
+        models, scenarios, args.repeats, budget_usd=args.budget_usd,
+        run_one=lambda s, m: run_trial(s, m, pricing, cost_circuit=cost_circuit),
+        budget_state=_budget_state,
+    )
 
     report = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "wiring_source": source,
         "baseline": BASELINE_MODEL,
         "repeats": args.repeats,
+        "budget_usd": args.budget_usd,
+        "benchmark_circuit": {
+            "session_cost_limit_usd": cost_circuit.config.session_cost_limit_usd,
+            "max_calls_per_session": cost_circuit.config.max_calls_per_session,
+        },
+        "estimate_usd": {"per_model": estimates, "tokens": tokens},
+        "stopped_on_budget": stopped_on_budget,
         "scenarios": {s.key: {"role": s.role, "description": s.description}
                       for s in scenarios},
         "prompts": prompt_fingerprints(scenarios),
