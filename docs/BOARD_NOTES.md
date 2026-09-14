@@ -174,10 +174,48 @@ Second, and more useful: when we counted why ideas die, they are overwhelmingly 
 
 ## item 20
 
-**Plain language —** Right now, if part of the research behind a decision is thin or missing, the AI still makes a full buy or sell call anyway. The plan is to check cheaply, before the expensive decision step runs, whether there's actually enough real evidence to decide at all — if not, skip that round loudly and try again well within the hour at the next scheduled check.
-**Example —** If most of a day's earnings reports come back flagged as too truncated to read, that fact already exists in the record; the fix would use it to skip that session's decision entirely and announce the skip clearly, instead of letting the AI guess.
-**The decision —** Where to set the minimum evidence bar below which the desk skips a decision entirely.
-**Recommendation —** This is designed but not yet built. Have a concrete number proposed with its reasoning shown before shipping anything, rather than picking one casually.
+**Plain language —** Your rule from 2 September: if the research behind a
+decision isn't really there, don't decide — skip the round loudly and try
+again later. The half of that rule which does NOT need a number is now built
+and switched on. Before the expensive decision step runs, the desk checks
+each of its five research seats and asks one question: did this seat answer,
+or did its answer never arrive? A seat that looked and found nothing — no
+insider filings today, no new inflation print published yet — has answered,
+and the desk carries on. A seat that was asked and came back with nothing at
+all, because the call failed or its reply was unreadable, has not answered,
+and the desk refuses to decide, spends nothing, says so, and waits.
+
+**Why there is no number in it —** you said the minimum bar is a risk
+judgement and not an agent's to invent, and that stands: nothing published
+says how many of five research seats a desk needs before a decision is
+sound, and picking one off our own trading history would be fitting a number
+to ourselves. So the rule was built to need no bar at all. "Answered" versus
+"never answered" is a yes-or-no fact, not a score.
+
+**How hard it bites, measured, not guessed —** replayed against every
+morning the desk has actually run: **5 of the 27 that got as far as the
+decision step would have been refused — about one in five, on 4 of 13
+trading days.** Four of those five are the same single fault: the news
+analyst occasionally replies with something that isn't readable at all. That
+fault is real and recent (it happened again on 4 September). So expect this
+to fire, and expect the news seat to be the reason until that is fixed
+separately.
+
+**One correction to your own note —** it assumed a skipped round costs half
+an hour because the desk re-checks every thirty minutes. The thirty-minute
+check does not redo the research or the decision; the only thing that can
+decide again is a narrow scan that only looks at stocks which have moved 3%
+or more that day, at most five of them. On a calm day a refused morning is
+closer to a lost day than a lost half-hour. That does not change the rule —
+a made-up decision is worse than none — but the price of refusing is higher
+than the note assumed.
+
+**The decision —** Still yours, and now the only thing left in this item:
+whether *partial* evidence should also stop a decision, and if so, where the
+line sits. Not "did the seat answer" — that is settled and built — but "the
+seat answered about 40 of 65 companies, is that enough?". Nothing published
+answers that, so it either gets a number from you or a ruling that partial
+coverage should never stop a decision at all.
 
 
 ## item 30

@@ -45,6 +45,12 @@ STATUS_PLAIN = {
         "None of the research analysts produced anything usable, so no trades "
         "were even considered."
     ),
+    "evidence_gate_skip": (
+        "One or more research seats were asked for their read and their "
+        "answer never came back at all. The desk deliberately declined to "
+        "decide rather than guess, spent nothing on the decision, and left "
+        "the next scheduled opportunity to try again."
+    ),
     "market_holiday": "The market was closed, so no session ran.",
     "broker_error": (
         "The session could not read the account from the broker and stopped "

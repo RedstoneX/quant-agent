@@ -8,9 +8,30 @@ from src.models import (
     TechAnalysisResult, PortfolioDecision, TradeDecision, RiskVerdict, Position,
     TargetPosition,
     MacroAnalysis, MacroReasoningChain, MacroPositionGuidance,
+    NewsIntelligenceReport, MacroNarrative,
     PositionReview, PositionReasoningChain, PositionAction,
     ReasoningChain, RiskReasoningChain, TechReasoningChain,
 )
+
+
+
+def _news_stub():
+    """A minimal, VALID NewsIntelligenceReport for pipeline fixtures.
+
+    Required since docs/WORK.md item 20: a news seat that returns None is
+    `data_status["news"] = "parse_error"`, which the evidence gate reads as
+    an answer that never arrived and refuses the decision on. Fixtures that
+    are testing execution/sizing/risk paths must give the seat a real
+    answer, or they end up asserting against the gate instead.
+    """
+    return NewsIntelligenceReport(
+        macro_narrative=MacroNarrative(
+            last_updated="2026-04-07", era_themes=["AI capex"],
+            current_regime="risk-on",
+        ),
+        state_changes=[], stock_news={},
+        pm_briefing="stub", market_sentiment="neutral", confidence="medium",
+    )
 
 
 def _mock_stop_seam(broker, *, specs=(), snapshot_ok=True, cancel_ok=True):
@@ -282,11 +303,14 @@ def test_pipeline_morning_run_buy(
     # News
     mock_na = MagicMock()
     # NewsAnalystAgent.analyze() -> tuple[NewsIntelligenceReport | None,
-    # AgentResult]; None is a real, typed outcome (a parse/analysis
-    # failure), not a stand-in for a type nothing produces. PM/RM are both
-    # mocked in this fixture, so no production code ever reads news
-    # content — only that the pipeline tolerates a newsless run.
-    mock_na.analyze.return_value = (None, _mock_agent_result())
+    # AgentResult]. This used to hand back None — "the pipeline tolerates a
+    # newsless run" — and that is no longer true, deliberately: since
+    # docs/WORK.md item 20 shipped, a seat that was asked and whose answer
+    # never arrived REFUSES the decision rather than being tolerated, so a
+    # None here would make every fixture below assert against
+    # `evidence_gate_skip` instead of the thing it is actually testing.
+    # PM/RM are still mocked, so no production code reads the content.
+    mock_na.analyze.return_value = (_news_stub(), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
@@ -407,11 +431,14 @@ def test_pipeline_morning_run_persists_specialist_evidence(
 
     mock_na = MagicMock()
     # NewsAnalystAgent.analyze() -> tuple[NewsIntelligenceReport | None,
-    # AgentResult]; None is a real, typed outcome (a parse/analysis
-    # failure), not a stand-in for a type nothing produces. PM/RM are both
-    # mocked in this fixture, so no production code ever reads news
-    # content — only that the pipeline tolerates a newsless run.
-    mock_na.analyze.return_value = (None, _mock_agent_result())
+    # AgentResult]. This used to hand back None — "the pipeline tolerates a
+    # newsless run" — and that is no longer true, deliberately: since
+    # docs/WORK.md item 20 shipped, a seat that was asked and whose answer
+    # never arrived REFUSES the decision rather than being tolerated, so a
+    # None here would make every fixture below assert against
+    # `evidence_gate_skip` instead of the thing it is actually testing.
+    # PM/RM are still mocked, so no production code reads the content.
+    mock_na.analyze.return_value = (_news_stub(), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
@@ -576,11 +603,14 @@ def test_pipeline_market_order_sizes_from_live_market_price(
 
     mock_na = MagicMock()
     # NewsAnalystAgent.analyze() -> tuple[NewsIntelligenceReport | None,
-    # AgentResult]; None is a real, typed outcome (a parse/analysis
-    # failure), not a stand-in for a type nothing produces. PM/RM are both
-    # mocked in this fixture, so no production code ever reads news
-    # content — only that the pipeline tolerates a newsless run.
-    mock_na.analyze.return_value = (None, _mock_agent_result())
+    # AgentResult]. This used to hand back None — "the pipeline tolerates a
+    # newsless run" — and that is no longer true, deliberately: since
+    # docs/WORK.md item 20 shipped, a seat that was asked and whose answer
+    # never arrived REFUSES the decision rather than being tolerated, so a
+    # None here would make every fixture below assert against
+    # `evidence_gate_skip` instead of the thing it is actually testing.
+    # PM/RM are still mocked, so no production code reads the content.
+    mock_na.analyze.return_value = (_news_stub(), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
@@ -700,7 +730,7 @@ def test_pipeline_risk_rejected(
     mock_na = MagicMock()
     # See the sibling fixtures' comment above: None is analyze()'s own real
     # Optional return, not a stand-in for a type nothing produces.
-    mock_na.analyze.return_value = (None, _mock_agent_result())
+    mock_na.analyze.return_value = (_news_stub(), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage
@@ -2909,11 +2939,14 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
 
     mock_na = MagicMock()
     # NewsAnalystAgent.analyze() -> tuple[NewsIntelligenceReport | None,
-    # AgentResult]; None is a real, typed outcome (a parse/analysis
-    # failure), not a stand-in for a type nothing produces. PM/RM are both
-    # mocked in this fixture, so no production code ever reads news
-    # content — only that the pipeline tolerates a newsless run.
-    mock_na.analyze.return_value = (None, _mock_agent_result())
+    # AgentResult]. This used to hand back None — "the pipeline tolerates a
+    # newsless run" — and that is no longer true, deliberately: since
+    # docs/WORK.md item 20 shipped, a seat that was asked and whose answer
+    # never arrived REFUSES the decision rather than being tolerated, so a
+    # None here would make every fixture below assert against
+    # `evidence_gate_skip` instead of the thing it is actually testing.
+    # PM/RM are still mocked, so no production code reads the content.
+    mock_na.analyze.return_value = (_news_stub(), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage

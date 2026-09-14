@@ -10081,6 +10081,102 @@ class TradingPipeline:
         payload.update(extra)
         return payload
 
+    def _evidence_gate_skip(self, ctx, run_id: str) -> dict | None:
+        """docs/WORK.md item 20 — refuse to DECIDE on evidence that never
+        arrived. Returns a terminal result dict when the run must skip, or
+        None to proceed.
+
+        The distinction it rests on is categorical and needs no threshold: a
+        seat that had nothing to report answered; a seat whose answer was
+        lost did not. See `src/evidence_gate.py` for why no count is used and
+        why the counting half of the owner's design is deliberately unbuilt.
+
+        THE SKIP IS LOUD, by three independent paths, because retired item 11
+        was this desk producing nothing for a whole day with nobody noticing
+        (docs/INCIDENT_HISTORY.md, closed 2026-09-13):
+          - its own standalone owner alert, sent here;
+          - `notifier.maybe_alert_data_quality`, which fires from main.py's
+            finally block on the `data_status` carried in the result and
+            cannot be suppressed by a mode's noise policy;
+          - the session result message, whose `status` says it in one word.
+
+        It drops no candidate and emits no target: it returns before any
+        target exists, so it cannot produce the 0%-target-means-SELL shape.
+        Every symbol that HAD reached a technical read still gets its own
+        durable, machine-readable row saying why the desk never decided on
+        it, alongside the run-level row.
+        """
+        from src import evidence_gate
+
+        try:
+            verdict = evidence_gate.evaluate(ctx.data_status)
+        except Exception as exc:  # noqa: BLE001
+            # A gate that can stop the desk trading must not stop it by
+            # crashing. `evaluate` is documented never to raise; if it
+            # somehow does, proceed and say so loudly.
+            logger.error(
+                "evidence gate raised (%s) — PROCEEDING with the decision. "
+                "This is a bug in src/evidence_gate.py.", exc,
+            )
+            return None
+
+        def _record(symbol, outcome, reason, **details):
+            # Forensic persistence must never be able to break the trading
+            # path it is reporting on (.claude/rules/trading-core.md).
+            # `_persist_evidence` already swallows DB errors; this also
+            # covers a caller with no `db` wired at all.
+            try:
+                _record_pipeline_event(
+                    self, ctx, symbol, "evidence_gate", outcome, reason,
+                    **details,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("evidence gate: event write failed: %s", exc)
+
+        evidence = verdict.to_evidence()
+        _record(None, evidence.pop("outcome"), evidence.pop("reason"), **evidence)
+        if not verdict.skip:
+            if verdict.unclassified:
+                logger.error(
+                    "evidence gate: unclassified seat status this run: %s",
+                    {s: verdict.data_status.get(s) for s in verdict.unclassified},
+                )
+            return None
+
+        logger.error("EVIDENCE GATE — %s", verdict.reason)
+        for analysis in ctx.analyses or []:
+            symbol = getattr(analysis, "symbol", None)
+            if symbol:
+                _record(
+                    symbol, "not_decided", "evidence_gate_skip",
+                    lost_seats=list(verdict.lost),
+                    data_status=dict(verdict.data_status),
+                )
+        # Legit PM-less completion — same reason `no_data` records one: the
+        # evening dead-man probe must not read "research rows, no PM row" as
+        # a morning that was killed mid-run.
+        from src import decision_checkpoint as _dc
+
+        _dc.write_status("morning", "evidence_gate_skip")
+        try:
+            from src.notifier import send_owner_alert
+
+            send_owner_alert(
+                f"DECISION SKIPPED — no evidence from {', '.join(verdict.lost)} "
+                f"(run {run_id})\n"
+                f"{verdict.reason}\n"
+                f"Nothing was traded and no Portfolio Manager call was paid "
+                f"for. The next scheduled decision opportunity tries again."
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("evidence gate: owner alert failed: %s", exc)
+        return {
+            "status": "evidence_gate_skip", "orders": [], "run_id": run_id,
+            "data_status": dict(ctx.data_status),
+            "lost_seats": list(verdict.lost),
+            "reason": verdict.reason,
+        }
+
     def run_morning(self) -> dict:
         ctx = RunContext.start("morning")
         run_id = ctx.run_id
@@ -10306,6 +10402,17 @@ class TradingPipeline:
                     # as a killed morning.
                     _dc.write_status("morning", "no_data")
                     return {"status": "no_data", "orders": [], "run_id": run_id}
+
+                # docs/WORK.md item 20 — the owner's own design. Deliberately
+                # sequenced HERE: after every safety path above (the two
+                # late-breach emergency-liquidation checks and the paid-
+                # suspension bails still run, because a refusal to DECIDE must
+                # never become a refusal to PROTECT), and before the Portfolio
+                # Manager call, which is the expensive one this exists to not
+                # spend on absent evidence.
+                gate_skip = self._evidence_gate_skip(ctx, run_id)
+                if gate_skip is not None:
+                    return gate_skip
 
                 # Phase 4 #1: decision stage — memory layers + PM + Constructor.
                 try:
