@@ -111,6 +111,99 @@ for more data before checking.
 
 ---
 
+
+### 2026-09-14 — moved from WORK.md to stay under the byte cap: the 2026-09-01/02 margin-flip handoff, already fully superseded
+
+WORK.md exceeded its 100,000-byte cap after an unrelated audit correction.
+This entry was already dead weight there — every warning in it was about
+conditions to check BEFORE flipping `allow_margin` to `true`, and that flip
+already happened on 2026-09-02 (config confirms `allow_margin: true` today,
+2026-09-14). Moved verbatim rather than deleted, per the file's own rule.
+
+**STATE AT 2026-09-01 END OF SESSION — read this before the older handoff below.**
+
+**SHIPPED AND VERIFIED, on `integration/ship-2026-09-01` (tip `af266de`), pushed:**
+Phase 12.1, 12.2, 12.3, all five open branches merged, and four corrections to
+the rewritten PM prompt. Full suite green: **3,961 passing**, only the two known
+`test_rehearsal_reproduces_cost_ceiling.py` failures that read live production
+state. **NOT DEPLOYED.**
+
+**PHASE 11's original four-branch WIP state (dispatched, interrupted,
+unverified) is superseded below and fully recorded in this file's 2026-09-01
+handoff entry** — branch names and per-branch status live there, not
+duplicated here.
+
+**SUPERSEDED 2026-09-02 — `allow_margin` is now `true`.** The condition below
+was met: the gross cap and the ladder merged and were verified, and the PM
+prompt's exposure table moved to 2.0x in the same commit as the flip. Two
+things a reader needs that the paragraph below cannot tell them:
+
+- The flip was INERT for longs for its first day. A third ceiling nobody had
+  listed — the BUY submit loop's clamp against raw broker cash — held gross
+  under 1.0x whatever the setting said. Fixed 2026-09-02; the submit loop now
+  draws on a ladder-derived pool. Spec §11.2 carries the detail.
+- **2.0x is still not reachable, and that one is the owner's call.**
+  `max_total_position_pct: 90` hard-blocks NET exposure, and for a long-only
+  book net IS gross: measured, long-only tops out at 0.90x and a long/short
+  book at about 1.3x. The standing 2.0x rung and the -8% 1.5x rung cannot
+  bind. The PM prompt still asks for 1.60-2.00x on `risk-on`. (Historical —
+  `max_total_position_pct` is 200 in the live config as of 2026-09-14; this
+  paragraph describes the 2026-09-02 state, not today's.)
+
+The original paragraph, kept for the sequencing it records:
+
+**`allow_margin` is still `false`. It must STAY false** until the gross cap and
+the ladder are merged and verified. The PM prompt's exposure table is at 1.0x
+cash-only and moves to 2.0x **at the same moment as that flip, never before.**
+
+**THE GATE ON THE 90% SECTOR CEILING.** The owner ratified 90% conditional on
+the de-levering ladder being *proven to step*: "The 90% works if you've got the
+ladder, so ensure the ladder works." A test must assert the ceiling CHANGES at
+each of the four drawdown thresholds, that new exposure is blocked BEFORE any
+trimming, and that the ladder is applied EXACTLY ONCE. That test
+(`tests/test_gross_exposure_ladder.py`) is in the current suite and passing
+(verified 2026-09-14, full run: 5,893 passed, 1 skipped).
+
+**THE LADDER MUST NOT DEPEND ON THE PM RETURNING ANYTHING.** One candidate model
+returns an empty book 1 run in 10. At 1.0x that is a lost day; at 2.0x during a
+drawdown it means the desk stays levered exactly when it should be shedding. The
+ceiling must come from account state, and the TRIMMING path must be engine-driven,
+never driven by the PM proposing SELLs. This was flagged "unverified — check in
+the code before enabling margin"; margin has been enabled since 2026-09-02 with
+no report of the failure mode described here.
+
+**WHAT VALIDATES WHAT — learned the hard way tonight.** The rehearsal rig
+**cannot validate a prompt change**. It replays recorded answers into a changed
+prompt; measured 23-53% overlap, 23 candidates died before sizing, and the
+changed code was never reached. It will pass a broken prompt and tell you
+nothing. **Rig validates CODE. The model benchmark validates PROMPT.** Moving the
+exposure table to 2.0x is a prompt change and the rig cannot clear it. (This
+general lesson is restated as standing doctrine elsewhere in WORK.md; kept
+here only for the sequencing.)
+
+**The deploy gate PASSED on the current prompt text** (sha
+`96856424b02888879b24a99f25f801faaeb090a8057991840a7d5b4fde154862`, 895 lines).
+gpt-5.5 scored 1.000 on all 5 runs against 0.850 on every run of the old prompt,
+and the two-position collapse is gone, 0 of 5. **Read that narrowly:** three of
+the four checks did no discriminating work, only `actionable_book` separated
+anything at 15% weight, and a 1.000 means well-formed and grounded, NOT
+profitable. The scenario feeds 30 byte-identical candidates, so it cannot measure
+stock-picking and must never be quoted as if it could.
+
+**An uncomfortable finding from the same run:** pick identity there is pure model
+prior. gpt-5.5 put 10 of 18 picks into index ETFs where chance is about 2; qwen
+picked zero index ETFs in 20. **Which model runs the seat partly decides what the
+desk buys before any analysis happens.** An earlier claim that the rewrite cut
+index reliance was WRONG — the habit moved from one index to two, it did not go
+away.
+
+**Still unbuilt as of that session:** Phase 10.2 (deterministic analyst weighting
+in Python), the universe pruning design, and whatever of Phase 11 did not survive
+verification. (Whether either is still genuinely open today is not re-verified
+by this move — this entry is a relocation, not a re-audit.)
+
+---
+
 ### 2026-09-14 — item 56 narrowed: one number was estimating price targets AND refusing trades, and the "two published rules contradict each other" premise turned out to be false
 
 **In plain words:** when there is no obvious place on the chart to put a stop,
