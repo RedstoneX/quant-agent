@@ -22,6 +22,100 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — item 66 closed: the swap rule could sell a healthy position because the specialists who liked it had moved on, not because anything about it got worse
+
+**In plain words:** the desk scores an idea by adding up what each specialist
+covering it says. More specialists behind the same call means a higher score,
+which is deliberate — agreement across independent sources is the desk's whole
+edge. The problem was that the desk then used those totals to answer a
+different question: "should I sell what I hold to make room for this?" A stock
+you have owned for a while is usually covered by fewer specialists than a
+brand-new idea, because a new idea typically shows up precisely when something
+fresh appears — an earnings filing, a confirmed institutional purchase. Six
+weeks later the filing is stale and only the chart still covers the holding.
+Its total drops by a third with nothing about the company having changed, and a
+new name clears the "must be 25% better" bar to displace it. The desk would
+have sold a position for the crime of being old news.
+
+**Three things were checked before anything was changed, and one board claim
+turned out to be wrong.**
+
+1. The score really is a sum now (changed 2026-09-13, correctly — the average
+   it replaced made a second AGREEING specialist LOWER a name's rank). Not
+   undone here.
+2. The swap rule really does compare a held name against a new one on that
+   score, and it scores the held name with TODAY's coverage, not the coverage
+   it had when it was bought. So the decay is live in the comparison, not
+   frozen at entry.
+3. **The board said the 25% margin is a ratio, so the change from average to
+   sum "does not affect it." That is wrong.** A ratio survives a change of
+   units. This was not a change of units: the divisor the sum deleted is each
+   name's OWN specialist count, and those differ between the two names being
+   compared. Two names' totals stopped being comparable term-for-term the
+   moment their coverage differed. Worked example, in the desk's own
+   arithmetic: an identical top chart read on both names scores 2.4 each; the
+   new name additionally carries a live filing and a confirmed flow, taking it
+   to 4.0; 4.0 clears 2.4 x 1.25, and a sale is proposed on a name whose only
+   fault is that its calendar moved.
+
+**Is it actually reachable? Yes, and faster than the board assumed.** The
+board described this as a weeks-long earnings-calendar effect. Measured
+against the desk's own archive (17 Aug – 2 Sep 2026, the specialist-evidence
+table, five held names), the set of specialists carrying a directional read on
+a HELD name changes **day to day**: DIS, MSFT and V each fell to zero scoring
+specialists on individual sessions and recovered within days; RSG went from
+zero to one to two inside five sessions. Coverage churn is a daily fact of
+this book. Two caveats stated rather than glossed: the archive ends 2026-09-02,
+before the sum landed, so this measures coverage churn and not scores under
+the new rule; and the earnings seat's scoring verdicts are recorded in a
+different shape than its analyses, so its contribution to a given day's
+coverage could not be reconstructed exactly.
+
+**One thing the board overstated in the other direction.** Automatic rotation
+being switched on does NOT mean this comparison can sell on its own. Only the
+categorical tier — a holding that fails the desk's own entry rules outright —
+is ever turned into a sale, and the reason builder refuses the ranked tier by
+raising. The ranked comparison reaches the Portfolio Manager as text in its
+prompt. That is still a real path to a real sale, just a model-mediated one,
+and it was worth fixing on those terms rather than on "it can sell by itself".
+
+**The fix, and why it needs no number.** The ranked comparison now re-runs the
+identical weighted arithmetic over only the specialists that scored BOTH names
+— the overlap of their coverage — and requires the same 25% margin to clear
+there as well as on the totals. A term that exists on one side and not the
+other cannot enter a comparison between the two. Nothing was invented: the
+specialist weights, the conviction scale and the margin are all unchanged, and
+a specialist's contribution to the restricted sum is exactly its contribution
+to the full one. When the two names share no scoring specialist at all, there
+is no like-for-like comparison to make and the rule declines outright — a
+missed swap costs an opportunity, a wrong one costs a real position, and the
+desk chose that asymmetry deliberately.
+
+**Direction of the change, stated because it must be:** rotation becomes
+**less** likely to fire, never more. The new condition is a conjunction with
+the old one, so every swap that fires now would also have fired before, and
+some that would have fired no longer do. That is a property of the
+arithmetic, not an estimate; a grid sweep over coverage and strength
+combinations pins it. Breadth is undiminished everywhere else — it still
+orders the ranking, still picks which new name is strongest and which holding
+is weakest, and still drives the categorical tier in full.
+
+**What is recorded.** A surfaced ranked comparison now carries which
+specialists were shared and each side's score over exactly those, and the
+Portfolio Manager's prompt states that comparison explicitly rather than only
+the two coverage-sensitive totals — so a reader can check which comparison was
+actually cleared. The categorical tier's per-symbol sell reason and pipeline
+event are unchanged.
+
+**What would still be worth doing, and is NOT open as a board item.** The
+board's original suggestion — once rotation has run for a while, count how
+many swaps were driven by coverage lapsing rather than by signals weakening —
+is now largely moot for the ranked tier, because a coverage-only gap can no
+longer produce one. If it is ever measured anyway, the shared-specialist
+scores recorded on each surfaced comparison are the data to measure it from.
+
+---
+
 ### 2026-09-14 — item 68 closed: the tool that merged the job board had deleted live items three times in one day, and nothing could tell a deleted question from an answered one
 
 **In plain words:** when two people edit the job board at the same time,

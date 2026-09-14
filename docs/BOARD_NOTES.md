@@ -289,14 +289,6 @@ Second, and more useful: when we counted why ideas die, they are overwhelmingly 
 **Recommendation —** Not yet, and not urgent. The current state invents nothing, which is the important part, and the ranking is honestly described as breadth-and-confidence. Adding a strength question to four prompts is cheap to do and expensive to get wrong — every one of them would be a fresh place for a specialist to assert a number nobody can check. Worth revisiting if the ranking ever looks like it is missing an obvious distinction; not worth doing pre-emptively.
 
 
-## item 66
-
-**Plain language —** The desk scores a stock idea by adding up what each specialist that looked at it says. That means a stock that several specialists happen to be covering right now scores higher than an identical stock only one is covering — which is deliberate, because agreement across independent sources is the desk's whole edge. But coverage comes and goes: a company only has an earnings filing to analyse for a few weeks after it reports. So a stock the desk already owns can quietly score lower a month later purely because its earnings coverage lapsed, with nothing about the company having changed. That matters because the desk uses this same score to ask "should I sell what I hold to make room for something better?"
-**Example —** You buy a stock when three specialists like it: the chart, its fresh earnings filing, and confirmed institutional buying. Six weeks later the filing is stale and the institutional flow is old news, so only the chart still covers it. Its score has dropped by roughly a third, purely on coverage. A brand-new idea with three current specialists behind it now clears the "20% better" bar to displace it — even if the original stock is doing exactly what it was bought to do.
-**The decision —** Nothing to decide yet, and nothing is broken today: the swap feature is not switched on. This is a note so it is not discovered live. If it turns out to matter, the fix is to compare the two stocks only on the specialists that cover BOTH of them, rather than on their raw totals.
-**Recommendation —** Leave it. Switch the swap feature on as planned, and once it has run for a while, count how many swaps happened because the held stock's coverage lapsed rather than because its own signals got worse. That is a real measurement rather than a guess, and it costs nothing but waiting.
-
-
 ## item 69
 
 **Plain language —** In one archived review the desk's own reviewer reasoned about a Disney position using a "distance to the stop-loss" of 4.5%, while the desk's trade records for that same moment imply 0.4% — more than ten times apart. That figure is not decoration: it is one of the numbers the desk checks a "this position is deteriorating" claim against. A reviewer working from 4.5% thinks the position has comfortable room; the records say it was almost touching its stop.

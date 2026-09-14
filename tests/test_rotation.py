@@ -1,16 +1,22 @@
 """Phase 14 — opportunity-cost rotation surfacing.
 
-Hand-computed scenarios, `RankedCandidate` built directly (bypassing
-`AnalystVerdict`/`rank_verdicts` — this module only ever reads `.symbol`
-and `.score`, and takes `ranked` as already sorted best-first, exactly the
-contract `rank_verdicts` itself guarantees and `test_analyst_verdict.py`
-already pins separately).
+Hand-computed scenarios, `RankedCandidate` built directly, taking `ranked`
+as already sorted best-first — exactly the contract `rank_verdicts` itself
+guarantees and `test_analyst_verdict.py` already pins separately.
+
+Two builders, because as of docs/WORK.md item 66 the module reads more than
+`.symbol` and `.score`: `_rc` sets a score with no verdicts behind it (fine
+for every path that never reaches the Tier 2 like-for-like check), and
+`_rcv` builds real `AnalystVerdict`s and DERIVES the score from them with
+`src/verdicts.py`'s own arithmetic, so a Tier 2 scenario's coverage and its
+score cannot silently disagree.
 """
+from src.models import AnalystVerdict, VerdictEvidence
 from src.rotation import (
     ROTATION_MARGIN_PCT,
     evaluate_rotation_opportunity,
 )
-from src.verdicts import RankedCandidate
+from src.verdicts import RankedCandidate, score_verdict, seat_weight
 
 # The desk's own ratified floor (`STARTER_POSITION_RISK_PCT` /
 # `RiskConfig.min_position_risk_pct`) — the exact number
@@ -22,6 +28,35 @@ FLOOR_PCT = 0.5
 
 def _rc(symbol: str, score: float, direction: str = "bullish") -> RankedCandidate:
     return RankedCandidate(symbol=symbol, direction=direction, score=score)
+
+
+def _verdict(symbol: str, seat: str, magnitude: float, conviction: str,
+             direction: str = "bullish") -> AnalystVerdict:
+    return AnalystVerdict(
+        seat=seat, symbol=symbol, direction=direction, magnitude=magnitude,
+        conviction=conviction, invalidation="the level breaks",
+        evidence=[VerdictEvidence(label="close", value=100.0)],
+    )
+
+
+def _rcv(symbol: str, seats: dict[str, tuple[float, str]],
+         direction: str = "bullish") -> RankedCandidate:
+    """A candidate whose score is DERIVED from its own seat coverage.
+
+    `seats` maps seat name -> (magnitude, conviction), and the score is
+    `sum(seat_weight(seat) * score_verdict(verdict))` — the identical
+    arithmetic `rank_verdicts` performs, so these scenarios exercise the
+    real relationship between coverage and score rather than asserting one.
+    """
+    verdicts = [
+        _verdict(symbol, seat, magnitude, conviction, direction)
+        for seat, (magnitude, conviction) in seats.items()
+    ]
+    score = round(sum(seat_weight(v.seat) * score_verdict(v) for v in verdicts), 4)
+    return RankedCandidate(
+        symbol=symbol, direction=direction, score=score,
+        verdicts=sorted(verdicts, key=lambda v: v.seat),
+    )
 
 
 # --- (a) clearly-stronger new candidate vs clearly-weaker/stale holding ----
@@ -50,8 +85,15 @@ def test_stronger_new_candidate_rotates_out_a_stale_ineligible_holding():
 
 def test_stronger_new_candidate_rotates_out_a_weak_but_still_eligible_holding():
     """Both sides eligible: OLD ranks last among held names, NEW clears the
-    25% margin (0.9 * 1.25 = 1.125 <= 1.8)."""
-    ranked = [_rc("NEW", 1.8), _rc("OLD", 0.9)]
+    25% margin (0.9 * 1.25 = 1.125 <= 1.8).
+
+    Both names are covered by the SAME single seat, so the item-66
+    like-for-like sub-score is the whole score and the two checks coincide.
+    """
+    ranked = [
+        _rcv("NEW", {"technical": (1.0, "medium")}),   # 1.2 * 1.5 = 1.8
+        _rcv("OLD", {"technical": (0.75, "low")}),     # 1.2 * 0.75 = 0.9
+    ]
     opp = evaluate_rotation_opportunity(
         ranked=ranked, blocked={}, held_symbols={"OLD"},
         headroom_pct=0.1, floor_pct=FLOOR_PCT,
@@ -63,14 +105,21 @@ def test_stronger_new_candidate_rotates_out_a_weak_but_still_eligible_holding():
     assert opp.held_symbol == "OLD"
     assert opp.held_score == 0.9
     assert opp.margin_pct == ROTATION_MARGIN_PCT
+    # Item 66: the comparison that was actually cleared is recorded.
+    assert opp.shared_seats == ("technical",)
+    assert opp.held_shared_score == 0.9
+    assert opp.new_shared_score == 1.8
 
 
 # --- (b) marginally-better new candidate does NOT trigger (respects margin) -
 
 def test_marginal_edge_does_not_trigger_rotation():
     """NEW beats OLD but by less than the 25% margin: 0.9 * 1.25 = 1.125,
-    and 1.10 falls short of that — no churn on a noise-level difference."""
-    ranked = [_rc("NEW", 1.10), _rc("OLD", 0.9)]
+    and 1.08 falls short of that — no churn on a noise-level difference."""
+    ranked = [
+        _rcv("NEW", {"technical": (0.9, "low")}),      # 1.2 * 0.9  = 1.08
+        _rcv("OLD", {"technical": (0.75, "low")}),     # 1.2 * 0.75 = 0.9
+    ]
     opp = evaluate_rotation_opportunity(
         ranked=ranked, blocked={}, held_symbols={"OLD"},
         headroom_pct=0.1, floor_pct=FLOOR_PCT,
@@ -81,7 +130,10 @@ def test_marginal_edge_does_not_trigger_rotation():
 def test_exactly_at_the_margin_does_trigger():
     """The margin is a floor (>=), not a strict inequality: exactly 25%
     higher clears it. 0.9 * 1.25 = 1.125 exactly."""
-    ranked = [_rc("NEW", 1.125), _rc("OLD", 0.9)]
+    ranked = [
+        _rcv("NEW", {"technical": (0.9375, "low")}),   # 1.2 * 0.9375 = 1.125
+        _rcv("OLD", {"technical": (0.75, "low")}),     # 1.2 * 0.75   = 0.9
+    ]
     opp = evaluate_rotation_opportunity(
         ranked=ranked, blocked={}, held_symbols={"OLD"},
         headroom_pct=0.1, floor_pct=FLOOR_PCT,
@@ -141,13 +193,16 @@ def test_empty_blocked_reasons_are_not_treated_as_a_blocking_row():
     """A `blocked` dict may carry a symbol with an empty reasons list (this
     codebase's own "empty list = eligible" convention, `candidate_eligibility`
     docstring) — that must not be misread as a categorical hit."""
-    ranked = [_rc("NEW", 1.10), _rc("OLD", 0.9)]
+    ranked = [
+        _rcv("NEW", {"technical": (0.9, "low")}),
+        _rcv("OLD", {"technical": (0.75, "low")}),
+    ]
     opp = evaluate_rotation_opportunity(
         ranked=ranked, blocked={"OLD": []}, held_symbols={"OLD"},
         headroom_pct=0.1, floor_pct=FLOOR_PCT,
     )
     assert opp is None  # falls through to the ranked-margin tier, which the
-    # 1.10 vs 0.9 gap (same as the marginal test above) still does not clear
+    # 1.08 vs 0.9 gap (same as the marginal test above) still does not clear
 
 
 def test_multiple_ineligible_holdings_pick_the_worse_one_deterministically():
@@ -176,6 +231,133 @@ def test_a_held_name_that_is_itself_the_best_ranked_candidate_is_not_compared_ag
     )
     # NEW (1.0) vs HELD (5.0): 5.0 * 1.25 = 6.25 > 1.0, well under margin.
     assert opp is None
+
+
+# --- (e) item 66: Tier 2 is coverage-neutral -------------------------------
+#
+# `rank_verdicts` became a weighted SUM on 2026-09-13 (correctly). A sum is
+# not a rescaling of the average it replaced: the divisor it deletes is the
+# name's own seat count, which differs per name. So two names' composites
+# stopped being comparable term-for-term the moment their coverage differed
+# — and Tier 2 compares exactly two such names. These pin that the margin
+# must now also clear on the seats that scored BOTH names.
+
+def test_coverage_decay_alone_does_not_rotate_a_held_name_out():
+    """The item-66 case, end to end. HELD and NEW carry an IDENTICAL
+    technical read — the strongest one that seat can give. NEW additionally
+    has a live earnings filing and a confirmed flow; HELD's lapsed weeks
+    ago. On the full composite that is 2.4 vs 4.0 and the 25% margin
+    clears, so the pre-fix code would have surfaced a sale. On the one seat
+    that scored both names it is 2.4 vs 2.4 — nothing about HELD is worse,
+    so nothing is surfaced.
+    """
+    held = _rcv("HELD", {"technical": (1.0, "high")})
+    new = _rcv("NEW", {
+        "technical": (1.0, "high"),      # 1.2 * 2.0 = 2.4, identical to HELD
+        "earnings": (0.0, "high"),       # 1.2 * 1.0 = 1.2, coverage HELD lost
+        "smart_money": (0.0, "medium"),  # 0.8 * 0.5 = 0.4, coverage HELD lost
+    })
+    assert held.score == 2.4
+    assert new.score == 4.0
+    # The pre-fix comparison, spelled out so this test fails loudly if the
+    # full-score margin ever stops being cleared by these inputs.
+    assert new.score >= held.score * (1.0 + ROTATION_MARGIN_PCT)
+
+    opp = evaluate_rotation_opportunity(
+        ranked=[new, held], blocked={}, held_symbols={"HELD"},
+        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+    )
+    assert opp is None
+
+
+def test_no_shared_scoring_seat_declines_rather_than_comparing():
+    """Fail toward NOT selling. HELD is scored by earnings alone, NEW by
+    technical alone; the full composites clear the margin (1.2 vs 2.4) but
+    there is no seat that has an opinion on both, so there is nothing
+    like-for-like to compare and Tier 2 declines."""
+    held = _rcv("HELD", {"earnings": (0.0, "high")})     # 1.2
+    new = _rcv("NEW", {"technical": (1.0, "high")})      # 2.4
+    assert new.score >= held.score * (1.0 + ROTATION_MARGIN_PCT)
+
+    opp = evaluate_rotation_opportunity(
+        ranked=[new, held], blocked={}, held_symbols={"HELD"},
+        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+    )
+    assert opp is None
+
+
+def test_a_real_like_for_like_gap_still_rotates_and_records_the_comparison():
+    """The check is not a blanket refusal. HELD's own chart is weak where
+    NEW's is strong, so the gap survives on the shared seat and the
+    rotation is surfaced — with the seats and both sub-scores recorded, so
+    the audit trail shows which comparison was actually cleared."""
+    held = _rcv("HELD", {"technical": (0.75, "low")})    # 0.9
+    new = _rcv("NEW", {
+        "technical": (1.0, "high"),                      # 2.4
+        "earnings": (0.0, "high"),                       # 1.2
+    })
+    opp = evaluate_rotation_opportunity(
+        ranked=[new, held], blocked={}, held_symbols={"HELD"},
+        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+    )
+    assert opp is not None
+    assert opp.tier == "ranked_margin"
+    assert opp.held_symbol == "HELD"
+    assert opp.new_symbol == "NEW"
+    assert opp.shared_seats == ("technical",)
+    assert opp.held_shared_score == 0.9
+    assert opp.new_shared_score == 2.4
+    # And the sub-score is a strict partial of the real composite, never a
+    # second scoring scheme: earnings is the only term dropped from NEW.
+    assert round(opp.new_score - opp.new_shared_score, 4) == 1.2
+
+
+def test_the_like_for_like_check_can_only_remove_rotations_never_add_one():
+    """The property, not an example: the shared-seat test is a CONJUNCTION
+    with the full-score test, so every surfaced ranked-margin rotation also
+    clears the original comparison. Swept over a grid of coverage and
+    strength combinations."""
+    convictions = ("low", "medium", "high")
+    magnitudes = (0.0, 0.5, 1.0)
+    seat_sets = (
+        ("technical",),
+        ("technical", "earnings"),
+        ("earnings", "smart_money"),
+        ("technical", "earnings", "smart_money", "news", "macro"),
+    )
+    surfaced = 0
+    for held_seats in seat_sets:
+        for new_seats in seat_sets:
+            for magnitude in magnitudes:
+                for conviction in convictions:
+                    held = _rcv(
+                        "HELD", {s: (0.5, "low") for s in held_seats},
+                    )
+                    new = _rcv(
+                        "NEW", {s: (magnitude, conviction) for s in new_seats},
+                    )
+                    opp = evaluate_rotation_opportunity(
+                        ranked=[new, held], blocked={},
+                        held_symbols={"HELD"},
+                        headroom_pct=0.1, floor_pct=FLOOR_PCT,
+                    )
+                    if opp is None:
+                        continue
+                    surfaced += 1
+                    assert opp.tier == "ranked_margin"
+                    # (1) the original full-composite margin still holds
+                    assert new.score >= held.score * (
+                        1.0 + ROTATION_MARGIN_PCT
+                    )
+                    # (2) and so does the like-for-like one
+                    assert opp.new_shared_score >= opp.held_shared_score * (
+                        1.0 + ROTATION_MARGIN_PCT
+                    )
+                    # (3) which was computed over a genuinely shared set
+                    assert set(opp.shared_seats) == (
+                        set(held_seats) & set(new_seats)
+                    )
+    assert surfaced > 0, "grid surfaced nothing — it is not testing anything"
 
 
 # --- (b) "no private execution path" regression guard ----------------------
@@ -281,3 +463,24 @@ def test_render_rotation_section_returns_plain_text_not_structured_data():
     assert isinstance(result, str)
     # `None` book-risk telemetry is the fail-open/skip path — still a str.
     assert "Opportunity Rotation" in result
+
+
+def test_render_states_the_like_for_like_comparison_for_the_ranked_tier():
+    """Item 66. When a ranked-margin rotation IS surfaced, the model is
+    shown the coverage-neutral comparison that justified it, not only the
+    two coverage-sensitive totals."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    result = PortfolioManagerAgent._render_rotation_section(
+        ranked=[
+            _rcv("NEW", {"technical": (1.0, "high"), "earnings": (0.0, "high")}),
+            _rcv("HELD", {"technical": (0.75, "low")}),
+        ],
+        blocked={},
+        held_symbols={"HELD"},
+        existing_risk_pct={"HELD": 24.9},
+        ceiling_pct=25.0,
+    )
+    assert "Like-for-like check" in result
+    assert "technical" in result
+    assert "0.90" in result and "2.40" in result
