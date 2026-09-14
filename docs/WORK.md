@@ -829,15 +829,16 @@ ever did, collapsing delivered risk to ~1%. **Fixed and merged
 and REJECTED in the same pass (`docs/OUTCOME.md`). Resolved detail:
 `docs/INCIDENT_HISTORY.md`, 2026-09-04.
 
-**PM conviction-band restoration — PENDING REVIEW, NOT rejected.**
-Corrected 2026-09-04: the original PR (#259) was mechanically
-auto-closed by GitHub as a side effect of an unrelated branch deletion
-(its base branch was deleted when #258 merged) — the owner never saw or
-judged its content, was asleep at the time, and did not close it. Real
-content restored on a fresh PR from the same commit. Bands proposed to
-widen back to their pre-compression 2.0-4.0%/1.0-2.5% range now that the
-notional-cap bug they were compressed for is fixed. Still needs real
-review and the owner's actual sign-off — treat as open, not decided.
+**PM conviction-band restoration — DONE, merged 2026-09-10 (PR #266).**
+The bands are back at 2.0-4.0% / 1.0-2.5% and have been live in
+`config/prompts/portfolio_manager.md` since that merge; verified against the
+file and against `git log -S` on 2026-09-14. **This paragraph previously said
+"still needs the owner's actual sign-off" and the board rendered it as a
+decision waiting on him — for four days after it had shipped.** He caught it.
+The lesson is the one already recorded against item 6: closing a thing in one
+place is not closing it, and a stale "needs the owner" label costs him more
+than a stale technical note, because it is the one part of this file he
+reads.
 
 **Drawdown alarms rebuilt on a volatility-relative basis — FIXED
 2026-09-11, owner call.** The three loss alarms (daily circuit breaker,

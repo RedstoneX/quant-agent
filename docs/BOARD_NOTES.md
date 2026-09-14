@@ -197,11 +197,15 @@ this line, one heading per item.
 
 ## item 32
 
-**Plain language —** The desk was approved to risk 5% of the account on each trade, but an old, never-approved size limit was quietly capping real trades at about 1% instead. That's fixed. Two related points remain open: whether to widen the trade-sizing bands back to their original range now that the bug is fixed, still awaiting the owner's actual sign-off; and whether the desk's two separate loss-alarm systems, one based on account swings and one on peak-to-trough drawdown, should ever be merged into one — nobody has decided that.
-**Example —** A trade sized to risk 5% of the account was actually only risking about 1% in practice because of the old cap — a fifth of the approved risk, on every single trade, until fixed.
-**The decision —** Restore the wider trade-sizing bands now that the bug is fixed, and separately, whether the two loss-alarm systems should ever be unified.
-**Recommendation —** Approve restoring the wider bands; they were only narrowed to compensate for a bug that no longer exists. Leave the two-alarm-system question for later since both work independently without conflicting today.
-**Why only you —** Both halves change how much of the account can be put at risk on a trade and how the desk reacts to a loss — risk-appetite calls, not engineering defaults.
+**Plain language —** The desk was approved to risk 5% of the account on each trade, but an old, never-approved size limit was quietly capping real trades at about 1% instead. That is fixed, and the wider sizing bands that had been narrowed to compensate for it were restored and merged on 2026-09-10 — they have been live ever since. This board kept asking for approval of something already shipped; that is corrected here. One genuinely open question remains, and it is a different question.
+
+**Example —** A trade sized to risk 5% of the account was actually only risking about 1% in practice because of the old cap — a fifth of the approved risk, on every trade, until fixed.
+
+**The decision —** Should the two loss-alarm systems be unified into one? Today the daily circuit breaker and the multi-day drawdown brakes are separate mechanisms that can both act on the same bad run.
+
+**Recommendation —** Leave them separate for now. They work independently, neither is known to be misfiring, and merging them is a redesign rather than a repair. Revisit once the desk has produced real drawdown data to look at, because right now there is none to reason from.
+
+**Why only you —** How the desk reacts to a losing run is a risk-appetite call, not an engineering default.
 
 
 ## item 35
