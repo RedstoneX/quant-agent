@@ -645,9 +645,13 @@ extraction, an easy task; concluding is a different, harder task and needs
 re-measuring before relying on it again.
 
 **Still genuinely open, not solved by the above:**
-  - ~~`familiarity_bias` is graded but never stated in the PROMPT~~ —
-    MOOT since PR #385: it scores nothing now (weight-0 diagnostic, see
-    `ops/model_policy/README.md`), so there is no grade to state.
+  - ~~`familiarity_bias` is graded but never stated in the PROMPT~~ — the
+    GRADING half is moot since PR #385 (weight-0 diagnostic, scores
+    nothing). **The concern behind it is NOT closed:** the live Candidate
+    Ranking is a SUM across seats, so deeper-covered names rank higher
+    (`src/agents/portfolio_manager.py`, "breadth is the point"), and the
+    state-change door favours news-covered names. Deterministic code, and
+    nothing measures it now. Open, unmeasured.
   - ~~Earnings is still the single largest prompt section post-fix~~ —
     DONE 2026-09-13. 38 of 65 filings were rendering a four-line verdict
     block with no direction, no thesis and the literal words "not disclosed
