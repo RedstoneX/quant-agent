@@ -4115,19 +4115,24 @@ class DecisionStage:
 
         if portfolio_decision and portfolio_decision.reasoning_chain:
             rc = portfolio_decision.reasoning_chain
-            # All NINE fields. This line logged seven, and the two it omitted
-            # were the two the schema lets default to "" — so the operator-
-            # facing log could not distinguish "PM red-teamed its book" from
-            # "PM skipped the step" (2026-08-13 agent audit).
+            # All TEN fields. This line logged seven, and the ones it
+            # omitted were exactly the ones the schema lets default to "" —
+            # so the operator-facing log could not distinguish "PM
+            # red-teamed its book" from "PM skipped the step" (2026-08-13
+            # agent audit). `macro_audit` is the third such field
+            # (2026-09-14, item 18e) and is here for the same reason: a
+            # field that validates when empty is invisible in a log that
+            # does not print it.
             logger.info(
                 "PM Reasoning Chain:\n  Macro: %s\n  News: %s\n  Earnings: %s\n  "
                 "Conflicts: %s\n  Sizing: %s\n  Balance: %s\n  Cash: %s\n  "
-                "Continuity: %s\n  Pre-mortem: %s",
+                "Continuity: %s\n  Pre-mortem: %s\n  Macro audit: %s",
                 rc.macro_filter[:120], rc.news_check[:120], rc.earnings_check[:120],
                 rc.signal_conflicts[:120], rc.sizing_logic[:120],
                 rc.portfolio_balance[:120], rc.cash_target[:120],
                 rc.continuity_check[:120] or "[MISSING]",
                 rc.premortem_check[:120] or "[MISSING]",
+                rc.macro_audit[:120] or "[MISSING]",
             )
 
         # Stage 1 (QAMC correlation plumbing): one id per PM call, generated

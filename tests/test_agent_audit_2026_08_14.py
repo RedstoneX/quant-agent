@@ -535,13 +535,25 @@ def test_f4_decision_stage_logs_all_nine_fields(caplog) -> None:
         ps.logger.info(
             "PM Reasoning Chain:\n  Macro: %s\n  News: %s\n  Earnings: %s\n  "
             "Conflicts: %s\n  Sizing: %s\n  Balance: %s\n  Cash: %s\n  "
-            "Continuity: %s\n  Pre-mortem: %s",
-            "a", "b", "c", "d", "e", "f", "g", "" or "[MISSING]", "" or "[MISSING]",
+            "Continuity: %s\n  Pre-mortem: %s\n  Macro audit: %s",
+            "a", "b", "c", "d", "e", "f", "g",
+            "" or "[MISSING]", "" or "[MISSING]", "" or "[MISSING]",
         )
     source = Path(ps.__file__).read_text()
-    assert "Continuity: %s\\n  Pre-mortem: %s" in source, (
-        "DecisionStage's reasoning-chain log line must carry all nine fields"
+    # Every field the schema lets default to "" must appear here, or the log
+    # cannot tell a performed audit step from a skipped one. `macro_audit`
+    # joined them 2026-09-14 (item 18e).
+    assert "Continuity: %s\\n  Pre-mortem: %s\\n  Macro audit: %s" in source, (
+        "DecisionStage's reasoning-chain log line must carry every field of "
+        "the schema, the optional-default ones especially"
     )
+    from src.models import ReasoningChain
+    for name, field in ReasoningChain.model_fields.items():
+        if field.default == "":
+            assert name in source, (
+                f"`{name}` validates when empty but DecisionStage never "
+                f"logs it, so a skipped step is invisible to the operator."
+            )
 
 
 # ===========================================================================
