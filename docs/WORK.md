@@ -133,12 +133,6 @@ see the struck-through index above for status.)
    `docs/INCIDENT_HISTORY.md`. **Still open:** a second, different
    failure (a dropped symbol key) — left unfixed, can't be auto-repaired
    without inventing data.
-6. **Macro analyst — CORRECTED 2026-09-03, prior "no defect" claim was
-   wrong.** Fires on 52% of runs, not rare. NOT a fetch/pipeline defect —
-   FRED's real publication lag is 2 days, but the gate's freshness bar
-   assumes 1. Calibration bug, not broken data. Replacement number is a
-   risk-threshold call for the owner — see DECIDE BY below. Full
-   measurement: `docs/INCIDENT_HISTORY.md`.
 
 **Also shipped: a bad analyst seat now gets its OWN Telegram alert.** Moved to `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 
