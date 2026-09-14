@@ -539,6 +539,141 @@ def test_main_exits_one_and_names_every_bucket_on_drift(tmp_path, capsys):
     assert "cp scripts/systemd/*" in out
 
 
+def _write_paused(repo_root: Path, units: tuple[str, ...]) -> None:
+    """Write a minimal `paused_units.yaml` naming `units`, in the same shape
+    as the real seed file at `scripts/systemd/paused_units.yaml`."""
+    lines = ["paused_units:"]
+    for name in units:
+        lines.append(f"  - unit: {name}")
+        lines.append('    since: "2026-09-14"')
+        lines.append('    reason: "test fixture"')
+    (repo_root / "scripts" / "systemd" / "paused_units.yaml").write_text(
+        "\n".join(lines) + "\n"
+    )
+
+
+def test_a_paused_unlisted_timer_is_not_reported_and_alarms_nothing(tmp_path):
+    """PAUSED + NOT ENABLED — the case the whole feature exists for. A
+    timer named on the paused list, installed but not enabled, must not be
+    counted as drift and must not exit non-zero."""
+    repo_root, units_dir = _make_box(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.timer": TIMER_BODY},
+        {"a.service": UNIT_BODY, "a.timer": TIMER_BODY},
+        enabled=(),
+    )
+    _write_paused(repo_root, ("a.timer",))
+    from scripts.check_unit_drift import build_report, format_alert, format_ok
+
+    report = build_report(str(repo_root), str(units_dir))
+    assert report.not_enabled == []
+    assert report.paused == [("a.timer", "timers.target")]
+    assert report.has_drift is False
+    rendered = format_ok(report)
+    assert "Deliberately paused (not an alarm):" in rendered
+    assert "a.timer -> timers.target" in rendered
+    # format_alert must never be reached on a clean run — assert its own
+    # rendering separately, so a change to has_drift's wiring cannot hide
+    # a broken template behind an untested code path.
+    assert "Deliberately paused (not an alarm):" in format_alert(report)
+
+
+def test_a_paused_timer_that_was_re_enabled_is_reported_as_drift(tmp_path):
+    """PAUSED + ENABLED — someone re-enabled the unit without updating the
+    list. The list and the box disagree, and that disagreement is itself
+    the finding."""
+    repo_root, units_dir = _make_box(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.timer": TIMER_BODY},
+        {"a.service": UNIT_BODY, "a.timer": TIMER_BODY},
+        enabled=("a.timer",),
+    )
+    _write_paused(repo_root, ("a.timer",))
+    from scripts.check_unit_drift import build_report, format_alert
+
+    report = build_report(str(repo_root), str(units_dir))
+    assert report.paused == []
+    assert report.paused_but_enabled == [("a.timer", "timers.target")]
+    assert report.has_drift is True
+    assert "a.timer" in format_alert(report)
+
+
+def test_an_unlisted_unenabled_timer_still_alarms_as_before(tmp_path):
+    """UNLISTED + NOT ENABLED — the ordinary drift case, unaffected by the
+    paused list existing at all (here the list is empty)."""
+    repo_root, units_dir = _make_box(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.timer": TIMER_BODY},
+        {"a.service": UNIT_BODY, "a.timer": TIMER_BODY},
+        enabled=(),
+    )
+    _write_paused(repo_root, ())
+    from scripts.check_unit_drift import build_report
+
+    report = build_report(str(repo_root), str(units_dir))
+    assert report.not_enabled == [("a.timer", "timers.target")]
+    assert report.paused == []
+    assert report.has_drift is True
+
+
+def test_a_paused_list_entry_naming_an_untracked_unit_is_reported(tmp_path):
+    """An error IN THE LIST, not on the box: the paused list names a unit
+    that scripts/systemd/ does not track at all. Silently ignoring it would
+    let the list rot exactly the way the drift check itself was built to
+    stop the box from rotting."""
+    repo_root, units_dir = _make_box(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.timer": TIMER_BODY},
+        {"a.service": UNIT_BODY, "a.timer": TIMER_BODY},
+        enabled=("a.timer",),
+    )
+    _write_paused(repo_root, ("nonexistent.timer",))
+    from scripts.check_unit_drift import build_report, format_alert
+
+    report = build_report(str(repo_root), str(units_dir))
+    assert report.paused_unknown == ["nonexistent.timer"]
+    assert report.has_drift is True
+    assert "nonexistent.timer" in format_alert(report)
+
+
+def test_no_paused_units_file_means_nothing_is_paused(tmp_path):
+    """The common case on a fresh checkout of a box with nothing paused:
+    absence of the file is not an error."""
+    report = _report(
+        tmp_path,
+        {"a.service": UNIT_BODY, "a.timer": TIMER_BODY},
+        {"a.service": UNIT_BODY, "a.timer": TIMER_BODY},
+        enabled=("a.timer",),
+    )
+    assert report.paused == []
+    assert report.paused_but_enabled == []
+    assert report.paused_unknown == []
+    assert report.paused_list_error is None
+    assert report.has_drift is False
+
+
+def test_the_seeded_paused_list_only_names_units_tracked_in_the_repo():
+    """The real seed file, not a fixture: every unit it names must actually
+    exist in scripts/systemd/, or the drift check would report the desk's
+    own paused-unit bookkeeping as broken on day one."""
+    import yaml
+
+    from scripts.check_unit_drift import PAUSED_UNITS_FILENAME
+
+    seed = SYSTEMD_DIR / PAUSED_UNITS_FILENAME
+    assert seed.is_file(), f"{seed} is missing"
+    data = yaml.safe_load(seed.read_text()) or {}
+    entries = data.get("paused_units") or []
+    assert entries, "paused_units.yaml declares no paused units"
+    tracked = {p.name for p in ALL_UNITS}
+    for entry in entries:
+        name = entry["unit"]
+        assert name in tracked, (
+            f"paused_units.yaml names {name!r}, which is not tracked in "
+            f"{SYSTEMD_DIR}"
+        )
+
+
 def test_the_alert_is_pushed_through_the_existing_notifier(tmp_path):
     """Same `TelegramNotifier` as check_deploy_drift.py and the cost
     circuit. No new sender, no new credential path."""
