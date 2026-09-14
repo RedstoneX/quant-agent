@@ -2536,7 +2536,14 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
 
     body = template.read_text()
     body = body.replace("{{JARGON_BANNER}}", jargon_banner)
-    body = body.replace("{{STAMP}}", now.strftime("%A %-d %B %Y &middot; %H:%M ET"))
+    # Get the commit hash of the current repo where the board is being generated
+    rc, cur_sha = _run(["git", "rev-parse", "HEAD"], REPO_ROOT)
+    cur_sha_short = cur_sha.strip()[:9] if rc == 0 else ""
+    timestamp = now.strftime("%A %-d %B %Y &middot; %H:%M ET")
+    body = body.replace("{{STAMP}}", timestamp)
+    # Commit hash in short form, visually subordinate with smaller font
+    stamp_hash = f"<span style=\"font-size:10px;opacity:0.65\">built from {cur_sha_short}</span>" if cur_sha_short else ""
+    body = body.replace("{{STAMP_HASH}}", stamp_hash)
     # The full commit this page was built against, stamped into a
     # machine-readable <meta> tag. src/api/server.py reads it back out at
     # serve time and compares it to a freshly-read live SHA — that comparison
