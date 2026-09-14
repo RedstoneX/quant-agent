@@ -1,0 +1,28 @@
+# Stop-coverage sweep — docs/INCIDENT_HISTORY.md, item 53.
+[Unit]
+Description=quant-agent stop-coverage sweep — re-places a lapsed protective stop while the desk is paused
+
+[Timer]
+# The SAME tick the desk's own session timers use (quant-agent-morning.timer
+# and siblings): every 30 minutes, all week. Copied rather than chosen — the
+# unit deliberately introduces no time of its own.
+#
+# The timer is only a wake-up. WHETHER anything happens is decided in code
+# against the exchange calendar the broker publishes (is_trading_day,
+# get_session_open, get_session_close), which is the only source allowed to
+# say when this market is open: a "09:30" typed into a timer would be wrong
+# on a late open and would still be wrong on a holiday.
+#
+# Why not simply add a second OnCalendar to the alert-heartbeat timer: that
+# unit's job is the channel self-test, and a second daily firing would send a
+# second probe and still give the placement exactly one attempt a day with no
+# retry. Thirty-minute ticks mean a placement that fails at 09:35 is tried
+# again at 10:05, which is what the in-session sweep this replaces did.
+OnCalendar=*:0/30
+# NOT Persistent. A missed tick is a tick whose session has moved on; running
+# it late would evaluate the market against a clock that has since changed,
+# and the next tick is at most 30 minutes away in any case.
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target
