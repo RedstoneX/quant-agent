@@ -157,83 +157,12 @@ today, (2) redesign each to the bounded shape above, (3) any prompt
 change needs a real paid benchmark — the rig can't verify one (item 1's
 own lesson) — so no prompt edit here is "done" without one.
 
-**STATE AT 2026-09-01 END OF SESSION — read this before the older handoff below.**
-
-**SHIPPED AND VERIFIED, on `integration/ship-2026-09-01` (tip `af266de`), pushed:**
-Phase 12.1, 12.2, 12.3, all five open branches merged, and four corrections to
-the rewritten PM prompt. Full suite green: **3,961 passing**, only the two known
-`test_rehearsal_reproduces_cost_ceiling.py` failures that read live production
-state. **NOT DEPLOYED.**
-
-**PHASE 11's original four-branch WIP state (dispatched, interrupted,
-unverified) is superseded below and fully recorded in
-`docs/INCIDENT_HISTORY.md`'s 2026-09-01 handoff entry** — branch names and
-per-branch status live there now, not duplicated here.
-
-**SUPERSEDED 2026-09-02 — `allow_margin` is now `true`.** The condition below
-was met: the gross cap and the ladder merged and were verified, and the PM
-prompt's exposure table moved to 2.0x in the same commit as the flip. Two
-things a reader needs that the paragraph below cannot tell them:
-
-- The flip was INERT for longs for its first day. A third ceiling nobody had
-  listed — the BUY submit loop's clamp against raw broker cash — held gross
-  under 1.0x whatever the setting said. Fixed 2026-09-02; the submit loop now
-  draws on a ladder-derived pool. Spec §11.2 carries the detail.
-- **2.0x is still not reachable, and that one is the owner's call.**
-  `max_total_position_pct: 90` hard-blocks NET exposure, and for a long-only
-  book net IS gross: measured, long-only tops out at 0.90x and a long/short
-  book at about 1.3x. The standing 2.0x rung and the -8% 1.5x rung cannot
-  bind. The PM prompt still asks for 1.60-2.00x on `risk-on`.
-
-The original paragraph, kept for the sequencing it records:
-
-**`allow_margin` is still `false`. It must STAY false** until the gross cap and
-the ladder are merged and verified. The PM prompt's exposure table is at 1.0x
-cash-only and moves to 2.0x **at the same moment as that flip, never before.**
-
-**THE GATE ON THE 90% SECTOR CEILING.** The owner ratified 90% conditional on
-the de-levering ladder being *proven to step*: "The 90% works if you've got the
-ladder, so ensure the ladder works." A test must assert the ceiling CHANGES at
-each of the four drawdown thresholds, that new exposure is blocked BEFORE any
-trimming, and that the ladder is applied EXACTLY ONCE. **That test has not been
-confirmed to pass. If it cannot pass, revert the sector ceiling — do not weaken
-the test.**
-
-**THE LADDER MUST NOT DEPEND ON THE PM RETURNING ANYTHING.** One candidate model
-returns an empty book 1 run in 10. At 1.0x that is a lost day; at 2.0x during a
-drawdown it means the desk stays levered exactly when it should be shedding. The
-ceiling must come from account state, and the TRIMMING path must be engine-driven,
-never driven by the PM proposing SELLs. **Unverified — check it in the code before
-enabling margin.**
-
-**WHAT VALIDATES WHAT — learned the hard way tonight.** The rehearsal rig
-**cannot validate a prompt change**. It replays recorded answers into a changed
-prompt; measured 23-53% overlap, 23 candidates died before sizing, and the
-changed code was never reached. It will pass a broken prompt and tell you
-nothing. **Rig validates CODE. The model benchmark validates PROMPT.** Moving the
-exposure table to 2.0x is a prompt change and the rig cannot clear it.
-
-**The deploy gate PASSED on the current prompt text** (sha
-`96856424b02888879b24a99f25f801faaeb090a8057991840a7d5b4fde154862`, 895 lines).
-gpt-5.5 scored 1.000 on all 5 runs against 0.850 on every run of the old prompt,
-and the two-position collapse is gone, 0 of 5. **Read that narrowly:** three of
-the four checks did no discriminating work, only `actionable_book` separated
-anything at 15% weight, and a 1.000 means well-formed and grounded, NOT
-profitable. The scenario feeds 30 byte-identical candidates, so it cannot measure
-stock-picking and must never be quoted as if it could.
-
-**An uncomfortable finding from the same run:** pick identity there is pure model
-prior. gpt-5.5 put 10 of 18 picks into index ETFs where chance is about 2; qwen
-picked zero index ETFs in 20. **Which model runs the seat partly decides what the
-desk buys before any analysis happens.** An earlier claim that the rewrite cut
-index reliance was WRONG — the habit moved from one index to two, it did not go
-away.
-
-**Still unbuilt after tonight:** Phase 10.2 (deterministic analyst weighting in
-Python), the universe pruning design recorded above, and whatever of Phase 11
-does not survive verification.
-
----
+**The 2026-09-01 end-of-session state (Phase 12.1-12.3 ship record, the
+`allow_margin` flip sequencing, the 90%-sector-ceiling gate, and the deploy
+benchmark run) moved to `docs/INCIDENT_HISTORY.md`, 2026-09-14 — finished and
+superseded (the ladder test it asked for now passes in the live suite;
+`allow_margin` has been `true` since 2026-09-02) and moved to stay under this
+file's byte cap, not deleted.**
 
 **The 2026-09-01 branch-by-branch handoff, the Phase 11 merge record and
 the telegram deep-link deploy entry now live in `docs/INCIDENT_HISTORY.md`**
@@ -744,7 +673,8 @@ re-measuring before relying on it again.
   - Section reorder (BUY eligibility to the top) deliberately NOT done —
     needs a paid `--replay-run` benchmark to verify, not authorised yet.
   - Whether R/R and net evidence join the production ranking composite —
-    owner call, not decided. Sizing-path parity is item 30.
+    not decided, not an owner call (label removed 2026-09-14, see
+    `docs/INCIDENT_HISTORY.md`). Sizing-path parity is item 30.
   - A spend cap on the OpenRouter key (mine to set via browser access, not
     the owner's) — still NOT built. This is an API-key-level cap outside
     our own code, the one leg of the cost-circuit replacement that never
@@ -834,8 +764,9 @@ number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
 **30. The agreement ladder that prices position size has rungs nobody
-derived, and four of its five rungs cannot bind — OPEN, owner call, reframed
-2026-09-13.**
+derived, and four of its five rungs cannot bind — OPEN, reframed
+2026-09-13.** *Owner-call label removed 2026-09-14, see
+`docs/INCIDENT_HISTORY.md`.*
 
 The item used to read "port the ranking path's per-seat weights onto the
 sizing path". Reading the code changes the question, on three findings — full
@@ -871,8 +802,9 @@ per-seat strength-plus-confidence composite while sizing counts +1/-1 votes
 into a step function, so matching the numbers leaves the two paths still
 measuring different things.
 
-**32. The two drawdown systems have never been reconciled — OPEN, owner call,
-unchanged since 2026-09-11.**
+**32. The two drawdown systems have never been reconciled — OPEN,
+unchanged since 2026-09-11.** *Owner-call label removed 2026-09-14, see
+`docs/INCIDENT_HISTORY.md`.*
 
 Everything else once on this item has landed and is written up; what is left
 is one decision, described at the bottom. The 5% envelope itself was restored
@@ -987,7 +919,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **64. The backtest rations the risk budget alphabetically, and cannot do otherwise until it has a candidate ranking — OPEN, found 2026-09-13 while building the best-ranked-first rationing rule (retired item 49; see `docs/INCIDENT_HISTORY.md`, 2026-09-14).** `src/backtest/engine.py` builds every day's candidates and hands `allocate_risk_budget` one `RiskRequest` per candidate at `config.risk.max_position_risk_pct` — the SAME number for all of them. The allocator's pre-decision ordering is largest-request-first with an alphabetical tie-break, so with every request identical the tie-break is the ONLY thing ordering them: on any day the budget binds, the backtest funds candidates in alphabetical order. That work fixed the production path by spending the budget down `rank_verdicts`' own order, and deliberately did NOT touch this one: the backtest is signal-driven and produces no analyst verdicts, so there is no ranking to spend down and inventing a score to stand in for one is exactly what the no-arbitrary-numbers rule forbids. **The consequence:** any backtest run on a day where total requested risk exceeds `max_portfolio_risk_pct` measures a desk that picks trades by ticker spelling — so its results on those days do not describe the desk that now runs in production, and neither the old nor the new production rule can be evaluated by backtesting until this is closed. **What would settle it:** either the backtest gains a deterministic per-candidate score derived from the same signal machinery it already computes (and that score has to be read off something, not fitted), or the engine is honestly documented as unable to evaluate rationing behaviour and every result is reported alongside how many of its days had a binding budget. Nothing was searched for yet beyond confirming the requests are uniform, which was read directly off the code.
 
-**65. Four of the five analyst seats have no strength scale of their own, and the deletion of the fake ones did not answer whether they should — OPEN, owner call, opened 2026-09-13 by the review of PR #348.**
+**65. Four of the five analyst seats have no strength scale of their own, and the deletion of the fake ones did not answer whether they should — OPEN, opened 2026-09-13 by the review of PR #348.** *Owner-call label removed 2026-09-14, see `docs/INCIDENT_HISTORY.md`.*
 
 `rank_verdicts` scores a candidate on two things per seat: how far the seat leans (`magnitude`) and how sure it is (`conviction`). Only Technical states a lean — its rating rungs are a strength it actually publishes. News, macro, smart_money and earnings do not, so each of them now reports `NO_STATED_STRENGTH` (0.0) and reaches the ranking through its weighted conviction alone. Nothing is invented, and nothing is borrowed — which is the improvement over both prior states (three unsourced tables, then one borrowed rung).
 
