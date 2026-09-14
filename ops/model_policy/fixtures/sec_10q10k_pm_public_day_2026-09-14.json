@@ -1,0 +1,372 @@
+{
+  "_blobs": {
+    "sec_10q10k_pm_public_day_2026-09-14.json.gz": {
+      "bytes_uncompressed": 147901849,
+      "fetch": "EarningsDataProvider.check_and_fetch(universe) -- src/data/earnings.py:860, the live morning-session earnings path -- run over the full config/settings.yaml trading.universe (101 symbols, config/settings.yaml:1192) at the live EarningsDataProvider default lookback_days=45 (src/data/earnings.py:89, instantiated unmodified at src/pipeline.py:1082). Raw 10-Q/10-K HTML per filing found inside that window, keyed SYMBOL_FORM_DATE.",
+      "fetched_on": "2026-09-14",
+      "sha256": "b777020a35743fe6b3f6f7918a5459209e22c9efab31a5520be99ed9b4a3af94",
+      "source": "https://www.sec.gov/"
+    }
+  },
+  "_exam": {
+    "as_of": "2026-09-14",
+    "filings_found": 49,
+    "lookback_days": 45,
+    "universe_size": 101
+  },
+  "_provenance": {
+    "note": "Raw public facts only: real 10-Q/10-K filing HTML pulled fresh from SEC EDGAR by the live EarningsDataProvider.check_and_fetch over the full 101-symbol live universe at the live 45-day window -- not a single hand-picked filing. text_excerpt / xbrl_facts are recomputed at exam time from this raw HTML by today's EarningsDataProvider._extract_text (xbrl cross-check left empty here -- not fetched at this scale; see README).",
+    "sections": {
+      "filings": {
+        "fetch": "EarningsDataProvider.check_and_fetch (see _blobs)",
+        "fetched_on": "2026-09-14",
+        "source": "https://www.sec.gov/"
+      }
+    }
+  },
+  "filings": [
+    {
+      "cik": null,
+      "filing_date": "2026-07-31",
+      "form_type": "10-Q",
+      "key": "AAPL_10-Q_2026-07-31",
+      "symbol": "AAPL"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-07-31",
+      "form_type": "10-Q",
+      "key": "AMZN_10-Q_2026-07-31",
+      "symbol": "AMZN"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-26",
+      "form_type": "10-Q",
+      "key": "NVDA_10-Q_2026-08-26",
+      "symbol": "NVDA"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-09-10",
+      "form_type": "10-Q",
+      "key": "AVGO_10-Q_2026-09-10",
+      "symbol": "AVGO"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-27",
+      "form_type": "10-Q",
+      "key": "CRM_10-Q_2026-08-27",
+      "symbol": "CRM"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-05",
+      "form_type": "10-Q",
+      "key": "AMD_10-Q_2026-08-05",
+      "symbol": "AMD"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-09-11",
+      "form_type": "10-Q",
+      "key": "ORCL_10-Q_2026-09-11",
+      "symbol": "ORCL"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-28",
+      "form_type": "10-Q",
+      "key": "MRVL_10-Q_2026-08-28",
+      "symbol": "MRVL"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-12",
+      "form_type": "10-Q",
+      "key": "CBRS_10-Q_2026-08-12",
+      "symbol": "CBRS"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-06",
+      "form_type": "10-Q",
+      "key": "NET_10-Q_2026-08-06",
+      "symbol": "NET"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-09-08",
+      "form_type": "10-Q",
+      "key": "PATH_10-Q_2026-09-08",
+      "symbol": "PATH"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-06",
+      "form_type": "10-Q",
+      "key": "JPM_10-Q_2026-08-06",
+      "symbol": "JPM"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-03",
+      "form_type": "10-Q",
+      "key": "GS_10-Q_2026-08-03",
+      "symbol": "GS"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-07-31",
+      "form_type": "10-Q",
+      "key": "BAC_10-Q_2026-07-31",
+      "symbol": "BAC"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-10",
+      "form_type": "10-Q",
+      "key": "BRK-B_10-Q_2026-08-10",
+      "symbol": "BRK-B"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-10",
+      "form_type": "10-Q",
+      "key": "UNH_10-Q_2026-08-10",
+      "symbol": "UNH"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-05",
+      "form_type": "10-Q",
+      "key": "LLY_10-Q_2026-08-05",
+      "symbol": "LLY"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-04",
+      "form_type": "10-Q",
+      "key": "PFE_10-Q_2026-08-04",
+      "symbol": "PFE"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-03",
+      "form_type": "10-Q",
+      "key": "XOM_10-Q_2026-08-03",
+      "symbol": "XOM"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-06",
+      "form_type": "10-Q",
+      "key": "CVX_10-Q_2026-08-06",
+      "symbol": "CVX"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-06",
+      "form_type": "10-Q",
+      "key": "COP_10-Q_2026-08-06",
+      "symbol": "COP"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-05",
+      "form_type": "10-Q",
+      "key": "OXY_10-Q_2026-08-05",
+      "symbol": "OXY"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-04",
+      "form_type": "10-Q",
+      "key": "EOG_10-Q_2026-08-04",
+      "symbol": "EOG"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-07",
+      "form_type": "10-Q",
+      "key": "EPD_10-Q_2026-08-07",
+      "symbol": "EPD"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-28",
+      "form_type": "10-Q",
+      "key": "WMT_10-Q_2026-08-28",
+      "symbol": "WMT"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-07",
+      "form_type": "10-Q",
+      "key": "MCD_10-Q_2026-08-07",
+      "symbol": "MCD"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-04",
+      "form_type": "10-K",
+      "key": "PG_10-K_2026-08-04",
+      "symbol": "PG"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-25",
+      "form_type": "10-Q",
+      "key": "HD_10-Q_2026-08-25",
+      "symbol": "HD"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-09-09",
+      "form_type": "10-Q",
+      "key": "GME_10-Q_2026-09-09",
+      "symbol": "GME"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-05",
+      "form_type": "10-Q",
+      "key": "CAT_10-Q_2026-08-05",
+      "symbol": "CAT"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-05",
+      "form_type": "10-Q",
+      "key": "UPS_10-Q_2026-08-05",
+      "symbol": "UPS"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-27",
+      "form_type": "10-Q",
+      "key": "DE_10-Q_2026-08-27",
+      "symbol": "DE"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-09-02",
+      "form_type": "10-Q",
+      "key": "AGX_10-Q_2026-09-02",
+      "symbol": "AGX"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-06",
+      "form_type": "10-Q",
+      "key": "DXPE_10-Q_2026-08-06",
+      "symbol": "DXPE"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-10",
+      "form_type": "10-Q",
+      "key": "RKLB_10-Q_2026-08-10",
+      "symbol": "RKLB"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-07-31",
+      "form_type": "10-Q",
+      "key": "ETN_10-Q_2026-07-31",
+      "symbol": "ETN"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-09-03",
+      "form_type": "10-K",
+      "key": "ZS_10-K_2026-09-03",
+      "symbol": "ZS"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-13",
+      "form_type": "10-Q",
+      "key": "ONDS_10-Q_2026-08-13",
+      "symbol": "ONDS"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-05",
+      "form_type": "10-Q",
+      "key": "DIS_10-Q_2026-08-05",
+      "symbol": "DIS"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-07-31",
+      "form_type": "10-Q",
+      "key": "LIN_10-Q_2026-07-31",
+      "symbol": "LIN"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-07",
+      "form_type": "10-Q",
+      "key": "MP_10-Q_2026-08-07",
+      "symbol": "MP"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-10",
+      "form_type": "10-Q",
+      "key": "VST_10-Q_2026-08-10",
+      "symbol": "VST"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-07",
+      "form_type": "10-Q",
+      "key": "OKLO_10-Q_2026-08-07",
+      "symbol": "OKLO"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-06",
+      "form_type": "10-Q",
+      "key": "CEG_10-Q_2026-08-06",
+      "symbol": "CEG"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-05",
+      "form_type": "10-Q",
+      "key": "FLNC_10-Q_2026-08-05",
+      "symbol": "FLNC"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-12",
+      "form_type": "10-Q",
+      "key": "NUE_10-Q_2026-08-12",
+      "symbol": "NUE"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-14",
+      "form_type": "10-K",
+      "key": "WDC_10-K_2026-08-14",
+      "symbol": "WDC"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-08-17",
+      "form_type": "10-K",
+      "key": "SNDK_10-K_2026-08-17",
+      "symbol": "SNDK"
+    },
+    {
+      "cik": null,
+      "filing_date": "2026-07-31",
+      "form_type": "10-Q",
+      "key": "DLR_10-Q_2026-07-31",
+      "symbol": "DLR"
+    }
+  ]
+}
