@@ -136,10 +136,17 @@ this line, one heading per item.
 
 ## item 10
 
-**Plain language —** The desk kept suggesting the same stock ideas repeatedly even though they never turned into real trades, using up a limited number of trade slots each session. The AI can now see its own track record of which names it keeps proposing and how often they actually go through, but nothing yet stops it from proposing a repeat name again.
-**Example —** A stock proposed five times in three weeks with zero fills now shows that history plainly to the decision-maker, but nothing currently blocks a sixth proposal of the same name.
-**The decision —** Whether to add a rule that actually blocks or limits re-proposing a name with a poor fill history, rather than only showing the AI its own record.
-**Recommendation —** Wait for a few more weeks of real data before setting a hard block; there isn't yet enough evidence to know where a fair cutoff belongs.
+**Plain language —** This started as "the desk keeps re-suggesting stocks that never actually get bought, using up trade slots." Two parts of that turned out to be wrong, and one real problem was found underneath.
+
+First, there are no trade slots. The desk has no limit on how many positions it can hold — how many it takes is decided by how much risk it can afford, and an idea that never becomes a trade costs no risk at all. So a repeat suggestion was not taking anything away from a fresh one. (Whether a repeat crowds out a better idea on the decision-maker's own shortlist has not been measured, and we are not claiming either way.)
+
+Second, and more useful: when we counted why ideas die, they are overwhelmingly not dying at the market. Of all the ideas that fail, only about one in seven fails because of a real price or broker event. The rest fail inside our own machinery. Under the current code the single biggest cause is an idea that simply never becomes an order at all — no reason recorded, it just stops. That is the real defect, and it is now what this item is about.
+
+**Example —** One stock was suggested eight times, turned down seven times across six different causes — then on the eighth it was bought, at the largest size and the highest confidence in the whole record. A "three strikes and you're out" rule would have killed the desk's best-conviction trade of the period. Another name has two of its three strikes from a pricing bug we fixed the same afternoon — the fix was written for that exact stock. It would have been blacklisted for a fault that no longer exists.
+
+**The decision —** None. This is no longer yours. You said the blocking proposal was a hack rather than a solution and told us to settle it without you; it is settled and closed: **no blocking rule will be added.** Not postponed, not switched off — answered. The reasoning is on file so nobody re-opens it. The short version: how often a stock converts is not a fact about the stock, it is a portrait of our own broken plumbing, so blocking on it means blacklisting a company for our bug. And the list of "repeat offenders" changes completely from one day to the next, so there is nothing stable there to block on anyway.
+
+**Recommendation —** Nothing to approve. What stays open is the machinery defect: most ideas die inside the pipeline without saying why. We shipped reason-recording for exactly that, but it has never been measured because the desk has produced no new ideas since. It gets re-measured as soon as it has, and we will tell you what it says.
 
 
 ## item 17

@@ -6367,6 +6367,10 @@ class TradingPipeline:
         making it cry wolf.
 
         Diagnostic only. Nothing here gates, filters or caps anything.
+        That is final, not interim: a count-based re-proposal gate was
+        ANSWERED NO on 2026-09-14 (docs/WORK.md item 10(b)) because the
+        conversion rate measures this desk's own gates and plumbing, not
+        the instrument. Do not add one.
 
         Returns "" when the window holds no proposals at all — PM's section
         then shows its own "no proposals on record" default. When there are

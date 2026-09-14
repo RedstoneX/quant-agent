@@ -615,22 +615,84 @@ Full reasoning + test: `docs/INCIDENT_HISTORY.md`. Stop is
 sided correctly at ingestion; the quote moves before construction —
 refusal stands.
 
-**10. Slots burned re-proposing names that never fill. PARTIALLY CLOSED,
-re-measured 2026-09-03 — see `docs/INCIDENT_HISTORY.md`.**
+**10. Most ideas die inside the machinery with no recorded reason
+(`no_order_built`). OPEN. The gating half of the old item is ANSWERED NO —
+2026-09-14, closed, do not re-open.**
 
-The memory gap is fixed: `_build_blocked_proposals` (`src/pipeline.py`,
+*Was: "Slots burned re-proposing names that never fill."* The memory gap
+that titled it is fixed: `_build_blocked_proposals` (`src/pipeline.py`,
 merged 2026-09-02 via `feat/blocked-trade-memory`) gives the PM a
 `## Proposal Conversion` section naming its own repeat-offender names and
-conversion rate. But it is diagnostic only by explicit design — it gates,
-filters and caps nothing — so it cannot fully close this item by itself.
-Whether it changes PM behavior is UNTESTED: an unrelated live desk reset
-(`scripts/desk_reset.py`, 2026-09-02 18:19 UTC, real tool, working as
-intended) wiped all decision-shaped proposal history the same day the fix
-shipped, leaving under a day of post-fix data — one proposal (ORCL),
-which filled. Not enough signal either way yet. Re-measure again once
-several full trading days have accumulated. Actually stopping re-proposals
-(vs. just showing them) would need a new gating threshold — that is an
-owner decision, not made here.
+conversion rate. What remains open is not the memory and not a gate — it is
+what the census found underneath.
+
+**(a) THE LIVE DEFECT — OPEN.** Census re-run read-only over the archive
+(`scripts/blocked_proposals_census.py`): 65 entry proposals, 14 filled,
+51 blocked. Grouped by cause, machinery ABSENCE — `no_order_built`,
+`order_not_placed`, `qty_zero` — is 27 of the 51; execution/price events
+(`order_canceled`, `insufficient_cash`, `slippage_gated`) are only 7.
+Restricted to proposals after the limit-is-ceiling fix (`0eb4a115`,
+2026-08-27 14:18:58Z), 28 proposals, 3 filled, 25 blocked, of which
+`no_order_built` alone is 16 — and exactly ONE broker cancel. So under
+current code the dominant outcome of a trade idea is that it evaporates
+inside the pipeline, and **for every measured row the cause is
+unrecoverable**: reason-capture (`ffce5766` / `4b5445eb`, PR #222 and
+#226, 2026-09-03) postdates all of them. That is the open question: a
+majority of ideas dying with no reason on record.
+
+**What would settle it.** The 2026-09-03 drop-reason capture has NEVER been
+measured, because the desk has produced no proposals since. Re-run the
+census once post-2026-09-03 proposals exist; `no_order_built` should then
+resolve into named constructor reasons. Until then nothing about the cause
+should be asserted. Two known undercounts must be carried into any re-run
+(`docs/AGENT_ROLE_AUDIT.md` §1.6): roughly 7% of sized targets never reach
+`specialist_evidence`, and 10 decisions carry no evidence rows at all.
+
+**(b) A COUNT-BASED RE-PROPOSAL GATE — ANSWERED NO. Not deferred, not
+switched off: answered.** No threshold is proposed and none is needed,
+because the question dissolves on partition. The reasoning, so nobody
+re-derives it:
+
+- *The conversion rate is not a fact about the instrument.* It is a
+  self-portrait of the desk's own gates and its own broken plumbing.
+  The three repeat zero-fill names — JPM, VLO, PATH — record not one
+  spread, book or partial-fill event between them; their causes are
+  `order_not_placed`, `order_canceled`, `no_order_built`, `geometry_rr`,
+  `rr_fail`. Gating on that blacklists a name for a bug.
+- *VLO is the proof.* Two of its three strikes are `order_canceled`, on
+  2026-08-21 and 2026-08-27 13:36 — both BEFORE the limit-is-ceiling fix
+  landed at 14:18 the same day, and the comment shipping that fix names
+  VLO explicitly as the trade it was written for. A conversion gate would
+  blacklist a symbol for a defect that no longer exists.
+- *NVDA is the cost.* Proposed 8 times across six distinct failure causes,
+  and it FILLED on the 8th — at 2.75% risk and high conviction, the largest
+  and most confident ask in the whole record. Any three-strikes rule kills
+  that trade. XLE: 6 proposals, one fill. §1.6 already records that XLE and
+  NVDA "have each since recorded one fill and are no longer zero-fill under
+  any count."
+- *The offender list churns daily.* 2026-09-01 named XLE and NVDA;
+  2026-09-02 named VLO, COP, JPM, XLF, CRM, PATH. A gate whose input turns
+  over completely in a day is gating on noise.
+- *Partition by refusal cause and no class needs a counter.* Deterministic
+  refusals (`geometry_rr`, `qty_zero`, `rr_fail`, constructor refusals)
+  re-fire on their own against an unchanged repeat, in the same session,
+  consuming zero capital — a counter adds nothing; and a repeat with
+  CHANGED geometry SHOULD pass, which is exactly what NVDA did. Machinery
+  absences are a bug to fix, not a name to blacklist — see (a). Execution
+  events are fixed at the execution layer, per-order, not per-symbol.
+- *The prompt already carries the better shape, and a threshold cannot
+  express it* (`src/agents/portfolio_manager.py`): "re-proposing it
+  unchanged will fail the same way again — either fix what the reason
+  names … or drop the name. This is information, not a prohibition." The
+  conditional on UNCHANGED is the whole point; a count has no way to say it.
+
+**(c) "Slots burned" was a false premise — VERIFIED 2026-09-14.** There is
+no position-count cap in `config/settings.yaml` and no target-count cap in
+the PM; `docs/OUTCOME.md` records position count as "Not fixed. Determined
+dynamically by the risk budget." A blocked proposal consumes zero risk
+budget, so it burns no slot. Whether a repeat displaces a fresh candidate
+inside the PM's own shortlist is UNMEASURED — recorded as unmeasured, not
+asserted either way.
 
 **17. Backup alert channel — OWNER DECISION, not a defect. (Was: "the desk can switch itself off silently.")**
 
