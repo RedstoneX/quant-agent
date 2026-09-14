@@ -59,12 +59,23 @@ Under each heading, each field on its own line, in the same shape
     **The decision —** what the owner specifically has to rule on.
     **Recommendation —** what we think he should do, stated as a
     recommendation.
+    **Why only you —** the one reason this decision cannot be made without
+    him: money, mandate, risk appetite, or public disclosure. Never a
+    market-structure number — those are researched, not decided, and an
+    item like that writes `**The decision —** None for you` instead.
 
 The label must start the line, the surrounding `**` is optional, and the
 separator may be an em dash, a hyphen or a colon. A block ends at the next
 label, the next heading, or a blank line — one paragraph per label. Nothing
 is mandatory: an item can carry only a `Plain language` line and nothing
 else, and any field left out renders as absent, never guessed.
+
+**"Waiting on you" on the board is built from two fields together.** An
+item shows there only when it carries BOTH a live `The decision` (not
+starting "None", "Not yet" or "Possibly") AND a `Why only you`. Writing a
+decision without a reason, or a reason without a decision, leaves it where
+it already was — in the running order, not promoted. See
+`_is_live_owner_ask` in `scripts/status_board.py`.
 
 ## Worked example — illustrative only, not a real backlog item
 
@@ -143,8 +154,8 @@ this line, one heading per item.
 
 **Plain language —** If the desk's own record-keeping breaks, a safety switch can shut down all further AI-based decisions completely, and it stays off until a person manually clears it — working as intended. The real problem, observed live, was that the alert meant to warn someone about it also failed to send, so the desk could sit switched off for a full day or a weekend with nobody aware, looking exactly like an ordinary quiet market.
 **Example —** This happened for real: the safety switch tripped because a data file couldn't be opened, and the message meant to warn the owner about it failed to deliver too, so both the shutdown and the warning about it went unnoticed at once.
-**The decision —** Whether the desk needs a completely separate backup alert channel, in case its current one goes down too.
-**Recommendation —** A cheap backup channel closes a real gap at low cost, but the record disagrees on urgency elsewhere — worth a direct check with the owner on timing before treating this as due soon.
+**The decision —** None for you right now. Already decided, 2026-09-03: not now, bigger problems to solve first. No due date; revisit only at your discretion. This line used to describe it as open — it wasn't kept in sync with your own ruling, corrected 2026-09-13.
+**Recommendation —** Nothing to approve right now. Bring it back yourself when you want to revisit it.
 
 
 ## item 18
@@ -170,12 +181,6 @@ this line, one heading per item.
 **Recommendation —** This is designed but not yet built. Have a concrete number proposed with its reasoning shown before shipping anything, rather than picking one casually.
 
 
-## item 28
-
-**Plain language —** An automated test meant to check the desk's cost-safety limit was marked fixed, but checking again, three separate times against a clean copy of the current code, shows it still fails every time. Whatever change was believed to fix it did not, and nobody re-verified the claim before writing it down as solved.
-**Example —** The fix was believed to be done because settings the test depended on were removed during an unrelated rewrite; three fresh re-runs since then all fail the same way, meaning the real cause hasn't actually been found yet.
-
-
 ## item 30
 
 **Plain language —** When ranking which stock ideas look best, the desk recently stopped treating every AI specialist's opinion as equally important and started weighting some more heavily based on research. The same change has deliberately NOT been made to the separate step that decides how much money to put into a trade — doing that properly means redesigning a related scoring scale too, a second real decision, not a copy-paste fix.
@@ -196,6 +201,7 @@ this line, one heading per item.
 **Example —** A trade sized to risk 5% of the account was actually only risking about 1% in practice because of the old cap — a fifth of the approved risk, on every single trade, until fixed.
 **The decision —** Restore the wider trade-sizing bands now that the bug is fixed, and separately, whether the two loss-alarm systems should ever be unified.
 **Recommendation —** Approve restoring the wider bands; they were only narrowed to compensate for a bug that no longer exists. Leave the two-alarm-system question for later since both work independently without conflicting today.
+**Why only you —** Both halves change how much of the account can be put at risk on a trade and how the desk reacts to a loss — risk-appetite calls, not engineering defaults.
 
 
 ## item 35
@@ -206,17 +212,14 @@ this line, one heading per item.
 
 ## item 39
 
-**Plain language —** When the desk's risk budget is nearly maxed out and it can't take a promising new trade, it now shows the AI a direct comparison between its weakest current holding and the strongest new idea being turned away, so it can weigh whether to make room. It only surfaces this comparison — it never automatically swaps one position for another.
-**Example —** If the desk is already near its risk ceiling and a strong new opportunity appears, the decision-maker is shown its own weakest current holding side by side with the new idea, but nothing forces a trade either way.
+**Plain language —** When the desk has run out of risk budget and has to turn away a good new idea, it now compares that idea against the weakest thing it is already holding. Two different things can happen. If the holding merely ranks lower, the desk only shows the comparison and does nothing. If the holding would flatly not be bought today — it fails the desk's own entry rules, the same rules a brand-new buy has to pass — the desk can now sell it itself to make room. That selling half is switched ON, at your instruction, rather than shipped switched off. It has never actually happened yet: nothing has been running since 3 September, so the first one will also be the first proof it works end to end, and you will get a message the moment it does.
 
+**The safety conditions, all five, all measured from the desk's own records and never from an opinion —** the book must genuinely have no room left; the holding must fail the entry rules today; the reason you were holding it must have ALREADY broken (anything whose original argument is still standing is never sold this way); nothing may be part-done or in mid-flight on it; and the decision-maker must itself have asked to buy the replacement — the desk never invents the buy side. The sale then goes through exactly the same checks as any other sale, including the risk reviewer's power to refuse it. If the sale happens but the replacement purchase then doesn't, you get a second, separate message saying so.
 
-## item 49
+**Example —** On the one real day with good records, the desk found 25 trades it was allowed to take, wanting to risk about 48% of the account against a 25% ceiling. That is the "no room left" condition, measured, not imagined — so on a day like that the door to rotation is open. What comes through it is deliberately narrow: only a holding that fails today's entry rules AND whose original reason for existing has already broken. Nothing has passed all of that yet, so there is no real swap to show you, and I am not going to invent one.
 
-**Plain language —** Removing the rule that was wrongly blocking good trades worked — the desk now finds roughly twice as many trades it's allowed to take. But that rule had been quietly doing a second job nobody noticed: by refusing so many trades, it meant the desk almost never ran out of risk budget. Now it does. On a normal day the desk wants to risk about twice what it's allowed to risk in total, so something has to decide which of the permitted trades actually get the money. Right now nothing decides that deliberately — they're taken in whatever order they happen to come out of the process, which is not a choice anybody made.
-**Example —** On the one real day with good records, the desk found 25 trades it was allowed to take. Together they'd risk about 48% of the account, but the ceiling is 25%. So roughly half of them can't happen — and today, which half survives is essentially arbitrary rather than "the best ones."
-**The decision —** How should the desk choose between more good trades than it can afford? Four real options: take the best-ranked ones until the money runs out; take all of them but size every one smaller; give the highest-conviction ideas priority; or simply cap how many new trades happen per day.
-**Recommendation —** Best-ranked-first is the most defensible starting point — it uses the ranking the desk already computes, and it means the money goes to the strongest ideas rather than whichever happened to be processed first. Sizing everyone smaller sounds fairer but quietly turns every strong idea into a weak one. Worth your judgement though: this genuinely changes what kind of desk this is, so it shouldn't be picked on my say-so alone.
-**DECIDED — 2026-09-12, by you.** Best-ranked-first. Your words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The money goes to the strongest ideas in order until it runs out; the rest simply don't happen that day, and they are not shrunk down to squeeze in. **Not built yet** — the decision is recorded, the code still spends the budget in arbitrary order. One thing the decision doesn't answer, which will come back to you when it's built: if the next-best idea only half fits in what's left of the budget, does it get taken at half size, or skipped?
+**One thing you should know —** the tier that only ranks things uses a "must be 25% better" bar that is a made-up number. It is honestly labelled as made-up in the code and it decides nothing — it only controls whether a comparison gets printed for the AI to read. The tier that can actually sell doesn't use it at all. It stays a research question, not a decision for you.
+
 
 ## item 52
 
@@ -230,6 +233,7 @@ this line, one heading per item.
 **Example —** Oracle: 5.3089 shares at about $150, worth $798. The stop covers 5 shares. The 0.3089 left over is about $46 with no stop. If Oracle gapped down 20% overnight, that slice would lose about $9 before anything could react. Small here — but the same rule applies to a position that is entirely under one share, like a single slice of a $1,500 stock, where the WHOLE position is the uncovered part. You corrected exactly that "it's less than one share so it's negligible" thinking on 2 September, and it still holds.
 **The decision —** While the desk is paused, what should happen to the uncovered fraction? Three real options. One: close the fraction now (sell the 0.3089 shares, about $46) and make that the standing rule whenever the desk is paused with fractional holdings. Two: leave it, accept the exposure, and rely on the new daily message to keep you informed. Three: stop buying fractions altogether — you already turned that down on 2 September because it locks a $10,000 account out of the expensive names the analysts keep picking, and nothing about that reasoning has changed.
 **Recommendation —** Option one as a rule, not a one-off: pausing the desk is a deliberate act, and it should include tidying the fractions, because the protection design assumes the desk is running. Today that means selling 0.3089 Oracle, which I have NOT done — no order has been placed, changed or cancelled. Option two is honest and now visible, but it means a paused desk carries an exposure nobody is managing. If you want the fraction sold, say so and it gets done by hand; the code shipped here is only the alarm.
+**Why only you —** Real money sits with no protective stop right now, and choosing to sell it, accept the exposure, or change the standing rule for a paused desk is a risk-appetite call, not a technical fix.
 
 ## item 55
 
@@ -268,14 +272,18 @@ this line, one heading per item.
 **Example —** Only three sell-decisions have ever gone through this reviewer in the recorded history, and every one was approved with no changes made. That is not proof the reviewer is doing its job — it is too small a sample to prove anything either way. What is provable is that the handful of automatic checks standing behind it each have a real gap: one of them does nothing unless the position is already flagged as vulnerable; another does nothing unless there is prior data to compare against; a third can be talked past just by citing an outside reason; and the last one only checks that the wording sounds right, not that the claim is true. A confidently-worded, clean-looking, wrong reason to sell could walk through all four untouched.
 **The decision —** Should selling get a purpose-built reviewer of its own — its own instructions, its own checklist — instead of the buying reviewer wearing a list of exceptions for it? This matters more than it sounds: a wrong "keep buying" that gets refused costs nothing, but a wrong "don't sell" that gets approved leaves a broken position sitting on the book overnight with only the ordinary stop-loss behind it, not a second layer of judgement.
 **Recommendation —** Not made. Today's fix was deliberately the smaller, safer move — make the shared reviewer honest about what it can and can't see on a sell, rather than building it a replacement, while the bigger question of whether selling deserves its own reviewer is put to you rather than assumed either way.
-
-## item 61
-
-**Plain language —** After a test run of the trading system, a summary report prints a line saying how many trades "the portfolio manager proposed." That number turns out not to be tied to whether the portfolio manager actually ran that session — it's counted a different way, and on one real test it printed "1" even though the portfolio manager never ran at all that session. It doesn't affect any real trading; it's a label on an after-the-fact report a person reads to judge whether a rehearsal run behaved the way it should have.
-**Example —** In the test used to reproduce a known cost-limit problem, the report said "1" order was proposed by the portfolio manager, when in fact that seat was never called during the run.
+**Why only you —** It decides how much independent scrutiny a decision to sell out of a position is allowed to skip — a risk-appetite call about the desk's own safety net, not an engineering default.
 
 ## item 63
 
 **Plain language —** When a company insider sells shares, the desk wants to know whether that's a real opinion about the stock or just someone raising cash. The best measure is how much of their own pile they sold. The research that measures this found something counter-intuitive: an insider selling a *small* slice of what they hold is actually a mildly *good* sign — they need money, they're keeping the rest, they still like the company. Selling more than half is the only case that reliably means bad news. The desk was doing the opposite of reading that correctly: it treated small sales as meaningless and threw them out of the ranking entirely. That's now fixed — nothing is thrown out, and every insider trade arrives at the analyst carrying how big it was relative to what the person held, plus what the research says that size means. What's still missing is narrower: the desk's internal "how much does this matter" score is a single dial from 0 to 1, and a dial cannot say "this matters, and it points the *other* way." So the analyst reads the direction in the notes, but the automatic ranking underneath it doesn't.
 **Example —** An executive holding 100,000 shares sells 1,000 of them. Research says that's worth about +0.68% over the next quarter — a small positive. Another sells 80,000 of 100,000; that's worth about −0.81% — a real negative. Today both arrive at the analyst with the same "importance" score of 1.0, distinguishable only by the written note attached. Before this change the first one scored 0.0 and the analyst never saw it at all.
 **The decision —** None needed from you right now, and deliberately so. The obvious move — invent a number that scores the bullish case lower or higher — would be exactly the kind of made-up figure this desk refuses. Two sources were checked for a signed scoring scheme and neither has one. This item exists so the gap is on the record rather than quietly papered over, and it gets picked up when either a published source or enough of the desk's own trading history can settle it.
+
+## item 64
+
+**Plain language —** The desk's practice runs against historical data ask for the same risk on every trade they consider. When the risk ceiling runs out on a busy day, the tie between all those identical requests is broken by ticker spelling — so the practice run funds trades in alphabetical order. Your best-first decision was built into the live desk, and deliberately not into the practice runs: those work off price signals and never produce the analyst ratings the ranking is made of, so there is no ranking to work down, and making up a score to stand in for one is exactly the kind of invented number that keeps causing problems here.
+
+**Example —** A practice-run day where the candidates together want more risk than the ceiling allows: Apple gets funded, Nvidia does not, purely because A comes before N. Nothing about either chart is consulted.
+
+**The decision —** None for you. Either the practice runs learn to score their own candidates off something real, or every practice-run result gets reported alongside how many of its days had the budget running out, so nobody reads a result as evidence about how the desk picks between trades when it isn't.

@@ -485,91 +485,6 @@ that X actually produces the symptom.
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
 
-### Landed 2026-08-31 — moved to the incident history
-
-Six 2026-08-31 incident/deployment records now live in
-`docs/INCIDENT_HISTORY.md` (append-only, never trimmed) instead of being
-deleted here to make room, which is how this file stays under its
-100,000-byte cap without losing the record of what went wrong.
-
-### Landed 2026-09-03 — RM-modification safety guards, FIXED
-
-A risk-manager "modification" could silently cancel a SELL/COVER exit or
-ship a stop/target edit that broke the R/R or noise-band floor a fresh
-decision would have to clear. Both guards now live in
-`_apply_risk_modifications`. Full detail and tests: `docs/INCIDENT_HISTORY.md`.
-
-### Landed 2026-09-13 — the Risk Manager's limits are read, not typed, FIXED
-
-The reviewer's standing sheet stated its limits as hand-typed prose. It said
-the long single-name ceiling was **33%** against a real `max_position_pct` of
-**65** — and that was **wrong at birth, not drift**: commit `e1c639a2`
-(PR #297, titled "single-name cap 100 -> 33") set the setting to 65 and typed
-33 into the sheet in the same diff. The same commit ALSO wrote
-`max_position_pct=65` correctly into the sheet's hard-rule inventory, so the
-sheet contradicted itself from minute one. **No verdict or log row has been
-found showing the stale 33 changed an outcome, and none is claimed** — what
-was fixed is an internal contradiction and the mechanism that allowed it.
-
-The line that commit replaced was relational ("half the long single-name
-ceiling") and therefore drift-immune; it was swapped for a literal. That
-sentence is now relational again. A second, genuinely stale one said the
-constructor caps a stop-out at 0.5% of equity against a ratified
-`max_position_risk_pct` of 5 — and it named the wrong binding mechanism as
-well, since the §9.4 agreement ceiling and the budget allocator narrow the
-real per-trade budget before the 5% envelope is reached. Rewritten to name
-what binds first.
-
-The sheet now carries `{{risk.<setting>}}` placeholders rendered by
-`src/agents/prompt_limits.py` from the same config object the engine is built
-from, **at agent construction** (not on first LLM call, which is the risk
-stage — after the whole day's analysis is paid for). Two build checks: a
-number beside a setting's name, and a number stated as the value of a
-ceiling/cap/budget/limit/floor phrase. Only the second catches the 2026-09-11
-shape; that gap is pinned by its own test.
-
-**FOUND WHILE FIXING — pre-existing, latent, NOT swept.** `src/pipeline.py`
-builds the risk engine's `RiskConfig` from a hand-enumerated argument list.
-**22 declared risk settings were absent from it** and silently fell back to
-pydantic class defaults, ignoring settings.yaml. Every one of those defaults
-currently equals its settings value, so nothing is live-wrong — but
-`allow_margin` was the same omission and did bite (it defaulted False while
-settings said True, blocking a user's BUYs). The seven settings the two sheets
-render are now threaded; **the remaining 15 are open work**, pinned by a test
-that fails if the count grows or if any omitted setting ever diverges from its
-default. Threading them changes enforcement and needs its own review.
-
-**PM's sheet, same treatment, same PR series.** `portfolio_manager.md` now
-renders ten settings and `tests/test_prompts_anchors.py`'s two value anchors
-are retargeted to the placeholders. Correcting an earlier claim in this
-entry: PM's sheet did not stay correct on 2026-09-11 because the human
-process was better — it stayed correct because that anchor test pinned the
-literal and the reviewer's sheet had no such anchor. The check held; it just
-cost a third hand-maintained copy of the number.
-
-**PM's parity is against TWO objects, not one.** `src/risk/rules.py` contains
-no reference at all to `max_cluster_risk_share_pct`, `short_gap_risk_multiple`,
-`min_position_risk_pct` or `max_portfolio_risk_pct` — those four are enforced
-by `PortfolioConstructor` from a separately built `ConstructorConfig`. The
-parity tests now build BOTH objects through the pipeline's own extracted
-builders (`build_risk_config`, `build_constructor_config`) and check that
-MOVING a setting moves what the objects carry, rather than scanning
-`src/pipeline.py` for a keyword name — a scan a hard-coded
-`max_gross_bearish_pct=20.0` would have satisfied.
-
-**Still open, pre-existing:** `build_constructor_config`'s `_risk_setting(name,
-default)` pattern types a literal fallback for roughly twenty settings, so each
-of those keeps a home in `src/pipeline.py` on top of settings.yaml and the
-dataclass field default. Not touched here — sweeping it changes sizing
-fallbacks nobody has reviewed. The equivalent literals on the risk engine's
-side were removed in this PR (`_threaded_risk_settings` omits a non-numeric
-read instead of substituting a number), and `min_position_risk_pct` now passes
-a legal **0** through both paths rather than being swallowed into a default.
-
-**Also open:** `config/settings.yaml`'s own `max_single_short_pct` comment
-still says "At 33 this cap is now roughly a THIRD of the long ceiling" —
-stale from the same commit, in the settings file itself.
-
 ### Ordered backlog — RESUME POINT
 
 ## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
@@ -880,8 +795,6 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**28. The offline test that must reproduce a known real cost-limit failure can no longer reproduce it — STILL BROKEN, previously marked fixed in error.** `test_rehearsal_reproduces_cost_ceiling.py` marked FIXED 2026-09-04 (config keys the test forced no longer exist, after the cost-circuit rewrite that deleted the per-call spend reservation) but re-verified directly 2026-09-10, three separate times against a clean `origin/main` checkout: this test still fails, identically, every time. Whatever landed did not actually resolve it, and nobody re-checked the claim before writing FIXED. Needs someone to actually read the failure and re-diagnose it — not re-apply the same fix that already didn't work. See `docs/INCIDENT_HISTORY.md`, 2026-09-04 "acceptance test broken on main by deleted cost-circuit config keys" for the (incomplete) original diagnosis.
-
 **30. The sizing path still owes the same amendment the ranking path just
 got — deliberately NOT done yet, owner should decide scope first.**
 
@@ -985,11 +898,15 @@ dig into this specific historical instance now.
 
 No DECIDE BY — revisit only if it recurs.
 
-**39. Opportunity-cost rotation — owner-requested. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. PM's prompt surfaces one comparison — weakest held vs. strongest new-with-no-room — when existing book risk is past the tradeable floor. 25% score margin gates it (PROVISIONAL, cited, `SEAT_WEIGHT`/31's posture); an ineligible holding needs no margin. Surfaces only, never edits. Design in `docs/INCIDENT_HISTORY.md`.
+**39. Opportunity-cost rotation — owner-requested, LIVE but never yet fired. `src/rotation.py`.** The risk ceiling blocks a candidate but never asks if it beats what is held. Two tiers. The CATEGORICAL tier (a holding that fails the desk's own entry rules today, so it would not be bought now) is the only one that can EXECUTE: `execution.rotation_enabled: true` since 2026-09-12, and it appends one zero-size PM target that travels the identical path as any PM-decided close — constructor, hard risk rules, AI Risk Manager per-symbol refusal, the item-25 holding-discipline claim check, and the protected-sell cancel-write-ahead discipline. No bypass and no new exempt reason category exists; verified by re-reading the exit gates 2026-09-13. The RANKED-MARGIN tier is surfaced to the PM as text and can never execute. **Never executed against a live broker** — no trading timer has run on the box since ~2026-09-03, so the first real rotation is also its first end-to-end proof; watch it.
 
-**49. The risk budget is now the binding constraint on a full day's eligible set, and nothing decides how to ration it — OPEN, surfaced 2026-09-12 by item 1(d).** Measured on `run-64290730` after the reward:risk floor was removed by setup type: eligible names 12 -> 25, and the eligible set's total requested risk is **48% against a 25% `max_portfolio_risk_pct` budget**. The floor was previously doing the rationing by accident — refusing enough candidates that the budget rarely bound. It no longer refuses them, so the budget binds on a normal day and something must decide WHICH permitted trades get the capital. Today that is whatever order `allocate_risk_budget` happens to process in, which is not a decision anybody made. Real options, none costed yet: rank-ordered (best-scored first until exhausted), proportional scale-down (everyone sized smaller), conviction-tiered, or a hard cap on names per session. Each is a different desk, not a tuning knob — owner call. Do NOT resolve by re-tightening the floor that was just removed.
+**39(a). The 25% rotation score margin is an invented constant — OPEN research question, not an owner call.** *Verdict 2026-09-13: the SHAPE is sourced, the NUMBER is not.* `ROTATION_MARGIN_PCT = 0.25` is documented as "the conservative end of a 5%-25% range", but none of the cited sources measures the quantity this desk applies it to.
 
-**DECIDED 2026-09-12 by the owner: rank-ordered, best first.** His words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The budget is spent on the best-ranked eligible candidates until it is exhausted; the remainder are not taken, and are not silently shrunk to fit. Proportional scale-down was explicitly rejected in the recommendation he accepted, on the grounds that sizing everyone smaller turns every strong idea into a weak one. **Still to BUILD** — `allocate_risk_budget` today spends in whatever order it happens to process in, which is the defect; the decision above is not yet implemented. Whether a partially-affordable candidate at the cut line is taken at a reduced size or skipped entirely is the one sub-question the decision does not settle, and must be raised with the owner rather than assumed.
+**The exact open question:** how much better must a new candidate's composite verdict score be than an incumbent holding's before swapping them is worth the round-trip cost — expressed on the verdict score, which is the unit this desk actually ranks on?
+
+**Already searched and ruled out — do not repeat this.** Grinold & Kahn establish that a no-trade region EXISTS under transaction costs; they hand over no number, and their breakeven is in expected-return-versus-cost units this desk does not compute. FTSE Russell's banding is a real production rule of exactly this shape, but its band is a percentile of index-membership rank, not a margin on a signal score. The 2026-09-13 literature sweep on rebalancing tolerance bands (Alpha Architect, Kitces, Morgan Stanley's 10-20% buffers) returns only ALLOCATION-DRIFT bands — how far a position's WEIGHT may wander from its target weight — which is a different quantity with a different unit, and importing its number would be that literature's figure doing a job it never measured. Backtesting a replacement against this desk's own history is FITTING and settles nothing; it is named here only to be ruled out.
+
+**Why this is not currently deciding money:** the categorical tier is checked first and needs no margin, and the ranked-margin tier is information-only, so the invented 25% today gates only whether a comparison is PRINTED in the PM's prompt. It must not be promoted to an execution gate until the question above is answered. **What would settle it:** a published study measuring the turnover-versus-decay trade-off of cross-sectional rank swaps as a function of the SIGNAL gap, not the weight gap; failing that, deriving the breakeven from this desk's own measured round-trip cost (spread plus slippage on the two names involved) against the score-to-expected-return mapping — which the desk does not compute today, and building that is the real prerequisite.
 
 **52. What, if anything, should gate an insider trade on its SIZE — REFRAMED 2026-09-13, no longer an owner call.** *Was: "insider-cluster size should be relative to a filer's holdings, not an absolute dollar filter — owner call." The premise has changed and the item is restated rather than closed.*
 
@@ -1062,13 +979,13 @@ No DECIDE BY — revisit only if it recurs.
 
 **60. The exit path shares its risk-review seat with the buy plan, wearing five stood-down or inverted checklist exceptions — OPEN, owner call, deferred 2026-09-13 while PR #343 (merged) repaired the seat's honesty about the exceptions rather than replacing it.** The AI Risk Manager audits both the morning BUY plan and the position reviewer's SELLs, but it was built and tuned for the buy plan only. Today's repair stopped it lying to itself on the exit path — it had been telling itself, on every exit review, that the PM's mandatory `continuity_check` and `premortem_check` audit steps were skipped, when those fields do not exist on the position reviewer's schema at all — but it did not give the exit path a reviewer of its own. Four checklist items are now stood down on that path as not applicable (the PM-only reasoning-chain audit; the $0.0 risk/reward geometry check, since an exit has no entry to measure a ratio against; sizing sanity, since there are no BUYs or SHORTs on this path to size; and Tech-block verification, since no TechAnalyst call runs on the midday/close loop that produces one to check). A fifth, event risk, is inverted rather than stood down: an imminent binary event argues for refusing a BUY (it carries less risk through the event) but for closing a SALE (refusing carries the position THROUGH it) — the seat's prompt now says so explicitly (`src/agents/risk_review_mode.py`). Two of the seat's three levers are discarded entirely on this path: `modifications` and `scale_all_buys` are applied only in the morning `RiskStage` (`_apply_risk_modifications`); the exit call site's own `_exit_verdict` is unused. Refusal is the only thing that does anything here. That leaves four deterministic Python gates plus one narrowed AI veto between a wrong exit and the book, and each gate is narrower than it looks: `holding_discipline_claim_check` returns "ok" whenever the position is not `protected` and passes every UNVERIFIABLE claim by design; the metric-contradiction veto is guarded by `and metric_deltas` in `pipeline.py` and never runs without recorded prior metrics for that symbol; the noise band is bypassed by any reason citing external information, which the named-trigger gate all but requires to fire; and the named-trigger gate itself checks that the reason uses recognised words, not that the claim is true. None of the four, alone or together, can catch a plausibly-worded, deterministically-clean, wrong exit — that gap is now named in the seat's own prompt as the job its remaining checklist item exists to cover. The archived record cannot yet say whether this matters: exactly THREE exit reviews exist in the archived database (rows 296, 319, 330), all pre-fix, all APPROVED, zero modifications, 8 of 8 exits allowed — evidence the seat has not yet subtracted value, not evidence it adds any. The direction of harm is the asymmetric one: a veto on the morning path stops a purchase, which costs nothing; a veto on this path stops a SALE, and a refused exit leaves a position whose thesis has broken on the book overnight, protected only by the broker stop. **The decision (BOARD_NOTES 60):** should the exit path get its own reviewer — its own prompt, its own output schema — instead of a buy-plan auditor wearing exceptions? Deliberately deferred rather than answered: the repair that landed makes the shared seat truthful about what it cannot see; it does not settle whether a shared seat is the right design at all.
 
-**61. The rehearsal report's "orders the portfolio manager proposed" count is not scoped to orders the portfolio manager actually produced — OPEN, cosmetic, found 2026-09-13 while fixing item 28.** `ops/rehearsal/report.py`'s `_collect_counts` sets `report.proposed` from a `COUNT(*)` over the `trades` table for `action IN ('BUY', 'SELL')` on that run, and separately falls back to `len(orders)` when that count is zero — neither check reads whether the Portfolio Manager seat was actually invoked that run. In the reproduction of the cost-ceiling failure (`tests/test_rehearsal_reproduces_cost_ceiling.py`, see item 28) the report printed "1" under that label on a run where the Portfolio Manager was never called at all. The label is printed verbatim at `ops/rehearsal/report.py:559`: `f"  Orders the portfolio manager proposed ...... {self.proposed}"`. Costs nothing in trades placed or capital risked — this is a report a human reads after the fact to judge whether a rehearsal behaved as intended, and on at least one run it attributed output to a seat that never ran.
-
 **62. Three ceilings that shape order size live only in the Portfolio Manager's prompt, with no settings key and no recorded derivation — OPEN, found 2026-09-13 while rendering PM's limits from config (PR #349).** Every other number on that sheet now renders from `config/settings.yaml`; these three cannot, because no setting exists to render. They are: (a) the **earnings-queued 1% RISK cap** on a BUY in a name that has `JUST FILED` (`config/prompts/portfolio_manager.md`, the sizing formula's `queued_cap` and the hard-rule table's row 3); (b) the **momentum-leader starter sleeve's 1.0% RISK per-name ceiling**; (c) the **10% cash floor** the sheet's worked example measures against. What was searched, and found: `grep -rn` across `src/` and `config/settings.yaml` for a settings key or a constant behind any of the three returns nothing — there is no `cash_floor`/`min_cash` anywhere in the repo, and no key for either 1% figure. The one piece of enforcement that exists does not match what the sheet says: `TradingPipeline._clamp_queued_earnings_buys` (`src/pipeline.py`) caps the resulting **position WEIGHT** at a `max_pct` defaulting to **5.0**, and its only call site (`src/pipeline_stages.py`) passes no override — so the belt behind the sheet's "1% risk" is a 5% weight cap, which is neither the same quantity nor the same number. The other two have no deterministic backstop at all. `tests/test_risk_prompt_limits_live.py` exempts all three from the hand-typed-limit check, pointing here; **that exemption is a place to record the question, not an answer to it.** Under the desk's no-arbitrary-numbers rule a live ceiling must be read off the instrument or cited to a published source, and none of the three has either on record. **What would settle it:** for each of the three, a derivation or a published source for the number, or a decision that the ceiling should not exist. For (a) specifically, whether the intended quantity is risk or weight — and if the number survives, all three become settings and render like the rest of the sheet. Deliberately NOT answered inside PR #349: that PR removes second homes for numbers that already have a first one; deciding what an un-derived number should be is a different question and this one is the owner's.
 
 **63. `signal_weight` cannot say "pay attention, and the sign is the other way" — OPEN, no source found, carried out of item 52.** One scalar in `[0,1]` does two jobs: it is the ranking sort key and the dollar multiplier deciding what reaches the analyst seat. It has no way to express direction. Scott & Xu (FAJ 2004) measure an insider sale under 10% of the holding at **+0.68%** size/B-P-adjusted quarterly excess return, significant at 1% — a mildly *bullish* fact arriving on a *sell* row. Today that row gets weight 1.0, identical to an insider dumping 80% of a position at −0.81%; before 2026-09-13 it got 0.0 and vanished from the ranking. Both are wrong, in opposite directions. **Not a number to pick.** Choosing a multiplier that splits the difference would be fitting, and the ratio and band are already reported on every observation so the seat can read the sign itself — this item is about whether the *deterministic* ranking should also know it. **Searched and ruled out:** Scott & Xu themselves (they report band returns, never a weighting scheme); Cohen/Malloy/Pomorski, whose routine/opportunistic split is a binary with no magnitude and no direction; the desk's own history, which has too few insider-sourced fills to measure anything. **What would settle it:** a published source that scores insider signals on a signed scale rather than sorting them into bins, or enough of this desk's own outcome data to read a separation directly — neither exists yet. Until one does, the ratio stays reported and unweighted. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-13.
 
-**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 11, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 50, 51, 54, 58 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52, whose own unresolvable residue is item 63.
+**64. The backtest rations the risk budget alphabetically, and cannot do otherwise until it has a candidate ranking — OPEN, found 2026-09-13 while building the best-ranked-first rationing rule (retired item 49; see `docs/INCIDENT_HISTORY.md`, 2026-09-14).** `src/backtest/engine.py` builds every day's candidates and hands `allocate_risk_budget` one `RiskRequest` per candidate at `config.risk.max_position_risk_pct` — the SAME number for all of them. The allocator's pre-decision ordering is largest-request-first with an alphabetical tie-break, so with every request identical the tie-break is the ONLY thing ordering them: on any day the budget binds, the backtest funds candidates in alphabetical order. That work fixed the production path by spending the budget down `rank_verdicts`' own order, and deliberately did NOT touch this one: the backtest is signal-driven and produces no analyst verdicts, so there is no ranking to spend down and inventing a score to stand in for one is exactly what the no-arbitrary-numbers rule forbids. **The consequence:** any backtest run on a day where total requested risk exceeds `max_portfolio_risk_pct` measures a desk that picks trades by ticker spelling — so its results on those days do not describe the desk that now runs in production, and neither the old nor the new production rule can be evaluated by backtesting until this is closed. **What would settle it:** either the backtest gains a deterministic per-candidate score derived from the same signal machinery it already computes (and that score has to be read off something, not fitted), or the engine is honestly documented as unable to evaluate rationing behaviour and every result is reported alongside how many of its days had a binding budget. Nothing was searched for yet beyond confirming the requests are uniform, which was read directly off the code.
+
+**Retired item numbers — never reuse.** 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20, 24, 25, 28, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 58, 61, 67, 90, 101, 200 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52, whose own unresolvable residue is item 63. Items 55-59 were briefly and incorrectly listed here as retired by a mis-resolved merge on 2026-09-13 (fix/rehearsal-cost-ceiling-reproduces) — no incident write-up for them exists, `docs/BOARD_NOTES.md` never stopped carrying their prose, and their WORK.md content is restored above; they are OPEN, not retired. Item 52 was also briefly and incorrectly caught in that same list despite its own paragraph remaining open above; corrected here — it is not retired.
 
 ## Evidence-only follow-ups
 

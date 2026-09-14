@@ -114,6 +114,235 @@ window is still the ATR period rather than a figure of its own. Two more
 feed the same percentage gap to a quiet name and to a volatile one and
 require opposite answers, which no flat threshold can pass.
 
+---
+
+### 2026-09-14 — item 49 closed: the desk was choosing which trades to fund by how much they asked for, and nobody had chosen that
+
+**In plain words:** the desk can only risk so much in total — a quarter of the
+account. Until 2026-09-11 that ceiling almost never got in the way, because
+another rule was throwing out so many trades that there was always room. That
+rule was removed for being wrong, and the number of trades the desk is allowed
+to take roughly doubled. So the ceiling now binds on an ordinary day: the desk
+wants to risk about twice what it is permitted to, and something has to decide
+which trades actually get the money. Nothing did. The money went to whichever
+trade had asked for the BIGGEST amount — a measure of size, not of quality, so
+a mediocre idea asking for a lot beat an excellent idea asking for a little,
+every time. The owner's decision was best-ranked first: fund the strongest
+idea, then the next, until the money runs out. That is now what happens. A
+second, smaller problem was found and fixed alongside it: a trade that missed
+out purely because the money ran out was leaving no record at all of why — it
+simply vanished off the order list.
+
+**Both halves are now ratified.** The owner settled the ORDER on 2026-09-12
+("be ran by the best, why bother with crappy ones if you've got a choice, go
+with the best") and the CUT LINE on 2026-09-14. The item is closed; number 49
+is retired and is never reused.
+
+**The measured case this was built against.** Run `run-64290730`, after the
+reward:risk floor was removed by setup type: eligible names went 12 → 25, and
+the eligible set asked for **48% of equity at risk against the 25%
+`max_portfolio_risk_pct` ceiling**. Those two aggregates are what was measured;
+the per-name split below is arithmetic on their average (48 / 25 = 1.92% per
+name), NOT recovered per-symbol data, and is labelled so nobody quotes it back
+as a measurement.
+
+Worked through at that average, with the desk's own 0.5% minimum tradeable
+size:
+
+- 12 names funded in full at 1.92% each — 23.04% committed.
+- The 13th finds 1.96% of headroom left, asks 1.92%, and is funded in full —
+  24.96% committed.
+- The 14th finds 0.04% left. That is under the 0.5% floor, so it is DENIED
+  rather than shrunk to a token position — unchanged behaviour, and the
+  reason the floor exists.
+- Names 15 through 25 find nothing at all.
+
+So roughly half the eligible sheet cannot be funded on a normal day. **Before
+this change**, the 13 that got funded were the 13 that had asked for the most
+risk, ties broken alphabetically. **After**, they are the top 13 of the desk's
+own candidate ranking. The count funded is identical; which names they are is
+not, and that was the whole point.
+
+**The cut line: taken at reduced size, not skipped. Ratified 2026-09-14.**
+When the ranking runs out of money part-way through a name, that name is
+funded with whatever is left rather than passed over. The reason, recorded
+because a decision without one rots: **cutting the size does not damage the
+trade.** Same instrument, same stop, same reward-to-risk geometry — fewer
+shares. Nothing about the idea is degraded by owning less of it. And it needs
+no invented number, because the existing `min_position_risk_pct` floor (0.5)
+already decides when a remainder is too small to be worth taking; below the
+floor the target is DROPPED, never zeroed.
+
+**Explicitly rejected at the cut line:** skipping the partially-affordable
+name and continuing down the ranking for a cheaper one that fits in full. That
+funds a worse-ranked idea purely because it costs less, which directly
+contradicts the "go with the best" ruling. The rejected branch is kept written
+and tested behind the named switch `PARTIAL_FIT_POLICY`, so revisiting the
+ruling would be a decision rather than a rewrite — a ratified default is not a
+reason to delete the alternative.
+
+**Also rejected, at the 2026-09-12 decision:** proportional scale-down (sizing
+everyone smaller turns every strong idea into a weak one), conviction tiering,
+a hard cap on names per session, and re-tightening the reward:risk floor that
+had just been removed.
+
+**What "best-ranked" actually resolves to, and whether it is sound.** It is
+`src/verdicts.py::rank_verdicts`, reused unchanged — no new score was invented
+and none could be, under the no-arbitrary-numbers rule. Its order is: the
+composite of each reporting seat's direction magnitude and conviction (seats
+weighted by a research-informed prior, 2026-09-03), then the trade's real
+structure-derived reward:risk as a tiebreak, then the symbol name as a final
+stabiliser. Two honest caveats, stated rather than papered over:
+
+- The symbol-name stabiliser is alphabetical. It is only reached when two
+  candidates are equal on BOTH real signals, so this is not the "ranking is
+  mostly alphabetical" defect already recorded against the EXIT path — that
+  was checked for specifically. Entry ranking does not have it.
+- The seat weights (1.2 technical/earnings, 1.0 news, 0.8 smart_money/macro)
+  are a research-informed prior, not a measurement of THIS desk's analysts.
+  That is already flagged on the board as item 31's posture. It was true
+  before this change and is unchanged by it — but it is now load-bearing for
+  which trades get funded, not only for the order they are listed in, which
+  is a real increase in what that prior decides.
+
+**The ranking that is used is the ranking the model was shown.** It is taken
+from the Portfolio Manager's own prompt-rendering pass and threaded through to
+the allocator, never recomputed downstream. Recomputing would risk rationing
+against numbers the model never saw. Same pattern, and the same reason, as the
+rotation pre-check.
+
+**A candidate that loses the budget is no longer silent.** This was the one
+constructor drop path with no durable per-symbol record. Its log line read
+"Constructor: X produces no order — risk budget granted 0% ...", and the
+drop-reason capture's pattern requires the words rejected/refused/skipped
+after the symbol, so it did not match — every budget-rationed name reached the
+database as the generic `constructor_dropped` with the detail "no matching
+constructor log line captured". Verified by running the capture's own regex
+against the real message before changing anything. It now goes through the
+same structured refusal channel every other named constructor refusal uses,
+under the code `risk_budget_exhausted`, with the requested percentage, the
+binding ceiling and the plain statement that nothing is wrong with the idea —
+it passed every gate and lost only the queue. Once the budget binds on a
+normal day, that was about to become the largest unexplained bucket on the
+sheet.
+
+**Not zeroed, dropped.** A 0% risk target is read downstream as "sell it". A
+budget refusal leaves no plan for the symbol at all, so the delta loop skips
+it and a held position is left exactly where it is. Refusing to open is not a
+decision to close. Pinned by a test.
+
+**What was deliberately NOT done.** No new constant was introduced — the
+change is an ordering, and it reads its order off machinery that already
+exists. The backtest engine still rations largest-first, which with its
+uniform requests means alphabetically; it has no candidate ranking to spend
+down, so it was filed as its own open board item rather than papered over
+with an invented score.
+
+---
+
+### 2026-09-13 — the Risk Manager's and Portfolio Manager's prompt sheets now render their limits from settings, not hand-typed prose
+
+The reviewer's standing sheet stated its limits as hand-typed prose. It said
+the long single-name ceiling was **33%** against a real `max_position_pct` of
+**65** — and that was **wrong at birth, not drift**: commit `e1c639a2`
+(PR #297, titled "single-name cap 100 -> 33") set the setting to 65 and typed
+33 into the sheet in the same diff. The same commit ALSO wrote
+`max_position_pct=65` correctly into the sheet's hard-rule inventory, so the
+sheet contradicted itself from minute one. **No verdict or log row has been
+found showing the stale 33 changed an outcome, and none is claimed** — what
+was fixed is an internal contradiction and the mechanism that allowed it.
+
+The line that commit replaced was relational ("half the long single-name
+ceiling") and therefore drift-immune; it was swapped for a literal. That
+sentence is now relational again. A second, genuinely stale one said the
+constructor caps a stop-out at 0.5% of equity against a ratified
+`max_position_risk_pct` of 5 — and it named the wrong binding mechanism as
+well, since the §9.4 agreement ceiling and the budget allocator narrow the
+real per-trade budget before the 5% envelope is reached. Rewritten to name
+what binds first.
+
+The sheet now carries `{{risk.<setting>}}` placeholders rendered by
+`src/agents/prompt_limits.py` from the same config object the engine is built
+from, **at agent construction** (not on first LLM call, which is the risk
+stage — after the whole day's analysis is paid for). Two build checks: a
+number beside a setting's name, and a number stated as the value of a
+ceiling/cap/budget/limit/floor phrase. Only the second catches the 2026-09-11
+shape; that gap is pinned by its own test.
+
+**FOUND WHILE FIXING — pre-existing, latent, NOT swept.** `src/pipeline.py`
+builds the risk engine's `RiskConfig` from a hand-enumerated argument list.
+**22 declared risk settings were absent from it** and silently fell back to
+pydantic class defaults, ignoring settings.yaml. Every one of those defaults
+currently equals its settings value, so nothing is live-wrong — but
+`allow_margin` was the same omission and did bite (it defaulted False while
+settings said True, blocking a user's BUYs). The seven settings the two sheets
+render are now threaded; **the remaining 15 are open work**, pinned by a test
+that fails if the count grows or if any omitted setting ever diverges from its
+default. Threading them changes enforcement and needs its own review.
+
+**PM's sheet, same treatment, same PR series.** `portfolio_manager.md` now
+renders ten settings and `tests/test_prompts_anchors.py`'s two value anchors
+are retargeted to the placeholders. Correcting an earlier claim in this
+entry: PM's sheet did not stay correct on 2026-09-11 because the human
+process was better — it stayed correct because that anchor test pinned the
+literal and the reviewer's sheet had no such anchor. The check held; it just
+cost a third hand-maintained copy of the number.
+
+**PM's parity is against TWO objects, not one.** `src/risk/rules.py` contains
+no reference at all to `max_cluster_risk_share_pct`, `short_gap_risk_multiple`,
+`min_position_risk_pct` or `max_portfolio_risk_pct` — those four are enforced
+by `PortfolioConstructor` from a separately built `ConstructorConfig`. The
+parity tests now build BOTH objects through the pipeline's own extracted
+builders (`build_risk_config`, `build_constructor_config`) and check that
+MOVING a setting moves what the objects carry, rather than scanning
+`src/pipeline.py` for a keyword name — a scan a hard-coded
+`max_gross_bearish_pct=20.0` would have satisfied.
+
+**Still open, pre-existing:** `build_constructor_config`'s `_risk_setting(name,
+default)` pattern types a literal fallback for roughly twenty settings, so each
+of those keeps a home in `src/pipeline.py` on top of settings.yaml and the
+dataclass field default. Not touched here — sweeping it changes sizing
+fallbacks nobody has reviewed. The equivalent literals on the risk engine's
+side were removed in this PR (`_threaded_risk_settings` omits a non-numeric
+read instead of substituting a number), and `min_position_risk_pct` now passes
+a legal **0** through both paths rather than being swallowed into a default.
+
+**Also open:** `config/settings.yaml`'s own `max_single_short_pct` comment
+still says "At 33 this cap is now roughly a THIRD of the long ceiling" —
+stale from the same commit, in the settings file itself.
+
+
+---
+
+
+### 2026-09-13 — the rehearsal report attributed trades to the portfolio manager even when it never ran (item 61)
+
+**In plain words:** after a test rehearsal, a summary report would print how
+many trades "the portfolio manager proposed" — but the count included trades
+from other sources that shared the run_id. On one run where the Portfolio
+Manager had failed (returned no valid decision), the report printed "1" when
+the only trade in the database came from emergency liquidation, not the PM.
+Costs nothing in real trading (a rehearsal is offline, no capital at risk),
+but it misleads whoever reads the report to judge whether a rehearsal ran as
+intended.
+
+**The mechanism.** `_collect_counts()` counted trades by querying the `trades`
+table (`SELECT COUNT(*) ... WHERE action IN ('BUY', 'SELL')`), which is wrong
+for two reasons: (1) BUY/SELL trades come from other session stages that share
+the run_id — emergency liquidation at src/pipeline.py:8008 and position reviewer
+exits at :9281 — and get falsely attributed to the PM; (2) when the PM stage
+enters but fails (a common case), its agent_logs entry is still written with the
+failure string as output_summary, so no proxy check on agent_logs can
+distinguish failure from success.
+
+**The fix:** count from `specialist_evidence` rows where `agent_name='portfolio_manager'`
+and `kind='proposed_order'`. These rows are written only AFTER the PM decision
+passes validation (src/pipeline_stages.py:4292-4300), so they correctly capture
+only valid PM proposals and exclude both the failure case and trades from other
+sources. This is shorter, needs no proxy, and is the ground truth.
+
+---
+
 ### 2026-09-13 — the insider holdings data the board said we did not have was already being downloaded, parsed and stored — and the filter using it was throwing away the one band the research calls a buy signal (item 52)
 
 **In plain words:** the board carried an open owner decision asking whether to
@@ -258,6 +487,94 @@ piece that cannot be settled by any source found is filed separately as item
 63.
 
 ---
+
+### 2026-09-13 — the permanently-red cost-ceiling test: what it was actually failing on, and why the September fix could not have worked (item 28)
+
+**In plain words:** one automated check had been failing every single run for
+over a week, and everyone had learned to read "1 failed" as normal. It was
+declared fixed on 2026-09-04 and it was not. The reason it kept failing had
+nothing to do with money or with the cost limit it was supposed to be
+guarding — it was failing because it demanded that a rehearsal of an old
+trading morning use exactly as many AI calls as that morning did, and the
+desk now watches more stocks than it did then, so it needs more.
+
+**What the check exists for.** On the morning of 2026-08-28 the desk's
+spending circuit refused the Portfolio Manager's call outright, so no trade
+was proposed at all. The refusal was based on a *projection* of what the call
+might cost: it guessed the session would reach $1.9118 against a $1.80
+ceiling. The four analyst calls that had actually run that morning had settled
+at $0.0460784 between them. The circuit stopped the desk on an estimate forty
+times the real spend. The check's job is to be able to reproduce that class of
+failure offline, on demand, for free.
+
+**Why the 2026-09-04 fix could not have worked.** That fix deleted a second
+test function that set two config keys the cost-circuit rewrite had removed,
+and rewrote the surviving test's comments. Its recorded verification was that
+the file "compiles and can be collected" — it was never run. Two separate
+things were wrong underneath and neither was touched:
+
+1. *The surviving assertions guarded nothing.* All three trigger codes it
+   checked for had been deleted from the codebase along with the projection
+   layer. Asserting that three non-existent codes do not appear is true of any
+   run of any code.
+2. *The failure was somewhere else entirely.* The test insisted the technical
+   analyst never run out of recorded answers to replay. The rehearsal harness
+   snapshots production as it stands **today** and replays answers recorded on
+   2026-08-28; today's watchlist needs one more chunked call than that
+   morning's recording contains. The harness's own documentation says a
+   rehearsal is "a fresh session against a snapshot of production's state, not
+   a re-enactment of a past one" — so the test was asserting against the
+   harness's stated design, and would have stayed red however the cost circuit
+   behaved.
+
+**This was already written down, and the fix ignored it.** `docs/WORK.md` has
+carried the correct symptom since 2026-09-02, in the handoff text above the
+backlog: "today's pipeline makes more `tech_analyst` chunk calls than
+`run-be9f8f06` recorded ('all 4 recorded response(s) were already replayed')".
+Two days later the item was closed against a different theory without anyone
+running the test to see which of the two it actually was.
+
+**What was ruled out.** Not a production defect: the cost circuit is behaving
+as item 14 intended. Not a stale-config problem either — that was the
+2026-09-04 diagnosis and it was already resolved by then. Not deletable: the
+2026-08-28 failure *class* — the ceiling refusing the Portfolio Manager before
+it can spend — is still reachable, just through a different mechanism, so
+there was nothing to prove structurally impossible.
+
+**What the check does now.** It runs the same rehearsal twice against
+byte-identical inputs. The first run uses production's own configured ceiling
+and must reach the Portfolio Manager; it then reads out of that run's own
+cost ledger what had really settled by that point. The second run repeats the
+session with the ceiling set to that measured figure and nothing else changed,
+and requires that the settled-cost circuit fires and that the Portfolio
+Manager never reaches the provider at all. No number is invented: the ceiling
+is measured from the run it is applied to. The two runs read the same bytes
+because the second works from a copy of the prepared sandbox rather than a
+fresh snapshot of a production database that keeps moving.
+
+The tech-analyst assertion is gone on purpose, and the reason is written into
+the test: running out of recorded chunks is expected drift between a snapshot
+taken now and a recording made in August, and it is reported as a finding
+rather than treated as a defect. What still guards the chunk un-merge fix —
+before which replay ran dry on the second chunk and the session died nowhere
+near the Portfolio Manager — is the first run having to reach the Portfolio
+Manager at all.
+
+**Proof it still bites.** With the settled-session-spend branch of
+`_enforce_settled_limits_locked` disabled, the check fails on exactly the
+assertion that matters (the ceiling never fires and the Portfolio Manager
+reaches the provider). Restored, it passes.
+
+**The lesson worth keeping.** A test recorded as fixed without being run is
+not fixed, and a permanently-red test trains everyone to ignore the failure
+count — which is the same as having no test at all, plus a hiding place for
+the next one to break. "Compiles and can be collected" is not verification.
+
+---
+
+
+
+
 
 ### 2026-09-13 — item 17 closed: the desk-wide silence alarm's own systemd timer was finally installed on the production box, ten days after it started warning about itself
 
