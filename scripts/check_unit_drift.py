@@ -74,6 +74,9 @@ DEFAULT_UNITS_PATH = "/home/qamc/.config/systemd/user"
 # Where unit files live inside the checkout.
 REPO_UNIT_SUBDIR = "scripts/systemd"
 UNIT_SUFFIXES = (".service", ".timer")
+# The declared, reviewable list of deliberately paused units, tracked
+# alongside the units it describes.
+PAUSED_UNITS_FILENAME = "paused_units.yaml"
 
 
 @dataclass
@@ -86,6 +89,16 @@ class UnitDriftReport:
     modified: list[str] = field(default_factory=list)
     undeployed: list[str] = field(default_factory=list)
     not_enabled: list[tuple[str, str]] = field(default_factory=list)
+    # Declared-paused bookkeeping. `paused` is not an alarm: a unit on the
+    # paused list that is installed-but-not-enabled is exactly what a
+    # deliberate pause looks like. `paused_but_enabled` means the box and
+    # the list disagree — someone re-enabled the unit without updating the
+    # list — and IS drift. `paused_unknown` is an error in the list itself:
+    # it names a unit this repo does not track.
+    paused: list[tuple[str, str]] = field(default_factory=list)
+    paused_but_enabled: list[tuple[str, str]] = field(default_factory=list)
+    paused_unknown: list[str] = field(default_factory=list)
+    paused_list_error: str | None = None
     error: str | None = None
 
     @property
@@ -96,6 +109,7 @@ class UnitDriftReport:
     def has_drift(self) -> bool:
         return self.checked and bool(
             self.untracked or self.modified or self.undeployed or self.not_enabled
+            or self.paused_but_enabled or self.paused_unknown
         )
 
 
@@ -156,6 +170,28 @@ def is_enabled(units_dir: Path, unit_name: str, target: str) -> bool:
         return link.is_symlink()
 
 
+def load_paused_units(repo_dir: Path) -> tuple[list[str], str | None]:
+    """Unit names declared in `<repo_dir>/paused_units.yaml`.
+
+    Missing file means nothing is deliberately paused right now — not an
+    error. A file that exists but cannot be parsed as expected IS an error:
+    silently treating it as "nothing paused" would turn a typo in the list
+    into six new false alarms with no clue why.
+    """
+    path = repo_dir / PAUSED_UNITS_FILENAME
+    if not path.is_file():
+        return [], None
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text()) or {}
+        entries = data.get("paused_units") or []
+        names = [str(e["unit"]) for e in entries]
+    except Exception as exc:  # noqa: BLE001 — a malformed list must not crash the check
+        return [], f"could not read {path}: {exc!r}"
+    return names, None
+
+
 def build_report(
     repo_path: str = DEFAULT_REPO_PATH, units_path: str = DEFAULT_UNITS_PATH,
 ) -> UnitDriftReport:
@@ -185,12 +221,25 @@ def build_report(
         if (repo_dir / name).read_bytes() != (units_dir / name).read_bytes():
             report.modified.append(name)
 
+    paused_names, report.paused_list_error = load_paused_units(repo_dir)
+    paused_set = set(paused_names)
+    report.paused_unknown = sorted(paused_set - repo_set)
+
     # Enablement is only meaningful for units that are actually installed.
     # An undeployed unit is already reported above; saying it is also not
-    # enabled is the same finding twice.
+    # enabled is the same finding twice. A unit on the paused list is
+    # expected to be not-enabled — that goes to `paused`, not `not_enabled`,
+    # so a deliberate pause never reads as an alarm.
     for name in sorted(installed_set):
         for target in parse_wanted_by(units_dir / name):
-            if not is_enabled(units_dir, name, target):
+            if is_enabled(units_dir, name, target):
+                if name in paused_set:
+                    # The list says paused, the box says enabled: they
+                    # disagree. That disagreement is the drift.
+                    report.paused_but_enabled.append((name, target))
+            elif name in paused_set:
+                report.paused.append((name, target))
+            else:
                 report.not_enabled.append((name, target))
 
     return report
@@ -215,6 +264,21 @@ def format_alert(report: UnitDriftReport) -> str:
         lines.append("Installed but not enabled (declares WantedBy, no .wants link):")
         lines.extend(f"  {n} -> {t}" for n, t in report.not_enabled)
         lines.append("")
+    if report.paused_but_enabled:
+        lines.append(
+            "On the paused list but enabled on the box — the list and the "
+            "box disagree:"
+        )
+        lines.extend(f"  {n} -> {t}" for n, t in report.paused_but_enabled)
+        lines.append("")
+    if report.paused_unknown:
+        lines.append(
+            f"Named in {PAUSED_UNITS_FILENAME} but not tracked in "
+            f"{REPO_UNIT_SUBDIR}/ — error in the paused list:"
+        )
+        lines.extend(f"  {n}" for n in report.paused_unknown)
+        lines.append("")
+    lines.extend(_paused_section_lines(report))
     lines.append(
         "Deploy is: cp scripts/systemd/* ~/.config/systemd/user/ && "
         "systemctl --user daemon-reload"
@@ -222,12 +286,27 @@ def format_alert(report: UnitDriftReport) -> str:
     return "\n".join(lines).rstrip()
 
 
+def _paused_section_lines(report: UnitDriftReport) -> list[str]:
+    """The 'not an alarm' section, rendered the same way whether the run is
+    otherwise clean or already alerting on something else."""
+    if not report.paused:
+        return []
+    lines = ["Deliberately paused (not an alarm):"]
+    lines.extend(f"  {n} -> {t}" for n, t in report.paused)
+    lines.append("")
+    return lines
+
+
 def format_ok(report: UnitDriftReport) -> str:
-    return (
+    base = (
         f"check_unit_drift: in sync — {len(report.repo_units)} unit"
         f"{'s' if len(report.repo_units) != 1 else ''} tracked and installed "
         f"identically"
     )
+    paused_lines = _paused_section_lines(report)
+    if not paused_lines:
+        return base
+    return "\n".join([base, ""] + paused_lines).rstrip()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -254,6 +333,9 @@ def main(argv: list[str] | None = None) -> int:
     if not report.checked:
         print(f"check_unit_drift: {report.error}", file=sys.stderr)
         return 3
+
+    if report.paused_list_error:
+        print(f"check_unit_drift: {report.paused_list_error}", file=sys.stderr)
 
     if not report.has_drift:
         print(format_ok(report))

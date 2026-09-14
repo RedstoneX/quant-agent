@@ -446,7 +446,13 @@ the box, and the box cannot see a pull request:
   it into `.wants`). Compared against the *deployed checkout* rather than
   `origin/main` on purpose, so it stays disjoint from the deploy-drift alarm
   and the two never report one condition twice. Exit 1 is a finding; exit 3
-  is an operator problem and marks the unit failed.
+  is an operator problem and marks the unit failed. **Update, 2026-09-14:**
+  a `not_enabled` unit named in `scripts/systemd/paused_units.yaml` (the six
+  trading-session timers, disabled the same day for a reboot-proof pause) is
+  reported in a separate "deliberately paused" section instead of alarming,
+  and does not count toward the exit status; a paused-list unit that comes
+  back enabled, or a paused-list entry naming a unit not tracked in
+  `scripts/systemd/`, is still reported as drift.
 - **`tests/test_systemd_units.py`** gates the repository: no foreign
   `/home/*` path (the `/home/yebo` defect, pinned by name), `WorkingDirectory`
   at the deploy root, every `ExecStart` naming a script that exists, every
