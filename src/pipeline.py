@@ -8717,10 +8717,20 @@ class TradingPipeline:
         arrives after the seat has spoken.
 
         **The verdict's only live effect here is `rejected_symbols`.**
-        `modifications` and `scale_all_buys` are discarded — `_apply_risk_modifications`
-        runs only in the morning `RiskStage`, and this method returns a veto
-        set. The seat is told so plainly rather than being given guidance on a
-        lever with no effect.
+        `modifications` and `scale_all_buys` are applied by
+        `_apply_risk_modifications`, which is called ONLY from the morning
+        `RiskStage` (`src/pipeline_stages.py`); this method returns a veto set
+        and reads neither.
+
+        **Since 2026-09-14 they are no longer emitted at all here.** The seat
+        answers `ExitRiskVerdict`, which is `RiskVerdict` without those two
+        fields, and `ExitRiskReasoningChain`, which drops the `min_length=1`
+        demand from the three chain steps this path's own prompt already
+        stands down or inverts (`rr_audit`, `sizing_sanity`, `event_risk`).
+        Telling the seat a lever is discarded still spent its judgement on the
+        lever; the fix is to stop asking. Nothing about the morning BUY path
+        changed — `RiskVerdict` and `RiskReasoningChain` are untouched and all
+        six morning chain steps remain mandatory.
 
         **What this seat is shown (2026-09-13).** It is told explicitly that it
         is on the EXIT path (`review_mode`), so the renderer no longer stamps
@@ -8734,7 +8744,7 @@ class TradingPipeline:
         """
         from src.agents import risk_review_mode
         from src.models import (
-            PortfolioDecision, ReasoningChain, TradeDecision,
+            ExitReviewChain, PortfolioDecision, TradeDecision,
         )
 
         # COVER is the short-side twin of SELL/REDUCE (Stage 3 shorts gap
@@ -8790,17 +8800,19 @@ class TradingPipeline:
             return (value or "").strip()[:800] or risk_review_mode.NOT_AUTHORED
 
         proposal = PortfolioDecision(
-            reasoning_chain=ReasoningChain(
+            # `ExitReviewChain`, not `ReasoningChain`: `news_check` is a
+            # PM-schema field with no counterpart here and is not rendered to
+            # the seat on this path, but the parent makes it `min_length=1`,
+            # so it was being filled with a placeholder string that existed
+            # only to satisfy the constraint. The subclass relaxes that one
+            # field for this path alone; the morning chain is untouched.
+            reasoning_chain=ExitReviewChain(
                 macro_filter=_step(rc.macro_continuity_check),
                 # Slot reuse, not a category claim: `earnings_check` is PM's
                 # field name, and `risk_review_mode` labels this row
                 # "Thesis progress check" — the reviewer's own field — in the
                 # rendered message. Nothing about earnings is implied.
                 earnings_check=_step(rc.thesis_progress_check),
-                # PM-schema field with no counterpart here. Not rendered to the
-                # seat at all on this path; the marker only has to be non-empty
-                # for the schema and unmistakable in the stored agent log.
-                news_check=risk_review_mode.UNUSED_SLOT,
                 signal_conflicts=_step(rc.thesis_integrity_check),
                 sizing_logic=_step(rc.execution_rationale),
                 portfolio_balance=_step(rc.winners_discipline_check),
