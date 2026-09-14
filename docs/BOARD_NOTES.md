@@ -112,8 +112,8 @@ this line, one heading per item.
 
 ## item 1
 
-**Plain language —** Before placing a trade, the desk checks that the potential reward is large enough compared to the risk. That check compared the two using two different, inconsistent ways of measuring the stop distance, so it wrongly rejected about a quarter of all trade ideas. It also had a loophole: a trade could skip the check if a news story could be cited as justification, and one can be found for almost any well-known name.
-**Example —** One live signal came through at a reward-to-risk of 1.28 when the best the arithmetic could possibly produce was 1.29 — the stop had been pushed out to a fixed minimum distance instead of sitting where the chart said, so the trade was refused for failing a bar it was mathematically incapable of clearing. Separately, a trade in a very famous stock was let through below the required ratio because a citable news story was available — something true of nearly every big name.
+**Plain language —** The desk used to refuse any trade whose likely gain was under one and a half times its risk. That was the biggest single reason trades did not happen, and on 11 September you changed it: a breakout is no longer judged on that ratio at all, and a range trade with a thin payoff is kept but bought at the smallest size instead of refused. What is left is small: the 1.5 figure still decides which trades get the smallest size, and nobody has a source for it.
+**Example —** A range trade risking $2 to make $2.60 used to be refused outright. Now it goes through at the smallest starter size. The line between normal size and smallest size is still drawn at 1.5, a number nobody derived.
 
 
 ## item 3
@@ -124,8 +124,8 @@ this line, one heading per item.
 
 ## item 4
 
-**Plain language —** There are two separate reward-to-risk minimums enforced at two different points, using two different numbers, and neither is backed by real research. Both work as designed, but two different rules checking the same thing is confusing, and this one should be merged into the fix already underway for the main floor above.
-**Example —** A trade could clear an earlier 1.5-minimum check and still be blocked later by this separate 1.2-minimum check — two different numbers guarding essentially the same question.
+**Plain language —** Just before an order is sent, the desk re-checks that the trade has not got worse since the risk reviewer approved it. That is working as designed. Since 11 September it can no longer bring the old payoff rule back by the back door: it only asks whether the final order is worse than the one approved. Its 1.2 figure still has no source, and belongs with item 1.
+**Example —** A range trade is approved at 1.3 to 1. The price moves before the order is built and the final order works out at 1.1 to 1. It is refused because sending it would make the approved trade worse, not because it misses a fixed bar.
 
 
 ## item 8

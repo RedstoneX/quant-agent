@@ -69,6 +69,150 @@ fixture has fewer than 63 rows with levels or any actionable name without a
 structural ratio, and a test fails if the live gate and the grader ever
 disagree on the admitted set.
 
+### 2026-09-14 — the agent backlog (docs/WORK.md) was a fifth history and repeated reasoning; the finished and superseded parts were removed after checking each against the code
+
+**In plain words:** the file every agent session loads had filled up with
+descriptions of work that was already built, decisions already made, and
+warnings about things that no longer exist. None of it was open work, but
+every session paid to read it and some of it pointed agents the wrong way.
+Each block was checked against the code on main before it was removed. Every
+numbered item survived; no item number was retired by this pass.
+
+**Removed, and why each was no longer live:**
+
+- **"ITEM 0 CONTINUED — PM-input architecture" (2026-09-02, marked NOT YET
+  IMPLEMENTED).** Its three steps were all done or owned elsewhere: counting
+  what every seat forwards to the trade-picking seat was done 2026-09-13
+  ("item 18d / PM gate item 7", this file); reshaping the bulky sections was
+  the same work plus the 2026-09-14 macro-audit answer box ("item 18e");
+  the benchmark it asked for is item 76. The one example it measured (macro's
+  full reasoning rendered verbatim) is still rendered, deliberately, under an
+  audit instruction that now has somewhere to put its answer.
+- **Resolved lines in DECISIONS PENDING.** The "a level needs 5 touches"
+  ruling of 2026-09-03 is superseded: the touch count is now 2 and sourced
+  (item 55, 2026-09-14). The drawdown sensitivity (3.0, 2026-09-11), the macro
+  freshness question (2026-09-11), and the silence-watchdog threshold
+  (2026-09-03) each already have their own entry here. The "second alert
+  channel, deferred" line duplicated funnel item 17, which keeps it.
+- **Cost-circuit stopgap values** (`max_paid_sessions_per_mode_per_day: 8`,
+  `daily_reserved_exposure_limit_usd: 5.50`, "not the final values"). Neither
+  key exists in the settings any more; the config loader now lists both as
+  retired names (2026-09-04 entry, "acceptance test broken on main by deleted
+  cost-circuit config keys").
+- **"Duplicate Phase 2b work in flight"** in a separate worktree. That worktree
+  no longer exists on disk and git lists no worktree of that name.
+- **"The rig's acceptance test no longer passes" (2026-09-02).** Re-diagnosed
+  and rewritten 2026-09-13 (item 28 entry, this file).
+- **Item 18's `familiarity_bias` bullet** ("graded but never stated in the
+  prompt"). Since 2026-09-14 it grades nothing: it is a weight-0 diagnostic
+  in the model benchmark (`ops/model_policy/README.md`).
+- **One-off instructions** from 2026-08-29 ("the next session runs overnight
+  and must not ask anything") and pointer lines to material already moved
+  here.
+
+**Kept, shortened:** every numbered item, the one pending decision with its
+date, the PM-gate EMPTY marker, and the standing rules other files point at
+("Engineering setup", "Operational facts").
+
+**What would catch it next time:** the no-growth test on WORK.md forces a
+prune on every write; this pass is what that rule looks like when it has been
+skipped for a while.
+
+### 2026-09-14 — the reward:risk floor stopped refusing trades, and the four-part plan written for it is all built (funnel item 1, shrunk, not closed)
+
+**In plain words:** the rule that refused any trade whose likely gain was under
+1.5 times its risk was the single largest reason the desk did not trade — 17
+of 68 proposals between 2026-08-18 and 2026-09-02, and the Risk Manager was
+also halving other positions "per R/R enforcement policy" (XLF, XLE twice,
+XLB), which that count did not include. It failed in both directions at once:
+it refused good trades on a ratio the stop-padding rule had invented, and it
+waved famous names through an exception that the desk's own news feed could
+always satisfy.
+
+**The reasoning, so it is not re-derived:**
+
+- **Refusing on an invented ratio.** Run `run-64290730` (2026-09-01): SLB
+  entered at $60.10 with its stop at $55.50 — exactly the 3.0x ATR floor, not
+  a chart level — for a reward:risk of 1.28 against a geometric maximum of
+  1.29. Once padding rather than a level sets the stop, the floor cannot be
+  cleared.
+- **The exception handed out the key to its own lock.** A below-floor pick
+  was allowed with a named catalyst. On NVDA the model did everything the rule
+  asked — named a catalyst, cut size, stated the ratio was below floor, and the
+  Risk Manager agreed. The catalyst came from our own news feed, and a famous
+  name always has one.
+- **It was not the model recognising the name.** Blinding the ticker
+  (2026-09-02) changed nothing: NVDA was picked 5 of 5 in both arms, quality
+  identical to four decimal places. The cause was the gate.
+- **Retracted example, do not re-cite:** "the PM assumed R/R 1.67 but the
+  order had 1.18" was entry-price drift between snapshot and fill, not the
+  floor; the stop was identical on both (spec, 2026-09-04 correction).
+
+**The four parts, all built:** (a) one stop geometry everywhere, and a stop
+backed by a real level is honoured however tight — merged 2026-09-02; the
+padding multiple (2.5x ATR) applies only where no level backs the stop
+(2026-09-10). (b) the catalyst must point at a stored, dated row and its
+direction is checked, not just its existence (2026-09-02 and 2026-09-03).
+(c) a below-floor pick is capped at the smallest starter size in code, after
+the model answers; on 2026-09-11 a verified below-floor catalyst could
+actually produce a trade for the first time. (d) owner decision 2026-09-11:
+no reward:risk test at all for a breakout (nothing overhead to measure a
+reward against; the position is trailed), and for a range trade the ratio is
+a ranking tiebreak and a thin payoff is size-capped rather than refused. The
+execution-time re-check (funnel item 4) followed: none for a breakout, and
+`min(1.2, approved ratio)` for a range order, so it cannot reinstate the floor
+at the last step.
+
+**Also recorded:** the PM's "Proposal Conversion" block (telling the desk what
+it keeps asking for and not getting) shipped 2026-09-02 and was blind the same
+day, because the reset erased the 21 days of history it reads.
+
+**Why item 1 is not closed:** the 1.5 figure still decides which range trades
+are capped at starter size, and has no source; the catalyst exception no
+longer changes any outcome and nobody has decided whether to remove it; and
+the 68-proposal census has not been re-run. The board test also pins the
+item's headline.
+
+### 2026-09-14 — a morning whose research never arrived now stops before the trade-picking seat instead of deciding on half the evidence (item 20, categorical half built)
+
+**In plain words:** if one of the research seats failed outright — the call
+broke, the reply was unreadable, the provider was down — the desk still went
+on to pick trades as if that seat had simply found nothing. The owner's ruling
+of 2026-09-02 was that a decision made without the information is not a weaker
+decision but a made-up one. The morning session now refuses to decide when any
+seat's answer was lost, spends nothing further, and says so.
+
+**Why it needs no number.** Every status a seat writes is sorted into three
+kinds: a usable answer; an honest empty answer (no insider filings today is a
+fact, not a gap); or a lost answer. Only the third refuses the run. That is a
+yes-or-no fact, so there is no threshold to invent, drift, or fit to the
+desk's own history. It reads the statuses the seats already report, and a test
+lists the whole vocabulary so a new status word must be classified in the same
+change.
+
+**It is loud three ways** — its own owner alert, the existing data-quality
+page, and a session status classed as a warning, not a quiet day. It returns
+before any target exists, so it cannot produce the "0% target means sell"
+shape, and every symbol that reached a technical read gets a durable row
+saying why no decision was made on it.
+
+**Measured bite before shipping:** replayed against the desk's own logs, 5 of
+the 27 historical morning runs that reached the trade-picking seat (19%) would
+have been refused, on 4 of 13 trading days. Four of the five are one recurring
+fault — the news analyst replying with something that is not JSON (08-17
+twice, 08-18, 08-25, and two saved parse failures on 2026-09-04); the fifth is
+the SEC provider failing on 08-26.
+
+**A correction to the item's own premise.** It assumed a skipped morning costs
+half an hour because the 30-minute check retries. That check re-runs neither
+the research nor the decision; the only thing that can decide again is a scan
+of at most five names that moved 3% or more. On a quiet day a refused morning
+is closer to a lost day. The ruling stands regardless.
+
+**Left open on item 20:** whether partial coverage should also gate, and at
+what count (owner's; no published source exists), and the intraday path, where
+one status word means both "not asked" and "asked and lost".
+
 ### 2026-09-14 — the 2026-09-11 audit's unsourced numbers, checked one by one: all still in force, most owned by nothing
 
 **In one line.** An audit three days earlier listed about twenty numbers that decide whether and how much the desk trades and have no source behind them. Each was re-checked against the live code. None had been fixed. Two are already on the board; the rest are owned by nothing.
