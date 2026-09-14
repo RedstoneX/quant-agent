@@ -1046,6 +1046,9 @@ class TradingPipeline:
             max_target_reach_atr_multiple=_risk_setting(
                 "max_target_reach_atr_multiple", 1.5,
             ),
+            max_stop_width_reach_atr_multiple=_risk_setting(
+                "max_stop_width_reach_atr_multiple", 1.5,
+            ),
             max_target_horizon_sessions=int(
                 _risk_setting("max_target_horizon_sessions", 60),
             ),

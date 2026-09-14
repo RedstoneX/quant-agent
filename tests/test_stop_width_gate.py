@@ -523,3 +523,117 @@ class TestRecordedAsData:
             active_state_changes="", allowed_buy_symbols={"NVDA", "WIDE"},
         )
         assert not any(r.startswith("R6") for v in verdicts.values() for r in v)
+
+
+# ---------------------------------------------------------------------------
+# docs/WORK.md item 56, 2026-09-13 — the target number and the refusal number
+# are now two numbers, and a stop's width has a published reading.
+# ---------------------------------------------------------------------------
+
+class TestStopWidthReadingAndSeparation:
+    """Item 56: one constant was estimating targets AND refusing trades.
+
+    Nothing here ratifies a threshold — item 56 is still open. These pin
+    (a) the two jobs are now two knobs, (b) the reading that converts a
+    width into a probability is the published one and not a fitted curve,
+    and (c) what the shipped multiple is actually worth.
+    """
+
+    def test_target_and_refusal_multiples_are_independent_knobs(self):
+        """Moving the stop-width knob must not move the target knob."""
+        from src.portfolio_constructor import ConstructorConfig
+
+        cfg = ConstructorConfig()
+        assert cfg.max_target_reach_atr_multiple == 1.5
+        assert cfg.max_stop_width_reach_atr_multiple == 1.5
+        moved = ConstructorConfig(max_stop_width_reach_atr_multiple=3.0)
+        assert moved.max_target_reach_atr_multiple == 1.5, (
+            "the target estimate must not follow the refusal threshold"
+        )
+
+    def test_settings_expose_both_multiples(self):
+        """Both knobs exist in the ratified settings model."""
+        from pathlib import Path
+
+        from src.config import load_config
+
+        settings = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
+        risk = load_config(settings).risk
+        assert risk.max_target_reach_atr_multiple == 1.5
+        assert risk.max_stop_width_reach_atr_multiple == 1.5
+
+    def test_range_to_sigma_constant_is_the_gaussian_one(self):
+        """`ATR_PER_SIGMA` is sqrt(8/pi) — a property of the Gaussian.
+
+        Feller's range result, the one Parkinson (1980) builds the
+        extreme-value variance estimator on. Not tunable, not fitted.
+        """
+        from src.data.levels import ATR_PER_SIGMA
+
+        assert ATR_PER_SIGMA == pytest.approx((8.0 / 3.141592653589793) ** 0.5)
+        assert ATR_PER_SIGMA == pytest.approx(1.5958, abs=1e-4)
+
+    def test_touch_probability_matches_the_reflection_principle(self):
+        """P(touch) = 2(1 - Phi(z)), z = width_atrs * ATR_PER_SIGMA / sqrt(H)."""
+        import math
+
+        from src.data.levels import ATR_PER_SIGMA, touch_probability
+
+        for width, horizon in ((1.0, 1), (2.5, 20), (6.0, 60), (0.5, 5)):
+            z = width * ATR_PER_SIGMA / math.sqrt(horizon)
+            expected = math.erfc(z / math.sqrt(2.0))
+            assert touch_probability(width, horizon) == pytest.approx(expected)
+
+    def test_touch_probability_is_monotone_and_bounded(self):
+        from src.data.levels import touch_probability
+
+        assert touch_probability(0.0, 20) == pytest.approx(1.0)
+        assert 0.0 < touch_probability(50.0, 20) < 1e-6
+        widths = [0.5, 1.0, 2.0, 4.0, 8.0]
+        probs = [touch_probability(w, 20) for w in widths]
+        assert probs == sorted(probs, reverse=True)
+        # Wider horizon, same width: MORE reachable.
+        assert touch_probability(2.5, 60) > touch_probability(2.5, 5)
+
+    def test_unreadable_inputs_return_none_rather_than_a_guess(self):
+        from src.data.levels import touch_probability
+
+        assert touch_probability(None, 20) is None
+        assert touch_probability(2.5, None) is None
+        assert touch_probability(2.5, 0) is None
+        assert touch_probability(-1.0, 20) is None
+        assert touch_probability(float("nan"), 20) is None
+        assert touch_probability("wide", 20) is None
+
+    def test_the_shipped_gate_is_a_constant_and_very_low_probability(self):
+        """What 1.5 x ATR x sqrt(H) is worth, stated as a reading.
+
+        The cap scales with sqrt(H) exactly as the reading does, so the
+        probability it refuses at is the SAME at every horizon: ~1.7%. That
+        is the measured answer to "does this gate bind" — it refuses only a
+        stop with under a 2% chance of being touched inside the trade.
+        """
+        import math
+
+        from src.data.levels import touch_probability
+
+        at_the_cap = {
+            h: touch_probability(1.5 * math.sqrt(h), h)
+            for h in (5, 20, 40, 60)
+        }
+        for horizon, p in at_the_cap.items():
+            assert p == pytest.approx(0.016681, abs=1e-5), (horizon, p)
+
+    def test_the_desks_own_fallback_stop_cannot_trip_the_gate(self):
+        """2.5 x ATR is inside 1.5 x ATR x sqrt(H) for every H >= 3.
+
+        Arithmetic, not a measurement: the gate can only ever fire on a
+        level-backed or signal-bar stop, never on the band the desk itself
+        falls back to. Recorded so that a future change to either number
+        has to face this.
+        """
+        import math
+
+        for horizon in range(3, 61):
+            assert 2.5 <= 1.5 * math.sqrt(horizon), horizon
+        assert 2.5 > 1.5 * math.sqrt(2)

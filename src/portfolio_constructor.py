@@ -36,6 +36,7 @@ from src.data.levels import (
     derive_structural_target,
     horizon_reach,
     level_zone_halfwidth,
+    touch_probability,
 )
 from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
@@ -490,6 +491,10 @@ class ConstructorConfig:
     min_target_atr_multiple: float = 1.0
     breakout_projection_atr_multiple: float = 1.0
     max_target_reach_atr_multiple: float = 1.5
+    # The stop-WIDTH refusal threshold (item 56, 2026-09-13). Was the line
+    # above until today; same value, separate knob, because estimating a
+    # target and refusing a trade are two jobs and neither derived the 1.5.
+    max_stop_width_reach_atr_multiple: float = 1.5
     max_target_horizon_sessions: int = 60
     # The model's target is not thrown away — it becomes evidence. Above this
     # absolute percentage gap between the computed target and the model's
@@ -2200,12 +2205,39 @@ class PortfolioConstructor:
         # already refused such a trade by name on both live paths, so this
         # only ever passes a hand-built shim (the backtest engine).
         if atr is not None:
+            stated_horizon = getattr(
+                analysis, "expected_horizon_sessions", None,
+            )
             reach = horizon_reach(
-                atr, getattr(analysis, "expected_horizon_sessions", None),
-                max_reach_atr_multiple=self.cfg.max_target_reach_atr_multiple,
+                atr, stated_horizon,
+                max_reach_atr_multiple=(
+                    self.cfg.max_stop_width_reach_atr_multiple
+                ),
                 max_horizon_sessions=self.cfg.max_target_horizon_sessions,
             )
             width = abs(entry_price - honoured)
+            # The READING (item 56, 2026-09-13): what this width actually
+            # means, as the probability the stop is touched inside the
+            # horizon. Reflection principle + the range-to-sigma identity,
+            # both published, no chosen constant — `levels.touch_probability`
+            # carries the citations. Recorded on EVERY stop, passing or
+            # refused, because the threshold is still open and this is the
+            # measurement that would settle it.
+            p_touch = touch_probability(
+                width / atr,
+                min(
+                    int(stated_horizon or 0) or 1,
+                    max(1, int(self.cfg.max_target_horizon_sessions)),
+                ),
+            )
+            touch_note = (
+                f" Reading: a stop this far out is touched inside the "
+                f"horizon with probability {p_touch:.1%} "
+                f"(reflection principle; see docs/WORK.md item 56 — the "
+                f"desk has no derivation for where that probability becomes "
+                f"too low, and this multiple is convention)."
+                if p_touch is not None else ""
+            )
             if reach is not None and width > reach and not math.isclose(
                 width, reach, rel_tol=1e-9,
             ):
@@ -2216,13 +2248,21 @@ class PortfolioConstructor:
                     f"${entry_price:,.2f} entry — past the ${reach:,.2f} "
                     f"({reach / atr:.2f} x ATR) the instrument can plausibly "
                     f"travel inside this trade's "
-                    f"{getattr(analysis, 'expected_horizon_sessions', None)}-"
+                    f"{stated_horizon}-"
                     f"session horizon. A stop price cannot reach is not a "
                     f"stop, and the size computed from it would be fiction "
                     f"(Kullamägi's width rule in shape, the desk's own reach "
-                    f"as the unit).",
+                    f"as the unit).{touch_note}",
                 )
                 return None
+            if p_touch is not None:
+                logger.info(
+                    "Constructor: %s stop width %.2f x ATR over a "
+                    "%s-session horizon — touch probability %.1f%% "
+                    "(item 56 reading; gate at %.2f x ATR x sqrt(H)).",
+                    symbol, width / atr, stated_horizon, 100 * p_touch,
+                    self.cfg.max_stop_width_reach_atr_multiple,
+                )
 
         # -------------------------------------------------------------
         # ONE reward:risk gate, on the stop that will actually ship.
