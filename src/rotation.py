@@ -96,13 +96,55 @@ this module does not take.
 the failed entry rules, the broken-protection basis, the candidate's rank and
 score, the headroom — so the audit trail, the Risk Manager and the owner
 alert all read the same checkable statement.
+
+**Tier 2 is coverage-neutral as of 2026-09-14** (`docs/INCIDENT_HISTORY.md`,
+that date, retired board item 66). On
+2026-09-13 `src/verdicts.py::rank_verdicts` changed from a weighted AVERAGE
+across seats to a weighted SUM — correctly: the average made a second,
+fully AGREEING seat LOWER a candidate's rank. But a sum is not a rescaling
+of an average; the divisor it deletes is the name's OWN seat count, which
+differs per name. So the composite score of two different names stopped
+being comparable term-for-term the moment their coverage differed, and
+Tier 2's relative margin compares exactly two such names. It is a ratio, so
+it survives a change of UNITS — it does not survive a per-name change of
+term count, and the item's claim that "the margin is a ratio, so the scale
+change does not affect it" was checked here and does not hold.
+
+Concretely: a held name covered today by Technical alone (weighted score
+2.4 at full strength) is displaced by a new name that Technical rates
+identically but that also carries a live earnings filing and a confirmed
+flow (2.4 + 1.2 + 0.4 = 4.0 >= 2.4 x 1.25). Nothing about the held name
+changed; the earnings calendar moved. Measured against the desk's own
+archive (`specialist_evidence`, 2026-08-17..2026-09-02), the set of seats
+carrying a non-neutral read on a HELD name changes day to day, not over
+weeks: DIS, MSFT and V each fell to zero scoring seats on individual
+sessions and recovered, and RSG went from zero to one to two scoring seats
+inside five sessions. Coverage churn is a daily fact of this book, so this
+is reachable now, not eventually.
+
+The fix introduces no number and does not touch the sum. Tier 2 now
+computes the SAME weighted arithmetic over only the seats that scored BOTH
+names — the intersection of their coverage — and requires the margin to
+clear on that like-for-like sub-score as well as on the full composite. A
+term present on one side and absent on the other cannot enter a comparison
+between the two. When the two names share no scoring seat at all there is
+no like-for-like comparison to make and Tier 2 declines outright, because
+rotation refusing a sale it should have made costs an opportunity while
+rotation making one it should not have costs a real position.
+
+This is strictly a conjunction with the previous test: every rotation that
+fires now would have fired before, and some that would have fired no longer
+do. Tier 2 is therefore LESS likely to fire, never more — that is a
+property of the arithmetic, not an estimate. Breadth is undiminished
+everywhere else: it still orders `ranked`, still picks `best_new`, still
+picks the weakest held name, and still drives Tier 1 in full.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from src.verdicts import RankedCandidate
+from src.verdicts import RankedCandidate, score_verdict, seat_weight
 
 __all__ = [
     "ROTATION_MARGIN_PCT",
@@ -140,6 +182,17 @@ class RotationOpportunity:
     #: The held symbol's own blocking reasons, "ineligible_hold" tier only.
     reasons: tuple[str, ...] = field(default_factory=tuple)
     margin_pct: float = ROTATION_MARGIN_PCT
+    #: "ranked_margin" tier only — the seats that scored BOTH names, and
+    #: each side's weighted sum over exactly those seats. This is the
+    #: like-for-like comparison the margin was actually cleared on
+    #: (`docs/INCIDENT_HISTORY.md` 2026-09-14); the full
+    #: `new_score`/`held_score` above are
+    #: coverage-sensitive and are not comparable term-for-term between two
+    #: names whose seat sets differ. Empty for the categorical tier, which
+    #: makes no ranking comparison at all.
+    shared_seats: tuple[str, ...] = field(default_factory=tuple)
+    held_shared_score: float | None = None
+    new_shared_score: float | None = None
 
 
 def evaluate_rotation_opportunity(
@@ -211,16 +264,78 @@ def evaluate_rotation_opportunity(
         # failure recorded is a state this module does not attempt to
         # interpret further, rather than divide by (near) zero and guess.
         return None
-    if best_new.score >= weakest_held.score * (1.0 + margin_pct):
-        return RotationOpportunity(
-            new_symbol=best_new.symbol,
-            new_score=best_new.score,
-            held_symbol=weakest_held.symbol,
-            held_score=weakest_held.score,
-            tier="ranked_margin",
-            margin_pct=margin_pct,
-        )
-    return None
+    if best_new.score < weakest_held.score * (1.0 + margin_pct):
+        return None
+
+    # `docs/INCIDENT_HISTORY.md` 2026-09-14. The full composite is a
+    # weighted SUM over
+    # whichever seats happen to cover each name today, so the two totals
+    # above are not comparable term-for-term once the two names' coverage
+    # differs — and it does, daily (see the module docstring for the
+    # archive measurement). Re-run the identical arithmetic over the seats
+    # that scored BOTH names and require the same margin there too. No
+    # constant is introduced: `seat_weight` and `score_verdict` are
+    # `src/verdicts.py`'s own, unchanged, and the margin is the same one.
+    shared = _shared_seat_comparison(held=weakest_held, new=best_new)
+    if shared is None:
+        # No seat scored both names. There is no like-for-like comparison
+        # to make, so this module declines rather than compare two
+        # differently-composed sums. Failing toward NOT selling is the
+        # asymmetry the desk chose: a missed rotation costs an
+        # opportunity, a wrong one costs a real position.
+        return None
+    shared_seats, held_shared, new_shared = shared
+    if held_shared <= 0:
+        return None  # same non-positive-denominator refusal as above
+    if new_shared < held_shared * (1.0 + margin_pct):
+        return None
+
+    return RotationOpportunity(
+        new_symbol=best_new.symbol,
+        new_score=best_new.score,
+        held_symbol=weakest_held.symbol,
+        held_score=weakest_held.score,
+        tier="ranked_margin",
+        margin_pct=margin_pct,
+        shared_seats=shared_seats,
+        held_shared_score=round(held_shared, 4),
+        new_shared_score=round(new_shared, 4),
+    )
+
+
+def _shared_seat_comparison(
+    *, held: RankedCandidate, new: RankedCandidate,
+) -> tuple[tuple[str, ...], float, float] | None:
+    """Each name's weighted score over ONLY the seats that scored both.
+
+    Returns `(shared_seats, held_score, new_score)`, or `None` when the two
+    names share no scoring seat.
+
+    The arithmetic is `src/verdicts.py`'s own and is reproduced, not
+    re-derived: a seat's contribution to `RankedCandidate.score` is
+    `seat_weight(seat) * (magnitude + conviction_score)`, which is exactly
+    `seat_weight(seat) * score_verdict(verdict)`. Summing that over a
+    subset of seats therefore yields the same composite restricted to that
+    subset — a partial sum of the real score, not a second scoring scheme.
+
+    Neutral seats are deliberately NOT shared coverage. A seat that looked
+    and came back with no lean contributes nothing to either name's score
+    (`RankedCandidate.neutral_seats`, never `.verdicts`), so including it
+    would add two zero terms and change nothing except to make an
+    incomparable pair look comparable.
+    """
+    held_by_seat = {v.seat: v for v in held.verdicts}
+    new_by_seat = {v.seat: v for v in new.verdicts}
+    shared = sorted(set(held_by_seat) & set(new_by_seat))
+    if not shared:
+        return None
+    held_total = sum(
+        seat_weight(seat) * score_verdict(held_by_seat[seat]) for seat in shared
+    )
+    new_total = sum(
+        seat_weight(seat) * score_verdict(new_by_seat[seat]) for seat in shared
+    )
+    return tuple(shared), held_total, new_total
 
 
 @dataclass(frozen=True)

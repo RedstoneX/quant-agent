@@ -1905,6 +1905,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 "there is no room to buy it without freeing capital first."
             )
         else:
+            # `docs/INCIDENT_HISTORY.md` 2026-09-14: the composite score
+            # is a weighted sum
+            # over whichever seats cover each name today, so the two
+            # totals are NOT comparable term-for-term. The margin was
+            # cleared on both the totals and on the seats that scored both
+            # names; state the second one, because it is the comparison
+            # that is actually like-for-like.
             lines.append(
                 f"{opportunity.held_symbol} is the weakest still-eligible "
                 f"held position (score {opportunity.held_score:.2f}). "
@@ -1913,6 +1920,26 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 "margin, not a noise-level difference (cross-sectional "
                 "replacement-rule convention; see src/rotation.py) — but "
                 "there is no room to buy it without freeing capital first."
+            )
+        if (
+            opportunity.tier == "ranked_margin"
+            and opportunity.held_shared_score is not None
+            and opportunity.new_shared_score is not None
+        ):
+            shared = ", ".join(opportunity.shared_seats)
+            lines.append(
+                "Like-for-like check (this is the load-bearing one): those "
+                "totals sum whichever seats cover each name TODAY, so a "
+                "held name whose earnings or flow coverage has lapsed "
+                "scores lower for that reason alone. On the seats that "
+                f"scored BOTH names ({shared}), "
+                f"{opportunity.held_symbol} is "
+                f"{opportunity.held_shared_score:.2f} and "
+                f"{opportunity.new_symbol} is "
+                f"{opportunity.new_shared_score:.2f} — the same "
+                f"{opportunity.margin_pct:.0%} margin clears there too, so "
+                "this gap is not an artefact of coverage. Had it not, "
+                "nothing would have been surfaced."
             )
         lines.append(
             "This is a comparison, not an instruction: it names the "
