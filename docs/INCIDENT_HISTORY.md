@@ -22,6 +22,32 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the 2026-09-11 audit's unsourced numbers, checked one by one: all still in force, most owned by nothing
+
+**In one line.** An audit three days earlier listed about twenty numbers that decide whether and how much the desk trades and have no source behind them. Each was re-checked against the live code. None had been fixed. Two are already on the board; the rest are owned by nothing.
+
+**Why they are recorded here and not filed as twenty board items.** The desk's rule for an unowned number (`docs/OUTCOME.md`, outcome 3) is an owned board item stating the question, where the number came from, what was searched, what would settle it, and the cost while open — one object per item (item 55). A bulk list in that shape would not fit the backlog's byte cap and would bury the one finding from the same audit that can leave a position unprotected (item 73). So this is the verified inventory; each number becomes a board item when it is worked, in that format, and not before. It is not a decision that they are fine.
+
+**Verified on origin/main 2026-09-14. Owned by an existing item:**
+- insider dollar floors $100k / $250k — item 52.
+- `NOISE_BAND_ATR_MULTIPLE` / `absolute_min_stop_atr_multiple` 1.0 — item 70 (a DIFFERENT 1.0 from the target multiples below).
+- the reach caps split out of one number — item 56.
+
+**Owned by nothing, all live:**
+- correlation cluster threshold 0.7 (`src/data/correlation.py`) — called "the traditional finance cutoff", no citation.
+- insider admission: 2 owners, $5 minimum price, $10M average daily dollar volume, 20 days of history (`src/config.py`, smart-money). The $10M and 20-day floors were already recorded as screening the wrong thing on 2026-09-01, under a redesign agreed and never built.
+- `stop_atr_setup_scale` and `stop_atr_regime_scale` (`src/portfolio_constructor.py`) — the code admits "not a specific measured number"; the direction is doctrine, the magnitudes are picked. These multiply into every stop distance.
+- `min_target_atr_multiple` and `breakout_projection_atr_multiple` 1.0 (`src/config.py`).
+- nominations 3 per seat / 6 per run, and `max_external_candidates` 3 — affordability caps, not measurements.
+- `max_single_short_pct` 10, `max_gross_bearish_pct` 20, `short_gap_risk_multiple` 1.5 — shorting is live, so all three bind; the first self-admits it stands "until a separate pass re-examines it".
+- intraday scan: 3% move, 3-hour cooldown. **The scan is ON** — its settings comment said it had been left disabled; that comment was stale and is corrected in the same change.
+- `MIN_RATCHET_PCT` 2.0 (`src/risk/trailing.py`) — the SAME rule as the reviewer prompt's `new_stop >= old_stop × 1.02`, kept deliberately identical; unsourced in both places.
+- `CHANDELIER_ATR_MULTIPLE` 3.0 (`src/risk/trailing.py`) — "the conventional setting", uncited.
+
+**Seen while checking, not on the audit's list:** `min_reward_risk_after_widening` 1.5 has no derivation; `min_stop_atr_multiple` 2.5 cites published doctrine for a 2.5–3.0 range but not the point value. The trailing-stop noise band 1.25×ATR is also unmeasured — its settings comment calls it MEASURED; nothing was.
+
+**Where to start when this is worked.** The trailing-stop numbers (2% minimum step, the cooldown that restrains it, 1.25×ATR, Chandelier 3.0) were examined against a real case the same day: on ORCL they decide how much of a run-up the desk gives back. The stop-scale multipliers come next because they touch every trade.
+
 ### 2026-09-14 — the daily-loss circuit breaker no longer sells the whole book; it stops the desk instead, and checks that what is held is actually protected
 
 **In plain words:** if the account fell past its daily loss limit, the desk used to try to sell everything it owned. It never once did — the limit has never been reached — and had it ever tried on the kind of day it was built for, it would have made things worse rather than better. It now does something different: it stops taking new risk for the rest of the day, cancels any orders that were waiting to buy, keeps every position, and checks with the broker one holding at a time that each really does have a live protective stop on it. If any does not, you get told by name. Nothing is sold.
