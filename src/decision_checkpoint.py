@@ -151,7 +151,7 @@ def mark_consumed(session: str) -> bool:
 
     Called (a) right before ExecutionStage submits (at-most-once for BUYs),
     (b) on any RiskStage early-exit — an RM-rejected or hard-blocked plan
-    must never be re-offered — and (c) on emergency-liquidation exits.
+    must never be re-offered — and (c) on a daily-loss HALT exit.
 
     Fail-CLOSED: if rewriting the file fails (disk full, permissions), fall
     back to deleting it — for load() a missing checkpoint equals a consumed
@@ -187,7 +187,7 @@ def mark_consumed(session: str) -> bool:
 
 def write_status(session: str, status: str) -> None:
     """Record a legitimate PM-less terminal status for the ET day
-    (no_data / emergency_sold). The evening dead-man probe reads this to
+    (no_data / daily_loss_halted). The evening dead-man probe reads this to
     avoid false 'morning killed mid-run' alarms. Never raises.
     """
     try:

@@ -742,12 +742,32 @@ def _closes_by_date(bars) -> dict:
     return out
 
 
-def normalized_holding_weights(positions, equity: float) -> dict:
+def normalized_holding_weights(
+    positions, equity: float, *, cash_park_symbol: str | None = None,
+) -> dict:
     """`{symbol: signed weight as a FRACTION of equity}` for held positions.
 
     docs/WORK.md item 32 (owner call 2026-09-11). The weighting convention
     for the drawdown alarms' volatility yardstick, in one place so no caller
     re-derives it.
+
+    **The cash park is excluded, exactly as `gross_exposure` excludes it**
+    (2026-09-14, docs/WORK.md item 32). It was the ONE risk calculation in
+    this module that still counted the sweep vehicle: `gross_exposure`,
+    `book_exposure`, `sector_side_gross`, the stop-coverage audit and every
+    LLM-facing position view all take a `cash_park_symbol` and drop it, and
+    this function did not. The consequence was measured against the archived
+    book: SGOV was 78% of the gross weight the volatility yardstick was
+    computed over, so the denominator of the daily circuit breaker was
+    neither the risk book nor the account but a third object — parked cash
+    blended into a measure of how much the risk book moves. The symbol is
+    passed by the caller from config and is never hardcoded here.
+
+    Excluding it makes the measured volatility SMALLER, not larger, so the
+    threshold comes out tighter and the alarm fires sooner — the safe
+    direction for a brake. It is a small effect precisely because parked
+    cash barely moves (reconstructed on the archived book: the daily trip
+    point tightens from about -0.75% to about -0.70% of equity).
 
     Two deliberate differences from `position_weight_pct`, which is the
     weight convention used for EXPOSURE CAPS and must not be reused here:
@@ -772,10 +792,13 @@ def normalized_holding_weights(positions, equity: float) -> dict:
         return {}
     if not math.isfinite(eq) or eq <= 0:
         return {}
+    park = (cash_park_symbol or "").strip().upper()
     weights: dict = {}
     for position in positions or ():
         symbol = str(getattr(position, "symbol", "") or "").strip().upper()
         if not symbol:
+            continue
+        if park and symbol == park:
             continue
         try:
             market_value = float(getattr(position, "market_value", 0.0) or 0.0)
@@ -785,6 +808,135 @@ def normalized_holding_weights(positions, equity: float) -> dict:
             continue
         weights[symbol] = weights.get(symbol, 0.0) + market_value / eq
     return {sym: w for sym, w in weights.items() if w != 0.0}
+
+
+def held_book_daily_pnl(
+    positions, *, cash_park_symbol: str | None = None,
+) -> tuple[float, bool]:
+    """`(dollars, measurable)` — today's mark-to-market change of the HELD
+    BOOK, over exactly the positions `normalized_holding_weights` weights.
+
+    **Why this exists: the daily circuit breaker was comparing two different
+    objects** (2026-09-14, docs/WORK.md item 32). Its threshold is built from
+    the HELD BOOK's own realized volatility — `normalized_holding_weights`
+    fed to `measure_portfolio_daily_vol` — while the loss compared against
+    that threshold was `total_value - last_equity`, the WHOLE ACCOUNT's day
+    change: realized losses on positions already closed today, commissions
+    and spread included, none of which the denominator models. A threshold
+    that says "this is more than the book I hold normally moves in a day" was
+    being tested against a number that can move without the book moving at
+    all.
+
+    So the numerator is rebuilt from the same object the denominator is: the
+    sum of each held position's own intraday unrealized change, with the cash
+    park dropped for the same reason it is dropped from the weights.
+
+    `measurable` is False when any non-park holding does not expose a finite
+    intraday change — the part of the book that could not be read is not
+    assumed flat, because assuming flat would understate a loss and delay a
+    brake. A caller that gets False must fall back to the account-wide number
+    and say so: that number is the more negative of the two on any day with
+    realized losses, so the fallback trips SOONER, never later.
+
+    An empty book is `(0.0, True)`: there is no held book to lose anything.
+    """
+    park = (cash_park_symbol or "").strip().upper()
+    total = 0.0
+    measurable = True
+    for position in positions or ():
+        symbol = str(getattr(position, "symbol", "") or "").strip().upper()
+        if not symbol or (park and symbol == park):
+            continue
+        value = getattr(position, "unrealized_intraday_pnl", None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            measurable = False
+            continue
+        value = float(value)
+        if not math.isfinite(value):
+            measurable = False
+            continue
+        total += value
+    return total, measurable
+
+
+def daily_loss_numerator(
+    account_pnl: float, positions, *, vol_relative: bool,
+    cash_park_symbol: str | None = None,
+) -> tuple[float, str]:
+    """`(pnl, basis)` — WHICH day-change number the daily circuit breaker
+    compares against its threshold. One rule, one place, no numbers in it.
+
+    **Numerator and denominator must measure the same object.** They did not
+    (2026-09-14, docs/WORK.md item 32): the threshold was built from the HELD
+    BOOK's own realized volatility while the loss tested against it was
+    `total_value - last_equity`, the whole account's day change — realized
+    losses on positions already closed today, commissions and spread
+    included, none of which the denominator models.
+
+    But the denominator is not always the held book, which is why
+    `vol_relative` is a required argument rather than something guessed
+    here. `RiskRuleEngine.daily_loss_limit_pct` has three rungs: an explicit
+    `max_daily_loss_pct`, then the volatility-relative threshold, then the
+    fixed percentage derived from the per-trade risk unit. Rungs 1 and 3 are
+    percentages OF THE ACCOUNT, so the account's day change is the number
+    that matches them, and passing the held book's there would be the same
+    mismatch pointing the other way. Only rung 2 is measured from the held
+    book. The caller reads which one governed from
+    `RiskRuleEngine.daily_loss_limit_basis()` and says so.
+
+    Even under rung 2 the account number is used as a FALLBACK when the held
+    book cannot honestly be measured:
+
+      * ``"held_book"`` — the threshold is volatility-relative and every
+        non-park holding exposed a finite intraday change.
+      * ``"account"`` — anything else. Either a fixed-percentage rung is
+        governing, or a holding exposed no readable intraday change, or the
+        held book reads exactly flat on a book that IS held while the
+        account is down. A broker that omits the intraday field reports
+        precisely that flat zero and nothing here can distinguish it from a
+        genuinely unmoved book, so the flat read is not trusted to suppress
+        a breach the account-wide number raises. The account number includes
+        realized losses, commissions and spread, so it is the more negative
+        of the two on any such day and trips SOONER — fail toward not
+        trading.
+
+    Every branch turns on whether a measurement EXISTS, never on how big it
+    is. No threshold, cutoff or tolerance is introduced here.
+    """
+    try:
+        account_pnl = float(account_pnl)
+    except (TypeError, ValueError):
+        return float("nan"), "account"
+    if not vol_relative:
+        return account_pnl, "account"
+    book_pnl, measurable = held_book_daily_pnl(
+        positions, cash_park_symbol=cash_park_symbol,
+    )
+    park = (cash_park_symbol or "").strip().upper()
+    held_any = any(
+        str(getattr(p, "symbol", "") or "").strip().upper() not in ("", park)
+        for p in (positions or ())
+    )
+    if not measurable:
+        logger.warning(
+            "Daily circuit breaker: a holding exposed no readable intraday "
+            "change, so the held-book loss could not be measured over the "
+            "whole book. Comparing the ACCOUNT's day change ($%.2f) instead "
+            "of the held book's ($%.2f) — the more negative of the two on a "
+            "day with realized losses, so it trips sooner.",
+            account_pnl, book_pnl,
+        )
+        return account_pnl, "account"
+    if held_any and book_pnl == 0.0 and account_pnl < 0:
+        logger.warning(
+            "Daily circuit breaker: the held book's intraday change reads "
+            "exactly $0.00 on a book that IS held, while the account is down "
+            "$%.2f. A broker that omits the intraday field reports exactly "
+            "this and nothing here can tell it apart from a genuinely flat "
+            "book — comparing the account's day change.", account_pnl,
+        )
+        return account_pnl, "account"
+    return book_pnl, "held_book"
 
 
 def measure_portfolio_daily_vol(
@@ -2010,14 +2162,39 @@ class RiskRuleEngine:
              nothing to measure at all: an all-cash book, holdings without
              enough price history, or no market-data provider wired in.
         """
+        limit, _basis = self._daily_loss_limit_and_basis()
+        return limit
+
+    #: `daily_loss_limit_basis` when the limit came from the held book's own
+    #: measured volatility. The ONLY basis whose numerator is the held book —
+    #: see `daily_loss_numerator`.
+    VOL_RELATIVE_BASIS = "volatility_relative"
+    #: Either of the two fixed-percentage rungs. Both are stated as a percent
+    #: of the ACCOUNT, so the account's day change is what matches them.
+    FIXED_BASIS = "fixed_percentage"
+
+    def daily_loss_limit_basis(self) -> str:
+        """WHICH rung of `daily_loss_limit_pct` is governing right now.
+
+        2026-09-14, docs/WORK.md item 32. The breaker's numerator has to
+        measure the same object as its denominator, and the denominator is
+        not always the same object: rungs 1 and 3 are fixed percentages OF
+        THE ACCOUNT, rung 2 is measured from the HELD BOOK. Reading the
+        limit no longer tells you which, so the two are computed together
+        and this reports the answer.
+        """
+        _limit, basis = self._daily_loss_limit_and_basis()
+        return basis
+
+    def _daily_loss_limit_and_basis(self) -> tuple[float, str]:
         explicit = getattr(self.config, "max_daily_loss_pct", None)
         if isinstance(explicit, (int, float)) and not isinstance(explicit, bool):
             if math.isfinite(float(explicit)) and float(explicit) > 0:
-                return float(explicit)
+                return float(explicit), self.FIXED_BASIS
         fallback = self.config.effective_max_daily_loss_pct
         sigma = self.portfolio_daily_vol_pct()
         if sigma is None:
-            return fallback
+            return fallback, self.FIXED_BASIS
         threshold = vol_relative_drawdown_threshold_pct(
             daily_vol_pct=sigma,
             window_sessions=1,
@@ -2033,7 +2210,12 @@ class RiskRuleEngine:
             # a shorter window tolerating a bigger loss than a longer one.
             cap_pct=GROSS_LADDER_ALERT_PCT,
         )
-        return abs(threshold)
+        # `vol_relative_drawdown_threshold_pct` returns `fallback_pct`
+        # unchanged when the sensitivity is unusable, so an equal value here
+        # means no measurement governed after all.
+        if threshold == -abs(float(fallback)):
+            return abs(threshold), self.FIXED_BASIS
+        return abs(threshold), self.VOL_RELATIVE_BASIS
 
     def check(self, decision: TradeDecision, positions: list[Position],
               total_value: float, daily_pnl: float,

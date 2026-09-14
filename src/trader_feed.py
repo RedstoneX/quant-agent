@@ -138,7 +138,14 @@ def _status_emoji(status: str) -> str:
         return "🔵"
     if status in {"rejected", "hard_risk_block", "symbol_block", "buys_unfunded"}:
         return "🟡"
-    if "error" in status or status in {"failed", "emergency_sold", "kill_switch_halted"}:
+    if "error" in status or status in {
+        "failed", "emergency_sold",
+        # docs/WORK.md item 32 (2026-09-14): the daily-loss breaker's status.
+        # "emergency_sold" is kept alongside it so historical runs still
+        # render; nothing emits it any more.
+        "daily_loss_halted",
+        "kill_switch_halted",
+    }:
         return "🔴"
     return "⚪"
 
@@ -641,7 +648,19 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     lines = [f"{_status_emoji(status)} {mode.upper()} REVIEW · {et_now().strftime('%H:%M ET')}", f"Status: {status}"]
 
     if status == "emergency_sold":
+        # Historical runs only — nothing emits this any more (item 32).
         lines.append("🚨 DAILY-LOSS CIRCUIT BREAKER — autonomous liquidation triggered")
+    if status == "daily_loss_halted":
+        lines.append(
+            "🛑 DAILY-LOSS CIRCUIT BREAKER — NEW RISK HALTED. Nothing sold; "
+            "every position kept."
+        )
+        unprotected = result.get("unprotected_at_halt") or []
+        if unprotected:
+            lines.append(
+                "⚠️ NOT verifiably stop-covered at the halt: "
+                + ", ".join(str(s) for s in unprotected[:8])
+            )
 
     _append_coverage_gaps(lines, result)
 

@@ -58,7 +58,17 @@ STATUS_PLAIN = {
     ),
     "emergency_sold": (
         "The account had already fallen through its daily loss limit, so "
-        "everything was sold and no new trades were considered."
+        "everything was sold and no new trades were considered. "
+        "(Historical only — the desk stopped doing this on 2026-09-14; see "
+        "daily_loss_halted.)"
+    ),
+    "daily_loss_halted": (
+        "The account had already fallen through its daily loss limit, so the "
+        "desk stopped taking new risk for the rest of the session. Nothing "
+        "was sold: resting entry orders were cancelled, every held position "
+        "was kept, and the protective stop on each one was checked against "
+        "the broker. If any position could not be confirmed as protected, "
+        "the owner was told by name."
     ),
     "paid_analysis_suspended": (
         "The session was stopped by the spending circuit before it could "

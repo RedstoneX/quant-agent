@@ -840,18 +840,21 @@ def test_pipeline_morning_bypasses_research_when_daily_loss_breached():
     pipeline.risk_engine = MagicMock()
     loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
     pipeline.risk_engine.check_daily_loss.return_value = loss_violation
-    pipeline._midday_emergency_liquidate = MagicMock(return_value=[
-        {"id": "sell-1", "status": "accepted", "symbol": "SPY"}
-    ])
+    pipeline._halt_on_daily_loss_breach = MagicMock(return_value={
+        "status": "daily_loss_halted", "halted": True, "orders": [],
+        "run_id": "r",
+    })
     pipeline._reconcile_fills = MagicMock()
 
     result = pipeline.run_morning()
 
-    assert result["status"] == "emergency_sold"
-    assert result["orders"] == [{"id": "sell-1", "status": "accepted", "symbol": "SPY"}]
-    pipeline._midday_emergency_liquidate.assert_called_once_with(
-        [position], loss_violation, result["run_id"],
-    )
+    # docs/WORK.md item 32: the breaker halts, it does not liquidate.
+    assert result["status"] == "daily_loss_halted"
+    assert result["orders"] == []
+    call = pipeline._halt_on_daily_loss_breach.call_args
+    assert call.args[0] == [position]
+    assert call.args[1] is loss_violation
+    pipeline.broker.submit_order.assert_not_called()
     pipeline.morning_research_stage.run.assert_not_called()
     pipeline.cost_circuit.activate_session.assert_called_once()
     pipeline.cost_circuit.require_paid_analysis.assert_not_called()
@@ -908,28 +911,32 @@ def test_pipeline_midday_bypasses_reviewer_when_daily_loss_breached():
     pipeline.risk_engine = MagicMock()
     loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
     pipeline.risk_engine.check_daily_loss.return_value = loss_violation
-    pipeline._midday_emergency_liquidate = MagicMock(return_value=[
-        {"id": "sell-1", "status": "accepted", "symbol": "SPY"}
-    ])
+    pipeline._halt_on_daily_loss_breach = MagicMock(return_value={
+        "status": "daily_loss_halted", "halted": True, "orders": [],
+        "run_id": "r",
+    })
     pipeline.position_reviewer = MagicMock()
     pipeline._reconcile_fills = MagicMock()
     pipeline.cost_circuit = MagicMock()
     pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
     pipeline.cost_circuit.require_paid_analysis.side_effect = RuntimeError(
-        "paid path must not precede emergency liquidation"
+        "paid path must not precede the deterministic halt"
     )
 
     result = pipeline.run_midday()
 
-    assert result["status"] == "emergency_sold"
-    assert result["orders"] == [{"id": "sell-1", "status": "accepted", "symbol": "SPY"}]
-    pipeline._midday_emergency_liquidate.assert_called_once_with(
-        [position], loss_violation, result["run_id"],
-    )
+    # docs/WORK.md item 32: the breaker halts, it does not liquidate.
+    assert result["status"] == "daily_loss_halted"
+    assert result["orders"] == []
+    assert result["session"] == "midday"
+    assert result["review"] is None
+    call = pipeline._halt_on_daily_loss_breach.call_args
+    assert call.args[0] == [position]
+    assert call.args[1] is loss_violation
+    pipeline.broker.submit_order.assert_not_called()
     pipeline.position_reviewer.review.assert_not_called()
     pipeline.cost_circuit.activate_session.assert_called_once()
     pipeline.cost_circuit.require_paid_analysis.assert_not_called()
-    pipeline._reconcile_fills.assert_called_once()
 
 
 @pytest.mark.parametrize("session_type", ["midday", "close"])
@@ -953,7 +960,7 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline._force_delever = MagicMock(return_value=[forced])
     pipeline._handle_ex_dividends = MagicMock(return_value=[exdiv])
     pipeline._reconcile_fills = MagicMock()
-    pipeline._check_late_breach_and_emergency_liquidate = MagicMock(return_value=None)
+    pipeline._check_late_breach_and_halt = MagicMock(return_value=None)
     pipeline._run_news_update = MagicMock()
     pipeline._load_earnings_analyses = MagicMock()
     pipeline.position_reviewer = MagicMock()
@@ -975,124 +982,88 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline._run_news_update.assert_not_called()
     pipeline._load_earnings_analyses.assert_not_called()
     pipeline.position_reviewer.review.assert_not_called()
-    pipeline._check_late_breach_and_emergency_liquidate.assert_called_once()
+    pipeline._check_late_breach_and_halt.assert_called_once()
 
 
-def test_emergency_liquidate_reconciles_before_dedupe_check(tmp_path):
-    """The dedupe guard added in P1 #2 reads DB rows, but DB rows can be
-    stale: a prior EMERGENCY_SELL limit might have been cancelled or
-    expired at the broker (halted symbol, day-order rollover, etc.) while
-    the row still says 'submitted'. Without reconciling first, the dedupe
-    sees the stale row and silently disables the circuit breaker — every
-    subsequent intra tick skips this symbol forever. Reconciliation flips
-    terminal statuses so the dedupe sees broker truth.
+def test_halt_reconciles_fills_before_judging_coverage(tmp_path):
+    """The dedupe/staleness reasoning that used to protect the liquidator
+    still applies to the halt, for a different reason: DB rows can be stale
+    (an order the broker has since cancelled or expired still reads
+    'submitted'), and the halt's coverage verdict and its per-symbol
+    refusal records are both written against that record. Reconcile first,
+    judge second.
 
-    Uses a real DB so the reconcile-then-check flow is genuinely exercised
-    end to end (vs mocking _reconcile_fills, which would only test that
-    we *call* it in the right order)."""
+    Uses a real DB so the reconcile actually runs, rather than asserting
+    that a mock was called."""
     from src.storage.db import Database
 
-    db_path = tmp_path / "t.db"
-    db = Database(str(db_path))
+    db = Database(str(tmp_path / "t.db"))
     db.initialize()
-
-    # Stale 'submitted' row from a prior intra tick. Broker actually
-    # cancelled this order but DB hasn't seen the update yet.
     db.insert_trade(
-        symbol="AMZN", action="EMERGENCY_SELL", qty=51.0, price=230.0,
-        reasoning="prior intra tick — broker has since cancelled",
+        symbol="AMZN", action="SELL", qty=51.0, price=230.0,
+        reasoning="prior tick — broker has since cancelled",
         run_id="run-old", broker_order_id="alpaca-stale", fill_status="submitted",
     )
 
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.db = db
     pipeline.broker = MagicMock()
-    # Reconcile asks broker for terminal status of stale order — it was cancelled.
     pipeline.broker.get_order_fill_info.return_value = {
         "status": "canceled", "filled_qty": None, "filled_avg_price": None,
     }
-    _mock_stop_seam(pipeline.broker)
-    pipeline.broker.submit_order.return_value = {
-        "id": "alpaca-fresh", "status": "accepted", "symbol": "AMZN",
-    }
-    pipeline._order_accepted = MagicMock(return_value=True)
-    pipeline._full_sell_qty = lambda q: q
-    pipeline._format_qty = lambda q: str(q)
+    pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
+    pipeline.broker.snapshot_protective_stops.return_value = (True, [{"qty": 51.0}])
 
     pos = Position(
         symbol="AMZN", qty=51.0, avg_entry=240.0, current_price=230.0,
-        market_value=11730.0, unrealized_pnl=-510.0, sector="Consumer Cyclical",
+        market_value=11730.0, unrealized_pnl=-510.0,
+        unrealized_intraday_pnl=-510.0, sector="Consumer Cyclical",
     )
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
-
-    orders = pipeline._midday_emergency_liquidate([pos], loss_violation, "run-now")
-
-    # The fresh emergency sell MUST fire — the stale row was reconciled
-    # to 'canceled' before the dedupe check, so dedupe didn't match.
-    assert len(orders) == 1, (
-        f"emergency sell must fire after reconcile flips stale row to "
-        f"terminal status; got orders={orders}"
+    pipeline._halt_on_daily_loss_breach(
+        [pos], MagicMock(message="Daily loss 4.0% exceeds max 3%"),
+        "run-now", where="intra_check",
     )
-    assert orders[0]["symbol"] == "AMZN"
-    # And the stale row should now be marked canceled in DB.
+
     rows = db.execute(
         "SELECT fill_status FROM trades WHERE broker_order_id = 'alpaca-stale'"
     ).fetchall()
     assert rows[0]["fill_status"] == "canceled"
-
+    # And, as always: nothing was sold.
+    pipeline.broker.submit_order.assert_not_called()
     db.close()
 
 
-def test_emergency_liquidate_orders_carry_action_for_notifier_banner(tmp_path):
-    """audit F5: the notifier's 🚨 AUTONOMOUS INTERVENTION banner keys off
-    order["action"]. broker.submit_order returns NO 'action' key, so before
-    the fix the banner was dead in production (tests passed only because
-    they hand-crafted action-shaped dicts). Drive the REAL pipeline path
-    with the REAL broker dict shape and assert the banner fires."""
-    from src.storage.db import Database
+def test_halt_renders_through_the_real_notifier_and_says_nothing_was_sold():
+    """audit F5's descendant. The old breaker was visible to the operator
+    only as a list of EMERGENCY orders; a halt places none, so without its
+    own banner an intra tick that broke its 30-minute silence would show
+    nothing explaining why. Drive the REAL notifier with the REAL halt
+    payload."""
     from src.notifier import format_session_result
 
-    db = Database(str(tmp_path / "t.db"))
-    db.initialize()
-
     pipeline = TradingPipeline.__new__(TradingPipeline)
-    pipeline.db = db
     pipeline.broker = MagicMock()
-    _mock_stop_seam(pipeline.broker)
-    # Exactly the shape broker.submit_order returns on success — no "action".
-    pipeline.broker.submit_order.return_value = {
-        "id": "alpaca-1", "status": "accepted", "symbol": "AMZN",
-        "side": "sell", "qty": 51.0, "limit_price": 227.7,
-    }
-    pipeline.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": 51.0, "filled_avg_price": 228.0,
-    }
-    pipeline.broker.wait_for_order_terminal.return_value = "filled"
-    pipeline._order_accepted = MagicMock(return_value=True)
-    pipeline._full_sell_qty = lambda q: q
-    pipeline._format_qty = lambda q: str(q)
+    pipeline.db = MagicMock()
+    pipeline._reconcile_fills = MagicMock()
+    pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
+    pipeline.broker.snapshot_protective_stops.return_value = (True, [{"qty": 0.0}])
 
     pos = Position(
         symbol="AMZN", qty=51.0, avg_entry=240.0, current_price=230.0,
-        market_value=11730.0, unrealized_pnl=-510.0, sector="Consumer Cyclical",
+        market_value=11730.0, unrealized_pnl=-510.0,
+        unrealized_intraday_pnl=-510.0, sector="Consumer Cyclical",
     )
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
+    with patch("src.notifier.send_owner_alert"):
+        halt = pipeline._halt_on_daily_loss_breach(
+            [pos], MagicMock(message="Daily loss 4.0% exceeds max 3%"),
+            "run-now", where="intra_check",
+        )
 
-    orders = pipeline._midday_emergency_liquidate([pos], loss_violation, "run-now")
-
-    assert len(orders) == 1
-    # The enrichment must be on the REAL order dict, not just in insert_trade.
-    assert orders[0].get("action") == "EMERGENCY_SELL", (
-        f"order dict must carry action for the notifier banner; got {orders[0]}"
-    )
-
-    # End-to-end: feed the real pipeline orders into the real notifier.
-    msg = format_session_result(
-        "midday", {"status": "emergency_sold", "orders": orders}, 12.0,
-    )
-    assert "🚨 AUTONOMOUS INTERVENTION" in msg
-    assert "EMERGENCY_SELL" in msg
-    db.close()
+    msg = format_session_result("intra_check", halt, 12.0)
+    assert "DAILY LOSS HALT" in msg
+    assert "nothing was sold" in msg
+    assert "AMZN" in msg          # named as not verifiably covered
+    assert "EMERGENCY orders" not in msg
 
 
 def test_reprotect_residual_is_idempotent_against_existing_broker_stop():
@@ -2331,6 +2302,22 @@ def test_partial_trim_reprotects_actual_residual_on_partial_fill(tmp_path):
     db.close()
 
 
+def _halt_ready(pipeline, *, covered_qty=None):
+    """Minimal wiring for `_halt_on_daily_loss_breach` on a __new__ stub.
+
+    `covered_qty` is what the broker reports as stop-covered per symbol:
+    None means "ask the position's own held qty", i.e. fully protected.
+    """
+    pipeline.db = getattr(pipeline, "db", None) or MagicMock()
+    pipeline._reconcile_fills = MagicMock()
+    pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
+    pipeline.broker.snapshot_protective_stops.side_effect = (
+        lambda sym, side="sell": (True, [{"qty": 1e9 if covered_qty is None
+                                          else covered_qty}])
+    )
+    return pipeline
+
+
 def test_late_breach_check_returns_none_when_no_breach():
     """No breach → helper returns None so the caller proceeds with its
     normal flow (no_data return / decision_stage / etc)."""
@@ -2345,20 +2332,24 @@ def test_late_breach_check_returns_none_when_no_breach():
     ]
     pipeline.risk_engine = MagicMock()
     pipeline.risk_engine.check_daily_loss.return_value = None  # no breach
-    pipeline._midday_emergency_liquidate = MagicMock()
+    pipeline._halt_on_daily_loss_breach = MagicMock()
 
-    out = pipeline._check_late_breach_and_emergency_liquidate("run-1", "post-research")
+    out = pipeline._check_late_breach_and_halt("run-1", "post-research")
 
     assert out is None
-    pipeline._midday_emergency_liquidate.assert_not_called()
+    pipeline._halt_on_daily_loss_breach.assert_not_called()
 
 
-def test_late_breach_check_emergency_liquidates_on_breach():
+def test_late_breach_check_halts_on_breach_and_sells_nothing():
     """If the tape crossed daily-loss during research (5-10 min on slow
-    OpenAI days), the helper must NOT wait for next intra tick — it
-    fires emergency liquidate inline so morning bails to emergency_sold
-    instead of no_data/no_trades. Pin: returns the emergency-sold dict
-    AND calls _midday_emergency_liquidate with fresh positions."""
+    OpenAI days), the helper must NOT wait for the next intra tick — it
+    halts inline so morning bails to `daily_loss_halted` instead of
+    no_data/no_trades.
+
+    docs/WORK.md item 32: this used to force-liquidate the whole book with
+    LIMIT orders 1% through the market and then restore the stops on any
+    leg that failed to fill. It halts instead, and the assertion that
+    matters most is the negative one — nothing is sold."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.broker = MagicMock()
     # 4% drawdown materialised during research
@@ -2367,28 +2358,24 @@ def test_late_breach_check_emergency_liquidates_on_breach():
     }
     pos = Position(
         symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
-        market_value=4800.0, unrealized_pnl=-200.0, sector="ETF",
+        market_value=4800.0, unrealized_pnl=-200.0,
+        unrealized_intraday_pnl=-4000.0, sector="ETF",
     )
     pipeline.broker.get_positions.return_value = [pos]
     pipeline.risk_engine = MagicMock()
     loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
     pipeline.risk_engine.check_daily_loss.return_value = loss_violation
-    pipeline._midday_emergency_liquidate = MagicMock(return_value=[
-        {"id": "sell-1", "status": "accepted", "symbol": "SPY"}
-    ])
+    _halt_ready(pipeline)
 
-    out = pipeline._check_late_breach_and_emergency_liquidate(
-        "run-late", "post-research",
-    )
+    out = pipeline._check_late_breach_and_halt("run-late", "post-research")
 
-    assert out == {
-        "status": "emergency_sold",
-        "orders": [{"id": "sell-1", "status": "accepted", "symbol": "SPY"}],
-        "run_id": "run-late",
-    }
-    pipeline._midday_emergency_liquidate.assert_called_once_with(
-        [pos], loss_violation, "run-late",
-    )
+    assert out["status"] == "daily_loss_halted"
+    assert out["halted"] is True
+    assert out["orders"] == []
+    assert out["run_id"] == "run-late"
+    assert out["unprotected_at_halt"] == []
+    pipeline.broker.submit_order.assert_not_called()
+    pipeline.broker.cancel_open_entry_orders.assert_called_once_with()
 
 
 def test_late_breach_check_swallows_broker_error_and_proceeds():
@@ -2399,19 +2386,20 @@ def test_late_breach_check_swallows_broker_error_and_proceeds():
     pipeline.broker = MagicMock()
     pipeline.broker.get_account.side_effect = RuntimeError("Alpaca 503")
     pipeline.risk_engine = MagicMock()
-    pipeline._midday_emergency_liquidate = MagicMock()
+    pipeline._halt_on_daily_loss_breach = MagicMock()
 
-    out = pipeline._check_late_breach_and_emergency_liquidate("run-1", "post-research")
+    out = pipeline._check_late_breach_and_halt("run-1", "post-research")
 
     assert out is None
     pipeline.risk_engine.check_daily_loss.assert_not_called()
-    pipeline._midday_emergency_liquidate.assert_not_called()
+    pipeline._halt_on_daily_loss_breach.assert_not_called()
 
 
-def test_late_breach_check_skips_emergency_when_no_positions():
+def test_late_breach_check_skips_halt_when_no_positions():
     """Even if check_daily_loss returns a violation, with no positions
-    there's nothing to liquidate. Avoid noise from spamming emergency
-    sells of an empty book."""
+    there is nothing held to protect and no new risk on the books to
+    refuse — the helper returns None rather than raising a halt over an
+    empty account."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.broker = MagicMock()
     pipeline.broker.get_account.return_value = {
@@ -2420,120 +2408,159 @@ def test_late_breach_check_skips_emergency_when_no_positions():
     pipeline.broker.get_positions.return_value = []
     pipeline.risk_engine = MagicMock()
     pipeline.risk_engine.check_daily_loss.return_value = MagicMock(message="x")
-    pipeline._midday_emergency_liquidate = MagicMock()
+    pipeline._halt_on_daily_loss_breach = MagicMock()
 
-    out = pipeline._check_late_breach_and_emergency_liquidate("run-1", "post-research")
+    out = pipeline._check_late_breach_and_halt("run-1", "post-research")
 
     assert out is None  # nothing to act on
-    pipeline._midday_emergency_liquidate.assert_not_called()
+    pipeline._halt_on_daily_loss_breach.assert_not_called()
 
 
-def test_emergency_liquidate_skips_position_when_pending_emergency_sell_already_open():
-    """Emergency sells go out as -1% LIMIT orders. On a fast-moving day the
-    tape can blow through that limit without filling — the order sits as
-    'submitted' at the broker. 30 minutes later intra fires again, sees
-    the position still on book (because the unfilled order didn't reduce
-    qty), and would naively submit a duplicate -1% LIMIT. If the first
-    order then fills against a partial qty, we double-exit. Pin the
-    idempotence: the DB pending check skips this symbol on the second
-    tick. Other symbols without pending submissions still proceed."""
+def test_halt_never_closes_resizes_or_zeroes_any_position():
+    """The invariant of docs/WORK.md item 32, stated as a test.
+
+    The old breaker's whole job was to close every position. Whatever else
+    the halt does, it must never place a closing, reducing or zeroing order
+    — long or short, pending fill or not. This is deliberately asserted at
+    the broker seam rather than on a return value, so a future refactor that
+    re-introduces selling through some other helper still trips it."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
-    # AMZN had its emergency sell submitted 25 min ago, still pending.
-    # SPY is a fresh symbol — no prior submission.
-    pipeline.db.has_pending_action_for_symbol.side_effect = (
-        lambda symbol, action: symbol == "AMZN" and action == "EMERGENCY_SELL"
-    )
-    _mock_stop_seam(pipeline.broker)
-    pipeline.broker.submit_order.return_value = {
-        "id": "sell-spy-new", "status": "accepted", "symbol": "SPY",
-    }
-    pipeline._order_accepted = MagicMock(return_value=True)
-    pipeline._full_sell_qty = lambda q: q
-    pipeline._format_qty = lambda q: str(q)
+    pipeline._submit_protected_sell = MagicMock()
+    positions = [
+        Position(symbol="AMZN", qty=51.0, avg_entry=240.0, current_price=230.0,
+                 market_value=11730.0, unrealized_pnl=-510.0,
+                 unrealized_intraday_pnl=-510.0, sector="Consumer Cyclical"),
+        # A SHORT: the deleted liquidator bought these back to cover.
+        Position(symbol="TSLA", qty=-8.0, avg_entry=300.0, current_price=320.0,
+                 market_value=-2560.0, unrealized_pnl=-160.0,
+                 unrealized_intraday_pnl=-160.0, sector="Consumer Cyclical"),
+    ]
+    _halt_ready(pipeline)
 
-    pos_pending = Position(
-        symbol="AMZN", qty=51.0, avg_entry=240.0, current_price=230.0,
-        market_value=11730.0, unrealized_pnl=-510.0, sector="Consumer Cyclical",
-    )
-    pos_fresh = Position(
-        symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
-        market_value=4800.0, unrealized_pnl=-200.0, sector="ETF",
+    out = pipeline._halt_on_daily_loss_breach(
+        positions, MagicMock(message="Daily loss 4.0% exceeds max 3%"),
+        "run-halt", where="intra_check",
     )
 
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
-    orders = pipeline._midday_emergency_liquidate(
-        [pos_pending, pos_fresh], loss_violation, "run-test",
-    )
-
-    assert len(orders) == 1, f"only fresh SPY should sell, AMZN dedup'd; got {orders}"
-    assert orders[0]["symbol"] == "SPY"
-    submit_calls = pipeline.broker.submit_order.call_args_list
-    assert all(c.kwargs.get("symbol") != "AMZN" for c in submit_calls), (
-        f"AMZN must be skipped due to pending submission; got {submit_calls}"
-    )
-    pipeline.db.has_pending_action_for_symbol.assert_any_call("AMZN", "EMERGENCY_SELL")
-    pipeline.db.has_pending_action_for_symbol.assert_any_call("SPY", "EMERGENCY_SELL")
+    pipeline.broker.submit_order.assert_not_called()
+    pipeline._submit_protected_sell.assert_not_called()
+    pipeline.broker.close_position.assert_not_called()
+    assert out["orders"] == []
+    assert out["positions"] == 2
 
 
-def test_emergency_liquidate_skips_position_when_protective_stop_cancel_fails():
-    """If a symbol's protective stops can't be cleared, Alpaca rejects the
-    SELL on held_for_orders. Emergency liquidate must skip that symbol
-    rather than blast a guaranteed-reject SELL into the broker — and must
-    still proceed with the OTHER symbols whose stops cleared cleanly. This
-    pins the AMZN-2026-04-25 production failure mode for the crisis path."""
+def test_halt_shouts_when_a_position_has_no_live_stop():
+    """The precondition. A halt is only safe if the per-position stops are
+    genuinely live at the broker, and the desk's own stored record cannot
+    answer that: `trades.stop_loss` is written once at entry and never
+    updated when a stop is replaced (the 2026-09-14 broker audit, WORK.md
+    items 35 and 69). So coverage is read from the broker, and an uncovered
+    position must reach the owner BY NAME, and must not be sold to make the
+    problem go away."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.broker = MagicMock()
-    pipeline.db = MagicMock()
-    pos_clean = Position(
-        symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
-        market_value=4800.0, unrealized_pnl=-200.0, sector="ETF",
-    )
-    pos_blocked = Position(
-        symbol="AMZN", qty=51.0, avg_entry=240.0, current_price=230.0,
-        market_value=11730.0, unrealized_pnl=-510.0, sector="Consumer Cyclical",
-    )
+    _halt_ready(pipeline, covered_qty=0.0)   # nothing covered at the broker
+    pos = Position(symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
+                   market_value=4800.0, unrealized_pnl=-200.0,
+                   unrealized_intraday_pnl=-200.0, sector="ETF")
 
-    # audit F1 #1: split seam. Both symbols HAVE stops (snapshot is a
-    # read, always succeeds); AMZN's cancel is what fails, so AMZN must
-    # be skipped while SPY proceeds.
-    pipeline.broker.snapshot_protective_stops.side_effect = (
-        lambda sym: (True, [{"id": f"stp-{sym}", "qty": 1.0, "stop_price": 1.0}])
-    )
-    pipeline.broker.cancel_snapshotted_stops.side_effect = (
-        lambda sym, specs: sym != "AMZN"
-    )
-    pipeline.broker.submit_order.return_value = {
-        "id": "sell-spy", "status": "accepted", "symbol": "SPY"
+    with patch("src.notifier.send_owner_alert") as alert:
+        out = pipeline._halt_on_daily_loss_breach(
+            [pos], MagicMock(message="Daily loss 4.0% exceeds max 3%"),
+            "run-halt", where="intra_check",
+        )
+
+    assert out["unprotected_at_halt"] == ["SPY"]
+    assert out["stop_coverage_verified"][0]["state"] == "uncovered"
+    assert out["stop_coverage_verified"][0]["coverage"] == "none"
+    alert.assert_called_once()
+    body = alert.call_args.args[0]
+    assert "SPY" in body
+    assert "NOT VERIFIABLY" in body.upper()
+    # ... and it still did not sell it.
+    pipeline.broker.submit_order.assert_not_called()
+
+
+def test_halt_reports_unreadable_coverage_as_unverified_never_as_covered():
+    """`_reconcile_stop_coverage` `continue`s past a symbol whose stops it
+    could not read, so that symbol simply vanishes from its gap list. A halt
+    that inherited that would silently assume protection exists — which is
+    exactly the assumption this whole change is not allowed to make."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    _halt_ready(pipeline)
+    pipeline.broker.snapshot_protective_stops.side_effect = RuntimeError("Alpaca 503")
+    pos = Position(symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
+                   market_value=4800.0, unrealized_pnl=-200.0,
+                   unrealized_intraday_pnl=-200.0, sector="ETF")
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        out = pipeline._halt_on_daily_loss_breach(
+            [pos], MagicMock(message="Daily loss 4.0% exceeds max 3%"),
+            "run-halt", where="intra_check",
+        )
+
+    assert out["stop_coverage_verified"][0]["state"] == "unverified"
+    assert out["unprotected_at_halt"] == ["SPY"]
+    alert.assert_called_once()
+
+
+def test_halt_files_a_durable_machine_readable_reason_per_held_symbol():
+    """Anything refused leaves a durable, per-symbol, machine-readable
+    reason. A halt refuses every held name further risk, so every held name
+    gets a row — with its verified coverage state on it."""
+    import json
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    _halt_ready(pipeline)
+    positions = [
+        Position(symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
+                 market_value=4800.0, unrealized_pnl=-200.0,
+                 unrealized_intraday_pnl=-200.0, sector="ETF"),
+        Position(symbol="AMZN", qty=5.0, avg_entry=240.0, current_price=230.0,
+                 market_value=1150.0, unrealized_pnl=-50.0,
+                 unrealized_intraday_pnl=-50.0, sector="Consumer Cyclical"),
+    ]
+
+    with patch("src.pipeline_stages._persist_evidence") as persisted:
+        pipeline._halt_on_daily_loss_breach(
+            positions, MagicMock(message="Daily loss 4.0% exceeds max 3%"),
+            "run-halt", where="intra_check",
+        )
+
+    filed = {
+        c.kwargs["symbol"]: json.loads(c.kwargs["evidence_json"])
+        for c in persisted.call_args_list
     }
-    # Idempotence guard added in P1 #2 — no prior pending submissions for
-    # this test, so both symbols pass that gate; the protective-stop gate
-    # is what we're actually exercising here.
-    pipeline.db.has_pending_action_for_symbol.return_value = False
-    pipeline._order_accepted = MagicMock(return_value=True)
-    pipeline._full_sell_qty = lambda q: q
-    pipeline._format_qty = lambda q: str(q)
+    assert set(filed) == {"SPY", "AMZN"}
+    for payload in filed.values():
+        assert payload["stage"] == "daily_loss_halt"
+        assert payload["outcome"] == "no_new_risk"
+        assert payload["reason"] == "daily_loss_halt"
+        assert payload["stop_coverage"] == "covered"
 
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
-    orders = pipeline._midday_emergency_liquidate(
-        [pos_clean, pos_blocked], loss_violation, "run-test",
-    )
 
-    assert len(orders) == 1, f"only the cleanly-cleared SPY should sell, got {orders}"
-    assert orders[0]["symbol"] == "SPY"
-    # snapshot is attempted for both; cancel is attempted for both, but
-    # only AMZN's returns False → AMZN skipped before submit.
-    assert pipeline.broker.snapshot_protective_stops.call_count == 2
-    pipeline.broker.snapshot_protective_stops.assert_any_call("SPY")
-    pipeline.broker.snapshot_protective_stops.assert_any_call("AMZN")
-    assert pipeline.broker.cancel_snapshotted_stops.call_count == 2
-    # AMZN must NOT have reached the SELL submit — that's the whole point.
-    submit_calls = pipeline.broker.submit_order.call_args_list
-    assert all(c.kwargs.get("symbol") != "AMZN" for c in submit_calls), (
-        f"AMZN SELL must be skipped when its stops can't be cleared; "
-        f"got submit_calls={submit_calls}"
-    )
+def test_halt_reports_a_failed_entry_cancel_rather_than_swallowing_it():
+    """A working entry limit can still add risk while the desk is halted.
+    The cancel is best-effort by necessity, but the failure has to be a
+    reported fact, not a swallowed one."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    _halt_ready(pipeline)
+    pipeline.broker.cancel_open_entry_orders.side_effect = RuntimeError("Alpaca 503")
+    pos = Position(symbol="SPY", qty=10.0, avg_entry=500.0, current_price=480.0,
+                   market_value=4800.0, unrealized_pnl=-200.0,
+                   unrealized_intraday_pnl=-200.0, sector="ETF")
+
+    with patch("src.notifier.send_owner_alert") as alert:
+        out = pipeline._halt_on_daily_loss_breach(
+            [pos], MagicMock(message="Daily loss 4.0% exceeds max 3%"),
+            "run-halt", where="intra_check",
+        )
+
+    assert out["entry_orders_cancelled"] is False
+    assert "cancel FAILED" in alert.call_args.args[0]
 
 
 def test_pipeline_init_propagates_allow_margin_to_risk_engine():
@@ -3563,9 +3590,16 @@ def test_midday_emergency_writes_wal_before_submit_survives_submit_crash(tmp_pat
         symbol="AMZN", qty=51.0, avg_entry=240.0, current_price=230.0,
         market_value=11730.0, unrealized_pnl=-510.0, sector="Consumer Cyclical",
     )
-    loss_violation = MagicMock(message="Daily loss 4% exceeds max 3%")
-
-    pipe._midday_emergency_liquidate([pos], loss_violation, "run-x")
+    # The daily-loss liquidator that used to drive this is deleted
+    # (docs/WORK.md item 32). The write-ahead discipline it exercised is
+    # not: `_submit_protected_sell` is the shared seam every surviving
+    # forced-sell path uses (`_force_delever`, the §11.2 gross ceiling),
+    # so the test drives that directly instead of through a caller.
+    pipe._submit_protected_sell(
+        symbol=pos.symbol, qty=pos.qty, limit_price=227.7,
+        reference_price=pos.current_price, position_qty_before_sell=pos.qty,
+        label="FORCE_DELEVER",
+    )
 
     rows = db.get_pending_protection_restores()
     assert len(rows) == 1, (

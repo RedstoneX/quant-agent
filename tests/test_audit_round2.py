@@ -77,22 +77,30 @@ def test_partial_trim_keeps_its_entry_orders():
     p.broker.cancel_open_entry_orders.assert_not_called()
 
 
-def test_emergency_liquidation_cancels_all_entry_orders():
+def test_daily_loss_halt_cancels_all_entry_orders_and_sells_nothing():
+    """The halt keeps the audit-round-2 guarantee that a resting entry order
+    cannot re-add risk, and adds the one this change is about: it places no
+    sell of any kind (docs/WORK.md item 32)."""
     p = TradingPipeline.__new__(TradingPipeline)
     p.broker = MagicMock()
     p.db = MagicMock()
     p._reconcile_fills = MagicMock()
-    p._finalize_pending_protections = MagicMock()
-    p.db.has_pending_action_for_symbol.return_value = False
-    p._submit_protected_sell = MagicMock(return_value=None)   # sells all skip; irrelevant
+    p._reconcile_stop_coverage = MagicMock(return_value=[])
+    p._sweeper = MagicMock(return_value=None)
+    p.broker.snapshot_protective_stops.return_value = (True, [{"qty": 26}])
+    p._submit_protected_sell = MagicMock()
     violation = MagicMock(message="daily loss 3.2% > 3%")
 
-    p._midday_emergency_liquidate(
+    result = p._halt_on_daily_loss_breach(
         [Position(symbol="GE", qty=26, avg_entry=316, current_price=350,
                   market_value=9_100, unrealized_pnl=884, sector="Industrials")],
-        violation, "r1",
+        violation, "r1", where="test",
     )
     p.broker.cancel_open_entry_orders.assert_called_once_with()
+    p._submit_protected_sell.assert_not_called()
+    p.broker.submit_order.assert_not_called()
+    assert result["orders"] == []
+    assert result["halted"] is True
 
 
 # ---------- park_excess never parks on a breach day ----------

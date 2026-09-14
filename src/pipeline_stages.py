@@ -5503,15 +5503,32 @@ class ExecutionStage:
                 ctx.deployable_cash = pipeline._compute_deployable_cash(cash, positions)
                 ctx.total_value = total_value
                 price_map = {**price_map, **fresh_prices}
-            daily_pnl_now = total_value - ctx.last_equity
+            # docs/WORK.md item 32 (2026-09-14): the number compared against
+            # the daily limit is the HELD BOOK's day change, chosen by the
+            # same one rule the breaker itself uses
+            # (`risk.rules.daily_loss_numerator`) — a threshold built from
+            # the held book's volatility must not be tested against the whole
+            # account's day change. Uses the FRESH locals: the refresh above
+            # updates ctx.total_value but not ctx.account.
+            from src.pipeline import _limit_is_vol_relative
+            from src.risk.rules import daily_loss_numerator
+            daily_pnl_now, _basis = daily_loss_numerator(
+                total_value - ctx.last_equity, ctx.positions,
+                vol_relative=_limit_is_vol_relative(pipeline.risk_engine),
+                cash_park_symbol=getattr(
+                    getattr(pipeline.config, "cash_sweep", None), "symbol", None,
+                ),
+            )
             loss_violation_now = pipeline.risk_engine.check_daily_loss(
                 ctx.last_equity, daily_pnl_now,
             )
             if loss_violation_now:
                 logger.warning(
-                    "ExecutionStage daily-loss re-check: %s — blocking "
-                    "%d BUY(s); intra will liquidate on next tick",
-                    loss_violation_now.message, len(buy_decisions),
+                    "ExecutionStage daily-loss re-check: %s — DROPPING "
+                    "%d BUY(s). The session's remaining new risk is refused; "
+                    "intra HALTS on the next tick (it no longer liquidates, "
+                    "docs/WORK.md item 32) — nothing held is sold because of "
+                    "this.", loss_violation_now.message, len(buy_decisions),
                 )
                 for d in buy_decisions:
                     _record_execution_skip(
