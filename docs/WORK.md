@@ -402,13 +402,28 @@ that X actually produces the symptom.
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
 - **Never hand-resolve a conflict in `docs/WORK.md`, `docs/BOARD_NOTES.md` or
-  `docs/INCIDENT_HISTORY.md`.** Run `scripts/resolve_doc_conflict.py
-  --from-index` during the merge. It merges numbered ITEMS rather than blocks
-  of text, refuses to write unless every item on either side survives exactly
-  once in its own list, and stops for a human on a number collision — which is
-  a renumber, never a delete. Refusing is a correct outcome; resolving it by
-  hand instead is how five live items were deleted (item 68, closed
-  2026-09-14, `docs/INCIDENT_HISTORY.md`).
+  `docs/INCIDENT_HISTORY.md`.** These three files are wired to
+  `scripts/resolve_doc_conflict.py` as a git merge driver (`.gitattributes` +
+  `scripts/git_merge_driver_docs.sh`), so a normal `git merge`/`git rebase`
+  runs it automatically once the clone has registered the driver — the
+  one-time, per-clone `git config` command is in README.md "### Install".
+  **A clone that skips that command is unaffected**, not silently unsafe: git
+  falls back to its own ordinary conflicted merge (real conflict markers, a
+  human resolves by hand) for these three files exactly as it would for any
+  other file, because a merge driver named in `.gitattributes` with no
+  matching `merge.<name>.driver` configured is simply not used. If a merge on
+  these files ever surfaces plain conflict markers instead of a clean
+  auto-resolve or a `REFUSING TO WRITE` message, that means the driver is not
+  registered in this clone — check `git config --get merge.docsmerge.driver`
+  before resolving by hand. The resolver merges numbered ITEMS rather than
+  blocks of text, refuses to write unless every item on either side survives
+  exactly once in its own list, and stops for a human on a number collision —
+  which is a renumber, never a delete. Refusing is a correct outcome;
+  resolving it by hand instead is how five live items were deleted (item 68,
+  closed 2026-09-14, `docs/INCIDENT_HISTORY.md`). The explicit CLI
+  (`--from-index`, or `--kind`/`--base`/`--ours`/`--theirs`/`--out`) still
+  works directly, for a merge run somewhere the driver isn't configured, or
+  for a dry run.
 ### Ordered backlog — RESUME POINT
 
 ## THE FUNNEL QUEUE — why trades do not happen, ranked by measured cost
@@ -885,20 +900,11 @@ No DECIDE BY — revisit only if it recurs.
 
 **Do NOT resolve this by picking a number**, and do not resolve it by removing the four seats from the ranking — the whole point of Phase 13 was that all five seats reach the ordering.
 
-**66. The ranking score is now coverage-sensitive, and `src/rotation.py` compares two names on it — OPEN, watch item, opened 2026-09-13 by the review of PR #348.**
-
-`rank_verdicts` aggregates seats by weighted SUM as of 2026-09-13 (it was an average; the average made a second AGREEING seat lower a candidate's rank — `docs/INCIDENT_HISTORY.md`, same date). A sum is the shape the desk's own edge implies, and this item is not a proposal to undo it. It is the consequence nobody should discover in production:
-
-  * A name's score now rises and falls with how many seats currently cover it. A name bought when it had a live earnings filing and a confirmed smart-money flow will, weeks later, be covered by Technical alone — and score lower for that reason, with nothing about the name having changed.
-  * `rotation.py` Tier 2 compares the weakest HELD name against the strongest NEW one on exactly this score, at a 25% relative margin. The margin is a ratio, so the change of scale does not affect it. Coverage decay on a held name does: it makes rotation OUT of a maturing position structurally easier over time.
-
-**Unresolved, and deliberately not decided here:** whether that is right. It is arguably exactly right for an aggressive-growth desk that wants its capital in the most-currently-confirmed names, and arguably a slow bleed of turnover driven by the earnings calendar rather than by the market. Nothing has been measured — the desk has too little resolved history to measure it, and rotation is not yet enabled. **What would settle it:** once auto-rotation runs, count how many Tier 2 rotations were driven by the held name's coverage lapsing rather than by its own signals weakening. If that share is material, the fix is to compare held-vs-new on seats both names share, not to go back to an average.
-
 **69. The position reviewer's own `distance_to_stop` does not reconcile with the trades table — OPEN, filed 2026-09-14, one archived instance, needs a broker check.** On run `close-0e9129f1` the reviewer's recorded reason for a DIS REDUCE states `distance_to_stop=4.49%`. The desk's own rows for the same symbol at the same time say otherwise: `trades` records the DIS buy at `fill_price=108.093333` with `stop_loss=105.80`, and the `positions` row at `2026-09-01 19:30:43` records `current_price=106.21` — a distance to stop of **0.39%**, an order of magnitude apart from the figure the reviewer reasoned with. The number is not merely decorative: it is one of the four metrics `exit_guard.compute_deltas` adjudicates a deterioration claim on, so a reviewer working from 4.49% is reasoning about a position that is comfortably clear of its stop while the recorded book says it is almost on top of it. **Unresolved, and not guessed at here:** whether the reviewer was handed a different (stale, or broker-side) stop than the one `trades` records, whether it computed against entry rather than current price, or whether it produced the figure from nothing. **What would settle it:** the broker's live stop for DIS at that timestamp, plus the position-facts block actually rendered into that review — the first is an account-side lookup that has not been done, the second is whether that block is recoverable from the archived agent logs for that run.
 
 **70. One underived `1.0` is doing two different jobs in the exit path, and neither is read off anything — OPEN, filed 2026-09-14 while wiring the structural check into thesis-invalidation exits (item 60).** `NOISE_BAND_ATR_MULTIPLE = 1.0` in `src/risk/exit_guard.py` sets how far an adverse move must travel before it stops being noise, and is reused inside `check_structural_protection` as the margin a close must clear to count as beyond its backing level. `absolute_min_stop_atr_multiple: 1.0` in `config/settings.yaml` sets how tight a stop is allowed to be. They are the same round number in the same unit answering two different questions, and neither has a derivation or a cited source on record. That they agree is a coincidence of both being 1, not a relationship anyone established — nothing in the code ties one to the other, so a future change to either silently breaks whatever alignment is being assumed. **Deliberately NOT fixed in the item-60 PR**, which adds information to a gate and changes no number. **What would settle it:** for each of the two independently, a published measurement of the quantity it claims to bound (an ATR multiple at which adverse moves stop being noise; an ATR multiple below which a stop sits inside ordinary daily range), or a decision that one of them should be derived from the other and made a single named constant. Nothing has been searched for yet beyond confirming that neither number is referenced to anything in-repo.
 
-**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 57, 58, 59, 61, 68 in this queue, and 1, 2, 3, 4, 5, 6 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Item 38's open follow-up survives as item 52, whose own unresolvable residue is item 63. Reconstructed from git history 2026-09-14 after corruption; 1, 3, 8, 10 and 20 are NOT retired in this queue (live items; 8 is live here AND retired in the PM test gate, a legitimate cross-scheme split); 67, 90, 101, 200 never existed. PM test gate's own item 4 (news analyst data quality) closed 2026-09-14 and is retired in that scheme only — the funnel queue's own item 4 is unrelated and stays live. Full account, and every renumbering the corruption forced (62/63, then 65, then 68/69/70): `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
+**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 57, 58, 59, 61, 66, 68 in this queue, and 1, 2, 3, 4, 5, 6 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Item 38's open follow-up survives as item 52, whose own unresolvable residue is item 63. Reconstructed from git history 2026-09-14 after corruption; 1, 3, 8, 10 and 20 are NOT retired in this queue (live items; 8 is live here AND retired in the PM test gate, a legitimate cross-scheme split); 67, 90, 101, 200 never existed. PM test gate's own item 4 (news analyst data quality) closed 2026-09-14 and is retired in that scheme only — the funnel queue's own item 4 is unrelated and stays live. Full account, and every renumbering the corruption forced (62/63, then 65, then 68/69/70): `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
 
 ## Evidence-only follow-ups
 

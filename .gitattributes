@@ -1,0 +1,12 @@
+# The three board documents every parallel branch collides on get merged by
+# the item-aware resolver (scripts/resolve_doc_conflict.py), not git's
+# default line-level 3-way merge.
+#
+# This line alone does NOT turn the driver on — a merge driver must also be
+# registered per clone (`git config merge.<name>.driver ...`; see README.md
+# "### Install" and scripts/git_merge_driver_docs.sh). A clone that has not
+# run that command is unaffected: git falls back to its normal conflicted
+# merge for these files, same as before this file existed.
+docs/WORK.md merge=docsmerge
+docs/BOARD_NOTES.md merge=docsmerge
+docs/INCIDENT_HISTORY.md merge=docsmerge
