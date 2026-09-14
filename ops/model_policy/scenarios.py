@@ -582,11 +582,39 @@ _PM_PRODUCTION_POSITIONS = [
 ]
 
 
+# A macro read that VALIDATES as `src.models.MacroAnalysis`. Until
+# 2026-09-14 this was `{"regime": "risk_on", "equity_outlook": "bullish"}`:
+# wrong regime literal (`risk_on` vs `risk-on`) and missing every required
+# field. `PortfolioManagerAgent` catches the parse failure and continues
+# with no macro seat verdict, so the scenario silently ran without the macro
+# evidence production always supplies. Guarded by
+# `tests/test_model_policy_harness_imports.py`.
+_PM_PRODUCTION_MACRO = {
+    "reasoning_chain": {
+        "volatility_analysis": "VIX in the mid-teens and drifting lower.",
+        "yield_curve_analysis": "2s10s modestly positive and steepening.",
+        "monetary_policy_analysis": "Fed funds unchanged; no near-term move priced.",
+        "inflation_labor_credit": "CPI easing, unemployment stable, HY spreads tight.",
+        "cross_signal_synthesis": "Volatility, curve and credit agree on risk appetite.",
+        "sector_implications": "Cyclicals and technology favoured over defensives.",
+    },
+    "regime": "risk-on",
+    "confidence": "medium",
+    "equity_outlook": "bullish",
+    "position_guidance": {
+        "target_invested_pct": 70.0,
+        "cash_recommendation_pct": 30.0,
+        "reasoning": "Constructive regime; keep dry powder for pullbacks.",
+    },
+    "summary": "Risk-on regime with supportive credit and easing volatility.",
+}
+
+
 def _pm_production_invoke(agent):
     decision, _ = agent.decide(
         analyses=_PM_PRODUCTION_ANALYSES,
         positions=_PM_PRODUCTION_POSITIONS,
-        macro_analysis={"regime": "risk_on", "equity_outlook": "bullish"},
+        macro_analysis=_PM_PRODUCTION_MACRO,
         cash_balance=45_000.0, total_value=100_000.0, allow_margin=False,
         weekly_narrative="Seven-day portfolio narrative. " * 80,
         macro_trajectory="Regime trajectory evidence. " * 80,
