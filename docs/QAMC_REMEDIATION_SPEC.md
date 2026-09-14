@@ -871,11 +871,10 @@ domains that all face this exact "frequency vs. magnitude" problem
 independently refuse to collapse it into one number — that convergence is
 the strongest evidence available that two channels, not one, is correct.
 
-*Binding accessibility constraint:* the owner has red-green color
-blindness. Meaning must never rest on hue alone anywhere in this
-presentation — encode sign and category with position, length, shape, or an
-explicit +/− glyph, and use color only as reinforcement on top of one of
-those, never as the sole carrier.
+*Binding accessibility constraint:* meaning must never rest on hue alone
+anywhere in this presentation — encode sign and category with position,
+length, shape, or an explicit +/− glyph, and use color only as
+reinforcement on top of one of those, never as the sole carrier.
 
 This section is a recommendation for whoever builds the Mission Control view,
 not a locked decision — unlike items 5–8, it carries no owner ratification,

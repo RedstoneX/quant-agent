@@ -30,7 +30,7 @@ export function signedMoney(v: number | null | undefined): string {
 }
 
 /** ▲ up, ▼ down, · flat. Paired with every signed figure so direction never
- * rests on colour alone (the owner has red-green colour blindness). */
+ * rests on colour alone. */
 export function trendGlyph(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v) || v === 0) return "·";
   return v > 0 ? "▲" : "▼";

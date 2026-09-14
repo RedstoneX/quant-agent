@@ -397,7 +397,7 @@ def test_paused_desk_says_nothing_at_the_weekend(paused_state_path):
 
 
 def test_paused_reminder_leads_with_a_word_not_a_colour(paused_state_path):
-    """Owner is red/green colour blind — severity is carried in text."""
+    """Severity is carried in text, never in colour alone."""
     status = silence_watchdog.check_paused_desk(
         now=_et(_MONDAY, 15, 0).astimezone(timezone.utc),
     )

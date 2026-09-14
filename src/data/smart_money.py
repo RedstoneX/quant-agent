@@ -27,6 +27,7 @@ from src.data.insider_signal import (
     InsiderPriorTrade,
     InsiderSignalThresholds,
     classify_transaction,
+    holdings_fraction,
 )
 from src.data.smart_money_cluster import cluster_survivors, observation_key
 from src.models import SmartMoneyObservation
@@ -153,7 +154,6 @@ class SECForm4Provider:
         insider_cadence_min_mean_gap_days: float = 20.0,
         insider_cadence_max_mean_gap_days: float = 120.0,
         insider_cadence_max_gap_dispersion: float = 0.25,
-        insider_min_material_sell_fraction: float = 0.05,
         insider_history_retention_days: int = _DEFAULT_HISTORY_RETENTION_DAYS,
     ):
         self.data_dir = Path(data_dir)
@@ -194,7 +194,6 @@ class SECForm4Provider:
             cadence_min_mean_gap_days=max(0.0, float(insider_cadence_min_mean_gap_days)),
             cadence_max_mean_gap_days=max(0.0, float(insider_cadence_max_mean_gap_days)),
             cadence_max_gap_dispersion=max(0.0, float(insider_cadence_max_gap_dispersion)),
-            min_material_sell_fraction=max(0.0, float(insider_min_material_sell_fraction)),
         )
 
     def _load_json(self, path: Path, fallback):
@@ -705,11 +704,14 @@ class SECForm4Provider:
             if item.stream != "insider" or item.disclosure_age_days > self.lookback_days:
                 continue
             verdict = classify_transaction(item, history, self._signal_thresholds)
+            fraction, band = holdings_fraction(item)
             item = item.model_copy(update={
                 "signal_class": verdict.label,
                 "signal_class_reason": verdict.reason,
                 "signal_class_detail": verdict.detail,
                 "signal_weight": verdict.weight,
+                "holdings_fraction": fraction,
+                "holdings_fraction_band": band,
             })
             age_days = max(0, (et_today() - item.disclosure_date).days)
             freshness = "fresh" if age_days <= 7 else (

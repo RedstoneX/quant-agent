@@ -306,6 +306,10 @@ class SmartMoneyAnalystAgent(BaseAgent):
                 ),
                 "transaction_value_usd": row.transaction_value_usd,
                 "post_transaction_shares": row.post_transaction_shares,
+                # Size relative to the insider's own holding. Reported, not
+                # gated: the seat weighs it, nothing filters on it.
+                "holdings_fraction": row.holdings_fraction,
+                "holdings_fraction_band": row.holdings_fraction_band,
                 "ownership_nature": row.ownership_nature,
                 "is_10b5_1": row.is_10b5_1,
                 "signal_class": row.signal_class,
@@ -393,6 +397,9 @@ class SmartMoneyAnalystAgent(BaseAgent):
             # is being asked to weigh — a reclassification must not replay a
             # synthesis produced before the trade was known to be routine.
             "signal_class", "signal_class_reason",
+            # Deterministic from `shares` and `post_transaction_shares`, and
+            # it is part of what the seat is asked to weigh.
+            "holdings_fraction", "holdings_fraction_band",
         )
         rows = []
         for observation in observations:
