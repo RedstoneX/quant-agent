@@ -57,6 +57,16 @@ def _strictify_schema(node: object) -> None:
             _strictify_schema(item)
 
 
+def _has_free_form_map(node: object) -> bool:
+    if isinstance(node, dict):
+        if isinstance(node.get("additionalProperties"), dict):
+            return True
+        return any(_has_free_form_map(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_has_free_form_map(v) for v in node)
+    return False
+
+
 def _response_format_for(model_cls: type) -> dict:
     """Build the OpenRouter `response_format` extra for `model_cls`.
 
@@ -73,6 +83,12 @@ def _response_format_for(model_cls: type) -> dict:
     try:
         schema = model_cls.model_json_schema()
         strict_schema = json.loads(json.dumps(schema))
+        # Strict mode cannot express free-form maps (dict[str, X] ->
+        # additionalProperties: {schema}); OpenAI rejected
+        # NewsIntelligenceReport for it 2026-09-14. Such a model goes
+        # strict=false for EVERY candidate model alike.
+        if _has_free_form_map(strict_schema):
+            raise ValueError("free-form map not strict-compatible")
         _strictify_schema(strict_schema)
         result = {
             "type": "json_schema",
