@@ -280,3 +280,11 @@ this line, one heading per item.
 **Example —** You buy a stock when three specialists like it: the chart, its fresh earnings filing, and confirmed institutional buying. Six weeks later the filing is stale and the institutional flow is old news, so only the chart still covers it. Its score has dropped by roughly a third, purely on coverage. A brand-new idea with three current specialists behind it now clears the "20% better" bar to displace it — even if the original stock is doing exactly what it was bought to do.
 **The decision —** Nothing to decide yet, and nothing is broken today: the swap feature is not switched on. This is a note so it is not discovered live. If it turns out to matter, the fix is to compare the two stocks only on the specialists that cover BOTH of them, rather than on their raw totals.
 **Recommendation —** Leave it. Switch the swap feature on as planned, and once it has run for a while, count how many swaps happened because the held stock's coverage lapsed rather than because its own signals got worse. That is a real measurement rather than a guess, and it costs nothing but waiting.
+
+## item 68
+
+**Plain language:** when two people edit the job board at the same time, the tool that merges their edits has twice thrown away live items instead of keeping both. Once it deleted five open questions and marked them closed; once two workers happened to give their new findings the same number and it deleted both of them rather than renumbering one; a third time this very item collided on number 65 with another branch's unrelated finding.
+
+**Why it matters:** nothing looks wrong afterwards. The file is tidy, nothing is flagged, and a question that vanished looks exactly like a question that was answered. That is the opposite of the rule that a question stays on the board until it is actually settled.
+
+**The decision:** none for you. This is a tooling repair.
