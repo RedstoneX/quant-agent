@@ -229,6 +229,29 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+**Register the board-document merge driver (one-time, per clone — not automatic).**
+`docs/WORK.md`, `docs/BOARD_NOTES.md` and `docs/INCIDENT_HISTORY.md` are the
+three files every parallel branch collides on, and `.gitattributes` names a
+merge driver for them (`docsmerge`) — but a git merge driver is only wired up
+by a per-clone `git config` entry, never by `.gitattributes` alone. Without
+this command your clone is not broken, just unaffected: conflicts in these
+three files fall back to git's ordinary line-level merge, same as before this
+existed. Run it once per clone:
+
+```bash
+git config merge.docsmerge.name   "item-aware doc conflict resolver"
+git config merge.docsmerge.driver "scripts/git_merge_driver_docs.sh %O %A %B %P"
+```
+
+With it set, a conflicting merge on those three files runs
+`scripts/resolve_doc_conflict.py` automatically — it merges by numbered item,
+not by line, and **refuses to write** (leaving the path conflicted for you to
+resolve by hand, exactly like an unconfigured clone) rather than guess when
+two branches file different items under the same number or a merge would make
+a live item vanish. See the "Operational facts" note in `docs/WORK.md` for
+what a refusal looks like and how to tell a missing driver from a genuine
+one.
+
 ### Configure
 
 1. Create `.env` (set `chmod 600` after — these are secrets):
