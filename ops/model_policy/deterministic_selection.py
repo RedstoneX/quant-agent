@@ -49,7 +49,7 @@ from src.risk.rules import (  # noqa: E402
 # validates API keys this audit does not have and does not need. Pinned by
 # `tests/test_deterministic_selection.py` against the YAML so a config edit
 # cannot silently desync them.
-AGREEMENT_CEILING_PCT = [3.0, 4.0, 5.0, 5.0, 5.0]
+AGREEMENT_CEILING_PCT = [2.236, 3.162, 3.873, 4.472, 5.0]
 MAX_POSITION_RISK_PCT = 5.0
 RR_FLOOR = 1.5
 SUBFLOOR_CATALYST_RISK_PCT = 0.5

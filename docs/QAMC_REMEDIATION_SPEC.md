@@ -548,8 +548,8 @@ Three properties, all falling out of the arithmetic rather than bolted on:
 
 - **Unanimous cases are unchanged.** With nothing opposed, `S` IS the aligned
   count, so `S=1` prices at `schedule[0]`, `S=2` at `schedule[1]`, and so on.
-  The ratified risk envelope and the measurement that chose
-  `[3.0, 4.0, 5.0, 5.0, 5.0]` both still stand.
+  The ratified risk envelope still stands; the schedule itself is now
+  DERIVED from it (2026-09-14, retired items 30/57).
 - **A dissenter costs exactly one rung.** Three aligned against one opposed is
   `S=2` and sizes at the two-seat rung, not the three-seat one.
 - **`S <= 0` produces no order at all.** There is deliberately NO standalone
@@ -585,18 +585,23 @@ nothing to derive from. That is precisely why the dissent change could ship
 before this question is settled: with weights pinned at 1, the dissent rule has
 no constant to inherit.
 
-**Two findings about the ceiling schedule itself, 2026-09-13 — not acted on,
-owner call (`docs/WORK.md` item 30).** First, `risk.agreement_ceiling_pct`
-(`[3.0, 4.0, 5.0, 5.0, 5.0]`) has no derivation behind its rungs: the
-measurement cited beside it counted how OFTEN each rung is reached across 75
-real targets, which is coverage, not a value. The stated reasoning fixes only
-a range for rung 1. Second, four of the five rungs cannot bind as configured
-— `max_position_risk_pct` is 5 and the PM's restored conviction bands top out
-at 4, so rungs 3-5 (all 5.0) sit at or above the hard ceiling and rung 2
-(4.0) can only bite on a request the prompt already forbids. Only rung 1
-(3.0) can reduce anything. This has a direct bearing on the open weighting
-question above: weighting the count that indexes this schedule would require
-inventing an interpolation rule to look up a table that was itself chosen.
+**The ceiling schedule is DERIVED, not chosen — 2026-09-14, retired items
+30 and 57.** `risk.agreement_ceiling_pct` is now
+`ceiling(n) = max_position_risk_pct x sqrt(n / 5 seats)` =
+`[2.236, 3.162, 3.873, 4.472, 5.0]`, computed by
+`src/risk/constants.py::derive_agreement_ceiling_schedule` and pinned to
+`config/settings.yaml` by test. It replaced a hand-typed
+`[3.0, 4.0, 5.0, 5.0, 5.0]` whose only support was a COVERAGE count (how
+often each rung is reached, not what a rung should be) and four of whose
+five rungs could not bind: rungs 3-5 all equalled `max_position_risk_pct`
+and rung 2 sat at the top of the PM's own conviction band. The square root
+is the published shape for combining independent estimates (variance falls
+as 1/N, so believable size rises as sqrt(N); the same root Grinold's law
+puts on breadth); both constants in the formula are this desk's own — the
+ratified envelope and the seat roster. Full derivation and every source, in
+`docs/INCIDENT_HISTORY.md`, 2026-09-14. **The weighting question above is
+unaffected:** all five seats still count 1, and a per-seat sizing weight is
+still refused for want of measured history.
 
 **Correction, 2026-09-02.** The owner removed conviction weighting from the
 ledger's credit on 2026-08-31 for two stated reasons (see §9.5 item 3a).

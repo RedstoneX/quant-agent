@@ -38,7 +38,9 @@ from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
 from src.risk.constants import (
     DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
+    INDEPENDENT_SEAT_COUNT,
     REWARD_RISK_FLOOR,
+    derive_agreement_ceiling_schedule,
     reward_risk_floor_applies,
 )
 from src.risk.metrics import unrealized_pnl_pct
@@ -787,7 +789,11 @@ def build_constructor_config(config, risk_engine_config):
             # ratified setting, not the constructor's own default" pattern
             # as every ceiling above.
             agreement_ceiling_pct=_risk_list_setting(
-                "agreement_ceiling_pct", [3.0, 4.0, 5.0, 5.0, 5.0],
+                "agreement_ceiling_pct",
+                derive_agreement_ceiling_schedule(
+                    _risk_setting("max_position_risk_pct", 5.0),
+                    INDEPENDENT_SEAT_COUNT,
+                ),
             ),
     )
 

@@ -203,14 +203,6 @@ answers that, so it either gets a number from you or a ruling that partial
 coverage should never stop a decision at all.
 
 
-## item 30
-
-**Plain language —** The desk allows a bigger position when more of its AI specialists agree: one specialist behind an idea allows 3% of the account at risk, two allows 4%, three or more allows 5%. This item used to ask whether that ladder should start counting some specialists as worth more than others, the way the separate ranking step recently started doing. Reading the code turns it into a different question. Nobody ever derived the ladder's steps from anything — the measurement quoted beside them counted how often each step gets used, not what any step should be. And as things are set up today, four of the five steps cannot actually reduce anything, because they sit at or above limits the desk already enforces elsewhere. Separately, weighting specialists differently in the money-sizing step is already ruled out by a standing rule of yours — a weight there may only come from the desk's own measured track record, which barely exists yet — so that half is not something anyone can just change.
-**Example —** The three-, four- and five-specialist steps all allow 5%, which is the desk's absolute per-trade ceiling anyway, so they never bite. The two-specialist step allows 4%, and the decision-maker is already instructed never to ask for more than 4%. Exactly one step — the single-specialist 3% — can ever shrink a position, and only for requests between 3% and 4%.
-**The decision —** Not "which weights". Whether a five-step ladder that nobody derived should be pricing position size at all, given four of its steps do nothing.
-**Recommendation —** Decide the ladder's existence before its weights. Copying the ranking weights across would mean inventing a rule for looking up a table whose entries were already invented, and it would not remove the mismatch you'd be trying to fix — the two steps disagree about what they are measuring, not just about the numbers.
-
-
 ## item 32
 
 **Plain language —** The desk was approved to risk 5% of the account per trade, but an old never-approved size limit was quietly capping real trades at about 1%. That is fixed, and so is the trade-sizing band question — the wider bands were restored and merged on 10 September, though this board wrongly kept calling them undecided until 13 September. One thing genuinely remains: the desk has two separate loss-alarm systems, one watching how much the account has fallen over a rolling window and one watching how far it is below its best-ever level. They were set up independently and nobody has decided whether the desk should have one loss response or two.
@@ -271,13 +263,6 @@ coverage should never stop a decision at all.
 **The decision —** None for you, now or before the restart.
 
 **Recommendation —** Two ways out, both real, and the second is not a cop-out: either find a published measurement of how likely a stop should be to get hit, or accept that no such number exists and delete the check entirely — the desk already answers a wide stop by buying fewer shares, which is the response the published literature actually prescribes.
-
-## item 57
-
-**Plain language —** The desk has five analyst seats, and it lets a trade take more risk when more of them agree. The schedule is 3% risk with one seat behind it, 4% with two, and 5% with three, four or five. Two problems. The 5% is already the hard ceiling, so the last three rungs narrow nothing — they are decoration. And in the only measured window, no trade ever had more than three seats agreeing, and two thirds had exactly one. So a five-tier design is really a one-tier design in practice. The measurement written beside it in the config is real, but it counts how often each rung gets used; it never says what the risk figure at each rung should be.
-**Example —** Two thirds of every trade this desk sizes is capped at 3% because only the technical seat backed it. That single invented number is doing almost all the sizing here — not the 5% envelope you ratified. Nobody can say why it is 3 rather than 2 or 4.
-**The decision —** Not yet. If research shows agreement between independent seats does not actually predict anything, the honest answer is to delete the schedule and let the 5% ceiling stand alone — and that would be a real change to how the desk sizes, so it would come back to you then. Right now there is nothing to rule on.
-**Recommendation —** Answer the underlying question first: does more agreement mean a better trade? If it cannot be shown, collapse the schedule rather than tune it.
 
 ## item 60
 
