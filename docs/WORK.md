@@ -484,77 +484,16 @@ that X actually produces the symptom.
 - **Subagents stall on polling loops** and will burn enormous token counts
   waiting on CI. Give every agent an explicit polling budget, or poll
   yourself.
+### Still open from the 2026-09-13 limits fix
 
-### Landed 2026-09-13 — the Risk Manager's limits are read, not typed, FIXED
-
-The reviewer's standing sheet stated its limits as hand-typed prose. It said
-the long single-name ceiling was **33%** against a real `max_position_pct` of
-**65** — and that was **wrong at birth, not drift**: commit `e1c639a2`
-(PR #297, titled "single-name cap 100 -> 33") set the setting to 65 and typed
-33 into the sheet in the same diff. The same commit ALSO wrote
-`max_position_pct=65` correctly into the sheet's hard-rule inventory, so the
-sheet contradicted itself from minute one. **No verdict or log row has been
-found showing the stale 33 changed an outcome, and none is claimed** — what
-was fixed is an internal contradiction and the mechanism that allowed it.
-
-The line that commit replaced was relational ("half the long single-name
-ceiling") and therefore drift-immune; it was swapped for a literal. That
-sentence is now relational again. A second, genuinely stale one said the
-constructor caps a stop-out at 0.5% of equity against a ratified
-`max_position_risk_pct` of 5 — and it named the wrong binding mechanism as
-well, since the §9.4 agreement ceiling and the budget allocator narrow the
-real per-trade budget before the 5% envelope is reached. Rewritten to name
-what binds first.
-
-The sheet now carries `{{risk.<setting>}}` placeholders rendered by
-`src/agents/prompt_limits.py` from the same config object the engine is built
-from, **at agent construction** (not on first LLM call, which is the risk
-stage — after the whole day's analysis is paid for). Two build checks: a
-number beside a setting's name, and a number stated as the value of a
-ceiling/cap/budget/limit/floor phrase. Only the second catches the 2026-09-11
-shape; that gap is pinned by its own test.
-
-**FOUND WHILE FIXING — pre-existing, latent, NOT swept.** `src/pipeline.py`
-builds the risk engine's `RiskConfig` from a hand-enumerated argument list.
-**22 declared risk settings were absent from it** and silently fell back to
-pydantic class defaults, ignoring settings.yaml. Every one of those defaults
-currently equals its settings value, so nothing is live-wrong — but
-`allow_margin` was the same omission and did bite (it defaulted False while
-settings said True, blocking a user's BUYs). The seven settings the two sheets
-render are now threaded; **the remaining 15 are open work**, pinned by a test
-that fails if the count grows or if any omitted setting ever diverges from its
-default. Threading them changes enforcement and needs its own review.
-
-**PM's sheet, same treatment, same PR series.** `portfolio_manager.md` now
-renders ten settings and `tests/test_prompts_anchors.py`'s two value anchors
-are retargeted to the placeholders. Correcting an earlier claim in this
-entry: PM's sheet did not stay correct on 2026-09-11 because the human
-process was better — it stayed correct because that anchor test pinned the
-literal and the reviewer's sheet had no such anchor. The check held; it just
-cost a third hand-maintained copy of the number.
-
-**PM's parity is against TWO objects, not one.** `src/risk/rules.py` contains
-no reference at all to `max_cluster_risk_share_pct`, `short_gap_risk_multiple`,
-`min_position_risk_pct` or `max_portfolio_risk_pct` — those four are enforced
-by `PortfolioConstructor` from a separately built `ConstructorConfig`. The
-parity tests now build BOTH objects through the pipeline's own extracted
-builders (`build_risk_config`, `build_constructor_config`) and check that
-MOVING a setting moves what the objects carry, rather than scanning
-`src/pipeline.py` for a keyword name — a scan a hard-coded
-`max_gross_bearish_pct=20.0` would have satisfied.
-
-**Still open, pre-existing:** `build_constructor_config`'s `_risk_setting(name,
-default)` pattern types a literal fallback for roughly twenty settings, so each
-of those keeps a home in `src/pipeline.py` on top of settings.yaml and the
-dataclass field default. Not touched here — sweeping it changes sizing
-fallbacks nobody has reviewed. The equivalent literals on the risk engine's
-side were removed in this PR (`_threaded_risk_settings` omits a non-numeric
-read instead of substituting a number), and `min_position_risk_pct` now passes
-a legal **0** through both paths rather than being swallowed into a default.
-
-**Also open:** `config/settings.yaml`'s own `max_single_short_pct` comment
-still says "At 33 this cap is now roughly a THIRD of the long ceiling" —
-stale from the same commit, in the settings file itself.
+**15 declared risk settings are still not threaded into the engine's
+`RiskConfig`** and silently fall back to pydantic class defaults, ignoring
+`settings.yaml`. Verified 2026-09-14: every one of those defaults currently
+equals its settings value, so nothing is live-wrong, and
+`test_the_rest_of_the_omission_is_recorded_not_silently_swept` fails if the
+count grows or any of them ever diverges. Threading them changes enforcement
+nobody has reviewed, so they stay unswept deliberately. Full account of the
+fix itself: `docs/INCIDENT_HISTORY.md`, 2026-09-14.
 
 ### Ordered backlog — RESUME POINT
 
@@ -1071,6 +1010,16 @@ No DECIDE BY — revisit only if it recurs.
 **63. `signal_weight` cannot say "pay attention, and the sign is the other way" — OPEN, no source found, carried out of item 52.** One scalar in `[0,1]` does two jobs: it is the ranking sort key and the dollar multiplier deciding what reaches the analyst seat. It has no way to express direction. Scott & Xu (FAJ 2004) measure an insider sale under 10% of the holding at **+0.68%** size/B-P-adjusted quarterly excess return, significant at 1% — a mildly *bullish* fact arriving on a *sell* row. Today that row gets weight 1.0, identical to an insider dumping 80% of a position at −0.81%; before 2026-09-13 it got 0.0 and vanished from the ranking. Both are wrong, in opposite directions. **Not a number to pick.** Choosing a multiplier that splits the difference would be fitting, and the ratio and band are already reported on every observation so the seat can read the sign itself — this item is about whether the *deterministic* ranking should also know it. **Searched and ruled out:** Scott & Xu themselves (they report band returns, never a weighting scheme); Cohen/Malloy/Pomorski, whose routine/opportunistic split is a binary with no magnitude and no direction; the desk's own history, which has too few insider-sourced fills to measure anything. **What would settle it:** a published source that scores insider signals on a signed scale rather than sorting them into bins, or enough of this desk's own outcome data to read a separation directly — neither exists yet. Until one does, the ratio stays reported and unweighted. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-13.
 
 **64. The backtest rations the risk budget alphabetically, and cannot do otherwise until it has a candidate ranking — OPEN, found 2026-09-13 while building the best-ranked-first rationing rule (retired item 49; see `docs/INCIDENT_HISTORY.md`, 2026-09-14).** `src/backtest/engine.py` builds every day's candidates and hands `allocate_risk_budget` one `RiskRequest` per candidate at `config.risk.max_position_risk_pct` — the SAME number for all of them. The allocator's pre-decision ordering is largest-request-first with an alphabetical tie-break, so with every request identical the tie-break is the ONLY thing ordering them: on any day the budget binds, the backtest funds candidates in alphabetical order. That work fixed the production path by spending the budget down `rank_verdicts`' own order, and deliberately did NOT touch this one: the backtest is signal-driven and produces no analyst verdicts, so there is no ranking to spend down and inventing a score to stand in for one is exactly what the no-arbitrary-numbers rule forbids. **The consequence:** any backtest run on a day where total requested risk exceeds `max_portfolio_risk_pct` measures a desk that picks trades by ticker spelling — so its results on those days do not describe the desk that now runs in production, and neither the old nor the new production rule can be evaluated by backtesting until this is closed. **What would settle it:** either the backtest gains a deterministic per-candidate score derived from the same signal machinery it already computes (and that score has to be read off something, not fitted), or the engine is honestly documented as unable to evaluate rationing behaviour and every result is reported alongside how many of its days had a binding budget. Nothing was searched for yet beyond confirming the requests are uniform, which was read directly off the code.
+
+**65. The doc-conflict resolver silently deletes live board items, and has done it twice in one night — OPEN, found 2026-09-14.** Every branch that closes a board item edits the same three places, so every parallel branch collides there, and a scratchpad resolver applies a fixed rule: on `docs/WORK.md` and `docs/BOARD_NOTES.md`, take the UNION OF THE DELETIONS. That rule is right when each side deleted a different item and wrong in every other case, and it cannot tell the two apart.
+
+**What it has already destroyed.** (a) Items 55-59 were deleted from a branch where neither side had retired them, and written into the retired-numbers line as though closed; the repair then appended a second byte-identical copy of each instead of reinstating the originals, and the duplicate keys read to the board parser as five MISSING items. (b) Two agents working in parallel independently numbered a new finding 63 — one about `signal_weight` being unable to express an inverted sign, one about the backtest rationing alphabetically. Faced with two different items under one number, the resolver deleted both. Restored by hand as 63 and 64.
+
+**Why it is dangerous rather than annoying.** Both failures leave a file that is valid markdown with no conflict marker in it, so `tests/test_no_conflict_markers_in_docs.py` passes. A vanished item is indistinguishable from a finished one, and the whole point of the no-parked-questions rule is that a question must survive until it is ANSWERED. This tool quietly reverses that. The only reason both were caught is that the board's own orphan test noticed BOARD_NOTES prose with no matching item, which catches the deletion only when the prose survives.
+
+**Already ruled out.** Hand-resolving: it is the same three places every time and a human does it worse under repetition. Abandoning parallel branches: the board only clears at this rate because branches run in parallel. Raising the conflict-marker test's coverage: it already passes on both failure shapes, so it is the wrong instrument.
+
+**What would settle it.** A resolver that is item-aware rather than hunk-aware: parse both sides into a set of numbered items, take the union of the ITEMS, require every number present on either side to be present afterwards exactly once, and STOP for a human when the same number carries different text on the two sides (the collision case, which is a renumber, never a delete). It must assert the post-conditions and fail loudly rather than write a plausible file. Until it exists, every doc merge must be followed by a per-section count of every item number — three independently numbered lists live in this file, so items 4 and 8 legitimately appear twice.
 
 **Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 11, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52, whose own unresolvable residue is item 63.
 
