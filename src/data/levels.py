@@ -472,8 +472,18 @@ def find_structural_levels(
     max_reach_atr_multiple: float = MAX_REACH_ATR_MULTIPLE,
     max_horizon_sessions: int = MAX_HORIZON_SESSIONS,
     max_per_side: int = MAX_LEVELS_PER_SIDE,
+    reference_price: float | None = None,
 ) -> tuple[list[Level], list[Level]]:
     """Return ``(support_levels, resistance_levels)``, most significant first.
+
+    **Which side of price (2026-09-14).** `reference_price`, when a finite
+    positive live price is supplied, decides support vs resistance. During
+    market hours `bars` end at the PREVIOUS session's close (completed bars
+    only — `MarketDataProvider.get_ohlcv`), so classifying against that close
+    labelled a level "support" after the stock had already traded through
+    it (ORCL 2026-09-10: traded 158.38 at the open, desk still called 159.79
+    support). The relevance window and strength stay measured from the last
+    completed close — they are properties of the completed history.
 
     Support is below the last close, resistance above it — classified by where
     the level sits *now*, not by whether the pivots forming it were highs or
@@ -514,6 +524,7 @@ def find_structural_levels(
     last_close = clean[-1].close
     if last_close <= 0:
         return [], []
+    side_price = _finite_positive(reference_price) or last_close
 
     volatility = _finite_positive(atr)
     if volatility is None:
@@ -588,7 +599,7 @@ def find_structural_levels(
 
         level = Level(
             price=round(price, 2),
-            kind="support" if price < last_close else "resistance",
+            kind="support" if price < side_price else "resistance",
             touches=len(cluster),
             last_touch_sessions_ago=int(sessions_ago),
             strength=round(strength, 4),
@@ -601,12 +612,18 @@ def find_structural_levels(
 
 
 def format_levels_block(
-    supports: list[Level], resistances: list[Level], last_close: float
+    supports: list[Level], resistances: list[Level], last_close: float,
+    live_price: float | None = None,
 ) -> str:
     """Render levels for the Tech Analyst prompt.
 
     Resistance descends toward the price and support descends away from it, so
     the block reads top-to-bottom like a chart's vertical axis.
+
+    `live_price` (in-progress session, 2026-09-14): when given, gaps and the
+    price marker are measured from it and the marker says so explicitly,
+    with the last completed close shown beside it — never one silently
+    standing in for the other.
     """
     if not supports and not resistances:
         return (
@@ -614,8 +631,11 @@ def format_levels_block(
             "history. Do not invent levels; rate this symbol neutral."
         )
 
+    live = _finite_positive(live_price)
+    anchor = live or last_close
+
     def line(lv: Level) -> str:
-        gap = (lv.price - last_close) / last_close * 100.0
+        gap = (lv.price - anchor) / anchor * 100.0
         return (
             f"    ${lv.price:,.2f} ({gap:+.1f}%) · {lv.touches} touches · "
             f"last {lv.last_touch_sessions_ago}d ago"
@@ -626,7 +646,13 @@ def format_levels_block(
         out.extend(line(lv) for lv in sorted(resistances, key=lambda x: -x.price))
     else:
         out.append("    none within range")
-    out.append(f"  >>> last close ${last_close:,.2f} <<<")
+    if live:
+        out.append(
+            f"  >>> LIVE ${live:,.2f} (session IN PROGRESS, not a close; "
+            f"last completed close ${last_close:,.2f}) <<<"
+        )
+    else:
+        out.append(f"  >>> last close ${last_close:,.2f} <<<")
     out.append("  Support (nearest first):")
     if supports:
         out.extend(line(lv) for lv in sorted(supports, key=lambda x: -x.price))

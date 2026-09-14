@@ -201,7 +201,10 @@ which is the only thing a level can be made of.
 ### The data we actually have
 
 Historical bars come from **yfinance** (`src/data/market.py::get_ohlcv`); Alpaca's IEX
-feed is the *fallback* when yfinance returns empty, not the primary source. Vendor
+feed is the *fallback* when yfinance returns empty, not the primary source. The series
+is **completed bars only**: while the market is open it ends at the previous session;
+after the 16:00 ET close it includes today (see `docs/INCIDENT_HISTORY.md`,
+2026-09-14 — before that fix it never included today at all). Vendor
 history caps, measured 2026-09-02:
 
 | Sampling | History available | Bars/symbol | Universe total |

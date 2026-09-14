@@ -22,6 +22,48 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — during market hours the desk judged every price against yesterday's close, so a stock trading below its support still read as above it
+
+**In plain words:** the price history every seat reads always stopped at
+the previous day — even in the evening, after today had closed. So in the
+morning the desk compared stops, supports and breakouts against a price
+that was a day old. ORCL on 2026-09-10 opened at 158.38, under the desk's
+own 159.79 support, and nothing on the desk could see it. The desk now
+reads the live price for those comparisons while the market is open, and
+says plainly when it cannot get one.
+
+**Cause.** `MarketDataProvider.get_ohlcv` passed `end=et_today()` to
+yfinance, whose `end` is exclusive. Every consumer got bars through
+yesterday at all hours. The intraday scan already worked around it with
+broker snapshots (2026-08-19); the morning Tech pass, the nomination
+responder and the prefilter did not. Levels were classified support vs
+resistance against the last completed close.
+
+**Fix.**
+- `get_ohlcv` now returns completed daily bars only, bounded by
+  `trading_calendar.last_completed_bar_date()`: the previous session while
+  the market is open, today from 16:00 ET. An in-progress bar from either
+  source (the Alpaca fallback can return one) is dropped and logged.
+- Morning Tech and the nomination responder get the live price from the
+  existing broker snapshot during regular hours. Levels are classified
+  against it. The prompt shows it as a labelled in-progress session, never
+  as a bar.
+- No live price, or a last trade not from today: logged, and the prompt
+  says LIVE PRICE UNAVAILABLE / STALE. Yesterday is never passed off as today.
+- The prefilter's price-vs-Bollinger check uses the live price.
+
+**Deliberately unchanged.** ATR, moving averages, pivots and the levels
+themselves stay on completed bars. Structural protection still requires a
+break on a CLOSE (its own documented rule). The trailing stop already used
+the broker's live position price.
+
+**Known limits.** Early-close days (13:00 ET) are treated as "not complete"
+until 16:00: stale, but labelled. How soon after 16:00 yfinance publishes
+the final daily bar is not verified. The evening session (20:00) is not
+affected by that.
+
+---
+
 ### 2026-09-14 — the model exam's only real trading day could not measure the one number the desk now admits trades on; it has been swapped for a day that can (WORK.md item 72, CLOSED)
 
 **In plain words:** the test we use to compare models for the trade-picking

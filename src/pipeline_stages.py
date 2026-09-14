@@ -2723,10 +2723,15 @@ class MorningResearchStage:
         admit_nominated_candidates_fn=None,
         event_calendar: "MacroEventCalendarProvider | None" = None,
         fomc_calendar: "FOMCCalendarProvider | None" = None,
+        live_session_context_fn=None,
     ):
         self.config = config
         self.db = db
         self.market = market
+        # (symbols) -> {sym: snapshot | {"live_unavailable": reason}}; {}
+        # outside regular hours. Optional so existing construction sites
+        # keep working; absent means "no live price" (pre-2026-09-14).
+        self._live_session_context = live_session_context_fn
         self.macro = macro
         # Optional so every existing construction site (tests, the
         # commissioning verifier) keeps working; when absent, the macro seat is
@@ -2764,6 +2769,27 @@ class MorningResearchStage:
         self._has_actionable_signal = has_actionable_signal_fn
         self._run_news_update = run_news_update_fn
         self._load_earnings_analyses = load_earnings_analyses_fn
+
+    def _live_context(self, symbols: list[str]) -> dict[str, dict]:
+        """Injected live-session read; {} when not wired or on failure."""
+        if self._live_session_context is None:
+            return {}
+        try:
+            return self._live_session_context(symbols) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("live session context failed (%s) — Tech sees completed bars only", exc)
+            return {}
+
+    @staticmethod
+    def _live_price_kwarg(live_context: dict, symbol: str) -> dict:
+        """`{"live_price": x}` only when a usable live price exists, so an
+        injected prefilter with the old 4-argument signature still works
+        outside market hours."""
+        ic = live_context.get(symbol) or {}
+        price = ic.get("last_price")
+        if ic.get("live_unavailable") or not isinstance(price, (int, float)) or price <= 0:
+            return {}
+        return {"live_price": price}
 
     def run(self, ctx: RunContext) -> RunContext:
         logger.info("=== Stage: MorningResearch ===")
@@ -2981,12 +3007,16 @@ class MorningResearchStage:
                 "bars_missing": len(bars_missing_symbols),
                 "bars_missing_symbols": bars_missing_symbols,
             }
+            # Completed bars end at the previous close while the session is
+            # open; price-vs-level judgement needs the live price (2026-09-14).
+            live_context = self._live_context([s["symbol"] for s in all_symbols_data])
             symbols_data = [
                 s for s in all_symbols_data
                 if (
                     s["symbol"] in ctx.admitted_symbols
                     or self._has_actionable_signal(
                         s["indicators"], s["symbol"], s["bars"], ctx.positions,
+                        **self._live_price_kwarg(live_context, s["symbol"]),
                     )
                 )
             ]
@@ -3025,6 +3055,10 @@ class MorningResearchStage:
                 valuations=valuations,
                 prior_macro_regime=prior_macro_state.get("regime"),
                 prior_macro_outlook=prior_macro_state.get("equity_outlook"),
+                intraday_context={
+                    s["symbol"]: live_context[s["symbol"]]
+                    for s in symbols_data if s["symbol"] in live_context
+                },
             )
             resolved = [a for a in analyses_map.values() if a is not None]
             if resolved:
@@ -3825,6 +3859,8 @@ class MorningResearchStage:
             valuations=valuations,
             prior_macro_regime=prior_macro_state.get("regime"),
             prior_macro_outlook=prior_macro_state.get("equity_outlook"),
+            # Same live-price rule as the main morning Tech pass (2026-09-14).
+            intraday_context=self._live_context([s["symbol"] for s in symbols_data]),
         )
         resolved = [a for a in analyses_map.values() if a is not None]
         if resolved:
