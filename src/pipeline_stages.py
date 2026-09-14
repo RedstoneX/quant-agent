@@ -656,8 +656,8 @@ def _repeg_settings(pipeline) -> tuple[float, float] | None:
 #: Plain-language endings for the single-shot reprice, keyed by the
 #: `repeg_outcome` written into the entry spec. Read by the end-of-session
 #: cancel alert so the owner is told what WAS and WAS NOT tried, in words —
-#: never colour or an emoji standing alone (the owner is red/green colour
-#: blind and severity must survive being read as plain text).
+#: never colour or an emoji standing alone; severity must survive being
+#: read as plain text.
 _REPEG_OUTCOME_TEXT = {
     "disabled": "automatic repricing is switched off (execution.repeg_enabled)",
     "no_room": "it was already sitting at the slippage ceiling, so there was "
@@ -1088,7 +1088,7 @@ def _alert_unmeasurable_symbols(faults: dict[str, dict]) -> None:
 
 def _session_candidate_ranking(pipeline) -> list[str] | None:
     """This session's candidate symbols, BEST FIRST, or None if there is no
-    ranking — docs/WORK.md item 49, owner decision 2026-09-12.
+    ranking — retired board item 49, owner decision 2026-09-12 (`docs/INCIDENT_HISTORY.md`, 2026-09-14).
 
     Reads `PortfolioManagerAgent.last_candidate_ranking`, the exact
     `rank_verdicts` output the PM's own prompt was rendered from. Same
@@ -2382,11 +2382,10 @@ def _alert_holding_discipline_block(
     the Risk Manager gave for it is contradicted by the desk's own data.
 
     Own message, never bundled into the run summary, and severity carried in
-    plain words — not colour and not an emoji standing in as the only signal
-    (item 21, owner's alert-design rule; he is red/green colour blind). The
-    leading emoji here is decoration on top of a plain-text header that
-    already says everything, exactly as `_alert_protection_failure` above
-    does.
+    plain words — not colour and not an emoji standing in as the only
+    signal (item 21, owner's alert-design rule). The leading emoji here is
+    decoration on top of a plain-text header that already says everything,
+    exactly as `_alert_protection_failure` above does.
 
     Deliberately NOT deduplicated, for the same reason
     `maybe_alert_data_quality` is not: the whole point of wiring this alert
@@ -4279,7 +4278,7 @@ class DecisionStage:
             # here only on a lane where the preamble did not run). The
             # constructor sizes UNDER it; it never trims the held book.
             gross_ceiling=_session_gross_ceiling(pipeline, ctx),
-            # docs/WORK.md item 49, owner decision 2026-09-12: when the risk
+            # retired board item 49, owner decision 2026-09-12 (`docs/INCIDENT_HISTORY.md`, 2026-09-14): when the risk
             # budget binds, spend it BEST-RANKED FIRST. This is the PM's own
             # `rank_verdicts` ordering, taken from the object the PM's prompt
             # was rendered from this session — never recomputed here, so the

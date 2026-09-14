@@ -415,7 +415,7 @@ def test_earnings_section_falls_back_when_falsifier_undisclosed(mock_cls):
 
 
 # --------------------------------------------------------------------------
-# docs/WORK.md item 49 — the ranking the budget is spent down must be the
+# retired board item 49 — the ranking the budget is spent down must be the
 # ranking the model was shown, not a second evaluation. Owner decision
 # 2026-09-12.
 # --------------------------------------------------------------------------

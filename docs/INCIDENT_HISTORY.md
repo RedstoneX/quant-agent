@@ -22,7 +22,7 @@ what would catch it next time.
 
 ---
 
-### 2026-09-13 — the desk was choosing which trades to fund by request size, and nobody had chosen that (item 49)
+### 2026-09-14 — item 49 closed: the desk was choosing which trades to fund by how much they asked for, and nobody had chosen that
 
 **In plain words:** the desk can only risk so much in total — a quarter of the
 account. Until 2026-09-11 that ceiling almost never got in the way, because
@@ -31,31 +31,36 @@ rule was removed for being wrong, and the number of trades the desk is allowed
 to take roughly doubled. So the ceiling now binds on an ordinary day: the desk
 wants to risk about twice what it is permitted to, and something has to decide
 which trades actually get the money. Nothing did. The money went to whichever
-trade had asked for the BIGGEST amount, which is a measure of size, not of
-quality — a mediocre idea asking for a lot beat an excellent idea asking for a
-little, every time. The owner's decision, 2026-09-12, was best-ranked first:
-spend on the strongest idea, then the next, until the money runs out. That is
-now what happens. A second, smaller problem was found and fixed alongside it:
-a trade that missed out purely because the money ran out was leaving no record
-at all of why — it just vanished from the order list.
+trade had asked for the BIGGEST amount — a measure of size, not of quality, so
+a mediocre idea asking for a lot beat an excellent idea asking for a little,
+every time. The owner's decision was best-ranked first: fund the strongest
+idea, then the next, until the money runs out. That is now what happens. A
+second, smaller problem was found and fixed alongside it: a trade that missed
+out purely because the money ran out was leaving no record at all of why — it
+simply vanished off the order list.
+
+**Both halves are now ratified.** The owner settled the ORDER on 2026-09-12
+("be ran by the best, why bother with crappy ones if you've got a choice, go
+with the best") and the CUT LINE on 2026-09-14. The item is closed; number 49
+is retired and is never reused.
 
 **The measured case this was built against.** Run `run-64290730`, after the
 reward:risk floor was removed by setup type: eligible names went 12 → 25, and
 the eligible set asked for **48% of equity at risk against the 25%
 `max_portfolio_risk_pct` ceiling**. Those two aggregates are what was measured;
 the per-name split below is arithmetic on their average (48 / 25 = 1.92% per
-name), NOT recovered per-symbol data, and is labelled as such so nobody quotes
-it back as a measurement.
+name), NOT recovered per-symbol data, and is labelled so nobody quotes it back
+as a measurement.
 
 Worked through at that average, with the desk's own 0.5% minimum tradeable
 size:
 
 - 12 names funded in full at 1.92% each — 23.04% committed.
-- The 13th name finds 1.96% of headroom left, asks 1.92%, and is funded in
-  full — 24.96% committed.
-- The 14th name finds 0.04% left. That is under the 0.5% floor, so it is
-  DENIED rather than shrunk to a token position — unchanged behaviour, and
-  the reason the floor exists.
+- The 13th finds 1.96% of headroom left, asks 1.92%, and is funded in full —
+  24.96% committed.
+- The 14th finds 0.04% left. That is under the 0.5% floor, so it is DENIED
+  rather than shrunk to a token position — unchanged behaviour, and the
+  reason the floor exists.
 - Names 15 through 25 find nothing at all.
 
 So roughly half the eligible sheet cannot be funded on a normal day. **Before
@@ -63,6 +68,29 @@ this change**, the 13 that got funded were the 13 that had asked for the most
 risk, ties broken alphabetically. **After**, they are the top 13 of the desk's
 own candidate ranking. The count funded is identical; which names they are is
 not, and that was the whole point.
+
+**The cut line: taken at reduced size, not skipped. Ratified 2026-09-14.**
+When the ranking runs out of money part-way through a name, that name is
+funded with whatever is left rather than passed over. The reason, recorded
+because a decision without one rots: **cutting the size does not damage the
+trade.** Same instrument, same stop, same reward-to-risk geometry — fewer
+shares. Nothing about the idea is degraded by owning less of it. And it needs
+no invented number, because the existing `min_position_risk_pct` floor (0.5)
+already decides when a remainder is too small to be worth taking; below the
+floor the target is DROPPED, never zeroed.
+
+**Explicitly rejected at the cut line:** skipping the partially-affordable
+name and continuing down the ranking for a cheaper one that fits in full. That
+funds a worse-ranked idea purely because it costs less, which directly
+contradicts the "go with the best" ruling. The rejected branch is kept written
+and tested behind the named switch `PARTIAL_FIT_POLICY`, so revisiting the
+ruling would be a decision rather than a rewrite — a ratified default is not a
+reason to delete the alternative.
+
+**Also rejected, at the 2026-09-12 decision:** proportional scale-down (sizing
+everyone smaller turns every strong idea into a weak one), conviction tiering,
+a hard cap on names per session, and re-tightening the reward:risk floor that
+had just been removed.
 
 **What "best-ranked" actually resolves to, and whether it is sound.** It is
 `src/verdicts.py::rank_verdicts`, reused unchanged — no new score was invented
@@ -75,7 +103,7 @@ stabiliser. Two honest caveats, stated rather than papered over:
 - The symbol-name stabiliser is alphabetical. It is only reached when two
   candidates are equal on BOTH real signals, so this is not the "ranking is
   mostly alphabetical" defect already recorded against the EXIT path — that
-  one was checked for specifically. Entry ranking does not have it.
+  was checked for specifically. Entry ranking does not have it.
 - The seat weights (1.2 technical/earnings, 1.0 news, 0.8 smart_money/macro)
   are a research-informed prior, not a measurement of THIS desk's analysts.
   That is already flagged on the board as item 31's posture. It was true
@@ -95,13 +123,13 @@ constructor drop path with no durable per-symbol record. Its log line read
 drop-reason capture's pattern requires the words rejected/refused/skipped
 after the symbol, so it did not match — every budget-rationed name reached the
 database as the generic `constructor_dropped` with the detail "no matching
-constructor log line captured". Verified directly by running the capture's own
-regex against the real message before changing anything. It now goes through
-the same structured refusal channel every other named constructor refusal
-uses, under the code `risk_budget_exhausted`, with the requested percentage,
-the binding ceiling and the plain statement that nothing is wrong with the
-idea — it passed every gate and lost only the queue. Once the budget binds on
-a normal day, that was about to become the largest unexplained bucket on the
+constructor log line captured". Verified by running the capture's own regex
+against the real message before changing anything. It now goes through the
+same structured refusal channel every other named constructor refusal uses,
+under the code `risk_budget_exhausted`, with the requested percentage, the
+binding ceiling and the plain statement that nothing is wrong with the idea —
+it passed every gate and lost only the queue. Once the budget binds on a
+normal day, that was about to become the largest unexplained bucket on the
 sheet.
 
 **Not zeroed, dropped.** A 0% risk target is read downstream as "sell it". A
@@ -111,21 +139,157 @@ decision to close. Pinned by a test.
 
 **What was deliberately NOT done.** No new constant was introduced — the
 change is an ordering, and it reads its order off machinery that already
-exists. The reward:risk floor that was just removed was not re-tightened.
-Proportional scale-down, conviction tiers and a names-per-session cap were all
-rejected by the owner's decision and none was built. The backtest engine still
-rations largest-first, because it has no candidate ranking to spend down —
-filed as board item 62 rather than papered over with an invented score.
+exists. The backtest engine still rations largest-first, which with its
+uniform requests means alphabetically; it has no candidate ranking to spend
+down, so it was filed as its own open board item rather than papered over
+with an invented score.
 
-**Still open, and it is the owner's:** if the next-best candidate only partly
-fits the remaining budget, is it taken at reduced size or skipped? Shipped as
-`PARTIAL_FIT_POLICY = "fill"` — the reduced size, which is what the allocator
-has always done and is still floor-guarded — so this change alters the ORDER
-the budget is spent in and nothing else. The other branch, `"skip"`, is
-written, tested and one line away. It ships as "fill" for a specific reason:
-shipping an unratified change to fill semantics alongside a ratified change to
-ordering would make the two impossible to tell apart in the next session's
-numbers. Board item 49 stays open naming only this question.
+---
+
+### 2026-09-13 — item 17 closed: the desk-wide silence alarm's own systemd timer was finally installed on the production box, ten days after it started warning about itself
+
+**In plain words:** item 17 was "the desk can switch itself off silently."
+Three code fixes shipped for it back on 2026-09-03. This entry closes out the
+one part that was still genuinely open: whether those fixes were actually
+running on the live box, not just merged into the repository.
+
+**What was found.** A 2026-09-12 check (recorded under WORK.md item 53 /
+BOARD_NOTES 53) reported that the desk-wide silence watchdog's own systemd
+timer (item 17c, `quant-agent-silence-heartbeat.timer`) had no state file and
+was absent from the box's timer list — so the alarm built specifically to
+catch "the desk went quiet and nobody noticed" had, itself, never run in
+production. Re-checked today, read-only, directly on `/home/qamc/quant-agent`
+(a separate checkout from this one, `qamc` user, detached HEAD at the same
+commit as `origin/main`):
+
+- The box's own `quant-agent-unit-drift.service` — a separate, already-running
+  watchdog that diffs installed systemd units against the repository — had
+  been alerting on exactly this gap every day from at least 2026-09-07 through
+  2026-09-13 12:50 UTC ("In the repository but NOT installed:
+  quant-agent-silence-heartbeat.service/.timer"). Ten days of daily alerts.
+- Sometime between that 12:50 UTC alert and 18:31 UTC the same day, the
+  missing units were installed on the box (`~/.config/systemd/user/`, files
+  dated 17:50 UTC) and the timer was enabled (symlink into
+  `timers.target.wants/`, dated 18:31 UTC) — the exact `cp scripts/systemd/*
+  ~/.config/systemd/user/ && systemctl --user daemon-reload` step the
+  unit-drift alert itself names as the fix. This did not go through a commit;
+  the box's git log is unchanged. It was a manual operator action, taken in
+  response to the drift alarm, outside this PR.
+- It has run as designed since: `systemctl --user status
+  quant-agent-silence-heartbeat.timer` shows it enabled and active, the
+  `.service` has completed successfully on its 30-minute cadence since
+  18:31:16, and `data/alerting/silence_heartbeat.json` is being updated on
+  every run. Because the trading timers are deliberately paused, the checks
+  since installation correctly take the "desk paused on purpose" branch
+  (`check_paused_desk`) rather than the silence-alert branch — the same
+  paused-desk behavior this file's other 2026-09-13 entry on item 11
+  describes, and exactly what the once-per-weekday paused-desk reminder is
+  for.
+
+**What this closes, and what it does not.** Items 17a and 17c are fully
+closed: the code shipped 2026-09-03, and the production deployment gap
+flagged 2026-09-12 is now verified fixed and running. Item 17b's code (the
+failed-alert-persists-and-retries fix) was also shipped 2026-09-03 and is
+unaffected by this finding. The one thing item 17 still names as open — a
+genuine second alert channel beyond Telegram — was never a code defect; it is
+an unresolved owner decision, unchanged by today's check, and stays recorded
+under `docs/BOARD_NOTES.md` ("item 17").
+
+**What would catch a repeat of the ten-day gap.** Nothing new was built for
+this — `scripts/check_unit_drift.py` already did its job, alerting every day
+the gap existed. The ten days between "flagged" and "fixed" was a human
+response-time gap, not a missing alarm, and no number is invented here to
+police how fast an alert must be acted on.
+
+---
+
+### 2026-09-13 — a prompt limit that was wrong the moment it was written, and the drift-immune phrasing it replaced
+
+**In plain words:** the desk's risk reviewer is briefed by a written
+instruction sheet. One sentence on it said no single holding may exceed 33% of
+the book. The real limit is 65%. This was NOT a number that went stale over
+time — it was wrong on the day it was typed.
+
+**What actually happened.** Commit `e1c639a2` (2026-09-11, PR #297, titled
+"single-name cap 100 -> 33") changed `risk.max_position_pct` and edited the
+reviewer's sheet in the same diff, about a hundred lines apart. The change
+landed at **65**, not the 33 in its own title — the owner reviewed the
+derivation and set his own risk-appetite number partway through. One hunk got
+the correction and the other did not. So the sheet said 33 from its first
+minute.
+
+**The harm is smaller than it first looks, and saying so matters.** The SAME
+commit also wrote `max_position_pct=65` correctly into the sheet's hard-rule
+inventory — the more authoritative of the two places. The sheet therefore
+CONTRADICTED ITSELF; it did not uniformly teach a wrong ceiling. No log row,
+no verdict and no modification has been found showing the stale 33 ever
+changed an outcome, and none is claimed. The honest description of what was
+fixed is **"removed an internal contradiction and the mechanism that allowed
+it"**, not "stopped the desk trading against a wrong limit". Overstating a
+finding is the same failure as understating one.
+
+**The part worth learning from.** The line that commit REPLACED read
+"`max_single_short_pct` (10%, **half the long single-name ceiling**". That is
+a RELATION. It names one number and expresses the other as a relationship, so
+it carries no second copy and cannot go wrong when either limit moves. The
+commit swapped a drift-immune phrasing for a hand-typed literal — and the
+literal was wrong immediately. The lesson is not "be more careful when
+copying numbers"; it is that a sentence about how two limits RELATE should
+stay relational, and only a limit the reviewer actually AUDITS against needs
+its value stated at all.
+
+**A second, older one on the same sheet.** It also said the constructor caps
+a stop-out at 0.5% of equity. The ratified per-trade envelope is 5%
+(`max_position_risk_pct`, 2026-08-27); 0.5 is `min_position_risk_pct`, the
+starter-size floor — a different setting. That sentence had genuinely gone
+stale, and it was doubly misleading: at 5% the outer envelope mostly does not
+bind, because the §9.4 agreement ceiling and the portfolio budget allocator
+narrow the real per-trade budget first. A reviewer reconciling a 3% cap-note
+against a sheet naming 5% as THE cap is pointed at the wrong mechanism.
+
+**What was ruled out.** Not a model failure: the reviewer applied the numbers
+it was given. Not a settings error: `max_position_pct: 65` was right
+everywhere the engine reads. Not the pipeline: the value reached the
+deterministic gate intact. Only the briefing was wrong, and the briefing was
+the one input nothing compared against anything.
+
+**A latent defect found while fixing it, worth more than the original.**
+`src/pipeline.py` builds the risk engine's config from a hand-enumerated
+argument list. Any declared setting left out of that list silently falls back
+to the pydantic class default and `settings.yaml` is ignored for it. **22 of
+the declared risk settings were in that state.** Today every one of those
+defaults happens to equal its settings value, so nothing was live-wrong — but
+this has bitten before: `allow_margin` was the same omission, defaulting to
+False while settings.yaml said True, and it blocked a user's BUYs. The seven
+settings the two sheets now render are threaded through; the other 15 are
+recorded in `docs/WORK.md` rather than swept in a change nobody asked for.
+
+**Why the Portfolio Manager's sheet did NOT go wrong in the same commit — the
+most useful part of this.** That commit edited both sheets. PM's copy of the
+same ceiling stayed right, and NOT because anyone was more careful with it:
+`tests/test_prompts_anchors.py` pinned the literal string "capped at 65%
+single-name" in PM's sheet and had no equivalent value anchor on the
+reviewer's sheet at all. A mechanical check held; an unchecked copy did not.
+That is this desk's own standing lesson restated — everything mechanically
+enforced holds, everything relying on remembering a rule slips.
+
+The anchor held by keeping a THIRD hand-maintained copy of the number
+(settings.yaml, the prompt, and the test's own string), so every change to
+the cap had to touch all three or CI went red on the last one. Both sheets
+now render the value instead, and the anchor is retargeted to pin the
+placeholder rather than the digits.
+
+**What catches it next time, and what does not.** The sheet no longer contains
+limit values, only placeholders rendered from the same config object the
+engine is built from, checked at agent construction rather than mid-session. A
+test fails the build on two shapes: a number typed beside a setting's name,
+and a number stated as the value of a "ceiling / cap / budget / limit / floor"
+phrase. The second is the one that catches the 2026-09-11 shape; the first,
+tested honestly, does not — that gap is pinned by its own test so nobody
+describes the adjacency check as sufficient. Neither catches a limit restated
+with no setting name and no limit noun, nor a placeholder citing the wrong
+setting for its sentence. This makes the observed defect fail the build. It
+does not make the class of defect impossible.
 
 ---
 
@@ -233,85 +397,6 @@ better. Model-behaviour fixes on this desk have repeatedly measured as
 no-change, and a shorter prompt is not evidence of a better one.
 
 ---
-
-
-
-
-### 2026-09-13 — a prompt limit that was wrong the moment it was written, and the drift-immune phrasing it replaced
-
-**In plain words:** the desk's risk reviewer is briefed by a written
-instruction sheet. One sentence on it said no single holding may exceed 33% of
-the book. The real limit is 65%. This was NOT a number that went stale over
-time — it was wrong on the day it was typed.
-
-**What actually happened.** Commit `e1c639a2` (2026-09-11, PR #297, titled
-"single-name cap 100 -> 33") changed `risk.max_position_pct` and edited the
-reviewer's sheet in the same diff, about a hundred lines apart. The change
-landed at **65**, not the 33 in its own title — the owner reviewed the
-derivation and set his own risk-appetite number partway through. One hunk got
-the correction and the other did not. So the sheet said 33 from its first
-minute.
-
-**The harm is smaller than it first looks, and saying so matters.** The SAME
-commit also wrote `max_position_pct=65` correctly into the sheet's hard-rule
-inventory — the more authoritative of the two places. The sheet therefore
-CONTRADICTED ITSELF; it did not uniformly teach a wrong ceiling. No log row,
-no verdict and no modification has been found showing the stale 33 ever
-changed an outcome, and none is claimed. The honest description of what was
-fixed is **"removed an internal contradiction and the mechanism that allowed
-it"**, not "stopped the desk trading against a wrong limit". Overstating a
-finding is the same failure as understating one.
-
-**The part worth learning from.** The line that commit REPLACED read
-"`max_single_short_pct` (10%, **half the long single-name ceiling**". That is
-a RELATION. It names one number and expresses the other as a relationship, so
-it carries no second copy and cannot go wrong when either limit moves. The
-commit swapped a drift-immune phrasing for a hand-typed literal — and the
-literal was wrong immediately. The lesson is not "be more careful when
-copying numbers"; it is that a sentence about how two limits RELATE should
-stay relational, and only a limit the reviewer actually AUDITS against needs
-its value stated at all.
-
-**A second, older one on the same sheet.** It also said the constructor caps
-a stop-out at 0.5% of equity. The ratified per-trade envelope is 5%
-(`max_position_risk_pct`, 2026-08-27); 0.5 is `min_position_risk_pct`, the
-starter-size floor — a different setting. That sentence had genuinely gone
-stale, and it was doubly misleading: at 5% the outer envelope mostly does not
-bind, because the §9.4 agreement ceiling and the portfolio budget allocator
-narrow the real per-trade budget first. A reviewer reconciling a 3% cap-note
-against a sheet naming 5% as THE cap is pointed at the wrong mechanism.
-
-**What was ruled out.** Not a model failure: the reviewer applied the numbers
-it was given. Not a settings error: `max_position_pct: 65` was right
-everywhere the engine reads. Not the pipeline: the value reached the
-deterministic gate intact. Only the briefing was wrong, and the briefing was
-the one input nothing compared against anything.
-
-**A latent defect found while fixing it, worth more than the original.**
-`src/pipeline.py` builds the risk engine's config from a hand-enumerated
-argument list. Any declared setting left out of that list silently falls back
-to the pydantic class default and `settings.yaml` is ignored for it. **22 of
-the declared risk settings were in that state.** Today every one of those
-defaults happens to equal its settings value, so nothing was live-wrong — but
-this has bitten before: `allow_margin` was the same omission, defaulting to
-False while settings.yaml said True, and it blocked a user's BUYs. The four
-settings the reviewer's sheet now renders are threaded through; the other 18
-are recorded in `docs/WORK.md` rather than swept in a change nobody asked for.
-
-**What catches it next time, and what does not.** The sheet no longer contains
-limit values, only placeholders rendered from the same config object the
-engine is built from, checked at agent construction rather than mid-session. A
-test fails the build on two shapes: a number typed beside a setting's name,
-and a number stated as the value of a "ceiling / cap / budget / limit / floor"
-phrase. The second is the one that catches the 2026-09-11 shape; the first,
-tested honestly, does not — that gap is pinned by its own test so nobody
-describes the adjacency check as sufficient. Neither catches a limit restated
-with no setting name and no limit noun, nor a placeholder citing the wrong
-setting for its sentence. This makes the observed defect fail the build. It
-does not make the class of defect impossible.
-
----
-
 
 ### 2026-09-13 — can the desk still die quietly? Every way it can produce nothing, enumerated (item 11 closed)
 
@@ -520,6 +605,7 @@ connected.* The tests assert the exit message carries no NOT-PERFORMED banner,
 that the morning path still carries both when genuinely earned, and that the
 two renderings are byte-identical when no review mode is given.
 
+---
 
 ### 2026-09-13 — a "close enough to the level" tolerance was measured in the wrong unit, and was narrower than the thing it claimed to cover on every ordinary stock
 
@@ -2953,10 +3039,9 @@ never credited to the veto.
 
 ### 2026-09-03 — alerts stop relying on colour
 
-**In plain words:** the owner is red/green colour blind — red, orange and
-green circles are effectively indistinguishable to him. Every critical
-alert on this desk opened with a coloured circle (🔴 critical, 🟠 hold) and
-colour was doing all the work of telling him how bad something was. This is
+**In plain words:** every critical alert on this desk opened with a
+coloured circle (🔴 critical, 🟠 hold) and colour was doing all the work of
+telling the reader how bad something was, with no text fallback. This is
 item 21(b) in `docs/WORK.md`, owner spec 2026-09-02.
 
 **What changed.** Every 🔴/🟠 alert opening in `src/notifier.py`,

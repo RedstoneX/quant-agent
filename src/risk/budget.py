@@ -50,11 +50,11 @@ A request cut below `floor_pct` is DENIED rather than shrunk to a token
 position: below the floor the idea is not worth trading, and a 0.1%-risk
 position pays full commission and full attention for an immaterial payoff.
 
-**The one thing best-ranked-first does NOT settle** — see `PARTIAL_FIT_POLICY`
-below. Whether the candidate sitting exactly on the cut line, whose request
-only partly fits the remaining budget, is taken at the reduced size or skipped
-entirely is an open question with the owner. It is a named switch, not a
-default nobody chose.
+**The candidate on the cut line** — whose request only partly fits what is
+left — is taken at the REDUCED SIZE, not skipped. Owner decision, 2026-09-14,
+completing the 2026-09-12 ruling. See `PARTIAL_FIT_POLICY` below for the
+reason and for what was rejected. It is a named switch, not a default nobody
+chose.
 
 **Held positions are not rationed.** A symbol already in the book consumes its
 existing risk whether or not this session names it. The budget available to new
@@ -85,18 +85,29 @@ __all__ = [
 #: "skip"  — do not take it at all; leave the remainder for the next name down
 #:           the ranking that fits in full, or unspent.
 #:
-#: **OPEN QUESTION WITH THE OWNER, 2026-09-13 (docs/WORK.md item 49).** The
-#: 2026-09-12 decision settled the ORDER (best-ranked first) and explicitly
-#: rejected proportional scale-down, conviction tiers and a names-per-session
-#: cap. It did not settle this. It is money, so it is his call, not this
-#: module's.
+#: **DECIDED "fill" by the owner, 2026-09-14** (retired board item 49; the
+#: write-up is `docs/INCIDENT_HISTORY.md`, 2026-09-14). This completes the
+#: 2026-09-12 ruling, which settled the ORDER (best-ranked first) and
+#: explicitly rejected proportional scale-down, conviction tiers and a
+#: names-per-session cap, but left the cut line itself open.
 #:
-#: "fill" ships as the current behaviour because it is what the allocator has
-#: always done — a request larger than the headroom has always been cut to the
-#: headroom and floor-guarded — so this change alters the ORDER the budget is
-#: spent in and nothing else. Shipping an unratified change to fill semantics
-#: alongside a ratified change to ordering would make the two impossible to
-#: tell apart in the next session's numbers. Switching is this one line.
+#: **The reason, recorded because a decision without one rots:** cutting the
+#: size does not damage the trade. Same instrument, same stop, same
+#: reward-to-risk geometry — fewer shares. Nothing about the idea is degraded
+#: by owning less of it. And it needs no invented number: `floor_pct`
+#: (`RiskConfig.min_position_risk_pct`, 0.5) already decides when a remainder
+#: is too small to be worth taking, and below it the target is DROPPED, never
+#: zeroed — a 0% target is read downstream as "sell it".
+#:
+#: **Explicitly rejected:** skipping the cut-line name and continuing down the
+#: ranking for a cheaper one. That funds a worse-ranked idea purely because it
+#: costs less, which directly contradicts the owner's "go with the best"
+#: ruling — the one thing the 2026-09-12 decision was about.
+#:
+#: The "skip" branch below stays written and tested. A ratified default is not
+#: a reason to delete the alternative: the rejected option should stay legible
+#: and one line away, so revisiting the ruling is a decision rather than a
+#: rewrite.
 PARTIAL_FIT_POLICY = "fill"
 
 #: Sort key for a request the caller's ranking does not name. Placed after

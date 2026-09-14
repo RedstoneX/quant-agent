@@ -246,7 +246,7 @@ def test_no_clusters_supplied_falls_back_to_the_total_ceiling_alone():
 
 
 # --------------------------------------------------------------------------
-# docs/WORK.md item 49 — best-ranked first (owner decision, 2026-09-12)
+# retired board item 49 — best-ranked first (owner decision, 2026-09-12)
 # --------------------------------------------------------------------------
 
 def test_budget_is_spent_best_ranked_first_not_largest_request_first():
@@ -338,9 +338,11 @@ def test_a_closed_name_is_never_starved_by_its_place_in_the_ranking():
 
 # --- the open sub-question, both branches ---------------------------------
 
-def test_partial_fit_ships_as_fill_the_cut_line_candidate_is_reduced():
-    """`PARTIAL_FIT_POLICY == "fill"` — the shipped branch, and the one the
-    allocator has always had. OPEN with the owner (docs/WORK.md item 49)."""
+def test_partial_fit_is_fill_the_cut_line_candidate_is_taken_at_reduced_size():
+    """`PARTIAL_FIT_POLICY == "fill"` — RATIFIED by the owner 2026-09-14
+    (retired board item 49). Cutting the size does not damage the trade: same
+    instrument, same stop, same reward-to-risk geometry, fewer shares. The
+    existing floor, not a new number, decides when a remainder is too small."""
     from src.risk.budget import PARTIAL_FIT_POLICY
 
     assert PARTIAL_FIT_POLICY == "fill"
@@ -353,8 +355,14 @@ def test_partial_fit_ships_as_fill_the_cut_line_candidate_is_reduced():
 
 
 def test_partial_fit_skip_branch_leaves_the_room_for_the_next_name_that_fits():
-    """The other side of the open question, kept executable so switching it
-    is one line. A skipped name is DENIED, never sized to zero-as-a-close."""
+    """The REJECTED branch, kept executable rather than deleted.
+
+    The owner ruled against it on 2026-09-14 — skipping the cut-line name and
+    continuing down the ranking funds a worse-ranked idea purely because it
+    costs less, which is the opposite of "go with the best". It stays written
+    and covered so revisiting that ruling is a decision, not a rewrite. A
+    skipped name is DENIED, never sized to zero-as-a-close.
+    """
     alloc = allocate_risk_budget(
         _req(BEST=20.0, NEXT=10.0, THIRD=4.0), ceiling_pct=25.0, floor_pct=0.5,
         priority=["BEST", "NEXT", "THIRD"], partial_fit="skip",

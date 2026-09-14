@@ -3118,7 +3118,7 @@ def test_morning_research_stage_records_bars_coverage_even_when_tech_analyst_cra
 
 
 # --------------------------------------------------------------------------
-# docs/WORK.md item 49 — the ranking handed to the constructor.
+# retired board item 49 — the ranking handed to the constructor.
 # --------------------------------------------------------------------------
 
 def test_session_candidate_ranking_reads_the_pms_own_order():

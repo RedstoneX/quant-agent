@@ -629,8 +629,8 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
 # docs/OUTCOME.md. This fires a SEPARATE, standalone alert through the same
 # `send_owner_alert` path already used for a naked position with no stop.
 #
-# Severity is carried in TEXT, never colour, per the owner's rule (he is
-# red/green colour blind) — no emoji standing in as the only signal here.
+# Severity is carried in TEXT, never colour, per the owner's alert-design
+# rule — no emoji standing in as the only signal here.
 #
 # Deliberately NOT deduplicated: if the same seat is still broken next run,
 # it alerts again. A repeated alert on a genuinely unresolved problem is
@@ -800,12 +800,11 @@ def format_session_result(
 
     run_id = result.get("run_id", "?")
     emoji = _status_emoji(status)
-    # Colour-blind-safe (item 21b): a 🛑 circle and a 🟢/🟡/⚪ circle differ
-    # only by hue to the owner, who is red/green colour blind. The shape
-    # itself (🛑 vs the others) already breaks that tie, but the header's
-    # first word states it in text too, so the line is still correct with
-    # zero emoji rendering — "status: {status}" a line below is not the
-    # FIRST word of the message.
+    # Colour-blind-safe (item 21b): a 🛑 circle and a 🟢/🟡/⚪ circle must not
+    # differ by hue alone. The shape itself (🛑 vs the others) already
+    # breaks that tie, but the header's first word states it in text too,
+    # so the line is still correct with zero emoji rendering — "status:
+    # {status}" a line below is not the FIRST word of the message.
     severity_prefix = "FAILED: " if emoji == "🛑" else ""
     lines: list[str] = [
         f"{emoji} {severity_prefix}{mode}  ({timestamp})",
@@ -984,8 +983,8 @@ def _append_fractional_overnight_line(lines: list[str], expected: list[dict]) ->
     So this line reports the DOLLARS actually unprotected right now, not a
     reassurance that the design bounds them. It is deliberately not a 🛑 —
     nothing here needs doing — and it is deliberately not silent either.
-    Uses 🌙 rather than a colour: the state is 'overnight', and the owner is
-    red-green colour blind, so hue carries no meaning on this channel.
+    Uses 🌙 rather than a colour: the state is 'overnight', and hue carries
+    no meaning on this channel.
 
     Silent when the remainder has already been re-placed for the session
     (nothing is exposed) — only a live, currently-unprotected remainder

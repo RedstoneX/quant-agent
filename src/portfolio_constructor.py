@@ -166,7 +166,7 @@ STOP_REFUSAL_WIDER_THAN_REACH = "stop_wider_than_instrument_reach"
 #: the bars it actually received; None (older row, hand-built object) is
 #: not judged, because an unknown count is not a short one.
 STOP_REFUSAL_INSUFFICIENT_HISTORY = "insufficient_history"
-#: docs/WORK.md item 49, 2026-09-13. The portfolio risk budget was spent
+#: retired board item 49 (`docs/INCIDENT_HISTORY.md`, 2026-09-14). The portfolio risk budget was spent
 #: before this candidate's turn came round. NOT a judgement about the idea:
 #: it passed every gate, and on a day with fewer competing names it would
 #: have been bought. The only reason it produced no order is that better-
@@ -783,7 +783,7 @@ class PortfolioConstructor:
         gross ceiling's de-lever is authored in the session preamble, before
         any agent runs, so it cannot depend on a model returning a book.
 
-        `ranking`: docs/WORK.md item 49, owner decision 2026-09-12. The
+        `ranking`: retired board item 49, owner decision 2026-09-12 (`docs/INCIDENT_HISTORY.md`, 2026-09-14). The
         session's candidate order, BEST FIRST — the caller passes the symbols
         of `PortfolioManagerAgent.last_candidate_ranking`, i.e. exactly the
         `rank_verdicts` order the PM itself was shown. When the risk budget
@@ -1252,7 +1252,7 @@ class PortfolioConstructor:
             ceiling_pct=self.cfg.max_portfolio_risk_pct,
             cluster_share_pct=self.cfg.max_cluster_risk_share_pct,
             floor_pct=self.cfg.min_risk_pct,
-            # docs/WORK.md item 49 — best-ranked first. `ranking` is the PM's
+            # retired board item 49 — best-ranked first. `ranking` is the PM's
             # own `rank_verdicts` order, threaded through unchanged; the
             # allocator scores nothing and this module scores nothing.
             priority=ranking,
@@ -1283,7 +1283,7 @@ class PortfolioConstructor:
                 if grant and grant.note:
                     note_parts.append(grant.note)
                 if granted <= 0:
-                    # docs/WORK.md item 49, 2026-09-13. This used to be a
+                    # retired board item 49 (`docs/INCIDENT_HISTORY.md`, 2026-09-14). This used to be a
                     # bare `logger.info` whose wording the drop-reason
                     # capture's regex does not match, so a budget-rationed
                     # name reached the database as a generic
@@ -1307,8 +1307,8 @@ class PortfolioConstructor:
                         f"{requested:.2f}% risk this idea asked for "
                         f"({limited_by}). Better-ranked candidates took the "
                         f"{self.cfg.max_portfolio_risk_pct:.2f}% ceiling "
-                        f"first (docs/WORK.md item 49, owner decision "
-                        f"2026-09-12). Nothing is wrong with the idea — it "
+                        f"first (owner decision 2026-09-12, retired board "
+                        f"item 49). Nothing is wrong with the idea — it "
                         f"passed every gate and lost only the queue.",
                     )
                     continue

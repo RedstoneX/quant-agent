@@ -1755,7 +1755,7 @@ def test_reward_to_risk_returns_none_for_every_malformed_geometry():
 
 
 # --------------------------------------------------------------------------
-# docs/WORK.md item 49 — best-ranked first, and the durable reason a
+# retired board item 49 — best-ranked first, and the durable reason a
 # budget-rationed name now leaves behind. Owner decision 2026-09-12.
 # --------------------------------------------------------------------------
 
