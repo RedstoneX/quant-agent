@@ -547,6 +547,65 @@ def _work_md_base_ref():
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def test_no_board_item_disappears_without_being_retired():
+    """A numbered item may leave docs/WORK.md only by being retired.
+
+    2026-09-14: a change rewrote item 75 by replacing everything between its
+    heading and the next item's heading. Nine minutes earlier another change
+    had placed item 76 in exactly that gap, so the rewrite deleted item 76
+    silently; CI passed and nobody saw it until the owner asked what else had
+    been missed. Merge-conflict protection could not catch it — there was no
+    conflict, just a slice.
+
+    This test compares the item numbers in WORK.md against main before this
+    change (the same base as the no-growth test) and fails if any number that
+    existed there is now gone without appearing on the retired-numbers line.
+    """
+    import os
+    import re
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[1]
+    work_md = repo / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    base = _work_md_base_ref()
+    if base is None:
+        if os.environ.get("GITHUB_ACTIONS"):
+            raise AssertionError("cannot read main-before-this-change to compare items against")
+        import pytest
+        pytest.skip("no reachable origin to compare WORK.md items against")
+    r = subprocess.run(
+        ["git", "-C", str(repo), "show", f"{base}:docs/WORK.md"],
+        capture_output=True, text=True, check=False,
+    )
+    if r.returncode != 0:
+        return
+    heading = re.compile(r"^\*\*(\d+)\. ", re.M)
+    before = set(heading.findall(r.stdout))
+    now_text = work_md.read_text()
+    after = set(heading.findall(now_text))
+    retired_line = next(
+        (l for l in now_text.splitlines() if l.startswith("**Retired item numbers")), "",
+    )
+    # Only the two number LISTS count as retired: "<list> in this queue" and
+    # "and <list> in the PM test gate". The rest of that line is prose that
+    # mentions live item numbers ("moved to item 76", "68/69/70"), and reading
+    # those as retired would let a live item vanish unnoticed.
+    queue_part = retired_line.split(" in this queue", 1)[0]
+    gate_match = re.search(r"and ([\d,\s]+) in the PM test gate", retired_line)
+    retired = set(re.findall(r"\b(\d+)\b", queue_part.split("**", 2)[-1]))
+    if gate_match:
+        retired |= set(re.findall(r"\d+", gate_match.group(1)))
+    vanished = sorted(before - after - retired, key=int)
+    assert not vanished, (
+        f"board item(s) {vanished} existed in docs/WORK.md before this change and are "
+        "now gone without being added to the retired-numbers line. Either restore "
+        "them, or close them properly (write up in docs/INCIDENT_HISTORY.md, add the "
+        "number to the retired line)."
+    )
+
+
 def test_work_md_does_not_grow_without_pruning():
     """Owner's standing rule: every write to docs/WORK.md cleans it up first.
     Resolved items that are written up in docs/INCIDENT_HISTORY.md are
