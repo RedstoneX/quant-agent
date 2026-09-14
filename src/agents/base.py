@@ -38,6 +38,13 @@ def _strictify_schema(node: object) -> None:
     only to stop treating "has a default" as "may be omitted").
     """
     if isinstance(node, dict):
+        # OpenAI strict mode rejects sibling keywords next to `$ref`
+        # (measured 2026-09-14: "$ref cannot have keywords {'default'}" for
+        # EarningsAnalysis.strategic_direction). Keep the bare reference.
+        if "$ref" in node:
+            for key in [k for k in node if k != "$ref"]:
+                del node[key]
+            return
         if node.get("type") == "object" or "properties" in node:
             props = node.get("properties")
             if isinstance(props, dict):
