@@ -10562,3 +10562,39 @@ is unused. The constructor's `take_profit` is written to the trade row and
 shown to the reviewer as a reference (progress-to-target, distance-to-target)
 and, for range setups only, to the execution-time reward:risk belt. Purely
 informational; unchanged by this work.
+
+## 2026-09-14 — the UNSOURCED token, written into a list field, discarded a whole earnings analysis
+
+**In plain words:** the earnings prompt tells the model to write a
+placeholder word when a number is missing from a filing. One of the places
+it can write that word is a field our code expects to be a list, not a
+word. When gemini-2.5-flash-lite did exactly that, the entire filing
+analysis was thrown away, not just the one missing value.
+
+`config/prompts/earnings_analyst.md` told the model to write
+`[UNSOURCED:<reason>]` for any missing quantitative value, including
+"revenue (total + YoY + segments)". `EarningsAnalysis.revenue.segments`
+(`src/models.py`) is a LIST field. The model returned
+`"segments": "[UNSOURCED:segment_data_not_disclosed]"` — a string where a
+list was expected — pydantic raised `list_type`, and
+`_validate_analysis` (`src/agents/earnings_analyst.py`) discarded the
+entire analysis ("Invalid llm earnings analysis for MRVL"), losing every
+other field the filing had correctly reported.
+
+**What changed.** The prompt now says list fields (`segments`,
+`management_highlights`, `key_initiatives`, etc.) get an empty list `[]`
+when nothing is disclosed, and that the UNSOURCED token belongs only in
+string fields — the note goes in `data_quality` instead. Separately,
+`LLMOutputModel` (the base every LLM-parsed model inherits) now coerces a
+bare UNSOURCED token on any `list[...]` field to `[]` rather than raising,
+using the same "kept, not silently blanked" telemetry as the existing
+null/empty-string coercion. The other four prompts that instruct the token
+(`macro_analyst.md`, `news_analyst.md`, `evening_analyst.md`,
+`portfolio_manager.md`) were audited: every field they point the token at
+is `str`-typed, so only `earnings_analyst.md` had the mismatch.
+`tests/test_models.py::test_unsourced_prompts_list_fields_tolerate_the_bare_token`
+enforces this mechanically going forward — it walks every list-typed field
+reachable from each of the five prompts' result models and asserts the
+token coerces to `[]`, and
+`test_every_unsourced_prompt_is_mapped_here` fails if a new prompt starts
+using the token without being added to the audited set.

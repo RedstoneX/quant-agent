@@ -1,10 +1,11 @@
 import logging
 import math
+import re
 import threading
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, date
-from typing import Any, Literal
+from typing import Any, Literal, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, computed_field, field_validator, model_validator
 
@@ -349,6 +350,40 @@ def _null_droppable_fields(cls: type[BaseModel]) -> frozenset[str]:
     return result
 
 
+# Every prompt in config/prompts/*.md instructing the `[UNSOURCED:<reason>]`
+# token documents it as a value for a MISSING QUANTITATIVE/TEXT fact — the
+# token is a single string literal. A field typed as a list has no way to
+# carry that literal: `EarningsRevenue.segments: list[EarningsSegment]`
+# received the bare string `"[UNSOURCED:segment_data_not_disclosed]"` from
+# gemini-2.5-flash-lite (2026-09), which is not a list, so pydantic raised
+# `list_type` and the whole `EarningsAnalysis` was discarded — the model
+# followed the token instruction literally into a field the prompt should
+# never have pointed it at. Coerce it to `[]` instead of losing the object,
+# on the same "kept, not silently blanked" discipline as `LLMOutputModel`'s
+# null-coercion above.
+_UNSOURCED_TOKEN_RE = re.compile(r"^\[UNSOURCED(?::[^\]]*)?\]$")
+
+_LIST_TYPED_FIELDS_CACHE: dict[str, frozenset[str]] = {}
+_LIST_TYPED_FIELDS_CACHE_LOCK = threading.Lock()
+
+
+def _list_typed_fields(cls: type[BaseModel]) -> frozenset[str]:
+    """Field names on `cls` declared as `list[...]`. Cached per class."""
+    key = f"{cls.__module__}.{cls.__qualname__}"
+    cached = _LIST_TYPED_FIELDS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    names = {
+        field_name
+        for field_name, field in cls.model_fields.items()
+        if get_origin(field.annotation) is list
+    }
+    result = frozenset(names)
+    with _LIST_TYPED_FIELDS_CACHE_LOCK:
+        _LIST_TYPED_FIELDS_CACHE[key] = result
+    return result
+
+
 class LLMOutputModel(BaseModel):
     """Base for every model parsed out of an LLM response.
 
@@ -423,6 +458,43 @@ class LLMOutputModel(BaseModel):
             "%s: dropped explicit null/empty on defaulted field(s) %s — the "
             "object is kept and the declared default applies, but the model "
             "said nothing where the prompt asked for something",
+            cls.__name__, ", ".join(sorted(hits)),
+        )
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def _unsourced_token_on_list_field_means_empty(cls, values: Any) -> Any:
+        """A bare `[UNSOURCED:<reason>]` string on a `list[...]` field is
+        coerced to `[]` instead of failing the whole object.
+
+        See the block comment above `_UNSOURCED_TOKEN_RE` for why this
+        happens: the token is documented prompt-wide as the way to mark a
+        missing value, but it is a string literal and some fields it gets
+        pointed at (e.g. `EarningsRevenue.segments`) are lists. Kept, not
+        silently blanked — tallied through the same telemetry as the null
+        coercion above so the gap is visible to the operator.
+        """
+        if not isinstance(values, dict):
+            return values
+        list_fields = _list_typed_fields(cls)
+        if not list_fields:
+            return values
+        hits: list[str] = []
+        for field_name in list_fields:
+            v = values.get(field_name, ...)
+            if isinstance(v, str) and _UNSOURCED_TOKEN_RE.match(v.strip()):
+                hits.append(field_name)
+        if not hits:
+            return values
+        values = dict(values)
+        for field_name in sorted(hits):
+            values[field_name] = []
+            parse_telemetry.record_null_coercion(cls.__name__, field_name)
+        logger.warning(
+            "%s: coerced [UNSOURCED:...] token on list field(s) %s to [] — "
+            "the model wrote the missing-data token into a field declared "
+            "as a list; the object is kept, the gap is logged",
             cls.__name__, ", ".join(sorted(hits)),
         )
         return values
