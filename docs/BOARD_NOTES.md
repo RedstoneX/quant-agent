@@ -142,14 +142,6 @@ this line, one heading per item.
 **Recommendation —** Wait for a few more weeks of real data before setting a hard block; there isn't yet enough evidence to know where a fair cutoff belongs.
 
 
-## item 15
-
-**Plain language —** The desk couldn't always tell whether a price was current or stale, risking decisions made on outdated information. The piece covering stocks it already owns is fixed — it now honestly says "unknown" freshness instead of pretending a price is live when the broker never actually confirms that. The bigger remaining piece is doing the same for live quotes and historical price data, which needs a choice between two different competing ways to build it.
-**Example —** A held stock's price used to be treated as fresh by default even though the broker never confirms when it last updated; it's now correctly labelled freshness "unknown" instead of falsely marked current.
-**The decision —** Which of two competing technical approaches to use for tagging whether a live quote or historical price is actually fresh.
-**Recommendation —** Have both approaches laid out side by side with trade-offs before this goes to the owner; not enough is settled yet to recommend one over the other.
-
-
 ## item 17
 
 **Plain language —** If the desk's own record-keeping breaks, a safety switch can shut down all further AI-based decisions completely, and it stays off until a person manually clears it — working as intended. The real problem, observed live, was that the alert meant to warn someone about it also failed to send, so the desk could sit switched off for a full day or a weekend with nobody aware, looking exactly like an ordinary quiet market.
@@ -253,13 +245,6 @@ this line, one heading per item.
 **The decision —** Not yet. If research shows agreement between independent seats does not actually predict anything, the honest answer is to delete the schedule and let the 5% ceiling stand alone — and that would be a real change to how the desk sizes, so it would come back to you then. Right now there is nothing to rule on.
 **Recommendation —** Answer the underlying question first: does more agreement mean a better trade? If it cannot be shown, collapse the schedule rather than tune it.
 
-## item 59
-
-**Plain language —** After 13 September the desk can no longer go quiet for a day without telling you — every way it can produce nothing now has an alarm, and each kind of empty day has its own distinct wording. What it still cannot do is notice a PATTERN. If a fault caused it to refuse every single idea, every single day, it would report that truthfully each morning and never once raise its voice. Nobody has decided how many identical empty days should set something off, and no number was invented for it.
-**Example —** In the measured window, 6 sessions out of 11 placed no trades at all. So a run of empty days is completely normal here, which is exactly what makes a broken run so easy to miss — a fortnight of "no trades today" messages looks the same whether the market is dull or a gate is jammed shut.
-**The decision —** Possibly yours later, but not yet. If we can tell a jam from a quiet market by its shape, no decision is needed. Only if that fails does it become a question of how long you are prepared to be flat without being told.
-**Recommendation —** Try the shape test first. The desk already writes down WHY each idea was refused; if every refusal for days on end carries the identical reason, that is a jam, and it can be alarmed without counting days at all.
-
 ## item 60
 
 **Plain language —** The AI that double-checks trades before they go out also double-checks the desk's decisions to SELL out of a position it already holds — but it was built and tuned only for the morning buying decision, not the selling one. A repair landed today after this reviewer was found telling itself, on every single sell it ever reviewed, that two mandatory safety checks had been skipped — when those checks don't exist for a sell at all and never did. The repair stopped it lying to itself, but it did not give selling its own reviewer. Instead, four of its normal checklist items are now switched off for a sell as not relevant, a fifth is flipped in meaning (a stock about to report earnings is a reason to refuse a purchase, but a reason to get out of a sale), and it turns out two of its three ways of actually intervening on a trade — nudging one position, or scaling back the whole plan — do nothing at all when it's reviewing a sell. All it can really do there is say yes or no to the whole thing.
@@ -300,7 +285,7 @@ this line, one heading per item.
 **Recommendation —** Leave it. Switch the swap feature on as planned, and once it has run for a while, count how many swaps happened because the held stock's coverage lapsed rather than because its own signals got worse. That is a real measurement rather than a guess, and it costs nothing but waiting.
 
 
-## item 67
+## item 68
 
 **Plain language —** The same made-up number, 1.0, is quietly doing two unrelated jobs in the selling path. In one place it decides how far a stock has to move against you before the move counts as real rather than ordinary daily wobble. In the other it decides how tight a stop-loss is allowed to be before the desk refuses it as too close. Both are expressed as "one average day's range", both were picked as a round figure, and neither has a source or a calculation behind it. That they happen to be the same number is a coincidence, not a design — nothing in the code links them, so if either is ever changed the other silently drifts away from it.
 **Example —** A stock whose average daily range is $4 has to move $4 against you before the desk stops calling it noise, and separately, its stop is refused if it sits closer than $4 away. Those two rules constrain each other in a way nobody chose, and the reason they line up is that somebody typed 1.0 twice.
@@ -308,7 +293,7 @@ this line, one heading per item.
 **Recommendation —** Treat them as two separate questions, because they are. Each needs either a published measurement of the thing it claims to bound, or a decision that the limit should not exist. Making them one shared constant would be tidier code and no more justified.
 
 
-## item 68
+## item 69
 
 **Plain language —** In one archived review the desk's own reviewer reasoned about a Disney position using a "distance to the stop-loss" of 4.5%, while the desk's trade records for that same moment imply 0.4% — more than ten times apart. That figure is not decoration: it is one of the numbers the desk checks a "this position is deteriorating" claim against. A reviewer working from 4.5% thinks the position has comfortable room; the records say it was almost touching its stop.
 **Example —** Disney was bought at $108.09 with a stop at $105.80 and was trading at $106.21. That is 0.4% of headroom. The review written at that moment states 4.49%.
