@@ -658,3 +658,73 @@ it is given authority. A benchmark is evidence; production agreement is proof.
 SIP market data (owner declined 2026-08-27 for the paper phase — see
 `docs/WORK.md`), Alpaca Elite smart routing, and a wider universe. None of
 them is the binding constraint.
+
+## 2026-09-14 analyst seat re-test
+
+**Why.** Seat models were chosen 2026-08-12..08-31 on prompts rewritten
+since; the old exams fed stale shapes and desk-recorded data.
+
+**Rules now in force:**
+- Exam fixtures = public raw facts only (SEC EDGAR, yfinance, FRED via
+  OneCLI, public RSS), enforced by `ops/model_policy/fixture_policy.py`.
+- Desk data refused until a reviewed trust cut-off date.
+- Published OpenRouter prices decide what is worth testing; the test itself
+  measures spend and picks the model; owner only rules on whether the
+  winner's cost is acceptable.
+- Every model runs under identical settings.
+
+**Faults found and fixed today (all merged):**
+- `smart_money` `max_tokens` 3000 truncated every answer, now 16000 (PR #411).
+- Earnings prompt told models to write the UNSOURCED token into a list
+  field; code discarded the whole analysis (PR #411).
+- Desk sent no reasoning effort and no response format, so thinking models
+  ran out of room (PR #412): reasoning effort "medium" = OpenRouter
+  documented default; strict `json_schema`; same on the Google-direct route;
+  free-form-map models like NewsIntelligenceReport go `strict=false` for
+  all; `$ref` sibling keywords stripped.
+- Benchmark could not run the live Google-direct route (PR #412 added the
+  `google-direct:` prefix).
+- Parallel benchmark runs sharing one DB were frozen by the cost circuit
+  when one call's cost was unknown (Google free tier returns no price;
+  mid-stream timeouts) — workaround used: one config copy with its own
+  storage `db_path` per process. **Not fixed in code — open.**
+
+**Results** (score % per exam: earnings / smart money / tech / news /
+macro; measured test spend; 2 runs each; "-" = not completed):
+
+| model | earnings/smart-money/tech/news/macro | spend | note |
+|---|---|---|---|
+| google-direct:gemini-3.5-flash-lite (current, free tier) | 100/100/88/100/100 | $0 | ≤20s per call |
+| openai/gpt-5.6-luna | 100/100/88/100/100 | $0.058 | |
+| google/gemini-3.5-flash-lite via OpenRouter | 100/100/65/100/100 | $0.154 | |
+| meta/muse-spark-1.3 | 82/100/100/100/100 | $0.433 | |
+| z-ai/glm-5.3 | 92/100/75/90/100 | $0.320 | |
+| z-ai/glm-5.3-flash | 100/0/65/100/100 | $0.026 | calls up to 420s timeout |
+| deepseek/deepseek-v4.1-flash | 90/50/50/50/100 | - | calls hit 420s timeout |
+| deepseek/deepseek-v4-flash-0731 | 42/100/70/65/100 | - | 420s timeouts |
+| qwen/qwen3.8-flash | 50/100/0/100/100 | - | 420s timeouts |
+| google/gemini-2.5-flash-lite | -/-/65/-/- | - | incomplete |
+
+Label: results are from one public-data day per exam, 2 repeats — small
+sample.
+
+**Decision (2026-09-14):** analyst seats stay on `gemini-3.5-flash-lite` via
+Google direct (free); nothing tested beat it. Open question: same model
+scored tech 88 direct vs 65 via OpenRouter — unexplained.
+
+**Next step:** build the PM practice day from FRESH output of the analyst
+seats (free model) on the public-data fixtures — the old PM fixtures
+`run_bba4d4f3` / `run_64290730` are desk recordings and quarantined. Then PM
+model test (shortlist: openai/gpt-5.5 current, anthropic/claude-opus-5,
+meta/muse-spark-1.3, z-ai/glm-5.3, moonshotai/kimi-k3, z-ai/glm-5.3-flash,
+qwen/qwen3.8-flash, deepseek/deepseek-v4.1-flash,
+deepseek/deepseek-v4-flash-0731; check why openai/gpt-5.6-sol ($2/$10, AA
+42-47) was left off). Then risk_manager and position_reviewer (they read PM
+output). Then restart the paper desk. Trading timers are deliberately
+paused (`scripts/systemd/paused_units.yaml`); PRs #410-#412 are merged but
+NOT deployed to the production box.
+
+**Owner's standing handoff:** the owner's private working notes for AI
+sessions live on the VPS at
+`/home/ubuntu/.claude/projects/-home-ubuntu/memory/` (start with
+`MEMORY.md` and `qamc-resume-2026-09-13.md`).

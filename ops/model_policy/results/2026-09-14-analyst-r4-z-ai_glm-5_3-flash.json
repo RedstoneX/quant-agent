@@ -1,0 +1,282 @@
+{
+  "generated_at": "2026-09-14T21:10:08Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.4,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.4,
+    "max_calls_per_session": 16
+  },
+  "estimate_usd": {
+    "per_model": {
+      "z-ai/glm-5.3-flash": 0.033689
+    },
+    "tokens": {
+      "earnings_filing": {
+        "input": 4966,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      },
+      "smart_money_form4": {
+        "input": 664,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": true,
+  "scenarios": {
+    "earnings_filing": {
+      "role": "earnings_analyst",
+      "description": "A real MRVL 10-Q (filed 2026-08-28) fetched from SEC EDGAR; filing text and XBRL facts recomputed by today's provider. Grades identifier echo, real figures, agreement with SEC XBRL, UNSOURCED-token and truncation discipline."
+    },
+    "smart_money_form4": {
+      "role": "smart_money_analyst",
+      "description": "Real SEC Form 4 submissions (2026-08-28..31) run through today's SECForm4Provider. Grades parse survival, stance vs P/S source direction, and the word limit. Narrower discovery window and empty insider history than production \u2014 see the fixture's deviations list."
+    }
+  },
+  "prompts": {
+    "earnings_analyst": {
+      "path": "config/prompts/earnings_analyst.md",
+      "sha256": "2177382e12e172455b8b84102169b831812d3ad902eede96e0ceb6cbe4251167",
+      "bytes": 19864,
+      "lines": 222
+    },
+    "smart_money_analyst": {
+      "path": "config/prompts/smart_money_analyst.md",
+      "sha256": "c9c41a0a4b9501586ba5ee13f77aa66e4db42490b5b09cfb05061a3e5a10ecc9",
+      "bytes": 2657,
+      "lines": 47
+    }
+  },
+  "pricing_used": {
+    "z-ai/glm-5.3-flash": {
+      "input": 0.15,
+      "output": 0.5
+    }
+  },
+  "trials": [
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "undefined reasons [] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "input truncated=True; data_quality='filing text truncated: the md&a results-of-operations narrative, full celestial ' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "ok"
+        }
+      ],
+      "input_tokens": 9376,
+      "output_tokens": 2687,
+      "cost_usd": 0.0027498999999999996,
+      "latency_s": 39.5,
+      "error": "",
+      "sample_output": "{\n  \"symbol\": \"MRVL\",\n  \"form_type\": \"10-Q\",\n  \"filing_date\": \"2026-08-28\",\n  \"revenue\": {\n    \"total\": \"$2,739.3 million (three months ended 2026-08-01)\",\n    \"yoy_growth\": \"+36.6% YoY ($2,739.3M vs $2,006.1M in Q2 FY26); six months $5,157.1M vs $3,901.4M, +32.2%\",\n    \"segments\": []\n  },\n  \"profitability\": {\n    \"gross_margin\": \"53.1% ($1,455.6M gross profit on $2,739.3M revenue) vs 50.4% prior-year quarter\",\n    \"operating_margin\": \"16.8% ($459.7M operating income) vs 14.5% ($290.1M) prior-year quarter\",\n    \"net_income\": \"$308.0 million (Q2); six months $342.5M vs $372.7M prior year \u2014 Q1 FY27 was only $34.5M, weighed down by $223.1M six-month interest and other loss including a $433.7M contingent-consideration fair value charge\",\n    \"eps\": \"$0.33 diluted (Q2) vs $0.22 prior year; six months $0.38 vs $0.43\"\n  },\n  \"cash_flow\": {\n    \"operating_cf\": \"$1,244.3 million (six months) vs $794.5M prior year, +56.6%\",\n    \"free_cf\": \"$961.9 million (six months; $1,244.3M OCF less $282.4M capex)\",\n    \"capex\": \"$282.4 million (six months) vs $166.3M prior year, +69.8%\"\n  },\n  \"balance_sheet\": {\n    \"cash_and_equivalents\": \"$3,932.8 million (up from $2,638.8M at January 31, 2026)\",\n    \"total_debt\": \"$4,962.9 million long-term debt; short-term debt now $0 (was $499.8M); $998.9M borrowings raised, $500.0M repaid in six months\",\n    \"assessment\": \"Roughly net-debt-neutral on cash alone ($3.93B cash vs $4.96B LT debt); equity swelled to $18.5B via a $2.0B Series A Convertible Preferre",
+      "actual_model": "z-ai/glm-5.3-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "undefined reasons [] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "input truncated=True; data_quality='filing text truncated: md&a results-of-operations discussion, segment/revenue-mi' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "ok"
+        }
+      ],
+      "input_tokens": 9376,
+      "output_tokens": 2991,
+      "cost_usd": 0.0029019,
+      "latency_s": 130.51,
+      "error": "",
+      "sample_output": "{\n  \"symbol\": \"MRVL\",\n  \"form_type\": \"10-Q\",\n  \"filing_date\": \"2026-08-28\",\n  \"revenue\": {\n    \"total\": \"$2,739.3 million (Q2 FY27, three months ended 2026-08-01)\",\n    \"yoy_growth\": \"+36.6% (vs $2,006.1M in the three months ended 2025-08-02); six-month revenue $5,157.1M vs $3,901.4M, +32.2% YoY\",\n    \"segments\": []\n  },\n  \"profitability\": {\n    \"gross_margin\": \"53.1% (gross profit $1,455.6M / revenue $2,739.3M), up from 50.4% ($1,010.6M / $2,006.1M) a year ago\",\n    \"operating_margin\": \"16.8% ($459.7M operating income), up from 14.5% ($290.1M) \u2014 GAAP operating income +58.5% YoY\",\n    \"net_income\": \"$308.0 million for the quarter (vs $194.8M); six-month net income $342.5M, down from $372.7M, dragged by a $433.7M contingent-consideration fair-value charge and $223.1M other expense YTD\",\n    \"eps\": \"$0.33 diluted (vs $0.22); six-month diluted EPS $0.38 vs $0.43 \u2014 YTD EPS down despite revenue growth, reflecting dilution (921.2M diluted shares vs 870.4M) and acquisition-related charges\"\n  },\n  \"cash_flow\": {\n    \"operating_cf\": \"$1,244.3 million for the six months ended 2026-08-01 (vs $794.5M prior year, +56.6%)\",\n    \"free_cf\": \"[UNSOURCED:not_in_filing] \u2014 six-month capex of $282.4M (purchases of property and equipment) implies ~$961.9M FCF, but the filing's Q2-only cash flow is not broken out in the provided text\",\n    \"capex\": \"$282.4 million six-month purchases of property and equipment (vs $166.3M prior year)\"\n  },\n  \"balance_sheet\": {\n    \"cash_and_equivalents\": \"$3,932.8 m",
+      "actual_model": "z-ai/glm-5.3-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "z-ai/glm-5.3-flash|smart_money_form4": {
+        "model": "z-ai/glm-5.3-flash",
+        "scenario": "smart_money_form4",
+        "role": "smart_money_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      },
+      "z-ai/glm-5.3-flash|earnings_filing": {
+        "model": "z-ai/glm-5.3-flash",
+        "scenario": "earnings_filing",
+        "role": "earnings_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.002826,
+        "latency_mean": 85.0,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "z-ai/glm-5.3-flash": {
+        "scenarios": {
+          "smart_money_form4": {
+            "model": "z-ai/glm-5.3-flash",
+            "scenario": "smart_money_form4",
+            "role": "smart_money_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          },
+          "earnings_filing": {
+            "model": "z-ai/glm-5.3-flash",
+            "scenario": "earnings_filing",
+            "role": "earnings_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.002826,
+            "latency_mean": 85.0,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_per_run_mean": 0.002826,
+        "cost_total_usd": 0.005652,
+        "quality_per_dollar": 353.86
+      }
+    }
+  }
+}

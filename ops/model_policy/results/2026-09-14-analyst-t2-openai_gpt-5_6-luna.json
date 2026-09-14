@@ -1,0 +1,435 @@
+{
+  "generated_at": "2026-09-14T21:27:52Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 24
+  },
+  "estimate_usd": {
+    "per_model": {
+      "openai/gpt-5.6-luna": 0.1100252
+    },
+    "tokens": {
+      "tech_batch": {
+        "input": 24814,
+        "output": 18111,
+        "source": "max measured in committed results"
+      },
+      "news_intel": {
+        "input": 4535,
+        "output": 11112,
+        "source": "max measured in committed results"
+      },
+      "macro_stress": {
+        "input": 7028,
+        "output": 10558,
+        "source": "max measured in committed results"
+      }
+    }
+  },
+  "stopped_on_budget": true,
+  "scenarios": {
+    "tech_batch": {
+      "role": "tech_analyst",
+      "description": "Real yfinance bars for 7 symbols (2026-08-28) run through today's compute_indicators and analyze_batch (src/agents/tech_analyst.py:336). Unblocked 2026-09-14: analyze_batch's own signature defaults prior_ratings to {} and prior_macro_regime/prior_macro_outlook to None (src/agents/tech_analyst.py:339-343) \u2014 the tech seat's prompt rates chart-driven, not prior-ratings-driven (config/prompts/tech_analyst.md). Valuations and the intraday snapshot are omitted the same way (both optional, default None) rather than invented. Grades symbol resolution, thesis_invalid_if discipline, the absolute ATR stop floor, and range R:R >= 2.0."
+    },
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "Real RSS wires (11 feeds, fetched live 2026-09-14) replayed through today's NewsDataProvider.fetch_news / format_for_prompt / tag_symbol_mentions (src/data/news.py). previous_narrative/prior_session_report=None (both optional, src/agents/news_analyst.py:376-380). Unblocked 2026-09-14. Grades schema/enum compliance and 'no invented tickers not in input' only \u2014 no judgement-based answer key for real news."
+    },
+    "macro_stress": {
+      "role": "macro_analyst",
+      "description": "15 real FRED series (2026-09-14), fetched live through the OneCLI credential gateway with a placeholder key \u2014 the real FRED_API_KEY never entered this process \u2014 then recomputed by today's MacroDataProvider.get_macro_summary (src/data/macro.py:1125). last_state/news_narrative=None (both optional, src/agents/macro_analyst.py:203-204). Unblocked 2026-09-14 \u2014 see the retired synthetic-tape note above for why the old scenario was blocked. Grades schema and rule compliance only; real conditions have no forced correct direction to grade against."
+    }
+  },
+  "prompts": {
+    "macro_analyst": {
+      "path": "config/prompts/macro_analyst.md",
+      "sha256": "220dd8f07d5c331d417e02db17e12bd4655c0e6de4e6626078e90adf6a43b9ca",
+      "bytes": 25425,
+      "lines": 228
+    },
+    "news_analyst": {
+      "path": "config/prompts/news_analyst.md",
+      "sha256": "e395669444d2e89c37eef6e89d568ea8789d721f8132daaa8c4aae42ac829afd",
+      "bytes": 17453,
+      "lines": 196
+    },
+    "tech_analyst": {
+      "path": "config/prompts/tech_analyst.md",
+      "sha256": "541e4d81a3a78546534b309e0ad03a06ad34063ebe826a93c3bd3799dab4146d",
+      "bytes": 23459,
+      "lines": 216
+    }
+  },
+  "pricing_used": {
+    "openai/gpt-5.6-luna": {
+      "input": 0.19999999999999998,
+      "output": 1.2
+    }
+  },
+  "trials": [
+    {
+      "model": "openai/gpt-5.6-luna",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "range R/R < 2.0: [] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 19436,
+      "output_tokens": 4523,
+      "cost_usd": 0.0093148,
+      "latency_s": 48.27,
+      "error": "",
+      "sample_output": "[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"medium\",\n    \"entry_price\": null,\n    \"stop_loss\": null,\n    \"reference_target\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": null,\n    \"expected_horizon_sessions\": null,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price $800.25 is below MA20 $838.40 and MA50 $893.19, while remaining above MA200 $765.12; the short- and intermediate-term trend is bearish within a broader long-term uptrend. MA20 and MA50 are declining, and the stock is consolidating near the lower edge of its $799.17-$887.91 range.\",\n      \"momentum\": \"RSI 38.45 is weak but not oversold, while MACD remains below its signal with a negative histogram (-0.92), confirming bearish momentum. The proximity to the lower range boundary limits the attractiveness of initiating a fresh short.\",\n      \"volatility\": \"Price is near the lower Bollinger Band at $792.47, and ATR $30.80 is at the 78th percentile and expanding. Elevated volatility increases breakdown risk but also raises the probability of a sharp mean-reversion bounce from support.\",\n      \"volume\": \"The 20-day up/down volume ratio is 0.27 and recent volume is down 32.77%, indicating prior distribution but no fresh high-volume breakdown confirmation on the latest decline.\",\n      \"support_resistance\": \"Immediate structural support is $775.34, only 0.81 ATR below the close, with deeper support at $662.98. Resistance is $840.38 and $852",
+      "actual_model": "openai/gpt-5.6-luna",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "openai/gpt-5.6-luna",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 0.75,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "range R/R < 2.0: ['UNH'] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 19436,
+      "output_tokens": 4539,
+      "cost_usd": 0.009334,
+      "latency_s": 45.16,
+      "error": "",
+      "sample_output": "[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"medium\",\n    \"entry_price\": null,\n    \"stop_loss\": null,\n    \"reference_target\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": null,\n    \"expected_horizon_sessions\": null,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price is below the declining MA20 at 838.40 and MA50 at 893.19, but remains above the rising MA200 at 765.12; the short- and intermediate-term trend is bearish within a broader long-term uptrend.\",\n      \"momentum\": \"RSI 38.45 is weak but not oversold, while MACD remains below its signal with a negative histogram, supporting downside momentum.\",\n      \"volatility\": \"Price is near the lower Bollinger Band at 792.47, and ATR 30.80 is expanding at the 78th percentile, indicating elevated whipsaw risk.\",\n      \"volume\": \"The 20-day up/down volume ratio is 0.27 and recent volume is down 32.77%, showing prior distribution but no fresh volume confirmation on the latest decline.\",\n      \"support_resistance\": \"The nearest support is 775.34, only 25.09 below price, while resistance is 840.38 and 852.47. A short toward 775.34 does not provide sufficient payoff relative to a structurally defensible stop above resistance.\"\n    },\n    \"reasoning\": \"Short-term trend and momentum are bearish, but CAT is already near meaningful support and elevated volatility makes the immediate risk/reward unattractive. Wait for a failed support retest or a clearer bre",
+      "actual_model": "openai/gpt-5.6-luna",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "openai/gpt-5.6-luna",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 211 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 8883,
+      "output_tokens": 1481,
+      "cost_usd": 0.0035538,
+      "latency_s": 21.29,
+      "error": "",
+      "sample_output": "{\"macro_narrative\":{\"last_updated\":\"2026-09-14\",\"era_themes\":[\"Higher-for-longer rates and bond-market volatility are challenging equity valuations\",\"AI investment and commercialization remain a defining market theme, but governance, safety, and commercialization risks are increasing\",\"Geopolitical and energy-supply uncertainty are sustaining an inflationary risk premium\"],\"current_regime\":\"Risk-off and rate-sensitive at the session open, with the 10-year Treasury yield reaching 5%, the VIX rising to 18, and investors rotating away from AI-exposed growth toward defensive and cybersecurity equities.\",\"key_state_tracker\":{\"monetary_policy\":\"Repricing toward tightening \u2014 markets were pricing more than a 92% probability of a September rate increase and more than 75% probability of another increase in December.\",\"bond_market\":\"Stress building \u2014 the 10-year Treasury yield briefly reached 5%, lifting mortgage rates and pressuring long-duration equity valuations.\",\"ai_cycle\":\"Leadership under review \u2014 Anthropic leadership called for a slower pace of capability improvement, while political pushback and concerns about AI risks intensified.\",\"equity_leadership\":\"Narrowing and rotating \u2014 AI-exposed technology is under pressure while cybersecurity stocks are outperforming.\",\"energy_supply\":\"Upside risk \u2014 reports said Saudi Arabia's East-West pipeline was shut down, with expectations that energy prices could rise.\",\"geopolitics\":\"Unresolved \u2014 Ukraine indicated openness to halting attacks o",
+      "actual_model": "openai/gpt-5.6-luna",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "openai/gpt-5.6-luna",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 265 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 8883,
+      "output_tokens": 1540,
+      "cost_usd": 0.0036246,
+      "latency_s": 20.43,
+      "error": "",
+      "sample_output": "{\"macro_narrative\":{\"last_updated\":\"2026-09-14\",\"era_themes\":[\"AI investment and commercialization cycle facing a new safety, regulation, and IPO-risk debate\",\"Higher-for-longer rates and renewed inflation pressure reshaping equity valuations\",\"Geopolitical and energy-supply disruptions increasing commodity and macro volatility\"],\"current_regime\":\"Defensive and rate-sensitive news backdrop \u2014 the 10-year Treasury yield reached 5%, rate-hike expectations intensified, oil prices rose on Saudi pipeline concerns, and investors rotated away from AI-exposed technology toward cybersecurity and other defensive areas.\",\"key_state_tracker\":{\"monetary_policy\":\"Re-tightening expectations \u2014 markets were pricing more than a 92% probability of a September rate increase and more than 75% probability of another increase in December.\",\"long_term_rates\":\"Stress point \u2014 the 10-year Treasury yield briefly reached 5%, while the 30-year mortgage rate rose to 7.17%.\",\"ai_cycle\":\"Repricing and divergence \u2014 concerns about an AI development slowdown and safety regulation are pressuring AI-exposed companies, while cybersecurity stocks are benefiting.\",\"energy_supply\":\"Tightening risk \u2014 Saudi Arabia's East-West oil pipeline is reportedly shut down, raising concern that the kingdom may soon be unable to export substantial volumes.\",\"market_risk\":\"Elevated \u2014 the VIX rose to 18 as equities declined and investors weighed bond-market stress against AI risks.\",\"geopolitics\":\"Fluid \u2014 Ukraine indicated openness t",
+      "actual_model": "openai/gpt-5.6-luna",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "openai/gpt-5.6-luna",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=72.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 8219,
+      "output_tokens": 2010,
+      "cost_usd": 0.0040558,
+      "latency_s": 25.04,
+      "error": "",
+      "sample_output": "{\"reasoning_chain\":{\"volatility_analysis\":\"VIX is 15.84 with a five-day average of 16.23, placing volatility in the normal but relatively supportive range. The rising trend is a mild caution signal rather than a risk-off confirmation, especially because the level remains well below 20.\",\"yield_curve_analysis\":\"The 2Y yield is 4.63% versus 4.96% for the 10Y, producing a positive 0.33% spread; the 3M/10Y spread is also positive at 0.89%. Both curves are non-inverted, reducing recessionary concern, although elevated nominal yields and a 2.60% real 10Y indicate restrictive financial conditions. The two curve measures are directionally consistent.\",\"monetary_policy_analysis\":\"DFF is 3.63% and unchanged over 30 days, indicating a stable policy stance rather than fresh easing or tightening. The combination of a high 2.60% real 10Y and a 2.36% breakeven suggests that elevated nominal yields are driven substantially by real-rate pressure, with inflation expectations only modestly above the Fed's target. The dollar has weakened 0.9% over 30 days, a mild counterpoint to the restrictive-rate backdrop rather than a major contradiction.\",\"inflation_labor_credit\":\"Inflation remains sticky: headline CPI is 3.71% year over year with 0.40% monthly growth, core CPI is 2.76% with 0.29% monthly growth, and PCE is 3.7%. Against that, labor is healthy: unemployment is 4.1%, down 0.2 percentage points over three months, while initial claims are 206,000, falling 6,000 over four weeks. Credit is benig",
+      "actual_model": "openai/gpt-5.6-luna",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "openai/gpt-5.6-luna",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=70.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 8219,
+      "output_tokens": 2239,
+      "cost_usd": 0.0043305999999999996,
+      "latency_s": 23.38,
+      "error": "",
+      "sample_output": "{\"reasoning_chain\":{\"volatility_analysis\":\"VIX is 15.84 versus a 5-day average of 16.23, placing volatility in the normal range and modestly below its recent average, although the rising trend is a mild caution. The level remains supportive of equities but does not provide a low-volatility all-clear signal below 15.\",\"yield_curve_analysis\":\"The 2Y yield is 4.63% and the 10Y is 4.96%, producing a positive 0.33% 2Y/10Y spread. The 3M/10Y spread is also positive at 0.89%, so both curves are non-inverted and there is no current curve-based recession warning. The relatively high absolute yield level still implies restrictive financial conditions, but the absence of divergence between the two spreads is supportive.\",\"monetary_policy_analysis\":\"DFF is 3.63% and unchanged over 30 days, indicating a stable policy stance rather than an active easing or tightening impulse. The 2.6% real 10Y yield is high, while the 2.36% breakeven is only moderately above the Fed's inflation objective; together they suggest that elevated nominal yields are driven substantially by real-rate and growth/term-premium pressure rather than an acute inflation repricing. The dollar is down 0.9% over 30 days, which is consistent with the lack of a fresh hawkish policy impulse, though the divergence is modest.\",\"inflation_labor_credit\":\"Inflation remains sticky: headline CPI is 3.71% year over year with 0.4% monthly growth, core CPI is 2.76% with 0.29% monthly growth, and PCE is 3.7%. Labor conditions are constru",
+      "actual_model": "openai/gpt-5.6-luna",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "openai/gpt-5.6-luna|tech_batch": {
+        "model": "openai/gpt-5.6-luna",
+        "scenario": "tech_batch",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 0.875,
+        "quality_min": 0.75,
+        "cost_mean": 0.009324,
+        "latency_mean": 46.72,
+        "errors": [],
+        "misattributed": []
+      },
+      "openai/gpt-5.6-luna|news_intel": {
+        "model": "openai/gpt-5.6-luna",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.003589,
+        "latency_mean": 20.86,
+        "errors": [],
+        "misattributed": []
+      },
+      "openai/gpt-5.6-luna|macro_stress": {
+        "model": "openai/gpt-5.6-luna",
+        "scenario": "macro_stress",
+        "role": "macro_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.004193,
+        "latency_mean": 24.21,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "openai/gpt-5.6-luna": {
+        "scenarios": {
+          "tech_batch": {
+            "model": "openai/gpt-5.6-luna",
+            "scenario": "tech_batch",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 0.875,
+            "quality_min": 0.75,
+            "cost_mean": 0.009324,
+            "latency_mean": 46.72,
+            "errors": [],
+            "misattributed": []
+          },
+          "news_intel": {
+            "model": "openai/gpt-5.6-luna",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.003589,
+            "latency_mean": 20.86,
+            "errors": [],
+            "misattributed": []
+          },
+          "macro_stress": {
+            "model": "openai/gpt-5.6-luna",
+            "scenario": "macro_stress",
+            "role": "macro_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.004193,
+            "latency_mean": 24.21,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.9583,
+        "quality_worst": 0.875,
+        "quality_worst_run": 0.75,
+        "cost_per_run_mean": 0.005702,
+        "cost_total_usd": 0.034214,
+        "quality_per_dollar": 168.06
+      }
+    }
+  }
+}

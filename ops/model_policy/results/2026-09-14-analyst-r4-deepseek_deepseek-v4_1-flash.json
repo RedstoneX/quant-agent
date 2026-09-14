@@ -1,0 +1,210 @@
+{
+  "generated_at": "2026-09-14T21:14:22Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.4,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.4,
+    "max_calls_per_session": 16
+  },
+  "estimate_usd": {
+    "per_model": {
+      "deepseek/deepseek-v4.1-flash": 0.040089
+    },
+    "tokens": {
+      "earnings_filing": {
+        "input": 4966,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      },
+      "smart_money_form4": {
+        "input": 664,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": true,
+  "scenarios": {
+    "earnings_filing": {
+      "role": "earnings_analyst",
+      "description": "A real MRVL 10-Q (filed 2026-08-28) fetched from SEC EDGAR; filing text and XBRL facts recomputed by today's provider. Grades identifier echo, real figures, agreement with SEC XBRL, UNSOURCED-token and truncation discipline."
+    },
+    "smart_money_form4": {
+      "role": "smart_money_analyst",
+      "description": "Real SEC Form 4 submissions (2026-08-28..31) run through today's SECForm4Provider. Grades parse survival, stance vs P/S source direction, and the word limit. Narrower discovery window and empty insider history than production \u2014 see the fixture's deviations list."
+    }
+  },
+  "prompts": {
+    "earnings_analyst": {
+      "path": "config/prompts/earnings_analyst.md",
+      "sha256": "2177382e12e172455b8b84102169b831812d3ad902eede96e0ceb6cbe4251167",
+      "bytes": 19864,
+      "lines": 222
+    },
+    "smart_money_analyst": {
+      "path": "config/prompts/smart_money_analyst.md",
+      "sha256": "c9c41a0a4b9501586ba5ee13f77aa66e4db42490b5b09cfb05061a3e5a10ecc9",
+      "bytes": 2657,
+      "lines": 47
+    }
+  },
+  "pricing_used": {
+    "deepseek/deepseek-v4.1-flash": {
+      "input": 0.15,
+      "output": 0.6
+    }
+  },
+  "trials": [
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "deepseek/deepseek-v4.1-flash|earnings_filing": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "scenario": "earnings_filing",
+        "role": "earnings_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4.1-flash|smart_money_form4": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "scenario": "smart_money_form4",
+        "role": "smart_money_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "deepseek/deepseek-v4.1-flash": {
+        "scenarios": {
+          "earnings_filing": {
+            "model": "deepseek/deepseek-v4.1-flash",
+            "scenario": "earnings_filing",
+            "role": "earnings_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          },
+          "smart_money_form4": {
+            "model": "deepseek/deepseek-v4.1-flash",
+            "scenario": "smart_money_form4",
+            "role": "smart_money_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": true,
+        "quality_mean": null,
+        "quality_worst": null,
+        "quality_worst_run": null,
+        "cost_per_run_mean": null,
+        "cost_total_usd": null,
+        "quality_per_dollar": null
+      }
+    }
+  }
+}
