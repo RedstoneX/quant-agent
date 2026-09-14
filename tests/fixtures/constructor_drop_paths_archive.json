@@ -1,0 +1,4068 @@
+{
+ "_provenance": {
+  "excluded_analyses": "Archive rows that no longer satisfy TechAnalysisResult's current schema (the model gained required fields after they were written) are excluded rather than patched: intra_check-63ee9b86/OKLO, run-5593a8c9/MSFT, run-5593a8c9/XLB, run-5593a8c9/XLE, run-5593a8c9/AAPL, run-5593a8c9/NVDA, run-5593a8c9/CMCSA, run-5dc33236/XLF, run-5dc33236/XLE, run-5dc33236/AMZN, run-5dc33236/JPM, run-5dc33236/V, run-5dc33236/DIS, run-5dc33236/CMCSA, run-6211ad13/META, run-6211ad13/XLU, run-6211ad13/XLE, run-6211ad13/VLO, run-6211ad13/ABT, run-6211ad13/MRVL, run-6211ad13/COP, run-6211ad13/WMT, run-74cbb7c7/XLF, run-74cbb7c7/XLE, run-74cbb7c7/V, run-74cbb7c7/CMCSA, run-a933b4da/XLE, run-a933b4da/AMD, run-a933b4da/EQNR, run-a933b4da/OXY, run-a933b4da/DIS",
+  "frozen": "2026-09-14, board item 10",
+  "note": "Every target, technical analysis and seat stance below is a row the live desk wrote between 2026-08-18 and 2026-09-02. Nothing here is authored by a test. Equity is that session's own daily_pnl total_value; positions are the archive's held-book snapshot (2026-09-01), the only one retained.",
+  "runs": 20,
+  "source": "production archive /tmp/qamc_watch2.db (read-only copy), specialist_evidence + positions + daily_pnl"
+ },
+ "decisions": [
+  {
+   "analyses": [
+    {
+     "atr_14": 10.65,
+     "conviction": "high",
+     "entry_price": 254.47,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 271.86,
+     "resistance_levels": [
+      255.83,
+      259.51,
+      262.34,
+      265.72,
+      271.86
+     ],
+     "risk_reward": 1.24,
+     "setup_type": "breakout",
+     "signal_age_days": null,
+     "stop_loss": 240.39,
+     "support_levels": [
+      252.05,
+      249.99,
+      246.47
+     ],
+     "symbol": "CRM",
+     "thesis_invalid_if": "Price closes below the MA50 (178.87) on above-average volume."
+    }
+   ],
+   "equity": 9870.37,
+   "evidence_registry": {},
+   "run_id": "intra_check-41e42bca",
+   "targets": [
+    {
+     "catalyst": "Salesforce beats Q2 earnings and expands AI partnership, with renewed investor confidence in its AI strategy.",
+     "conviction": "medium",
+     "provenance": [
+      {
+       "evidence": "High-conviction technical buy on a powerful bullish trend and breakout from consolidation.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Bullish CRM news tied to post-earnings gains and renewed confidence in AI strategy.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "news"
+      },
+      {
+       "evidence": "Technology is bearish in the current macro registry, so the long is kept reduced despite the catalyst.",
+       "observed_stance": "bearish",
+       "relationship": "conflicts",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 0.75,
+     "suggested_stop_price": null,
+     "symbol": "CRM",
+     "target_weight_pct": null,
+     "thesis": "Open a reduced CRM position: technical=buy and news=bullish support the post-earnings AI breakout, while macro=bearish a",
+     "thesis_invalid_if": "Price closes below the MA50 on above-average volume or the post-earnings breakout fails decisively."
+    }
+   ],
+   "timestamp": "2026-08-28 14:00:44"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 0.6,
+     "conviction": "low",
+     "entry_price": 8.0,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 9.5,
+     "resistance_levels": [
+      9.99,
+      11.63,
+      11.75
+     ],
+     "risk_reward": 1.88,
+     "setup_type": "range",
+     "signal_age_days": null,
+     "stop_loss": 7.2,
+     "support_levels": [
+      8.64,
+      8.55,
+      8.31,
+      7.75,
+      7.3,
+      6.8
+     ],
+     "symbol": "ONDS",
+     "thesis_invalid_if": "Price closes below $7.75 on above-average volume."
+    }
+   ],
+   "equity": 9870.37,
+   "evidence_registry": {},
+   "run_id": "intra_check-483360ea",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "provenance": [
+      {
+       "evidence": "Potential short-covering rally with improving intraday bounce and R/R 1.88:1.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro stance conflicts with adding Technology-linked risk in the current environment.",
+       "observed_stance": "bearish",
+       "relationship": "conflicts",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 0.5,
+     "suggested_stop_price": null,
+     "symbol": "ONDS",
+     "target_weight_pct": null,
+     "thesis": "Open a minimum-risk starter: technical=buy supports a potential short-covering breakout, while macro=bearish conflicts a",
+     "thesis_invalid_if": "Price closes below $7.75 on above-average volume."
+    }
+   ],
+   "timestamp": "2026-08-28 17:30:43"
+  },
+  {
+   "analyses": [],
+   "equity": 9870.37,
+   "evidence_registry": {},
+   "run_id": "intra_check-63ee9b86",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "provenance": [
+      {
+       "evidence": "Medium-conviction TA buy based on rebound from session lows, neutral RSI, narrowing MACD histogram, and a target retest of recent highs.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "OKLO",
+     "target_weight_pct": 3.0,
+     "thesis": "Open a low-conviction starter: current registry has technical=buy only, with no current news, earnings, or macro confirm",
+     "thesis_invalid_if": "Price closes below MA20 (42.91) on above-average volume."
+    }
+   ],
+   "timestamp": "2026-08-26 15:00:42"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 10.65,
+     "conviction": "high",
+     "entry_price": 254.47,
+     "expected_horizon_sessions": 10,
+     "rating": "strong_buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 271.86,
+     "resistance_levels": [
+      255.83,
+      259.51,
+      262.34,
+      265.72,
+      271.86
+     ],
+     "risk_reward": 1.24,
+     "setup_type": "breakout",
+     "signal_age_days": null,
+     "stop_loss": 240.39,
+     "support_levels": [
+      249.99,
+      246.47,
+      242.06
+     ],
+     "symbol": "CRM",
+     "thesis_invalid_if": "Price closes below the MA20 ($199.98) on above-average volume."
+    }
+   ],
+   "equity": 9870.37,
+   "evidence_registry": {},
+   "run_id": "intra_check-6d86968d",
+   "targets": [
+    {
+     "catalyst": "Current news is bullish: renewed Wall Street confidence in CRM's AI strategy after strong earnings and AI partnership momentum.",
+     "conviction": "medium",
+     "provenance": [
+      {
+       "evidence": "Technical report shows powerful breakout, strong bullish momentum, heavy accumulation volume, and accelerating trend.",
+       "observed_stance": "strong_buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Current news cites renewed confidence in Salesforce's AI strategy after strong earnings.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "news"
+      },
+      {
+       "evidence": "Macro sector guidance is bearish for Technology due to rate sensitivity and geopolitical/trade headwinds.",
+       "observed_stance": "bearish",
+       "relationship": "conflicts",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 0.75,
+     "suggested_stop_price": null,
+     "symbol": "CRM",
+     "target_weight_pct": null,
+     "thesis": "Open a reduced starter: technical=strong_buy and news=bullish support a Salesforce breakout/AI-strategy catalyst, but ma",
+     "thesis_invalid_if": "Price closes below the MA20 on above-average volume."
+    }
+   ],
+   "timestamp": "2026-08-28 18:30:43"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 8.28,
+     "conviction": "low",
+     "entry_price": 176.0,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 200.0,
+     "resistance_levels": [
+      180.23,
+      190.93
+     ],
+     "risk_reward": 2.67,
+     "setup_type": "range",
+     "signal_age_days": null,
+     "stop_loss": 167.0,
+     "support_levels": [
+      166.85,
+      164.72,
+      162.64
+     ],
+     "symbol": "ZS",
+     "thesis_invalid_if": "Price closes below MA20 (172.04) on increased volume."
+    },
+    {
+     "atr_14": 16.22,
+     "conviction": "medium",
+     "entry_price": 285.0,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 315.0,
+     "resistance_levels": [
+      293.14,
+      300.27,
+      310.59
+     ],
+     "risk_reward": 4.0,
+     "setup_type": "range",
+     "signal_age_days": null,
+     "stop_loss": 277.5,
+     "support_levels": [
+      278.98,
+      273.42,
+      268.38
+     ],
+     "symbol": "NET",
+     "thesis_invalid_if": "Price closes below MA20 (295.74) on increased volume."
+    },
+    {
+     "atr_14": 0.78,
+     "conviction": "high",
+     "entry_price": 16.8,
+     "expected_horizon_sessions": 12,
+     "rating": "strong_buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 19.9,
+     "resistance_levels": [
+      16.88,
+      17.47,
+      18.01
+     ],
+     "risk_reward": 2.82,
+     "setup_type": "range",
+     "signal_age_days": null,
+     "stop_loss": 15.7,
+     "support_levels": [
+      15.72,
+      15.55,
+      15.41
+     ],
+     "symbol": "PATH",
+     "thesis_invalid_if": "Price closes below MA20 (15.20) on significant volume."
+    }
+   ],
+   "equity": 9874.98,
+   "evidence_registry": {},
+   "run_id": "intra_check-71b87090",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "provenance": [
+      {
+       "evidence": "Technical report flags a cautious buy on a gap-up/range breakout with R/R 2.67:1.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "ZS",
+     "target_weight_pct": 3.0,
+     "thesis": "Open a small starter because the only current source is technical=buy with acceptable R/R 2.67:1; there are no current n",
+     "thesis_invalid_if": "Price closes below MA20 (172.04) on increased volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "provenance": [
+      {
+       "evidence": "Technical report identifies a consolidation breakout with strong price action and volume, with R/R 4.00:1.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "NET",
+     "target_weight_pct": 4.0,
+     "thesis": "Open a controlled starter because the only current source is technical=buy and the R/R is asymmetric at 4.00:1; size is ",
+     "thesis_invalid_if": "Price closes below MA20 (295.74) on increased volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "provenance": [
+      {
+       "evidence": "Technical report shows strong uptrend, robust volume accumulation, bullish momentum, and a high-conviction breakout setup.",
+       "observed_stance": "strong_buy",
+       "relationship": "supports",
+       "source": "technical"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "PATH",
+     "target_weight_pct": 5.0,
+     "thesis": "Open a top-of-starter-bucket position because the only current source is technical=strong_buy with strong uptrend, volum",
+     "thesis_invalid_if": "Price closes below MA20 (15.20) on significant volume."
+    }
+   ],
+   "timestamp": "2026-08-27 14:00:44"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 3.51,
+     "conviction": "medium",
+     "entry_price": 59.03,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 65.91,
+     "resistance_levels": [
+      59.2,
+      60.1,
+      61.34,
+      63.9,
+      64.94,
+      65.91
+     ],
+     "risk_reward": 2.42,
+     "setup_type": "range",
+     "signal_age_days": null,
+     "stop_loss": 56.19,
+     "support_levels": [
+      56.19,
+      53.73,
+      52.42
+     ],
+     "symbol": "MP",
+     "thesis_invalid_if": "Price closes below MA20 (54.02) on above-average volume."
+    }
+   ],
+   "equity": 9870.37,
+   "evidence_registry": {},
+   "run_id": "intra_check-9429cd1f",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "provenance": [
+      {
+       "evidence": "Current report shows bullish momentum, accumulation volume, and a pullback within an uptrend.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro sector stance is neutral, so it does not conflict with the long but does not upgrade conviction.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.5,
+     "suggested_stop_price": null,
+     "symbol": "MP",
+     "target_weight_pct": null,
+     "thesis": "Open a selective MP long: technical=buy supports a breakout/pullback-within-uptrend setup, while macro=neutral is contex",
+     "thesis_invalid_if": "Price closes below MA20 (54.02) on above-average volume."
+    }
+   ],
+   "timestamp": "2026-08-28 18:00:43"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 8.92,
+     "conviction": "medium",
+     "entry_price": 180.31,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 202.89,
+     "resistance_levels": [
+      190.93,
+      202.89
+     ],
+     "risk_reward": 1.17,
+     "setup_type": "range",
+     "signal_age_days": null,
+     "stop_loss": 161.0,
+     "support_levels": [
+      175.84,
+      166.85,
+      155.66
+     ],
+     "symbol": "ZS",
+     "thesis_invalid_if": "Price closes below the MA20 (175.84) and support at 166.85 on expanding volume."
+    }
+   ],
+   "equity": 9838.94,
+   "evidence_registry": {
+    "ZS": {
+     "macro": "bullish",
+     "technical": "buy"
+    }
+   },
+   "run_id": "intra_check-d0909ddc",
+   "targets": [
+    {
+     "catalyst": "Still-active 2026-08-27 HIGH cybersecurity spending theme tied to rising AI threats; used only to justify a half-size low-R/R starter.",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Healthy pullback to rising MA20 during ongoing accumulation phase, with invalidation below MA20 and support.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Risk-on macro regime with Technology sector guidance bullish.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 0.75,
+     "suggested_stop_price": null,
+     "symbol": "ZS",
+     "target_weight_pct": null,
+     "thesis": "Open a reduced starter because current registry signals align with macro=bullish and technical=buy, but Tech R/R is only",
+     "thesis_invalid_if": "Price closes below the MA20 and support at 166.85 on expanding volume."
+    }
+   ],
+   "timestamp": "2026-09-01 14:00:43"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 7.29,
+     "conviction": "medium",
+     "entry_price": 228.0,
+     "expected_horizon_sessions": 7,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 245.0,
+     "resistance_levels": [
+      230.47,
+      236.26
+     ],
+     "risk_reward": 1.42,
+     "setup_type": "breakout",
+     "signal_age_days": null,
+     "stop_loss": 216.0,
+     "support_levels": [
+      212.95,
+      198.23,
+      193.9
+     ],
+     "symbol": "NVDA",
+     "thesis_invalid_if": "Price closes below MA20 (217.21) on above-average volume"
+    }
+   ],
+   "equity": 9870.37,
+   "evidence_registry": {},
+   "run_id": "intra_check-d6b06e63",
+   "targets": [
+    {
+     "catalyst": "2026-08-27 HIGH active state change: Nvidia revenue forecast of 70% growth.",
+     "conviction": "medium",
+     "provenance": [
+      {
+       "evidence": "Technical Analysis Reports show NVDA in a strong uptrend with bullish breakout momentum.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Registry stance is macro=bearish for NVDA/Technology, so the long is sized down.",
+       "observed_stance": "bearish",
+       "relationship": "conflicts",
+       "source": "macro"
+      },
+      {
+       "evidence": "Registry stance is news=neutral for NVDA, so current news coverage does not independently confirm the long.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "news"
+      }
+     ],
+     "risk_allocation_pct": 0.75,
+     "suggested_stop_price": null,
+     "symbol": "NVDA",
+     "target_weight_pct": null,
+     "thesis": "Open a reduced NVDA starter: technical=buy supports the breakout, but macro=bearish conflicts and news=neutral does not ",
+     "thesis_invalid_if": "Price closes below MA20 on above-average volume."
+    }
+   ],
+   "timestamp": "2026-08-28 16:00:43"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 0.6,
+     "conviction": "low",
+     "entry_price": 8.6,
+     "expected_horizon_sessions": 7,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 9.99,
+     "resistance_levels": [
+      9.99
+     ],
+     "risk_reward": 2.14,
+     "setup_type": "range",
+     "signal_age_days": null,
+     "stop_loss": 7.95,
+     "support_levels": [
+      8.22,
+      7.75
+     ],
+     "symbol": "ONDS",
+     "thesis_invalid_if": "Price closes below the MA50 (8.15)"
+    }
+   ],
+   "equity": 9874.98,
+   "evidence_registry": {},
+   "run_id": "intra_check-f6975fb8",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "provenance": [
+      {
+       "evidence": "Low-conviction buy based on bounce from support, increased volume, and short-term range-continuation potential with R/R 2.14:1.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "ONDS",
+     "target_weight_pct": 3.0,
+     "thesis": "Open a small ONDS starter because the only current specialist source is technical=buy with acceptable 2.14:1 R/R. Convic",
+     "thesis_invalid_if": "Price closes below the MA50 at 8.15."
+    }
+   ],
+   "timestamp": "2026-08-27 14:30:43"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 1.21,
+     "conviction": "medium",
+     "entry_price": 62.29,
+     "expected_horizon_sessions": 15,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 66.0,
+     "resistance_levels": [],
+     "risk_reward": 1.95,
+     "setup_type": "breakout",
+     "signal_age_days": 0,
+     "stop_loss": 60.39,
+     "support_levels": [
+      59.18,
+      57.1,
+      52.84
+     ],
+     "symbol": "XLE",
+     "thesis_invalid_if": "Price closes below the MA20 (61.1) on increasing volume."
+    },
+    {
+     "atr_14": 4.04,
+     "conviction": "medium",
+     "entry_price": 219.27,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 242.96,
+     "resistance_levels": [
+      224.2,
+      227.44,
+      232.56
+     ],
+     "risk_reward": 6.6,
+     "setup_type": "range",
+     "signal_age_days": 0,
+     "stop_loss": 215.68,
+     "support_levels": [
+      218.51,
+      215.68,
+      213.33
+     ],
+     "symbol": "RSG",
+     "thesis_invalid_if": "Price closes below the $218.51 support level on increased volume."
+    },
+    {
+     "atr_14": 11.99,
+     "conviction": "high",
+     "entry_price": 505.06,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 527.09,
+     "resistance_levels": [
+      511.52,
+      527.09
+     ],
+     "risk_reward": 1.49,
+     "setup_type": "range",
+     "signal_age_days": 11,
+     "stop_loss": 490.26,
+     "support_levels": [
+      501.39,
+      489.81,
+      486.35
+     ],
+     "symbol": "MSFT",
+     "thesis_invalid_if": "Price closes below the MA20 (490.26) on above-average volume"
+    },
+    {
+     "atr_14": 6.8,
+     "conviction": "low",
+     "entry_price": null,
+     "expected_horizon_sessions": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "resistance_levels": [],
+     "risk_reward": null,
+     "setup_type": null,
+     "signal_age_days": 0,
+     "stop_loss": null,
+     "support_levels": [],
+     "symbol": "V",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 19.85,
+     "conviction": "medium",
+     "entry_price": 622.66,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 641.49,
+     "resistance_levels": [
+      641.49,
+      643.99,
+      653.18
+     ],
+     "risk_reward": 2.46,
+     "setup_type": "range",
+     "signal_age_days": 0,
+     "stop_loss": 615.0,
+     "support_levels": [
+      622.66,
+      617.81,
+      612.38
+     ],
+     "symbol": "DE",
+     "thesis_invalid_if": "Price closes below MA50 (609.61) on above-average volume."
+    },
+    {
+     "atr_14": 2.37,
+     "conviction": "medium",
+     "entry_price": 106.82,
+     "expected_horizon_sessions": 8,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 110.61,
+     "resistance_levels": [
+      107.18,
+      109.75,
+      110.94
+     ],
+     "risk_reward": 1.75,
+     "setup_type": "range",
+     "signal_age_days": 0,
+     "stop_loss": 104.66,
+     "support_levels": [
+      106.82,
+      105.93,
+      104.62
+     ],
+     "symbol": "DIS",
+     "thesis_invalid_if": "Price closes below MA20 (104.66) on above-average volume."
+    },
+    {
+     "atr_14": 0.69,
+     "conviction": "low",
+     "entry_price": null,
+     "expected_horizon_sessions": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "resistance_levels": [],
+     "risk_reward": null,
+     "setup_type": null,
+     "signal_age_days": 0,
+     "stop_loss": null,
+     "support_levels": [],
+     "symbol": "CMCSA",
+     "thesis_invalid_if": ""
+    }
+   ],
+   "equity": 9883.23,
+   "evidence_registry": {
+    "DE": {
+     "earnings": "neutral",
+     "macro": "bullish",
+     "technical": "buy"
+    },
+    "RSG": {
+     "macro": "bullish",
+     "news": "bullish",
+     "smart_money": "bullish",
+     "technical": "buy"
+    },
+    "XLE": {
+     "macro": "bearish",
+     "news": "bullish",
+     "technical": "buy"
+    }
+   },
+   "run_id": "run-13c21846",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Consolidating within an uptrend with bullish MACD and favorable continuation setup.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Risk-on macro regime supports cyclical and economically sensitive equity exposure.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "macro"
+      },
+      {
+       "evidence": "Current news is bullish for RSG via positive corporate recognition and retention implications.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "news"
+      },
+      {
+       "evidence": "Actionable smart-money evidence shows a 10% owner made large opportunistic purchases.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "smart_money"
+      }
+     ],
+     "risk_allocation_pct": 1.0,
+     "suggested_stop_price": null,
+     "symbol": "RSG",
+     "target_weight_pct": null,
+     "thesis": "Open a capped long: technical=buy, macro=bullish, news=bullish, and smart_money=bullish all align, but the JUST FILED ea",
+     "thesis_invalid_if": "Price closes below the $218.51 support level on increased volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Bullish trend with rising moving averages and positive MACD, with a potential breakout setup.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Risk-on macro regime favors Industrials and economically sensitive cyclicals.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "macro"
+      },
+      {
+       "evidence": "Filing describes a mixed agricultural cycle and technology strategy; it does not confirm or negate the technical breakout.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "earnings"
+      }
+     ],
+     "risk_allocation_pct": 1.5,
+     "suggested_stop_price": null,
+     "symbol": "DE",
+     "target_weight_pct": null,
+     "thesis": "Open a moderate long: technical=buy and macro=bullish support a cyclical breakout, while earnings=neutral provides conte",
+     "thesis_invalid_if": "Price closes below MA50 (609.61) on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Strong uptrend near 52-week highs with accumulation volume and acceptable continuation setup.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Fresh HIGH-conviction Middle East escalation is directly bullish for crude oil and XLE.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "news"
+      },
+      {
+       "evidence": "Macro sector guidance is bearish for Energy, so the position is sized as a reduced event-driven exposure rather than a full sector overweight.",
+       "observed_stance": "bearish",
+       "relationship": "conflicts",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.0,
+     "suggested_stop_price": null,
+     "symbol": "XLE",
+     "target_weight_pct": null,
+     "thesis": "Open a reduced long: technical=buy and news=bullish support an oil-shock trade after renewed US-Iran attacks, while macr",
+     "thesis_invalid_if": "Price closes below the MA20 (61.1) on increasing volume."
+    }
+   ],
+   "timestamp": "2026-08-31 19:16:39"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 7.15,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 0,
+     "stop_loss": null,
+     "symbol": "V",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 6.2,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 1,
+     "stop_loss": null,
+     "symbol": "JPM",
+     "thesis_invalid_if": ""
+    }
+   ],
+   "equity": 10002.79,
+   "evidence_registry": {},
+   "run_id": "run-5593a8c9",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "JPM",
+     "target_weight_pct": 10.0,
+     "thesis": "4/4 signals aligned: Strong earnings beat, favorable rate environment, stable operational execution, and bullish tech si",
+     "thesis_invalid_if": "Guidance pulled or credit quality significantly deteriorates."
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "NVDA",
+     "target_weight_pct": 8.0,
+     "thesis": "AI capex driver with a new $15B contract, despite mixed news (tariffs) and truncated earnings. 3/4 signals aligned; lean",
+     "thesis_invalid_if": "Price closes below MA50 ($416.57) or breaks $180 support on increased volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "XLE",
+     "target_weight_pct": 15.0,
+     "thesis": "Strong alignment across all signals: Middle East tensions driving oil prices higher (HIGH news conviction), supported by",
+     "thesis_invalid_if": "Price closes below MA50 (57.21) on increased volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "suggested_stop_price": null,
+     "symbol": "XLB",
+     "target_weight_pct": 5.0,
+     "thesis": "Basic materials sector play, with a low conviction tech buy signal. Neutral macro and news backdrop. Taking a small star",
+     "thesis_invalid_if": "Price closes below MA20 (52.03) on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "AAPL",
+     "target_weight_pct": 0.0,
+     "thesis": "Closing position due to weakening thesis from tariff risks and truncated earnings, despite bullish tech and earnings sig",
+     "thesis_invalid_if": ""
+    }
+   ],
+   "timestamp": "2026-08-20 14:04:14"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 3.98,
+     "conviction": "medium",
+     "entry_price": 223.5,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 242.96,
+     "resistance_levels": [
+      224.2,
+      227.44,
+      232.56
+     ],
+     "risk_reward": 3.89,
+     "setup_type": "range",
+     "signal_age_days": 0,
+     "stop_loss": 218.5,
+     "support_levels": [
+      221.79,
+      218.51,
+      213.33
+     ],
+     "symbol": "RSG",
+     "thesis_invalid_if": "Price closes below the MA50 (216.06) on above-average volume"
+    },
+    {
+     "atr_14": 12.05,
+     "conviction": "medium",
+     "entry_price": 513.5,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 549.61,
+     "resistance_levels": [
+      527.09,
+      549.61
+     ],
+     "risk_reward": 2.33,
+     "setup_type": "range",
+     "signal_age_days": 11,
+     "stop_loss": 498.0,
+     "support_levels": [
+      511.52,
+      501.39,
+      486.35
+     ],
+     "symbol": "MSFT",
+     "thesis_invalid_if": "Price closes below the MA20 (492.75) on above-average volume"
+    },
+    {
+     "atr_14": 7.66,
+     "conviction": "medium",
+     "entry_price": 228.0,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 245.0,
+     "resistance_levels": [],
+     "risk_reward": 1.42,
+     "setup_type": "breakout",
+     "signal_age_days": 3,
+     "stop_loss": 216.0,
+     "support_levels": [
+      212.95,
+      198.23,
+      193.9,
+      190.01
+     ],
+     "symbol": "NVDA",
+     "thesis_invalid_if": "Price closes below the MA50 (208.42) on above-average volume."
+    },
+    {
+     "atr_14": 6.64,
+     "conviction": "medium",
+     "entry_price": 383.9,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 405.0,
+     "resistance_levels": [],
+     "risk_reward": 3.01,
+     "setup_type": "breakout",
+     "signal_age_days": 6,
+     "stop_loss": 376.9,
+     "support_levels": [
+      372.58,
+      364.19,
+      356.75,
+      347.89
+     ],
+     "symbol": "V",
+     "thesis_invalid_if": "Price closes below the MA50 (357.94) on above-average volume."
+    },
+    {
+     "atr_14": 3.01,
+     "conviction": "medium",
+     "entry_price": 132.0,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 145.0,
+     "resistance_levels": [],
+     "risk_reward": 3.25,
+     "setup_type": "breakout",
+     "signal_age_days": 11,
+     "stop_loss": 128.0,
+     "support_levels": [
+      125.21,
+      121.18,
+      111.95
+     ],
+     "symbol": "COP",
+     "thesis_invalid_if": "Price closes below MA20 (125.97) on above-average volume."
+    },
+    {
+     "atr_14": 0.69,
+     "conviction": "high",
+     "entry_price": 26.41,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 28.44,
+     "resistance_levels": [
+      27.15,
+      27.76,
+      28.44,
+      30.85,
+      31.65,
+      32.04
+     ],
+     "risk_reward": 11.28,
+     "setup_type": "range",
+     "signal_age_days": 6,
+     "stop_loss": 26.23,
+     "support_levels": [
+      26.82,
+      26.23,
+      25.47,
+      24.67,
+      24.24,
+      22.81
+     ],
+     "symbol": "CMCSA",
+     "thesis_invalid_if": "Price closes below MA20 (25.99) on above-average volume"
+    },
+    {
+     "atr_14": 2.3,
+     "conviction": "medium",
+     "entry_price": 108.1,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 114.78,
+     "resistance_levels": [
+      109.75,
+      110.94,
+      111.84,
+      113.39,
+      114.78,
+      117.9
+     ],
+     "risk_reward": 3.08,
+     "setup_type": "range",
+     "signal_age_days": 14,
+     "stop_loss": 105.93,
+     "support_levels": [
+      107.18,
+      105.93,
+      104.62,
+      101.29,
+      100.42,
+      95.02
+     ],
+     "symbol": "DIS",
+     "thesis_invalid_if": "Price closes below MA20 (105.26) on above-average volume"
+    }
+   ],
+   "equity": 9883.23,
+   "evidence_registry": {
+    "COP": {
+     "earnings": "bullish",
+     "macro": "neutral",
+     "news": "bullish",
+     "technical": "buy"
+    },
+    "NVDA": {
+     "earnings": "bullish",
+     "macro": "bullish",
+     "technical": "buy"
+    },
+    "V": {
+     "macro": "bullish",
+     "technical": "buy"
+    }
+   },
+   "run_id": "run-5834d319",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Breakout structure with accumulation supports upside continuation.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Energy-specific news is bullish as higher oil prices benefit producers.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "news"
+      },
+      {
+       "evidence": "Filing synthesis supports strong financial performance and capital returns.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "earnings"
+      },
+      {
+       "evidence": "Energy is not the primary macro overweight, but the macro view does not oppose the long.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 2.8,
+     "suggested_stop_price": null,
+     "symbol": "COP",
+     "target_weight_pct": null,
+     "thesis": "Open COP as the cleanest energy long: technical=buy, news=bullish, and earnings=bullish all support the trade; macro=neu",
+     "thesis_invalid_if": "Price closes below MA20 on above-average volume or the energy shock reverses materially."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Strong bullish trend, rising moving averages, positive MACD, and accumulation volume support continuation.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro favors financial services in the current risk-on regime.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.9,
+     "suggested_stop_price": null,
+     "symbol": "V",
+     "target_weight_pct": null,
+     "thesis": "Add to V: technical=buy and macro=bullish both support the payments breakout, with no current registry conflict.",
+     "thesis_invalid_if": "Price closes below MA50."
+    },
+    {
+     "catalyst": "Bullish recent 10-Q synthesis showing continued AI-growth execution and margin strength.",
+     "conviction": "high",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Strong bullish trend and volume confirmation support the long setup.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro favors technology and the AI investment cycle.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "macro"
+      },
+      {
+       "evidence": "Filing synthesis supports dominant AI and accelerated-computing execution.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "earnings"
+      }
+     ],
+     "risk_allocation_pct": 1.1,
+     "suggested_stop_price": null,
+     "symbol": "NVDA",
+     "target_weight_pct": null,
+     "thesis": "Open NVDA selectively: technical=buy, macro=bullish, and earnings=bullish align, but the technical payoff is below the n",
+     "thesis_invalid_if": "Price closes below MA50 on above-average volume."
+    }
+   ],
+   "timestamp": "2026-08-31 19:02:25"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 13.8,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 1,
+     "stop_loss": null,
+     "symbol": "MSFT",
+     "thesis_invalid_if": ""
+    }
+   ],
+   "equity": 10000.97,
+   "evidence_registry": {},
+   "run_id": "run-5dc33236",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "JPM",
+     "target_weight_pct": 10.0,
+     "thesis": "4/4 aligned: Macro supports financials with steepening yield curve, news is supportive of higher rates, earnings beat, a",
+     "thesis_invalid_if": "Net interest income guidance sharply revised downwards or a significant credit event emerges."
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "NVDA",
+     "target_weight_pct": 8.0,
+     "thesis": "High conviction AI play with a major contract news catalyst, despite mixed news (tariffs) and JUST FILED earnings.",
+     "thesis_invalid_if": "Price closes below MA50 or breaks $180 support on rising volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "XLE",
+     "target_weight_pct": 5.0,
+     "thesis": "Geopolitical tensions and rising oil prices provide a bullish catalyst, aligning with Tech buy signal and favorable macr",
+     "thesis_invalid_if": "Price closes below MA50 (56.88) on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "XLF",
+     "target_weight_pct": 5.0,
+     "thesis": "Financials sector benefits from steepening yield curve and higher rates, with Tech buy signal and supportive macro.",
+     "thesis_invalid_if": "Price closes below MA50 (55.42) on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "AMZN",
+     "target_weight_pct": 0.0,
+     "thesis": "Closing position due to sell signal and truncated filings, reallocating capital to stronger opportunities.",
+     "thesis_invalid_if": ""
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "AAPL",
+     "target_weight_pct": 0.0,
+     "thesis": "Closing position due to weakening thesis from bearish news (tariffs, yields) and neutral Tech signal, despite bullish ea",
+     "thesis_invalid_if": ""
+    }
+   ],
+   "timestamp": "2026-08-18 15:03:14"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 6.42,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 0,
+     "stop_loss": null,
+     "symbol": "NVDA",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 7.01,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 1,
+     "stop_loss": null,
+     "symbol": "V",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 0.65,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 3,
+     "stop_loss": null,
+     "symbol": "EPD",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 3.66,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 1,
+     "stop_loss": null,
+     "symbol": "XOM",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 0.75,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 0,
+     "stop_loss": null,
+     "symbol": "CMCSA",
+     "thesis_invalid_if": ""
+    }
+   ],
+   "equity": 10005.68,
+   "evidence_registry": {},
+   "run_id": "run-6211ad13",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "XLE",
+     "target_weight_pct": 12.0,
+     "thesis": "Macro risk-on/transitional, news of Middle East escalation, earnings bullishness, and Tech BUY signal align. Energy sect",
+     "thesis_invalid_if": "Price closes below MA20 (60.08) on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "XOM",
+     "target_weight_pct": 15.0,
+     "thesis": "Strong alignment across Macro, News (oil surge), Earnings (bullish), and Tech (buy). Geopolitical tensions are a strong ",
+     "thesis_invalid_if": "Price closes below MA20 (57.22) on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "COP",
+     "target_weight_pct": 8.0,
+     "thesis": "Bullish trend and momentum confirmed by Macro, News, Earnings, and Tech signals. Benefits from rising energy prices.",
+     "thesis_invalid_if": "Price closes below MA20 (121.58) on increased volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "EPD",
+     "target_weight_pct": 5.0,
+     "thesis": "Macro and Earnings are bullish, News is HIGH bullish. Tech signal is neutral, creating a conflict. Position sized down d",
+     "thesis_invalid_if": "Price closes below MA20 (40.12) on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "MRVL",
+     "target_weight_pct": 12.0,
+     "thesis": "All four signals (Macro, News, Earnings, Tech) align for MRVL. Strong AI demand and robust Tech Buy signal.",
+     "thesis_invalid_if": "Price closes below MA20 (208.28) on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "VLO",
+     "target_weight_pct": 10.0,
+     "thesis": "Strong bullish trend and momentum across Macro, News, Earnings, and Tech signals. Good R/R supports higher sizing.",
+     "thesis_invalid_if": "Price closes below MA20 (319.25) on increased volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "ABT",
+     "target_weight_pct": 7.0,
+     "thesis": "Bullish Tech signal contrasts with neutral Earnings and News signals. Position sized moderately to account for acquisiti",
+     "thesis_invalid_if": "Price closes below MA20 (108.58) on increased volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "NVDA",
+     "target_weight_pct": 8.0,
+     "thesis": "While Tech is neutral and Earnings data is limited, the strong AI theme in Macro and News (contract news) warrants parti",
+     "thesis_invalid_if": "Price closes below MA50 (388.49) or MACD flips to negative."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "WMT",
+     "target_weight_pct": 0.0,
+     "thesis": "Closing WMT position due to 4/4 bearish alignment: Macro transitional, News HIGH bearish (earnings miss), Earnings beari",
+     "thesis_invalid_if": ""
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "META",
+     "target_weight_pct": 0.0,
+     "thesis": "Closing META position due to 3/4 bearish alignment: Macro transitional, News bearish, Tech sell. Earnings data is lackin",
+     "thesis_invalid_if": ""
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "XLU",
+     "target_weight_pct": 0.0,
+     "thesis": "Closing XLU position due to 3/4 bearish alignment: Macro neutral, Earnings bearish, Tech sell. High R/R on sell signal j",
+     "thesis_invalid_if": ""
+    }
+   ],
+   "timestamp": "2026-08-21 13:33:02"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 4.09,
+     "conviction": "medium",
+     "entry_price": 220.92,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 232.56,
+     "resistance_levels": [
+      221.79,
+      224.2,
+      227.44,
+      232.56
+     ],
+     "risk_reward": 1.42,
+     "setup_type": "range",
+     "signal_age_days": 1,
+     "stop_loss": 212.74,
+     "support_levels": [
+      218.51,
+      213.33,
+      209.71
+     ],
+     "symbol": "RSG",
+     "thesis_invalid_if": "Price closes below the MA50 (216.03) on expanding volume"
+    },
+    {
+     "atr_14": 3.16,
+     "conviction": "low",
+     "entry_price": 92.61,
+     "expected_horizon_sessions": 15,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 111.76,
+     "resistance_levels": [
+      93.12,
+      111.76
+     ],
+     "risk_reward": 3.03,
+     "setup_type": "range",
+     "signal_age_days": 1,
+     "stop_loss": 86.29,
+     "support_levels": [
+      63.95,
+      61.4
+     ],
+     "symbol": "CHPX",
+     "thesis_invalid_if": "Price closes below the MA200 (74.50) or breaks below the lower Bollinger Band on high volume"
+    },
+    {
+     "atr_14": 1.21,
+     "conviction": "high",
+     "entry_price": 63.96,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 68.0,
+     "resistance_levels": [],
+     "risk_reward": 1.67,
+     "setup_type": "breakout",
+     "signal_age_days": 1,
+     "stop_loss": 61.54,
+     "support_levels": [
+      59.18,
+      57.1,
+      52.84
+     ],
+     "symbol": "XLE",
+     "thesis_invalid_if": "Price closes below the rising MA20 (61.52) on above-average volume"
+    },
+    {
+     "atr_14": 11.7,
+     "conviction": "medium",
+     "entry_price": 507.29,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 527.09,
+     "resistance_levels": [
+      511.52,
+      527.09,
+      549.61
+     ],
+     "risk_reward": 0.85,
+     "setup_type": "range",
+     "signal_age_days": 12,
+     "stop_loss": 483.89,
+     "support_levels": [
+      501.39,
+      489.81,
+      486.35
+     ],
+     "symbol": "MSFT",
+     "thesis_invalid_if": "Price closes below MA20 (493.78) on expanding volume"
+    },
+    {
+     "atr_14": 7.48,
+     "conviction": "medium",
+     "entry_price": 220.78,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 236.26,
+     "resistance_levels": [
+      236.26
+     ],
+     "risk_reward": 1.03,
+     "setup_type": "breakout",
+     "signal_age_days": 4,
+     "stop_loss": 205.82,
+     "support_levels": [
+      212.95,
+      207.89,
+      198.23
+     ],
+     "symbol": "NVDA",
+     "thesis_invalid_if": "Price closes below MA20 (218.75) on above-average volume"
+    },
+    {
+     "atr_14": 6.58,
+     "conviction": "medium",
+     "entry_price": 379.37,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 400.0,
+     "resistance_levels": [
+      385.57,
+      400.0
+     ],
+     "risk_reward": 1.36,
+     "setup_type": "range",
+     "signal_age_days": 0,
+     "stop_loss": 364.19,
+     "support_levels": [
+      372.58,
+      364.19,
+      356.75
+     ],
+     "symbol": "V",
+     "thesis_invalid_if": "Price closes below support at 364.19 on above-average volume"
+    },
+    {
+     "atr_14": 2.29,
+     "conviction": "medium",
+     "entry_price": 107.55,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 113.39,
+     "resistance_levels": [
+      109.75,
+      110.94,
+      113.39
+     ],
+     "risk_reward": 1.28,
+     "setup_type": "range",
+     "signal_age_days": 1,
+     "stop_loss": 103.0,
+     "support_levels": [
+      107.18,
+      105.93,
+      104.62
+     ],
+     "symbol": "DIS",
+     "thesis_invalid_if": "Price closes below support at 104.62 on above-average volume"
+    },
+    {
+     "atr_14": 0.68,
+     "conviction": "medium",
+     "entry_price": 26.62,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 28.44,
+     "resistance_levels": [
+      26.82,
+      27.15,
+      28.44
+     ],
+     "risk_reward": 1.2,
+     "setup_type": "range",
+     "signal_age_days": 0,
+     "stop_loss": 25.1,
+     "support_levels": [
+      26.23,
+      25.47,
+      24.67
+     ],
+     "symbol": "CMCSA",
+     "thesis_invalid_if": "Price closes below MA50 (24.39) on expanding volume"
+    }
+   ],
+   "equity": 9838.94,
+   "evidence_registry": {
+    "CHPX": {
+     "macro": "bullish",
+     "technical": "buy"
+    },
+    "NVDA": {
+     "earnings": "bullish",
+     "macro": "bullish",
+     "news": "mixed",
+     "technical": "buy"
+    },
+    "XLE": {
+     "macro": "neutral",
+     "technical": "buy"
+    }
+   },
+   "run_id": "run-64290730",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "High-conviction confirmed uptrend with accumulation and R/R 1.67.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro sector stance is neutral for Energy, not a direct conflict with the technical long.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.0,
+     "suggested_stop_price": null,
+     "symbol": "XLE",
+     "target_weight_pct": null,
+     "thesis": "Technical=buy supports a confirmed energy uptrend with R/R 1.67; macro=neutral is context rather than opposition, so thi",
+     "thesis_invalid_if": "Price closes below the rising MA20 on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Pullback to moving-average cluster after prior accumulation with R/R 3.03.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro favors Technology in the risk-on regime.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 0.9,
+     "suggested_stop_price": null,
+     "symbol": "CHPX",
+     "target_weight_pct": null,
+     "thesis": "Technical=buy and macro=bullish align, and R/R 3.03 gives asymmetric upside, but Tech flags low liquidity and high ATR, ",
+     "thesis_invalid_if": "Price closes below the MA200 or breaks below the lower Bollinger Band on high volume."
+    },
+    {
+     "catalyst": "HIGH bullish stock-specific news: strategic $3B investment into SB Energy reinforces long-term AI infrastructure ecosystem lock-in.",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Pullback/consolidation holding above rising MA20 provides a continuation setup.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Earnings synthesis is bullish with strong AI and accelerated-computing growth.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "earnings"
+      },
+      {
+       "evidence": "Macro favors Technology in the high-confidence risk-on regime.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "macro"
+      },
+      {
+       "evidence": "News contains a HIGH bullish strategic investment catalyst but also a MEDIUM bearish yield-driven semiconductor headwind, so size is reduced.",
+       "observed_stance": "mixed",
+       "relationship": "conflicts",
+       "source": "news"
+      }
+     ],
+     "risk_allocation_pct": 0.75,
+     "suggested_stop_price": null,
+     "symbol": "NVDA",
+     "target_weight_pct": null,
+     "thesis": "Technical=buy, earnings=bullish, and macro=bullish support a long continuation setup, but news=mixed conflicts because t",
+     "thesis_invalid_if": "Price closes below MA20 on above-average volume."
+    }
+   ],
+   "timestamp": "2026-09-01 13:30:45"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 2.6,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 0,
+     "stop_loss": null,
+     "symbol": "XLI",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 13.54,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 2,
+     "stop_loss": null,
+     "symbol": "MSFT",
+     "thesis_invalid_if": ""
+    }
+   ],
+   "equity": 10001.95,
+   "evidence_registry": {},
+   "run_id": "run-74cbb7c7",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "XLE",
+     "target_weight_pct": 10.0,
+     "thesis": "Geopolitical tensions in the Middle East are driving oil prices higher, supported by strong earnings from integrated ene",
+     "thesis_invalid_if": "Price closes below MA20 (59.65) on above-average volume, or significant geopolitical de-escalation."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "XLF",
+     "target_weight_pct": 8.0,
+     "thesis": "Financials sector benefiting from a steepening yield curve and strong earnings from JPM, despite neutral technicals. Ove",
+     "thesis_invalid_if": "Price closes below MA50 (55.64) on increased volume, or significant inversion of the yield curve."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "XLI",
+     "target_weight_pct": 7.0,
+     "thesis": "Industrial sector showing moderate strength with a bullish trend, supported by infrastructure spending and positive earn",
+     "thesis_invalid_if": "Price closes below MA50 (55.64) on increased volume, or a significant slowdown in industrial orders."
+    }
+   ],
+   "timestamp": "2026-08-19 13:35:09"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 6.26,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 3,
+     "stop_loss": null,
+     "symbol": "NVDA",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 0.65,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 6,
+     "stop_loss": null,
+     "symbol": "EPD",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 6.95,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 4,
+     "stop_loss": null,
+     "symbol": "V",
+     "thesis_invalid_if": "Price closes below MA20 (364.91)"
+    },
+    {
+     "atr_14": 0.74,
+     "conviction": "low",
+     "entry_price": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "risk_reward": null,
+     "signal_age_days": 3,
+     "stop_loss": null,
+     "symbol": "CMCSA",
+     "thesis_invalid_if": "Price closes below MA20 (25.22) on increased volume."
+    }
+   ],
+   "equity": 9921.75,
+   "evidence_registry": {},
+   "run_id": "run-a933b4da",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "JPM",
+     "target_weight_pct": 10.0,
+     "thesis": "4/4 aligned: strong earnings beat, favorable macro/rate environment, solid operational execution. High conviction buy.",
+     "thesis_invalid_if": "Core lending growth decelerates significantly or credit losses rise unexpectedly."
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "AMD",
+     "target_weight_pct": 10.0,
+     "thesis": "4/4 aligned: strong product cycle in AI, robust earnings growth, supportive macro for tech. High conviction buy.",
+     "thesis_invalid_if": "AI accelerator rollout faces significant delays or competitive setbacks."
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "NVDA",
+     "target_weight_pct": 8.0,
+     "thesis": "3/4 aligned (macro, news HIGH bullish catalyst; earnings neutral; tech neutral). HIGH bullish contract news overrides ma",
+     "thesis_invalid_if": "Price closes below MA50 or breaks $180 support"
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "suggested_stop_price": null,
+     "symbol": "OXY",
+     "target_weight_pct": 8.0,
+     "thesis": "4/4 aligned (macro underweight but news HIGH bullish; earnings low neutral; tech high-buy). Strong news and tech overrid",
+     "thesis_invalid_if": "Price closes below MA50 (54.79)"
+    },
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "suggested_stop_price": null,
+     "symbol": "EQNR",
+     "target_weight_pct": 5.0,
+     "thesis": "3/4 aligned (macro neutral; news neutral; earnings low neutral; tech med-buy). Moderate tech conviction with weak earnin",
+     "thesis_invalid_if": "Price closes below MA50 (36.67)"
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "EPD",
+     "target_weight_pct": 0.0,
+     "thesis": "Closing position. Tech signal is neutral, trend is weak, and news is mixed. Reallocating capital to higher conviction op",
+     "thesis_invalid_if": ""
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "suggested_stop_price": null,
+     "symbol": "XLE",
+     "target_weight_pct": 0.0,
+     "thesis": "Closing position. Tech signal is sell, contrary to news. Reallocating capital to higher conviction opportunities.",
+     "thesis_invalid_if": ""
+    }
+   ],
+   "timestamp": "2026-08-24 13:33:03"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 4.09,
+     "computed_levels": [
+      202.92,
+      207.35,
+      209.71,
+      213.33,
+      218.51,
+      221.79,
+      224.2,
+      227.44,
+      232.56,
+      235.83,
+      242.96
+     ],
+     "conviction": "medium",
+     "entry_price": 223.29,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 232.56,
+     "resistance_levels": [
+      224.2,
+      227.44,
+      232.56
+     ],
+     "risk_reward": 0.93,
+     "setup_type": "range",
+     "signal_age_days": 2,
+     "stop_loss": 213.33,
+     "support_levels": [
+      221.79,
+      218.51,
+      213.33
+     ],
+     "symbol": "RSG",
+     "thesis_invalid_if": "Price closes below support at 213.33 on expanding volume"
+    },
+    {
+     "atr_14": 4.57,
+     "computed_levels": [
+      47.47,
+      52.6,
+      58.27,
+      70.39,
+      77.6
+     ],
+     "conviction": "medium",
+     "entry_price": 79.04,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 88.1,
+     "resistance_levels": [
+      88.1
+     ],
+     "risk_reward": 1.05,
+     "setup_type": "range",
+     "signal_age_days": 0,
+     "stop_loss": 70.39,
+     "support_levels": [
+      77.6,
+      70.39,
+      58.27
+     ],
+     "symbol": "AUGO",
+     "thesis_invalid_if": "Price closes below support at 70.39 on above-average volume"
+    },
+    {
+     "atr_14": 0.8,
+     "computed_levels": [
+      42.79,
+      44.37,
+      45.51,
+      49.62,
+      50.17,
+      51.6,
+      52.17,
+      52.68,
+      53.34,
+      53.94
+     ],
+     "conviction": "medium",
+     "entry_price": 52.07,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 55.5,
+     "resistance_levels": [
+      52.17,
+      52.68,
+      53.94
+     ],
+     "risk_reward": 1.81,
+     "setup_type": "range",
+     "signal_age_days": 9,
+     "stop_loss": 50.17,
+     "support_levels": [
+      51.6,
+      50.17,
+      49.62
+     ],
+     "symbol": "XLB",
+     "thesis_invalid_if": "Price closes below support at 50.17 on heavy volume"
+    },
+    {
+     "atr_14": 7.35,
+     "computed_levels": [
+      179.23,
+      190.01,
+      193.9,
+      198.23,
+      207.89,
+      212.95
+     ],
+     "conviction": "medium",
+     "entry_price": 217.44,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 236.26,
+     "resistance_levels": [
+      236.26
+     ],
+     "risk_reward": 1.97,
+     "setup_type": "breakout",
+     "signal_age_days": 5,
+     "stop_loss": 207.89,
+     "support_levels": [
+      212.95,
+      207.89,
+      198.23
+     ],
+     "symbol": "NVDA",
+     "thesis_invalid_if": "Price closes below support at 207.89"
+    },
+    {
+     "atr_14": 11.62,
+     "computed_levels": [
+      410.07,
+      432.39,
+      466.95,
+      478.47,
+      486.35,
+      489.81,
+      501.39,
+      511.52,
+      527.09,
+      549.61
+     ],
+     "conviction": "high",
+     "entry_price": 501.02,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 527.09,
+     "resistance_levels": [
+      511.52,
+      527.09,
+      549.61
+     ],
+     "risk_reward": 1.16,
+     "setup_type": "range",
+     "signal_age_days": 13,
+     "stop_loss": 478.47,
+     "support_levels": [
+      489.81,
+      486.35,
+      478.47
+     ],
+     "symbol": "MSFT",
+     "thesis_invalid_if": "Price closes below support at 478.47 on high volume"
+    },
+    {
+     "atr_14": 57.42,
+     "computed_levels": [
+      889.63
+     ],
+     "conviction": "medium",
+     "entry_price": 933.44,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 1050.0,
+     "resistance_levels": [
+      1005.5
+     ],
+     "risk_reward": 2.66,
+     "setup_type": "range",
+     "signal_age_days": 1,
+     "stop_loss": 889.63,
+     "support_levels": [
+      889.63,
+      853.25
+     ],
+     "symbol": "MU",
+     "thesis_invalid_if": "Price closes below support at 889.63 on increased volume"
+    },
+    {
+     "atr_14": 6.72,
+     "computed_levels": [
+      331.99,
+      341.81,
+      347.89,
+      356.75,
+      364.19,
+      372.58
+     ],
+     "conviction": "medium",
+     "entry_price": 372.67,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 385.57,
+     "resistance_levels": [
+      385.57
+     ],
+     "risk_reward": 1.52,
+     "setup_type": "range",
+     "signal_age_days": 1,
+     "stop_loss": 364.19,
+     "support_levels": [
+      372.58,
+      364.19,
+      356.75
+     ],
+     "symbol": "V",
+     "thesis_invalid_if": "Price closes below support level 364.19 on rising volume"
+    },
+    {
+     "atr_14": 9.35,
+     "computed_levels": [
+      308.11,
+      316.91,
+      335.47,
+      347.67,
+      354.06,
+      373.0,
+      399.06,
+      412.6,
+      444.77,
+      455.78,
+      462.34,
+      484.74
+     ],
+     "conviction": "medium",
+     "entry_price": 396.3,
+     "expected_horizon_sessions": 12,
+     "rating": "sell",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 354.06,
+     "resistance_levels": [
+      399.06,
+      412.6,
+      444.77
+     ],
+     "risk_reward": 2.59,
+     "setup_type": "range",
+     "signal_age_days": 16,
+     "stop_loss": 412.6,
+     "support_levels": [
+      373.0,
+      354.06
+     ],
+     "symbol": "UNH",
+     "thesis_invalid_if": "Price closes above resistance level 412.60 on strong volume"
+    },
+    {
+     "atr_14": 0.62,
+     "computed_levels": [
+      30.27,
+      35.3,
+      36.61,
+      37.28,
+      37.91,
+      38.58
+     ],
+     "conviction": "high",
+     "entry_price": 39.28,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 41.5,
+     "resistance_levels": [
+      41.5
+     ],
+     "risk_reward": 1.73,
+     "setup_type": "breakout",
+     "signal_age_days": 2,
+     "stop_loss": 38.0,
+     "support_levels": [
+      38.58,
+      37.91,
+      37.28
+     ],
+     "symbol": "EPD",
+     "thesis_invalid_if": "Price closes below support at 37.91 on high volume"
+    },
+    {
+     "atr_14": 0.66,
+     "computed_levels": [
+      22.81,
+      23.84,
+      24.24,
+      24.67,
+      25.47,
+      26.23,
+      26.82,
+      27.15,
+      27.76,
+      28.44,
+      31.65,
+      32.04
+     ],
+     "conviction": "medium",
+     "entry_price": 26.3,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 28.44,
+     "resistance_levels": [
+      26.82,
+      27.15,
+      27.76,
+      28.44
+     ],
+     "risk_reward": 1.62,
+     "setup_type": "range",
+     "signal_age_days": 1,
+     "stop_loss": 24.98,
+     "support_levels": [
+      26.23,
+      25.47,
+      24.67
+     ],
+     "symbol": "CMCSA",
+     "thesis_invalid_if": "Price closes below MA50 (24.47) on heavy volume"
+    },
+    {
+     "atr_14": 2.33,
+     "computed_levels": [
+      95.02,
+      100.42,
+      101.29,
+      103.34,
+      104.62,
+      105.93,
+      107.18,
+      109.75,
+      111.85,
+      113.39,
+      114.78,
+      117.9
+     ],
+     "conviction": "medium",
+     "entry_price": 106.22,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 113.39,
+     "resistance_levels": [
+      107.18,
+      109.75,
+      111.85,
+      113.39
+     ],
+     "risk_reward": 1.54,
+     "setup_type": "range",
+     "signal_age_days": 2,
+     "stop_loss": 101.56,
+     "support_levels": [
+      105.93,
+      104.62,
+      103.34
+     ],
+     "symbol": "DIS",
+     "thesis_invalid_if": "Price closes below MA50 (100.65) on above-average volume"
+    }
+   ],
+   "equity": 9822.37,
+   "evidence_registry": {
+    "AUGO": {
+     "macro": "neutral",
+     "smart_money": "bullish",
+     "technical": "buy"
+    },
+    "CMCSA": {
+     "earnings": "neutral",
+     "macro": "bullish",
+     "technical": "buy"
+    },
+    "DIS": {
+     "earnings": "neutral",
+     "macro": "bullish",
+     "technical": "buy"
+    },
+    "EPD": {
+     "earnings": "bullish",
+     "macro": "bullish",
+     "technical": "buy"
+    },
+    "MU": {
+     "macro": "bullish",
+     "technical": "buy"
+    },
+    "NVDA": {
+     "earnings": "bullish",
+     "macro": "bullish",
+     "news": "bullish",
+     "technical": "buy"
+    },
+    "UNH": {
+     "earnings": "neutral",
+     "macro": "bullish",
+     "technical": "sell"
+    },
+    "V": {
+     "macro": "bullish",
+     "technical": "buy"
+    },
+    "XLB": {
+     "macro": "neutral",
+     "technical": "buy"
+    }
+   },
+   "run_id": "run-bba4d4f3",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Current technical report shows a buy rating with solid trend alignment above rising moving averages and acceptable swing R/R.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Current stock-specific news highlights sovereign and enterprise AI infrastructure demand.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "news"
+      },
+      {
+       "evidence": "Current filing synthesis is bullish on AI and accelerated-computing growth.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "earnings"
+      },
+      {
+       "evidence": "Risk-on regime supports deployment, but macro is not counted as symbol-level evidence.",
+       "observed_stance": "bullish",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 2.75,
+     "suggested_stop_price": null,
+     "symbol": "NVDA",
+     "target_weight_pct": null,
+     "thesis": "Open/add NVDA as the strongest current long: technical=buy, news=bullish, and earnings=bullish all align, with macro=bul",
+     "thesis_invalid_if": "Price closes below support at 207.89"
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Current technical report shows a high-conviction continuation setup with acceptable R/R.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Current filing synthesis is bullish on operating leverage, volumes, and midstream/export capacity.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "earnings"
+      },
+      {
+       "evidence": "Macro favors Energy, but remains context only.",
+       "observed_stance": "bullish",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 2.25,
+     "suggested_stop_price": null,
+     "symbol": "EPD",
+     "target_weight_pct": null,
+     "thesis": "Open EPD long: technical=buy and earnings=bullish align, while macro=bullish is supportive context for energy exposure.",
+     "thesis_invalid_if": "Price closes below support at 37.91 on high volume"
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Current technical report shows solid trend structure and favorable R/R.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Risk-on macro supports growth exposure at the book level, not as a standalone symbol signal.",
+       "observed_stance": "bullish",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.5,
+     "suggested_stop_price": null,
+     "symbol": "MU",
+     "target_weight_pct": null,
+     "thesis": "Open MU long: technical=buy supports a semiconductor-memory continuation setup; macro=bullish is context, with no curren",
+     "thesis_invalid_if": "Price closes below support at 889.63 on increased volume"
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Current technical report shows accumulation and rising moving averages supporting continuation.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Filing synthesis remains uncertain because of the strategic separation.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "earnings"
+      },
+      {
+       "evidence": "Macro favors Communication Services, but macro is not counted as symbol-level confirmation.",
+       "observed_stance": "bullish",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.5,
+     "suggested_stop_price": null,
+     "symbol": "CMCSA",
+     "target_weight_pct": null,
+     "thesis": "Add to CMCSA: technical=buy supports the existing long, earnings=neutral does not confirm but also does not invalidate, ",
+     "thesis_invalid_if": "Price closes below MA50 on heavy volume"
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Current technical report shows bullish alignment above rising moving averages with acceptable R/R.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Filing synthesis is neutral due to strategic integration and profitability uncertainty.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "earnings"
+      },
+      {
+       "evidence": "Macro favors Communication Services at the book level only.",
+       "observed_stance": "bullish",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.5,
+     "suggested_stop_price": null,
+     "symbol": "DIS",
+     "target_weight_pct": null,
+     "thesis": "Add to DIS: technical=buy keeps the breakout thesis intact, earnings=neutral is non-confirming context, and macro=bullis",
+     "thesis_invalid_if": "Price closes below MA50 on above-average volume"
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Current technical report shows a healthy pullback to a rising MA20 and acceptable R/R.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro favors Financial Services, but this remains context only.",
+       "observed_stance": "bullish",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.5,
+     "suggested_stop_price": null,
+     "symbol": "V",
+     "target_weight_pct": null,
+     "thesis": "Add to V: technical=buy supports the payments pullback setup, with macro=bullish as context; no current earnings source ",
+     "thesis_invalid_if": "Price closes below support level 364.19 on rising volume"
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Current technical report shows accumulation and structural support above rising moving averages.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro is neutral on Basic Materials and does not add symbol-level confirmation.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.0,
+     "suggested_stop_price": null,
+     "symbol": "XLB",
+     "target_weight_pct": null,
+     "thesis": "Open small XLB long: technical=buy with acceptable R/R supports the trade, while macro=neutral is context and keeps sizi",
+     "thesis_invalid_if": "Price closes below support at 50.17 on heavy volume"
+    },
+    {
+     "catalyst": "Fresh actionable insider open-market buying plus a technical pullback within a rising trend justifies a half-sized starter despite low R/R.",
+     "conviction": "low",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Current technical report shows a pullback into a strong rising trend with defined structural support.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Actionable insider open-market buying indicates current smart-money accumulation.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "smart_money"
+      },
+      {
+       "evidence": "Macro is neutral and does not count toward the symbol agreement.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 0.75,
+     "suggested_stop_price": null,
+     "symbol": "AUGO",
+     "target_weight_pct": null,
+     "thesis": "Open a low-risk AUGO starter: technical=buy and smart_money=bullish align, macro=neutral is context, but R/R is below th",
+     "thesis_invalid_if": "Price closes below support at 70.39 on above-average volume"
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "short",
+     "provenance": [
+      {
+       "evidence": "Current technical report shows bearish trend structure below declining moving averages with a stop above resistance.",
+       "observed_stance": "sell",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Filing synthesis is neutral and does not confirm the short, so the position is kept small.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "earnings"
+      },
+      {
+       "evidence": "Macro is book-level context and does not veto a name-specific short.",
+       "observed_stance": "bullish",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.0,
+     "suggested_stop_price": null,
+     "symbol": "UNH",
+     "target_weight_pct": null,
+     "thesis": "Open a small UNH short: technical=sell supports the bearish trade with adequate R/R, earnings=neutral is non-confirming ",
+     "thesis_invalid_if": "Price closes above resistance level 412.60 on strong volume"
+    }
+   ],
+   "timestamp": "2026-09-02 13:30:45"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 4.04,
+     "conviction": "medium",
+     "entry_price": 219.27,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 242.96,
+     "resistance_levels": [
+      221.79,
+      224.2,
+      227.44
+     ],
+     "risk_reward": 6.6,
+     "setup_type": "range",
+     "signal_age_days": 0,
+     "stop_loss": 215.68,
+     "support_levels": [
+      218.51,
+      216.63,
+      215.68
+     ],
+     "symbol": "RSG",
+     "thesis_invalid_if": "Price closes below the $218.51 support level on above-average volume"
+    },
+    {
+     "atr_14": 6.64,
+     "conviction": "low",
+     "entry_price": null,
+     "expected_horizon_sessions": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "resistance_levels": [],
+     "risk_reward": null,
+     "setup_type": null,
+     "signal_age_days": 0,
+     "stop_loss": null,
+     "support_levels": [],
+     "symbol": "V",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 11.99,
+     "conviction": "medium",
+     "entry_price": 505.06,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 527.09,
+     "resistance_levels": [
+      511.52,
+      527.09,
+      549.61
+     ],
+     "risk_reward": 1.49,
+     "setup_type": "range",
+     "signal_age_days": 11,
+     "stop_loss": 490.26,
+     "support_levels": [
+      501.39,
+      490.26,
+      489.81,
+      486.35,
+      478.47
+     ],
+     "symbol": "MSFT",
+     "thesis_invalid_if": "Price closes below MA20 (490.26) on above-average volume."
+    },
+    {
+     "atr_14": 0.84,
+     "conviction": "high",
+     "entry_price": 18.33,
+     "expected_horizon_sessions": 15,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 20.5,
+     "resistance_levels": [
+      18.33,
+      18.41,
+      18.83,
+      19.08,
+      19.47,
+      19.92,
+      22.22
+     ],
+     "risk_reward": 1.64,
+     "setup_type": "range",
+     "signal_age_days": 3,
+     "stop_loss": 17.01,
+     "support_levels": [
+      18.01,
+      17.47,
+      16.88
+     ],
+     "symbol": "PATH",
+     "thesis_invalid_if": "Price closes below MA20 (15.50) on above-average volume."
+    },
+    {
+     "atr_14": 10.66,
+     "conviction": "high",
+     "entry_price": 348.0,
+     "expected_horizon_sessions": 15,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 375.0,
+     "resistance_levels": [
+      353.0,
+      346.59
+     ],
+     "risk_reward": 2.08,
+     "setup_type": "breakout",
+     "signal_age_days": 3,
+     "stop_loss": 335.0,
+     "support_levels": [
+      341.67,
+      300.27,
+      292.27
+     ],
+     "symbol": "VLO",
+     "thesis_invalid_if": "Price closes below MA20 (330.07) on above-average volume."
+    },
+    {
+     "atr_14": 2.3,
+     "conviction": "low",
+     "entry_price": null,
+     "expected_horizon_sessions": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "resistance_levels": [],
+     "risk_reward": null,
+     "setup_type": null,
+     "signal_age_days": 0,
+     "stop_loss": null,
+     "support_levels": [],
+     "symbol": "DIS",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 0.69,
+     "conviction": "medium",
+     "entry_price": 27.06,
+     "expected_horizon_sessions": 8,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 28.44,
+     "resistance_levels": [
+      27.15,
+      27.76,
+      28.44
+     ],
+     "risk_reward": 2.51,
+     "setup_type": "range",
+     "signal_age_days": 6,
+     "stop_loss": 26.51,
+     "support_levels": [
+      26.82,
+      26.23,
+      25.47
+     ],
+     "symbol": "CMCSA",
+     "thesis_invalid_if": "Price closes below the MA20 (25.99) on above-average volume"
+    }
+   ],
+   "equity": 9883.23,
+   "evidence_registry": {
+    "PATH": {
+     "macro": "bullish",
+     "technical": "buy"
+    },
+    "RSG": {
+     "macro": "bullish",
+     "news": "neutral",
+     "smart_money": "bullish",
+     "technical": "buy"
+    },
+    "VLO": {
+     "earnings": "bullish",
+     "macro": "neutral",
+     "news": "bullish",
+     "technical": "buy"
+    }
+   },
+   "run_id": "run-c2f42b39",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Clear uptrend with bullish momentum and R/R 6.60:1.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Risk-on macro favors deployment into qualified long setups.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "macro"
+      },
+      {
+       "evidence": "Employer-branding news is not a directional catalyst.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "news"
+      },
+      {
+       "evidence": "Actionable 10% owner purchases indicate current insider conviction.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "smart_money"
+      }
+     ],
+     "risk_allocation_pct": 1.0,
+     "suggested_stop_price": null,
+     "symbol": "RSG",
+     "target_weight_pct": null,
+     "thesis": "Open a capped long: technical=buy, macro=bullish, and smart_money=bullish all support the setup, while news=neutral is c",
+     "thesis_invalid_if": "Price closes below the $218.51 support level on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "high",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "High-conviction breakout setup with strong trend and R/R 2.08:1.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Strong refining margins and operational execution support the long thesis.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "earnings"
+      },
+      {
+       "evidence": "Renewed Middle East hostilities are bullish for oil-linked equities.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "news"
+      },
+      {
+       "evidence": "Macro does not strongly dictate energy, so the position rests on technical, earnings, and news confirmation.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 2.25,
+     "suggested_stop_price": null,
+     "symbol": "VLO",
+     "target_weight_pct": null,
+     "thesis": "Open the cleanest energy long: technical=buy, earnings=bullish, and news=bullish all support a breakout tied to the oil-",
+     "thesis_invalid_if": "Price closes below MA20 (330.07) on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "direction": "long",
+     "provenance": [
+      {
+       "evidence": "Powerful bullish trend, accumulation, and R/R 1.64:1.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Risk-on macro favors selective growth and technology exposure.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "macro"
+      }
+     ],
+     "risk_allocation_pct": 1.5,
+     "suggested_stop_price": null,
+     "symbol": "PATH",
+     "target_weight_pct": null,
+     "thesis": "Open a moderate software momentum long: technical=buy and macro=bullish support the breakout, but no current earnings or",
+     "thesis_invalid_if": "Price closes below MA20 (15.50) on above-average volume."
+    }
+   ],
+   "timestamp": "2026-08-31 19:09:06"
+  },
+  {
+   "analyses": [
+    {
+     "atr_14": 10.68,
+     "conviction": "high",
+     "entry_price": 599.9,
+     "expected_horizon_sessions": 15,
+     "rating": "strong_buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 620.0,
+     "resistance_levels": [],
+     "risk_reward": 3.41,
+     "setup_type": "breakout",
+     "signal_age_days": 2,
+     "stop_loss": 594.0,
+     "support_levels": [
+      598.47,
+      584.84,
+      579.2
+     ],
+     "symbol": "MA",
+     "thesis_invalid_if": "Price closes below MA50 (544.04) on above average volume"
+    },
+    {
+     "atr_14": 0.78,
+     "conviction": "medium",
+     "entry_price": 16.76,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 19.5,
+     "resistance_levels": [
+      16.88,
+      17.47,
+      18.01
+     ],
+     "risk_reward": 3.47,
+     "setup_type": "breakout",
+     "signal_age_days": 10,
+     "stop_loss": 15.97,
+     "support_levels": [
+      16.65,
+      15.72,
+      15.55
+     ],
+     "symbol": "PATH",
+     "thesis_invalid_if": "Price closes below MA20 (15.20) on above average volume"
+    },
+    {
+     "atr_14": 2.51,
+     "conviction": "low",
+     "entry_price": 114.5,
+     "expected_horizon_sessions": 15,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 122.0,
+     "resistance_levels": [
+      114.09,
+      115.58,
+      116.78
+     ],
+     "risk_reward": 3.0,
+     "setup_type": "range",
+     "signal_age_days": 2,
+     "stop_loss": 112.0,
+     "support_levels": [
+      112.22,
+      110.05,
+      108.52
+     ],
+     "symbol": "ABT",
+     "thesis_invalid_if": "Price closes below MA20 (110.61) on above average volume"
+    },
+    {
+     "atr_14": 11.65,
+     "conviction": "medium",
+     "entry_price": 491.71,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 510.0,
+     "resistance_levels": [
+      496.37,
+      501.39,
+      511.52
+     ],
+     "risk_reward": 2.16,
+     "setup_type": "breakout",
+     "signal_age_days": 7,
+     "stop_loss": 483.23,
+     "support_levels": [
+      495.83,
+      489.81,
+      486.35
+     ],
+     "symbol": "MSFT",
+     "thesis_invalid_if": "Price closes below MA50 (425.03) on higher than average volume"
+    },
+    {
+     "atr_14": 6.91,
+     "conviction": "medium",
+     "entry_price": 383.9,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 405.0,
+     "resistance_levels": [],
+     "risk_reward": 3.01,
+     "setup_type": "breakout",
+     "signal_age_days": 2,
+     "stop_loss": 376.9,
+     "support_levels": [
+      372.58,
+      364.19,
+      356.75
+     ],
+     "symbol": "V",
+     "thesis_invalid_if": "Price closes below the MA50 (355.96)"
+    },
+    {
+     "atr_14": 4.09,
+     "conviction": "low",
+     "entry_price": null,
+     "expected_horizon_sessions": null,
+     "rating": "neutral",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": null,
+     "resistance_levels": [
+      224.2,
+      227.44,
+      232.56
+     ],
+     "risk_reward": null,
+     "setup_type": null,
+     "signal_age_days": 1,
+     "stop_loss": null,
+     "support_levels": [
+      221.79,
+      218.51,
+      213.33
+     ],
+     "symbol": "RSG",
+     "thesis_invalid_if": ""
+    },
+    {
+     "atr_14": 0.68,
+     "conviction": "high",
+     "entry_price": 27.2,
+     "expected_horizon_sessions": 10,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 29.5,
+     "resistance_levels": [
+      27.2,
+      27.76,
+      28.44
+     ],
+     "risk_reward": 1.64,
+     "setup_type": "breakout",
+     "signal_age_days": 2,
+     "stop_loss": 25.8,
+     "support_levels": [
+      27.15,
+      26.82,
+      26.23
+     ],
+     "symbol": "CMCSA",
+     "thesis_invalid_if": "Price closes below MA20 (25.7) on significant volume."
+    },
+    {
+     "atr_14": 4.07,
+     "conviction": "low",
+     "entry_price": 107.5,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 115.0,
+     "resistance_levels": [
+      107.36,
+      109.47,
+      111.67
+     ],
+     "risk_reward": 1.67,
+     "setup_type": "range",
+     "signal_age_days": 3,
+     "stop_loss": 103.0,
+     "support_levels": [
+      101.61,
+      93.87
+     ],
+     "symbol": "CCJ",
+     "thesis_invalid_if": "Price closes below MA20 (97.03) on above average volume"
+    },
+    {
+     "atr_14": 10.72,
+     "conviction": "high",
+     "entry_price": 348.03,
+     "expected_horizon_sessions": 10,
+     "rating": "strong_buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 375.0,
+     "resistance_levels": [
+      353.0,
+      353.0
+     ],
+     "risk_reward": 2.07,
+     "setup_type": "breakout",
+     "signal_age_days": 0,
+     "stop_loss": 335.0,
+     "support_levels": [
+      342.92,
+      314.95,
+      300.16
+     ],
+     "symbol": "VLO",
+     "thesis_invalid_if": "Price closes below MA20 (328.27) on increased volume."
+    },
+    {
+     "atr_14": 2.33,
+     "conviction": "medium",
+     "entry_price": 109.63,
+     "expected_horizon_sessions": 12,
+     "rating": "buy",
+     "reasoning": "(trimmed: only the fields PortfolioConstructor reads are kept)",
+     "reasoning_chain": {
+      "momentum": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "support_resistance": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "trend": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volatility": "(trimmed \u2014 the constructor reads none of the analyst's prose)",
+      "volume": "(trimmed \u2014 the constructor reads none of the analyst's prose)"
+     },
+     "reference_target": 118.0,
+     "resistance_levels": [
+      109.63,
+      110.94,
+      111.84
+     ],
+     "risk_reward": 3.42,
+     "setup_type": "range",
+     "signal_age_days": 10,
+     "stop_loss": 107.18,
+     "support_levels": [
+      107.18,
+      105.93,
+      104.62
+     ],
+     "symbol": "DIS",
+     "thesis_invalid_if": "Price closes below MA20 (104.13) on above-average volume."
+    }
+   ],
+   "equity": 9874.98,
+   "evidence_registry": {},
+   "run_id": "run-e9432693",
+   "targets": [
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "provenance": [
+      {
+       "evidence": "Powerful uptrend at all-time highs with bullish momentum and accumulation volume.",
+       "observed_stance": "strong_buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro sector guidance favors Financial Services.",
+       "observed_stance": "overweight",
+       "relationship": "supports",
+       "source": "macro"
+      },
+      {
+       "evidence": "Filing read is limited and does not independently confirm the technical/macro breakout thesis.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "earnings"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "MA",
+     "target_weight_pct": 9.0,
+     "thesis": "Open MA as the highest-quality payments breakout: technical=strong_buy and macro=overweight support the long, while earn",
+     "thesis_invalid_if": "Price closes below MA50 on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "provenance": [
+      {
+       "evidence": "Strong bullish trend near all-time highs with positive momentum and accumulation volume.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro sector guidance favors Financial Services.",
+       "observed_stance": "overweight",
+       "relationship": "supports",
+       "source": "macro"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "V",
+     "target_weight_pct": 6.0,
+     "thesis": "Open V as a smaller payments breakout alongside MA: technical=buy and macro=overweight support the long, but sizing is r",
+     "thesis_invalid_if": "Price closes below MA50."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "provenance": [
+      {
+       "evidence": "Strong uptrend with breakout to new highs and supportive moving averages.",
+       "observed_stance": "strong_buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Strong refining profitability and shareholder returns support the fundamental setup.",
+       "observed_stance": "bullish",
+       "relationship": "supports",
+       "source": "earnings"
+      },
+      {
+       "evidence": "Macro energy stance is neutral, so position is driven by technical and earnings confirmation.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "VLO",
+     "target_weight_pct": 9.0,
+     "thesis": "Open VLO for energy/refining momentum: technical=strong_buy and earnings=bullish support the long, with macro=neutral as",
+     "thesis_invalid_if": "Price closes below MA20 on increased volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "provenance": [
+      {
+       "evidence": "Strong bullish trend, positive momentum, accumulation volume, and favorable technical R/R.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Filing read is neutral, with acquisition integration and profitability execution still key.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "earnings"
+      },
+      {
+       "evidence": "Healthcare is not a macro overweight, but offers defensive balance in a transitional regime.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "ABT",
+     "target_weight_pct": 5.0,
+     "thesis": "Open a modest ABT position for defensive healthcare exposure: technical=buy supports the trade, while earnings=neutral a",
+     "thesis_invalid_if": "Price closes below MA20 on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "provenance": [
+      {
+       "evidence": "Strong bullish trend, accumulation volume, and bullish momentum indicators despite consolidation.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro underweights Technology due to rates and geopolitical decoupling risk.",
+       "observed_stance": "underweight",
+       "relationship": "conflicts",
+       "source": "macro"
+      },
+      {
+       "evidence": "Filing text is heavily truncated and insufficient to form a bullish earnings thesis.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "earnings"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "MSFT",
+     "target_weight_pct": 5.0,
+     "thesis": "Open MSFT at reduced size: technical=buy supports a breakout setup, but macro=underweight conflicts with the long and ea",
+     "thesis_invalid_if": "Price closes below MA50 on higher-than-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "provenance": [
+      {
+       "evidence": "Bullish trend, positive momentum, and accumulation volume point to a potential breakout.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro underweights rate-sensitive and geopolitically exposed Technology.",
+       "observed_stance": "underweight",
+       "relationship": "conflicts",
+       "source": "macro"
+      },
+      {
+       "evidence": "No stock-specific bullish news catalyst is present in the current registry.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "news"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "PATH",
+     "target_weight_pct": 4.0,
+     "thesis": "Open only a small PATH starter: technical=buy with strong R/R supports the setup, but macro=underweight conflicts and ne",
+     "thesis_invalid_if": "Price closes below MA20 on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "medium",
+     "provenance": [
+      {
+       "evidence": "Strong bullish trend and momentum with breakout and accumulation volume.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro underweights Communication Services because of rate and discretionary-spending sensitivity.",
+       "observed_stance": "underweight",
+       "relationship": "conflicts",
+       "source": "macro"
+      },
+      {
+       "evidence": "Major strategic separation makes the fundamental outlook uncertain rather than clearly bullish.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "earnings"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "CMCSA",
+     "target_weight_pct": 5.0,
+     "thesis": "Open CMCSA at reduced size: technical=buy supports the breakout, while macro=underweight conflicts and earnings=neutral ",
+     "thesis_invalid_if": "Price closes below MA20 on significant volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "provenance": [
+      {
+       "evidence": "Bullish trend, momentum, accumulation volume, and acceptable R/R support a small starter.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro does not provide a sector overweight, so the position is sized from technical evidence only.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "macro"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "CCJ",
+     "target_weight_pct": 3.0,
+     "thesis": "Open a small CCJ starter: technical=buy supports upside, but macro=neutral is only context and no earnings/news source i",
+     "thesis_invalid_if": "Price closes below MA20 on above-average volume."
+    },
+    {
+     "catalyst": "",
+     "conviction": "low",
+     "provenance": [
+      {
+       "evidence": "Bullish trend and momentum with consolidation near highs and favorable technical R/R.",
+       "observed_stance": "buy",
+       "relationship": "supports",
+       "source": "technical"
+      },
+      {
+       "evidence": "Macro underweights Communication Services due to rate and demand sensitivity.",
+       "observed_stance": "underweight",
+       "relationship": "conflicts",
+       "source": "macro"
+      },
+      {
+       "evidence": "Filing read is neutral because integration and profitability execution remain unresolved.",
+       "observed_stance": "neutral",
+       "relationship": "context",
+       "source": "earnings"
+      }
+     ],
+     "suggested_stop_price": null,
+     "symbol": "DIS",
+     "target_weight_pct": 4.0,
+     "thesis": "Open a small DIS starter: technical=buy supports a breakout, but macro=underweight conflicts and earnings=neutral does n",
+     "thesis_invalid_if": "Price closes below MA20 on above-average volume."
+    }
+   ],
+   "timestamp": "2026-08-27 13:30:47"
+  }
+ ],
+ "positions": [
+  {
+   "avg_entry": 100.650667,
+   "current_price": 100.4,
+   "market_value": 7530.0,
+   "qty": 75.0,
+   "sector": "Unknown",
+   "symbol": "SGOV",
+   "unrealized_pnl": -18.800025
+  },
+  {
+   "avg_entry": 26.78,
+   "current_price": 26.355,
+   "market_value": 474.39,
+   "qty": 18.0,
+   "sector": "Communication Services",
+   "symbol": "CMCSA",
+   "unrealized_pnl": -7.65
+  },
+  {
+   "avg_entry": 108.093333,
+   "current_price": 106.21,
+   "market_value": 318.63,
+   "qty": 3.0,
+   "sector": "Communication Services",
+   "symbol": "DIS",
+   "unrealized_pnl": -5.649999
+  },
+  {
+   "avg_entry": 491.63,
+   "current_price": 501.075,
+   "market_value": 501.075,
+   "qty": 1.0,
+   "sector": "Technology",
+   "symbol": "MSFT",
+   "unrealized_pnl": 9.445
+  },
+  {
+   "avg_entry": 380.33,
+   "current_price": 373.7,
+   "market_value": 373.7,
+   "qty": 1.0,
+   "sector": "Financial Services",
+   "symbol": "V",
+   "unrealized_pnl": -6.63
+  },
+  {
+   "avg_entry": 221.26,
+   "current_price": 222.35,
+   "market_value": 444.7,
+   "qty": 2.0,
+   "sector": "Industrials",
+   "symbol": "RSG",
+   "unrealized_pnl": 2.18
+  }
+ ]
+}
