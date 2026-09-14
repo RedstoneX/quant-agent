@@ -211,13 +211,6 @@ coverage should never stop a decision at all.
 **Recommendation —** Keep them as two for now. They do not conflict, and merging means re-deciding trip points already set once — worth doing when there is real evidence of how each behaves, not before. The severity question is worth a look sooner, because while the desk is ramping out of cash the "sell everything" alarm sits unusually close.
 
 
-## item 35
-
-**Plain language —** Old trading records show a protective stop on one stock being cancelled and replaced with a looser one — a real event, not a display error. This happened during active development, before the account was deliberately wiped clean to start fresh, so the owner chose not to dig into this one old case now, and to simply watch for a repeat once the desk runs on stable, finished code.
-**Example —** A stop on a Visa position bought in late August was found cancelled and replaced with a wider, less protective one a few days later, during a period of heavy in-progress changes — not treated as reliable evidence of how the desk behaves today.
-**New evidence on the same position, 2026-09-14 —** the archived records show that same Visa position, on the evening of 1 September, trading at $373.70 against a recorded stop of $374.27 — below its own stop, and still held. That is one of two things and the desk's own records cannot tell them apart: either the stop was widened again, which is the recurrence this item was deferred pending, or the stop was never actually live at the broker. **This needs a broker check that nobody has done** — the account's own order history for that stop between 27 August and 1 September. Until that is looked up, neither explanation should be believed over the other.
-
-
 ## item 39
 
 **Plain language —** When the desk has run out of risk budget and has to turn away a good new idea, it now compares that idea against the weakest thing it is already holding. Two different things can happen. If the holding merely ranks lower, the desk only shows the comparison and does nothing. If the holding would flatly not be bought today — it fails the desk's own entry rules, the same rules a brand-new buy has to pass — the desk can now sell it itself to make room. That selling half is switched ON, at your instruction, rather than shipped switched off. It has never actually happened yet: nothing has been running since 3 September, so the first one will also be the first proof it works end to end, and you will get a message the moment it does.
@@ -295,14 +288,6 @@ coverage should never stop a decision at all.
 **Example —** The news specialist reads a headline and says "bearish, low confidence". The chart specialist can say "bearish" or "strongly bearish" — those are two different ratings it publishes. The news specialist has no such distinction available to it. Today the desk takes that at face value and scores the news read on its confidence alone. The alternative is to add a "how strongly" question to what the news specialist is asked, so it has to state one and justify it per story — which is how the chart specialist works.
 **The decision —** Do you want the other four specialists asked to rate their own strength, separately from their confidence? It is a change to what each is asked to produce, not a number to pick.
 **Recommendation —** Not yet, and not urgent. The current state invents nothing, which is the important part, and the ranking is honestly described as breadth-and-confidence. Adding a strength question to four prompts is cheap to do and expensive to get wrong — every one of them would be a fresh place for a specialist to assert a number nobody can check. Worth revisiting if the ranking ever looks like it is missing an obvious distinction; not worth doing pre-emptively.
-
-
-## item 69
-
-**Plain language —** In one archived review the desk's own reviewer reasoned about a Disney position using a "distance to the stop-loss" of 4.5%, while the desk's trade records for that same moment imply 0.4% — more than ten times apart. That figure is not decoration: it is one of the numbers the desk checks a "this position is deteriorating" claim against. A reviewer working from 4.5% thinks the position has comfortable room; the records say it was almost touching its stop.
-**Example —** Disney was bought at $108.09 with a stop at $105.80 and was trading at $106.21. That is 0.4% of headroom. The review written at that moment states 4.49%.
-**The decision —** None for you yet. Three explanations fit and the archive cannot separate them: the reviewer was handed a different stop than the one on file, it measured from the purchase price instead of the current one, or the number came from nowhere. Guessing between them would be exactly the kind of confident story this desk keeps getting wrong.
-**Recommendation —** Settle it with two lookups before treating any of the three as likely: what stop the broker actually had on Disney at that timestamp, and what the reviewer was actually shown in that run. The first needs the account; the second needs the archived logs for that run. Only one archived instance is known, so this is a discrepancy to explain, not yet a pattern.
 
 
 ## item 70
