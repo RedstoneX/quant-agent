@@ -1287,6 +1287,19 @@ class SmartMoneyObservation(LLMOutputModel):
     signal_class_reason: str = ""
     signal_class_detail: str = ""
     signal_weight: float = Field(default=1.0, ge=0.0, le=1.0)
+    # Trade size relative to what the insider already held, reconstructed from
+    # the Form 4 fields the desk already parses (`shares` and
+    # `post_transaction_shares`) — see
+    # `src/data/insider_signal.py::holdings_fraction`. Reported for buys and
+    # sells alike and never used as an admission cutoff; the bands are Scott &
+    # Xu's own (FAJ 2004). `None`/`""` when the filing does not carry enough
+    # to compute one, and `no_prior_holding` for a purchase by an insider who
+    # held nothing beforehand (no ratio exists — that is a distinct fact, not
+    # a missing one).
+    holdings_fraction: float | None = Field(default=None, ge=0.0)
+    holdings_fraction_band: Literal[
+        "", "under_10pct", "10_to_50pct", "over_50pct", "no_prior_holding"
+    ] = ""
     economic_role: Literal["actionable", "confirmatory", "contradictory", "historical"]
     # Populated only for stream="congressional" (src/data/congressional_trading.py).
     # Two independent free sources (kadoa-org/congress-trading-monitor,
