@@ -383,6 +383,30 @@ def run_coverage_check(now: datetime | None = None) -> str:
     return f"{line}; alert {'delivered' if delivered else 'could NOT be delivered'}"
 
 
+def run_refusal_signature_check(now: datetime | None = None) -> str:
+    """Unvarying-refusal watchdog — see `src/refusal_signature.py`
+    (docs/WORK.md item 59). Reads the durable per-candidate evidence rows
+    and sends one owner alert when every candidate, over consecutive
+    sessions with CHANGING candidates, was refused for the same single
+    reason. Introduces no day count and no threshold. Silent while the
+    trading timers are paused, because the streak it needs must end on the
+    most recent trading day. Returns the journal line."""
+    from src.refusal_signature import (
+        alert_text, check_refusal_signature, status_line,
+    )
+
+    status = check_refusal_signature(now=now, broker=_build_broker())
+    line = status_line(status)
+    if not status.should_alert:
+        return line
+    from src.notifier import send_owner_alert
+
+    text = alert_text(status)
+    print(text, file=sys.stderr)
+    delivered = bool(send_owner_alert(text, symbols=status.symbols))
+    return f"{line}; alert {'delivered' if delivered else 'could NOT be delivered'}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Prove the operator alert channel still works.",
@@ -409,6 +433,13 @@ def main(argv: list[str] | None = None) -> int:
             print(run_coverage_check())
         except Exception as exc:  # noqa: BLE001
             print(f"coverage_watchdog: could NOT run ({exc})", file=sys.stderr)
+        # Same rule as the coverage watchdog above: it rides this unit
+        # because this unit runs whether or not the trading timers do, and
+        # it must never change the probe's own verdict or exit code.
+        try:
+            print(run_refusal_signature_check())
+        except Exception as exc:  # noqa: BLE001
+            print(f"refusal_signature: could NOT run ({exc})", file=sys.stderr)
     return code
 
 

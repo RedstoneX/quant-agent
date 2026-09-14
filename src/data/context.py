@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from src.data.technical import atr_series
+from src.data.technical import ATR_PERIOD, atr_series
 from src.models import OHLCV
 from src.quantities import avg_dollar_volume
 
@@ -44,22 +44,24 @@ _W_1W, _W_1M, _W_3M, _W_6M, _W_12M = 5, 21, 63, 126, 252
 # Sessions used to measure whether a moving average is rising or falling.
 _SLOPE_LOOKBACK = 10
 
-# A consolidation is a stretch where the whole range is small relative to
-# price. 8% over ~15 sessions is tight enough to call "coiling" for a swing
-# horizon without being so strict that only dead stocks qualify.
-_CONSOLIDATION_WINDOW = 15
-_CONSOLIDATION_MAX_RANGE_PCT = 8.0
+# The shortest stretch that can be called a base. NOT a chosen figure: it is
+# the ATR period this same file already reads volatility over (Wilder, via
+# `src.data.technical.ATR_PERIOD`). A stretch shorter than one full
+# volatility-measurement period has no volatility reading of its own to be
+# tight relative to, so there is nothing to compare it against. It sets
+# resolution and a minimum, not a pass/fail line: the detector then extends
+# the base backwards for as long as price stays inside the envelope, so the
+# reported length is read off the instrument.
+#
+# Replaced `_CONSOLIDATION_WINDOW = 15` / `_CONSOLIDATION_MAX_RANGE_PCT = 8.0`
+# (docs/WORK.md item 58, closed 2026-09-13). The 8% was inherited convention:
+# a flat percentage means a different thing on a utility than on a high-beta
+# name, which is the whole complaint. There is now no percentage anywhere in
+# this test.
+_CONSOLIDATION_WINDOW = ATR_PERIOD
 
-# A narrow range is not sufficient: a slow steady trend also spans little over
-# a short window, and calling that "consolidation" would classify a clean
-# uptrend as a base. Genuine consolidation goes sideways — its range comes from
-# oscillation, not drift — so the net move across the window must be small
-# relative to the range it travelled.
-_CONSOLIDATION_MAX_DRIFT_RATIO = 0.5
-
-# A gap must be this large to be worth noting; smaller ones are noise that
-# ordinary intraday movement fills within hours.
-_MIN_GAP_PCT = 2.0
+# How many gaps the prompt line budget will carry. A rendering budget, not a
+# market-structure claim — the nearest gaps are collected first.
 _MAX_GAPS_REPORTED = 3
 
 
@@ -72,6 +74,10 @@ class Gap:
     to_price: float
     direction: str  # "up" | "down"
     sessions_ago: int
+    #: Gap width in units of the name's own ATR at the session BEFORE the gap
+    #: — i.e. how many ordinary days' trading the gap is worth for this
+    #: instrument. None when there was not enough history for an ATR reading.
+    size_atr: float | None = None
 
     @property
     def size_pct(self) -> float:
@@ -122,6 +128,10 @@ class MarketContext:
     consolidation_high: float | None = None
     consolidation_low: float | None = None
     consolidation_range_pct: float | None = None
+    #: The same envelope expressed in the name's own ATR units — how many
+    #: ordinary days' range the whole base spans. Instrument units, so it
+    #: compares across names in a way a percentage does not.
+    consolidation_range_atr: float | None = None
     sessions_in_range: int | None = None
 
     # Liquidity, which bounds position size.
@@ -168,6 +178,33 @@ def _find_unfilled_gaps(bars: list[OHLCV], limit: int) -> list[Gap]:
     first, and stops once `limit` are collected — older gaps matter less and
     the list is meant to be read, not exhaustive.
 
+    **What makes a gap a gap.** Bulkowski's definition is structural and
+    carries no size floor at all: "Gaps occur when today's high is below
+    yesterday's low (bearish gap), or today's low is above yesterday's high
+    (bullish gap)" (https://thepatternsite.com/gaps.html, fetched
+    2026-09-13). The non-overlap test below IS that definition.
+
+    **What makes one worth reporting.** This used to be `_MIN_GAP_PCT = 2.0`,
+    inherited convention, justified in prose as "smaller ones are noise that
+    ordinary intraday movement fills within hours" (docs/WORK.md item 58).
+    A flat percentage says two different things on two different names: 2%
+    on a sleepy utility is an event, 2% on a high-beta name is a Tuesday.
+    The prose reason is now the test, measured on the instrument: a gap is
+    reported when it is wider than one ordinary day's trading range for
+    *this* name, which is what ATR measures — so ordinary intraday movement
+    demonstrably cannot close it in a session. The published prescription is
+    to normalise gap size by ATR rather than by a threshold: "Take the
+    distance of the gap and divide it by the ATR of the stock. This will
+    give you a sense of the significance of the gap over the ATR lookback
+    period."
+    (https://www.tradingsetupsreview.com/complete-breakaway-gap-trading-guide/,
+    fetched 2026-09-13). The resulting multiple is carried on `Gap.size_atr`
+    and rendered, so the analyst sees the significance rather than a raw
+    percentage. There is no percentage in this filter any more.
+
+    The ATR used is the one in force at the session BEFORE the gap, so the
+    gap bar's own outsized true range cannot raise the bar it has to clear.
+
     Reported to the analyst as context, and nothing more (docs/WORK.md item
     54, 2026-09-12): for one day a level on the far side of one of these
     gaps was ruled "not a floor". Bulkowski's measurement is the other way
@@ -178,6 +215,17 @@ def _find_unfilled_gaps(bars: list[OHLCV], limit: int) -> list[Gap]:
     """
     out: list[Gap] = []
     n = len(bars)
+    atr = atr_series(bars)
+    # `atr_series` trims the warm-up: element j belongs to bar j + ATR_PERIOD - 1.
+    offset = ATR_PERIOD - 1
+
+    def _ordinary_day_before(bar_index: int) -> float | None:
+        j = (bar_index - 1) - offset
+        if j < 0 or j >= atr.size:
+            return None
+        value = float(atr[j])
+        return value if value > 0 else None
+
     for i in range(n - 1, 0, -1):
         if len(out) >= limit:
             break
@@ -185,20 +233,30 @@ def _find_unfilled_gaps(bars: list[OHLCV], limit: int) -> list[Gap]:
         if prev.high <= 0:
             continue
         if cur.low > prev.high:  # gap up
-            size = (cur.low - prev.high) / prev.high * 100.0
-            if size < _MIN_GAP_PCT:
-                continue
+            width = cur.low - prev.high
+            from_price, to_price, direction = prev.high, cur.low, "up"
             # Filled if anything after it traded back down into the gap.
-            if any(b.low <= prev.high for b in bars[i + 1:]):
-                continue
-            out.append(Gap(str(cur.date), prev.high, cur.low, "up", n - 1 - i))
+            filled = any(b.low <= prev.high for b in bars[i + 1:])
         elif cur.high < prev.low:  # gap down
-            size = (prev.low - cur.high) / prev.low * 100.0
-            if size < _MIN_GAP_PCT:
+            width = prev.low - cur.high
+            from_price, to_price, direction = prev.low, cur.high, "down"
+            filled = any(b.high >= prev.low for b in bars[i + 1:])
+        else:
+            continue
+        if filled:
+            continue
+        ordinary_day = _ordinary_day_before(i)
+        if ordinary_day is not None:
+            if width < ordinary_day:
                 continue
-            if any(b.high >= prev.low for b in bars[i + 1:]):
-                continue
-            out.append(Gap(str(cur.date), prev.low, cur.high, "down", n - 1 - i))
+            size_atr = round(width / ordinary_day, 2)
+        else:
+            # No ATR reading yet (start of history). Report the gap rather
+            # than invent a threshold to judge it by.
+            size_atr = None
+        out.append(
+            Gap(str(cur.date), from_price, to_price, direction, n - 1 - i, size_atr)
+        )
     return out
 
 
@@ -272,25 +330,64 @@ def compute_market_context(
             else:
                 volatility_state = "stable"
 
-    # Consolidation — measurable, so it should not be a model's impression.
+    # Consolidation — measurable, so it should not be a model's impression,
+    # and measured against the instrument rather than against a percentage
+    # (docs/WORK.md item 58, closed 2026-09-13).
+    #
+    # Two tests, neither of which contains a number:
+    #
+    # 1. CONTRACTION. The trailing window's high-low envelope is no wider
+    #    than the envelope of the window of equal length immediately before
+    #    it. This is Crabel's narrow-range shape, moved from a single bar to
+    #    a window: "An NR4 bar is a bar whose high-to-low range is the
+    #    narrowest of the most recent four bars; an NR7 is the narrowest of
+    #    the most recent seven"
+    #    (https://www.luxalgo.com/library/concept/nr4-nr7-narrow-range-bars/,
+    #    fetched 2026-09-13), and StockCharts on the same pattern: "Crabel
+    #    used the absolute range, as opposed to the percentage range"
+    #    (chartschool.stockcharts.com, .../narrow-range-day-nr7, fetched
+    #    2026-09-13). The comparison is against the name's own immediately
+    #    preceding stretch, so it means the same thing on a utility and on a
+    #    high-beta name. It is also Minervini's VCP shape — successive
+    #    contractions each smaller than the last — reduced to the one
+    #    comparison this detector can make on a fixed window.
+    #
+    # 2. SIDEWAYS. A narrow range is not sufficient: a slow steady trend
+    #    also spans little over a short window. The window's range is spent
+    #    either on drift (net move start to end) or on oscillation (the
+    #    rest). A base oscillates more than it drifts. That is an identity,
+    #    not a tuned cut: `drift <= span - drift` is exactly the old
+    #    `_CONSOLIDATION_MAX_DRIFT_RATIO = 0.5`, restated as the break-even
+    #    point between drift-dominated and oscillation-dominated rather than
+    #    as a chosen ratio. Behaviour is unchanged; the arbitrariness was in
+    #    the framing.
+    #
+    # Ruled out by name: O'Neil's flat base ("roughly five weeks or more of
+    # sideways trade with a correction of no more than about 15 percent") —
+    # the same source states "Both numbers are conventions from studies of
+    # past leaders, not laws"
+    # (https://www.luxalgo.com/library/concept/flat-base/, fetched
+    # 2026-09-13), so adopting them swaps one convention for another with a
+    # citation attached.
     is_consolidating = False
     cons_high = cons_low = cons_range_pct = None
+    cons_range_atr = None
     sessions_in_range = None
-    if len(bars) >= _CONSOLIDATION_WINDOW:
+    if len(bars) >= 2 * _CONSOLIDATION_WINDOW:
         window = bars[-_CONSOLIDATION_WINDOW:]
+        prior = bars[-2 * _CONSOLIDATION_WINDOW:-_CONSOLIDATION_WINDOW]
         cons_high = float(max(b.high for b in window))
         cons_low = float(min(b.low for b in window))
         mid = (cons_high + cons_low) / 2.0
         if mid > 0:
             cons_range_pct = round((cons_high - cons_low) / mid * 100.0, 2)
             span = cons_high - cons_low
+            prior_span = float(max(b.high for b in prior)) - float(min(b.low for b in prior))
             drift = abs(window[-1].close - window[0].close)
-            # Trend travels the range; a base oscillates within it.
-            drift_ratio = (drift / span) if span > 0 else 1.0
-            is_consolidating = (
-                cons_range_pct <= _CONSOLIDATION_MAX_RANGE_PCT
-                and drift_ratio <= _CONSOLIDATION_MAX_DRIFT_RATIO
-            )
+            oscillation = span - drift
+            if atr.size and float(atr[-1]) > 0:
+                cons_range_atr = round(span / float(atr[-1]), 2)
+            is_consolidating = span <= prior_span and drift <= oscillation
             if is_consolidating:
                 # Extend backwards while price stays inside the same envelope,
                 # so a three-month base is not reported as a fifteen-day one.
@@ -350,6 +447,7 @@ def compute_market_context(
         consolidation_high=round(cons_high, 2) if cons_high else None,
         consolidation_low=round(cons_low, 2) if cons_low else None,
         consolidation_range_pct=cons_range_pct,
+        consolidation_range_atr=cons_range_atr,
         sessions_in_range=sessions_in_range,
         avg_dollar_volume_20d=avg_dollar_volume_20d_usd,
         up_down_volume_ratio=up_down_ratio,
@@ -406,9 +504,18 @@ def format_context_block(ctx: MarketContext | None, days_to_earnings: int | None
         lines.append(f"  MA direction over {_SLOPE_LOOKBACK} sessions: " + " · ".join(slopes))
 
     if ctx.is_consolidating and ctx.consolidation_high and ctx.consolidation_low:
+        # Width is stated in the name's OWN ATR as well as in percent: a 6%
+        # base on a quiet name and a 6% base on a high-beta name are not the
+        # same object, and the ATR multiple is the half that says which.
+        in_atr = (
+            f", {ctx.consolidation_range_atr:.1f}× its own ATR"
+            if ctx.consolidation_range_atr is not None else ""
+        )
         lines.append(
             f"  CONSOLIDATING: ${ctx.consolidation_low:,.2f}–${ctx.consolidation_high:,.2f} "
-            f"({ctx.consolidation_range_pct:.1f}% wide) for {ctx.sessions_in_range} sessions"
+            f"({ctx.consolidation_range_pct:.1f}% wide{in_atr}) for "
+            f"{ctx.sessions_in_range} sessions — range is no wider than the "
+            f"preceding stretch of equal length, and sideways rather than drifting"
         )
     else:
         lines.append("  Not consolidating: no tight range in the recent window")
@@ -423,9 +530,12 @@ def format_context_block(ctx: MarketContext | None, days_to_earnings: int | None
         lines.append(f"  Up/down volume (20d): {ctx.up_down_volume_ratio:.2f} — {verdict}")
 
     for gap in ctx.unfilled_gaps:
+        # The ATR multiple, not the percentage, is what says whether this gap
+        # is an event for THIS name — see `_find_unfilled_gaps`.
+        in_atr = f", {gap.size_atr:.1f}× its ATR then" if gap.size_atr is not None else ""
         lines.append(
             f"  Unfilled gap {gap.direction}: ${gap.from_price:,.2f} → ${gap.to_price:,.2f} "
-            f"({gap.size_pct:.1f}%) {gap.sessions_ago}d ago"
+            f"({gap.size_pct:.1f}%{in_atr}) {gap.sessions_ago}d ago"
         )
 
     if days_to_earnings is not None:

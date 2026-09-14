@@ -1801,7 +1801,11 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # stated rule for a resolved item: written up in docs/INCIDENT_HISTORY.md
     # and removed outright, not condensed into a pointer. Their numbers are
     # retired and must never come back under the same key.
-    for rank in (14, 33, 34, 36, 41, 42, 43, 47, 51, 54):
+    #
+    # 28 joined them on 2026-09-13: the permanently-red rehearsal cost-ceiling
+    # test was re-diagnosed and rewritten, written up in
+    # docs/INCIDENT_HISTORY.md, and deleted from the queue.
+    for rank in (14, 28, 33, 34, 36, 41, 42, 43, 47, 51, 54):
         assert rank not in by_rank, (
             f"item {rank} is retired and was deleted from docs/WORK.md; "
             "it must not reappear in the funnel queue"
@@ -1817,12 +1821,21 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
         "docs/INCIDENT_HISTORY.md and delete them from the queue"
     )
     # Genuinely partial work stays where he can see it.
-    for rank in (18, 32):
+    for rank in (18,):
         assert by_rank[rank].bucket == "open", rank
         assert by_rank[rank].part_done is True, rank
-    # And the negated lines stay open, as they always did.
-    for rank in (28, 30):
+    # And the negated lines stay open, as they always did. (28 was the other
+    # one; it is retired above.)
+    # 32 joined them on 2026-09-13: it used to read "MOSTLY FIXED, one real
+    # judgment call left" (part_done), but everything except the
+    # drawdown-reconciliation decision has since landed and been written up,
+    # so the item was rewritten to name only what remains. An item whose
+    # entire content is one open owner decision is `open`, not part_done —
+    # a part_done label would be claiming outstanding BUILD work that no
+    # longer exists.
+    for rank in (30, 32):
         assert by_rank[rank].bucket == "open", rank
+        assert by_rank[rank].part_done is False, rank
 
 
 def test_a_mostly_finished_item_is_labelled_rather_than_hidden():

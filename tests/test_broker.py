@@ -349,6 +349,73 @@ def test_get_session_close_returns_none_on_api_error(mock_tc_cls):
     assert broker.get_session_close() is None
 
 
+@patch("src.execution.broker.TradingClient")
+def test_get_session_open_returns_et_datetime_on_trading_day(mock_tc_cls):
+    """Mirrors test_get_session_close_returns_et_datetime_on_trading_day —
+    docs/WORK.md item 15 needs the session OPEN boundary (not just close)
+    to tell a stale quote from a live one against a real exchange-supplied
+    fact, never an invented elapsed-minutes cutoff."""
+    from datetime import date as _date, datetime as _dt
+    from alpaca.trading.models import Calendar
+    from src.trading_calendar import ET
+
+    entry = Calendar(date="2026-11-27", open="09:30", close="13:00")
+    mock_client = MagicMock()
+    mock_client.get_calendar.return_value = [entry]
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    opened = broker.get_session_open(on_date=_date(2026, 11, 27))
+
+    assert opened is not None
+    assert isinstance(opened, _dt)
+    assert opened.tzinfo is ET
+    assert opened.hour == 9 and opened.minute == 30
+    assert opened.date() == _date(2026, 11, 27)
+
+
+@patch("src.execution.broker.TradingClient")
+def test_get_session_open_returns_none_on_non_trading_day(mock_tc_cls):
+    mock_client = MagicMock()
+    mock_client.get_calendar.return_value = []  # weekend / holiday
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    assert broker.get_session_open() is None
+
+
+@patch("src.execution.broker.TradingClient")
+def test_get_session_open_returns_none_on_api_error(mock_tc_cls):
+    mock_client = MagicMock()
+    mock_client.get_calendar.side_effect = RuntimeError("calendar down")
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    assert broker.get_session_open() is None
+
+
+@patch("src.execution.broker.TradingClient")
+def test_get_session_open_is_cached_per_date(mock_tc_cls):
+    """Same invariance argument as is_trading_day: a trading day's open
+    time is fixed by the exchange calendar in advance, so a second call
+    for the same date must not re-hit the API."""
+    from datetime import date as _date
+    from alpaca.trading.models import Calendar
+
+    entry = Calendar(date="2026-11-27", open="09:30", close="13:00")
+    mock_client = MagicMock()
+    mock_client.get_calendar.return_value = [entry]
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    on_date = _date(2026, 11, 27)
+    first = broker.get_session_open(on_date=on_date)
+    second = broker.get_session_open(on_date=on_date)
+
+    assert first == second
+    mock_client.get_calendar.assert_called_once()
+
+
 @patch("alpaca.data.historical.screener.ScreenerClient")
 @patch("src.execution.broker.TradingClient")
 def test_get_top_movers_returns_normalized_gainer_dicts(mock_tc_cls, mock_screener_cls):
