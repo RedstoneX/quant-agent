@@ -632,17 +632,6 @@ several full trading days have accumulated. Actually stopping re-proposals
 (vs. just showing them) would need a new gating threshold — that is an
 owner decision, not made here.
 
-**15. We cannot tell a stale price from a live one — POSITION-MARK SLICE SHIPPED, QUOTE/BARS SLICE STILL OPEN.**
-
-Full reasoning: `docs/INCIDENT_HISTORY.md` ("item 15"). Shipped: held
-positions now carry real provenance, never fabricated as fresh (Alpaca
-supplies no mark timestamp, so `freshness` is correctly tagged
-`"unknown"`). Still open, the bigger half — tagging live quotes and
-historical bars the same way, which is what retired items 5/9/11 needed:
-needs an owner decision between two competing `read_price_bars`
-implementations (`rescue/price-provenance` branch), a real architecture
-choice, not a mechanical merge.
-
 **17. Backup alert channel — OWNER DECISION, not a defect. (Was: "the desk can switch itself off silently.")**
 
 The original defect (hit live 2026-09-02: a database fault latched
