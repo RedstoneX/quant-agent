@@ -22,6 +22,151 @@ what would catch it next time.
 
 ---
 
+### 2026-09-13 — the insider holdings data the board said we did not have was already being downloaded, parsed and stored — and the filter using it was throwing away the one band the research calls a buy signal (item 52)
+
+**In plain words:** the board carried an open owner decision asking whether to
+go and buy, or somehow approximate, data on how much stock an insider already
+owns — because judging a sale by its dollar size is weaker than judging it by
+what share of the person's own position it represents. The premise was wrong.
+Every SEC Form 4 the desk downloads already states the filer's holding
+immediately after the trade, the desk already parses that number, and it
+already stores it on every observation. This was never an acquisition
+problem. It was a wiring problem, and the wiring was half done.
+
+**How the premise was checked rather than assumed.** Pulled the SEC EDGAR
+daily index for 2026-09-11 (895 Form 4 filings), downloaded the first 120
+submissions and parsed them with the desk's own XPath. Of 77 open-market
+purchase/sale rows across those filings, 77 carried
+`postTransactionAmounts/sharesOwnedFollowingTransaction` — 100%, no gaps. The
+ratio needs no new source, no subscription and no approximation.
+
+**What was already half-built.** The routine/opportunistic classifier has had
+a proportional sell test since it was written: it reconstructs the
+pre-transaction holding and asks what fraction was sold. So the item's
+substance was partly live already. What was missing: purchases had no such
+measure at all, and nothing outside that one classifier branch ever saw the
+ratio — the number was computed, used for a single yes/no, and thrown away
+before the analyst seat or the operator could weigh it.
+
+**The number that filter used was invented.** The materiality boundary was
+0.05. Traced through the code comments and the research notes, that 5%
+matches no published band anywhere; the research note it cites carried the
+claim with no citation attached at all. Chasing the claim to its actual
+source: Scott & Xu, *Some Insider Sales Are Positive Signals*, Financial
+Analysts Journal 60(3), 2004 — 512,133 transactions, 80,742 company-quarters,
+1987-2002, and genuinely a measurement rather than an assertion. They cut
+"shares traded as a percentage of shares owned" at **10% and 50%**, not 5%.
+Their size- and book-to-price-adjusted quarterly excess returns: sales over
+100,000 shares are significantly negative only in the over-50% band (-0.81%);
+in the two lower bands they are -0.06% and +0.08%, both insignificant. Sales
+under 100,000 shares in the under-10% band are significantly *positive*
+(+0.68%) — a proportionally small sale is a mildly good sign, not a neutral
+one. Purchases scale the same way: +0.38% / +1.06% / +1.42% across the three
+bands, with initial purchases (no prior holding, so no ratio exists) earning
+an insignificant +0.10%.
+
+**What the source does NOT license, and was therefore not built.** Their
+ratio is a net, per-stock-quarter figure, computed over a six-month formation
+window against holdings aggregated across every insider in that stock who
+reported a holding. One Form 4 row is not that object. So their band returns
+do not carry over to a per-transaction admission gate, and no second cutoff
+was invented to fill the gap. The ratio is reported on every row, for buys
+and sells alike, and banded with the paper's own boundaries; the dollar
+materiality filter that admits a symbol is untouched. A test pins this: two
+purchases identical in dollars but at opposite ends of the holdings range
+both survive admission unchanged.
+
+**The first attempt at the fix was also wrong, and this is the part worth
+remembering.** The obvious repair was to move the cutoff from the invented
+0.05 to 0.10, the paper's lowest band edge. That was written, reviewed
+adversarially, and rejected before it merged. Three things were wrong with
+it, and all three are visible in the paper itself.
+
+*The desk's question was not the paper's question.* The setting asks "below
+what fraction of a holding is a sale not a directional view". The only place
+the paper's prose marks a significance boundary is at half, not a tenth:
+"The group of stocks with net total sales exceeding 100,000 shares had an
+average excess return of −0.55 percent, but of that group, those stocks for
+which shares sold accounted for more than half of shares owned had average
+excess return of −1.17 percent. Excess returns on stocks with the same level
+of shares sold but a lower percentage of holdings were negative but
+statistically insignificant." A band edge on a results table is a place the
+authors chose to cut a column. It is not a measured threshold, and 10% was
+being read as one purely because it was the smallest number printed.
+
+*The label being applied stated the opposite of the evidence.* "Small sales
+that represented small percentages of shares owned not only did not predict
+poor performance but were associated with significantly positive abnormal
+returns." ROUTINE, in this classifier, means Cohen/Malloy/Pomorski's "carries
+no predictive power", and carries weight 0.0 — which is both the ranking sort
+key and the dollar multiplier deciding what the analyst seat ever sees. So a
+row the source measures at +0.68% with 1% significance was being labelled
+"no information" and then deleted from the ranking. The detail string the
+rejected version generated even said the paper finds these mildly positive,
+one line above the code that discarded the row for it.
+
+*The PR had already made the correct argument, for purchases only.* It
+refused to gate buys on the same bands, on the ground that the paper's ratio
+is a net per-stock-quarter figure over a six-month window against holdings
+aggregated across insiders, which is not the same object as one Form 4 row.
+That refusal is owed to sells too. Applying it to one direction and not the
+other was inconsistency, not judgement.
+
+**What was actually done.** The cutoff was removed, not moved, and no
+replacement was invented. `insider_min_material_sell_fraction` is deleted
+from the config model, from settings.yaml, from the classifier thresholds and
+from the provider and pipeline wiring; a test now fails if it reappears on
+either the thresholds dataclass or the config model. A sale that survives the
+two Cohen/Malloy/Pomorski routine tests is `discretionary_sale`, and carries
+its holdings ratio, its band, and — new — the sign the paper measured for
+that band, so the seat is handed the direction of the evidence and not just a
+number. Under 10%: mildly bullish, +0.68%. 10–50%: +0.44%. Over 50%: the only
+band that predicts negative returns, and only above 100,000 shares, −0.81%.
+
+**What this costs, stated plainly.** A proportionally tiny sale now ranks at
+weight 1.0 alongside an insider liquidating most of a position. That is not
+right either — the paper says their signs differ. It is less wrong than
+weight 0.0, which asserts the row is uninformative when the source says it is
+informative and positive, and it does not require inventing a number. The
+real gap is structural: `signal_weight` is a single "how much attention"
+scalar with no way to express "attention, and the sign is the other way".
+That is now WORK.md item 62, and it is deliberately left open rather than
+closed by choosing a multiplier.
+
+**The 10b5-1 branch went with it.** A small planned sale used to be demoted
+to routine. That branch existed only to reinforce the immateriality cutoff —
+the research note is explicit that the flag is not a clean noise filter, and
+nothing in it licenses demoting a sale on the flag alone. With no cutoff, the
+flag demotes nothing and is reported in the detail text instead.
+
+**Also corrected.** The research note's "size relative to holdings" bullet had
+been carrying the conclusion with no source behind it since it was written.
+It now names Scott & Xu, the sample, the bands, the numbers and the two
+sentences above, so the next reader does not have to re-derive where the
+claim came from — or repeat the mistake of reading a column edge as a
+finding.
+
+**What would catch it next time.** The tell was available without reading the
+paper: the code's own generated text contradicted the code's own decision in
+adjacent lines. When a detail string explains why a row matters and the
+branch it sits in throws that row away, one of the two is wrong. The second
+tell was a citation used at the wrong altitude — the paper was quoted
+accurately, every figure checked out, and the conclusion still did not
+follow, because nobody asked whether the paper had measured the boundary the
+setting needed or merely printed a number near it.
+
+**Decision recorded.** No owner call is needed: nothing had to be acquired and
+nothing paid for. Item 52 is NOT deleted — it was independently reframed on
+main the same day into a different, genuinely open question (should an insider
+trade be admitted or refused on ANY measure of its size), which this work does
+not answer and deliberately did not build. What this work does settle is that
+item's original premise: the holdings data exists, and the relative measure is
+computed and reported. That correction is written into item 52, and the one
+piece that cannot be settled by any source found is filed separately as item
+63.
+
+---
+
 ### 2026-09-13 — item 17 closed: the desk-wide silence alarm's own systemd timer was finally installed on the production box, ten days after it started warning about itself
 
 **In plain words:** item 17 was "the desk can switch itself off silently."
