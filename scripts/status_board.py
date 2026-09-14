@@ -1269,6 +1269,13 @@ def load_funnel_queue(work_md: Path,
 _PM_GATE_HEADING = "## PM TEST GATE"
 _PM_GATE_STOP = "<!-- END PM TEST GATE -->"
 
+#: An empty gate is a legitimate, deliberate state (every gate item closed)
+#: and must be DECLARED in the text, never inferred from the absence of
+#: numbered items — the same "shape changed" guard below still has to catch
+#: an edit that accidentally deletes every item without meaning to empty the
+#: gate. Exact marker, start of a line, inside the gate body.
+_PM_GATE_EMPTY_MARKER = "**The gate is EMPTY"
+
 
 def load_pm_gate(work_md: Path,
                   notes: dict[str, Prose] | None = None
@@ -1282,6 +1289,17 @@ def load_pm_gate(work_md: Path,
     heading or an unparseable body is reported as a plain-English problem,
     never rendered as a silent empty (and therefore falsely "nothing is
     blocking this") section.
+
+    Three outcomes for the body once the heading is found:
+
+    * zero items, `_PM_GATE_EMPTY_MARKER` present — the gate is deliberately
+      empty (every item closed). Returns `([], None)`.
+    * zero items, no marker — the section's shape has changed underneath the
+      parser (a bad edit, not a deliberate empty gate). Returns the existing
+      "shape has changed" problem.
+    * marker present AND items still parse — inconsistent: the body claims
+      to be empty while still listing work. Returns a problem rather than
+      silently picking one side.
     """
     if not work_md.exists():
         return [], "The backlog file is missing, so the gate could not be read."
@@ -1296,8 +1314,20 @@ def load_pm_gate(work_md: Path,
         if stop in body:
             body = body.split(stop, 1)[0]
 
+    has_empty_marker = any(
+        line.strip().startswith(_PM_GATE_EMPTY_MARKER)
+        for line in body.splitlines())
     items = _parse_numbered_items(body, source="pm-gate", notes=notes)
+
+    if items and has_empty_marker:
+        return [], (
+            "The gate body declares itself EMPTY with "
+            f"{_PM_GATE_EMPTY_MARKER!r} but still lists "
+            f"{len(items)} numbered item(s), so its shape is inconsistent."
+        )
     if not items:
+        if has_empty_marker:
+            return [], None
         return [], (
             "The gate heading is there but no numbered items could be read "
             "from it, so its shape has changed."
@@ -2102,18 +2132,23 @@ def _render_decisions(decisions: list[PendingDecision],
     return "\n".join(rows) + _render_owner_call_cards(owner_calls)
 
 
-def _render_open_queue(items: list[QueueItem], problem: str | None) -> str:
+def _render_open_queue(items: list[QueueItem], problem: str | None,
+                       empty_message: str = "Nothing is queued.") -> str:
     """What is next, in order: one line each, opening to the full explanation.
 
     Mobile first — the line is the whole tap target and everything else is
     behind it, so the owner can read the running order on one screen without
     scrolling past four paragraphs to reach item two.
+
+    `empty_message` lets a caller whose empty state means something more
+    specific than "nothing queued" say so — e.g. the PM gate, where an empty
+    result is a deliberately cleared gate, not an absence of work.
     """
     if problem:
         return (f'<div class="note"><b>The running order could not be read.</b> '
                 f'{_esc(problem)}</div>')
     if not items:
-        return '<div class="note">Nothing is queued.</div>'
+        return f'<div class="note">{_esc(empty_message)}</div>'
     rows = []
     for it in items:
         meta = []
@@ -2440,6 +2475,19 @@ def _safely(loader: Any, work_md: Path, what: str,
                     f"({type(exc).__name__}).")
 
 
+def _pm_gate_lede(open_count: int, total: int) -> str:
+    """The one-line status under 'Before the model test can mean anything'.
+
+    A plain 'N of M feeds are still not signed off' reads as '0 of 0' when
+    the gate is cleared, which looks like a parse failure rather than a
+    deliberately empty gate. Say the clear state in words instead.
+    """
+    if total == 0 and open_count == 0:
+        return ("Every feed is signed off. Nothing is blocking the model "
+                "test on this gate.")
+    return (f"{open_count} of {total} feeds are still not signed off.")
+
+
 def _unexplained_note(unexplained: int, total: int) -> str:
     """One honest line about how much of this page is not yet written for him.
 
@@ -2664,12 +2712,14 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
 
     pm_gate_open = [i for i in pm_gate_items
                    if not i.done and i.ref not in owner_call_refs]
-    body = body.replace("{{PM_GATE}}", _render_open_queue(pm_gate_open, pm_gate_problem))
+    body = body.replace("{{PM_GATE}}", _render_open_queue(
+        pm_gate_open, pm_gate_problem,
+        empty_message="Gate clear — nothing is blocking the model test."))
+    body = body.replace("{{PM_GATE_LEDE}}",
+                        _pm_gate_lede(len(pm_gate_open), len(pm_gate_items)))
     body = body.replace("{{PM_GATE_DONE}}", _render_one_liners(
         [i for i in pm_gate_items if i.done],
         "None of the feeds have been signed off yet.", struck=True))
-    body = body.replace("{{PM_GATE_OPEN}}", str(len(pm_gate_open)))
-    body = body.replace("{{PM_GATE_TOTAL}}", str(len(pm_gate_items)))
     body = body.replace("{{ROWS}}", rows)
     body = body.replace("{{ALARM}}", alarm)
     body = body.replace("{{RULES_TOTAL}}", str(total_rules))
