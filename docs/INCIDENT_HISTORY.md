@@ -22,6 +22,112 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — item 10 closed: every way an idea can die inside the machinery now records why, and a test now fails if someone adds a new way that does not
+
+**In plain words:** most trade ideas the desk has never reached the market —
+they stopped somewhere inside our own software, and for the largest group of
+them nothing anywhere said why. Earlier the same day six of those silent
+stopping points were fixed and the work was reported as complete. It was not:
+checking it properly turned up more, including one whose message the
+reason-recorder could never read at all. All of them now record a short
+machine-readable code plus a sentence, per stock. More usefully than any of
+the individual fixes, there is now a test that fails the moment somebody adds
+a new way to drop an idea without recording a reason — this defect had come
+back three times, each time after a list of fixes believed to be complete.
+
+**The claim that was attacked, and why.** The board item said the specific
+historical cases could not be explained "until the desk trades again". That
+same "wait for live data" framing had already been wrong once on this item and
+was settled statically instead. It was wrong a second time. Two things were
+done with no new trading at all:
+
+**1. The real constructor was replayed over real recorded sessions.** Every
+Portfolio Manager target the live desk wrote between 2026-08-18 and
+2026-09-02 — 73 targets across 20 decisions, with the technical analyses, the
+seat-stance registry, the held book and each session's own equity, all read
+out of the production archive — was run through the real
+`PortfolioConstructor.construct_orders`. Nothing was stubbed. 68 of those
+candidates produce no order, and every single one of them comes out carrying
+either a named data fault or a named refusal, with a non-empty detail. Those
+are the two records `pipeline_stages._record_constructor_drops` reads BEFORE
+it falls back to the generic row whose detail is scraped out of log prose.
+The frozen inputs live in `tests/fixtures/constructor_drop_paths_archive.json`
+so this is re-runnable, and the built-order set per session is pinned
+alongside, which is how "no refusal behaviour changed" is checked rather than
+asserted: the same candidates are dropped and the same ones kept.
+
+**2. Every drop site was enumerated from the source, not from memory.** An
+AST scan of `src/portfolio_constructor.py` lists every statement that ends a
+candidate — a return of no order, a `continue` in the target loop, the sector
+dial's negative-allocation refusal — and requires each to either record the
+reason itself or carry a `# drop-reason:` comment naming what records it
+instead. That is the standing guard, and it is worth more than any of the
+individual fixes because it covers the paths nobody has hit yet.
+
+**What the enumeration found that the morning's pass missed.** Nine more
+sites. Eight of them were never invisible — their log line does match the
+recovery regex — but a matched sentence is not a code: they all landed in the
+database under the single generic reason `constructor_dropped` with a
+paragraph of prose, indistinguishable by machine from each other. Those eight
+are the no-structural-target refusal (twice, once in each builder and once in
+the shared entry/stop resolver), the terminal "no valid stop against entry"
+check, the wrong-side-of-entry stop refusal, the unmeasurable-geometry
+refusal, the non-finite stop and non-finite entry guards, and both ends of the
+§10.3 sector-crowding dial. The ninth is the one that matters for the
+completeness claim: **no stop typed and no ATR to derive one from** logs
+"Constructor: BUY SYM has no stop ..." — the recovery pattern requires
+rejected/refused/skipped straight after the symbol, so a candidate dropped
+there reached the record as the literal "no matching constructor log line
+captured". That is the exact signature the morning's pass had reported as
+fully eliminated.
+
+**Stated plainly, because it limits the finding:** none of those last three
+guards is reachable through `construct_orders` as the code stands today. A
+missing or unreadable volatility reading makes the target derivation file a
+data fault one step earlier, and a non-finite stop fails the `> 0` test in
+`_resolve_stop` and is replaced by the instrument's own noise band. They are
+defence in depth, and a test pins both the code they file and the fact that
+nothing currently reaches them, so the day a change opens one up the record
+already says what it will say. The other six additions are on live paths.
+
+**The 16 historical rows, attributed.** The census restricted to proposals
+after the limit-is-ceiling fix gives 28 proposals, 3 filled, 25 blocked, 16 of
+them `no_order_built`. They were attributed by checking out the constructor as
+it stood on each row's own date and running it against that session's recorded
+target and technical analysis — the day's own code, the day's own inputs.
+Eleven of the sixteen reproduce exactly and identically: `CRM` twice, `NVDA`,
+`ONDS` and `MP` (2026-08-28), `NVDA`, `VLO`, `PATH` and `DE` (2026-08-31),
+`NVDA` and `ZS` (2026-09-01) were all refused by the reward:risk floor applied
+after the stop is widened past the noise band — the setup only qualified on a
+stop tighter than one ordinary day's range. The five of 2026-09-02 (`MU`,
+`CMCSA`, `DIS`, `V`, `AUGO`) are target-derivation and reward:risk refusals of
+the same family: no structural level in the trade's direction for `MU`, `V`
+and `AUGO`, a sub-floor ratio against the shipping stop for `CMCSA` and `DIS`.
+Confidence is lower on those five — the live quote each was priced against was
+never persisted, and the replay reproduces only two of that session's four
+real orders when the analyst's own entry is substituted for it.
+
+**So the sixteen say something different from what the item assumed.** Not one
+of them came from a silent path. Every one of them logged a reason the
+recovery regex would have matched; they are anonymous in the database purely
+because the capture that writes those reasons to a table did not exist until
+2026-09-03, after all sixteen. The rows themselves stay unexplained in the
+database — nothing retroactively writes a row for a session that has already
+run — and that is a fact to record, not an open question.
+
+**One correction to the numbers.** The full-history census reads 65 proposals,
+14 filled, 51 blocked, and machinery ABSENCE (`no_order_built` 18 +
+`order_not_placed` 9 + `qty_zero` 3) is **30 of the 51, not 27**. The
+post-fix-window figures — 28 / 3 / 25 with `no_order_built` at 16 — reproduce
+exactly.
+
+**What would catch it next time:** the AST guard. Every previous pass at this
+defect shipped a list of sites believed complete, and every one of them was
+wrong about a site nobody had thought of. A list cannot be trusted; a scan of
+the source can be.
+
+---
+
 ### 2026-09-14 — the ladder that decides how big a trade can be was five invented numbers, four of which did nothing; it is now one formula with no invented number in it (board items 30 and 57, both CLOSED)
 
 **In plain words:** the desk lets a trade risk more of the account when more
