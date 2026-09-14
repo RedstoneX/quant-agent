@@ -1706,6 +1706,55 @@ def test_an_incidental_use_of_a_new_word_is_not_a_closure_claim(headline):
     assert it.bucket == "open"
 
 
+#: Item 60's real headline, verbatim from `docs/WORK.md` as of 2026-09-13 —
+#: the exact text that classified as `finished_unmarked` before the fix,
+#: because "PR #343 (merged)" put the closure word "MERGED" inside a status
+#: tail whose own word is "OPEN".
+_ITEM_60_REAL_HEADLINE = (
+    "The exit path shares its risk-review seat with the buy plan, wearing "
+    "five stood-down or inverted checklist exceptions — OPEN, owner "
+    "call, deferred 2026-09-13 while PR #343 (merged) repaired the seat's "
+    "honesty about the exceptions rather than replacing it."
+)
+
+
+def test_a_reference_to_another_prs_status_is_not_a_claim_about_this_item():
+    """Regression for the real item 60: a status tail that cites a
+    DIFFERENT pull request's own outcome ("PR #343 (merged)") must not be
+    read as this item's own closure. Before the fix this failed —
+    `closure_claim` returned "finished" and `bucket` was
+    `finished_unmarked`, hiding a live, undecided owner-call item as
+    already-done."""
+    it = sb.QueueItem(60, "t", "", "", None, False,
+                      headline=_ITEM_60_REAL_HEADLINE)
+    assert it.closure_claim == ""
+    assert it.claims_closure is False
+    assert it.bucket != "finished_unmarked"
+
+
+@pytest.mark.parametrize("tail,removed", [
+    ("OPEN, deferred while PR #343 (merged) repaired part of it.", "MERGED"),
+    ("OPEN, deferred while #343 (merged) repaired part of it.", "MERGED"),
+    ("OPEN, see item 12 (fixed) for the related repair.", "FIXED"),
+])
+def test_strip_cross_references_removes_only_the_referenced_status(tail, removed):
+    """The stripped text still contains the item's OWN status word ("OPEN")
+    — this only removes the parenthetical describing something else."""
+    scanned = sb._strip_cross_references(tail)
+    assert "OPEN" in scanned
+    assert removed not in scanned.upper()
+
+
+def test_a_bare_closure_word_is_still_read_when_it_is_not_a_cross_reference():
+    """The fix must not go blind to a real closure word just because a
+    number appears nearby — only a number IMMEDIATELY followed by its own
+    parenthetical status is a cross-reference."""
+    it = sb.QueueItem(1, "t", "", "", None, False,
+                      headline="A thing — FIXED, see item 12 for detail.")
+    assert it.closure_claim == "finished"
+    assert it.claims_closure is True
+
+
 def test_a_word_that_merely_contains_a_closure_word_is_not_one():
     """Substring matching is what makes a growing vocabulary dangerous:
     INCOMPLETE contains COMPLETE, UNRESOLVED contains RESOLVED, and MERGE
@@ -2198,6 +2247,144 @@ def test_a_decision_with_no_recommendation_says_so(tmp_path):
     out = sb._render_decisions(got)
     assert "A bare question?" in out
     assert "nothing here to agree or disagree with" in out
+
+
+# ---------------------------------------------------------------------------
+# "Waiting on you" — roadblocks that need HIS decision, not the desk's
+#
+# The section already existed for formal `DECIDE BY` lines. These tests
+# cover the extension: a backlog item buried in the running order that
+# names a live decision AND the one reason it is money, mandate, risk
+# appetite or public disclosure (never a market-structure number) is lifted
+# up to the same section, and removed from wherever it would otherwise show.
+# ---------------------------------------------------------------------------
+
+def test_why_only_you_label_parses():
+    assert sb.parse_prose(["Why only you — real money is at risk."]).why_him == (
+        "real money is at risk.")
+
+
+@pytest.mark.parametrize("line", [
+    "Why only you — a",
+    "**Why only him —** a",
+    "Why him: a",
+])
+def test_every_why_only_you_spelling_parses(line):
+    assert sb.parse_prose([line]).why_him == "a"
+
+
+def _prose(decision="", why_him=""):
+    return sb.Prose(decision=decision, why_him=why_him)
+
+
+@pytest.mark.parametrize("decision,why_him,live", [
+    ("Should we sell the position?", "It risks real money.", True),
+    ("Should we sell the position?", "", False),          # no reason given
+    ("", "It risks real money.", False),                  # no decision at all
+    ("None for you.", "It risks real money.", False),     # a research question
+    ("Not yet. The gate has to clear first.", "It risks real money.", False),
+    ("Possibly yours later, but not yet.", "It risks real money.", False),
+])
+def test_owner_call_needs_a_live_decision_and_a_reason(decision, why_him, live):
+    """`_is_live_owner_ask` requires BOTH fields, and a decision that reads
+    as already-settled or not-yet-his (the backlog's own "None for you" /
+    "Not yet" convention on the pure research items, 52/55/56/58) never
+    counts, even with a reason attached."""
+    assert sb._is_live_owner_ask(_prose(decision, why_him)) is live
+
+
+def test_owner_call_headline_is_the_first_sentence_only():
+    """The card's headline is one line, even when the authored decision text
+    runs to several sentences — the full text still renders in the body."""
+    it = sb.QueueItem(
+        53, "t", "", "", None, False,
+        prose=sb.Prose(
+            decision="Should the fraction be sold? Three real options exist.",
+            why_him="Real money is uncovered right now."),
+    )
+    assert sb.owner_call_items([it]) == [it]
+    out = sb._render_owner_call_cards([it])
+    assert "<h3>" in out
+    header = out.split("<h3>", 1)[1].split("</h3>", 1)[0]
+    assert "Should the fraction be sold?" in header
+    assert "Three real options exist." not in header
+    assert "Three real options exist." in out  # still shown, in the body
+
+
+def test_owner_call_item_moves_out_of_the_general_queue(tmp_path):
+    """End to end: an item flagged as a live owner call shows in "Waiting on
+    you" and does NOT also show in "What's next, in order" — one item, one
+    place, never both."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**1. An ordinary engineering item — 1 of 2 (50%). DEFECT.**\n\n"
+        "**2. A real roadblock — 1 of 2 (50%). OPEN.**\n"
+    )
+    notes = tmp_path / "BOARD_NOTES.md"
+    notes.write_text(
+        "## item 2\n\n"
+        "**Plain language —** explained for him.\n"
+        "**The decision —** Should the desk take on this exposure?\n"
+        "**Why only you —** it risks real money.\n"
+    )
+    phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
+             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
+    template = (Path(__file__).resolve().parents[1] / "scripts"
+                / "status_board_template.html")
+    out = sb.render(phases, state, template, work_md=work, board_notes=notes)
+
+    yours = out.split('<section id="yours">', 1)[1].split("</section>", 1)[0]
+    order = out.split('<section id="order">', 1)[1].split('<section id="inhand">', 1)[0]
+    assert "Should the desk take on this exposure?" in yours
+    assert "item 2" in yours
+    assert "item 2" not in order
+    assert "An ordinary engineering item" in order
+
+
+def test_a_market_structure_number_never_reaches_waiting_on_you(tmp_path):
+    """An item can carry a real, unresolved `The decision` and still never
+    belong to him — a chart-structure constant is settled by research or by
+    this desk's own data, not by his say-so. Without an authored
+    `Why only you`, it stays in the running order."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. A pivot-window question — 1 of 2 (50%). OPEN.**\n"
+    )
+    notes = tmp_path / "BOARD_NOTES.md"
+    notes.write_text(
+        "## item 9\n\n"
+        "**Plain language —** how many bars make a swing point.\n"
+        "**The decision —** None for you. It is a chart-structure question.\n"
+    )
+    phases = [_phase([sb.RuleResult("file_exists", sb.PASS, "note")])]
+    state = {"in_sync": True, "circuit": "clear", "spend_today": 0.1,
+             "sessions_today": 1, "box_sha": "abc", "main_sha": "abc"}
+    template = (Path(__file__).resolve().parents[1] / "scripts"
+                / "status_board_template.html")
+    out = sb.render(phases, state, template, work_md=work, board_notes=notes)
+    yours = out.split('<section id="yours">', 1)[1].split("</section>", 1)[0]
+    order = out.split('<section id="order">', 1)[1].split('<section id="inhand">', 1)[0]
+    assert "item 9" not in yours
+    assert "item 9" in order
+
+
+def test_waiting_on_you_collapses_to_one_line_when_empty():
+    """No formal decision, no live owner call: one quiet line, not a blank
+    section — and it must not grow with a second, separate empty message
+    once owner-call items exist as a data source too."""
+    out = sb._render_decisions([], [])
+    assert "Nothing is waiting on you" in out
+    assert out.count("Nothing is waiting on you") == 1
+
+
+def test_render_decisions_still_takes_a_single_argument():
+    """Backward compatible: every existing call site that passes only the
+    formal decisions list must keep working unchanged."""
+    out = sb._render_decisions([])
+    assert "Nothing is waiting on you" in out
 
 
 # ---------------------------------------------------------------------------

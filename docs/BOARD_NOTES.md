@@ -59,12 +59,23 @@ Under each heading, each field on its own line, in the same shape
     **The decision —** what the owner specifically has to rule on.
     **Recommendation —** what we think he should do, stated as a
     recommendation.
+    **Why only you —** the one reason this decision cannot be made without
+    him: money, mandate, risk appetite, or public disclosure. Never a
+    market-structure number — those are researched, not decided, and an
+    item like that writes `**The decision —** None for you` instead.
 
 The label must start the line, the surrounding `**` is optional, and the
 separator may be an em dash, a hyphen or a colon. A block ends at the next
 label, the next heading, or a blank line — one paragraph per label. Nothing
 is mandatory: an item can carry only a `Plain language` line and nothing
 else, and any field left out renders as absent, never guessed.
+
+**"Waiting on you" on the board is built from two fields together.** An
+item shows there only when it carries BOTH a live `The decision` (not
+starting "None", "Not yet" or "Possibly") AND a `Why only you`. Writing a
+decision without a reason, or a reason without a decision, leaves it where
+it already was — in the running order, not promoted. See
+`_is_live_owner_ask` in `scripts/status_board.py`.
 
 ## Worked example — illustrative only, not a real backlog item
 
@@ -143,8 +154,8 @@ this line, one heading per item.
 
 **Plain language —** If the desk's own record-keeping breaks, a safety switch can shut down all further AI-based decisions completely, and it stays off until a person manually clears it — working as intended. The real problem, observed live, was that the alert meant to warn someone about it also failed to send, so the desk could sit switched off for a full day or a weekend with nobody aware, looking exactly like an ordinary quiet market.
 **Example —** This happened for real: the safety switch tripped because a data file couldn't be opened, and the message meant to warn the owner about it failed to deliver too, so both the shutdown and the warning about it went unnoticed at once.
-**The decision —** Whether the desk needs a completely separate backup alert channel, in case its current one goes down too.
-**Recommendation —** A cheap backup channel closes a real gap at low cost, but the record disagrees on urgency elsewhere — worth a direct check with the owner on timing before treating this as due soon.
+**The decision —** None for you right now. Already decided, 2026-09-03: not now, bigger problems to solve first. No due date; revisit only at your discretion. This line used to describe it as open — it wasn't kept in sync with your own ruling, corrected 2026-09-13.
+**Recommendation —** Nothing to approve right now. Bring it back yourself when you want to revisit it.
 
 
 ## item 18
@@ -196,6 +207,7 @@ this line, one heading per item.
 **Example —** A trade sized to risk 5% of the account was actually only risking about 1% in practice because of the old cap — a fifth of the approved risk, on every single trade, until fixed.
 **The decision —** Restore the wider trade-sizing bands now that the bug is fixed, and separately, whether the two loss-alarm systems should ever be unified.
 **Recommendation —** Approve restoring the wider bands; they were only narrowed to compensate for a bug that no longer exists. Leave the two-alarm-system question for later since both work independently without conflicting today.
+**Why only you —** Both halves change how much of the account can be put at risk on a trade and how the desk reacts to a loss — risk-appetite calls, not engineering defaults.
 
 
 ## item 35
@@ -230,6 +242,7 @@ this line, one heading per item.
 **Example —** Oracle: 5.3089 shares at about $150, worth $798. The stop covers 5 shares. The 0.3089 left over is about $46 with no stop. If Oracle gapped down 20% overnight, that slice would lose about $9 before anything could react. Small here — but the same rule applies to a position that is entirely under one share, like a single slice of a $1,500 stock, where the WHOLE position is the uncovered part. You corrected exactly that "it's less than one share so it's negligible" thinking on 2 September, and it still holds.
 **The decision —** While the desk is paused, what should happen to the uncovered fraction? Three real options. One: close the fraction now (sell the 0.3089 shares, about $46) and make that the standing rule whenever the desk is paused with fractional holdings. Two: leave it, accept the exposure, and rely on the new daily message to keep you informed. Three: stop buying fractions altogether — you already turned that down on 2 September because it locks a $10,000 account out of the expensive names the analysts keep picking, and nothing about that reasoning has changed.
 **Recommendation —** Option one as a rule, not a one-off: pausing the desk is a deliberate act, and it should include tidying the fractions, because the protection design assumes the desk is running. Today that means selling 0.3089 Oracle, which I have NOT done — no order has been placed, changed or cancelled. Option two is honest and now visible, but it means a paused desk carries an exposure nobody is managing. If you want the fraction sold, say so and it gets done by hand; the code shipped here is only the alarm.
+**Why only you —** Real money sits with no protective stop right now, and choosing to sell it, accept the exposure, or change the standing rule for a paused desk is a risk-appetite call, not a technical fix.
 
 ## item 55
 
@@ -275,6 +288,7 @@ this line, one heading per item.
 **Example —** Only three sell-decisions have ever gone through this reviewer in the recorded history, and every one was approved with no changes made. That is not proof the reviewer is doing its job — it is too small a sample to prove anything either way. What is provable is that the handful of automatic checks standing behind it each have a real gap: one of them does nothing unless the position is already flagged as vulnerable; another does nothing unless there is prior data to compare against; a third can be talked past just by citing an outside reason; and the last one only checks that the wording sounds right, not that the claim is true. A confidently-worded, clean-looking, wrong reason to sell could walk through all four untouched.
 **The decision —** Should selling get a purpose-built reviewer of its own — its own instructions, its own checklist — instead of the buying reviewer wearing a list of exceptions for it? This matters more than it sounds: a wrong "keep buying" that gets refused costs nothing, but a wrong "don't sell" that gets approved leaves a broken position sitting on the book overnight with only the ordinary stop-loss behind it, not a second layer of judgement.
 **Recommendation —** Not made. Today's fix was deliberately the smaller, safer move — make the shared reviewer honest about what it can and can't see on a sell, rather than building it a replacement, while the bigger question of whether selling deserves its own reviewer is put to you rather than assumed either way.
+**Why only you —** It decides how much independent scrutiny a decision to sell out of a position is allowed to skip — a risk-appetite call about the desk's own safety net, not an engineering default.
 
 ## item 61
 
