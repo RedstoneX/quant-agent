@@ -1,48 +1,70 @@
-"""Acceptance test: the rehearsal harness reproduces the 2026-08-28 morning's
-Portfolio Manager cost-ceiling failure — offline, deterministically, for free.
+"""Acceptance test: the rehearsal harness reproduces, offline and for free,
+the failure the desk suffered on the morning of 2026-08-28 — the spending
+circuit refusing the Portfolio Manager's call, so nothing was proposed.
 
-This is what `ops/rehearsal` was built for (see its module docstrings): on
-2026-08-28 the Portfolio Manager never reached a provider. Its `_execute`
-call was stopped by `cost_circuit.begin_call` because the assembled prompt's
-pre-call estimate projected session spend past the reserved-exposure ceiling
-($1.80 at the time; `config/settings.yaml` still pins that value). No trade
-was proposed, and the session ended `paid_analysis_suspended`.
+WHAT HAPPENED THAT MORNING
+--------------------------
+Run `run-be9f8f06` (still in production's `agent_logs`) recorded four analyst
+calls and no Portfolio Manager call at all. Its one `llm_circuit_events` row
+says why, verbatim:
 
-Before the fix in `ops/rehearsal/replay.py` (see test_rehearsal_replay.py),
-the harness could not even reach that point: tech_analyst's 4 real provider
-calls that morning collapsed into one `agent_logs` row (a pre-existing,
-documented limitation of `analyze_batch`'s chunk merge — see
-src/agents/tech_analyst.py), replay had only 1 recorded answer to hand back
-to 4 real chunk calls, and the run died on the second chunk with
-`MissingRecordedResponse` — masking the actual incident behind an unrelated
-`failed_call_unknown_cost` circuit trip on tech_analyst itself. This test
-would have failed for that reason before the fix; it is the harness's own
-acceptance test, not a test of a pipeline feature.
+    quota_held / projected_session_cost_limit / portfolio_manager
+    "next portfolio_manager call would project session cost to $1.9118,
+     above reserved-exposure ceiling $1.80"
+
+The four analyst calls had actually settled at $0.0460784 between them. The
+circuit stopped the desk on a projection forty times the real spend.
+
+WHY THIS TEST HAD TO BE REWRITTEN (docs/WORK.md item 28)
+--------------------------------------------------------
+Item 14 (2026-09-02) deleted the entire per-call reservation layer, and with
+it every projection-based trigger — `projected_session_cost_limit` and its two
+siblings no longer exist anywhere in `src/cost_circuit.py`. The version of
+this test that survived that rewrite asserted only that those three dead codes
+did NOT appear, which is true of any run of any code and guards nothing. It
+then failed on something else entirely: it demanded that tech_analyst never
+run out of recorded chunk responses, which a rehearsal against a snapshot
+taken TODAY cannot honour — today's watchlist needs more chunks than
+2026-08-28's recording contains, and `ops/rehearsal/runner.py` says outright
+that a rehearsal is "a fresh session against a snapshot of production's state,
+not a re-enactment of a past one". So it was red on main continuously, for a
+reason unrelated to spending.
+
+WHAT REPRODUCES THE INCIDENT TODAY
+-----------------------------------
+The same failure — the ceiling refusing the Portfolio Manager before it can
+spend — is still reachable, through the mechanism that replaced the
+projections: `session_cost_limit`, checked against REAL SETTLED spend
+(`_enforce_settled_limits_locked`). This test drives it in two runs against
+byte-identical inputs:
+
+  PHASE 1, at production's own configured ceiling: the session gets all the
+  way to the Portfolio Manager and asks it a question. Measure what had
+  actually settled by that point. (This half is also the regression guard for
+  the chunk un-merge fix: before it, replay ran dry on tech_analyst's second
+  chunk and the session died long before the Portfolio Manager.)
+
+  PHASE 2, with the ceiling set to that measured figure and nothing else
+  changed: the settled-cost circuit must trip, and the Portfolio Manager must
+  never reach the provider boundary at all.
+
+No invented number anywhere: the phase-2 ceiling is read out of phase 1's own
+ledger, and the two runs read the same bytes because phase 2 runs against a
+`fork()` of the prepared sandbox rather than a second snapshot of a production
+that keeps moving.
 
 REQUIRES real production data (`sudo -n -u qamc` read access to
 `/home/qamc/quant-agent/data`) — this is an ops tool for one specific
 deployment, not a portable unit test, and the harness's whole design (see
 `ops/rehearsal/isolation.py`) is built around exactly this read path. Skips
-cleanly wherever that access isn't available (any machine other than this
-one). Everything it does past the snapshot copy is offline: no provider
-call, no network, no write to production — see the isolation checks this
-test itself asserts on.
-
-WHAT "REPRODUCE" MEANS HERE: the FAILURE MODE, not a byte-identical replay.
-`ops/rehearsal/runner.py` says outright a rehearsal is "a fresh session
-against a snapshot of production's state, not a re-enactment of a past one".
-The snapshot is taken NOW, not frozen at 2026-08-28 09:30 ET, so current
-watchlist/position drift and the offline asset-eligibility gate (broker
-stubbed — see ops/rehearsal/broker.py) can legitimately change which exact
-symbols reach tech_analyst and therefore the exact dollar figure the
-Portfolio Manager's prompt projects. What must reproduce, and does, is the
-qualitative incident: the reserved-exposure ceiling — not a different limit,
-not a crash, not a silent no-op — stops the Portfolio Manager before it
-proposes anything.
+cleanly wherever that access isn't available. Everything past the snapshot
+copy is offline: no provider call, no network, no write to production — see
+the isolation checks this test itself asserts on.
 """
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
 from datetime import datetime
 
@@ -57,23 +79,14 @@ SUDO_USER = "qamc"
 # 2 years (src/storage/db.py), so this should stay resolvable for a long time.
 INCIDENT_RUN_ID = "run-be9f8f06"
 
-# The reserved-exposure ceiling family of circuit trips — see
-# src/cost_circuit.py. `begin_call` checks it once before any provider
-# attempt (`projected_session_cost_limit`); `before_provider_attempt`
-# re-checks it at every actual network boundary
-# (`provider_projected_session_cost_limit`,
-# `outstanding_projected_session_cost_limit`) because "a reservation can wait
-# behind a provider semaphore while an earlier call settles above its
-# estimate ... an old reservation is not a blank cheque to spend past the
-# cap" (cost_circuit.py). Which one trips first for the Portfolio Manager can
-# legitimately shift between runs depending on retry/failover timing; all
-# three are the same defense enforced at different points, and any of them
-# tripping on portfolio_manager is the incident reproducing.
-RESERVED_EXPOSURE_TRIP_CODES = {
-    "projected_session_cost_limit",
-    "provider_projected_session_cost_limit",
-    "outstanding_projected_session_cost_limit",
-}
+REHEARSED_AT = (2026, 8, 28, 9, 35)
+
+# The settled-spend ceiling that replaced the reserved-exposure projections
+# (item 14, 2026-09-02). `_enforce_settled_limits_locked` in src/cost_circuit.py
+# raises exactly this code when session spend reaches
+# `llm_cost_circuit.session_cost_limit_usd`, and it is a session-scoped quota
+# trigger, so it self-heals on a fresh run_id rather than needing an operator.
+SETTLED_SESSION_CEILING_CODE = "session_cost_limit"
 
 
 def _qamc_reachable() -> bool:
@@ -97,89 +110,182 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_rehearsal_reproduces_2026_08_28_pm_cost_ceiling_failure(tmp_path):
+def _settled_session_spend(db_path, run_id: str) -> float:
+    """What the circuit's own ledger says this rehearsal really spent.
+
+    Read from `llm_budget_sessions`, which is the row
+    `_enforce_settled_limits_locked` compares against the ceiling — not from
+    `agent_logs`, which is the pipeline's separate record of the same calls
+    and would only happen to agree.
+    """
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT actual_cost_usd, costs_exact FROM llm_budget_sessions "
+            "WHERE run_id = ?", (run_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, (
+        f"the rehearsal left no cost-circuit session ledger row for {run_id}; "
+        "nothing was accounted, so there is no measured ceiling to re-run with"
+    )
+    assert row[1], (
+        "the rehearsal's own spend is not exactly accounted (costs_exact=0), "
+        "so it cannot be used as a ceiling"
+    )
+    return float(row[0] or 0.0)
+
+
+def _paid_for_agent(db_path, run_id: str, agent_prefix: str) -> float:
+    """Settled spend attributed to one agent, from the pipeline's own log."""
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM agent_logs "
+            "WHERE run_id = ? AND agent_name LIKE ?",
+            (run_id, agent_prefix + "%"),
+        ).fetchone()
+    finally:
+        conn.close()
+    return float(rows[0] or 0.0)
+
+
+def _reached_provider(report, agent: str) -> bool:
+    """True when `agent` got past the circuit and asked replay for an answer.
+
+    `missing_recorded_response` is raised by `ResponseLibrary.match`, which
+    `ops/rehearsal/replay.py` calls only AFTER `authorize(model)` has already
+    let the call through. So the finding's presence is proof the circuit
+    permitted the call; its absence, for an agent the session definitely
+    reaches, is proof the circuit stopped it first.
+    """
+    return any(
+        f["kind"] == "missing_recorded_response" and f["agent"] == agent
+        for f in report.findings
+    ) or any(a["agent"] == agent for a in report.agents_ran)
+
+
+def test_the_settled_cost_ceiling_still_stops_the_portfolio_manager(tmp_path):
     from ops.rehearsal.isolation import Sandbox
     from ops.rehearsal.runner import run_rehearsal
     from src.trading_calendar import ET
 
-    sandbox = Sandbox.prepare(
+    now_et = datetime(*REHEARSED_AT, tzinfo=ET)
+    prepared = Sandbox.prepare(
         source_db=PRODUCTION_DB,
         root=tmp_path / "sandbox",
         source_data_dir=PRODUCTION_DATA,
         sudo_user=SUDO_USER,
     )
-    report = run_rehearsal(
-        sandbox,
+    # Fork BEFORE the first session writes to it, so phase 2 reads the same
+    # bytes phase 1 read and the only difference between the two runs is the
+    # ceiling. A second Sandbox.prepare() would re-snapshot a production that
+    # has moved on.
+    forked = prepared.fork(tmp_path / "sandbox-2")
+
+    # ---------------------------------------------------------- phase 1
+    # Production's own configured ceiling, untouched.
+    baseline = run_rehearsal(
+        prepared,
         session="morning",
-        now_et=datetime(2026, 8, 28, 9, 35, tzinfo=ET),
+        now_et=now_et,
         replay_run=INCIDENT_RUN_ID,
         production_db=PRODUCTION_DB,
         sudo_user=SUDO_USER,
     )
 
-    # --- isolation actually held (belt-and-suspenders on top of the
-    # harness's own internal asserts, which would have raised already) ---
-    assert any("byte-identical" in c for c in report.isolation_checks)
+    # Isolation actually held — belt-and-suspenders on top of the harness's
+    # own internal asserts, which would have raised already.
+    assert any("byte-identical" in c for c in baseline.isolation_checks)
 
-    # --- the defect this test exists to catch from ever coming back:
-    # tech_analyst must not run out of recorded chunk responses ---
-    missing_tech = [
-        f for f in report.findings
-        if f["kind"] == "missing_recorded_response" and f["agent"] == "tech_analyst"
-    ]
-    assert not missing_tech, (
-        f"tech_analyst ran out of recorded chunk responses again: {missing_tech}"
-    )
-    assert any(a["agent"] == "tech_analyst" for a in report.agents_ran), (
-        "tech_analyst should have run (replayed), not merely avoided the "
-        "missing-response finding"
-    )
-
-    # --- the acceptance criterion, INVERTED 2026-08-28 once the four
-    # cost-circuit fixes landed. This test was written to pin the bug: the
-    # Portfolio Manager stopped by the reserved-exposure ceiling, zero
-    # trades, session suspended. That is now the wrong answer.
+    # The chunk un-merge regression guard. Before that fix, replay had one
+    # recorded answer for four real tech_analyst chunk calls and the session
+    # died on the second chunk, nowhere near the Portfolio Manager. Reaching
+    # the Portfolio Manager at all is what proves it is still fixed.
     #
-    # With the fixes in, the session gets PAST the ceiling and reaches the
-    # PM. The pre-fix failure mode (reserved-exposure ceiling) cannot be
-    # reproduced anymore: item 14 (2026-09-02) deleted the entire per-call
-    # cost reservation layer and replaced it with: (a) a settled-cost cap,
-    # (b) a per-session call-count cap, and (c) an API-key-level cap
-    # (not implemented in code). The old config keys
-    # (reservation_min_history_samples, session_reserved_exposure_limit_usd)
-    # were deleted and their validation rejects any settings.yaml carrying
-    # them. So regression testing for "can we still reproduce the old
-    # failure" is not applicable — the old failure mode is architecturally
-    # gone. Instead, this test verifies the harness works correctly under
-    # the current (fixed) design.
-    ceiling_blocks = [
-        b for b in report.blocked_agents
-        if b["agent"] == "portfolio_manager"
-        and b["trigger_code"] in RESERVED_EXPOSURE_TRIP_CODES
+    # Deliberately NOT asserted: that tech_analyst never runs out of recorded
+    # chunks. The snapshot is taken now and today's universe needs more chunks
+    # than 2026-08-28 recorded, so running dry on the last one is expected
+    # drift, reported as a finding. Asserting on it is what kept this test red.
+    assert _reached_provider(baseline, "portfolio_manager"), (
+        "the session never reached the Portfolio Manager at production's own "
+        "ceiling, so there is no 'before' to compare the ceiling run against. "
+        f"agents_ran={[a['agent'] for a in baseline.agents_ran]} "
+        f"status={baseline.status!r} error={baseline.error!r}"
+    )
+    assert not any(
+        b["trigger_code"] == SETTLED_SESSION_CEILING_CODE
+        for b in baseline.blocked_agents
+    ), (
+        "production's configured ceiling stopped this session on its own, so "
+        "phase 2 would prove nothing. "
+        f"blocked_agents={baseline.blocked_agents}"
+    )
+
+    baseline_run_id = f"rehearsal-morning-{now_et.strftime('%Y%m%d')}"
+    ceiling_usd = _settled_session_spend(prepared.db_path, baseline_run_id)
+    assert ceiling_usd > 0, (
+        "the rehearsal settled no spend at all, so there is no measured "
+        "ceiling to re-run against"
+    )
+    # The Portfolio Manager contributed nothing to that figure — it never got
+    # an answer to bill for — so the measured ceiling is exactly the spend that
+    # had settled by the time it was reached, which is the boundary the
+    # circuit checks.
+    assert _paid_for_agent(prepared.db_path, baseline_run_id, "portfolio_manager") == 0.0
+
+    # ---------------------------------------------------------- phase 2
+    # Identical inputs, identical replay, one changed number: the ceiling is
+    # now the money this very session had already spent by the time it got to
+    # the Portfolio Manager.
+    blocked = run_rehearsal(
+        forked,
+        session="morning",
+        now_et=now_et,
+        replay_run=INCIDENT_RUN_ID,
+        production_db=PRODUCTION_DB,
+        sudo_user=SUDO_USER,
+        config_overrides={
+            "llm_cost_circuit.session_cost_limit_usd": ceiling_usd,
+        },
+    )
+
+    assert any("byte-identical" in c for c in blocked.isolation_checks)
+
+    ceiling_trips = [
+        b for b in blocked.blocked_agents
+        if b["trigger_code"] == SETTLED_SESSION_CEILING_CODE
     ]
-    assert not ceiling_blocks, (
-        "the reserved-exposure ceiling blocked the portfolio_manager again — "
-        f"the estimator fix has regressed: {ceiling_blocks}"
+    assert ceiling_trips, (
+        "the settled-cost ceiling did not fire even though the session spent "
+        f"${ceiling_usd:.7f} against a ${ceiling_usd:.7f} limit — the "
+        "protection that replaced the 2026-08-28 reserved-exposure ceiling is "
+        f"gone. blocked_agents={blocked.blocked_agents} "
+        f"status={blocked.status!r} error={blocked.error!r}"
     )
-    assert report.status != "paid_analysis_suspended", (
-        f"session was suspended by the spending circuit: error={report.error!r}"
+
+    # The incident itself: the Portfolio Manager is refused BEFORE it can
+    # spend. In phase 1 it reached the provider boundary and asked a question;
+    # here it must not get that far.
+    assert not _reached_provider(blocked, "portfolio_manager"), (
+        "the Portfolio Manager still reached the provider boundary with the "
+        "ceiling already spent — the circuit let a call through above its "
+        f"cap. findings={blocked.findings} "
+        f"blocked_agents={blocked.blocked_agents}"
     )
-    # The PM is REACHED but cannot be replayed, and that is itself the
-    # proof. This rehearsal is pinned to the incident run, and the incident
-    # run contains no recorded portfolio_manager response — precisely
-    # BECAUSE the estimator blocked the call before it was ever made. So
-    # "the circuit let us through to a question history never answered" is
-    # exactly the expected post-fix outcome, and it can only happen if the
-    # ceiling no longer fires.
-    pm_missing = [
-        f for f in report.findings
-        if f["kind"] == "missing_recorded_response"
-        and f["agent"] == "portfolio_manager"
-    ]
-    pm_ran = any(a["agent"] == "portfolio_manager" for a in report.agents_ran)
-    assert pm_ran or pm_missing, (
-        "the portfolio_manager was neither reached nor asked for — the "
-        "session stopped before it, which is the pre-fix behaviour. "
-        f"agents_ran={[a['agent'] for a in report.agents_ran]} "
-        f"status={report.status!r} error={report.error!r}"
+    # ...and the session ends the way 2026-08-28 ended: paid analysis stopped
+    # by the spending circuit, not by a crash and not by a decision.
+    assert "paid analysis suspended" in (blocked.error or ""), (
+        "the ceiling fired but the session did not end as a spending "
+        f"suspension: status={blocked.status!r} error={blocked.error!r}"
     )
+
+    # Deliberately NOT asserted: `report.proposed == 0`. That count is every
+    # BUY/SELL row the run wrote, whatever wrote it — and a paid-analysis
+    # suspension deliberately preserves deterministic loss protection and the
+    # broker-resident stops (the circuit's own alert says so). Exit management
+    # acting while the thinking is switched off is the design, not a leak past
+    # the ceiling. What must be zero is anything the Portfolio Manager
+    # decided, and the assertion above — it never reached a provider — is the
+    # direct measurement of that.

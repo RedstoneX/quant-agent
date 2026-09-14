@@ -181,12 +181,6 @@ this line, one heading per item.
 **Recommendation —** This is designed but not yet built. Have a concrete number proposed with its reasoning shown before shipping anything, rather than picking one casually.
 
 
-## item 28
-
-**Plain language —** An automated test meant to check the desk's cost-safety limit was marked fixed, but checking again, three separate times against a clean copy of the current code, shows it still fails every time. Whatever change was believed to fix it did not, and nobody re-verified the claim before writing it down as solved.
-**Example —** The fix was believed to be done because settings the test depended on were removed during an unrelated rewrite; three fresh re-runs since then all fail the same way, meaning the real cause hasn't actually been found yet.
-
-
 ## item 30
 
 **Plain language —** When ranking which stock ideas look best, the desk recently stopped treating every AI specialist's opinion as equally important and started weighting some more heavily based on research. The same change has deliberately NOT been made to the separate step that decides how much money to put into a trade — doing that properly means redesigning a related scoring scale too, a second real decision, not a copy-paste fix.
@@ -286,11 +280,6 @@ this line, one heading per item.
 **The decision —** Should selling get a purpose-built reviewer of its own — its own instructions, its own checklist — instead of the buying reviewer wearing a list of exceptions for it? This matters more than it sounds: a wrong "keep buying" that gets refused costs nothing, but a wrong "don't sell" that gets approved leaves a broken position sitting on the book overnight with only the ordinary stop-loss behind it, not a second layer of judgement.
 **Recommendation —** Not made. Today's fix was deliberately the smaller, safer move — make the shared reviewer honest about what it can and can't see on a sell, rather than building it a replacement, while the bigger question of whether selling deserves its own reviewer is put to you rather than assumed either way.
 **Why only you —** It decides how much independent scrutiny a decision to sell out of a position is allowed to skip — a risk-appetite call about the desk's own safety net, not an engineering default.
-
-## item 61
-
-**Plain language —** After a test run of the trading system, a summary report prints a line saying how many trades "the portfolio manager proposed." That number turns out not to be tied to whether the portfolio manager actually ran that session — it's counted a different way, and on one real test it printed "1" even though the portfolio manager never ran at all that session. It doesn't affect any real trading; it's a label on an after-the-fact report a person reads to judge whether a rehearsal run behaved the way it should have.
-**Example —** In the test used to reproduce a known cost-limit problem, the report said "1" order was proposed by the portfolio manager, when in fact that seat was never called during the run.
 
 ## item 63
 
