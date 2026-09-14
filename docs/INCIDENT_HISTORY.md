@@ -22,6 +22,64 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — item 68 closed: the tool that merged the job board had deleted live items three times in one day, and nothing could tell a deleted question from an answered one
+
+**In plain words:** when two people edit the job board at the same time,
+something has to combine their edits. The thing doing that lived in a
+scratchpad, not in the project, and it followed one blunt rule: if either
+side removed something, remove it. That is right when the two people closed
+different items and wrong the rest of the time, and it could not tell the
+difference. Three times in one day it threw away live questions — five open
+items on one branch neither side had closed, and twice two workers happened
+to give a new finding the same number and it deleted both instead of asking
+for one to be renumbered. Nothing looked wrong afterwards: the file was tidy,
+no warning appeared, and a question that had vanished was indistinguishable
+from a question that had been answered. That is the exact opposite of this
+desk's rule that a question stays on the board until it is settled.
+
+**What replaced it.** A resolver that lives in the project, merges ITEMS
+rather than blocks of text, and refuses to write anything it cannot prove is
+right. It reads both versions into numbered items per list — the board holds
+several independently numbered lists, so the same number is a different item
+in each, which is why 4 and 8 legitimately appear twice — keeps the union of
+the items, and only drops one when that side genuinely closed it, which it
+knows from the common ancestor of the two versions. A number carrying
+different text on the two sides is a renumber, never a delete, so it stops
+and prints both texts for a person to choose between.
+
+**Why the post-conditions are the actual fix, not the merging.** Every one of
+the three destructions produced valid markdown with no conflict marker, so
+the existing marker test passed and nothing caught it. Merging better would
+have reduced the rate; it would not have made a failure visible. So the tool
+now proves its own output before writing: every number on either side is
+present exactly once in its own list; the board's own reader
+(`scripts/status_board.py`) is asked to read the merged file back and must
+report the same items, so the tool and the page the owner reads can never
+disagree; no number is both live and retired in the same list; the retired
+list is rebuilt as the union of the two source lists, parsed from those lists
+rather than scraped out of the sentences around them, which is what corrupted
+that line badly enough to need rebuilding from git history; every board note
+still has an item to explain; the incident log keeps both sides' entries,
+newest first, with existing history not reordered; and the merged backlog is
+under the 100,000-byte cap, which main breached twice in one night. Any one
+of those failing refuses the write and says which.
+
+**Ruled out, and why.** Hand-resolving: it is the same three files every
+time and a person does it worse under repetition. Fewer parallel branches:
+the board only clears at this rate because branches run in parallel.
+Strengthening the conflict-marker test: it already passed on all three
+failures, so it is the wrong instrument.
+
+**What would catch it next time.** The tests that ship with the tool are the
+three real destruction shapes — different-item deletions, a same-number
+collision, an item vanishing — plus a duplicate, a cap breach and the
+append-only log. Refusing is a passing test there. The remaining exposure is
+a merge done by hand or by some other tool; the tool being in the project
+instead of a scratchpad is what makes reaching for it the easy path, which is
+the only enforcement that has ever held here.
+
+---
+
 ### 2026-09-14 — board item 10: "we can't know why most trade ideas die until the desk runs again" was checked, and it was wrong
 
 **In plain words:** most of the time a trade idea disappears somewhere

@@ -297,15 +297,6 @@ Second, and more useful: when we counted why ideas die, they are overwhelmingly 
 **Recommendation —** Leave it. Switch the swap feature on as planned, and once it has run for a while, count how many swaps happened because the held stock's coverage lapsed rather than because its own signals got worse. That is a real measurement rather than a guess, and it costs nothing but waiting.
 
 
-## item 68
-
-**Plain language:** when two people edit the job board at the same time, the tool that merges their edits has twice thrown away live items instead of keeping both. Once it deleted five open questions and marked them closed; once two workers happened to give their new findings the same number and it deleted both of them rather than renumbering one; a third time this very item collided on number 65 with another branch's unrelated finding.
-
-**Why it matters:** nothing looks wrong afterwards. The file is tidy, nothing is flagged, and a question that vanished looks exactly like a question that was answered. That is the opposite of the rule that a question stays on the board until it is actually settled.
-
-**The decision:** none for you. This is a tooling repair.
-
-
 ## item 69
 
 **Plain language —** In one archived review the desk's own reviewer reasoned about a Disney position using a "distance to the stop-loss" of 4.5%, while the desk's trade records for that same moment imply 0.4% — more than ten times apart. That figure is not decoration: it is one of the numbers the desk checks a "this position is deteriorating" claim against. A reviewer working from 4.5% thinks the position has comfortable room; the records say it was almost touching its stop.
