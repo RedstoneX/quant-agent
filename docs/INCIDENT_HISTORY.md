@@ -22,6 +22,90 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — a "three strikes and you're out" rule for repeat trade ideas was REFUSED; the conversion rate turned out to measure our own plumbing, not the stocks (item 10, gating half ANSWERED NO)
+
+**In plain words:** the desk kept suggesting the same stocks and never buying
+them, so the obvious idea was to stop it re-asking for a name with a bad
+record. The owner rejected that framing outright — "this proposal is a hack,
+not a solution" — and told us to settle it ourselves. We did, and the data
+says he was right for a reason nobody had articulated: **how often a stock
+converts is not a fact about the stock. It is a self-portrait of the desk's
+own gates and its own broken plumbing.** Blocking on it means blacklisting a
+company for our bug. Answered NO, closed, not deferred.
+
+**The census (re-run read-only over the archive, `scripts/blocked_proposals_census.py`).**
+65 entry proposals, 14 filled, 51 blocked. By cause: `no_order_built` 18,
+`order_not_placed` 9, `rm_rejected:rr_fail` 7, `order_canceled` 6,
+`geometry_rr` 4, `qty_zero` 3, `rm_rejected:other` 2, `insufficient_cash` 1,
+`slippage_gated` 1. Machinery ABSENCE is 27 of the 51; real execution or
+price events are only 7. Restricted to proposals after the limit-is-ceiling
+fix (`0eb4a115`, 2026-08-27 14:18:58Z): 28 proposals, 3 filled, 25 blocked,
+`no_order_built` alone 16, and exactly ONE broker cancel.
+
+**VLO is the proof — a gate would blacklist a symbol for a dead defect.**
+Two of VLO's three strikes are `order_canceled`, dated 2026-08-21 and
+2026-08-27 13:36. The limit-is-ceiling fix landed at 14:18 that same
+afternoon, and the comment shipping it names VLO explicitly as the trade it
+was written for. Both strikes predate the fix by hours. A conversion counter
+has no way to know that; it would have barred VLO for a fault that no longer
+exists. The other repeat zero-fill names, JPM and PATH, are the same story:
+between the three of them there is not one spread, book or partial-fill
+event on record — their causes are `order_not_placed`, `order_canceled`,
+`no_order_built`, `geometry_rr`, `rr_fail`. Every one of those is us.
+
+**NVDA is the cost — a gate would have killed the best trade in the record.**
+NVDA was proposed 8 times, refused across six distinct causes, and then
+FILLED on the eighth — at 2.75% risk and high conviction, the largest and
+most confident ask in the whole dataset. Any three-strikes rule kills that
+trade five proposals earlier. XLE tells the same story more quietly: 6
+proposals, one fill. `docs/AGENT_ROLE_AUDIT.md` §1.6 already recorded that
+XLE and NVDA "have each since recorded one fill and are no longer zero-fill
+under any count."
+
+**And the input churns daily.** 2026-09-01's offender list was XLE and NVDA;
+2026-09-02's was VLO, COP, JPM, XLF, CRM, PATH — no overlap. A gate whose
+input turns over completely inside a day is gating on noise. §1.6 also
+records the diagnostic UNDER-counts: roughly 7% of sized targets never reach
+`specialist_evidence`, plus 10 decisions with no evidence rows at all.
+
+**Why no threshold is needed at all — the reformulation.** Partition the
+refusals by cause and every class answers itself. *Deterministic* refusals
+(`geometry_rr`, `qty_zero`, `rr_fail`, constructor refusals) re-fire on their
+own against an unchanged repeat, in the same session, consuming zero capital
+— a counter adds nothing; and a repeat whose geometry has CHANGED should
+pass, which is precisely what NVDA did. *Machinery absences* are a bug to
+fix, not a name to blacklist. *Execution events* are fixed at the execution
+layer, per-order, never per-symbol. The portfolio manager's prompt already
+carries the correct shape and a count cannot express it: "re-proposing it
+unchanged will fail the same way again — either fix what the reason names …
+or drop the name. This is information, not a prohibition." The conditional
+on UNCHANGED is the entire content of the rule.
+
+**"Slots burned" was a false premise — verified, not assumed.** There is no
+position-count cap in `config/settings.yaml` and no target-count cap in the
+portfolio manager; `docs/OUTCOME.md` records position count as "Not fixed.
+Determined dynamically by the risk budget." A blocked proposal consumes zero
+risk budget, so it burns no slot. Whether a repeat displaces a fresher
+candidate inside the PM's own shortlist is UNMEASURED and is recorded as
+unmeasured — not asserted either way.
+
+**What is left OPEN, and it is the real finding.** Under current code
+`no_order_built` is 16 of 25 blocked proposals — the majority of trade ideas
+die inside the machinery — and for every measured row the cause is
+**unrecoverable**, because the constructor's drop-reason capture (PR #222,
+#226, 2026-09-03) postdates all of them. That capture has never been
+measured, because the desk has produced no proposals since. What would
+settle it: re-run the census once post-2026-09-03 proposals exist, carrying
+the two §1.6 undercounts. Until then, no claim about the cause is defensible.
+Tracked as `docs/WORK.md` item 10(a); the gating half, 10(b), is closed.
+
+**The stale label, stripped in four places.** "Owner decision" had propagated
+to `docs/WORK.md` item 10, `docs/BOARD_NOTES.md` item 10, the 2026-09-03
+entry in this file, and `docs/AGENT_ROLE_AUDIT.md` §1.6. It was never the
+owner's decision — he had refused it. All four now say answered.
+
+---
+
 ### 2026-09-14 — the four numbers that describe every chart to every analyst seat were all round figures somebody liked; they are now read off the stock itself (item 58)
 
 **In plain words:** before any analyst seat looks at a chart, the desk writes
@@ -4282,6 +4366,14 @@ alone.**
   its prior-refusal count — a new risk/quality threshold (how many refusals
   before a block, and for how long), which is an owner decision, not one
   to make unilaterally in this pass.
+  > **CORRECTION, 2026-09-14.** The two sentences above are wrong on both
+  > counts and are superseded. The owner refused the framing outright
+  > ("this proposal is a hack, not a solution") and directed that it be
+  > settled without him, so it was never his decision to hold. It is now
+  > ANSWERED NO on the evidence — no count-based gate, no threshold, closed
+  > rather than deferred. Reasoning and census: the 2026-09-14 entry at the
+  > top of this file, and `docs/WORK.md` item 10(b). "Slots burned" is also
+  > a false premise — there is no position-count cap to burn.
 
 **Recommendation, not a decision:** re-run this measurement after several
 full trading days have accumulated post-reset (the 21-day lookback needs
@@ -4289,6 +4381,10 @@ that much history to say anything about a 3+ repeat pattern), and treat
 "should a repeat block ever restrict a name" as its own open decision for
 the owner — it is already flagged as such in `docs/AGENT_ROLE_AUDIT.md`
 §1.6.
+> **CORRECTION, 2026-09-14.** The second half of that recommendation is
+> withdrawn: it is not an owner decision and is no longer open. See the
+> 2026-09-14 entry at the top of this file. The first half — re-run the
+> measurement — stands, and was done on 2026-09-14.
 
 ---
 
