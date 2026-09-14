@@ -737,26 +737,23 @@ second notion of coverage. A test enumerates the vocabulary, so a seat that
 gains a new status word must classify it in the same diff rather than
 silently widening or narrowing the gate.
 
-The skip is loud by three independent paths (its own owner alert, the
-existing standalone `maybe_alert_data_quality` page off the `data_status`
-carried in the result, and a session status of its own that is classified as
-a warning, not as a quiet day). It drops no candidate and emits no target —
-it returns before any target exists, so it cannot produce the 0%-target-means-
-SELL shape. Every symbol that had reached a technical read still gets its own
-durable, machine-readable evidence row saying why the desk never decided on
-it.
+The skip is loud three independent ways: its own owner alert, the existing
+standalone `maybe_alert_data_quality` page off the `data_status` in the
+result, and a session status classified as a warning rather than a quiet day.
+It drops no candidate and emits no target — it returns before any target
+exists, so it cannot produce the 0%-target-means-SELL shape. Every symbol
+that reached a technical read gets its own durable, machine-readable row
+saying why the desk never decided on it.
 
 **MEASURED BITE, because a refusal gate whose bite is unknown must not
-ship.** Replayed against the desk's own `agent_logs` + `specialist_evidence`
-for every historical morning run: **5 of the 27 runs that actually reached
-the Portfolio Manager (19%) would have been refused**, on 4 of 13 trading
-days. Four of those five are one recurring upstream bug — the news analyst
-returning non-JSON (`data_status["news"] = "parse_error"`), seen on 08-17
-(twice), 08-18 and 08-25, and again in two saved parse-failure records dated
-2026-09-04. The fifth is the smart-money seat's SEC provider failing with no
-findings on 08-26. So the gate's bite today is dominated by ONE fixable
-seat, and fixing that seat is not this item — but the desk should expect the
-gate to fire until it is fixed.
+ship.** Replayed against the desk's own `agent_logs` + `specialist_evidence`:
+**5 of the 27 historical morning runs that actually reached the Portfolio
+Manager (19%) would have been refused**, on 4 of 13 trading days. Four are
+one recurring upstream bug — the news analyst returning non-JSON — on 08-17
+(twice), 08-18, 08-25, and again in two saved parse-failure records dated
+2026-09-04. The fifth is the smart-money SEC provider failing with no
+findings on 08-26. The bite is dominated by ONE fixable seat; fixing it is
+not this item, but expect the gate to fire until it is.
 
 **STILL OPEN — question 1, the counting half, and it is yours, not an
 agent's.** Design (a) also asked for "how many earnings reports are usable,
@@ -769,25 +766,22 @@ to it, which this document forbids outright. What would settle it: your
 ratified number, or a decision that partial coverage should never gate at
 all and the categorical rule above is the whole of item 20.
 
-**STILL OPEN — question 2, found while building this.** The intraday
-opportunity scan writes `not_run_intraday` for macro and news BOTH when it
-deliberately chose not to re-fetch a seat AND when this morning's
-carry-forward came back empty because the morning seat itself failed. "Not
-asked" and "asked and lost" are wearing one word there, so the gate is
-deliberately NOT applied to the intraday path — it would be classifying a
-state the data cannot distinguish. Splitting that value in
-`_carry_forward_macro` / `_carry_forward_news` is a small, separate change.
+**STILL OPEN — question 2, found while building this.** The intraday scan
+writes `not_run_intraday` BOTH when it chose not to re-fetch a seat AND when
+the carry-forward was empty because this morning's seat failed. "Not asked"
+and "asked and lost" wear one word there, so the gate is deliberately NOT
+applied to the intraday path — it would be classifying a state the data
+cannot distinguish. Splitting that value in `_carry_forward_macro` /
+`_carry_forward_news` is a small, separate change.
 
 **CORRECTION to this item's own premise, verified 2026-09-14.** It says a
 skipped run "costs half an hour, not a day" because `intra_check` retries
-every 30 minutes. `run_intra_check` does not re-run research or the PM. The
-thing that can decide again is the intraday opportunity scan inside it, and
-that scan only looks at symbols that have moved at least 3% since the last
-close (`config/settings.yaml`, `intraday_scan.move_threshold_pct`), capped at
-5 candidates. On a quiet day a refused morning is closer to a lost day than
-to a lost half-hour. That does not change the ruling — a fabricated decision
-is worse than no decision — but the cost of a refusal is higher than the item
-assumed.
+every 30 minutes. `run_intra_check` re-runs neither research nor the PM. The
+only thing that can decide again is the intraday scan inside it, which looks
+only at symbols that moved >=3% since the last close, capped at 5. On a quiet
+day a refused morning is closer to a lost day. That does not change the
+ruling — a fabricated decision is worse than none — but a refusal costs more
+than this item assumed.
 
 **The signal already existed and is now read, not rebuilt.** The earnings
 `data quality` line the agents were already writing is extracted as a status
