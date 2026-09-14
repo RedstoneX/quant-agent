@@ -20,7 +20,7 @@ import pytest
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import (
-    AnalystVerdict, NEWS_CONVICTION_MAGNITUDE, StockNewsItem,
+    AnalystVerdict, NO_STATED_STRENGTH, StockNewsItem,
     news_verdict_for_symbol,
 )
 from src.quantities import collapse_stances
@@ -49,22 +49,44 @@ def test_all_agree_bullish_collapses_to_bullish():
     assert v.direction == "bullish"
     # conviction: among agreeing items (both agree here), the HIGHEST wins.
     assert v.conviction == "high"
-    assert v.magnitude == NEWS_CONVICTION_MAGNITUDE["high"]
-    assert v.magnitude == 1.0
+    assert v.magnitude == NO_STATED_STRENGTH
     assert v.invalidation  # directional verdict must state one
     assert len(v.evidence) == 2
 
 
-def test_all_agree_low_conviction_still_has_nonzero_magnitude():
-    """A low-conviction directional call must still carry SOME lean —
-    magnitude 0.0 is reserved for neutral by AnalystVerdict's own validator,
-    so 'low' cannot collapse to the same number as 'no call at all'."""
+def test_a_low_conviction_directional_call_still_states_its_direction():
+    """**Rewritten 2026-09-13, on review before PR #348 merged.** This test
+    used to require a NONZERO magnitude, on the argument that "low" must not
+    collapse to the same number as "no call at all". The argument was
+    answered rather than dropped: news has no strength scale of its own, so
+    the only way to give it a nonzero magnitude is to borrow one off
+    Technical's rungs — a number this seat cannot back. What actually
+    distinguishes a low-conviction bearish read from no coverage is that it
+    is a FALSIFIABLE bearish read: a direction, an invalidation condition,
+    and cited evidence, all of which reach the Portfolio Manager and none of
+    which a missing seat produces. And since `rank_verdicts` now SUMS rather
+    than averages, a zero here can no longer drag an agreeing candidate down
+    — which was the real hazard the old assertion was guarding against."""
     items = [_item("bearish", "low")]
     v = news_verdict_for_symbol("XOM", items)
     assert v.direction == "bearish"
     assert v.conviction == "low"
-    assert v.magnitude == NEWS_CONVICTION_MAGNITUDE["low"]
-    assert v.magnitude > 0.0
+    assert v.magnitude == NO_STATED_STRENGTH == 0.0
+    assert v.invalidation           # still falsifiable
+    assert v.evidence               # still cited
+
+
+def test_news_magnitude_does_not_track_conviction():
+    """2026-09-13, item 31 review. `score_verdict` is magnitude + conviction.
+    While news's magnitude was a table on its own conviction, the composite
+    was one signal counted twice at an unsourced spacing. Magnitude is flat
+    now, so conviction enters the score exactly once — this test is the
+    mechanical guard against the table coming back. (And flat means ZERO,
+    not Technical's 0.5 rung borrowed — see `NO_STATED_STRENGTH`.)"""
+    low = news_verdict_for_symbol("XOM", [_item("bearish", "low")])
+    high = news_verdict_for_symbol("XOM", [_item("bearish", "high")])
+    assert low.conviction == "low" and high.conviction == "high"
+    assert low.magnitude == high.magnitude == NO_STATED_STRENGTH
 
 
 # ==========================================================================

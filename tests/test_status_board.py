@@ -1821,13 +1821,21 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
         "docs/INCIDENT_HISTORY.md and delete them from the queue"
     )
     # Genuinely partial work stays where he can see it.
-    for rank in (18, 32):
+    for rank in (18,):
         assert by_rank[rank].bucket == "open", rank
         assert by_rank[rank].part_done is True, rank
-    # And the negated line stays open, as it always did. (28 was the other
+    # And the negated lines stay open, as they always did. (28 was the other
     # one; it is retired above.)
-    for rank in (30,):
+    # 32 joined them on 2026-09-13: it used to read "MOSTLY FIXED, one real
+    # judgment call left" (part_done), but everything except the
+    # drawdown-reconciliation decision has since landed and been written up,
+    # so the item was rewritten to name only what remains. An item whose
+    # entire content is one open owner decision is `open`, not part_done —
+    # a part_done label would be claiming outstanding BUILD work that no
+    # longer exists.
+    for rank in (30, 32):
         assert by_rank[rank].bucket == "open", rank
+        assert by_rank[rank].part_done is False, rank
 
 
 def test_a_mostly_finished_item_is_labelled_rather_than_hidden():

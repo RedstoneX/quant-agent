@@ -686,7 +686,7 @@ one: earnings analysts were handing PM a completed extraction FORM instead
 of a call (fixed in PR #252 — seat now returns `key_thesis`, a 2-3 sentence
 call + falsifier; full 8-field extraction stays on disk for audit), and
 there was no ranking rule anywhere in the rulebook at all (fixed 2026-09-03,
-Phase 13, extended to all five seats by item 31). Measured result:
+Phase 13, extended to all five seats 2026-09-03). Measured result:
 205,607→98,351 chars, earnings share 68.1%→33.4%. Live-model check done
 2026-09-04 (real AAPL filing through the real earnings prompt on the real
 OneCLI-proxied model, coherent output, n=1). **Also invalidated by this:**
@@ -795,95 +795,67 @@ status. **Pull the field the agent already writes.**
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**30. The sizing path still owes the same amendment the ranking path just
-got — deliberately NOT done yet, owner should decide scope first.**
+**30. The agreement ladder that prices position size has rungs nobody
+derived, and four of its five rungs cannot bind — OPEN, owner call, reframed
+2026-09-13.**
 
-2026-09-03: `src/verdicts.py::SEAT_WEIGHT` (ranking/tiebreak only) moved
-from equal-weight to a research-informed prior — owner-amended §13.3.
-`src/risk/rules.py::SEAT_WEIGHT` (the §9.4 signed sum that actually PRICES
-position size) was deliberately left untouched in the same pass, for a real
-reason, not an oversight: `agreement_ceiling_for_score` indexes a discrete
-ceiling schedule by an INTEGER net-agreement count. A per-seat float weight
-turns that into a fractional score, which needs the schedule itself
-redesigned (round to nearest int? interpolate between rungs?) — a second,
-separate risk-logic decision, not a drop-in constant swap. Flagged rather
-than bundled in.
+The item used to read "port the ranking path's per-seat weights onto the
+sizing path". Reading the code changes the question, on three findings — full
+reasoning in `docs/INCIDENT_HISTORY.md`, 2026-09-13.
 
-**31. All five seats now reach the ranking, not just Technical — 2026-09-03.**
-News, macro, earnings, smart_money each got a `to_verdict()`, wired into
-`rank_candidates` via `_collect_seat_verdicts` (one bad entry drops only
-that seat, never the run — caught and fixed a real gap: an
-`EarningsAnalysis`'s own `symbol` is LLM-declared and can diverge from the
-pipeline's ground-truth wrapper symbol, now dropped on mismatch). Known
-simplification: macro's verdict is one broad read applied to every symbol,
-not the sector-adjusted stance `build_evidence_registry` already computes
-elsewhere in the same prompt. Also open: three of the four new seats'
-magnitude mappings are reasoned but unmeasured judgment calls, flagged by
-their own authors, not yet independently reviewed.
+  a. **A per-seat sizing weight is already forbidden, by a ratified rule with
+     a passing guard behind it.** A confidence weight may only be derived
+     from measured history (minimum 20 resolved calls per seat); there is
+     nothing to derive from, and `tests/test_signed_dissent.py` fails on both
+     the constant and the symmetry if anyone adds a weight table. The
+     2026-09-03 amendment that let the RANKING use a published prior was
+     scoped by the owner to the ranking module. Extending it is HIS call, not
+     an engineering one — so nothing was changed here.
+  b. **The ladder's rungs were never derived.** The measurement beside them
+     counted how OFTEN each rung is reached (67% of 75 real targets at one
+     net seat, 29% two, 4% three, none above). That is coverage. The stated
+     reasoning fixes only a range for rung 1 — "not near 5, not much under 2"
+     — and 3.0/4.0 sit inside it by choice. Weighting the count would mean
+     inventing an interpolation rule to index a table that was itself
+     invented.
+  c. **Four of the five rungs are inert as configured.** Per-trade hard
+     ceiling 5%; the PM's own restored conviction bands top out at 4%. Rungs
+     3-5 are all 5.0 and can never reduce anything; rung 2 (4.0) can only
+     bite on a request the prompt already forbids. Only rung 1 (3.0) can
+     ever cut a position, and only over the 3-4% slice. This became true when
+     item 32 restored the bands; nobody re-checked it then.
 
-**32. The ratified 5% per-trade risk envelope was not actually being delivered — MOSTLY FIXED, one real judgment call left.**
+**The decision is therefore not "which weights".** It is whether a chosen
+five-rung ladder should be pricing size at all, when four rungs are inert and
+none of the five was read from anything. Porting the ranking prior across
+would not fix the incoherence the item named either — ranking scores a
+per-seat strength-plus-confidence composite while sizing counts +1/-1 votes
+into a step function, so matching the numbers leaves the two paths still
+measuring different things.
 
-An old, unratified position-size cap bound before real risk-based sizing
-ever did, collapsing delivered risk to ~1%. **Fixed and merged
-2026-09-04**; a portfolio-level volatility-target overlay was investigated
-and REJECTED in the same pass (`docs/OUTCOME.md`). Resolved detail:
-`docs/INCIDENT_HISTORY.md`, 2026-09-04.
+**32. The two drawdown systems have never been reconciled — OPEN, owner call,
+unchanged since 2026-09-11.**
 
-**PM conviction-band restoration — PENDING REVIEW, NOT rejected.**
-Corrected 2026-09-04: the original PR (#259) was mechanically
-auto-closed by GitHub as a side effect of an unrelated branch deletion
-(its base branch was deleted when #258 merged) — the owner never saw or
-judged its content, was asleep at the time, and did not close it. Real
-content restored on a fresh PR from the same commit. Bands proposed to
-widen back to their pre-compression 2.0-4.0%/1.0-2.5% range now that the
-notional-cap bug they were compressed for is fixed. Still needs real
-review and the owner's actual sign-off — treat as open, not decided.
+Everything else once on this item has landed and is written up; what is left
+is one decision, described at the bottom. The 5% envelope itself was restored
+2026-09-04 (an old unratified
+position-size cap was binding first and collapsing delivered risk to ~1%); a
+portfolio-level volatility-target overlay was investigated and REJECTED in the
+same pass (`docs/OUTCOME.md`); the three loss alarms were rebuilt on a
+volatility-relative basis 2026-09-11, owner call, at a PROVISIONAL sensitivity
+of 3.0 that is explicitly not researched and is reversible. The PM conviction
+bands were restored to 2.0-4.0% / 1.0-2.5% / 0.5-1.0% and merged by the owner
+2026-09-10; this file carried a stale "PENDING REVIEW" note against them until
+2026-09-13. Detail for all of it: `docs/INCIDENT_HISTORY.md`, 2026-09-04 and
+2026-09-11.
 
-**Drawdown alarms rebuilt on a volatility-relative basis — FIXED
-2026-09-11, owner call.** The three loss alarms (daily circuit breaker,
-5-day and 20-day brakes) were each a fixed percentage of equity. The
-2026-09-04 fixes made those percentages track the real risk unit and made
-them √time-consistent, but they were still frozen numbers. **The owner
-refused a recalibration**: a fixed percentage is only right for the
-volatility regime it was chosen in, markets are not stationary, and a
-recalibrated frozen number has the identical flaw. So the BASIS changed,
-not the calibration — each alarm now trips at a multiple of how much **the
-book actually held** normally moves in a day, reconstructed from its real
-holdings' market price history at their real weights, recomputed every
-session and scaled per window by √time.
-
-**Corrected same day, before merge — the load-bearing half.** The first
-implementation measured the ACCOUNT's own equity curve. Owner rejected it:
-the post-reset account ramps from cash for weeks, a mostly-cash account
-barely moves, so the measurement would have been far too small and the
-alarms far too tight — firing constantly once actually invested. And the
-account's record is a record of malfunction anyway. Holdings work from day
-one. Reasoning: `docs/INCIDENT_HISTORY.md`, 2026-09-04 and 2026-09-11.
-
-Settled vs. provisional — read before citing either half:
-
-- **SETTLED (architecture).** Stationarity flaw gone, the yardstick never
-  touches the desk's own performance record, no warm-up needed, √time
-  expressed once rather than as drift-prone per-window constants.
-- **PROVISIONAL (sensitivity).** 3.0, owner, 2026-09-11. Reversible and
-  explicitly NOT researched or validated — no citable standard exists. At
-  a ~1%/session book: -3.0% daily, -6.7% over 5d, -13.4% over 20d (was
-  -6.7% / -15% / -20%). It replaced 6.7, which measurement showed left the
-  daily breaker firing only on a ~6.7σ session — dormant.
-- **NOT touched, deliberately.** Position sizing. Volatility here is only
-  the alarm's yardstick; volatility-target sizing stays REJECTED
-  (`docs/OUTCOME.md`).
-
-**STILL OPEN, OWNER CALL — full reconciliation of the two drawdown
-systems.** Unchanged, and the reason all three alarms are capped at the
-§11.2 ladder's -20% owner-alert point: the brakes measure rolling-window
-return, the ladder peak-to-trough, calibrated independently, and nobody
-has decided whether the desk should have one drawdown response or two.
-The cap is a floor on the disagreement, not agreement. At 3.0 it no longer
-binds below ~1.5%/session; it stays as the guarantee for violent regimes.
-
-**Conviction-band question — DECIDED 2026-09-11, owner call:** restore
-the pre-compression bands. See item 32's conviction-band entry below.
+**What is actually left.** The drawdown brakes measure rolling-window return;
+the §11.2 ladder measures peak-to-trough. They were calibrated independently,
+and nobody has decided whether the desk should have one drawdown response or
+two. All three alarms are capped at the ladder's -20% owner-alert point, which
+is a floor on the disagreement rather than agreement between them. At a
+sensitivity of 3.0 that cap no longer binds below roughly 1.5%/session; it
+stays as the guarantee for violent regimes.
 
 **35. A stop-widening was observed in pre-clean-slate trade history (Visa, Aug 2026) — DEFERRED, not investigated further for now.**
 
@@ -985,7 +957,33 @@ No DECIDE BY — revisit only if it recurs.
 
 **64. The backtest rations the risk budget alphabetically, and cannot do otherwise until it has a candidate ranking — OPEN, found 2026-09-13 while building the best-ranked-first rationing rule (retired item 49; see `docs/INCIDENT_HISTORY.md`, 2026-09-14).** `src/backtest/engine.py` builds every day's candidates and hands `allocate_risk_budget` one `RiskRequest` per candidate at `config.risk.max_position_risk_pct` — the SAME number for all of them. The allocator's pre-decision ordering is largest-request-first with an alphabetical tie-break, so with every request identical the tie-break is the ONLY thing ordering them: on any day the budget binds, the backtest funds candidates in alphabetical order. That work fixed the production path by spending the budget down `rank_verdicts`' own order, and deliberately did NOT touch this one: the backtest is signal-driven and produces no analyst verdicts, so there is no ranking to spend down and inventing a score to stand in for one is exactly what the no-arbitrary-numbers rule forbids. **The consequence:** any backtest run on a day where total requested risk exceeds `max_portfolio_risk_pct` measures a desk that picks trades by ticker spelling — so its results on those days do not describe the desk that now runs in production, and neither the old nor the new production rule can be evaluated by backtesting until this is closed. **What would settle it:** either the backtest gains a deterministic per-candidate score derived from the same signal machinery it already computes (and that score has to be read off something, not fitted), or the engine is honestly documented as unable to evaluate rationing behaviour and every result is reported alongside how many of its days had a binding budget. Nothing was searched for yet beyond confirming the requests are uniform, which was read directly off the code.
 
-**Retired item numbers — never reuse.** 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20, 24, 25, 28, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 58, 61, 67, 90, 101, 200 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52, whose own unresolvable residue is item 63. Items 55-59 were briefly and incorrectly listed here as retired by a mis-resolved merge on 2026-09-13 (fix/rehearsal-cost-ceiling-reproduces) — no incident write-up for them exists, `docs/BOARD_NOTES.md` never stopped carrying their prose, and their WORK.md content is restored above; they are OPEN, not retired. Item 52 was also briefly and incorrectly caught in that same list despite its own paragraph remaining open above; corrected here — it is not retired.
+**65. Four of the five analyst seats have no strength scale of their own, and the deletion of the fake ones did not answer whether they should — OPEN, owner call, opened 2026-09-13 by the review of PR #348.**
+
+`rank_verdicts` scores a candidate on two things per seat: how far the seat leans (`magnitude`) and how sure it is (`conviction`). Only Technical states a lean — its rating rungs are a strength it actually publishes. News, macro, smart_money and earnings do not, so each of them now reports `NO_STATED_STRENGTH` (0.0) and reaches the ranking through its weighted conviction alone. Nothing is invented, and nothing is borrowed — which is the improvement over both prior states (three unsourced tables, then one borrowed rung).
+
+**The exact open question.** Should those four seats be given a real strength scale — a field in their own schema that measures how far the read leans, distinct from how confident it is — or is "direction plus confidence" genuinely all any of them can say? Today the desk has assumed the second by default, because it is the only answer that requires inventing nothing. That is a defensible default and a poor decision record.
+
+**What was searched and ruled out, so nobody redoes it.**
+
+  a. Deriving a lean from a field the seat already reports. Ruled out and DELETED, 2026-09-13: for news, macro and smart_money it was the same field the verdict hands to `conviction`, so the composite counted one signal twice at three different unsourced spacings. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-13, item 31.
+  b. Borrowing Technical's `buy` rung (0.5) for the seats that have no rungs. Ruled out and DELETED the same day on review: a number read off another seat's scale is not read off this seat's instrument. It is the same failure as (a), one step quieter.
+  c. Fitting a spacing to this desk's own resolved calls. Forbidden by `qamc-no-fitting-only-reading`, and impossible anyway — the conviction ledger is far short of the ratified 20-resolved-calls-per-seat bar (`_CONVICTION_OUTCOME_MIN_N`, `src/storage/db.py`), which is itself not yet wired.
+  d. Citing a published source for a cross-seat strength spacing. Nothing to cite. The 2026-09-03 literature reviews behind `SEAT_WEIGHT` produced a sourced ordinal ranking of seat RELIABILITY and explicitly no cross-category ratio; none of them speaks to how far a given read leans.
+
+**What evidence would settle it.** Either (1) a seat's own schema is extended with a strength field the analyst must state and justify per call — the same shape Technical already has, which makes the number read from that call rather than chosen for the seat; or (2) the conviction ledger clears the 20-resolved-call bar per seat and a lean can be measured out-of-sample. Until one of those exists, 0.0 stands and the ranking is a breadth-and-confidence ranking, which is what it should be described as.
+
+**Do NOT resolve this by picking a number**, and do not resolve it by removing the four seats from the ranking — the whole point of Phase 13 was that all five seats reach the ordering.
+
+**66. The ranking score is now coverage-sensitive, and `src/rotation.py` compares two names on it — OPEN, watch item, opened 2026-09-13 by the review of PR #348.**
+
+`rank_verdicts` aggregates seats by weighted SUM as of 2026-09-13 (it was an average; the average made a second AGREEING seat lower a candidate's rank — `docs/INCIDENT_HISTORY.md`, same date). A sum is the shape the desk's own edge implies, and this item is not a proposal to undo it. It is the consequence nobody should discover in production:
+
+  * A name's score now rises and falls with how many seats currently cover it. A name bought when it had a live earnings filing and a confirmed smart-money flow will, weeks later, be covered by Technical alone — and score lower for that reason, with nothing about the name having changed.
+  * `rotation.py` Tier 2 compares the weakest HELD name against the strongest NEW one on exactly this score, at a 25% relative margin. The margin is a ratio, so the change of scale does not affect it. Coverage decay on a held name does: it makes rotation OUT of a maturing position structurally easier over time.
+
+**Unresolved, and deliberately not decided here:** whether that is right. It is arguably exactly right for an aggressive-growth desk that wants its capital in the most-currently-confirmed names, and arguably a slow bleed of turnover driven by the earnings calendar rather than by the market. Nothing has been measured — the desk has too little resolved history to measure it, and rotation is not yet enabled. **What would settle it:** once auto-rotation runs, count how many Tier 2 rotations were driven by the held name's coverage lapsing rather than by its own signals weakening. If that share is material, the fix is to compare held-vs-new on seats both names share, not to go back to an average.
+
+**Retired item numbers — never reuse.** 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20, 24, 25, 28, 29, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 58, 61, 67, 90, 101, 200 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52, whose own unresolvable residue is item 63. Items 55-59 were briefly and incorrectly listed here as retired by a mis-resolved merge on 2026-09-13 (fix/rehearsal-cost-ceiling-reproduces) — no incident write-up for them exists, `docs/BOARD_NOTES.md` never stopped carrying their prose, and their WORK.md content is restored above; they are OPEN, not retired. Item 52 was also briefly and incorrectly caught in that same list despite its own paragraph remaining open above; corrected here — it is not retired. Items 62 and 63 were independently opened with different content by two branches at once (PR #348's review notes and PR #349's PM-limits work); PR #349's landed first, so PR #348's two collided items were renumbered 65 and 66 on merge.
 
 ## Evidence-only follow-ups
 

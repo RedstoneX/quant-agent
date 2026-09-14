@@ -183,25 +183,18 @@ this line, one heading per item.
 
 ## item 30
 
-**Plain language —** When ranking which stock ideas look best, the desk recently stopped treating every AI specialist's opinion as equally important and started weighting some more heavily based on research. The same change has deliberately NOT been made to the separate step that decides how much money to put into a trade — doing that properly means redesigning a related scoring scale too, a second real decision, not a copy-paste fix.
-**Example —** Two AI specialists can currently count equally toward how big a position gets sized, even though one of them already counts for more when the desk is only ranking which ideas look best — the two steps disagree with each other on whose opinion matters more.
-**The decision —** Whether and how to extend the new weighting to the money-sizing step, including how to redesign the scoring scale it would affect.
-**Recommendation —** Scope the sizing-path change and the scoring-scale redesign together in one proposal; they can't be decided separately without creating a second mismatch.
-
-
-## item 31
-
-**Plain language —** Until now, only the technical chart-reading AI's opinion actually counted toward ranking which stock ideas look best; the other four specialists weren't wired in at all. All five now feed into the ranking. One known simplification remains: the economic-outlook specialist gives one broad opinion applied the same way to every stock, rather than adjusting it per sector the way a related calculation elsewhere already does.
-**Example —** Previously, a stock could rank highly purely on its price chart even if the news, economic, earnings and institutional-buying specialists all disagreed with it, because only the chart-reading opinion counted toward the score.
+**Plain language —** The desk allows a bigger position when more of its AI specialists agree: one specialist behind an idea allows 3% of the account at risk, two allows 4%, three or more allows 5%. This item used to ask whether that ladder should start counting some specialists as worth more than others, the way the separate ranking step recently started doing. Reading the code turns it into a different question. Nobody ever derived the ladder's steps from anything — the measurement quoted beside them counted how often each step gets used, not what any step should be. And as things are set up today, four of the five steps cannot actually reduce anything, because they sit at or above limits the desk already enforces elsewhere. Separately, weighting specialists differently in the money-sizing step is already ruled out by a standing rule of yours — a weight there may only come from the desk's own measured track record, which barely exists yet — so that half is not something anyone can just change.
+**Example —** The three-, four- and five-specialist steps all allow 5%, which is the desk's absolute per-trade ceiling anyway, so they never bite. The two-specialist step allows 4%, and the decision-maker is already instructed never to ask for more than 4%. Exactly one step — the single-specialist 3% — can ever shrink a position, and only for requests between 3% and 4%.
+**The decision —** Not "which weights". Whether a five-step ladder that nobody derived should be pricing position size at all, given four of its steps do nothing.
+**Recommendation —** Decide the ladder's existence before its weights. Copying the ranking weights across would mean inventing a rule for looking up a table whose entries were already invented, and it would not remove the mismatch you'd be trying to fix — the two steps disagree about what they are measuring, not just about the numbers.
 
 
 ## item 32
 
-**Plain language —** The desk was approved to risk 5% of the account on each trade, but an old, never-approved size limit was quietly capping real trades at about 1% instead. That's fixed. Two related points remain open: whether to widen the trade-sizing bands back to their original range now that the bug is fixed, still awaiting the owner's actual sign-off; and whether the desk's two separate loss-alarm systems, one based on account swings and one on peak-to-trough drawdown, should ever be merged into one — nobody has decided that.
-**Example —** A trade sized to risk 5% of the account was actually only risking about 1% in practice because of the old cap — a fifth of the approved risk, on every single trade, until fixed.
-**The decision —** Restore the wider trade-sizing bands now that the bug is fixed, and separately, whether the two loss-alarm systems should ever be unified.
-**Recommendation —** Approve restoring the wider bands; they were only narrowed to compensate for a bug that no longer exists. Leave the two-alarm-system question for later since both work independently without conflicting today.
-**Why only you —** Both halves change how much of the account can be put at risk on a trade and how the desk reacts to a loss — risk-appetite calls, not engineering defaults.
+**Plain language —** The desk was approved to risk 5% of the account per trade, but an old never-approved size limit was quietly capping real trades at about 1%. That is fixed, and so is the trade-sizing band question — the wider bands were restored and merged on 10 September, though this board wrongly kept calling them undecided until 13 September. One thing genuinely remains: the desk has two separate loss-alarm systems, one watching how much the account has fallen over a rolling window and one watching how far it is below its best-ever level. They were set up independently and nobody has decided whether the desk should have one loss response or two.
+**Example —** The two systems are currently pinned together only by a shared -20% alert point. That is a floor on how far apart they can drift, not evidence that they agree.
+**The decision —** Should the two loss-alarm systems be merged into one, or deliberately kept as two?
+**Recommendation —** Leave them as two for now. Both work, neither conflicts with the other today, and merging them means re-deciding trip points you have already set once — worth doing when there is live evidence about how each behaves, not before.
 
 
 ## item 35
@@ -287,3 +280,18 @@ this line, one heading per item.
 **Example —** A practice-run day where the candidates together want more risk than the ceiling allows: Apple gets funded, Nvidia does not, purely because A comes before N. Nothing about either chart is consulted.
 
 **The decision —** None for you. Either the practice runs learn to score their own candidates off something real, or every practice-run result gets reported alongside how many of its days had the budget running out, so nobody reads a result as evidence about how the desk picks between trades when it isn't.
+
+## item 65
+
+**Plain language —** When the desk decides which stock ideas look best, each of its five specialists contributes two things: which way it leans, and how sure it is. Only the chart specialist actually publishes a "how strongly" number — it has strong-buy and buy as separate ratings. The other four have nothing of the kind, so for a while the desk quietly made one up for them, three different ways. Those made-up numbers are now gone, and those four specialists count purely on how sure they are. That is honest, but it leaves a real question nobody has answered: should those four be able to say "strongly" at all, or is "which way, and how sure" genuinely everything they can tell you?
+**Example —** The news specialist reads a headline and says "bearish, low confidence". The chart specialist can say "bearish" or "strongly bearish" — those are two different ratings it publishes. The news specialist has no such distinction available to it. Today the desk takes that at face value and scores the news read on its confidence alone. The alternative is to add a "how strongly" question to what the news specialist is asked, so it has to state one and justify it per story — which is how the chart specialist works.
+**The decision —** Do you want the other four specialists asked to rate their own strength, separately from their confidence? It is a change to what each is asked to produce, not a number to pick.
+**Recommendation —** Not yet, and not urgent. The current state invents nothing, which is the important part, and the ranking is honestly described as breadth-and-confidence. Adding a strength question to four prompts is cheap to do and expensive to get wrong — every one of them would be a fresh place for a specialist to assert a number nobody can check. Worth revisiting if the ranking ever looks like it is missing an obvious distinction; not worth doing pre-emptively.
+
+
+## item 66
+
+**Plain language —** The desk scores a stock idea by adding up what each specialist that looked at it says. That means a stock that several specialists happen to be covering right now scores higher than an identical stock only one is covering — which is deliberate, because agreement across independent sources is the desk's whole edge. But coverage comes and goes: a company only has an earnings filing to analyse for a few weeks after it reports. So a stock the desk already owns can quietly score lower a month later purely because its earnings coverage lapsed, with nothing about the company having changed. That matters because the desk uses this same score to ask "should I sell what I hold to make room for something better?"
+**Example —** You buy a stock when three specialists like it: the chart, its fresh earnings filing, and confirmed institutional buying. Six weeks later the filing is stale and the institutional flow is old news, so only the chart still covers it. Its score has dropped by roughly a third, purely on coverage. A brand-new idea with three current specialists behind it now clears the "20% better" bar to displace it — even if the original stock is doing exactly what it was bought to do.
+**The decision —** Nothing to decide yet, and nothing is broken today: the swap feature is not switched on. This is a note so it is not discovered live. If it turns out to matter, the fix is to compare the two stocks only on the specialists that cover BOTH of them, rather than on their raw totals.
+**Recommendation —** Leave it. Switch the swap feature on as planned, and once it has run for a while, count how many swaps happened because the held stock's coverage lapsed rather than because its own signals got worse. That is a real measurement rather than a guess, and it costs nothing but waiting.
