@@ -1,0 +1,143 @@
+{
+  "generated_at": "2026-09-14T23:28:55Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.05,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.05,
+    "max_calls_per_session": 8
+  },
+  "estimate_usd": {
+    "per_model": {
+      "qwen/qwen3.8-flash": 0.0203332
+    },
+    "tokens": {
+      "pm_public_day": {
+        "input": 17644,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "pm_public_day": {
+      "role": "portfolio_manager",
+      "description": "A valid PM practice day under the owner's raw-facts-only rule: tech/macro/news/earnings/smart-money analyses run FRESH (google-direct gemini-3.5-flash-lite) over the existing public-fact exam fixtures, a flat labelled SYNTHETIC ACCOUNT STATE (no positions, no desk memory), so every memory/history field is left at decide()'s own documented default. Grades live grounding, whether every opened target is in the desk's own pre-decision eligible set (candidate_eligibility), and reasoning_chain schema completeness \u2014 no judgement answer key."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "f10fb88f38a8d1e9e0be1a73ae5f2928e6855c1d3a0ec1853fc35f591c0585c8",
+      "bytes": 70578,
+      "lines": 1140
+    }
+  },
+  "pricing_used": {
+    "qwen/qwen3.8-flash": {
+      "input": 0.15,
+      "output": 0.47
+    }
+  },
+  "trials": [
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": false,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        }
+      ],
+      "input_tokens": 31453,
+      "output_tokens": 16000,
+      "cost_usd": 0.012237950000000001,
+      "latency_s": 77.51,
+      "error": "",
+      "sample_output": "",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": false,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        }
+      ],
+      "input_tokens": 31493,
+      "output_tokens": 16000,
+      "cost_usd": 0.01224395,
+      "latency_s": 301.53,
+      "error": "",
+      "sample_output": "",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "qwen/qwen3.8-flash|pm_public_day": {
+        "model": "qwen/qwen3.8-flash",
+        "scenario": "pm_public_day",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 0.0,
+        "quality_min": 0.0,
+        "cost_mean": 0.012241,
+        "latency_mean": 189.52,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "qwen/qwen3.8-flash": {
+        "scenarios": {
+          "pm_public_day": {
+            "model": "qwen/qwen3.8-flash",
+            "scenario": "pm_public_day",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 0.0,
+            "quality_min": 0.0,
+            "cost_mean": 0.012241,
+            "latency_mean": 189.52,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.0,
+        "quality_worst": 0.0,
+        "quality_worst_run": 0.0,
+        "cost_per_run_mean": 0.012241,
+        "cost_total_usd": 0.024482,
+        "quality_per_dollar": 0.0
+      }
+    }
+  }
+}

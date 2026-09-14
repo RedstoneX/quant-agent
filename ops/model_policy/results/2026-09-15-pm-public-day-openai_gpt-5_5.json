@@ -1,0 +1,184 @@
+{
+  "generated_at": "2026-09-14T23:25:22Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 1.4,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 1.4,
+    "max_calls_per_session": 8
+  },
+  "estimate_usd": {
+    "per_model": {
+      "openai/gpt-5.5": 1.13644
+    },
+    "tokens": {
+      "pm_public_day": {
+        "input": 17644,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "pm_public_day": {
+      "role": "portfolio_manager",
+      "description": "A valid PM practice day under the owner's raw-facts-only rule: tech/macro/news/earnings/smart-money analyses run FRESH (google-direct gemini-3.5-flash-lite) over the existing public-fact exam fixtures, a flat labelled SYNTHETIC ACCOUNT STATE (no positions, no desk memory), so every memory/history field is left at decide()'s own documented default. Grades live grounding, whether every opened target is in the desk's own pre-decision eligible set (candidate_eligibility), and reasoning_chain schema completeness \u2014 no judgement answer key."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "f10fb88f38a8d1e9e0be1a73ae5f2928e6855c1d3a0ec1853fc35f591c0585c8",
+      "bytes": 70578,
+      "lines": 1140
+    }
+  },
+  "pricing_used": {
+    "openai/gpt-5.5": {
+      "input": 5.0,
+      "output": 30.0
+    }
+  },
+  "trials": [
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "7/7 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 31138,
+      "output_tokens": 7962,
+      "cost_usd": 0.39455,
+      "latency_s": 85.21,
+      "error": "",
+      "sample_output": "{\"reasoning_chain\":{\"macro_filter\":\"Official macro is risk-on with bullish outlook and medium confidence, and its position guidance asks for 75.0% invested versus 25.0% cash. The account starts from 0.0% invested and 100.0% cash, so the deployment gap is the central portfolio problem; I am using the macro target as the exposure anchor but tempering sector selection because News Intelligence presents a high-confidence risk-off/yield-shock backdrop that conflicts with the official macro tone.\",\"news_check\":\"News is not cleanly bullish: the PM Briefing describes a risk-off transition driven by a Treasury-yield and rate-hike shock, while also flagging AAPL-specific bullish product news and a sector-level energy supply shock. I am therefore not buying broad index beta; I am concentrating new long risk in technically confirmed software breakouts, AAPL where symbol news is bullish, selected energy names with favorable sector context, and financial/broad exposure that fits the official macro sector guidance. GOOGL has bullish news but neutral technical coverage, so it is not sizeable today.\",\"earnings_check\":\"No current earnings-analysis rows are available, so earnings is absent for every proposed name rather than supportive or conflicting. There are no JUST FILED names in the proposed target list and no current filing stance to cite. Because calibration history is unavailable, realized earnings-related hit-rate adjustment is [UNSOURCED:no_calibration].\",\"signal_conflicts\":\"NET: avai",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:BRK-B",
+        "TARGET:COP",
+        "TARGET:JPM",
+        "TARGET:NET",
+        "TARGET:OXY",
+        "TARGET:ZS"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "8/8 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 31138,
+      "output_tokens": 7201,
+      "cost_usd": 0.37172,
+      "latency_s": 76.38,
+      "error": "",
+      "sample_output": "{\"reasoning_chain\":{\"macro_filter\":\"Macro Analysis is risk-on with bullish outlook and medium confidence, and Position Guidance asks for 75.0% invested / 25.0% cash; Account Status shows 0.0% invested and 100.0% cash, so the deployment gap must be acted on. I am using the risk-on exposure call but not ignoring the News Intelligence warning that yields touched 5% and overall news sentiment is bearish with high confidence, so I prefer current technical strength plus idiosyncratic support over broad index exposure.\",\"news_check\":\"News Intelligence is internally mixed: PM Briefing and State Changes are bearish for broad equities and growth tech because the 10-year touched 5% and hike odds surged, while AAPL has a medium bullish product catalyst and the Saudi pipeline shutdown is a high bullish sector catalyst for energy. GOOGL has medium bullish news but Technical is neutral and not sizeable, so it is skipped despite the news.\",\"earnings_check\":\"No current Earnings Analysis rows or SEC filing reads surfaced today, so no target receives earnings provenance and no filing stance is counted. With no earnings seat available, sizing relies on current technical coverage, macro context, and AAPL's current news stance where present.\",\"signal_conflicts\":\"NET: available=<macro=bullish, technical=strong_buy>. Conflict: none in the registry; top-down news backdrop is rate-pressure context, not current symbol coverage. Resolution: buy, but do not use a max-size risk request because only techni",
+      "actual_model": "openai/gpt-5.5",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:BRK-B",
+        "TARGET:COP",
+        "TARGET:CVX",
+        "TARGET:JPM",
+        "TARGET:NET",
+        "TARGET:OXY",
+        "TARGET:ZS"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "openai/gpt-5.5|pm_public_day": {
+        "model": "openai/gpt-5.5",
+        "scenario": "pm_public_day",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.383135,
+        "latency_mean": 80.79,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "openai/gpt-5.5": {
+        "scenarios": {
+          "pm_public_day": {
+            "model": "openai/gpt-5.5",
+            "scenario": "pm_public_day",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.383135,
+            "latency_mean": 80.79,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_per_run_mean": 0.383135,
+        "cost_total_usd": 0.76627,
+        "quality_per_dollar": 2.61
+      }
+    }
+  }
+}

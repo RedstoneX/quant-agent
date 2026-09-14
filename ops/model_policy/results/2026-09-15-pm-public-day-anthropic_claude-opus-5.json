@@ -1,0 +1,184 @@
+{
+  "generated_at": "2026-09-14T23:25:51Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 1.2,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 1.2,
+    "max_calls_per_session": 8
+  },
+  "estimate_usd": {
+    "per_model": {
+      "anthropic/claude-opus-5": 0.97644
+    },
+    "tokens": {
+      "pm_public_day": {
+        "input": 17644,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "pm_public_day": {
+      "role": "portfolio_manager",
+      "description": "A valid PM practice day under the owner's raw-facts-only rule: tech/macro/news/earnings/smart-money analyses run FRESH (google-direct gemini-3.5-flash-lite) over the existing public-fact exam fixtures, a flat labelled SYNTHETIC ACCOUNT STATE (no positions, no desk memory), so every memory/history field is left at decide()'s own documented default. Grades live grounding, whether every opened target is in the desk's own pre-decision eligible set (candidate_eligibility), and reasoning_chain schema completeness \u2014 no judgement answer key."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "f10fb88f38a8d1e9e0be1a73ae5f2928e6855c1d3a0ec1853fc35f591c0585c8",
+      "bytes": 70578,
+      "lines": 1140
+    }
+  },
+  "pricing_used": {
+    "anthropic/claude-opus-5": {
+      "input": 5.0,
+      "output": 25.0
+    }
+  },
+  "trials": [
+    {
+      "model": "anthropic/claude-opus-5",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "11/11 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 48870,
+      "output_tokens": 7432,
+      "cost_usd": 0.43015,
+      "latency_s": 94.1,
+      "error": "",
+      "sample_output": "{\"reasoning_chain\":{\"macro_filter\":\"Macro seat calls risk-on / bullish equity outlook with medium confidence and target_invested_pct 75.0% (facts: invested_pct 0.0%, cash_pct 100.0%). Account is cash-only this session (margin disabled), so gross exposure ceiling is effectively 1.0x and the risk-on 1.60-2.00x band is unreachable \u2014 I size toward the 75% invested target instead. Regime has no trajectory history yet [UNSOURCED:no_rm_history equivalent \u2014 no prior macro snapshots], so I trust today's read but note the news seat disagrees (see news_check) and therefore stay near, not above, the macro target.\",\"news_check\":\"NARRATIVE: news seat reads a risk-OFF transition \u2014 10Y touching 5%, VIX 18, >92% odds of a Fed HIKE; overall sentiment bearish/high confidence. STATE CHANGES: [HIGH] 10Y at 5% + mortgage 7.17% \u2192 bearish SPY/QQQ/XLK, bullish XLF/defensives; [HIGH] Saudi East-West pipeline shutdown \u2192 bullish energy. STOCK: AAPL [MEDIUM] bullish (Siri redesign into iPhone 18); GOOGL [MEDIUM] bullish but Tech is neutral so it is not sizeable. Note: the Active News State Changes memory window is EMPTY, so no catalyst citation is available today and no sub-floor R/R exception can be used. Practical effect: I tilt the book toward energy (COP/CVX/EQNR/OXY \u2014 directly supported by the pipeline state change) and financials (JPM), keep growth/momentum names (NET, ZS, MU, TSM) smaller than their technical conviction alone would justify given the rate headwind.\",\"earnings_check\":\"No SEC filing ",
+      "actual_model": "anthropic/claude-opus-5",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:BRK-B",
+        "TARGET:COP",
+        "TARGET:CVX",
+        "TARGET:EQNR",
+        "TARGET:JPM",
+        "TARGET:MU",
+        "TARGET:NET",
+        "TARGET:OXY",
+        "TARGET:TSM",
+        "TARGET:ZS"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    },
+    {
+      "model": "anthropic/claude-opus-5",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "4/4 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 48870,
+      "output_tokens": 7228,
+      "cost_usd": 0.42505,
+      "latency_s": 94.86,
+      "error": "",
+      "sample_output": "{\"reasoning_chain\":{\"macro_filter\":\"Macro seat: risk-on, bullish equity outlook, medium confidence, target invested 75.0% (cash 25.0%). Book is 0.0% invested with $100,000 cash (Quantitative Facts: invested_pct 0.0, cash_pct 100.0) \u2014 this is a fresh, cash-only account, so gross is capped at 1.0x and the regime exposure table's 1.60-2.00x risk-on band is unreachable by construction; the operative target is macro's 75% invested. The macro read is contradicted by today's News Intelligence macro narrative (risk-off transitional, 10Y touching 5%, VIX 18, >92% odds of a hike) \u2014 I resolve toward the lower half of the deployment band (~80-85% notional) rather than pushing gross to the cash ceiling, and I lean the book toward names with their own idiosyncratic momentum plus one energy name the HIGH news state change directly favors. No prior regime snapshots exist [UNSOURCED:no_rm_history equivalent \u2014 L7 empty], so I cannot claim a 5-day stable regime.\",\"news_check\":\"NARRATIVE: risk-off transitional \u2014 10Y at 5%, 30Y mortgage 7.17%, hawkish Fed repricing. STATE CHANGES: [HIGH] 10Y hits 5% \u2192 bearish broad equities/growth tech, bullish financials/defensives; [HIGH] Saudi East-West pipeline shutdown \u2192 bullish energy. STOCK: AAPL [MEDIUM] bullish (Siri redesign into iPhone 18 cycle); GOOGL [MEDIUM] bullish but Tech is neutral so it is not sizeable today. Active News State Changes memory layer is empty, so no catalyst-override citations are available this session and I use none. Net: news i",
+      "actual_model": "anthropic/claude-opus-5",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:COP",
+        "TARGET:NET",
+        "TARGET:ZS"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "anthropic/claude-opus-5|pm_public_day": {
+        "model": "anthropic/claude-opus-5",
+        "scenario": "pm_public_day",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.4276,
+        "latency_mean": 94.48,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "anthropic/claude-opus-5": {
+        "scenarios": {
+          "pm_public_day": {
+            "model": "anthropic/claude-opus-5",
+            "scenario": "pm_public_day",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.4276,
+            "latency_mean": 94.48,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_per_run_mean": 0.4276,
+        "cost_total_usd": 0.8552,
+        "quality_per_dollar": 2.34
+      }
+    }
+  }
+}

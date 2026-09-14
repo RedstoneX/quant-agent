@@ -1,0 +1,166 @@
+{
+  "generated_at": "2026-09-14T23:27:38Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.65,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.65,
+    "max_calls_per_session": 8
+  },
+  "estimate_usd": {
+    "per_model": {
+      "moonshotai/kimi-k3": 0.518494671967144
+    },
+    "tokens": {
+      "pm_public_day": {
+        "input": 17644,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "pm_public_day": {
+      "role": "portfolio_manager",
+      "description": "A valid PM practice day under the owner's raw-facts-only rule: tech/macro/news/earnings/smart-money analyses run FRESH (google-direct gemini-3.5-flash-lite) over the existing public-fact exam fixtures, a flat labelled SYNTHETIC ACCOUNT STATE (no positions, no desk memory), so every memory/history field is left at decide()'s own documented default. Grades live grounding, whether every opened target is in the desk's own pre-decision eligible set (candidate_eligibility), and reasoning_chain schema completeness \u2014 no judgement answer key."
+    }
+  },
+  "prompts": {
+    "portfolio_manager": {
+      "path": "config/prompts/portfolio_manager.md",
+      "sha256": "f10fb88f38a8d1e9e0be1a73ae5f2928e6855c1d3a0ec1853fc35f591c0585c8",
+      "bytes": 70578,
+      "lines": 1140
+    }
+  },
+  "pricing_used": {
+    "moonshotai/kimi-k3": {
+      "input": 2.6481380629999998,
+      "output": 13.282724250000001
+    }
+  },
+  "trials": [
+    {
+      "model": "moonshotai/kimi-k3",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": false,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        }
+      ],
+      "input_tokens": 31481,
+      "output_tokens": 4436,
+      "cost_usd": 0.142288199134303,
+      "latency_s": 137.48,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro seat calls risk-on (medium confidence) with target_invested 75%. However today's News Intelligence directly conflicts: [HIGH] 10-year Treasury touches 5%, >92% Fed-hike probability, overall sentiment bearish (high confidence). The macro seat's own numbers (10Y 4.96%, sticky core CPI 2.76%) sit one tick from its own bear trigger. I treat this as a risk-on regime with a material, named headwind \u2014 not a regime flip (no flip in Macro Regime Trajectory exists; no prior snapshots). I honor the 75% invested target directionally but size toward the moderate end of conviction buckets given the macro/news divergence, and lean into the two pockets the news itself favors: energy (Saudi pipeline shutdown) and financials (higher rates).\",\n    \"news_check\": \"NARRATIVE: yields-and-housing stress, hawkish Fed repricing, energy supply risk. STATE CHANGES: [HIGH] 10Y at 5% / rate-hike repricing \u2192 bearish broad equities and growth tech, bullish financials and defensives; [HIGH] Saudi East-West pipeline shutdown \u2192 bullish energy (COP, CVX, EQNR, OXY all carry high/medium Tech buys today). STOCK: AAPL [MEDIUM] bullish Siri-AI/iPhone catalyst; GOOGL [MEDIUM] bullish but Tech is neutral so not tradeable. Net: the news cuts against broad tech beta but directly supports the energy and financials sleeves I am buying.\",\n    \"earnings_check\": \"No SEC filing analysis present for any candidate today; the earnings seat is absent from every registry entry. ",
+      "actual_model": "moonshotai/kimi-k3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    },
+    {
+      "model": "moonshotai/kimi-k3",
+      "scenario": "pm_public_day",
+      "role": "portfolio_manager",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_grounded",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "PortfolioDecision passed live grounding validation (PortfolioManagerAgent.validate_grounding, src/agents/portfolio_manager.py:2328) \u2014 every cited symbol, source and claim exists in the evidence this session actually built."
+        },
+        {
+          "name": "opens_only_from_eligible_set",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "10/10 target(s) admitted by PortfolioManagerAgent.candidate_eligibility (src/agents/portfolio_manager.py:1376); refused: none; eligible set today: ['AAPL', 'AGX', 'BRK-B', 'COP', 'CVX', 'EQNR', 'JPM', 'MU', 'NEE', 'NET', 'OKLO', 'ONDS', 'OXY', 'TSM', 'ZS']"
+        },
+        {
+          "name": "reasoning_chain_all_ten_fields",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "config/prompts/portfolio_manager.md:679 \u2014 the 10-field reasoning_chain is MANDATORY; missing/empty: none"
+        }
+      ],
+      "input_tokens": 31481,
+      "output_tokens": 4513,
+      "cost_usd": 0.143310968901553,
+      "latency_s": 166.12,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"macro_filter\": \"Macro seat calls risk-on, bullish, medium confidence with target_invested 75% \u2014 VIX 15.84 normal, curves uninverted (+0.33% 2s10s, +0.89% 3m10y), HY OAS 265bps tight, labor robust. The book is 0% invested on a fresh $100k cash-only account, so the deployment gap is the entire decision today: macro asks for ~75% at work and I intend to close most of that. Note the News seat reads the same tape as risk-off transitional (10Y touching 5%, >92% hike odds) \u2014 that is a genuine cross-seat tension, named here and resolved in signal_conflicts per name; I side with the macro seat's levels-based read but keep total risk moderate rather than maximal.\",\n    \"news_check\": \"NARRATIVE: hawkish Fed repricing, 10Y at 5%, mortgage 7.17%, Saudi East-West pipeline shutdown. STATE CHANGES: [HIGH] yield spike \u2014 bearish broad equities/growth, bullish financials and defensives; [HIGH] Saudi pipeline shutdown \u2014 bullish energy (COP, CVX, EQNR, OXY all benefit). STOCK: AAPL [MEDIUM] bullish Siri/iPhone 18 catalyst; GOOGL [MEDIUM] bullish but Tech is neutral so it is not tradeable. Overall news sentiment bearish(high) \u2014 I treat this as a regime-level caution that caps conviction shading, not as a veto on qualified longs, per the rule that macro/news sets exposure, not selection.\",\n    \"earnings_check\": \"No SEC filing coverage this session \u2014 the earnings seat is absent for every name. No JUST FILED flags. Agreement counts are computed on the seats that remain (",
+      "actual_model": "moonshotai/kimi-k3",
+      "used_fallback": false,
+      "picks": [
+        "TARGET:AAPL",
+        "TARGET:BRK-B",
+        "TARGET:COP",
+        "TARGET:CVX",
+        "TARGET:JPM",
+        "TARGET:MU",
+        "TARGET:NET",
+        "TARGET:OXY",
+        "TARGET:TSM",
+        "TARGET:ZS"
+      ],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "openrouter"
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "moonshotai/kimi-k3|pm_public_day": {
+        "model": "moonshotai/kimi-k3",
+        "scenario": "pm_public_day",
+        "role": "portfolio_manager",
+        "runs": 2,
+        "quality_mean": 0.5,
+        "quality_min": 0.0,
+        "cost_mean": 0.1428,
+        "latency_mean": 151.8,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "moonshotai/kimi-k3": {
+        "scenarios": {
+          "pm_public_day": {
+            "model": "moonshotai/kimi-k3",
+            "scenario": "pm_public_day",
+            "role": "portfolio_manager",
+            "runs": 2,
+            "quality_mean": 0.5,
+            "quality_min": 0.0,
+            "cost_mean": 0.1428,
+            "latency_mean": 151.8,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.5,
+        "quality_worst": 0.5,
+        "quality_worst_run": 0.0,
+        "cost_per_run_mean": 0.1428,
+        "cost_total_usd": 0.285599,
+        "quality_per_dollar": 3.5
+      }
+    }
+  }
+}
