@@ -7665,10 +7665,38 @@ class TradingPipeline:
         # Session-scoped memo. The daily circuit breaker fires from six
         # separate places in this file, and each measurement is one market
         # fetch per holding — without this the same number would be bought
-        # six times a session. Keyed on the holdings and their weights (to
-        # 4dp) and on the latest bar date seen, so an intraday change in the
-        # book re-measures rather than serving a stale yardstick.
-        key = tuple(sorted((sym, round(w, 4)) for sym, w in weights.items()))
+        # six times a session.
+        #
+        # Keyed on the TRADING DATE and on the holdings with their weights
+        # (to 4dp), so an intraday change in the book re-measures rather
+        # than serving a stale yardstick, AND a new session can never serve
+        # yesterday's. The date half is not decorative: `src/scheduler.py`
+        # holds ONE `TradingPipeline` for the life of the process, so this
+        # memo outlives a session. Without the date, a book whose weights
+        # happen to round to the same 4dp on two consecutive days would be
+        # priced today against yesterday's volatility — a silently stale
+        # yardstick under all three loss alarms. This comment previously
+        # CLAIMED a bar-date component the key did not have (docs/WORK.md
+        # item 32, 2026-09-14); the code now does what it said.
+        from src.trading_calendar import et_now
+        try:
+            measured_on = et_now().date().isoformat()
+        except Exception as exc:  # noqa: BLE001
+            # A clock/timezone failure must never serve a stale number: fall
+            # through with a key that can never match a previous call, so the
+            # measurement is simply redone.
+            logger.warning(
+                "Held-book volatility memo: could not read the trading date "
+                "(%s) — re-measuring rather than reusing a cached yardstick.",
+                exc,
+            )
+            # A fresh object each time: it can never equal a stored key, so
+            # the memo misses and the measurement is redone.
+            measured_on = object()
+        key = (
+            measured_on,
+            tuple(sorted((sym, round(w, 4)) for sym, w in weights.items())),
+        )
         cached = getattr(self, "_held_book_vol_memo", None)
         if cached is not None and cached[0] == key:
             return cached[1]
