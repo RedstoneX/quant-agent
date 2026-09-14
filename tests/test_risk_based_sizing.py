@@ -1752,3 +1752,72 @@ def test_reward_to_risk_returns_none_for_every_malformed_geometry():
     assert reward_to_risk(100.0, 110.0, 130.0, is_short=False) is None  # stop above a long
     assert reward_to_risk(100.0, 90.0, 90.0, is_short=False) is None    # target below entry
     assert reward_to_risk(100.0, 100.0, 130.0, is_short=False) is None  # zero risk
+
+
+# --------------------------------------------------------------------------
+# retired board item 49 — best-ranked first, and the durable reason a
+# budget-rationed name now leaves behind. Owner decision 2026-09-12.
+# --------------------------------------------------------------------------
+
+def test_constructor_spends_the_budget_in_the_ranked_order_it_is_given():
+    """Two identical ideas, one budget that fits only one of them. The
+    `ranking` argument — the PM's own `rank_verdicts` order — decides which,
+    and reversing it reverses the outcome. Nothing else differs."""
+    def _run(ranking):
+        return PortfolioConstructor().construct_orders(
+            targets=[_risk_target("NVDA", 5.0), _risk_target("AMD", 5.0)],
+            positions=[],
+            analyses=[
+                _analysis("NVDA", entry=100, stop=95, target=140),
+                _analysis("AMD", entry=100, stop=95, target=140),
+            ],
+            total_value=EQUITY, price_map={"NVDA": 100.0, "AMD": 100.0},
+            # 20 of the 25% ceiling already spent: room for one 5% idea.
+            existing_risk_pct={"HELD": 20.0}, clusters=[], ranking=ranking,
+        )
+
+    nvda_first = {d.symbol: d.allocated_risk_pct for d in _run(["NVDA", "AMD"])}
+    amd_first = {d.symbol: d.allocated_risk_pct for d in _run(["AMD", "NVDA"])}
+    assert abs(nvda_first["NVDA"] - 5.0) < 0.05
+    assert abs(amd_first["AMD"] - 5.0) < 0.05
+    # The loser takes the remainder, which here is nothing at all.
+    assert "AMD" not in nvda_first
+    assert "NVDA" not in amd_first
+
+
+def test_a_budget_rationed_name_leaves_a_durable_machine_readable_reason():
+    """Before item 49 this was the one constructor drop path with no
+    per-symbol record: its log line did not match `_DropReasonCapture`'s
+    pattern, so the symbol reached the database as a generic
+    `constructor_dropped` with "no matching constructor log line captured".
+    """
+    from src.portfolio_constructor import STOP_REFUSAL_BUDGET_EXHAUSTED
+
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
+        total_value=EQUITY, price_map={"NVDA": 100.0},
+        existing_risk_pct={"HELD": 25.0}, clusters=[],
+    )
+    assert decisions == []
+    refusals = constructor.drain_refusals()
+    assert refusals["NVDA"]["refusal"] == STOP_REFUSAL_BUDGET_EXHAUSTED
+    assert "risk budget" in refusals["NVDA"]["detail"]
+    # And the log-scrape fallback now matches it too, so neither record path
+    # is silent on this symbol.
+    assert "NVDA" in constructor.last_drop_reasons
+
+
+def test_a_budget_refusal_drops_the_target_and_never_zeroes_it():
+    """A 0% target is read downstream as "sell it". Refusing to OPEN a
+    position must never emit an order for the symbol at all — the target is
+    dropped, and a held position is left exactly where it is."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
+        total_value=EQUITY, price_map={"NVDA": 100.0},
+        existing_risk_pct={"HELD": 25.0}, clusters=[],
+    )
+    assert [d for d in decisions if d.symbol == "NVDA"] == []

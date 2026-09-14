@@ -1801,7 +1801,11 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # stated rule for a resolved item: written up in docs/INCIDENT_HISTORY.md
     # and removed outright, not condensed into a pointer. Their numbers are
     # retired and must never come back under the same key.
-    for rank in (14, 33, 34, 36, 41, 42, 43, 47, 51, 54):
+    #
+    # 28 joined them on 2026-09-13: the permanently-red rehearsal cost-ceiling
+    # test was re-diagnosed and rewritten, written up in
+    # docs/INCIDENT_HISTORY.md, and deleted from the queue.
+    for rank in (14, 28, 33, 34, 36, 41, 42, 43, 47, 51, 54):
         assert rank not in by_rank, (
             f"item {rank} is retired and was deleted from docs/WORK.md; "
             "it must not reappear in the funnel queue"
@@ -1817,12 +1821,21 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
         "docs/INCIDENT_HISTORY.md and delete them from the queue"
     )
     # Genuinely partial work stays where he can see it.
-    for rank in (18, 32):
+    for rank in (18,):
         assert by_rank[rank].bucket == "open", rank
         assert by_rank[rank].part_done is True, rank
-    # And the negated lines stay open, as they always did.
-    for rank in (28, 30):
+    # And the negated lines stay open, as they always did. (28 was the other
+    # one; it is retired above.)
+    # 32 joined them on 2026-09-13: it used to read "MOSTLY FIXED, one real
+    # judgment call left" (part_done), but everything except the
+    # drawdown-reconciliation decision has since landed and been written up,
+    # so the item was rewritten to name only what remains. An item whose
+    # entire content is one open owner decision is `open`, not part_done —
+    # a part_done label would be claiming outstanding BUILD work that no
+    # longer exists.
+    for rank in (30, 32):
         assert by_rank[rank].bucket == "open", rank
+        assert by_rank[rank].part_done is False, rank
 
 
 def test_a_mostly_finished_item_is_labelled_rather_than_hidden():
@@ -2022,9 +2035,12 @@ def test_a_negated_ruling_is_not_a_ruling(headline):
 
 
 def test_a_dated_status_paragraph_in_the_body_counts_as_a_ruling():
-    """Item 49's real shape: the headline still says OPEN, and the ruling
-    was recorded as a dated bold paragraph underneath it. That is how the
-    backlog records a later change of state, so the board reads it."""
+    """The shape retired item 49 had while it was live: the headline still
+    said OPEN, and the ruling was recorded as a dated bold paragraph
+    underneath it. That is how the backlog records a later change of state,
+    so the board reads it. The item is gone (built and closed 2026-09-14);
+    the parser behaviour it pinned is not, so this stays as a synthetic
+    fixture rather than being deleted with it."""
     body = (
         "\n**49. The risk budget binds and nothing rations it — OPEN, "
         "surfaced 2026-09-12.** Measured on a real run.\n\n"
@@ -2081,12 +2097,21 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     items, problem = sb.load_funnel_queue(work_md)
     assert problem is None
     by_rank = {i.rank: i for i in items}
-    # Item 1 is IN FLIGHT; 20 and 39 are the owner's own design / request;
-    # 49 was decided by him on 2026-09-12 in a status paragraph.
+    # Item 1 is IN FLIGHT; 20 and 39 are the owner's own design / request.
+    #
+    # Item 49 used to be pinned here as the "decided, not yet built" case —
+    # the owner ruled best-ranked-first on 2026-09-12 in a status paragraph
+    # and the code had not caught up. It was BUILT on 2026-09-13, the cut-line
+    # sub-question was ruled on 2026-09-14, and the item was written up in
+    # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md under the owner's
+    # 2026-09-12 doctrine. Its number is retired. The parser behaviour it used
+    # to pin here lives on as a synthetic fixture in
+    # `test_a_dated_status_paragraph_in_the_body_counts_as_a_ruling`.
+    assert 49 not in by_rank
     assert by_rank[1].in_hand_state == "being built"
-    for rank in (20, 39, 49):
+    for rank in (20, 39):
         assert by_rank[rank].in_hand_state == "decided, not yet built", rank
-    for rank in (1, 20, 39, 49):
+    for rank in (1, 20, 39):
         assert by_rank[rank].bucket == "in_hand", rank
     # Checked and by design.
     for rank in (3, 4, 8):

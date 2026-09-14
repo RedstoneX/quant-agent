@@ -142,14 +142,6 @@ this line, one heading per item.
 **Recommendation —** Wait for a few more weeks of real data before setting a hard block; there isn't yet enough evidence to know where a fair cutoff belongs.
 
 
-## item 15
-
-**Plain language —** The desk couldn't always tell whether a price was current or stale, risking decisions made on outdated information. The piece covering stocks it already owns is fixed — it now honestly says "unknown" freshness instead of pretending a price is live when the broker never actually confirms that. The bigger remaining piece is doing the same for live quotes and historical price data, which needs a choice between two different competing ways to build it.
-**Example —** A held stock's price used to be treated as fresh by default even though the broker never confirms when it last updated; it's now correctly labelled freshness "unknown" instead of falsely marked current.
-**The decision —** Which of two competing technical approaches to use for tagging whether a live quote or historical price is actually fresh.
-**Recommendation —** Have both approaches laid out side by side with trade-offs before this goes to the owner; not enough is settled yet to recommend one over the other.
-
-
 ## item 17
 
 **Plain language —** If the desk's own record-keeping breaks, a safety switch can shut down all further AI-based decisions completely, and it stays off until a person manually clears it — working as intended. The real problem, observed live, was that the alert meant to warn someone about it also failed to send, so the desk could sit switched off for a full day or a weekend with nobody aware, looking exactly like an ordinary quiet market.
@@ -181,33 +173,20 @@ this line, one heading per item.
 **Recommendation —** This is designed but not yet built. Have a concrete number proposed with its reasoning shown before shipping anything, rather than picking one casually.
 
 
-## item 28
-
-**Plain language —** An automated test meant to check the desk's cost-safety limit was marked fixed, but checking again, three separate times against a clean copy of the current code, shows it still fails every time. Whatever change was believed to fix it did not, and nobody re-verified the claim before writing it down as solved.
-**Example —** The fix was believed to be done because settings the test depended on were removed during an unrelated rewrite; three fresh re-runs since then all fail the same way, meaning the real cause hasn't actually been found yet.
-
-
 ## item 30
 
-**Plain language —** When ranking which stock ideas look best, the desk recently stopped treating every AI specialist's opinion as equally important and started weighting some more heavily based on research. The same change has deliberately NOT been made to the separate step that decides how much money to put into a trade — doing that properly means redesigning a related scoring scale too, a second real decision, not a copy-paste fix.
-**Example —** Two AI specialists can currently count equally toward how big a position gets sized, even though one of them already counts for more when the desk is only ranking which ideas look best — the two steps disagree with each other on whose opinion matters more.
-**The decision —** Whether and how to extend the new weighting to the money-sizing step, including how to redesign the scoring scale it would affect.
-**Recommendation —** Scope the sizing-path change and the scoring-scale redesign together in one proposal; they can't be decided separately without creating a second mismatch.
-
-
-## item 31
-
-**Plain language —** Until now, only the technical chart-reading AI's opinion actually counted toward ranking which stock ideas look best; the other four specialists weren't wired in at all. All five now feed into the ranking. One known simplification remains: the economic-outlook specialist gives one broad opinion applied the same way to every stock, rather than adjusting it per sector the way a related calculation elsewhere already does.
-**Example —** Previously, a stock could rank highly purely on its price chart even if the news, economic, earnings and institutional-buying specialists all disagreed with it, because only the chart-reading opinion counted toward the score.
+**Plain language —** The desk allows a bigger position when more of its AI specialists agree: one specialist behind an idea allows 3% of the account at risk, two allows 4%, three or more allows 5%. This item used to ask whether that ladder should start counting some specialists as worth more than others, the way the separate ranking step recently started doing. Reading the code turns it into a different question. Nobody ever derived the ladder's steps from anything — the measurement quoted beside them counted how often each step gets used, not what any step should be. And as things are set up today, four of the five steps cannot actually reduce anything, because they sit at or above limits the desk already enforces elsewhere. Separately, weighting specialists differently in the money-sizing step is already ruled out by a standing rule of yours — a weight there may only come from the desk's own measured track record, which barely exists yet — so that half is not something anyone can just change.
+**Example —** The three-, four- and five-specialist steps all allow 5%, which is the desk's absolute per-trade ceiling anyway, so they never bite. The two-specialist step allows 4%, and the decision-maker is already instructed never to ask for more than 4%. Exactly one step — the single-specialist 3% — can ever shrink a position, and only for requests between 3% and 4%.
+**The decision —** Not "which weights". Whether a five-step ladder that nobody derived should be pricing position size at all, given four of its steps do nothing.
+**Recommendation —** Decide the ladder's existence before its weights. Copying the ranking weights across would mean inventing a rule for looking up a table whose entries were already invented, and it would not remove the mismatch you'd be trying to fix — the two steps disagree about what they are measuring, not just about the numbers.
 
 
 ## item 32
 
-**Plain language —** The desk was approved to risk 5% of the account on each trade, but an old, never-approved size limit was quietly capping real trades at about 1% instead. That's fixed. Two related points remain open: whether to widen the trade-sizing bands back to their original range now that the bug is fixed, still awaiting the owner's actual sign-off; and whether the desk's two separate loss-alarm systems, one based on account swings and one on peak-to-trough drawdown, should ever be merged into one — nobody has decided that.
-**Example —** A trade sized to risk 5% of the account was actually only risking about 1% in practice because of the old cap — a fifth of the approved risk, on every single trade, until fixed.
-**The decision —** Restore the wider trade-sizing bands now that the bug is fixed, and separately, whether the two loss-alarm systems should ever be unified.
-**Recommendation —** Approve restoring the wider bands; they were only narrowed to compensate for a bug that no longer exists. Leave the two-alarm-system question for later since both work independently without conflicting today.
-**Why only you —** Both halves change how much of the account can be put at risk on a trade and how the desk reacts to a loss — risk-appetite calls, not engineering defaults.
+**Plain language —** The desk was approved to risk 5% of the account per trade, but an old never-approved size limit was quietly capping real trades at about 1%. That is fixed, and so is the trade-sizing band question — the wider bands were restored and merged on 10 September, though this board wrongly kept calling them undecided until 13 September. One thing genuinely remains: the desk has two separate loss-alarm systems, one watching how much the account has fallen over a rolling window and one watching how far it is below its best-ever level. They were set up independently and nobody has decided whether the desk should have one loss response or two.
+**Example —** The two systems are currently pinned together only by a shared -20% alert point. That is a floor on how far apart they can drift, not evidence that they agree.
+**The decision —** Should the two loss-alarm systems be merged into one, or deliberately kept as two?
+**Recommendation —** Leave them as two for now. Both work, neither conflicts with the other today, and merging them means re-deciding trip points you have already set once — worth doing when there is live evidence about how each behaves, not before.
 
 
 ## item 35
@@ -226,14 +205,6 @@ this line, one heading per item.
 
 **One thing you should know —** the tier that only ranks things uses a "must be 25% better" bar that is a made-up number. It is honestly labelled as made-up in the code and it decides nothing — it only controls whether a comparison gets printed for the AI to read. The tier that can actually sell doesn't use it at all. It stays a research question, not a decision for you.
 
-
-## item 49
-
-**Plain language —** Removing the rule that was wrongly blocking good trades worked — the desk now finds roughly twice as many trades it's allowed to take. But that rule had been quietly doing a second job nobody noticed: by refusing so many trades, it meant the desk almost never ran out of risk budget. Now it does. On a normal day the desk wants to risk about twice what it's allowed to risk in total, so something has to decide which of the permitted trades actually get the money. Right now nothing decides that deliberately — they're taken in whatever order they happen to come out of the process, which is not a choice anybody made.
-**Example —** On the one real day with good records, the desk found 25 trades it was allowed to take. Together they'd risk about 48% of the account, but the ceiling is 25%. So roughly half of them can't happen — and today, which half survives is essentially arbitrary rather than "the best ones."
-**The decision —** How should the desk choose between more good trades than it can afford? Four real options: take the best-ranked ones until the money runs out; take all of them but size every one smaller; give the highest-conviction ideas priority; or simply cap how many new trades happen per day.
-**Recommendation —** Best-ranked-first is the most defensible starting point — it uses the ranking the desk already computes, and it means the money goes to the strongest ideas rather than whichever happened to be processed first. Sizing everyone smaller sounds fairer but quietly turns every strong idea into a weak one. Worth your judgement though: this genuinely changes what kind of desk this is, so it shouldn't be picked on my say-so alone.
-**DECIDED — 2026-09-12, by you.** Best-ranked-first. Your words: *"be ran by the best, why bother with crappy ones if you've got a choice, go with the best."* The money goes to the strongest ideas in order until it runs out; the rest simply don't happen that day, and they are not shrunk down to squeeze in. **Not built yet** — the decision is recorded, the code still spends the budget in arbitrary order. One thing the decision doesn't answer, which will come back to you when it's built: if the next-best idea only half fits in what's left of the budget, does it get taken at half size, or skipped?
 
 ## item 52
 
@@ -272,20 +243,6 @@ this line, one heading per item.
 **The decision —** Not yet. If research shows agreement between independent seats does not actually predict anything, the honest answer is to delete the schedule and let the 5% ceiling stand alone — and that would be a real change to how the desk sizes, so it would come back to you then. Right now there is nothing to rule on.
 **Recommendation —** Answer the underlying question first: does more agreement mean a better trade? If it cannot be shown, collapse the schedule rather than tune it.
 
-## item 58
-
-**Plain language —** Before the analysts look at a chart, the desk describes it to them — whether the stock has gapped, whether it has been going sideways. Four numbers decide what gets described: a gap must be at least 2% to be mentioned; "going sideways" means a total range under 8% across 15 sessions with a small net move. Every one of those is a round figure someone picked. They are not trading rules and they refuse nothing, which is why this is filed as research rather than a fault — but they shape what every seat is told, so they bias every decision without ever appearing in one.
-**Example —** A 2% gap on a sleepy utility is a genuine event. A 2% gap on a high-volatility name is an ordinary Tuesday. Both get reported to the analysts in exactly the same words, and the seats have no way to tell which is which.
-**The decision —** None for you. Chart-description question, so it goes to research.
-**Recommendation —** Same fix as the level width: replace the flat percentages with the stock's own normal movement, so a gap is "unusual for this name" rather than "over 2%". That needs no number at all and is probably a small job.
-
-## item 59
-
-**Plain language —** After 13 September the desk can no longer go quiet for a day without telling you — every way it can produce nothing now has an alarm, and each kind of empty day has its own distinct wording. What it still cannot do is notice a PATTERN. If a fault caused it to refuse every single idea, every single day, it would report that truthfully each morning and never once raise its voice. Nobody has decided how many identical empty days should set something off, and no number was invented for it.
-**Example —** In the measured window, 6 sessions out of 11 placed no trades at all. So a run of empty days is completely normal here, which is exactly what makes a broken run so easy to miss — a fortnight of "no trades today" messages looks the same whether the market is dull or a gate is jammed shut.
-**The decision —** Possibly yours later, but not yet. If we can tell a jam from a quiet market by its shape, no decision is needed. Only if that fails does it become a question of how long you are prepared to be flat without being told.
-**Recommendation —** Try the shape test first. The desk already writes down WHY each idea was refused; if every refusal for days on end carries the identical reason, that is a jam, and it can be alarmed without counting days at all.
-
 ## item 60
 
 **Plain language —** The AI that double-checks trades before they go out also double-checks the desk's decisions to SELL out of a position it already holds — but it was built and tuned only for the morning buying decision, not the selling one. A repair landed today after this reviewer was found telling itself, on every single sell it ever reviewed, that two mandatory safety checks had been skipped — when those checks don't exist for a sell at all and never did. The repair stopped it lying to itself, but it did not give selling its own reviewer. Instead, four of its normal checklist items are now switched off for a sell as not relevant, a fifth is flipped in meaning (a stock about to report earnings is a reason to refuse a purchase, but a reason to get out of a sale), and it turns out two of its three ways of actually intervening on a trade — nudging one position, or scaling back the whole plan — do nothing at all when it's reviewing a sell. All it can really do there is say yes or no to the whole thing.
@@ -294,13 +251,39 @@ this line, one heading per item.
 **Recommendation —** Not made. Today's fix was deliberately the smaller, safer move — make the shared reviewer honest about what it can and can't see on a sell, rather than building it a replacement, while the bigger question of whether selling deserves its own reviewer is put to you rather than assumed either way.
 **Why only you —** It decides how much independent scrutiny a decision to sell out of a position is allowed to skip — a risk-appetite call about the desk's own safety net, not an engineering default.
 
-## item 61
-
-**Plain language —** After a test run of the trading system, a summary report prints a line saying how many trades "the portfolio manager proposed." That number turns out not to be tied to whether the portfolio manager actually ran that session — it's counted a different way, and on one real test it printed "1" even though the portfolio manager never ran at all that session. It doesn't affect any real trading; it's a label on an after-the-fact report a person reads to judge whether a rehearsal run behaved the way it should have.
-**Example —** In the test used to reproduce a known cost-limit problem, the report said "1" order was proposed by the portfolio manager, when in fact that seat was never called during the run.
-
 ## item 63
 
 **Plain language —** When a company insider sells shares, the desk wants to know whether that's a real opinion about the stock or just someone raising cash. The best measure is how much of their own pile they sold. The research that measures this found something counter-intuitive: an insider selling a *small* slice of what they hold is actually a mildly *good* sign — they need money, they're keeping the rest, they still like the company. Selling more than half is the only case that reliably means bad news. The desk was doing the opposite of reading that correctly: it treated small sales as meaningless and threw them out of the ranking entirely. That's now fixed — nothing is thrown out, and every insider trade arrives at the analyst carrying how big it was relative to what the person held, plus what the research says that size means. What's still missing is narrower: the desk's internal "how much does this matter" score is a single dial from 0 to 1, and a dial cannot say "this matters, and it points the *other* way." So the analyst reads the direction in the notes, but the automatic ranking underneath it doesn't.
 **Example —** An executive holding 100,000 shares sells 1,000 of them. Research says that's worth about +0.68% over the next quarter — a small positive. Another sells 80,000 of 100,000; that's worth about −0.81% — a real negative. Today both arrive at the analyst with the same "importance" score of 1.0, distinguishable only by the written note attached. Before this change the first one scored 0.0 and the analyst never saw it at all.
 **The decision —** None needed from you right now, and deliberately so. The obvious move — invent a number that scores the bullish case lower or higher — would be exactly the kind of made-up figure this desk refuses. Two sources were checked for a signed scoring scheme and neither has one. This item exists so the gap is on the record rather than quietly papered over, and it gets picked up when either a published source or enough of the desk's own trading history can settle it.
+
+## item 64
+
+**Plain language —** The desk's practice runs against historical data ask for the same risk on every trade they consider. When the risk ceiling runs out on a busy day, the tie between all those identical requests is broken by ticker spelling — so the practice run funds trades in alphabetical order. Your best-first decision was built into the live desk, and deliberately not into the practice runs: those work off price signals and never produce the analyst ratings the ranking is made of, so there is no ranking to work down, and making up a score to stand in for one is exactly the kind of invented number that keeps causing problems here.
+
+**Example —** A practice-run day where the candidates together want more risk than the ceiling allows: Apple gets funded, Nvidia does not, purely because A comes before N. Nothing about either chart is consulted.
+
+**The decision —** None for you. Either the practice runs learn to score their own candidates off something real, or every practice-run result gets reported alongside how many of its days had the budget running out, so nobody reads a result as evidence about how the desk picks between trades when it isn't.
+
+## item 65
+
+**Plain language —** When the desk decides which stock ideas look best, each of its five specialists contributes two things: which way it leans, and how sure it is. Only the chart specialist actually publishes a "how strongly" number — it has strong-buy and buy as separate ratings. The other four have nothing of the kind, so for a while the desk quietly made one up for them, three different ways. Those made-up numbers are now gone, and those four specialists count purely on how sure they are. That is honest, but it leaves a real question nobody has answered: should those four be able to say "strongly" at all, or is "which way, and how sure" genuinely everything they can tell you?
+**Example —** The news specialist reads a headline and says "bearish, low confidence". The chart specialist can say "bearish" or "strongly bearish" — those are two different ratings it publishes. The news specialist has no such distinction available to it. Today the desk takes that at face value and scores the news read on its confidence alone. The alternative is to add a "how strongly" question to what the news specialist is asked, so it has to state one and justify it per story — which is how the chart specialist works.
+**The decision —** Do you want the other four specialists asked to rate their own strength, separately from their confidence? It is a change to what each is asked to produce, not a number to pick.
+**Recommendation —** Not yet, and not urgent. The current state invents nothing, which is the important part, and the ranking is honestly described as breadth-and-confidence. Adding a strength question to four prompts is cheap to do and expensive to get wrong — every one of them would be a fresh place for a specialist to assert a number nobody can check. Worth revisiting if the ranking ever looks like it is missing an obvious distinction; not worth doing pre-emptively.
+
+
+## item 66
+
+**Plain language —** The desk scores a stock idea by adding up what each specialist that looked at it says. That means a stock that several specialists happen to be covering right now scores higher than an identical stock only one is covering — which is deliberate, because agreement across independent sources is the desk's whole edge. But coverage comes and goes: a company only has an earnings filing to analyse for a few weeks after it reports. So a stock the desk already owns can quietly score lower a month later purely because its earnings coverage lapsed, with nothing about the company having changed. That matters because the desk uses this same score to ask "should I sell what I hold to make room for something better?"
+**Example —** You buy a stock when three specialists like it: the chart, its fresh earnings filing, and confirmed institutional buying. Six weeks later the filing is stale and the institutional flow is old news, so only the chart still covers it. Its score has dropped by roughly a third, purely on coverage. A brand-new idea with three current specialists behind it now clears the "20% better" bar to displace it — even if the original stock is doing exactly what it was bought to do.
+**The decision —** Nothing to decide yet, and nothing is broken today: the swap feature is not switched on. This is a note so it is not discovered live. If it turns out to matter, the fix is to compare the two stocks only on the specialists that cover BOTH of them, rather than on their raw totals.
+**Recommendation —** Leave it. Switch the swap feature on as planned, and once it has run for a while, count how many swaps happened because the held stock's coverage lapsed rather than because its own signals got worse. That is a real measurement rather than a guess, and it costs nothing but waiting.
+
+## item 68
+
+**Plain language:** when two people edit the job board at the same time, the tool that merges their edits has twice thrown away live items instead of keeping both. Once it deleted five open questions and marked them closed; once two workers happened to give their new findings the same number and it deleted both of them rather than renumbering one; a third time this very item collided on number 65 with another branch's unrelated finding.
+
+**Why it matters:** nothing looks wrong afterwards. The file is tidy, nothing is flagged, and a question that vanished looks exactly like a question that was answered. That is the opposite of the rule that a question stays on the board until it is actually settled.
+
+**The decision:** none for you. This is a tooling repair.

@@ -22,6 +22,515 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the four numbers that describe every chart to every analyst seat were all round figures somebody liked; they are now read off the stock itself (item 58)
+
+**In plain words:** before any analyst seat looks at a chart, the desk writes
+it a short description — has this stock gapped, is it going sideways. Four
+round numbers decided what got written: a gap had to be at least 2% to be
+mentioned, and "going sideways" meant a total range under 8% across 15
+sessions with a small net move. None of them came from anywhere. The problem
+is not that they are wrong, it is that they mean different things on
+different stocks: a 2% gap on a sleepy utility is a real event, a 2% gap on a
+high-volatility name is an ordinary Tuesday, and both were reported to the
+seats in exactly the same words. Every number in that description is now
+measured against the stock's own recent behaviour instead, so there is no
+percentage left in it at all.
+
+**What each number actually moved, established before any of it was changed.**
+This mattered more than the fix. Nothing in the trading rules reads the gap
+list or the consolidation flag directly — no gate, no stop, no size. Both
+reach a real decision only one way: they are sentences in the Technical
+Analyst's prompt, and that analyst's own `setup_type` verdict *does* move
+real machinery downstream (a sizing multiplier, whether the reward/risk floor
+applies at all, and how the position is tracked after entry). So the honest
+answer is that these constants can change a trade taken or refused in a live
+session, but only by persuading a model, never by mechanically refusing
+anything. The one place a constant does gate deterministically is the
+backtest engine, which substitutes the consolidation flag for the analyst's
+chart read; that path does not touch live trading.
+
+**What replaced them.**
+
+* *Gap worth reporting.* Bulkowski's definition of a gap is purely structural
+  and carries no size floor: today's low above yesterday's high, or today's
+  high below yesterday's low. The detection code was already exactly that;
+  the 2% was a second screen bolted on top, justified in a comment as
+  "smaller ones are noise that ordinary intraday movement fills within
+  hours". That sentence is now the test, measured: a gap is reported when it
+  is wider than one ordinary day's trading range for that name — which is
+  what ATR is — so ordinary intraday movement demonstrably cannot close it in
+  a session. The published prescription is to express gap size in ATR rather
+  than to threshold it, so the multiple is now printed on the line and the
+  seat can see the significance for itself.
+* *Consolidation.* Two tests, neither containing a number. First, the
+  trailing window's high-low envelope must be no wider than the envelope of
+  the equal-length stretch immediately before it — Toby Crabel's narrow-range
+  shape (NR4/NR7: the narrowest range of the last four or seven bars) lifted
+  from a single bar to a window, and the same idea as Minervini's volatility
+  contraction. It is a comparison against the name's own immediate past, so
+  it means the same thing on a utility and on a high-beta name. Second, the
+  window must be sideways rather than drifting: the range is spent either on
+  net drift or on oscillation, and a base oscillates more than it drifts.
+  That second test is arithmetically identical to the old
+  `_CONSOLIDATION_MAX_DRIFT_RATIO = 0.5` — the 0.5 turned out not to be a
+  tuned cut at all but the break-even point between drift-dominated and
+  oscillation-dominated. Behaviour unchanged; only the framing was arbitrary.
+* *Window length.* The 15 is now the ATR period the same file already reads
+  volatility over. A stretch shorter than one full volatility-measurement
+  period has no volatility reading of its own to be judged tight against, so
+  there is nothing to compare it to. The window sets a minimum and a
+  resolution, not a pass/fail line: the detector already extends the base
+  backwards for as long as price stays inside the envelope, so the base
+  length that gets reported is read off the instrument either way.
+
+**What was ruled out, by name.** O'Neil's flat base ("roughly five weeks or
+more of sideways trade with a correction of no more than about 15 percent")
+was rejected because the same source says outright that "Both numbers are
+conventions from studies of past leaders, not laws" — adopting them would
+swap one convention for another with a citation stapled to it, which is the
+same unsourced act in the other direction. Also rejected: picking any ATR
+multiple for the gap floor, the move already refused for the level-match
+tolerance. The multiple used is one, and one is not a tuned parameter — it is
+the identity "wider than an ordinary day". The academic route was searched
+too, after the item 55 precedent: the one directly relevant rule-based
+recognizer for horizontal/rectangle consolidation patterns is Tsinaslanidis
+and Zapranis' 2016 Springer book, whose identification criteria are behind a
+paywall and could not be fetched. It is recorded here as unread, not as
+unsupportive.
+
+**Known weakness, stated rather than hidden.** A purely relative contraction
+test flags dead tape as consolidating, because in a dead market every stretch
+is narrow and nothing is coiled. That is a real limitation of the shape and
+the usual remedy is to add an absolute floor as some fraction of ATR — a
+fraction nobody can source, so it was not added. It bites less here than it
+would elsewhere: this flag tells the analyst "range-bound, not breakout",
+and a dead stock genuinely is range-bound. The flag would be wrong if it
+were read as "expansion is imminent". Nothing reads it that way today; if
+something ever does, this is the paragraph to come back to.
+
+**What catches it next time.** A test asserts the three deleted constants
+have not reappeared under any name, and another asserts the consolidation
+window is still the ATR period rather than a figure of its own. Two more
+feed the same percentage gap to a quiet name and to a volatile one and
+require opposite answers, which no flat threshold can pass.
+
+---
+
+### 2026-09-14 — item 49 closed: the desk was choosing which trades to fund by how much they asked for, and nobody had chosen that
+
+**In plain words:** the desk can only risk so much in total — a quarter of the
+account. Until 2026-09-11 that ceiling almost never got in the way, because
+another rule was throwing out so many trades that there was always room. That
+rule was removed for being wrong, and the number of trades the desk is allowed
+to take roughly doubled. So the ceiling now binds on an ordinary day: the desk
+wants to risk about twice what it is permitted to, and something has to decide
+which trades actually get the money. Nothing did. The money went to whichever
+trade had asked for the BIGGEST amount — a measure of size, not of quality, so
+a mediocre idea asking for a lot beat an excellent idea asking for a little,
+every time. The owner's decision was best-ranked first: fund the strongest
+idea, then the next, until the money runs out. That is now what happens. A
+second, smaller problem was found and fixed alongside it: a trade that missed
+out purely because the money ran out was leaving no record at all of why — it
+simply vanished off the order list.
+
+**Both halves are now ratified.** The owner settled the ORDER on 2026-09-12
+("be ran by the best, why bother with crappy ones if you've got a choice, go
+with the best") and the CUT LINE on 2026-09-14. The item is closed; number 49
+is retired and is never reused.
+
+**The measured case this was built against.** Run `run-64290730`, after the
+reward:risk floor was removed by setup type: eligible names went 12 → 25, and
+the eligible set asked for **48% of equity at risk against the 25%
+`max_portfolio_risk_pct` ceiling**. Those two aggregates are what was measured;
+the per-name split below is arithmetic on their average (48 / 25 = 1.92% per
+name), NOT recovered per-symbol data, and is labelled so nobody quotes it back
+as a measurement.
+
+Worked through at that average, with the desk's own 0.5% minimum tradeable
+size:
+
+- 12 names funded in full at 1.92% each — 23.04% committed.
+- The 13th finds 1.96% of headroom left, asks 1.92%, and is funded in full —
+  24.96% committed.
+- The 14th finds 0.04% left. That is under the 0.5% floor, so it is DENIED
+  rather than shrunk to a token position — unchanged behaviour, and the
+  reason the floor exists.
+- Names 15 through 25 find nothing at all.
+
+So roughly half the eligible sheet cannot be funded on a normal day. **Before
+this change**, the 13 that got funded were the 13 that had asked for the most
+risk, ties broken alphabetically. **After**, they are the top 13 of the desk's
+own candidate ranking. The count funded is identical; which names they are is
+not, and that was the whole point.
+
+**The cut line: taken at reduced size, not skipped. Ratified 2026-09-14.**
+When the ranking runs out of money part-way through a name, that name is
+funded with whatever is left rather than passed over. The reason, recorded
+because a decision without one rots: **cutting the size does not damage the
+trade.** Same instrument, same stop, same reward-to-risk geometry — fewer
+shares. Nothing about the idea is degraded by owning less of it. And it needs
+no invented number, because the existing `min_position_risk_pct` floor (0.5)
+already decides when a remainder is too small to be worth taking; below the
+floor the target is DROPPED, never zeroed.
+
+**Explicitly rejected at the cut line:** skipping the partially-affordable
+name and continuing down the ranking for a cheaper one that fits in full. That
+funds a worse-ranked idea purely because it costs less, which directly
+contradicts the "go with the best" ruling. The rejected branch is kept written
+and tested behind the named switch `PARTIAL_FIT_POLICY`, so revisiting the
+ruling would be a decision rather than a rewrite — a ratified default is not a
+reason to delete the alternative.
+
+**Also rejected, at the 2026-09-12 decision:** proportional scale-down (sizing
+everyone smaller turns every strong idea into a weak one), conviction tiering,
+a hard cap on names per session, and re-tightening the reward:risk floor that
+had just been removed.
+
+**What "best-ranked" actually resolves to, and whether it is sound.** It is
+`src/verdicts.py::rank_verdicts`, reused unchanged — no new score was invented
+and none could be, under the no-arbitrary-numbers rule. Its order is: the
+composite of each reporting seat's direction magnitude and conviction (seats
+weighted by a research-informed prior, 2026-09-03), then the trade's real
+structure-derived reward:risk as a tiebreak, then the symbol name as a final
+stabiliser. Two honest caveats, stated rather than papered over:
+
+- The symbol-name stabiliser is alphabetical. It is only reached when two
+  candidates are equal on BOTH real signals, so this is not the "ranking is
+  mostly alphabetical" defect already recorded against the EXIT path — that
+  was checked for specifically. Entry ranking does not have it.
+- The seat weights (1.2 technical/earnings, 1.0 news, 0.8 smart_money/macro)
+  are a research-informed prior, not a measurement of THIS desk's analysts.
+  That is already flagged on the board as item 31's posture. It was true
+  before this change and is unchanged by it — but it is now load-bearing for
+  which trades get funded, not only for the order they are listed in, which
+  is a real increase in what that prior decides.
+
+**The ranking that is used is the ranking the model was shown.** It is taken
+from the Portfolio Manager's own prompt-rendering pass and threaded through to
+the allocator, never recomputed downstream. Recomputing would risk rationing
+against numbers the model never saw. Same pattern, and the same reason, as the
+rotation pre-check.
+
+**A candidate that loses the budget is no longer silent.** This was the one
+constructor drop path with no durable per-symbol record. Its log line read
+"Constructor: X produces no order — risk budget granted 0% ...", and the
+drop-reason capture's pattern requires the words rejected/refused/skipped
+after the symbol, so it did not match — every budget-rationed name reached the
+database as the generic `constructor_dropped` with the detail "no matching
+constructor log line captured". Verified by running the capture's own regex
+against the real message before changing anything. It now goes through the
+same structured refusal channel every other named constructor refusal uses,
+under the code `risk_budget_exhausted`, with the requested percentage, the
+binding ceiling and the plain statement that nothing is wrong with the idea —
+it passed every gate and lost only the queue. Once the budget binds on a
+normal day, that was about to become the largest unexplained bucket on the
+sheet.
+
+**Not zeroed, dropped.** A 0% risk target is read downstream as "sell it". A
+budget refusal leaves no plan for the symbol at all, so the delta loop skips
+it and a held position is left exactly where it is. Refusing to open is not a
+decision to close. Pinned by a test.
+
+**What was deliberately NOT done.** No new constant was introduced — the
+change is an ordering, and it reads its order off machinery that already
+exists. The backtest engine still rations largest-first, which with its
+uniform requests means alphabetically; it has no candidate ranking to spend
+down, so it was filed as its own open board item rather than papered over
+with an invented score.
+
+---
+
+### 2026-09-13 — the desk could refuse every idea, every day, tell the truth each time, and never raise its voice (item 59)
+
+**In plain words:** every kind of empty day already had its own honest
+wording and its own alarm. What nothing watched was the PATTERN. If a fault
+had jammed one gate shut, the desk would have reported "no trades today"
+every morning, truthfully, forever, and nobody would have been told. That
+matters more here than it sounds: in the window the census measured, 6
+sessions out of 11 placed no trades at all, so a run of empty days is the
+normal state of this desk — which is exactly what would have made a broken
+run invisible. There is now an alarm for it, and it counts no days.
+
+**Why no day count.** The obvious alarm — "tell me after N identical empty
+days" — was refused, because there is no honest place to read N off. It
+would have been invented, and an invented number is the thing this desk
+does not ship. The reformulation that replaced it: **a jammed gate and a
+quiet market differ in SHAPE, not in duration.** A quiet market kills
+different candidates for different reasons — this one has no usable
+structure, that one's reward:risk is thin, another is too young to measure.
+A jammed gate kills every candidate with the SAME reason, and keeps doing it
+while the candidates underneath it change.
+
+So the trigger is stated with no threshold in it at all:
+
+> every candidate, in every consecutive no-entry session back to the last
+> session that ended any other way, was refused by ONE reason — the same
+> one — while the set of candidates was NOT the same set each time.
+
+The run of sessions is bounded by the data, not by a constant: it ends at
+the last session that entered something, let a candidate through, refused
+its candidates for more than one reason, or refused them for a different
+one. "The candidate set was not the same set each time" is what forces more
+than one session into it — you cannot observe that a reason did not vary
+from a single observation, nor that the input varied from identical inputs.
+Nothing is tuned and nothing was fitted to the desk's own trade history.
+
+**A worked example, on real rows.** Two real sessions from 2026-09-02, the
+last day the desk ran before the timers were paused, replayed through the
+new check straight out of the production evidence table:
+
+    intra_check-f90ec0ba   candidates: NVDA
+    intra_check-ab906349   candidates: CEG, DE, VST, ZS
+
+Every one of those five names ended on the identical terminal record —
+`portfolio_manager / omitted / candidate_not_selected_for_target`. One
+reason, five names, two sessions, and the candidate set changed completely
+between them. Run against a database holding only those two sessions, the
+check fires and says so in the owner's words. It does NOT fire against the
+real database, because the session that actually sits between those two
+placed an entry (ORCL) and the session after them let the cash-sweep
+vehicle fill — either one ends the run. That is the alarm working, not the
+alarm being lucky: both of those are cases where "it refused every idea" is
+simply false.
+
+**What made this buildable, and what it exposed.** The durable per-candidate
+evidence rows written since 2026-09-03 (and extended 2026-09-12) do carry
+what the plan assumed: a per-symbol, machine-readable row for every dropped
+candidate, drained exactly once per session, already read by the funnel
+census and by the evening blocked-proposals digest. Two things about them
+are worth writing down before anyone trusts them further:
+
+* **Only two refusals are recorded as named CODES** — a stop wider than the
+  instrument's reach, and too little history to measure. Every other
+  constructor drop reaches the record as `constructor_dropped` with a detail
+  string recovered by a **regular expression over the constructor's own log
+  lines**, and with a literal fallback of "no matching constructor log line
+  captured" when the pattern misses. That is a real per-symbol row, so the
+  candidate is never silently absent — but the reason inside it is prose,
+  not a code, and a refactor that rewords a log line changes it. This alarm
+  works around that by normalising the prose (the ticker and every numeric
+  literal are replaced before two reasons are compared), which can only ever
+  merge two texts describing the same rule, never split one rule in two — so
+  its failure mode is a missed alarm, never a false one. It is a workaround
+  for a gap, not a fix for it.
+* **None of it has ever run in production.** The timers were paused on
+  2026-09-03; the production evidence table contains 38 `pipeline_event`
+  rows, all from 2026-09-02, and not one `constructor_dropped` or
+  `constructor_refused` row among them. The refusal-recording path has been
+  exercised only by tests. Nobody should cite it as proven in the field.
+
+**How it behaves while the desk is paused.** It is silent, and needs no flag
+to be. The check requires the newest session in the run to fall on the most
+recent completed trading day — the same calendar the stop-coverage watchdog
+already uses. A paused desk runs no sessions, so its newest session is
+never current, so nothing is sent: a deliberately paused desk is not a
+defect. It re-arms itself the moment sessions resume, because that is the
+same moment the newest session becomes current again. Verified against a
+copy of the live database: it reports the desk as not running and sends
+nothing.
+
+**Cadence.** At most one alert per trading day while the condition holds —
+item 41's existing ruling, the same one the stop-coverage watchdog uses. No
+new cadence was invented. It rides the daily alert-heartbeat unit, the one
+thing proven to run whether or not the trading timers are on, and it can
+never change that unit's own verdict or exit code.
+
+### 2026-09-13 — item 15 (price provenance) closed: live quotes and price bars now carry the same honest freshness the position-mark slice shipped
+
+**In plain words:** the piece of item 15 left open on 2026-09-03 — telling a
+stale live price or chart price apart from a genuinely current one — is now
+built. A live quote's price is tagged "stale" when nothing has traded for
+that symbol since the market opened today (exactly the case that used to be
+invisible: the feed goes quiet on an illiquid name and the desk would have
+shown yesterday's last print as if it were live). Every chart bar is tagged
+"historical" — it always was one, so this is a completeness fix, not a
+behavior change. Nothing was invented to do this: the "is it stale" cutoff
+comes from the exchange's own regular-session open time, read from Alpaca's
+trading calendar (which already accounts for early-close days), not a
+guessed number of minutes.
+
+**Which slice was already shipped (2026-09-03), unchanged here:** held
+positions' `current_price` carries `position_mark`, honestly `"unknown"`
+freshness because Alpaca's position endpoint supplies no mark timestamp at
+all. That code was not touched.
+
+**What was open, and the actual architecture decision made.** The rescue
+branch (`rescue/price-provenance`, uncommitted 2026-08-21 dev-account work)
+had its own competing answer for quotes and bars: a second, dedicated Alpaca
+market-data client (`_get_market_data_client`, `read_current_quote`) and a
+hardcoded `_CURRENT_QUOTE_MAX_AGE = timedelta(minutes=15)` — a quote older
+than 15 minutes was called "stale". That number was never sourced from
+anything: not an exchange boundary, not IEX's own published behavior, not
+this desk's own measured history — just asserted. It is rejected outright,
+per the no-arbitrary-numbers rule, and was NOT merged.
+
+Meanwhile `main` had independently built its own, already-live quote/bar
+paths in the 11 days since the rescue branch's base commit:
+`read_price_bars` (multi-timeframe, 5m/15m/1h via
+`AlpacaBroker.get_intraday_chart_bars`, daily via `get_bars`, both with
+caching) and `read_live_quotes`/`get_intraday_snapshots` (batched, with
+per-symbol failure isolation). This is the richer, production-proven
+implementation, so it wins — the fix was written directly against it rather
+than resurrecting the rescue branch's redundant client.
+
+**Where the freshness cutoff actually comes from.** Alpaca's `Trade` model
+carries its own `timestamp` field for every last-trade print (confirmed
+against the installed SDK: `alpaca.data.models.trades.Trade.model_fields`
+includes `timestamp`) — a real provider-supplied market timestamp, not
+something derived from our own data. A new `AlpacaBroker.get_session_open()`
+reads today's regular-session open time from Alpaca's own trading calendar
+(the same calendar `is_trading_day`/`get_session_close` already use,
+including early-close days). `broker_reads._quote_freshness` compares the
+two: a last-trade timestamp from before today's session open is `"stale"`
+(nothing has traded since the prior session, or today isn't a trading day,
+or the calendar lookup failed) — otherwise `"current"`. No elapsed-minutes
+number appears anywhere in this logic.
+
+**One incorrect docstring found and fixed along the way.**
+`LiveQuotesResponse.as_of`'s comment claimed "Alpaca's snapshot SDK object
+doesn't expose one [a per-trade timestamp] cleanly here" — false; the SDK's
+`Trade.timestamp` was there the whole time, just never read.
+`get_intraday_snapshots` now extracts and carries it as `last_trade_at`.
+
+**What is still genuinely a separate, non-blocking gap.** Same posture as
+the position-mark slice: the two frontend components
+(`PositionsPanel.tsx`, `PriceChartPanel.tsx`) still don't render any of this
+provenance — the API now serves `quote`/`close_price` correctly typed, but
+nothing on the dashboard shows a "stale" badge yet. This is a display gap,
+not a "cannot tell stale from live" gap: the honest answer now exists at the
+API layer for any consumer (present or future) to read; Mission Control
+simply hasn't been wired to show it, exactly as position_mark's frontend
+wiring was deferred on 2026-09-03 without blocking that slice's close.
+
+**`rescue/price-provenance` is now dead — evidence, not assumption.** Its
+one useful slice (position_mark) was already merged 2026-09-03. Its
+remaining unmerged content (`.rej` hunks in `src/api/broker_reads.py.rej`,
+`src/api/routes_live.py.rej`) is the redundant client + arbitrary threshold
+described above, which this entry replaces with a sourced implementation
+against main's own code. Nothing on the branch is still needed. Recommend
+deletion (not done here — branch deletion is the owner's call per standing
+instruction).
+
+**Tests:** `tests/test_broker.py` (+5: `get_session_open` mirrors
+`get_session_close`'s early-close/none/error/caching coverage),
+`tests/test_broker_market_data.py` (+1, plus 2 existing full-equality
+assertions updated for the new `last_trade_at` field),
+`tests/test_broker_reads.py` (+9: `_quote_freshness` unit coverage, bar
+`close_price` provenance for both daily and intraday timeframes, one
+end-to-end stale-quote test, plus 2 existing tests updated for the new
+`quote` field). Full targeted run: 209 passed
+(`test_broker_reads.py test_broker.py test_broker_market_data.py
+test_api_contract.py`) plus 160 passed
+(`test_intraday_scan.py test_intraday_scan_crash_visibility.py
+test_invariants.py test_pipeline.py`, the other real consumers of
+`get_intraday_snapshots`) — 369 passed, 0 failed, 0 skipped across every
+file that touches the changed code paths.
+
+---
+
+### 2026-09-13 — the Risk Manager's and Portfolio Manager's prompt sheets now render their limits from settings, not hand-typed prose
+
+The reviewer's standing sheet stated its limits as hand-typed prose. It said
+the long single-name ceiling was **33%** against a real `max_position_pct` of
+**65** — and that was **wrong at birth, not drift**: commit `e1c639a2`
+(PR #297, titled "single-name cap 100 -> 33") set the setting to 65 and typed
+33 into the sheet in the same diff. The same commit ALSO wrote
+`max_position_pct=65` correctly into the sheet's hard-rule inventory, so the
+sheet contradicted itself from minute one. **No verdict or log row has been
+found showing the stale 33 changed an outcome, and none is claimed** — what
+was fixed is an internal contradiction and the mechanism that allowed it.
+
+The line that commit replaced was relational ("half the long single-name
+ceiling") and therefore drift-immune; it was swapped for a literal. That
+sentence is now relational again. A second, genuinely stale one said the
+constructor caps a stop-out at 0.5% of equity against a ratified
+`max_position_risk_pct` of 5 — and it named the wrong binding mechanism as
+well, since the §9.4 agreement ceiling and the budget allocator narrow the
+real per-trade budget before the 5% envelope is reached. Rewritten to name
+what binds first.
+
+The sheet now carries `{{risk.<setting>}}` placeholders rendered by
+`src/agents/prompt_limits.py` from the same config object the engine is built
+from, **at agent construction** (not on first LLM call, which is the risk
+stage — after the whole day's analysis is paid for). Two build checks: a
+number beside a setting's name, and a number stated as the value of a
+ceiling/cap/budget/limit/floor phrase. Only the second catches the 2026-09-11
+shape; that gap is pinned by its own test.
+
+**FOUND WHILE FIXING — pre-existing, latent, NOT swept.** `src/pipeline.py`
+builds the risk engine's `RiskConfig` from a hand-enumerated argument list.
+**22 declared risk settings were absent from it** and silently fell back to
+pydantic class defaults, ignoring settings.yaml. Every one of those defaults
+currently equals its settings value, so nothing is live-wrong — but
+`allow_margin` was the same omission and did bite (it defaulted False while
+settings said True, blocking a user's BUYs). The seven settings the two sheets
+render are now threaded; **the remaining 15 are open work**, pinned by a test
+that fails if the count grows or if any omitted setting ever diverges from its
+default. Threading them changes enforcement and needs its own review.
+
+**PM's sheet, same treatment, same PR series.** `portfolio_manager.md` now
+renders ten settings and `tests/test_prompts_anchors.py`'s two value anchors
+are retargeted to the placeholders. Correcting an earlier claim in this
+entry: PM's sheet did not stay correct on 2026-09-11 because the human
+process was better — it stayed correct because that anchor test pinned the
+literal and the reviewer's sheet had no such anchor. The check held; it just
+cost a third hand-maintained copy of the number.
+
+**PM's parity is against TWO objects, not one.** `src/risk/rules.py` contains
+no reference at all to `max_cluster_risk_share_pct`, `short_gap_risk_multiple`,
+`min_position_risk_pct` or `max_portfolio_risk_pct` — those four are enforced
+by `PortfolioConstructor` from a separately built `ConstructorConfig`. The
+parity tests now build BOTH objects through the pipeline's own extracted
+builders (`build_risk_config`, `build_constructor_config`) and check that
+MOVING a setting moves what the objects carry, rather than scanning
+`src/pipeline.py` for a keyword name — a scan a hard-coded
+`max_gross_bearish_pct=20.0` would have satisfied.
+
+**Still open, pre-existing:** `build_constructor_config`'s `_risk_setting(name,
+default)` pattern types a literal fallback for roughly twenty settings, so each
+of those keeps a home in `src/pipeline.py` on top of settings.yaml and the
+dataclass field default. Not touched here — sweeping it changes sizing
+fallbacks nobody has reviewed. The equivalent literals on the risk engine's
+side were removed in this PR (`_threaded_risk_settings` omits a non-numeric
+read instead of substituting a number), and `min_position_risk_pct` now passes
+a legal **0** through both paths rather than being swallowed into a default.
+
+**Also open:** `config/settings.yaml`'s own `max_single_short_pct` comment
+still says "At 33 this cap is now roughly a THIRD of the long ceiling" —
+stale from the same commit, in the settings file itself.
+
+
+---
+
+
+### 2026-09-13 — the rehearsal report attributed trades to the portfolio manager even when it never ran (item 61)
+
+**In plain words:** after a test rehearsal, a summary report would print how
+many trades "the portfolio manager proposed" — but the count included trades
+from other sources that shared the run_id. On one run where the Portfolio
+Manager had failed (returned no valid decision), the report printed "1" when
+the only trade in the database came from emergency liquidation, not the PM.
+Costs nothing in real trading (a rehearsal is offline, no capital at risk),
+but it misleads whoever reads the report to judge whether a rehearsal ran as
+intended.
+
+**The mechanism.** `_collect_counts()` counted trades by querying the `trades`
+table (`SELECT COUNT(*) ... WHERE action IN ('BUY', 'SELL')`), which is wrong
+for two reasons: (1) BUY/SELL trades come from other session stages that share
+the run_id — emergency liquidation at src/pipeline.py:8008 and position reviewer
+exits at :9281 — and get falsely attributed to the PM; (2) when the PM stage
+enters but fails (a common case), its agent_logs entry is still written with the
+failure string as output_summary, so no proxy check on agent_logs can
+distinguish failure from success.
+
+**The fix:** count from `specialist_evidence` rows where `agent_name='portfolio_manager'`
+and `kind='proposed_order'`. These rows are written only AFTER the PM decision
+passes validation (src/pipeline_stages.py:4292-4300), so they correctly capture
+only valid PM proposals and exclude both the failure case and trades from other
+sources. This is shorter, needs no proxy, and is the ground truth.
+
+---
+
 ### 2026-09-13 — the insider holdings data the board said we did not have was already being downloaded, parsed and stored — and the filter using it was throwing away the one band the research calls a buy signal (item 52)
 
 **In plain words:** the board carried an open owner decision asking whether to
@@ -166,6 +675,94 @@ piece that cannot be settled by any source found is filed separately as item
 63.
 
 ---
+
+### 2026-09-13 — the permanently-red cost-ceiling test: what it was actually failing on, and why the September fix could not have worked (item 28)
+
+**In plain words:** one automated check had been failing every single run for
+over a week, and everyone had learned to read "1 failed" as normal. It was
+declared fixed on 2026-09-04 and it was not. The reason it kept failing had
+nothing to do with money or with the cost limit it was supposed to be
+guarding — it was failing because it demanded that a rehearsal of an old
+trading morning use exactly as many AI calls as that morning did, and the
+desk now watches more stocks than it did then, so it needs more.
+
+**What the check exists for.** On the morning of 2026-08-28 the desk's
+spending circuit refused the Portfolio Manager's call outright, so no trade
+was proposed at all. The refusal was based on a *projection* of what the call
+might cost: it guessed the session would reach $1.9118 against a $1.80
+ceiling. The four analyst calls that had actually run that morning had settled
+at $0.0460784 between them. The circuit stopped the desk on an estimate forty
+times the real spend. The check's job is to be able to reproduce that class of
+failure offline, on demand, for free.
+
+**Why the 2026-09-04 fix could not have worked.** That fix deleted a second
+test function that set two config keys the cost-circuit rewrite had removed,
+and rewrote the surviving test's comments. Its recorded verification was that
+the file "compiles and can be collected" — it was never run. Two separate
+things were wrong underneath and neither was touched:
+
+1. *The surviving assertions guarded nothing.* All three trigger codes it
+   checked for had been deleted from the codebase along with the projection
+   layer. Asserting that three non-existent codes do not appear is true of any
+   run of any code.
+2. *The failure was somewhere else entirely.* The test insisted the technical
+   analyst never run out of recorded answers to replay. The rehearsal harness
+   snapshots production as it stands **today** and replays answers recorded on
+   2026-08-28; today's watchlist needs one more chunked call than that
+   morning's recording contains. The harness's own documentation says a
+   rehearsal is "a fresh session against a snapshot of production's state, not
+   a re-enactment of a past one" — so the test was asserting against the
+   harness's stated design, and would have stayed red however the cost circuit
+   behaved.
+
+**This was already written down, and the fix ignored it.** `docs/WORK.md` has
+carried the correct symptom since 2026-09-02, in the handoff text above the
+backlog: "today's pipeline makes more `tech_analyst` chunk calls than
+`run-be9f8f06` recorded ('all 4 recorded response(s) were already replayed')".
+Two days later the item was closed against a different theory without anyone
+running the test to see which of the two it actually was.
+
+**What was ruled out.** Not a production defect: the cost circuit is behaving
+as item 14 intended. Not a stale-config problem either — that was the
+2026-09-04 diagnosis and it was already resolved by then. Not deletable: the
+2026-08-28 failure *class* — the ceiling refusing the Portfolio Manager before
+it can spend — is still reachable, just through a different mechanism, so
+there was nothing to prove structurally impossible.
+
+**What the check does now.** It runs the same rehearsal twice against
+byte-identical inputs. The first run uses production's own configured ceiling
+and must reach the Portfolio Manager; it then reads out of that run's own
+cost ledger what had really settled by that point. The second run repeats the
+session with the ceiling set to that measured figure and nothing else changed,
+and requires that the settled-cost circuit fires and that the Portfolio
+Manager never reaches the provider at all. No number is invented: the ceiling
+is measured from the run it is applied to. The two runs read the same bytes
+because the second works from a copy of the prepared sandbox rather than a
+fresh snapshot of a production database that keeps moving.
+
+The tech-analyst assertion is gone on purpose, and the reason is written into
+the test: running out of recorded chunks is expected drift between a snapshot
+taken now and a recording made in August, and it is reported as a finding
+rather than treated as a defect. What still guards the chunk un-merge fix —
+before which replay ran dry on the second chunk and the session died nowhere
+near the Portfolio Manager — is the first run having to reach the Portfolio
+Manager at all.
+
+**Proof it still bites.** With the settled-session-spend branch of
+`_enforce_settled_limits_locked` disabled, the check fails on exactly the
+assertion that matters (the ceiling never fires and the Portfolio Manager
+reaches the provider). Restored, it passes.
+
+**The lesson worth keeping.** A test recorded as fixed without being run is
+not fixed, and a permanently-red test trains everyone to ignore the failure
+count — which is the same as having no test at all, plus a hiding place for
+the next one to break. "Compiles and can be collected" is not verification.
+
+---
+
+
+
+
 
 ### 2026-09-13 — item 17 closed: the desk-wide silence alarm's own systemd timer was finally installed on the production box, ten days after it started warning about itself
 
@@ -416,6 +1013,295 @@ either, so the lever there is coverage breadth, not rendering.
 reduction in what the model READS. Nobody has measured whether it decides any
 better. Model-behaviour fixes on this desk have repeatedly measured as
 no-change, and a shorter prompt is not evidence of a better one.
+
+---
+
+### 2026-09-13 — the board said the trade-sizing bands were still awaiting sign-off; they had been merged by the owner three days earlier (item 32 record correction)
+
+**In plain words:** the desk's decision-maker is given bands for how much of
+the account a trade may risk depending on how convinced it is. Those bands
+had been narrowed in August to compensate for a separate bug, and the
+proposal to widen them back was recorded on the board as "still awaiting the
+owner's actual sign-off". It was not. The owner merged the change himself on
+10 September, and the wider bands have been the live instruction ever since.
+The board went on describing a settled thing as undecided.
+
+**How the two came apart.** The original pull request was mechanically
+auto-closed by GitHub when an unrelated branch it was stacked on was deleted
+— nobody rejected it. Its content was restored on a fresh pull request, and
+the "PENDING REVIEW, the owner never saw this" note was written at that
+point, correctly. What went wrong is that when the replacement was merged,
+the merge updated one part of the board and not the other: the same item
+ended up carrying a line saying the question was DECIDED and, further down,
+the original paragraph still saying it was pending. Both were sitting in the
+same item, contradicting each other, for three days.
+
+**Which was right.** The running configuration. Verified by reading the live
+prompt (the bands are there, 2.0-4.0% and 1.0-2.5%) and the commit that put
+them there (authored and merged by the owner, 2026-09-10). The board text was
+the stale half, and it has been deleted rather than annotated.
+
+**What would catch it next time.** Nothing mechanical exists for this, and it
+is worth being honest that this is the second time a stale board line has
+survived a merge that was supposed to remove it (the item 17(b) duplicate was
+the first). The rule that keeps failing is "update the record in the same
+commit as the change"; the pattern in both cases was a merge that edited the
+summary line and left the detail paragraph. When resolving a board item that
+appears in two places, search the item number, do not edit the paragraph you
+happen to be looking at.
+
+---
+
+### 2026-09-13 — three of the five analyst seats had their "how strongly do you lean" number invented from the same field as their "how sure are you" number, so the ranking counted one opinion twice (item 31, CLOSED)
+
+**In plain words:** when the desk ranks which stock ideas look best, each
+specialist contributes two separate numbers — how strongly it leans, and how
+confident it is — and the desk adds them together. Three of the five
+specialists had no real "how strongly" number to give, because nothing they
+produce measures it. So when those seats were wired into the ranking, someone
+filled the gap by working the lean out from the confidence. That means the
+desk was adding a number to itself: one opinion, counted twice, and the
+multipliers used to do the doubling were picked, not measured or read from
+any published source. A single "insiders are buying right now" label scored
+the highest total the ranking can produce — the same as the one specialist
+that was actually measured to produce real conclusions, at its strongest
+rating and highest confidence, together.
+
+**What each of the four newly-wired seats was doing, and the verdict on each.**
+This is the independent review item 31 asked for.
+
+  * **earnings — CONVENTION, kept unchanged.** Every directional call got one
+    flat number and neutral got zero. This seat states a single
+    bullish/bearish rung with no strength field anywhere, and its author said
+    so and refused to invent a gradient. It is the only one of the four that
+    did not invent a weight, and it is the shape the other three were brought
+    to.
+  * **news — ASSERTED, neutralised.** The lean was a table on the seat's own
+    confidence (low/medium/high -> 0.33/0.67/1.0). Nothing sourced, and it is
+    the same confidence the verdict separately reports.
+  * **macro — ASSERTED, neutralised.** The lean was a table on the seat's own
+    confidence (0.25/0.5/0.75) plus a flat bonus (0.25) when the analyst
+    declared a regime change. Same double-count, plus a second invented
+    constant on top. The regime-change claim is not lost: it still reaches
+    the reader as the analyst's own stated falsifier, in the analyst's own
+    words, rather than as a number nobody derived.
+  * **smart_money — ASSERTED, neutralised.** Both halves — the lean AND the
+    confidence — were tables on one categorical label. Both signals were the
+    same label. The label still sets confidence, which is the one place it
+    has something behind it: the ordering there restates a ranking that
+    already existed in the seat for a different purpose, with the seat's own
+    prompt explaining why.
+
+**What was ruled out.** Finding a published source for any of the three
+spacings — there is nothing to cite for "a high-confidence news item leans
+three times as far as a low-confidence one", and fitting one to this desk's
+own trade history is forbidden and impossible anyway (the book has almost no
+resolved history). The choice was therefore between leaving invented weights
+in place and removing them, and removing them is the standing rule: a number
+must be read from the instrument or from a source, or it should not be there.
+This change DELETES arbitrary numbers rather than replacing them with
+better-argued ones. If a seat is ever measured to deserve a real gradient,
+that is a weight to ratify with the measurement attached.
+
+**The second half of item 31 — macro was answering one question with two
+different answers in the same prompt.** The macro specialist gives a broad
+market view and, separately, a per-sector view. The block of the prompt that
+lists what each specialist thinks about each stock was already using the
+sector view where one existed, falling back to the broad view otherwise. The
+ranking was using the broad view for every stock. So the desk could tell its
+decision-maker "macro is negative on energy" in one part of the prompt and
+rank an energy name on a positive broad read in another part. Now both
+resolve the same way, through the same shared reduction, so one macro read
+gives one answer.
+
+The objection recorded at the time — that there was "nothing sector-specific
+to attach" — was half right. There is no sector-specific *confidence*, so the
+analyst's own overall confidence is still used, unchanged, rather than
+inventing one. But there IS sector-specific *reasoning*: the sector row's own
+stated reason, already on the model, and it is now cited first on the verdict
+and labelled as the thing that decided the direction, so a reader can see why
+this stock's macro read differs from the market's.
+
+**What would catch it next time.** The double-count is now a test in its own
+right for each of the three seats: change only the field the deleted table
+was keyed on, and the lean must not move. That is mechanical, so it holds;
+the comment saying "flagged for review" did not, for ten days.
+
+**The general lesson, which is the part worth keeping.** All three defects
+came from the same move: a seat was wired into a scoring shape that wanted
+two numbers, the seat only had one, and the gap was filled by deriving the
+missing number from the one that existed. Every author flagged their own
+mapping as unmeasured and none of them was wrong to ship it — but a flag in a
+code comment is not a review, and three of them accumulated before anyone
+compared them side by side. When a seat cannot fill a field, the honest fill
+is not a function of another field.
+
+**CORRECTED THE SAME DAY, BEFORE MERGE — the sentence above originally ended
+"the honest fill is a constant, not a function of another field", and the fix
+it describes filled the gap with 0.5.** That was wrong in the same way, one
+step quieter, and the two defects it caused are the entry immediately below.
+Read both together; this one is not the whole story.
+
+---
+
+### 2026-09-13 — deleting three invented numbers left a fourth behind, and made a second agreeing analyst LOWER a stock's rank (found on adversarial review of PR #348, before merge)
+
+**In plain words.** The fix above removed three made-up "how strongly does
+this specialist lean" numbers and set those seats to a single flat value
+instead. Two things were wrong with it, and both were caught by reviewing the
+change against the desk's own stated edge rather than against its own
+reasoning.
+
+**Defect 1 — agreement became dilutive. This is the serious one.** The desk
+scores a stock by AVERAGING its specialists' scores. Averaging means a second
+specialist who AGREES can pull the average down, and after the flat value was
+introduced that stopped being a corner case and became the normal case.
+Reproduced against the code, exact arithmetic:
+
+  * technical says `strong_buy` at high confidence, on its own:
+    lean 1.0 + confidence 1.0 = **2.0**.
+  * add smart_money saying `actionable` — the strongest thing that seat can
+    say, agreeing on direction — and the average of the two leans falls to
+    0.8, scoring **1.8**.
+
+A second analyst, agreeing, made the stock rank LOWER. That contradicts the
+desk's own stated edge — breadth x consistency x asymmetry — and
+`docs/OUTCOME.md` §9.4's "agreement earns size". It was not a tuning problem.
+An average answers "how enthusiastic is the average specialist covering this
+name", which is a question nobody asked and which the edge statement never
+mentions.
+
+**The fix: the aggregation is now a SUM, not an average.** Chosen because it
+follows from the edge rather than because it produced nicer numbers:
+
+  * It introduces NO number. It deletes a divisor. Every constant left in the
+    arithmetic was already ratified and is unchanged.
+  * It is monotone by construction — every added term is a positive weight
+    times two non-negative signals — so "an agreeing seat can only add" stops
+    being a property somebody has to remember to test and becomes a property
+    of the arithmetic.
+  * Disagreement cannot leak into it: a stock whose specialists disagree on
+    direction is already dropped whole, before any scoring happens.
+
+The reward-to-risk tiebreak deliberately stays an average. It combines several
+estimates of ONE quantity in a real unit; two specialists both reading 2.0 do
+not make 4.0. Evidence adds, measurements average.
+
+**Defect 2 — 0.5 was not a derivation either.** The flat value was
+Technical's `buy` rung, borrowed by four seats that have no rungs — which is
+the whole reason they were in this fix. Borrowing is not deriving. The four
+seats now carry ZERO stated strength (`NO_STATED_STRENGTH`), which is the
+honest encoding of "states no distance", and they reach the ranking through
+their weighted confidence alone. This only became a coherent option once the
+aggregation was a sum: under the old average a zero would have dragged an
+agreeing stock down, which is exactly why 0.5 looked necessary at the time.
+
+**Two consequences of the sum, stated rather than discovered later.** The
+score is no longer capped at 2.0 and is not comparable to a score recorded
+before today. And coverage now moves the score: a name with a live earnings
+filing and a confirmed institutional flow outranks an otherwise identical name
+with only a chart, and it falls back when that coverage lapses. That is the
+intended reading of breadth, but it means `src/rotation.py`'s comparison of a
+held name against a new one is now partly a comparison of how much coverage
+each has today. The margin is a ratio so the change of scale does not affect
+it; coverage decay on a held name does. Flagged as `docs/WORK.md` item 63, not
+silently absorbed.
+
+**A third finding, verified and INTENDED but undisclosed in the original
+change.** The sector fix in the entry above has a consequence nobody wrote
+down. Macro's verdict used to be the broad market read for every stock, so an
+energy name Technical liked, on a session with a negative broad read, was
+dropped from the ranking as an unadjudicated disagreement. Now the read
+resolves on the sector's own rows, and when those rows contradict each other
+the result is "no opinion" — which the ranking skips, so there is no
+disagreement left to drop the stock for, and it reaches the decision-maker.
+Verified against the code, both before and after.
+
+That behaviour is right: the desk's belief about that sector is genuinely
+unresolved, and an unresolved read is an absence of an opinion, not a
+disagreement. Dropping a stock on the strength of a broad outlook its own
+sector rows contradict was the bug. What was not acceptable was doing it
+invisibly. So a specialist that looked and came back with nothing is now
+recorded on the candidate and printed in the decision-maker's prompt — "no
+lean from: macro" — because "this seat looked and found nothing" and "this
+seat never looked" were previously indistinguishable downstream.
+
+**What is still open.** Whether these four seats should have a real strength
+scale of their own at all is not settled by deleting the fake one. It cannot
+be answered by choosing a number and it must not be answered by fitting one to
+the desk's history. It is `docs/WORK.md` item 62.
+
+**The lesson.** The first fix was right about what to delete and wrong about
+what to leave. Deleting an invented number is only half the job; the other
+half is checking what the SHAPE around it then does, and checking it against
+the desk's stated edge rather than against the change's own reasoning. Here
+the shape had been quietly wrong the whole time and the deletion only made it
+visible — the average was already dilutive whenever a weaker-leaning seat
+agreed, before any of this.
+
+---
+
+### 2026-09-13 — the schedule that prices "how many analysts agree" has rungs nobody derived, and four of its five rungs cannot bind anything (item 30 finding, NOT resolved — owner decision)
+
+**In plain words:** the desk allows a bigger position when more of its
+specialists agree. It does this with a five-step ladder: one net specialist
+in favour allows 3% of the account at risk, two allows 4%, three or more
+allows 5%. Item 30 asked whether that ladder should start weighting some
+specialists more heavily than others, the way the *ranking* step recently
+started doing. Reading the code turns that into a different question, because
+two things are true that the item did not record.
+
+**First: the ladder's own steps were never derived from anything.** The
+measurement cited beside them measured how OFTEN each step would be reached —
+across 75 real targets, 67% had exactly one net specialist behind them, 29%
+had two, 4% had three, none had four or five. That is a coverage count. It
+says which step matters most; it says nothing about what any step should BE.
+The stated reasoning only fixes a *range* for the first step: near 5% and the
+ladder does nothing, much under 2% and it shrinks nine trades in ten to a
+token. 3% and 4% sit inside that range by choice. So the ladder is a chosen
+shape, not a read one — which means weighting the count that indexes it would
+mean inventing an interpolation rule to look up a table whose entries were
+already invented. That compounds the problem rather than fixing it.
+
+**Second: four of the five steps cannot currently reduce anything.** The
+desk's hard per-trade ceiling is 5% and the decision-maker's own instructions
+cap what it may ask for at 4%. So the three-, four- and five-specialist steps
+(all 5%) sit at or above the hard ceiling and can never bite, and the
+two-specialist step (4%) can only bite on a request the prompt already
+forbids. Exactly one step — the single-specialist 3% — can ever reduce a
+position, and only for a request between 3% and 4%. This became true when the
+conviction bands were restored (item 32); it was not true when the ladder was
+written, and nobody re-checked.
+
+**Third, and this is the part that settles the original question: a per-seat
+weight in the sizing path is already forbidden by a ratified rule with a
+mechanical guard behind it.** The desk's standing rule is that a confidence
+weight may only be DERIVED from measured history, never chosen up front, with
+the minimum set at 20 resolved calls per seat; the book is nowhere near that
+and the closed round-trips it does have record no conviction at all, so there
+is nothing to derive from (the exact count was not re-measured here — the
+spec's own figure was single digits). A test fails if
+anyone introduces a per-seat weight table into the sizing score, and it fails
+on symmetry as well as on the constant, so a table that averages to one is
+caught too. The 2026-09-03 owner amendment that let the RANKING use a
+published prior was scoped, in the owner's own decision, to the ranking
+module and explicitly left this one alone.
+
+**So the code was left alone, deliberately.** Not because equal weights are
+right, but because changing them is not an engineering decision available
+here: it needs the owner to extend that amendment, and even then the thing it
+would index has no derivation behind it. The live incoherence item 30 names
+is real — the desk ranks on one belief about whose opinion counts and sizes
+on another — but porting the weights across would not remove it, because the
+two paths disagree structurally and not just numerically: ranking scores a
+per-seat strength-plus-confidence composite, sizing counts seats as plus-one
+/ minus-one votes and reads a step function. Matching the numbers leaves them
+still measuring different things.
+
+**What is actually left for the owner** is written into `docs/WORK.md` item
+30: not "which weights", but whether a chosen five-step ladder should be
+pricing size at all when four of its steps are inert and none of the five was
+read from anything.
 
 ---
 
