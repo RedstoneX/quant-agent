@@ -22,6 +22,66 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — item 53 CLOSED: the sliver of a share nobody could protect now gets its stop put back automatically, and it has already done it once for real
+
+**In one line.** Because this broker sells fractions of shares, a position can
+end up as, say, 0.3089 of an Oracle share, and the broker will not hold a
+lasting protective stop on a fraction — so the sliver sat there unprotected and
+nobody was putting the stop back. It now goes back on by itself, every half
+hour, and it did exactly that on a real position today.
+
+**What was actually wrong.** Two separate things, and only the second one was
+still open by the time this closed.
+
+The first was that the morning routine only *reported* the missing stop. It
+noticed the sliver was uncovered, wrote that down, and did nothing about it.
+The owner ruled fix-it rather than pick-one-of-three-options, so the daily path
+now re-places the stop instead of complaining about it. It does this through the
+same single piece of machinery the in-session sweep uses — deliberately one
+home, not a second order path — at the level recorded on that position's own
+last purchase, and only ever ADDS an order: nothing in it can sell, resize,
+cancel or zero a position. If the placement fails it raises an alarm once that
+day rather than silently retrying.
+
+The second, and the reason this item stayed open for two days after the code was
+finished, is that **the code was not running anywhere.** The morning routine
+fires hours before the market opens, and a fractional stop can only be a
+day-order, which cannot be placed into a shut market. So the repair had to
+become its own separate half-hourly job that checks the broker's published
+calendar and only acts when there is a session to act in. Writing that job is
+not the same as installing it, and for two days it was written and not
+installed. This is precisely how an earlier fix sat dead for ten days — code
+that exists, tests that pass, and nothing on the machine ever calling it.
+
+**What closed it.** The job is installed, enabled, and running on a thirty-minute
+tick under the desk's own account. Proof that it works is not a passing test —
+it is the live journal line from 13:30 UTC on 2026-09-14, where it found 0.3089
+of an uncovered Oracle share and placed protective coverage at the stop level
+recorded on that position's own buy. Runs after that report every held position
+fully covered, which is the state it is supposed to produce.
+
+**What is NOT fixed, and cannot be.** The sliver is still unprotected
+**overnight.** This broker accepts a fractional order only as a day-order
+(measured 2026-09-01, broker code 42210000), so each re-placement buys exactly
+one session and expires at the close. The only two cures are to stop trading
+fractions at all — which the owner declined on 2026-09-02, having ratified
+fractional trading deliberately — or to close out the fractional remainder of
+every position, which is a trading-behaviour change nobody has asked for. This
+is therefore a **standing accepted limitation of the broker, not an open
+question**, and it should not be re-filed as one. Worst case on an overnight gap
+is the whole value of the sliver.
+
+**What would catch the real failure next time.** The failure mode here was never
+the trading logic — it was the gap between "built and tested" and "running on
+the machine". The unit-drift report flags any service that exists in the repo
+but is not deployed, and it reported this one as `undeployed` daily for two
+days. That report was working; it was not being read. The lesson recorded for
+next time is that an item whose close condition is "it appears in the live timer
+list" must not be described as built, because built and running are different
+states and only one of them protects money.
+
+---
+
 ### 2026-09-14 — the model exam was still marking against a rule the desk deleted three days earlier, and the reason it was blocked was a contamination that never existed (PM test gate item 8, CLOSED)
 
 **In plain words:** we want to find out which AI model should run the seat
