@@ -1,10 +1,10 @@
 {
   "_blobs": {
     "sec_form4_pm_public_day_2026-09-14.json.gz": {
-      "bytes_uncompressed": 2450382,
-      "fetch": "SECForm4Provider.refresh() + the raw parsed-disclosure rows its cache (observations.json) held before fetch()'s own classify_transaction/cluster/admit pass -- src/data/smart_money.py:581 (refresh) and :688 (fetch). Real, credentialless SEC EDGAR full-text-search discovery, run market-wide (this provider's own discovery is not scoped to one ticker) against the live smart_money config (config/settings.yaml:1075-1096), including the live lookback_days=365 (config/settings.yaml:1088, src/config.py:1258). Four fields that fetch() itself assigns (signal_class, economic_role, freshness, admission_eligible) are stripped from this raw layer -- they carried only SmartMoneyObservation's schema DEFAULT values here (never classified, since that classification is fetch()'s job, run fresh at exam time), and the key ban in this module does not distinguish a default from a real one, so they are removed rather than asserted as raw.",
+      "bytes_uncompressed": 2655678,
+      "fetch": "SECForm4Provider.refresh() + the raw parsed-disclosure rows its cache (observations.json) held before fetch()'s own classify_transaction/cluster/admit pass -- src/data/smart_money.py:581 (refresh) and :688 (fetch). Real, credentialless SEC EDGAR full-text-search discovery, run market-wide (this provider's own discovery is not scoped to one ticker) against the live smart_money config (config/settings.yaml:1075-1096), including the live lookback_days=365 (config/settings.yaml:1088, src/config.py:1258). Rows still carry SmartMoneyObservation's own unclassified schema defaults for signal_class / economic_role / freshness / admission_eligible -- fetch() overwrites all four for every row regardless (see :688-:744), so the stored value never matters; three of the four have no default and cannot be stripped without breaking reconstruction. This blob is decompressed content, not part of the manifest JSON `fixture_policy.check_fixture` walks for forbidden keys, so no policy exemption is needed.",
       "fetched_on": "2026-09-14",
-      "sha256": "666b96117b5b027b4ba6d687002b777944502c7f6642d7179a29149caad29d08",
+      "sha256": "20a95260d13515ff80e4781120b075609619a075c6bf47ee6840fbff5372600d",
       "source": "https://efts.sec.gov/"
     }
   },
