@@ -1,0 +1,46 @@
+{
+ "_provenance": {
+  "note": "Raw public facts only, fetched fresh from SEC EDGAR. Nothing here was read from the desk. The filing text shown to the model and the STRUCTURED FINANCIAL FACTS block are recomputed at exam time by today's EarningsDataProvider._extract_text / _fetch_xbrl_raw.",
+  "sections": {
+   "filing": {
+    "source": "https://data.sec.gov/submissions/CIK0001835632.json",
+    "fetched_on": "2026-09-14",
+    "fetch": "src.data.earnings.EarningsDataProvider._get_cik + submissions JSON"
+   }
+  }
+ },
+ "_exam": {
+  "session_date": "2026-08-31",
+  "why_this_filing": "A real 10-Q filed inside the earnings provider's 45-day lookback of the chosen session; chosen for having both readable statements and XBRL facts.",
+  "upstream_inputs": [
+   {
+    "input": "prior analysis of this symbol (earnings seat's own earlier output)",
+    "status": "NOT SUPPLIED \u2014 an agent output, not filled. The exam runs the no-prior configuration a newly covered symbol gets in production (src/agents/earnings_analyst.py _analyze_new reads none)."
+   }
+  ]
+ },
+ "_blobs": {
+  "sec_mrvl_10q_2026-08-28.htm.gz": {
+   "sha256": "14805c63be5f70a0166ad415d0fc5d04b72ca4a5edec2ded5c837f30b20c0c8e",
+   "source": "https://www.sec.gov/Archives/edgar/data/1835632/000183563226000025/mrvl-20260801.htm",
+   "fetched_on": "2026-09-14",
+   "fetch": "src.data.earnings.EarningsDataProvider._download_filing",
+   "bytes_uncompressed": 2026443
+  },
+  "sec_mrvl_companyfacts.json.gz": {
+   "sha256": "58833ba296a7890f568e06e35c969917720a72c5a0107fa39e9f33dd17969813",
+   "source": "https://data.sec.gov/api/xbrl/companyfacts/CIK0001835632.json",
+   "fetched_on": "2026-09-14",
+   "fetch": "src.data.earnings.EarningsDataProvider._sec_get (the URL _fetch_xbrl_raw reads)",
+   "bytes_uncompressed": 1329277
+  }
+ },
+ "filing": {
+  "symbol": "MRVL",
+  "cik": "1835632",
+  "form_type": "10-Q",
+  "filing_date": "2026-08-28",
+  "accession_number": "0001835632-26-000025",
+  "primary_doc": "mrvl-20260801.htm"
+ }
+}

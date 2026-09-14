@@ -1,0 +1,56 @@
+{
+ "_provenance": {
+  "note": "Raw public facts only: completed daily bars from yfinance (1.6.0). Indicators, structural levels, market context and the prefilter are recomputed at exam time by today's code.",
+  "sections": {
+   "symbols": {
+    "source": "yfinance",
+    "fetched_on": "2026-09-14",
+    "fetch": "yfinance.download per symbol (see _blobs)"
+   }
+  }
+ },
+ "_exam": {
+  "session_date": "2026-08-31",
+  "bars_end": "2026-08-28",
+  "lookback_days": 1800,
+  "why_these_symbols": "SPY (the builder's relative-strength benchmark) plus six liquid names across sectors. Production would pass the prefilter survivors of a 101-symbol universe.",
+  "upstream_inputs": [
+   {
+    "input": "previous macro regime and equity outlook (macro seat output)",
+    "status": "MISSING \u2014 production always passes it (src/pipeline_stages.py:3052)."
+   },
+   {
+    "input": "previous tech ratings per symbol (tech seat's own output)",
+    "status": "MISSING \u2014 production passes one for every symbol rated before."
+   }
+  ],
+  "missing_raw_facts": [
+   {
+    "input": "valuation multiples as of the session date",
+    "status": "yfinance serves them as of TODAY only; no free as-of source is wired."
+   },
+   {
+    "input": "intraday snapshot at the ~09:33 ET morning run",
+    "status": "the live run reads a broker snapshot; none is fetched here."
+   }
+  ]
+ },
+ "_blobs": {
+  "yf_daily_bars_2026-08-28.json.gz": {
+   "sha256": "04ae2e291e5daeacc23bbb7516121882f1d2ccffe4c620a4183e77bb3d86dceb",
+   "source": "yfinance",
+   "fetched_on": "2026-09-14",
+   "fetch": "yfinance.download(symbol, start=2021-09-26, end=2026-08-29) \u2014 the call src.data.market.MarketDataProvider.get_ohlcv makes (default auto_adjust)",
+   "bytes_uncompressed": 1339820
+  }
+ },
+ "symbols": [
+  "CAT",
+  "JPM",
+  "MU",
+  "NVDA",
+  "SPY",
+  "UNH",
+  "XLE"
+ ]
+}

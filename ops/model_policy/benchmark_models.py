@@ -52,7 +52,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ops.model_policy.scenarios import (  # noqa: E402
-    Check, DEFAULT_SCENARIOS, Scenario, SCENARIOS, SCENARIOS_BY_KEY,
+    Check, DEFAULT_SCENARIOS, Scenario, SCENARIOS, SCENARIOS_BY_KEY, refusal_reason,
 )
 
 ONECLI_DASHBOARD = "http://127.0.0.1:10254/api/container-config"
@@ -543,6 +543,12 @@ def _extract_picks(output) -> list[str]:
 
 
 def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) -> Trial:
+    # Backstop for any caller that bypasses main(): a refused exam never
+    # reaches a model.
+    why = refusal_reason(scenario)
+    if why:
+        from ops.model_policy.fixture_policy import FixtureQuarantined
+        raise FixtureQuarantined(why)
     agent_cls = _load_agent_cls(scenario.agent_path)
     agent = agent_cls(
         api_key=PLACEHOLDER_KEY,
@@ -935,6 +941,27 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--budget-usd is required for any run that calls a model "
                  "(not needed with --report)")
 
+    # Owner rule 2026-09-14 (ops/model_policy/fixture_policy.py): an exam built
+    # on a quarantined fixture, or one that cannot be a valid test of the live
+    # seat, is refused here — before .env, gateway wiring, pricing or any paid
+    # call. Naming a refused scenario explicitly is an error; the default
+    # sweep drops refused ones and says which, so it can never shrink silently.
+    requested = (
+        [SCENARIOS_BY_KEY[k] for k in args.scenario]
+        if args.scenario else DEFAULT_SCENARIOS
+    )
+    refusals = {s.key: refusal_reason(s) for s in requested}
+    refused = {k: why for k, why in refusals.items() if why}
+    for why in refused.values():
+        print(f"REFUSED {why}", file=sys.stderr)
+    if refused and args.scenario:
+        print("Refusing to run: every scenario named with --scenario must be "
+              "admissible. See ops/model_policy/README.md.", file=sys.stderr)
+        return 2
+    if not [s for s in requested if s.key not in refused]:
+        print("Refusing to run: no admissible scenario selected.", file=sys.stderr)
+        return 2
+
     if load_env_if_keys_missing():
         print("loaded .env (placeholder keys; values not shown)", file=sys.stderr)
 
@@ -951,10 +978,7 @@ def main(argv: list[str] | None = None) -> int:
     # DEFAULT_SCENARIOS, not SCENARIOS: the production-scale tech batch is
     # opt-in, because running it against every candidate costs far more
     # than it informs. Name it explicitly for the finalists.
-    scenarios = (
-        [SCENARIOS_BY_KEY[k] for k in args.scenario]
-        if args.scenario else DEFAULT_SCENARIOS
-    )
+    scenarios = [s for s in requested if s.key not in refused]
     total = len(models) * len(scenarios) * args.repeats
 
     pricing = openrouter_pricing()
