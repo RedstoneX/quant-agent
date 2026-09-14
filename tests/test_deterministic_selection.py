@@ -44,6 +44,31 @@ def test_constants_match_production_config():
     assert MAX_POSITION_RISK_PCT == float(_SETTINGS["risk"]["max_position_risk_pct"])
 
 
+def test_conviction_bands_match_the_live_prompt():
+    """The audit sized its replay off bands the desk stopped using.
+
+    `CONVICTION_BANDS` said high 1.5-3.0 / medium 1.0-2.0 from before
+    2026-09-10, while `config/prompts/portfolio_manager.md` has said
+    2.0-4.0 / 1.0-2.5 since — so both the replay's `max_risk_pct` and the
+    `CONVICTION_SCORE` ranking signal read off band tops that no longer
+    existed. Found 2026-09-14. Parsing the sheet rather than pinning a
+    second copy of the numbers is the only version of this that cannot rot:
+    if the wording moves so these lines stop matching, this fails closed.
+    """
+    prompt = (
+        Path(__file__).resolve().parent.parent
+        / "config" / "prompts" / "portfolio_manager.md"
+    ).read_text()
+    pattern = r"^-\s+(High|Moderate|Low) conviction[^:]*:\s*([\d.]+)-([\d.]+)%"
+    found = {
+        {"High": "high", "Moderate": "medium", "Low": "low"}[m.group(1)]:
+            (float(m.group(2)), float(m.group(3)))
+        for m in re.finditer(pattern, prompt, re.M)
+    }
+    assert found == {"high": (2.0, 4.0), "medium": (1.0, 2.5), "low": (0.5, 1.0)}
+    assert CONVICTION_BANDS == found
+
+
 def test_catalyst_parsing_reads_only_the_arrow_list():
     text = (
         "- [2026-08-27] Nvidia revenue forecast of 70% growth → NVDA, SMH, AMD\n"
@@ -86,7 +111,15 @@ def test_rules_admit_twentyfive_names_and_rank_none_of_them(rows):
     # eligible names were already asking under the old rung. That is itself
     # the measured answer to "how much does this change cost": on the one
     # day with good records, almost nothing in aggregate.
-    assert summary["total_max_risk_pct"] == 47.24
+    #
+    # 47.24 -> 56.49 on 2026-09-14: `CONVICTION_BANDS` was still the pre-
+    # 2026-09-10 sheet (high 1.5-3.0 / medium 1.0-2.0) and is now the live one
+    # (2.0-4.0 / 1.0-2.5). The eligible SET does not move — conviction only
+    # sizes — and neither does the ranking below, because min-max
+    # normalisation is unchanged by an affine rescale of the encoding. What
+    # moves is how far past the budget the admitted names ask, which makes the
+    # finding stronger, not different.
+    assert summary["total_max_risk_pct"] == 56.49
     assert summary["total_max_risk_pct"] > 25.0
     assert summary["rules_name_a_single_pick"] is False
 
@@ -101,8 +134,9 @@ def test_subfloor_catalyst_door_is_reachable_only_by_news_covered_names(rows):
     # in the front. On this day that leaves MSFT and TSM; NVDA, the name this
     # whole line of work was written about, no longer needs the door.
     assert by_door == {"MSFT", "TSM"}
-    # Both famous-and-weak names the benchmark's `familiarity_bias` check
-    # penalises are still ADMITTED by the desk's own rules.
+    # Both mega-caps the benchmark's `familiarity_bias` check USED to
+    # penalise are ADMITTED by the desk's own rules — which is why that check
+    # is a weight-0 diagnostic as of 2026-09-14 rather than a pass mark.
     for symbol in ("NVDA", "MSFT"):
         row = next(r for r in rows if r["symbol"] == symbol)
         assert row["eligible"] is True
@@ -110,9 +144,11 @@ def test_subfloor_catalyst_door_is_reachable_only_by_news_covered_names(rows):
 
 
 def test_three_of_the_five_qualified_shorts_are_refused_by_the_net_rule(rows):
-    """GEV/UNH/NEE clear the R/R floor and are still refused deterministically:
-    the §9.4 signed score nets a bullish earnings stance off the bearish
-    technical one. The benchmark faults the model for passing them over."""
+    """GEV/UNH/NEE clear the retired 1.5 floor and are still refused
+    deterministically: the §9.4 signed score nets a bullish earnings stance
+    off the bearish technical one. The benchmark USED to fault a model for
+    passing them over — it credited picks production would never place. Fixed
+    2026-09-14: `takes_an_eligible_short` counts only NKE and FLNC."""
     refused = {}
     for symbol in ("GEV", "UNH", "NEE"):
         row = next(r for r in rows if r["symbol"] == symbol)
@@ -121,7 +157,7 @@ def test_three_of_the_five_qualified_shorts_are_refused_by_the_net_rule(rows):
         assert any(b.startswith("R5") for b in row["blocked_by"]), row["blocked_by"]
         refused[symbol] = row["net_sources"]
     assert refused == {"GEV": -1, "UNH": 0, "NEE": 0}
-    # NKE and FLNC survive, so `takes_a_qualified_short` remains satisfiable.
+    # NKE and FLNC survive, so `takes_an_eligible_short` remains satisfiable.
     for symbol in ("NKE", "FLNC"):
         assert next(r for r in rows if r["symbol"] == symbol)["eligible"] is True
 
@@ -147,7 +183,10 @@ def test_block_reason_census(rows):
 def test_conviction_score_is_read_off_the_desks_own_bands():
     """No invented encoding: the ordinal comes from CONVICTION_BANDS."""
     assert CONVICTION_SCORE == {name: band[1] for name, band in CONVICTION_BANDS.items()}
-    assert CONVICTION_SCORE == {"high": 3.0, "medium": 2.0, "low": 1.0}
+    # The live sheet's band tops as of 2026-09-10, not a second copy of them:
+    # `test_conviction_bands_match_the_live_prompt` above is what ties these
+    # to the prompt, and this only asserts the encoding is the band tops.
+    assert CONVICTION_SCORE == {"high": 4.0, "medium": 2.5, "low": 1.0}
 
 
 def test_ranking_uses_three_independent_signals_at_equal_weight():

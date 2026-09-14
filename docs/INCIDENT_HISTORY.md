@@ -22,6 +22,108 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the model exam was still marking against a rule the desk deleted three days earlier, and the reason it was blocked was a contamination that never existed (PM test gate item 8, CLOSED)
+
+**In plain words:** we want to find out which AI model should run the seat
+that actually picks the trades. That test was blocked on the board by a
+worry that its input data might be dirty. The worry was groundless — but the
+test really was broken, for a completely different reason nobody had written
+down: the exam paper still had the old answer key. On 2026-09-11 the owner
+retired the rule that every trade must promise at least 1.5 times as much
+reward as risk. The exam went on marking models on how well they obeyed it.
+Running the comparison in that state would have paid real money to discover
+which model is best at following a deleted rule.
+
+**What was actually wrong, verified rather than assumed.**
+
+* **Four of the six marks — 0.80 of the score out of 1.00 — hung off that
+  retired number.** Only "did it produce valid output" and "did it do
+  anything at all", 0.10 each, were clean. A first pass at this called it
+  "roughly half"; counting the weights rather than eyeballing them is what
+  corrected it, and the same pass corrected "16 prompt changes since" to 25
+  commits.
+* On the one real trading day the exam is built from, that definition is
+  wrong three separate ways. Twelve of the 38 tradeable candidates are
+  breakout setups, which the desk now says carry no reward-to-risk judgement
+  at all — including NVDA, the single name this whole line of work was
+  written about. Three of the five "qualified shorts" the exam rewarded are
+  ones the desk refuses outright on a different rule entirely, so it was
+  handing out marks for trades the desk would never place. And every famous
+  mega-cap the exam penalised as "weak" is in fact a name the desk's own
+  rules admit.
+* A third mark, "every thin pick names a catalyst", was grading a
+  requirement that no longer exists: a catalyst is now required only when a
+  trade's payoff cannot be measured at all, not when it is merely thin.
+* **The sharpest single case: SLB.** Ten of the twelve breakout candidates
+  sit below the retired 1.5, SLB among them at 1.28 — and `docs/OUTCOME.md`
+  names SLB that exact morning as the flagship trade the desk WRONGLY
+  REFUSED, because a 3x-ATR stop makes 1.29 the best ratio arithmetic allows
+  over the hold. The exam was set to mark a model DOWN for making the trade
+  the desk's own doctrine says it should have made.
+
+**What the fix does.** The exam no longer holds any opinion of its own about
+what makes a candidate qualified. It asks the desk's own admission rules —
+the same plain-Python replay of them that already shadows production — and
+scores the model on whether it picked names the desk would actually have
+admitted. On this day that is 25 of the 59 names read, of which exactly two
+are shorts. Nothing in the exam is a number anyone typed; every threshold it
+still uses is imported from the live configuration.
+
+**Two marks were deleted rather than reworded**, which is the part worth
+remembering: when a rule is gone, a check that quietly redefines itself to
+survive is worse than no check. The catalyst-discipline mark is gone
+outright. The familiarity mark — "did it reach for the mega-cap it knows" —
+is kept as a REPORTED NUMBER worth nothing, because the three mega-caps in
+question are all names the desk permits, and failing a model for taking a
+permitted trade would be inventing a rule the desk does not have.
+
+**The blocking claim itself was false, and that is the second lesson.** The
+item said past benchmark runs "may be contaminated by bad seat data". They
+cannot be. Every input the exam uses is frozen on disk — hand-built
+scenarios plus one verbatim copy of a real morning session — and no live
+analyst is called anywhere in the harness, so fixing a seat cannot reach
+backwards into a saved file. The one real fixture was not dirty either:
+every seat returned success on that run. The item had sat on the board as a
+blocker on a premise that was impossible by construction, while the actual
+blocker sat in the code unwritten-down. Nobody had checked; the wording
+sounded plausible next to a real spend-baseline contamination that did
+exist, and the resemblance was doing the work of evidence.
+
+**What this exam still cannot tell us, said plainly.** The rule that replaced
+the floor reads a reward-to-risk worked out from the desk's own measured
+price levels, not from the analyst's guessed target. **Not one of the 59 rows
+in the frozen fixture carries those levels** — the field did not exist when
+the copy was taken — so that number cannot be computed for any name on it,
+and no substitute would be the real one. It does not stop the exam working:
+nothing on that day is refused by the payoff rule that is not already refused
+for having no view at all, so admission is decided by coverage, rating,
+eligibility and how many analysts agree, none of which need a ratio. But it
+does mean the exam cannot say whether a model reads payoff geometry the way
+the desk now does, and nobody should claim it can. A day that WOULD support
+that question already exists in the archive — 2026-09-02, where 63 of 64
+readings carry the levels and every one of the 34 tradeable candidates has a
+computable structural ratio. Capturing it as a second fixture is unstarted
+work.
+
+**A stale number found in the same sweep, unrelated but worth the line.** The
+plain-Python replay of the desk's rules was still sizing positions off the
+conviction bands the trade-picking sheet used BEFORE 2026-09-10 (high
+1.5-3.0% rather than the live 2.0-4.0%). Nobody had named it. It changes no
+decision about which names are admitted — conviction only sizes — but it did
+mean the audit understated how far past the risk budget the admitted names
+collectively ask: 47.24% of equity, not the 56.49% they really ask. The bands
+are now parsed out of the live sheet by a test, so they cannot drift again.
+
+**What would catch it next time.** The grader's checks are now pinned by a
+test that fails if any check name reintroduces the retired floor, and the
+admitted set is asserted equal to the desk's own rule replay — so the exam
+can no longer grow a second opinion about what the desk admits without CI
+saying so. That is the mechanical version of the rule this desk keeps
+relearning: a benchmark that hardcodes a number is a copy of the number, and
+copies go stale silently.
+
+---
+
 ### 2026-09-14 — the two drawdown systems, set side by side at last: they do not contradict each other, but the shallowest alarm takes the most drastic action, and one of the three has been unable to see since the reset (board item 32, reconciliation half CLOSED)
 
 **In plain words:** the desk has two separate ways of noticing it is losing
