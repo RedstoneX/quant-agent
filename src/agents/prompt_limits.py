@@ -169,3 +169,64 @@ def load_risk_config_from_settings(path: str | Path):
             f"cannot be rendered without the settings the engine enforces",
         )
     return RiskConfig(**_walk_and_substitute(raw["risk"]))
+
+
+class LiveLimitPrompt:
+    """Mixin: this seat's standing sheet renders its limits from live config.
+
+    Two agents now brief their model with `{{risk.*}}` placeholders (the Risk
+    Manager, which AUDITS against the limits, and the Portfolio Manager, which
+    SIZES under them). The wiring is identical, so it lives here rather than
+    being copied — a copy of the loading rule is the same species of defect as
+    a copy of a limit's value.
+
+    A subclass supplies `_prompt_path` and `_fallback_prompt`; everything else
+    is provided.
+    """
+
+    #: Overridden by the subclass.
+    _prompt_path: Path
+    _fallback_prompt: str = "Respond with JSON."
+    #: Settings file used when the caller injects no config. The SAME file the
+    #: pipeline reads — a second read of one copy, not a second copy.
+    _settings_path: Path
+
+    def __init__(self, *args, risk_config=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._risk_config = risk_config
+        # COMMISSIONING RENDER. `system_prompt` is a lazy property read inside
+        # `BaseAgent.run`, i.e. mid-session, after the day's analysis budget
+        # has already been spent. Rendering once here moves a bad-placeholder
+        # failure to construction time, which is what lets this be described
+        # as a startup check. Cost is one file read.
+        self.assert_prompt_renders()
+
+    @property
+    def risk_config(self):
+        """The live risk settings this seat's briefing renders from.
+
+        `getattr`, not attribute access: several tests build an agent with
+        `__new__` to exercise message building without an LLM client, so
+        `__init__` never runs. Absent the attribute is the same case as
+        absent the config — load it.
+        """
+        if getattr(self, "_risk_config", None) is None:
+            self._risk_config = load_risk_config_from_settings(self._settings_path)
+        return self._risk_config
+
+    @property
+    def system_prompt(self) -> str:
+        if self._prompt_path.exists():
+            return render_prompt_limits(
+                self._prompt_path.read_text(), self.risk_config,
+            )
+        return self._fallback_prompt
+
+    def assert_prompt_renders(self) -> None:
+        """Render the standing sheet once and discard it, to surface a bad
+        placeholder now rather than in the middle of a trading session.
+
+        Separate from `__init__` so a commissioning script or a test can call
+        it against a candidate config without building an agent.
+        """
+        _ = self.system_prompt

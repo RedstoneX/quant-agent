@@ -3115,3 +3115,39 @@ def test_morning_research_stage_records_bars_coverage_even_when_tech_analyst_cra
         assert payload["resolved"] == 0
     finally:
         db.close()
+
+
+# --------------------------------------------------------------------------
+# retired board item 49 — the ranking handed to the constructor.
+# --------------------------------------------------------------------------
+
+def test_session_candidate_ranking_reads_the_pms_own_order():
+    from types import SimpleNamespace
+
+    from src.pipeline_stages import _session_candidate_ranking
+
+    pipeline = SimpleNamespace(portfolio_manager=SimpleNamespace(
+        last_candidate_ranking=[
+            SimpleNamespace(symbol="nvda"), SimpleNamespace(symbol=" amd "),
+        ],
+    ))
+    assert _session_candidate_ranking(pipeline) == ["NVDA", "AMD"]
+
+
+def test_session_candidate_ranking_is_none_not_empty_when_there_is_no_ranking():
+    """An EMPTY ranking and an ABSENT one mean the same thing to the
+    allocator — fall back to its pre-decision ordering. Returning `[]` would
+    be indistinguishable from "every candidate ranked last"."""
+    from types import SimpleNamespace
+
+    from src.pipeline_stages import _session_candidate_ranking
+
+    assert _session_candidate_ranking(SimpleNamespace()) is None
+    assert _session_candidate_ranking(
+        SimpleNamespace(portfolio_manager=SimpleNamespace(last_candidate_ranking=[]))
+    ) is None
+    assert _session_candidate_ranking(
+        SimpleNamespace(portfolio_manager=SimpleNamespace(
+            last_candidate_ranking=[SimpleNamespace(symbol="  ")],
+        ))
+    ) is None
