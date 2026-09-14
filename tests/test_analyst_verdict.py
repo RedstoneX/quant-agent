@@ -27,6 +27,11 @@ from pydantic import ValidationError
 from ops.model_policy import scenarios as S
 from ops.model_policy.deterministic_selection import evaluate
 from src.agents.portfolio_manager import PortfolioManagerAgent
+
+# The level-less 2026-09-01 day this audit's numbers were measured on.
+# `pm_selection` itself moved to run-bba4d4f3 on 2026-09-14; this file
+# stays pinned to the day its write-up describes.
+_LEVEL_LESS = S.load_frozen_selection(S.LEVEL_LESS_SELECTION_FIXTURE)
 from src.models import (
     NO_STATED_STRENGTH, RATING_DIRECTION, RATING_MAGNITUDE, AnalystVerdict,
     EarningsAnalysis,
@@ -239,9 +244,9 @@ def test_the_production_shaped_tech_response_populates_the_verdict():
 
 def test_every_real_technical_read_on_the_fixture_day_maps_to_a_valid_verdict():
     """59 production reads from run-64290730 — none may fail the shape."""
-    verdicts = [a.to_verdict() for a in S._SELECTION_ANALYSES]
-    assert len(verdicts) == len(S._SELECTION_ANALYSES)
-    for a, v in zip(S._SELECTION_ANALYSES, verdicts):
+    verdicts = [a.to_verdict() for a in _LEVEL_LESS.analyses]
+    assert len(verdicts) == len(_LEVEL_LESS.analyses)
+    for a, v in zip(_LEVEL_LESS.analyses, verdicts):
         assert v.direction == RATING_DIRECTION[a.rating]
         assert v.conviction == a.conviction
 
@@ -981,12 +986,12 @@ def test_production_eligibility_matches_the_item_18_audit_on_the_real_day():
     """The audit script (`ops/model_policy/deterministic_selection.py`) and
     the production port must admit the SAME twelve names on run-64290730.
     If one moves and the other does not, this fails."""
-    sel = S._SELECTION
-    rows = evaluate(sel, S._SELECTION_ANALYSES, S._SELECTION_POSITIONS, S._SELECTION_NEWS)
+    sel = _LEVEL_LESS.raw
+    rows = evaluate(sel, _LEVEL_LESS.analyses, _LEVEL_LESS.positions, _LEVEL_LESS.news)
     audit = sorted(r["symbol"] for r in rows if r["eligible"])
     registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=S._SELECTION_ANALYSES, positions=S._SELECTION_POSITIONS,
-        news_intel=S._SELECTION_NEWS, earnings_analyses=sel["earnings_analyses"],
+        analyses=_LEVEL_LESS.analyses, positions=_LEVEL_LESS.positions,
+        news_intel=_LEVEL_LESS.news, earnings_analyses=sel["earnings_analyses"],
         macro_analysis=sel["macro_analysis"], smart_money_findings=[],
         symbol_sectors={},
     )
@@ -994,7 +999,7 @@ def test_production_eligibility_matches_the_item_18_audit_on_the_real_day():
         earnings_analyses=sel["earnings_analyses"],
     )
     ranked, blocked = PortfolioManagerAgent.rank_candidates(
-        analyses=S._SELECTION_ANALYSES, evidence_registry=registry,
+        analyses=_LEVEL_LESS.analyses, evidence_registry=registry,
         stale_sources=stale,
         allowed_buy_symbols=set(sel["allowed_buy_symbols"]) | set(sel["transient_admitted_symbols"]),
         active_state_changes=sel["memory"]["active_state_changes"], asof=SESSION,

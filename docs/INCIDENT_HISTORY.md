@@ -22,6 +22,53 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the model exam's only real trading day could not measure the one number the desk now admits trades on; it has been swapped for a day that can (WORK.md item 72, CLOSED)
+
+**In plain words:** the test we use to compare models for the trade-picking
+seat was built from a morning where the desk's price-level data had not been
+recorded. The desk decides which ideas are even allowed by measuring
+reward against risk from those levels, so on that morning it could measure
+nothing — and the test was quietly calling 13 names "allowed" that the real
+desk would have refused. The test now uses the next morning, where the level
+data exists for every name that matters.
+
+**What was wrong.** `pm_selection` replayed `run-64290730` (2026-09-01). None
+of its 59 analysis rows carried `computed_levels`, so the structural
+reward:risk that the live admission gate reads was None for every name.
+The scenario's own notes said admission "does not depend on it". That was
+true only of the grader's shadow of the rules, which reads the analyst's own
+ratio. **Measured 2026-09-14:** the live `candidate_eligibility` handed the
+real (all-None) structural ratios admits **12** names on that file, and the
+grader admitted **25**. So nearly half the names the exam credited as
+admitted were ones production would refuse as unmeasurable.
+
+**What replaced it.** Production `run-bba4d4f3` (2026-09-02 13:31 UTC),
+captured the same way: the read-only Mission Control API's per-symbol rows,
+plus the run's own recorded prompt for account, memory and insights. The
+board item's recorded counts were checked, not copied, and held:
+64 analyses, **63 with computed levels** (the one without, MRVL, is rated
+neutral), **34 actionable, all 34 with a computable structural ratio**
+(14 breakout / 20 range). On this day the live gate with the real ratios and
+the grader's shadow admit the identical 25 names, one of them a short
+(FLNC). The live PM proposed nine targets, the risk seat approved them, and
+the funnel still recorded zero orders; why is not established by the pull.
+
+**What was ruled out.** Tuning anything to make the new day pass: expected
+answers come only from the existing rules, and nothing was hand-picked. The
+three older audits that pin their write-ups to 2026-09-01 were left on that
+day rather than silently re-derived, which is the only reason the old file
+is still in the repo.
+
+**A stale number found on the way.** The benchmark notes said the rendered
+prompt is 194,173 characters. That was measured on 2026-09-01 and the
+renderer has changed since: the old fixture renders at 87,119 characters
+today and the new one at 87,247 (measured through the live renderer).
+
+**What catches it next time.** The scenario now refuses to import if the
+fixture has fewer than 63 rows with levels or any actionable name without a
+structural ratio, and a test fails if the live gate and the grader ever
+disagree on the admitted set.
+
 ### 2026-09-14 — the 2026-09-11 audit's unsourced numbers, checked one by one: all still in force, most owned by nothing
 
 **In one line.** An audit three days earlier listed about twenty numbers that decide whether and how much the desk trades and have no source behind them. Each was re-checked against the live code. None had been fixed. Two are already on the board; the rest are owned by nothing.

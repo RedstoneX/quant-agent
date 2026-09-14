@@ -1,5 +1,6 @@
 """The desk's OWN stated selection rules, written as plain Python and run
-against the frozen run-64290730 fixture. **No LLM call anywhere in here.**
+against a frozen `pm_selection` fixture (run-bba4d4f3 since 2026-09-14; the
+item 18 audit tests still pin run-64290730). **No LLM call anywhere in here.**
 
 Why this exists (docs/WORK.md item 18b, the owner's question): if the rules
 the desk already states are complete, they determine what to buy and the
@@ -133,6 +134,13 @@ def evaluate(selection: dict, analyses, positions, news_intel) -> list[dict]:
     # selection.py` and the PR that added this field for how newer
     # production runs (which do carry `computed_levels`) were used to
     # validate the real gate end to end.
+    # 2026-09-14 (docs/WORK.md item 72): the level-less day is no longer what
+    # `pm_selection` grades. On its replacement, run-bba4d4f3, every
+    # actionable name has a non-None `rr_real`, and production
+    # `candidate_eligibility` handed those ratios admits exactly the set this
+    # function does (pinned in tests/test_pm_selection_scenario.py). On
+    # run-64290730 it does NOT — 12 against 25 — which is why that day was
+    # retired from grading.
     constructor = PortfolioConstructor()
 
     rows: list[dict] = []

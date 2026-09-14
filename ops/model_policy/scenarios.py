@@ -45,6 +45,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from src.models import (
@@ -57,6 +58,7 @@ from src.models import (
     TechnicalIndicators,
     TradeDecision,
 )
+from src.portfolio_constructor import PortfolioConstructor
 from src.risk.constants import reward_risk_floor_applies
 from src.risk.rules import RiskViolation
 
@@ -670,91 +672,75 @@ def _pm_production_grade(decision: PortfolioDecision | None) -> list[Check]:
 # **REBUILT 2026-09-14 (docs/WORK.md PM-gate item 8).** Every check here used
 # to key off `analyst reward/risk >= 1.5`. That floor was retired on
 # 2026-09-11 (item 1(d)) and this scenario went on grading against it, so it
-# was scoring obedience to a deleted rule. Three of its consequences on this
-# exact fixture, all measured, none hypothetical:
-#   * NVDA is a `breakout`. The PM prompt now forbids any reward:risk
-#     judgement on it — so the old `familiarity_bias` check faulted a model
-#     for a ratio the desk tells it not to look at.
-#   * Three of the five "qualified shorts" it rewarded (GEV, UNH, NEE) are
-#     REFUSED deterministically by the §9.4 net-evidence rule. The old check
-#     credited picks production would never have placed.
-#   * Two of the eight "qualified" names (XLE 1.67, PFE 1.50) are breakouts,
-#     whose ratio the desk no longer computes for gating at all — as are 12
-#     of the 38 actionable candidates, every one of them a long.
+# was scoring obedience to a deleted rule. The admitted set now comes from
+# the desk's own current admission rules instead.
+#
+# **RE-POINTED 2026-09-14 (docs/WORK.md item 72, CLOSED).** The day this
+# scenario first replayed, `run-64290730` (2026-09-01), carried no
+# `computed_levels` on any of its 59 rows, so the structural reward:risk the
+# live gate reads was None for every name. Measured on that file: the live
+# `candidate_eligibility`, handed those real (all-None) ratios, admits 12
+# names — this grader admitted 25, so 13 of its "admitted" names were ones
+# production would refuse as unmeasurable. The earlier note here that "the
+# admitted set does not depend on it" held only for the shadow in
+# `deterministic_selection`, which reads the analyst's ratio. That file is
+# kept only for three older audits (`LEVEL_LESS_SELECTION_FIXTURE`).
 #
 # WHY IT IS NOT SYNTHETIC. The first draft of this scenario hand-built ~30
 # candidates in tiers with planted "traps". That measures whether a model can
 # find a pattern the author planted, which is not the same thing as reading
 # evidence — real signals carry real ambiguity, invented ones carry the
 # author's assumptions. The fixture is therefore a verbatim pull of
-# `run-64290730`, the 2026-09-01 morning session, from the read-only Mission
-# Control API. See the `_provenance` block inside the fixture for exactly
-# what was pulled, and its `fidelity` block for what is NOT reproducible
-# offline. That block is measured, not asserted: rendering this fixture
-# through `build_user_message` and diffing it against the run's recorded
-# prompt gives 18 of 22 shared sections byte-identical at 91.4% of the live
-# character count. Three sections are absent because they are computed from
-# the production DB or fetched at runtime (PMFacts, portfolio heat, company
-# profiles); the smart-money findings are absent because reconstructing them
-# would have meant inventing SEC source URLs. Where an absence changes what
-# a model sees, the fidelity block says so — the one that matters here is
-# that Energy reads as macro-bullish rather than the macro-neutral the live
-# session showed.
+# `run-bba4d4f3`, the 2026-09-02 13:31 UTC session, from the read-only
+# Mission Control API: every analysis row is the API's `tech` payload for
+# that symbol, in the order the run's own recorded prompt presented them;
+# earnings are the API's per-symbol payloads; macro and news are those seats'
+# recorded responses; account, positions, memory layers, evening insights and
+# the BUY-eligibility universe are read out of the run's recorded
+# portfolio_manager prompt. See the fixture's `_provenance` block, whose
+# `fidelity` figures are measured, not asserted: rendered through today's
+# `build_user_message`, 12 of 22 shared sections are byte-identical and all 64
+# technical rows match the recorded prompt's rating, conviction, entry, stop
+# and target. The rest differ because the renderer changed after the run, or
+# because the section is computed live (PMFacts, portfolio heat, company
+# profiles, proposal conversion) or would need SEC source URLs the payloads do
+# not carry (smart-money findings — so AUGO, MAIR and RSG lose that one
+# source in the registry here).
 #
-# WHY THAT RUN. It is the desk's own documented failure. 82 candidates
-# entered the funnel, 59 got a technical read, 38 were actionable, and the
-# session placed ZERO trades. `bearish_hedge_considered` was false: fifteen
-# validated bearish candidates were on the table, two of them admitted by the
-# desk's own rules end to end, and not one short was proposed on a day the
-# market fell. The live PM emitted three long targets (XLE, CHPX, NVDA), two
-# reached a proposed order, none executed, and the risk manager rejected the
-# plan for `rr_fail` — a refusal reason the desk has since deleted. Matching
-# what the live desk did is therefore FAILURE, not success, and nothing below
-# grades against its output.
+# THE DAY, measured. 91 candidates considered, 64 technical reads, 34
+# actionable (14 breakout / 20 range), 10 of them bearish. **63 of the 64
+# rows carry `computed_levels`** (the one without is MRVL, rated neutral), and
+# `PortfolioConstructor.real_reward_risk_preview` returns a ratio for every
+# one of the 34 actionable names. The live PM proposed nine targets — eight
+# longs and an UNH short — and the risk seat approved them (category
+# `rr_fail`, one allocation halved), yet the funnel recorded zero proposed
+# orders, zero fills and `decision_state=no_proposal`. Why an approved plan
+# produced no order is NOT established by this pull. Nothing below grades
+# against the live output.
 #
 # WHAT "QUALIFIED" MEANS NOW, AND WHY IT IS NOT A NUMBER THIS FILE CHOOSES.
 # The admitted set is whatever `deterministic_selection.evaluate` admits: the
 # desk's own stated rules — current technical coverage, an actionable rating,
 # BUY-eligibility for a long, a MEASURABLE payoff (its size no longer gates)
 # or a dated catalyst row, and a net independent source score of at least 1
-# so the §9.4 agreement ceiling leaves a rung to stand on. On this fixture
-# that admits 25 of the 59 read names, of which exactly 2 are shorts (NKE
-# 2.28 and FLNC 1.84, which are also the day's two best-paying shorts). Every
-# one of those gates exists in production today and every refusal below is
-# one production would actually make. Nothing here is tuned, and this file
-# introduces no threshold of its own.
+# so the §9.4 agreement ceiling leaves a rung to stand on. On this fixture it
+# admits 25 of the 64 read names, exactly one of them a short (FLNC,
+# sell/medium, net +1), and production `candidate_eligibility` handed the
+# real structural ratios admits the IDENTICAL 25
+# (tests/test_pm_selection_scenario.py pins that). The other nine bearish
+# names, the live PM's UNH short among them, are refused by the net-evidence
+# rule. Nothing here is tuned, and this file introduces no threshold of its
+# own.
 #
-# WHAT THIS FIXTURE CANNOT MEASURE, STATED RATHER THAN PAPERED OVER.
-# The rule that replaced the floor reads a STRUCTURAL reward:risk — derived
-# from the desk's own computed levels, not from the analyst's guessed target.
-# **Zero of this fixture's 59 rows carry `computed_levels`** (the key is
-# absent entirely; the field post-dates the pull), so
-# `PortfolioConstructor.real_reward_risk_preview` returns None for every name
-# on it. The quantity the current rule reads simply is not in this file, and
-# no constant swapped in for it would be the real one. Two consequences, and
-# the first is why this scenario is still usable:
-#   * The admitted set does NOT depend on it. Measured: not one name on this
-#     fixture is blocked by the payoff rule that is not already blocked for a
-#     neutral rating. Admission here is decided by coverage, rating,
-#     BUY-eligibility and net evidence — none of which need a ratio.
-#   * Whether a model READS payoff geometry the way the desk now does is
-#     therefore NOT measured here, and must not be claimed from this scenario.
-#     Scoring that needs a fixture carrying `computed_levels` and
-#     `setup_type`. One exists in the archive — production `run-bba4d4f3`,
-#     2026-09-02, where 63 of 64 analyses carry computed levels and all 34
-#     actionable candidates have a computable structural ratio (14 breakout /
-#     20 range). It has not been captured as a fixture, and doing so is its
-#     own job, not this one.
-#
-# WHY IT STILL SEPARATES EVIDENCE FROM FAMILIARITY. Thirteen bearish names
-# the desk refuses, two it admits, and a live session that took neither — the
-# bearish gap is real and is keyed entirely off ratings and evidence, not off
-# any ratio. What is NOT gradeable any more is famousness: NVDA, AAPL and
-# MSFT are all ADMITTED by the desk's own rules (net evidence +3, +3, +2), and
-# NVDA is a breakout the prompt forbids judging on reward:risk at all. So
-# `familiarity_bias` survives as a weight-0 DIAGNOSTIC — the share is
-# reported on every run, and it scores nothing, because the desk has no rule
-# against picking a well-evidenced mega-cap and the score must not invent one.
+# WHY IT STILL SEPARATES EVIDENCE FROM FAMILIARITY. Nine bearish names the
+# desk refuses, one it admits, and a live plan that shorted a refused one. What
+# is NOT gradeable is famousness: of the five famous names with a read (AAPL,
+# GOOGL, MSFT, NVDA, SPY), AAPL, MSFT and NVDA are ADMITTED by the desk's own
+# rules, AAPL and NVDA on breakouts the prompt forbids judging on reward:risk
+# at all. So `familiarity_bias` survives as a weight-0 DIAGNOSTIC — the share
+# is reported on every run, and it scores nothing, because the desk has no
+# rule against picking a well-evidenced mega-cap and the score must not invent
+# one.
 #
 # THE CHECKS, and why they weigh what they weigh:
 #   parsed_and_grounded          0.10  survived the grounding validator
@@ -785,7 +771,17 @@ def _pm_production_grade(decision: PortfolioDecision | None) -> list[Check]:
 #     the same weight, not a renamed one: it asks whether the desk would have
 #     ADMITTED each pick, which is a rule, not a ratio.
 
-_SELECTION_FIXTURE =Path(__file__).resolve().parent / "fixtures" / "run_64290730_pm_input.json"
+_FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+_SELECTION_FIXTURE = _FIXTURES_DIR / "run_bba4d4f3_pm_input.json"
+# The 2026-09-01 pull this scenario ran on until 2026-09-14. NOT graded any
+# more: none of its 59 rows carries `computed_levels`, so the structural
+# reward:risk the live admission gate reads is None for every name, and the
+# live gate given those ratios admits 12 names where this grader admitted 25
+# (measured 2026-09-14, docs/INCIDENT_HISTORY.md). Kept ONLY because three
+# older audits pin their write-ups to that exact day
+# (tests/test_deterministic_selection.py, tests/test_analyst_verdict.py,
+# tests/test_pm_input_shape.py); they load it through this constant.
+LEVEL_LESS_SELECTION_FIXTURE = _FIXTURES_DIR / "run_64290730_pm_input.json"
 
 # The famous names the familiarity diagnostic is about. Fixed list, not derived:
 # deriving "famous" from the data would let the fixture redefine the very
@@ -795,26 +791,30 @@ _SELECTION_FIXTURE =Path(__file__).resolve().parent / "fixtures" / "run_64290730
 _SELECTION_FAMOUS = ("AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "QQQ", "SPY")
 
 
-def _load_selection_fixture() -> dict:
-    """The frozen run-64290730 pull. Raises rather than degrading quietly.
+def load_frozen_selection(path: Path) -> SimpleNamespace:
+    """A frozen production pull, parsed. Raises rather than degrading quietly.
 
     Loaded from disk instead of inlined as Python literals for one reason:
     every value has to be provably the API's, not a transcription of it. The
-    file is the record; the module only reads it.
+    file is the record; the module only reads it. Returns `raw` (the dict),
+    `analyses`, `positions` and `news` as the live models.
     """
-    if not _SELECTION_FIXTURE.exists():
-        raise RuntimeError(f"selection fixture missing: {_SELECTION_FIXTURE}")
-    return json.loads(_SELECTION_FIXTURE.read_text())
+    if not path.exists():
+        raise RuntimeError(f"selection fixture missing: {path}")
+    raw = json.loads(path.read_text())
+    return SimpleNamespace(
+        raw=raw,
+        analyses=[TechAnalysisResult.model_validate(r) for r in raw["analyses"]],
+        positions=[Position.model_validate(r) for r in raw["positions"]],
+        news=NewsIntelligenceReport.model_validate(raw["news_intel"]),
+    )
 
 
-_SELECTION = _load_selection_fixture()
-_SELECTION_ANALYSES = [
-    TechAnalysisResult.model_validate(row) for row in _SELECTION["analyses"]
-]
-_SELECTION_POSITIONS = [
-    Position.model_validate(row) for row in _SELECTION["positions"]
-]
-_SELECTION_NEWS = NewsIntelligenceReport.model_validate(_SELECTION["news_intel"])
+_FROZEN = load_frozen_selection(_SELECTION_FIXTURE)
+_SELECTION = _FROZEN.raw
+_SELECTION_ANALYSES = _FROZEN.analyses
+_SELECTION_POSITIONS = _FROZEN.positions
+_SELECTION_NEWS = _FROZEN.news
 _SELECTION_BY_SYMBOL = {a.symbol: a for a in _SELECTION_ANALYSES}
 _SELECTION_TOTAL_VALUE = _SELECTION["account"]["total_value"]
 _SELECTION_HELD_WEIGHT_PCT = {
@@ -833,6 +833,16 @@ _SELECTION_BEARISH = {
 _SELECTION_BREAKOUT = {
     a.symbol for a in _SELECTION_ANALYSES
     if not reward_risk_floor_applies(a.setup_type)
+}
+
+#: symbol -> the STRUCTURAL reward:risk the live admission gate reads — the
+#: constructor's derived-target, noise-widened ratio, never the analyst's.
+#: Exactly what `pipeline_stages` hands `candidate_eligibility` in production.
+_SELECTION_STRUCTURAL_RR = {
+    a.symbol: PortfolioConstructor().real_reward_risk_preview(
+        a, "short" if a.rating in ("sell", "strong_sell") else "long",
+    )
+    for a in _SELECTION_ANALYSES if a.rating != "neutral"
 }
 
 # THE ADMITTED SET, computed by the desk's own rules rather than restated
@@ -858,9 +868,7 @@ _SELECTION_ELIGIBLE_SHORTS = {
     if direction == "short"
 }
 # Famous AND admitted. Not "famous and weak" — that phrase needed the retired
-# floor to define "weak", and the three mega-caps with a read this session are
-# all names the desk's own rules let through (NVDA on a breakout, which the
-# prompt forbids judging on reward:risk at all). Reported, never scored.
+# floor to define "weak". Reported, never scored.
 _SELECTION_FAMOUS_ELIGIBLE = {
     symbol for symbol in _SELECTION_FAMOUS if symbol in _SELECTION_ELIGIBLE
 }
@@ -880,7 +888,7 @@ def _selection_blocked_by(symbol: str, direction: str) -> str:
         )
     return ""
 
-# The shape of the day, asserted at import. These six numbers are what the
+# The shape of the day, asserted at import. These numbers are what the
 # checks below mean; if a fixture edit moves any of them, the benchmark has
 # silently become a different test and must fail loudly instead. The import
 # is covered by tests/test_model_policy_harness_imports.py, so this runs in
@@ -894,20 +902,29 @@ _SELECTION_SHAPE = {
     "bearish_actionable": len(_SELECTION_BEARISH),
     "famous_eligible": len(_SELECTION_FAMOUS_ELIGIBLE),
     "positions_held": len(_SELECTION_POSITIONS),
+    "with_computed_levels": sum(1 for a in _SELECTION_ANALYSES if a.computed_levels),
+    "actionable_with_structural_rr": sum(
+        1 for v in _SELECTION_STRUCTURAL_RR.values() if v is not None
+    ),
 }
 _SELECTION_SHAPE_EXPECTED = {
-    "analysed": 59,
-    "actionable": 38,
-    "breakout_actionable": 12,
+    "analysed": 64,
+    "actionable": 34,
+    "breakout_actionable": 14,
     "eligible": 25,
-    "eligible_shorts": 2,
-    "bearish_actionable": 15,
+    "eligible_shorts": 1,
+    "bearish_actionable": 10,
     "famous_eligible": 3,
     "positions_held": 5,
+    # The reason this fixture replaced run-64290730: the quantity the live
+    # admission gate reads exists here. If either falls, the scenario has
+    # silently gone back to a level-less day.
+    "with_computed_levels": 63,
+    "actionable_with_structural_rr": 34,
 }
 if _SELECTION_SHAPE != _SELECTION_SHAPE_EXPECTED:
     raise RuntimeError(
-        "run-64290730 selection fixture no longer has the shape this scenario "
+        "run-bba4d4f3 selection fixture no longer has the shape this scenario "
         f"grades: got {_SELECTION_SHAPE}, expected {_SELECTION_SHAPE_EXPECTED}"
     )
 
@@ -1003,9 +1020,9 @@ def _pm_selection_grade(decision: PortfolioDecision | None) -> list[Check]:
     pick_symbols = [t.symbol for t in picks]
     evidence = "; ".join(_selection_evidence_repr(t) for t in picks) or "none"
 
-    # The live desk's actual failure was inaction: 38 actionable signals and
-    # nothing that survived to an order. A model that opens nothing has
-    # reproduced it, whatever its reasoning says.
+    # On this day 34 actionable signals and a nine-target plan the risk seat
+    # approved ended with zero proposed orders and zero fills. A model that
+    # opens nothing has reproduced that outcome, whatever its reasoning says.
     checks.append(Check(
         "opens_a_position", 0.10, bool(picks),
         f"{len(picks)} opening/adding target(s): {evidence}",
@@ -1035,17 +1052,15 @@ def _pm_selection_grade(decision: PortfolioDecision | None) -> list[Check]:
         "no picks to judge — an empty book selects from nothing",
     ))
 
-    # The specific failure this scenario exists to detect. Fifteen validated
-    # bearish candidates were on offer; the desk's own rules admit two of them
-    # — NKE (sell/medium, net evidence +1) and FLNC (sell/medium, +1) — which
-    # are also the two best-paying shorts of the day. The other thirteen are
-    # refused deterministically, mostly by the §9.4 net-evidence rule, so this
-    # check credits only a short production would actually have placed. The
-    # live desk proposed none at all and its funnel recorded
-    # `bearish_hedge_considered=false`. Shorts are a first-class, prompt-
+    # The specific failure this scenario exists to detect. Ten validated
+    # bearish candidates were on offer; the desk's own rules admit exactly one
+    # — FLNC (sell/medium, net evidence +1). The other nine are refused
+    # deterministically by the §9.4 net-evidence rule, including UNH, the one
+    # short the live PM did propose, so this check credits only a short
+    # production would actually have placed. Shorts are a first-class, prompt-
     # documented instrument here (`direction: "short"`, its own caps and
     # borrow gate) and are not blocked by the cash-only account, so declining
-    # every one of them is a choice, not a constraint.
+    # the admitted one is a choice, not a constraint.
     shorts = [t for t in picks if t.direction == "short"]
     eligible_shorts = [
         t.symbol for t in shorts if t.symbol in _SELECTION_ELIGIBLE_SHORTS
@@ -1062,9 +1077,9 @@ def _pm_selection_grade(decision: PortfolioDecision | None) -> list[Check]:
     # DIAGNOSTIC, WEIGHT 0 — reported on every run, scores nothing. The owner
     # asked for the familiarity rate as a number, and it is still worth
     # watching across models and repeats. It is no longer a pass/fail because
-    # it cannot be one honestly: the three mega-caps with a read this session
-    # are all ADMITTED by the desk's own rules, and NVDA is a breakout the PM
-    # prompt explicitly forbids judging on reward:risk. Failing a model for
+    # it cannot be one honestly: three of the famous names with a read this
+    # session (AAPL, MSFT, NVDA) are ADMITTED by the desk's own rules, two of
+    # them breakouts the PM prompt explicitly forbids judging on reward:risk. Failing a model for
     # taking a well-evidenced name the desk permits would be scoring a rule
     # this desk does not have. What the number still shows is the shape of a
     # book: reaching for the names everyone knows while admitted candidates
@@ -1688,14 +1703,14 @@ SCENARIOS: list[Scenario] = [
         invoke=_pm_selection_invoke,
         grade=_pm_selection_grade,
         default=False,
-        description="The REAL 2026-09-01 opportunity set (run-64290730): 59 "
-                    "technical reads, 38 actionable, 30 of them below the 1.5 "
-                    "R/R floor, 5 qualified shorts, and every famous mega-cap "
-                    "weak. Grades WHICH candidates the model picks — including "
-                    "a familiarity_bias number reported on every run. Does NOT "
-                    "measure profitability. Opt-in: ~56k input tokens per call "
-                    "(the live session billed 61,557 and cost $0.24 on "
-                    "gpt-5.5).",
+        description="The REAL 2026-09-02 opportunity set (run-bba4d4f3): 64 "
+                    "technical reads, 63 with computed levels, 34 actionable "
+                    "and every one with a computable structural reward:risk, "
+                    "25 admitted by the desk's own rules including one short. "
+                    "Grades WHICH candidates the model picks — including a "
+                    "familiarity_bias number reported on every run. Does NOT "
+                    "measure profitability. Opt-in: the rendered prompt is "
+                    "87,247 characters.",
     ),
     Scenario(
         key="risk_rr_breach",

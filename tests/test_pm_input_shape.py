@@ -35,6 +35,11 @@ from src.agents.portfolio_manager import PortfolioManagerAgent
 
 scenarios = importlib.import_module("ops.model_policy.scenarios")
 
+# The level-less 2026-09-01 day this audit's numbers were measured on.
+# `pm_selection` itself moved to run-bba4d4f3 on 2026-09-14; this file
+# stays pinned to the day its write-up describes.
+_LEVEL_LESS = scenarios.load_frozen_selection(scenarios.LEVEL_LESS_SELECTION_FIXTURE)
+
 
 # The marker the old null block printed, verbatim. Its ABSENCE is the point:
 # a line that says the analyst disclosed nothing is not evidence, and four
@@ -44,18 +49,18 @@ _NULL_FALSIFIER = "Invalidated if: not disclosed by the analyst"
 
 @pytest.fixture(scope="module")
 def rendered() -> str:
-    sel = scenarios._SELECTION
+    sel = _LEVEL_LESS.raw
     account = sel["account"]
     memory = sel["memory"]
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     return agent.build_user_message(
-        analyses=scenarios._SELECTION_ANALYSES,
-        positions=scenarios._SELECTION_POSITIONS,
+        analyses=_LEVEL_LESS.analyses,
+        positions=_LEVEL_LESS.positions,
         macro_analysis=sel["macro_analysis"],
         cash_balance=account["cash_balance"],
         reserve_balance=account["reserve_balance"],
         total_value=account["total_value"],
-        news_intel=scenarios._SELECTION_NEWS,
+        news_intel=_LEVEL_LESS.news,
         earnings_analyses=sel["earnings_analyses"],
         recent_performance=sel["recent_performance"],
         position_history=sel["position_history"],
@@ -92,7 +97,7 @@ def _neutral_earnings_symbols() -> set[str]:
     hardcoding a list someone typed once.
     """
     out = set()
-    for item in scenarios._SELECTION["earnings_analyses"]:
+    for item in _LEVEL_LESS.raw["earnings_analyses"]:
         analysis = item.get("analysis")
         if not isinstance(analysis, dict):
             continue
@@ -108,7 +113,7 @@ def test_fixture_still_contains_the_no_call_majority_this_is_measuring():
     assertion below would pass vacuously and prove nothing."""
     neutral = _neutral_earnings_symbols()
     analysed = [
-        item for item in scenarios._SELECTION["earnings_analyses"]
+        item for item in _LEVEL_LESS.raw["earnings_analyses"]
         if isinstance(item.get("analysis"), dict)
     ]
     assert len(analysed) == 65
@@ -195,7 +200,7 @@ def test_neutral_technical_reads_drop_the_none_fields_not_the_conclusion(rendere
 def test_every_analysed_symbol_still_appears_in_the_technical_section(rendered):
     tech = _section(rendered, "Technical Analysis Reports")
     listed = set(re.findall(r"^- ([A-Z][A-Z0-9.\-]*): ", tech, re.M))
-    assert listed == {a.symbol for a in scenarios._SELECTION_ANALYSES}
+    assert listed == {a.symbol for a in _LEVEL_LESS.analyses}
 
 
 def test_neutral_reads_keep_the_analysts_own_sentence(rendered):
@@ -203,7 +208,7 @@ def test_neutral_reads_keep_the_analysts_own_sentence(rendered):
     rendered verbatim and untruncated — the change is a shape change, not a
     cap."""
     tech = _section(rendered, "Technical Analysis Reports")
-    by_symbol = {a.symbol: a for a in scenarios._SELECTION_ANALYSES}
+    by_symbol = {a.symbol: a for a in _LEVEL_LESS.analyses}
     for symbol, analysis in by_symbol.items():
         if analysis.rating != "neutral" or analysis.risk_reward is not None:
             continue
@@ -215,7 +220,7 @@ def test_neutral_reads_keep_the_analysts_own_sentence(rendered):
 def test_a_read_with_geometry_keeps_every_field(rendered):
     tech = _section(rendered, "Technical Analysis Reports")
     sized = [
-        a for a in scenarios._SELECTION_ANALYSES
+        a for a in _LEVEL_LESS.analyses
         if a.rating != "neutral" and a.risk_reward is not None
     ]
     assert sized
@@ -230,11 +235,11 @@ def test_dissent_and_the_net_agreement_arithmetic_are_untouched(rendered):
     agreement = _section(rendered, "Independent Source Agreement")
     agent = PortfolioManagerAgent.__new__(PortfolioManagerAgent)
     registry = agent.build_evidence_registry(
-        analyses=scenarios._SELECTION_ANALYSES,
-        positions=scenarios._SELECTION_POSITIONS,
-        news_intel=scenarios._SELECTION_NEWS,
-        earnings_analyses=scenarios._SELECTION["earnings_analyses"],
-        macro_analysis=scenarios._SELECTION["macro_analysis"],
+        analyses=_LEVEL_LESS.analyses,
+        positions=_LEVEL_LESS.positions,
+        news_intel=_LEVEL_LESS.news,
+        earnings_analyses=_LEVEL_LESS.raw["earnings_analyses"],
+        macro_analysis=_LEVEL_LESS.raw["macro_analysis"],
         smart_money_findings=[],
         symbol_sectors={},
     )
