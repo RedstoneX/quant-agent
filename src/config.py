@@ -820,6 +820,11 @@ class RiskConfig(BaseModel):
     # Looser than the projection on purpose: this asks "could it get there",
     # the projection asks "how far do I claim it goes".
     max_target_reach_atr_multiple: float = Field(default=1.5, gt=0, le=5)
+    # The REFUSAL threshold on a stop's width, in the same units. Split off
+    # from `max_target_reach_atr_multiple` on 2026-09-13 (docs/WORK.md item
+    # 56) at the same value: one number was estimating targets AND refusing
+    # trades, with no derivation for either job. Same value, two knobs.
+    max_stop_width_reach_atr_multiple: float = Field(default=1.5, gt=0, le=5)
     # Ceiling on `expected_horizon_sessions` before it enters the sqrt()
     # travel estimate, so an implausible horizon cannot licence a target far
     # outside anything the symbol does.

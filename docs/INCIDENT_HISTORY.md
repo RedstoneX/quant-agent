@@ -22,6 +22,90 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — item 56 narrowed: one number was estimating price targets AND refusing trades, and the "two published rules contradict each other" premise turned out to be false
+
+**In plain words:** when there is no obvious place on the chart to put a stop,
+the desk invents one at 2.5 times the stock's average daily range, and a
+separate safety check refuses the trade if that stop looks too wide. Two
+things were wrong with this, and a third was suspected and turned out not to
+be true at all.
+
+The first real problem: the number the safety check used was not written for
+that job. It was written to estimate how far a stock could plausibly travel
+*toward a price target*, and it was quietly reused to *refuse trades* — the
+setting was still called a target setting at the place where it refuses. Two
+unrelated jobs, one knob, no derivation on record for either. They are now two
+separate settings holding the same value, so nobody can move one and silently
+move the other. That is tidiness, not an answer.
+
+The second: the safety check turns out to be almost pure decoration, and it
+can now be said exactly how much. It refuses a stop only when that stop has
+under a 2% chance of ever being hit during the trade, and as a matter of
+arithmetic rather than opinion it can never refuse the desk's own invented
+stop at any holding period of three days or more. So the direction of its
+error is settled — it is not blocking good trades, it is letting wide ones
+through. That is the safer of the two ways to be wrong.
+
+The third was the premise the whole item was filed on, and it was **wrong**.
+The item said a well-known trader's rule ("a stop should never be wider than
+one day's range") flatly contradicted the desk's own 2.5-times-daily-range
+stop, and that the desk had dodged the argument by adopting a third, looser
+limit. There was never a contradiction. A stop's width measured in "average
+daily ranges" means nothing until you say how long you intend to hold: one
+day's range is loose for a three-day trade and very tight for a three-month
+one. Restated as the thing both rules are actually about — the chance the stop
+gets hit before the trade ends — they land in almost the same place: about 36%
+for his rule over the few days he holds, about 37% for the desk's over the
+three weeks it holds. The earlier claim that "the desk is placing stops
+roughly 2.5 times too wide" compared his *cap* at one holding period against
+the desk's *width* at another, and is withdrawn.
+
+**What was ruled out, and why it matters that it was ruled out by name.** The
+technique that appears to answer this exactly — Maximum Adverse Excursion,
+plotting how far winning trades went against you before they worked — was
+rejected, and its own literature says why: excursion statistics describe one
+historical sample, and rules tuned to past percentiles inherit the fragility
+of any other fitted parameter. That is fitting, which this desk does not do,
+and it is unavailable regardless on a record of one live trade and 53 archived
+rows. The academic finance literature was then searched separately, because a
+previous pass had read only trading-educator and charting-vendor material and
+that was the same gap that had stalled item 55. The journals say the threshold
+is open work too: the most-cited empirical stop-loss study uses a flat 10% cut
+with 5% and 15% run as robustness checks — not scaled to the instrument at all
+— and closes by leaving the search for optimal stop-loss strategies to future
+research; the one general framework in the field is reviewed as giving little
+guidance at the holding periods this desk trades; and the reviewing thesis
+sweeps its own level over a 0.5-to-5% grid. Taking any of those numbers would
+have been importing a foreign default, which is the same unsourced act in the
+other direction.
+
+**What was built instead of a number.** The desk can now state any stop's
+width as the probability that stop is touched inside the trade's own horizon.
+That reading is not fitted and not chosen: it falls out of two published
+results — the reflection principle for the running maximum of a random walk,
+and the standard identity relating a day's range to a day's volatility — plus
+the stock's own average range and the trade's own stated horizon. It is
+recorded on every stop the desk sizes, whether the trade passes or is refused,
+so the evidence that would settle the remaining question now accumulates by
+itself instead of having to be gone looking for.
+
+**Still open, and deliberately left open (WORK.md item 56):** how unlikely a
+stop has to be to hit before it stops counting as a stop. No number was
+invented for it, and the check was not switched off and called done. Two ways
+out are named in the item, and the second is not a cop-out: either find a
+published measurement of stop survival stated as a probability, or accept that
+none exists and delete the width check entirely — the desk already answers a
+wide stop by buying fewer shares, which is what the published literature
+actually prescribes.
+
+**Nothing changed in behaviour.** The value is untouched, the split is a
+rename, and the probability is recorded rather than acted on. Nothing here
+needed to hold up the restart.
+
+---
+
+
+
 ### 2026-09-14 — item 6 was fixed three days ago and the board never noticed; the question it was holding for the owner was never his to answer
 
 **In plain words:** the board carried an open job saying the macro seat's

@@ -246,6 +246,77 @@ def travel_over(atr: float, horizon_sessions: int) -> float:
     return float(atr) * math.sqrt(max(1, int(horizon_sessions)))
 
 
+#: Expected daily RANGE of a driftless random walk, in units of its daily
+#: standard deviation: ``E[high - low] = sqrt(8/pi) * sigma ~= 1.5958 * sigma``
+#: (Feller's asymptotic range distribution, the result Parkinson 1980 builds
+#: the extreme-value variance estimator on — "Parkinson (1980) applies the
+#: asymptotic distribution of range from the minimum value to the maximum
+#: value over a specified time interval from Feller (1951) to get the
+#: estimators of variance and volatility",
+#: https://portfoliooptimizer.io/blog/range-based-volatility-estimators-overview-and-examples-of-usage/).
+#:
+#: This desk measures ATR, which is a RANGE, and the reflection principle
+#: below is stated in SIGMA. This constant is the unit conversion between
+#: them and nothing else. It is not a tuning knob and must never be
+#: configured: it is a property of the Gaussian, not of any instrument.
+#: Substitution stated plainly, as elsewhere in this module: ATR(14) is a
+#: TRUE range and includes the overnight gap, so it runs slightly wider than
+#: the intraday high-low range this identity describes. The effect is
+#: conservative here — a larger ATR reports a LOWER touch probability for
+#: the same stop, so the reading never flatters a stop's reachability.
+ATR_PER_SIGMA = math.sqrt(8.0 / math.pi)
+
+
+def touch_probability(
+    width_atrs: float | None,
+    horizon_sessions: int | None,
+) -> float | None:
+    """Probability a stop `width_atrs` ATRs away is TOUCHED within the horizon.
+
+    This is a READING, not a fitted constant, and it is the quantity the
+    desk actually wants whenever it asks "is this stop too wide". Two
+    published results and no chosen number:
+
+    1. The reflection principle for the running maximum of Brownian motion:
+       ``P(sup_{s<=t} X_s >= a) = 2 P(X_t >= a) = 2 (1 - Phi(a / (sigma
+       sqrt(t))))``. Stated at
+       https://almostsuremath.com/2023/04/18/the-maximum-of-brownian-motion-and-the-reflection-principle/
+       as "the reflected process is also a standard Brownian motion" giving
+       ``P(X_t^* >= a) = 2 P(X_t >= a)``, with the running maximum
+       distributed as ``|X_t|``.
+    2. `ATR_PER_SIGMA` above, to state (1) in the range units this desk
+       measures.
+
+    So ``a / (sigma sqrt(H)) = width_atrs * ATR_PER_SIGMA / sqrt(H)`` and the
+    answer falls out. Every input is read off the instrument in front of us
+    (its own ATR) or off the trade (its own horizon); nothing is tuned.
+
+    **What this does and does not license.** It converts a width into a
+    probability. It does NOT say which probability is too low — that
+    threshold is docs/WORK.md item 56 and is still open. It is exposed so
+    that every refusal, and every stop that passes, records the reading that
+    would settle it, rather than an ATR multiple whose meaning changes with
+    the horizon.
+
+    Driftless by construction: a drift term would need an expected return
+    this desk does not forecast, and assuming one in the trade's favour
+    would make every stop look less reachable than it is.
+
+    Returns None when the width or the horizon cannot be read.
+    """
+    try:
+        width = float(width_atrs)
+        horizon = int(horizon_sessions)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(width) or width < 0 or horizon < 1:
+        return None
+    z = width * ATR_PER_SIGMA / math.sqrt(horizon)
+    # 2 * (1 - Phi(z)) == erfc(z / sqrt(2)), evaluated directly so no normal
+    # CDF approximation enters.
+    return math.erfc(z / math.sqrt(2.0))
+
+
 def horizon_reach(
     atr: float | None,
     horizon_sessions: int | None,
