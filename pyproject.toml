@@ -45,6 +45,8 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
+    # Runs the suite across every CPU (see [tool.pytest.ini_options] below).
+    "pytest-xdist>=3.6",
     "httpx>=0.27.0",
     # tests/test_api_*.py import fastapi directly, so the API deps are part of
     # what the test suite needs — not just what the API process needs. Without
@@ -66,3 +68,13 @@ api = [
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+# Run the suite in parallel across every available CPU. Measured 2026-09-14 on
+# the 6-core box: 6,007 tests in 224s in parallel against ~463s one at a time,
+# 0 failures, on two separate runs with different schedulers. Tests never
+# touch the live desk or its database; each worker gets its own tmp_path.
+# A test that genuinely needs to run alone should be fixed to isolate its
+# state, not taken out of the parallel run. `-p no:xdist` runs serially for
+# debugging.
+addopts = "-n auto"
