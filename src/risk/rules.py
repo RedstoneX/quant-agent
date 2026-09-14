@@ -269,16 +269,18 @@ def sector_allowance_pct(
 
 # --- Spec §9.4 "agreement earns size" -------------------------------------
 #
-# Since 2026-09-02 the quantity that earns size is a SIGNED SUM, not a
-# headcount: `signed_source_score` nets opposed seats off aligned ones and
-# `agreement_ceiling_for_score` prices the result. The two counts below are
-# still computed and still reported — a reader wants "2 for, 1 against", not
-# only "net +1" — but neither of them sizes anything on its own.
+# Since 2026-09-02 the quantity in play is a SIGNED SUM, not a headcount:
+# `signed_source_score` nets opposed seats off aligned ones. Since
+# 2026-09-14 it no longer earns SIZE at all — `agreement_refuses_trade`
+# turns it into one yes/no refusal and nothing else (see that function for
+# why the graduated ceiling was retired). The two counts below are still
+# computed and still reported — a reader wants "2 for, 1 against", not only
+# "net +1" — but neither of them sizes anything.
 #
 # Shared polarity vocabulary. `PortfolioManagerAgent.validate_grounding`
 # (src/agents/portfolio_manager.py) uses this to decide whether a
 # provenance claim's stance "supports" a target's direction; the
-# constructor's agreement ceiling (`src/portfolio_constructor.py`) uses the
+# constructor's agreement refusal (`src/portfolio_constructor.py`) uses the
 # SAME rule to count how many of the canonical evidence registry's
 # independent sources are directionally aligned with what the PM is
 # actually proposing. One definition, two consumers, by design — a second,
@@ -467,51 +469,46 @@ def signed_source_score(
     )
 
 
-def agreement_ceiling_for_score(schedule: list[float] | tuple[float, ...], score: int) -> float:
-    """The risk-allocation ceiling for a signed source score of `score`.
+def agreement_refuses_trade(score: int) -> bool:
+    """Does the net evidence REFUSE this trade outright? Not a ceiling.
 
-    `schedule[i]` is the ceiling for a net score of `i + 1`. UNANIMOUS
-    evidence therefore prices exactly as it did before the signed sum landed
-    — with nothing opposed, `S` IS the aligned count, so `S=1` reads
-    `schedule[0]`, `S=2` reads `schedule[1]`, and so on. The existing risk
-    envelope is unchanged for every case the old rule and this one agree
-    about; what moved is only the cases where a seat was arguing the other
-    way. Three aligned against one opposed is `S=2` and sizes at the 2-seat
-    rung, because that is what the arithmetic says, not because a separate
-    penalty was added.
+    True for a signed source score at or below zero — a name with no net
+    evidence for the direction proposed, or with net dissent against it. The
+    caller maps that to `SizeOverride.no_trading()`: the target is dropped,
+    no order is built, and anything already held is left exactly where it is
+    (refusing to BUY is not a decision to SELL).
 
-    **A score at or below zero returns 0.0, which is a block** — the request
-    is refused outright rather than sized at the strictest rung. This is not
-    a veto rule bolted on top of the ceiling; it is the same schedule lookup
-    running off the bottom of its own domain. The schedule's first entry
-    prices ONE net seat of evidence, and a book with no net evidence for a
-    direction has not earned a position in it. Charging the dissenter twice —
-    once by netting it off `S` and again through a standalone veto — is
-    exactly what this shape avoids.
+    False for any net score of 1 or more, and that is the WHOLE of what
+    agreement does to size now. There is no rung, no ladder and no per-score
+    number: a target that clears the refusal is bounded by the ratified
+    per-trade envelope (`RiskConfig.max_position_risk_pct`) and by the
+    portfolio budget allocator, exactly like every other target.
 
-    NOTE this is a behaviour change for `S = 0` with nothing opposed, i.e. a
-    symbol whose every seat is neutral. The old `agreement_ceiling_for_count`
-    deliberately priced a zero count identically to one ("not punished any
-    harder than one"). Under a signed sum it cannot: zero net evidence and one
-    net seat of evidence are different numbers, and the rung that prices the
-    second cannot also price the first. Measured over the 28 sized targets in
-    the 2026-08-28..2026-09-02 snapshot, no target ever had zero aligned
-    sources; every case the change actually reaches is a real dissent.
+    **Why the graduated ceiling was retired (owner decision, 2026-09-14.)**
+    Until this change §9.4 scaled permitted risk by the net seat count as
+    `max_position_risk_pct x sqrt(n / 5)`. The square-root law is the
+    statistics of averaging INDEPENDENT estimates, and this desk's seats are
+    not independent: technical, news, earnings, macro and smart_money read
+    overlapping evidence (the same tape, the same bars, the same filings)
+    and several are the same underlying model behind different prompts. The
+    archetype's one precondition is unmet, so the schedule could not be
+    justified at any slope — and no honest correlation haircut exists to
+    replace it with, only an invented number.
 
-    A score past the end of the schedule uses the last (least restrictive)
-    entry — this book has never measured more than `len(schedule)` independent
-    seats agreeing on one symbol, and the ratified per-trade envelope
-    (`RiskConfig.max_position_risk_pct`) is the hard ceiling regardless,
-    enforced independently of this schedule.
+    Secondarily, a graduated ceiling cannot tell "the seats disagreed" from
+    "the seats had nothing to look at". A thinly-covered name and a
+    contested one arrive at the same low net score and were sized the same.
+    That is the identical defect already fixed in the rotation rule (retired
+    board item 66), and the refusal below is the only place the distinction
+    is safe to act on: at or below zero the desk declines, and above zero it
+    does not pretend to grade.
+
+    What agreement still does, unchanged: it ORDERS which candidates get
+    funded first, through `src/verdicts.py::rank_verdicts` and
+    `allocate_risk_budget`'s `priority` (retired board item 49). Agreement
+    earns the QUEUE POSITION. It no longer sets the size.
     """
-    if not schedule:
-        # No schedule configured — this ceiling is inert, INCLUDING its block.
-        # An unconfigured dial must not silently become the strictest possible
-        # rule; a desk that switched the schedule off did not ask for a veto.
-        return float("inf")
-    if score <= 0:
-        return 0.0
-    return schedule[min(score, len(schedule)) - 1]
+    return score <= 0
 
 
 # --- Spec §11.2 — gross exposure, its ceiling, and the de-levering ladder --
@@ -1205,9 +1202,8 @@ def _positive_float(value, default: float = 0.0) -> float:
     MagicMock config fixture auto-creates a child mock for any attribute
     access, and `mock > 0` raises rather than returning False. A ceiling that
     cannot be read is INERT (default 0.0 switches the rule off) rather than
-    blocking, matching `agreement_ceiling_for_score`'s "no schedule
-    configured — this ceiling is inert". Production config always carries the
-    validated field, so this path is a test/misconfiguration guard only.
+    blocking. Production config always carries the validated field, so this
+    path is a test/misconfiguration guard only.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return default

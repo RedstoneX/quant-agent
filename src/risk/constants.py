@@ -7,8 +7,6 @@ that cares about "is this account meaningfully on margin?" imports from
 here.
 """
 
-import math
-
 MARGIN_DEFICIT_FLOOR_USD = 1.0
 """Minimum cash deficit (in USD) before cash-only-policy actions fire.
 
@@ -201,79 +199,3 @@ Consumers (must stay aligned — if you edit one, verify the others):
 """
 
 
-INDEPENDENT_SEAT_COUNT = 5
-"""How many independent analyst seats can express a directional stance.
-
-`technical`, `news`, `earnings`, `macro`, `smart_money` — the exact set
-`src/risk/rules.py::signed_source_score` nets over. Read off the desk's
-own seat roster, not chosen: it is the domain of the agreement score, so
-it is also the length of the agreement ceiling schedule.
-"""
-
-
-def derive_agreement_ceiling_schedule(
-    max_position_risk_pct: float,
-    seats: int = INDEPENDENT_SEAT_COUNT,
-    *,
-    digits: int = 3,
-) -> list[float]:
-    """Spec §9.4's agreement ceiling, DERIVED — never typed by hand.
-
-        ceiling(n) = max_position_risk_pct x sqrt(n / seats)
-
-    **Why a square root, and why this anchor.** Two published results, one
-    shape, and no free parameter anywhere in it.
-
-    1. *Independent estimates of one quantity combine as 1/N in variance.*
-       Zhang et al., "Optimal blending of multiple independent prediction
-       models" (PMC9998929) state the bound directly for N independent
-       models whose variances are at most `sigma_M^2`:
-       "we get variance: sigma_B^2 = ... <= lim sigma_M^2/N = 0". Variance
-       falling as 1/N means the STANDARD ERROR of the consensus falls as
-       1/sqrt(N) — so its signal-to-noise, and therefore how much of the
-       consensus you can believe, rises as sqrt(N). Hyndman &
-       Athanasopoulos (`otexts.com/fpp2/combinations.html`) is the applied
-       statement of the same thing: "combining multiple forecasts leads to
-       increased forecast accuracy".
-    2. *Finance already prices exactly this shape as sqrt(independent
-       estimates).* Grinold's fundamental law: "IR* = IC x sqrt(BR)", with
-       breadth defined as "the number of independent estimates of
-       exceptional returns made at a given frequency in a year"
-       (AnalystPrep, CFA L2 study notes). The square root "indicat[es]
-       diminishing returns as you increase the number of opportunities" —
-       the second agreeing seat is worth less than the first, the fifth
-       less again. Practitioner sizing carries the same object as a
-       forecast diversification multiplier (Carver, `Systematic Trading`).
-
-    **The two numbers are both this desk's own, and neither is invented.**
-    `max_position_risk_pct` is the owner-ratified per-trade envelope; the
-    seat count is the desk's own roster. The anchor is the only one
-    available: UNANIMOUS agreement is the strongest evidence this desk can
-    ever assemble, so it earns the full ratified envelope and nothing
-    earns more. Everything weaker is discounted by the sqrt law. There is
-    no third constant to choose, which is the point — the schedule is a
-    FUNCTION of the caps that constrain it, so it can never again drift
-    out of reach when one of them moves (docs/WORK.md items 30/57).
-
-    **The honest caveat, stated rather than hidden.** sqrt(N) is the
-    diversification credit for INDEPENDENT estimates. These five seats read
-    overlapping public information, so their errors are certainly
-    positively correlated, and the true credit is smaller than sqrt(N).
-    That makes this schedule the LOOSEST defensible one, not a tight one —
-    and it errs toward the ratified envelope, which is hard-capped
-    independently. It is not tightened by a guessed correlation, because
-    guessing one would be exactly the invented number this replaces.
-
-    Consumers (must stay aligned — if you edit one, verify the others):
-      - `RiskConfig.agreement_ceiling_pct`        (model default)
-      - `config/settings.yaml` (`risk.agreement_ceiling_pct`)
-      - `ConstructorConfig.agreement_ceiling_pct` (constructor default)
-      - `TradingPipeline._build_agents`           (settings-read fallback)
-      - `ops/model_policy/deterministic_selection.py`
-    """
-    if seats < 1:
-        raise ValueError("seats must be >= 1")
-    return [
-        round(max_position_risk_pct * math.sqrt(n / seats), digits)
-        for n in range(1, seats + 1)
-    ]

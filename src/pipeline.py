@@ -38,9 +38,7 @@ from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
 from src.risk.constants import (
     DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
-    INDEPENDENT_SEAT_COUNT,
     REWARD_RISK_FLOOR,
-    derive_agreement_ceiling_schedule,
     reward_risk_floor_applies,
 )
 from src.risk.metrics import unrealized_pnl_pct
@@ -702,23 +700,6 @@ def build_constructor_config(config, risk_engine_config):
             return float(value)
         return float(value) if value > 0 else default
 
-    def _risk_list_setting(name: str, default: list[float]) -> tuple[float, ...]:
-        """Read a risk-config list setting, or the ratified default.
-
-        Same Mock-safety posture as `_risk_setting`: a MagicMock
-        config fixture auto-creates a child mock for any attribute
-        access, which is neither a list nor numeric — guard for that
-        explicitly rather than let it reach the constructor as a
-        non-iterable and blow up deep in the sizing arithmetic.
-        """
-        value = getattr(_risk_cfg, name, default)
-        if not isinstance(value, (list, tuple)) or not value:
-            return tuple(default)
-        try:
-            return tuple(float(v) for v in value)
-        except (TypeError, ValueError):
-            return tuple(default)
-
     return ConstructorConfig(
             risk_budget_pct=_risk_setting("max_position_risk_pct", 5.0),
             min_risk_pct=_risk_setting("min_position_risk_pct", 0.5, allow_zero=True),
@@ -802,16 +783,6 @@ def build_constructor_config(config, risk_engine_config):
             ),
             target_divergence_warn_pct=_risk_setting(
                 "target_divergence_warn_pct", 25.0,
-            ),
-            # Spec §9.4 "agreement earns size" — same "wire from the
-            # ratified setting, not the constructor's own default" pattern
-            # as every ceiling above.
-            agreement_ceiling_pct=_risk_list_setting(
-                "agreement_ceiling_pct",
-                derive_agreement_ceiling_schedule(
-                    _risk_setting("max_position_risk_pct", 5.0),
-                    INDEPENDENT_SEAT_COUNT,
-                ),
             ),
     )
 

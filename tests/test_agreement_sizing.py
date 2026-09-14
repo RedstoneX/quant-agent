@@ -1,28 +1,32 @@
-"""Spec §9.4 — "agreement earns size".
+"""Spec §9.4 — agreement REFUSES a trade; it does not size one.
 
-`TargetPosition.risk_allocation_pct` is ceilinged — never raised — by the
-SIGNED score over the independent seats (of technical/news/earnings/macro/
-smart_money): those aligned with the target's proposed action MINUS those
-opposed to it. The ceiling is computed deterministically from the canonical
+The SIGNED score over the independent seats (of technical/news/earnings/
+macro/smart_money) — those aligned with the target's proposed action MINUS
+those opposed to it — is computed deterministically from the canonical
 evidence registry (reusing `validate_grounding`'s own polarity rule, not a
-second one), applied in `PortfolioConstructor` strictly BEFORE
-`allocate_risk_budget` and the single-name clamps, and can never exceed the
-ratified 5% per-trade envelope.
+second one) and turned into ONE yes/no decision in `PortfolioConstructor`:
+at or below zero the target is refused outright and produces no order; at
++1 or more it carries no size restriction of its own.
+
+**The graduated ceiling was retired 2026-09-14 by owner decision.** It
+scaled permitted risk as `max_position_risk_pct x sqrt(net / 5 seats)`; the
+square-root law prices INDEPENDENT estimates, and these five seats read
+overlapping evidence with several sharing one underlying model, so its one
+precondition was never met. Measured over the archived sized targets of the
+2026-08-28..2026-09-02 snapshot, the rungs capped ZERO targets — only the
+refusal ever bit. `test_no_agreement_keyed_size_ladder_exists` fails if any
+per-score size ladder comes back.
 
 The signed sum landed 2026-09-02. `tests/test_signed_dissent.py` holds the
-acceptance criterion for that change (unanimous cases must price exactly as
-the old aligned-count rule did) and the mechanical pin on seat weights; this
-file is the rule's own behaviour, end to end.
+acceptance criterion for that change and the mechanical pin on seat weights;
+this file is the rule's own behaviour, end to end.
 """
 
 from src.config import RiskConfig
-from src.risk.constants import (
-    INDEPENDENT_SEAT_COUNT, derive_agreement_ceiling_schedule,
-)
 from src.models import Position, TargetPosition, TechAnalysisResult, TechReasoningChain
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 from src.risk.rules import (
-    agreement_ceiling_for_score, count_aligned_sources, signed_source_score,
+    agreement_refuses_trade, count_aligned_sources, signed_source_score,
     stance_is_aligned,
 )
 
@@ -102,59 +106,89 @@ def test_macro_polarity_flips_for_inverse_etf():
 
 
 # --------------------------------------------------------------------------
-# agreement_ceiling_for_score — the schedule lookup
+# agreement_refuses_trade — the refusal gate, and the ladder's absence
 # --------------------------------------------------------------------------
 
-SCHEDULE = derive_agreement_ceiling_schedule(5.0, INDEPENDENT_SEAT_COUNT)
+def test_a_net_at_or_below_zero_is_refused():
+    """The rule that SURVIVED the 2026-09-14 retirement, unchanged in
+    behaviour. A name with no net evidence for its direction, or with net
+    dissent, is not a small idea — it is not an idea."""
+    assert agreement_refuses_trade(0)
+    assert agreement_refuses_trade(-1)
+    assert agreement_refuses_trade(-5)
 
 
-def test_ceiling_schedule_one_net_source_is_the_strictest_tier():
-    assert agreement_ceiling_for_score(SCHEDULE, 1) == 2.236
+def test_any_positive_net_is_not_refused_and_that_is_all_it_decides():
+    """No rung, no ladder, no per-score number: +1 and +5 are the same
+    answer, because the only question left is go/no-go."""
+    assert not agreement_refuses_trade(1)
+    assert not agreement_refuses_trade(2)
+    assert not agreement_refuses_trade(5)
+    assert not agreement_refuses_trade(99)
 
 
-def test_ceiling_schedule_zero_or_negative_is_a_block():
-    """The schedule's first rung prices ONE net source and there is no rung
-    below it. Zero (or negative) net evidence therefore returns 0.0, which
-    the constructor reads as "no order" — the same lookup that sizes the
-    trade is the one that refuses it, so a dissenter is never charged twice."""
-    assert agreement_ceiling_for_score(SCHEDULE, 0) == 0.0
-    assert agreement_ceiling_for_score(SCHEDULE, -1) == 0.0
-    assert agreement_ceiling_for_score(SCHEDULE, -5) == 0.0
+def test_the_gate_is_a_bool_not_a_float_sentinel():
+    """A float sentinel is what let "no rung" and "a real zero-weight
+    close" be the same value downstream. The gate cannot be misread as a
+    size because it is not a number."""
+    assert isinstance(agreement_refuses_trade(0), bool)
+    assert isinstance(agreement_refuses_trade(3), bool)
 
 
-def test_ceiling_schedule_two():
-    assert agreement_ceiling_for_score(SCHEDULE, 2) == 3.162
+def test_no_agreement_keyed_size_ladder_exists():
+    """The anti-regression pin for the retirement (owner decision,
+    2026-09-14). Fails if any per-score sequence of size numbers keyed on
+    agreement comes back — in the risk constants, in `RiskConfig`, in the
+    constructor's mirrored config, or in `config/settings.yaml`.
+
+    Five copies of one number is the smell that started this; so is a
+    revived schedule under a new name. Both are caught here.
+    """
+    import yaml
+    from pathlib import Path
+    import src.risk.constants as risk_constants
+
+    for name in ("agreement_ceiling_pct", "derive_agreement_ceiling_schedule",
+                 "INDEPENDENT_SEAT_COUNT", "AGREEMENT_CEILING_PCT"):
+        assert not hasattr(risk_constants, name), (
+            f"src/risk/constants.py re-exports {name} — the agreement sizing "
+            "ladder is retired"
+        )
+
+    for model in (RiskConfig, ConstructorConfig):
+        fields = getattr(model, "model_fields", None) or {
+            f.name: f for f in __import__("dataclasses").fields(model)
+        }
+        for field_name in fields:
+            assert "agreement" not in field_name, (
+                f"{model.__name__}.{field_name} keys size on agreement — "
+                "retired 2026-09-14"
+            )
+
+    risk_settings = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text()
+    )["risk"]
+    for key, value in risk_settings.items():
+        if "agreement" in key:
+            raise AssertionError(
+                f"config/settings.yaml carries risk.{key} = {value!r} — the "
+                "agreement sizing ladder is retired"
+            )
 
 
-def test_ceiling_schedule_every_rung_is_a_distinct_binding_number():
-    """Items 30/57, retired 2026-09-14. Under the hand-typed
-    [3, 4, 5, 5, 5] the top three rungs all equalled
-    `max_position_risk_pct`, so four of five rungs could not narrow
-    anything and the ladder was decoration above rung 1. Derived from the
-    envelope, every rung is strictly below the one above it and only
-    UNANIMOUS agreement reaches the full envelope."""
-    assert agreement_ceiling_for_score(SCHEDULE, 3) == 3.873
-    assert agreement_ceiling_for_score(SCHEDULE, 4) == 4.472
-    assert agreement_ceiling_for_score(SCHEDULE, 5) == 5.0
-    assert SCHEDULE == sorted(set(SCHEDULE))
-    assert all(v < 5.0 for v in SCHEDULE[:-1])
-
-
-def test_ceiling_schedule_score_past_schedule_length_uses_last_entry():
-    assert agreement_ceiling_for_score(SCHEDULE, 99) == 5.0
-
-
-def test_ceiling_schedule_empty_is_inert_including_its_block():
-    """An unconfigured schedule must not silently become the STRICTEST rule.
-    A desk that switched the ceiling off did not ask for a dissent veto."""
-    assert agreement_ceiling_for_score([], 1) == float("inf")
-    assert agreement_ceiling_for_score([], 0) == float("inf")
-    assert agreement_ceiling_for_score([], -3) == float("inf")
+def test_a_stale_settings_file_cannot_resurrect_the_ladder():
+    """The key is REJECTED on load, not ignored. `extra="ignore"` would let
+    a stale deployment keep the list and an operator would believe a ladder
+    they set was in force — the same posture
+    `ExecutionConfig._reject_deleted_repeg_keys` takes."""
+    with pytest.raises(ValidationError) as excinfo:
+        RiskConfig(**_risk_kwargs(agreement_ceiling_pct=[2.236, 3.162, 3.873, 4.472, 5.0]))
+    assert "agreement_ceiling_pct" in str(excinfo.value)
 
 
 # --------------------------------------------------------------------------
-# RiskConfig validation — config, not a module constant, and it must never
-# be able to widen the envelope or reward MORE agreement with LESS room.
+# RiskConfig — the envelope is now the only per-trade number agreement
+# interacts with, and agreement cannot narrow it.
 # --------------------------------------------------------------------------
 
 def _risk_kwargs(**overrides):
@@ -166,74 +200,10 @@ def _risk_kwargs(**overrides):
     return base
 
 
-def test_risk_config_default_agreement_schedule_is_well_formed():
+def test_risk_config_has_no_agreement_field_at_all():
     cfg = RiskConfig(**_risk_kwargs())
-    assert cfg.agreement_ceiling_pct == [2.236, 3.162, 3.873, 4.472, 5.0]
-
-
-def test_unset_schedule_is_derived_from_this_config_own_envelope():
-    """The ladder cannot drift away from the cap that bounds it, because
-    it is a function of that cap. Move the envelope and every rung moves
-    with it — the failure items 30/57 named (rungs creeping up to equal
-    the cap and going inert) is now unrepresentable."""
-    for envelope in (5.0, 4.0, 2.5, 10.0):
-        cfg = RiskConfig(**_risk_kwargs(max_position_risk_pct=envelope))
-        assert cfg.agreement_ceiling_pct == derive_agreement_ceiling_schedule(
-            envelope, INDEPENDENT_SEAT_COUNT,
-        )
-        assert cfg.agreement_ceiling_pct[-1] == pytest.approx(envelope)
-        assert all(v < envelope for v in cfg.agreement_ceiling_pct[:-1])
-
-
-def test_shipped_schedule_is_the_derivation_not_a_typed_list():
-    """Reads `config/settings.yaml` itself. A hand-edit of those five
-    numbers fails here — the whole point of retiring items 30/57 was that
-    nobody should ever be able to type a rung again."""
-    import yaml
-    from pathlib import Path
-
-    settings = yaml.safe_load(
-        (Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text()
-    )["risk"]
-    assert settings["agreement_ceiling_pct"] == derive_agreement_ceiling_schedule(
-        float(settings["max_position_risk_pct"]), INDEPENDENT_SEAT_COUNT,
-    )
-
-
-def test_derivation_is_the_square_root_law_and_has_no_free_constant():
-    """`ceiling(n) = cap x sqrt(n / seats)`. Pinned as arithmetic so a
-    future edit to the helper that quietly reshapes the curve (linear,
-    or a fudged exponent) fails rather than passes."""
-    import math
-
-    cap, seats = 5.0, INDEPENDENT_SEAT_COUNT
-    derived = derive_agreement_ceiling_schedule(cap, seats)
-    for n, value in enumerate(derived, start=1):
-        assert value == pytest.approx(cap * math.sqrt(n / seats), abs=5e-4)
-    # Concave, not linear: each extra agreeing seat buys strictly less
-    # than the one before it. That IS the published shape.
-    gaps = [b - a for a, b in zip(derived, derived[1:])]
-    assert all(b < a for a, b in zip(gaps, gaps[1:]))
-
-
-def test_risk_config_rejects_schedule_exceeding_the_envelope():
-    with pytest.raises(ValidationError):
-        RiskConfig(**_risk_kwargs(agreement_ceiling_pct=[3.0, 4.0, 5.0, 5.0, 6.0]))
-
-
-def test_risk_config_rejects_a_decreasing_schedule():
-    with pytest.raises(ValidationError):
-        RiskConfig(**_risk_kwargs(agreement_ceiling_pct=[4.0, 3.0, 5.0, 5.0, 5.0]))
-
-
-def test_risk_config_rejects_wrong_length():
-    with pytest.raises(ValidationError):
-        RiskConfig(**_risk_kwargs(agreement_ceiling_pct=[3.0, 4.0, 5.0]))
-
-
-def test_risk_config_rejects_non_positive_entries():
-    with pytest.raises(ValidationError):
-        RiskConfig(**_risk_kwargs(agreement_ceiling_pct=[0.0, 4.0, 5.0, 5.0, 5.0]))
+    assert not hasattr(cfg, "agreement_ceiling_pct")
+    assert cfg.max_position_risk_pct == 5.0
 
 
 # --------------------------------------------------------------------------
@@ -244,17 +214,16 @@ def _registry(**sources_per_symbol) -> dict[str, dict[str, str]]:
     return sources_per_symbol
 
 
-def test_ceiling_only_ever_reduces_a_modest_request_is_untouched():
-    """A low-agreement target asking for LESS than its ceiling is sized
-    exactly as requested — the ceiling never adds size, and it never cuts
-    a request that was already under it."""
+def test_a_single_net_source_request_is_sized_exactly_as_asked():
+    """A one-seat idea is sized at what the PM asked for. Nothing about the
+    seat count narrows it any more."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
         symbol="NVDA", risk_allocation_pct=2.0, conviction="medium",
         thesis="Modest single-source idea.",
     )
     analysis = _analysis("NVDA")
-    registry = _registry(NVDA={"technical": "bullish"})  # 1 aligned source -> ceiling 3.0
+    registry = _registry(NVDA={"technical": "bullish"})  # net +1 — allowed, uncapped
 
     decisions = constructor.construct_orders(
         targets=[target], positions=[], analyses=[analysis],
@@ -271,19 +240,19 @@ def test_ceiling_only_ever_reduces_a_modest_request_is_untouched():
     assert "agreement ceiling" not in d.reasoning
 
 
-def test_ceiling_binds_and_says_so_in_the_order_reasoning():
-    """A single-source target asking for the full envelope is capped, and
-    the order's reasoning must say why — mirroring the existing single-
-    name-ceiling precedent (`_build_buy`'s cap_note)."""
+def test_a_single_net_source_full_envelope_ask_is_no_longer_capped():
+    """THE retirement, as behaviour. Before 2026-09-14 a one-seat target
+    asking for the full envelope was cut to the sqrt(1/5) rung (2.236%) and
+    the order said "agreement ceiling". It is now sized at the full ratified
+    envelope, and no cap note is written, because no cap happened."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
         symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
         thesis="Single-source high-conviction ask.",
     )
-    # Wide stop so the single-name (20%) ceiling does NOT also bind here —
-    # isolates the agreement ceiling's effect.
+    # Wide stop so the single-name notional ceiling does not bind either.
     analysis = _analysis("NVDA", entry=100.0, stop=80.0, target=140.0)
-    registry = _registry(NVDA={"technical": "bullish"})  # 1 aligned -> ceiling 2.236
+    registry = _registry(NVDA={"technical": "bullish"})   # net +1
 
     decisions = constructor.construct_orders(
         targets=[target], positions=[], analyses=[analysis],
@@ -292,44 +261,42 @@ def test_ceiling_binds_and_says_so_in_the_order_reasoning():
     )
     assert len(decisions) == 1
     d = decisions[0]
-    assert "agreement ceiling" in d.reasoning
-    assert "not PM inconsistency" in d.reasoning
-    # risk 2.236% (post-ceiling) / $20 risk-per-share * $100 entry = 11.18%
-    assert abs(d.allocation_pct - 11.18) < 0.05
+    assert "agreement ceiling" not in d.reasoning
+    # 5.0% risk / $20 risk-per-share * $100 entry = 25% notional weight.
+    assert abs(d.allocation_pct - 25.0) < 0.05
 
 
-def test_ceiling_never_exceeds_the_five_percent_envelope_even_if_misconfigured():
-    """Defence in depth: even a (hypothetically) misconfigured schedule
-    above the envelope cannot win, because the runtime code takes
-    min(envelope, ceiling) — never the ceiling alone."""
-    constructor = PortfolioConstructor(ConstructorConfig(
-        agreement_ceiling_pct=(999.0, 999.0, 999.0, 999.0, 999.0),
-    ))
-    target = TargetPosition(
-        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
-        thesis="Full agreement, huge misconfigured ceiling.",
-    )
-    analysis = _analysis("NVDA", entry=100.0, stop=80.0, target=140.0)
-    registry = _registry(NVDA={
-        "technical": "bullish", "earnings": "bullish", "news": "bullish",
-    })  # 3 aligned -> would-be ceiling 999, but envelope wins
+def test_one_seat_and_five_seats_are_sized_identically():
+    """No rung, stated as behaviour rather than as an internals check: the
+    same ask backed by one seat and by five produces the same order."""
+    constructor = PortfolioConstructor()
 
-    decisions = constructor.construct_orders(
-        targets=[target], positions=[], analyses=[analysis],
-        total_value=100_000.0, price_map={"NVDA": 100.0},
-        evidence_registry=registry,
-    )
-    assert len(decisions) == 1
-    # 5.0% risk / $20 risk-per-share * $100 entry = 25% weight -> clamped by
-    # the 20% single-name ceiling, not by agreement — either way, nothing
-    # above the ratified envelope's implied sizing ever appears.
-    assert decisions[0].allocation_pct <= 25.0 + 1e-6
+    def _size(registry):
+        decisions = constructor.construct_orders(
+            targets=[TargetPosition(
+                symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+                thesis="Same ask, different seat counts.",
+            )],
+            positions=[],
+            analyses=[_analysis("NVDA", entry=100.0, stop=80.0, target=140.0)],
+            total_value=100_000.0, price_map={"NVDA": 100.0},
+            evidence_registry=registry,
+        )
+        assert len(decisions) == 1
+        return decisions[0].allocation_pct
+
+    one = _size(_registry(NVDA={"technical": "bullish"}))
+    five = _size(_registry(NVDA={
+        "technical": "bullish", "news": "bullish", "earnings": "bullish",
+        "macro": "bullish", "smart_money": "bullish",
+    }))
+    assert one == pytest.approx(five, abs=1e-9)
 
 
-def test_no_op_wall_full_agreement_is_byte_identical_to_no_registry():
-    """With 3+ aligned sources the schedule's ceiling equals the full
-    envelope, so sizing must be IDENTICAL to a call that supplies no
-    evidence_registry at all (today's behaviour)."""
+def test_no_op_wall_any_positive_net_is_byte_identical_to_no_registry():
+    """Any net above zero must size IDENTICALLY to a call that supplies no
+    evidence_registry at all — the agreement path adds nothing but its
+    refusal."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
         symbol="NVDA", risk_allocation_pct=3.0, conviction="high",
@@ -359,11 +326,10 @@ def test_no_op_wall_full_agreement_is_byte_identical_to_no_registry():
     assert b.reasoning == w.reasoning
 
 
-def test_missing_evidence_registry_leaves_ceiling_unenforced():
+def test_missing_evidence_registry_leaves_the_refusal_unenforced():
     """Same "no view, don't invent one" posture as `existing_risk_pct`/
     `clusters`: omitting the registry must NOT be silently treated as zero
-    agreement — it must leave the ceiling OFF, not clamp to the strictest
-    tier."""
+    agreement — a missing registry is not evidence of disagreement."""
     constructor = PortfolioConstructor()
     target = TargetPosition(
         symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
@@ -384,30 +350,28 @@ def test_missing_evidence_registry_leaves_ceiling_unenforced():
     assert abs(decisions[0].allocation_pct - 25.0) < 0.05
 
 
-def test_composition_agreement_ceiling_then_budget_allocator_then_single_name():
-    """All three deterministic layers must hold together and in order:
-    the agreement ceiling narrows each REQUEST first, `allocate_risk_budget`
-    rations what's left across a correlated cluster second, and the
-    single-name notional clamp still applies to the resulting size third.
+def test_composition_agreement_refusal_then_budget_allocator_then_single_name():
+    """The deterministic layers must still hold together and in order: the
+    agreement gate admits or refuses each target first, `allocate_risk_budget`
+    rations what is left across a correlated cluster second, and the
+    single-name notional clamp applies to the resulting size third. What is
+    NO LONGER in the chain is any agreement-driven narrowing of the request.
 
-    Cluster share tightened to 16% of the 25% portfolio ceiling (= 4.0%)
-    so the allocator actually has to ration between two single-source
-    (agreement-ceilinged to 3.0% each) requests — 6.0% combined otherwise
-    fits the default 10% cluster cap without the allocator doing anything,
-    which would leave this layer untested. `max_position_pct` pinned back
-    to its pre-2026-09-04 value of 20 (real deployed value is 100 since
-    that date, see settings.yaml) so this fixture's 30% notional request
-    still exercises the single-name clamp this test is specifically about.
+    Cluster share tightened to 16% of the 25% portfolio ceiling (= 4.0%) so
+    the allocator actually has to ration between the two requests.
+    `max_position_pct` pinned back to its pre-2026-09-04 value of 20 (the
+    real deployed value is 100 since that date, see settings.yaml) so this
+    fixture's notional still exercises the single-name clamp.
     """
     constructor = PortfolioConstructor(ConstructorConfig(
         max_cluster_risk_share_pct=16.0, max_position_pct=20.0,
     ))
-    # Two single-source (agreement ceiling 3.0%) targets in the same
-    # correlation cluster, both requesting the full 5% envelope.
+    # Two single-seat targets in the same correlation cluster, each asking
+    # for 3.0% risk — 6.0% combined against a 4.0% cluster cap.
     targets = [
-        TargetPosition(symbol="OKLO", risk_allocation_pct=5.0, conviction="high",
+        TargetPosition(symbol="OKLO", risk_allocation_pct=3.0, conviction="high",
                        thesis="Nuclear theme A."),
-        TargetPosition(symbol="CEG", risk_allocation_pct=5.0, conviction="high",
+        TargetPosition(symbol="CEG", risk_allocation_pct=3.0, conviction="high",
                        thesis="Nuclear theme B."),
     ]
     analyses = [
@@ -416,7 +380,7 @@ def test_composition_agreement_ceiling_then_budget_allocator_then_single_name():
     ]
     registry = _registry(
         OKLO={"technical": "bullish"}, CEG={"technical": "bullish"},
-    )  # both single-source -> agreement ceiling 3.0% each
+    )  # both net +1 — admitted, and NOT narrowed
 
     decisions = constructor.construct_orders(
         targets=targets, positions=[], analyses=analyses,
@@ -428,21 +392,18 @@ def test_composition_agreement_ceiling_then_budget_allocator_then_single_name():
     buys = {d.symbol: d for d in decisions if d.action == "BUY"}
     assert set(buys) == {"OKLO", "CEG"}
     for d in buys.values():
-        assert "agreement ceiling" in d.reasoning
+        assert "agreement ceiling" not in d.reasoning
 
-    # Both requests were narrowed 5.0% -> 2.236% by the agreement ceiling
-    # BEFORE the allocator ever saw them (4.472% combined). Alphabetical
-    # tie-break processes CEG first: it fits the 4.0% cluster cap in full
-    # (risk 2.236% / $10 risk-per-share * $100 entry = 22.36% notional
-    # weight, then clamped to 20% by the single-name ceiling). OKLO is
-    # processed second with only 1.764% of cluster headroom left
-    # (4.0 - 2.236), rationed by the allocator down to 1.764% risk = 17.64%
-    # notional weight, which never reaches the single-name ceiling.
+    # Equal requests, alphabetical tie-break: CEG is processed first and
+    # fits the 4.0% cluster cap in full (3.0% risk / $10 risk-per-share *
+    # $100 entry = 30% notional, clamped to 20% by the single-name ceiling).
+    # OKLO is processed second with 1.0% of cluster headroom left, rationed
+    # to 1.0% risk = 10% notional, which never reaches the single-name cap.
     assert "single-name ceiling" in buys["CEG"].reasoning
     assert buys["CEG"].allocation_pct == pytest.approx(20.0, abs=0.05)
     assert "cluster" in buys["OKLO"].reasoning
     assert "single-name ceiling" not in buys["OKLO"].reasoning
-    assert buys["OKLO"].allocation_pct == pytest.approx(17.64, abs=0.05)
+    assert buys["OKLO"].allocation_pct == pytest.approx(10.0, abs=0.05)
 
 
 # ==========================================================================
@@ -453,15 +414,14 @@ def test_composition_agreement_ceiling_then_budget_allocator_then_single_name():
 # `filing_date` / `is_new` away, and nothing in `src/risk/rules.py` or
 # `src/portfolio_constructor.py` ever looked at the age of an earnings stance.
 # A bullish earnings view therefore counted as a full live corroborating
-# source forever: one stale stance moved a name from 1 aligned source to 2 and
-# bought it a 2.236% -> 3.162% risk allowance, a 41% larger allowance, on evidence
-# that had confirmed nothing about today.
+# source forever.
 #
-# The gate is a REMOVAL FROM THE TALLY only. The stance stays in the canonical
-# registry, so `validate_grounding` still sees the coverage and a PM that
-# cites it does not fail the session — this can shrink a ceiling and can never
-# raise one, matching the constructor's standing posture that it may only
-# refuse size a request did not earn.
+# Since the sizing ladder was retired (2026-09-14) the gate can no longer
+# change a size at all — it can only pull the NET down, and the only outcome
+# that changes anything is a net driven to zero or below, which refuses the
+# trade. The stance stays in the canonical registry either way, so
+# `validate_grounding` still sees the coverage and a PM that cites it does
+# not fail the session.
 
 from datetime import date, timedelta       # noqa: E402
 from unittest.mock import patch            # noqa: E402
@@ -581,18 +541,17 @@ def test_count_aligned_sources_ignores_a_gated_source():
 
 
 # --------------------------------------------------------------------------
-# End to end: the stale bullish view no longer buys the higher ceiling
+# End to end: gating a source can refuse the trade, and can do nothing else
 # --------------------------------------------------------------------------
 
 def _stale_ceiling_decisions(stale_sources):
     """One full-envelope long on NVDA with technical + earnings both bullish.
 
-    Geometry: entry 100 / stop 70 / target 160. Risk-per-share $30, so a
-    ceiling of 3.162% risk is a 10.54% weight and 2.236% is a 7.45% weight
-    — both far below the 20% single-name cap, which therefore cannot be
-    what moves the number.
+    Geometry: entry 100 / stop 70 / target 160. Risk-per-share $30, so the
+    full 5% envelope is a 16.67% weight — under the 20% single-name cap,
+    which therefore cannot be what moves the number.
 
-    Returns the raw decision LIST, because gating every aligned source now
+    Returns the raw decision LIST, because gating every aligned source
     leaves a net score of zero and produces no order at all.
     """
     constructor = PortfolioConstructor()
@@ -615,28 +574,27 @@ def _stale_ceiling_decision(stale_sources):
     return decisions[0]
 
 
-def test_a_fresh_second_source_earns_the_two_source_ceiling():
+def test_two_fresh_seats_size_at_the_full_ask():
     d = _stale_ceiling_decision(None)
-    # 2 aligned -> 3.162% risk / $30 rps * $100 = 10.54% weight
-    assert abs(d.allocation_pct - 10.54) < 0.05
+    # 5.0% risk / $30 rps * $100 = 16.67% weight
+    assert abs(d.allocation_pct - 16.67) < 0.05
 
 
-def test_a_stale_bullish_earnings_view_no_longer_earns_the_higher_ceiling():
-    """The defect, priced. Same registry, same trade — the only difference
-    is that the earnings filing is older than the threshold, and the risk
-    allowance drops a rung from 3.162% to 2.236%."""
+def test_a_stale_view_no_longer_changes_the_size_at_all():
+    """Retired 2026-09-14. Gating the earnings stance takes the net from +2
+    to +1 — which used to drop the risk allowance a rung (3.162% -> 2.236%)
+    and now changes nothing, because the net no longer sizes anything. The
+    gate's only remaining power is to refuse (see below)."""
     d = _stale_ceiling_decision({"NVDA": frozenset({"earnings"})})
-    # 1 aligned -> 2.236% risk / $30 rps * $100 = 7.45% weight
-    assert abs(d.allocation_pct - 7.45) < 0.05
-    assert "agreement ceiling" in d.reasoning
+    assert abs(d.allocation_pct - 16.67) < 0.05
+    assert "agreement ceiling" not in d.reasoning
 
 
 def test_the_freshness_gate_can_only_ever_reduce():
-    """Gating a source can never raise the ceiling, whatever it gates.
+    """Gating a source can never grow a position, whatever it gates.
 
-    Gating EVERYTHING leaves a net score of zero, which is now a refusal
-    rather than the strictest rung — still a reduction, just the largest one
-    available. Asserted as "no order", not as a smaller order."""
+    Gating EVERYTHING leaves a net score of zero, which is a refusal.
+    Asserted as "no order", not as a smaller order."""
     fresh = _stale_ceiling_decision(None).allocation_pct
     for gated in ({"NVDA": frozenset({"earnings"})},
                   {"NVDA": frozenset({"technical"})}):
@@ -646,7 +604,7 @@ def test_the_freshness_gate_can_only_ever_reduce():
     ) == []
 
 
-def test_no_stale_map_leaves_the_ceiling_exactly_as_it_was():
+def test_no_stale_map_leaves_the_outcome_exactly_as_it_was():
     """A caller with no freshness view must not have one invented for it —
     the same posture `evidence_registry=None` already takes."""
     assert (_stale_ceiling_decision(None).allocation_pct
@@ -660,10 +618,10 @@ def test_no_stale_map_leaves_the_ceiling_exactly_as_it_was():
 # `count_aligned_sources` counts only sources aligned with the trade, so on a
 # long a bearish earnings stance contributes 0 to it — arithmetically
 # identical to neutral and to no coverage at all. That is still true OF THAT
-# COUNT; what changed is that the count is no longer what sizes the trade.
+# COUNT; what changed is that the count is not what decides the trade.
 # `signed_source_score` nets the opposed seats off, and
-# `agreement_ceiling_for_score` prices the net. Both counts are still reported
-# because "2 for, 1 against" and "net +1" are different facts.
+# `agreement_refuses_trade` turns the net into one yes/no. Both counts are
+# still reported because "2 for, 1 against" and "net +1" are different facts.
 
 def test_count_opposing_sources_on_a_long():
     sources = {"technical": "bullish", "earnings": "bearish",
@@ -720,9 +678,8 @@ def test_opposing_count_flips_with_macro_polarity_on_an_inverse_etf():
 def _dissent_decisions(registry, *, risk_pct: float = 5.0):
     """One NVDA long, entry 100 / stop 70 / target 160 (risk-per-share $30).
 
-    At that geometry 5.0% risk is a 16.67% weight, 3.162% is 10.54% and
-    2.236% is 7.45% — all under the 20% single-name cap, so any movement
-    here is the agreement ceiling and nothing else.
+    At that geometry 5.0% risk is a 16.67% weight, under the 20% single-name
+    cap, so nothing but the agreement path can change the outcome.
     """
     constructor = PortfolioConstructor()
     target = TargetPosition(
@@ -737,25 +694,22 @@ def _dissent_decisions(registry, *, risk_pct: float = 5.0):
     )
 
 
-def test_dissent_moves_the_size_down_a_ceiling_rung():
-    """The subtraction test that actually bites. 2-aligned/1-opposed nets to
-    +1, so the ceiling drops 3.162% -> 2.236% and the weight 10.54% -> 7.45%.
-    (1-aligned/1-opposed cannot distinguish a rung drop from a block, which
-    is why this case and not that one.)"""
+def test_survivable_dissent_does_not_move_the_size_but_is_still_recorded():
+    """2-aligned/1-opposed nets to +1: above zero, so the trade stands at
+    the full ask. The dissent is still written into the order note — it is
+    information for the Risk Manager, not a size cut."""
     decisions = _dissent_decisions(_registry(NVDA={
         "technical": "bullish", "earnings": "bullish", "macro": "bearish",
     }))
     assert len(decisions) == 1
     d = decisions[0]
-    assert abs(d.allocation_pct - 7.45) < 0.05
+    assert abs(d.allocation_pct - 16.67) < 0.05
     assert "1 independent source(s) took the OPPOSITE side" in d.reasoning
-    assert "already been subtracted" in d.reasoning
 
 
-def test_three_aligned_and_one_opposed_sizes_at_the_two_seat_rung():
-    """The consequence stated in the ratified change, checked as arithmetic
-    rather than as a special case: S = 3 - 1 = 2, so it prices where a flat
-    two-source idea prices, not where a three-source one does."""
+def test_every_surviving_net_sizes_the_same_contested_or_not():
+    """The retirement, checked where the old ladder used to be loudest:
+    S = 3 - 1 = 2, a flat +2 and a flat +3 all produce the same size."""
     contested = _dissent_decisions(_registry(NVDA={
         "technical": "bullish", "earnings": "bullish", "news": "bullish",
         "macro": "bearish",
@@ -770,13 +724,15 @@ def test_three_aligned_and_one_opposed_sizes_at_the_two_seat_rung():
     assert contested[0].allocation_pct == pytest.approx(
         flat_two[0].allocation_pct, abs=1e-9,
     )
-    assert contested[0].allocation_pct < flat_three[0].allocation_pct
+    assert contested[0].allocation_pct == pytest.approx(
+        flat_three[0].allocation_pct, abs=1e-9,
+    )
 
 
 def test_a_net_score_of_zero_produces_no_order_at_all():
-    """One for, one against is not a small idea — it is not an idea. And it
-    must come from the ceiling arithmetic itself: there is no standalone
-    dissent veto anywhere in the constructor to charge the seat twice."""
+    """One for, one against is not a small idea — it is not an idea. There
+    is no standalone dissent veto anywhere in the constructor to charge the
+    seat twice; the sign of the net IS the rule."""
     assert _dissent_decisions(_registry(NVDA={
         "technical": "bullish", "earnings": "bearish",
     })) == []
@@ -798,7 +754,7 @@ def test_a_net_score_at_or_below_zero_leaves_a_durable_machine_readable_reason()
     constructor log line captured" — found here by running the regex
     against the constructor's own message, statically, no live data needed.
     """
-    from src.portfolio_constructor import PortfolioConstructor, STOP_REFUSAL_AGREEMENT_CEILING
+    from src.portfolio_constructor import PortfolioConstructor, STOP_REFUSAL_AGREEMENT_NET
 
     constructor = PortfolioConstructor()
     target = TargetPosition(
@@ -815,7 +771,7 @@ def test_a_net_score_at_or_below_zero_leaves_a_durable_machine_readable_reason()
     )
     assert decisions == []
     refusals = constructor.drain_refusals()
-    assert refusals["NVDA"]["refusal"] == STOP_REFUSAL_AGREEMENT_CEILING
+    assert refusals["NVDA"]["refusal"] == STOP_REFUSAL_AGREEMENT_NET
     assert "net" in refusals["NVDA"]["detail"]
     # And the log-scrape fallback now matches it too (via `_note_refusal`'s
     # own "refused" wording), so neither record path is silent on this
@@ -848,8 +804,9 @@ def test_blocking_a_target_leaves_a_held_position_alone():
 
 
 def test_dissent_is_recorded_on_the_order_that_survives_it():
-    """The number still appears in the order note — and now says plainly that
-    it has already been paid for, so a reader does not double-count it."""
+    """The split still appears in the order note. It no longer changes the
+    size — the note says so, so a reader does not look for a cut that is
+    not there."""
     with_dissent = _dissent_decisions(_registry(NVDA={
         "technical": "bullish", "earnings": "bullish", "macro": "bearish",
     }))
@@ -857,8 +814,11 @@ def test_dissent_is_recorded_on_the_order_that_survives_it():
         "technical": "bullish", "earnings": "bullish", "macro": "neutral",
     }))
     assert len(with_dissent) == len(without_dissent) == 1
-    assert with_dissent[0].allocation_pct < without_dissent[0].allocation_pct
+    assert with_dissent[0].allocation_pct == pytest.approx(
+        without_dissent[0].allocation_pct, abs=1e-9,
+    )
     assert "OPPOSITE side" in with_dissent[0].reasoning
+    assert "no longer sizes anything" in with_dissent[0].reasoning
     assert "OPPOSITE side" not in without_dissent[0].reasoning
 
 
@@ -894,7 +854,7 @@ def test_a_gated_stance_is_not_shown_to_the_pm_as_corroborating():
     assert "- NVDA: 1 aligned / 0 opposed = net +1 if long" in msg
     assert "earnings stance NOT counted — filing older than 90d" in msg
     assert "STALE (still real coverage, still citable as provenance" in msg
-    assert "does NOT count toward the agreement ceiling" in msg
+    assert "does NOT count toward the agreement score" in msg
 
 
 def test_a_fresh_stance_is_shown_as_corroborating():
@@ -905,9 +865,9 @@ def test_a_fresh_stance_is_shown_as_corroborating():
 
 
 def test_the_pm_is_shown_the_opposing_count_and_the_net():
-    """The net is what the constructor will actually price, so the PM must
-    see it before it sizes — a ceiling the PM cannot predict reads as the
-    constructor contradicting PM's own reasoning (2026-08-20 incident)."""
+    """The net is what the constructor will admit or refuse on, so the PM
+    must see it before it proposes — a refusal the PM cannot predict reads
+    as the constructor contradicting its reasoning (2026-08-20 incident)."""
     agent = _pm_agent()
     msg = agent.build_user_message(
         analyses=[_analysis("NVDA")],

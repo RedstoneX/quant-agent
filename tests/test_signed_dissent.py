@@ -3,13 +3,19 @@
 Two jobs, and they are different jobs.
 
 **The acceptance criterion.** Signing the sum was allowed to change how a
-CONTESTED name is sized. It was not allowed to change anything else. So the
-first half of this file pins the property that made the change shippable: with
-nothing opposed, the signed score IS the aligned count, and every rung of
-`risk.agreement_ceiling_pct` must therefore price exactly what it priced
-before. The ratified risk envelope is unchanged for unanimous evidence, which
-is nearly all of it — measured over the 12 most recent runs in the local
-snapshot, 25 of 28 sized targets are untouched.
+CONTESTED name is treated. It was not allowed to change anything else. So the
+first half of this file pins the property that made the change shippable:
+with nothing opposed, the signed score IS the aligned count. Measured over
+the 12 most recent runs in the local snapshot, 25 of 28 sized targets were
+untouched.
+
+**Superseded in part, 2026-09-14.** The graduated ceiling the signed score
+used to index is retired (owner decision — the sqrt law prices INDEPENDENT
+estimates and these seats are not independent). The score now feeds
+`agreement_refuses_trade`, one yes/no. The "unanimous cases price exactly as
+before" half of the criterion went with the schedule; what survives, and is
+still pinned below, is that the SCORE itself is unchanged and that the
+refusal comes from the score's sign alone.
 
 **The weight pin.** The second half is a mechanical guard, not a comment.
 `src/conviction_ledger.py` records the desk's standing rule (owner,
@@ -45,7 +51,7 @@ import pytest
 
 from src.risk.rules import (
     SEAT_WEIGHT,
-    agreement_ceiling_for_score,
+    agreement_refuses_trade,
     count_aligned_sources,
     count_opposing_sources,
     signed_source_score,
@@ -59,35 +65,17 @@ REPO = Path(__file__).parent.parent
 #: keys literally, and this list is what a weight table would be keyed by.
 SEATS = ("technical", "news", "earnings", "macro", "smart_money")
 
-#: `config/settings.yaml::risk.agreement_ceiling_pct`, the live schedule.
-SCHEDULE = [3.0, 4.0, 5.0, 5.0, 5.0]
-
-
 # ==========================================================================
-# The acceptance criterion: unanimous cases price exactly as they did
+# The acceptance criterion: the score itself is the aligned count
 # ==========================================================================
-
-def _old_agreement_ceiling_for_count(schedule, count: int) -> float:
-    """`agreement_ceiling_for_count` as it stood at 840d783, verbatim.
-
-    Kept here — and ONLY here — as the reference the new rule is measured
-    against. Deleting it would leave "unanimous cases are unchanged" as a
-    claim in a docstring rather than an assertion in a test.
-    """
-    if not schedule:
-        return float("inf")
-    index = max(0, min(count, len(schedule)) - 1)
-    return schedule[index]
-
 
 @pytest.mark.parametrize("count", [1, 2, 3, 4, 5, 6, 99])
-def test_unanimous_cases_reproduce_the_old_aligned_count_ceiling_exactly(count):
-    """S=1 gives what count=1 gave, S=2 what count=2 gave, up the schedule
-    and past its end. This is the property that made the change shippable:
-    the existing risk envelope moves for contested names and for nothing
-    else."""
-    assert (agreement_ceiling_for_score(SCHEDULE, count)
-            == _old_agreement_ceiling_for_count(SCHEDULE, count))
+def test_every_unanimous_count_is_admitted(count):
+    """With nothing opposed there is nothing for the gate to refuse, at any
+    count. The old form of this test compared the score against a retired
+    per-rung schedule; the schedule is gone, so what is left to assert is
+    that unanimity is never the thing that stops a trade."""
+    assert not agreement_refuses_trade(count)
 
 
 def test_a_unanimous_registry_scores_exactly_its_aligned_count():
@@ -100,16 +88,17 @@ def test_a_unanimous_registry_scores_exactly_its_aligned_count():
         assert count_aligned_sources("AAPL", sources, "long") == n
 
 
-def test_the_only_case_the_old_rule_priced_differently_is_a_zero_count():
-    """Honest about what DID move. The old rule deliberately priced a zero
-    aligned count at the strictest rung ("not punished any harder than one");
-    a signed sum cannot, because zero net evidence and one net seat are
-    different numbers. Documented rather than hidden — and measured: across
-    the 28 sized targets in the 2026-08-28..2026-09-02 snapshot, no target
-    ever had zero aligned sources, so every case this reaches in practice is
-    a real dissent, not a silent registry."""
-    assert _old_agreement_ceiling_for_count(SCHEDULE, 0) == SCHEDULE[0]
-    assert agreement_ceiling_for_score(SCHEDULE, 0) == 0.0
+def test_the_only_case_the_old_rule_treated_differently_is_a_zero_count():
+    """Honest about what DID move in 2026-09-02. The pre-signing rule
+    deliberately priced a zero aligned count at the strictest rung ("not
+    punished any harder than one"); a signed sum cannot, because zero net
+    evidence and one net seat are different facts. Documented rather than
+    hidden — and measured: across the 28 sized targets in the
+    2026-08-28..2026-09-02 snapshot, no target ever had zero aligned
+    sources, so every case this reaches in practice is a real dissent, not a
+    silent registry."""
+    assert agreement_refuses_trade(0)
+    assert not agreement_refuses_trade(1)
 
 
 # ==========================================================================
@@ -266,17 +255,18 @@ def test_the_derivation_rule_this_guard_cites_still_exists():
 # No second veto
 # ==========================================================================
 
-def test_the_block_comes_from_the_ceiling_and_nothing_else():
-    """S <= 0 must be refused by the SAME schedule lookup that sizes the
-    trade. If a standalone dissent veto were ever added on top, the
-    dissenting seat would be charged twice — netted off the score AND used
-    to reject the trade — and this test is where that shows up: with the
-    schedule switched off, an opposed-majority registry must still produce a
-    (merely unenforced) ceiling rather than a block."""
-    assert agreement_ceiling_for_score([], -3) == float("inf")
+def test_the_block_comes_from_the_score_sign_and_nothing_else():
+    """S <= 0 must be refused by the SIGN of the score itself. If a
+    standalone dissent veto were ever added on top, the dissenting seat
+    would be charged twice — netted off the score AND used to reject the
+    trade. The gate takes one argument, the score, so there is nowhere for a
+    second rule to enter."""
+    import inspect
+
     contested = {"technical": "bullish", "earnings": "bearish", "macro": "bearish"}
     assert signed_source_score("AAPL", contested, "long") == -1
-    assert agreement_ceiling_for_score(SCHEDULE, -1) == 0.0
+    assert agreement_refuses_trade(-1)
+    assert list(inspect.signature(agreement_refuses_trade).parameters) == ["score"]
 
 
 def test_dissent_and_agreement_are_the_same_magnitude():
