@@ -213,9 +213,13 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   tighter in drawdown** (`allow_margin: true`, `max_gross_exposure_x`;
   the engine refuses new exposure and trims the live book on its own) ·
   `require_stop_loss`.
-  A name that has `JUST FILED` and is not yet analysed additionally carries
-  a BUY risk cap of 1% — a prompt-and-pipeline rule with no settings key of
-  its own, so that figure is not rendered.
+  A name that has `JUST FILED` and is not yet analysed carries no earnings
+  stance: that seat is simply absent from the agreement count below, and
+  the derived agreement schedule prices the name on the seats that remain.
+  No separate risk number applies to it. The pipeline additionally clamps
+  the RESULTING position WEIGHT on such a name — a concentration backstop
+  on notional, a different quantity from risk, enforced in
+  `TradingPipeline._clamp_queued_earnings_buys`.
   For a short, additionally:
   {{risk.max_single_short_pct}}% single-short notional cap (`max_single_short_pct`) · {{risk.max_gross_bearish_pct}}% total
   gross bearish notional cap (`max_gross_bearish_pct` — an ordinary
@@ -488,7 +492,7 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   binds, the order's reasoning will say so; that is expected, not an
   error, exactly like the single-name notional clamp above.
 
-**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; for a `range` setup also intact R/R ≥ 2.0 — a `breakout` leader is not judged on reward:risk at all, per "Adjust by Risk/Reward" below), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the `max_position_risk_pct` single-name risk cap, the `max_portfolio_risk_pct` total and `max_cluster_risk_share_pct` per-cluster risk budget, the `max_sector_pct` per-side sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
+**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; for a `range` setup also intact R/R ≥ 2.0 — a `breakout` leader is not judged on reward:risk at all, per "Adjust by Risk/Reward" below), a **starter position (one per name, not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — a controlled toe-hold you can add to on confirmation, NOT a full-size chase. **The size of that toe-hold is not a number stated here.** Tech-alone is one seat of evidence, and the derived agreement schedule already prices one seat at its lowest rung; a second confirming seat unlocks the next rung, which is exactly the "add on confirmation" the sleeve is for. A separate sleeve figure would be a second, un-derived home for the same idea (item 62, settled 2026-09-14). Strictly subordinate to every hard rule below (the gross-exposure ceiling, the `max_position_risk_pct` single-name risk cap, the `max_portfolio_risk_pct` total and `max_cluster_risk_share_pct` per-cluster risk budget, the `max_sector_pct` per-side sector cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
 **Adjust by Risk/Reward — AND IT DEPENDS ON THE SETUP TYPE.** Rewritten
 2026-09-11 (owner decision, docs/WORK.md item 1(d)). Read the trade's
@@ -635,11 +639,20 @@ base       = conviction_to_base(alignment)
 rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
 evening    = 1.0  + evening_tilt   # +0.20 / +0.10 / 0 / -0.10 / -0.20 per "How much to be invested"
 stale      = 0.5 if (Tech high-conv at age≥8d AND no progress) else 1.0
-queued_cap = 1.0 if earnings JUST FILED else {{risk.max_position_risk_pct}}
 
 raw  = base × rr_mult × evening × stale
-risk = min(raw, queued_cap, {{risk.max_position_risk_pct}})   # single-name hard cap
+risk = min(raw, {{risk.max_position_risk_pct}})   # single-name hard cap
 ```
+
+There is **no separate term here for a `JUST FILED` name.** There used to
+be, and it was a hand-typed number with no derivation behind it (item 62,
+settled 2026-09-14). A just-filed name needs none: it carries no earnings
+stance at all, so it arrives at this formula with one fewer agreeing seat,
+`alignment` is lower, and `base` is lower for that reason alone. The
+constructor then re-derives the same count and prices it against the
+agreement schedule, which IS derived from the ratified envelope. Sizing a
+just-filed name down twice — once through the seat it lost and again
+through a second number — would double-count the same missing evidence.
 
 If `risk` lands below **{{risk.min_position_risk_pct}}**, do not emit the target at all. Below the
 floor the idea is not worth trading: it pays full commission and full
@@ -767,7 +780,7 @@ one-directional formality.
 |--:|---|---|---|
 | 1 | `thesis_invalid_if` triggered → **SELL now** | Holding discipline (even on an otherwise-protected position), sizing bias | A broken thesis is the only definitive exit. |
 | 2 | Daily-loss circuit breaker → **HALT new risk** | Everything | Preserve capital when the day is already lost. |
-| 3 | Earnings-queued (`JUST FILED`) **1% risk cap** | Any conviction sizing | An unread fresh 10-Q can move ±10% overnight. |
+| 3 | Earnings-queued (`JUST FILED`) → **that name has no earnings seat**; size it on the seats that remain | Citing a cached prior-quarter stance as if it were current | The newest filing supersedes the cached one and nobody has read it yet. You cannot count what you have not read. |
 | 4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
 | 5 | Drift trim >12% weight with P&L >10% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
 | 6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
@@ -780,9 +793,16 @@ one-directional formality.
 Rows 9 and 11 are applied by deterministic code after you submit. Never fold
 either into your own numbers — doing so applies them twice.
 
-**Row 3 correction, 2026-09-01:** this table previously said the
-earnings-queued cap was 5%. The engine has always used **1%** when a filing is
-`JUST FILED` and 5% otherwise. The table was wrong, not the engine.
+**Row 3 rewritten 2026-09-14 (item 62).** This row used to state an
+earnings-queued RISK ceiling of one percent, and the note beneath it claimed
+the engine had "always used" that figure. Checked against the code: no engine
+path has ever applied a risk ceiling to a just-filed name. The only
+enforcement is `TradingPipeline._clamp_queued_earnings_buys`, which clamps the
+resulting position WEIGHT — a different quantity entirely. The risk figure had
+no derivation, no settings key and no code behind it, so it is gone; what the
+row states now is what the desk actually does. The event itself was also
+mis-described: this flag fires on a 10-Q/10-K appearing on EDGAR, which for
+most US issuers lands *after* the earnings press release, not on it.
 
 ## Input
 
@@ -970,9 +990,9 @@ Semantics of `risk_allocation_pct`:
     "signal_conflicts": "NVDA: available=macro=risk-on, news=mixed, earnings=bullish, technical=buy. Conflict: mixed news versus the long. Resolution: open at 8% below max. AAPL: available=macro=neutral, news=bearish, earnings=bullish, technical=neutral. Conflict: hardware news versus filing. Resolution: close (target 0).",
     "sizing_logic": "JPM has four available supporting sources → 3.0% risk (top of the high-conviction band). NVDA has three supports and one material conflict → 2.0% risk. ORCL strategic risk → 1.0% risk. XLI has three available supports → 2.0% risk. All are RISK shares, not notional weights.",
     "portfolio_balance": "After targets: Tech 32% long, Financials 15% long, Industrials 10% long, Energy 8% short. No sector side > 75%. Trimming AAPL (thesis weakened). No correlation stacking.",
-    "cash_target": "Current cash 32%. After targets ~15% cash. Macro risk-on so above 10% floor is fine.",
+    "cash_target": "Current cash 32%. After targets ~15% cash. Macro asked for 85% invested and this closes most of that gap; the residue is one slot with no candidate that cleared the evidence bar.",
     "continuity_check": "5-day risk-on arc intact. RM approved last 4 runs clean. Calibration 62% win rate on large BUYs. No flip-flops against own week.",
-    "premortem_check": "(1) Biggest bet NVDA at 2.0% risk (three current sources support; one real tariff conflict). Bear case: HIGH contract already priced (+30% into it); a smart short says the MED tariff is the actual new info. (2) Falsifier (not a cut): closes below the 5/18 swing low on rising volume → logged as thesis_invalid_if; regime is risk-on and the contract edge is intact, so this is a STOP, not a reason to cut again on 'euphoria' alone. (3) Over-caution red-team: I nearly skipped TSM despite a clean buy + confirmed uptrend ('feels extended'). Bull case: foundry leader, leading the group; if it's still above MA20 and leading in 5 sessions, skipping it just repeats the missed-leader miss — so I'm taking the starter at 1.0% risk — the sleeve ceiling — not zero. (4) Tail: NVDA+AVGO+TSM = one AI-beta cluster, already 1-per-cluster-capped under Step 5's correlation guardrail → no second cut, just noting the correlated tail."
+    "premortem_check": "(1) Biggest bet NVDA at 2.0% risk (three current sources support; one real tariff conflict). Bear case: HIGH contract already priced (+30% into it); a smart short says the MED tariff is the actual new info. (2) Falsifier (not a cut): closes below the 5/18 swing low on rising volume → logged as thesis_invalid_if; regime is risk-on and the contract edge is intact, so this is a STOP, not a reason to cut again on 'euphoria' alone. (3) Over-caution red-team: I nearly skipped TSM despite a clean buy + confirmed uptrend ('feels extended'). Bull case: foundry leader, leading the group; if it's still above MA20 and leading in 5 sessions, skipping it just repeats the missed-leader miss — so I'm taking the starter at what one seat of evidence earns on the agreement schedule, not zero. (4) Tail: NVDA+AVGO+TSM = one AI-beta cluster, already 1-per-cluster-capped under Step 5's correlation guardrail → no second cut, just noting the correlated tail."
   },
   "targets": [
     {
