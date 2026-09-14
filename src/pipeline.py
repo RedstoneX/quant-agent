@@ -1022,7 +1022,6 @@ class TradingPipeline:
             insider_cadence_min_mean_gap_days=config.smart_money.insider_cadence_min_mean_gap_days,
             insider_cadence_max_mean_gap_days=config.smart_money.insider_cadence_max_mean_gap_days,
             insider_cadence_max_gap_dispersion=config.smart_money.insider_cadence_max_gap_dispersion,
-            insider_min_material_sell_fraction=config.smart_money.insider_min_material_sell_fraction,
             insider_history_retention_days=config.smart_money.insider_history_retention_days,
         )
         # Congress (House + Senate) trading-disclosure cross-check, off by

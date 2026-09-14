@@ -1093,7 +1093,9 @@ smart_money:
   insider_cadence_min_mean_gap_days: 20
   insider_cadence_max_mean_gap_days: 120
   insider_cadence_max_gap_dispersion: 0.25
-  insider_min_material_sell_fraction: 0.05
+  # insider_min_material_sell_fraction REMOVED 2026-09-13 — it was a cutoff no
+  # published source measures, and it discarded a band Scott & Xu find
+  # significantly positive. The ratio is reported, not gated. See src/config.py.
   insider_history_retention_days: 1830
 
 nominations:
