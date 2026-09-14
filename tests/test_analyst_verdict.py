@@ -28,7 +28,8 @@ from ops.model_policy import scenarios as S
 from ops.model_policy.deterministic_selection import evaluate
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import (
-    RATING_DIRECTION, RATING_MAGNITUDE, AnalystVerdict, EarningsAnalysis,
+    NO_STATED_STRENGTH, RATING_DIRECTION, RATING_MAGNITUDE, AnalystVerdict,
+    EarningsAnalysis,
     NewsIntelligenceReport, StockNewsItem, TechAnalysisResult,
     TechReasoningChain, VerdictEvidence,
 )
@@ -276,7 +277,10 @@ def test_a_bullish_earnings_read_maps_onto_the_verdict():
     v = _earnings("bullish", "high").to_verdict()
     assert v.seat == "earnings"
     assert v.symbol == "AAPL"
-    assert (v.direction, v.magnitude, v.conviction) == ("bullish", 0.5, "high")
+    # magnitude 0.0: earnings states a direction and a conviction and no
+    # strength scale of its own — see `NO_STATED_STRENGTH`. It reaches the
+    # ranking through its weighted conviction, not through a borrowed rung.
+    assert (v.direction, v.magnitude, v.conviction) == ("bullish", 0.0, "high")
     assert v.invalidation == "China demand craters"
     by_label = {e.label: e for e in v.evidence}
     assert by_label["key_thesis"].text == "services mix offsets hardware softness"
@@ -290,9 +294,9 @@ def test_a_bullish_earnings_read_maps_onto_the_verdict():
 
 def test_a_bearish_earnings_read_uses_the_bull_case_as_its_invalidation():
     v = _earnings("bearish", "low").to_verdict()
-    assert (v.direction, v.magnitude, v.conviction) == ("bearish", 0.5, "low")
+    assert (v.direction, v.magnitude, v.conviction) == ("bearish", 0.0, "low")
     assert v.invalidation == "services mix reaccelerates"
-    assert v.signed_magnitude == -0.5
+    assert v.signed_magnitude == 0.0
 
 
 def test_a_neutral_earnings_read_maps_to_a_neutral_verdict_with_no_lean():
@@ -387,53 +391,124 @@ def test_score_is_magnitude_plus_conviction():
 
 
 def test_rank_verdicts_orders_by_score_then_symbol_and_skips_neutral():
+    """Scores carry technical's 1.2 seat weight since 2026-09-13: the
+    aggregation is a weighted SUM, so a lone seat's weight multiplies its own
+    score instead of cancelling out of an average. Ordering is unchanged."""
     verdicts = [
-        _tech("CCC", "buy", "medium").to_verdict(),          # 1.0
-        _tech("AAA", "buy", "medium").to_verdict(),          # 1.0 — ties on symbol
-        _tech("BBB", "strong_sell", "high").to_verdict(),    # 2.0
-        _tech("DDD", "buy", "low").to_verdict(),             # 0.5
-        _tech("EEE", "neutral", invalid_if="").to_verdict(), # not a candidate
+        _tech("CCC", "buy", "medium").to_verdict(),          # 1.0 * 1.2
+        _tech("AAA", "buy", "medium").to_verdict(),          # 1.0 * 1.2 — ties on symbol
+        _tech("BBB", "strong_sell", "high").to_verdict(),    # 2.0 * 1.2
+        _tech("DDD", "buy", "low").to_verdict(),             # 0.5 * 1.2
+        _tech("EEE", "neutral", invalid_if="").to_verdict(), # no lean — not scored
     ]
     ranked = rank_verdicts(verdicts)
     assert [c.symbol for c in ranked] == ["BBB", "AAA", "CCC", "DDD"]
-    assert [c.score for c in ranked] == [2.0, 1.0, 1.0, 0.5]
+    assert [c.score for c in ranked] == [2.4, 1.2, 1.2, 0.6]
     assert ranked[0].direction == "bearish"
     assert ranked[0].seats == ["technical"]
     # Pure: same input, same order.
     assert [c.symbol for c in rank_verdicts(verdicts)] == ["BBB", "AAA", "CCC", "DDD"]
 
 
-def test_two_seats_on_one_symbol_average_at_the_research_informed_weight():
-    """Same fixture as the old unit-weight test, recomputed for §13.3's
-    2026-09-03 amendment: technical enters at 1.2x, news at 1.0x, so
-    technical's numbers pull the weighted average further than a plain
-    mean would — the whole point of giving it a higher prior."""
+def test_two_seats_on_one_symbol_sum_at_the_research_informed_weight():
+    """Same fixture as the old unit-weight test, recomputed for the
+    2026-09-13 change from a weighted AVERAGE to a weighted SUM. Technical
+    enters at 1.2x, news at 1.0x, and each seat's contribution is ADDED."""
     tech = _tech("XLE", "buy", "high").to_verdict()             # 0.5 + 1.0, weight 1.2
     other = AnalystVerdict(
         seat="news", symbol="XLE", direction="bullish", magnitude=1.0,
         conviction="low", evidence=_evidence(), invalidation="x",  # 1.0 + 0.0, weight 1.0
     )
     [c] = rank_verdicts([tech, other])
-    # magnitude: (0.5*1.2 + 1.0*1.0) / 2.2 = 0.7273
-    # conviction: (1.0*1.2 + 0.0*1.0) / 2.2 = 0.5455
-    # risk_reward_tiebreak (fix #2): only technical carries risk_reward
-    # evidence (2.40, from its 100/95/112 fixture geometry) — "news" has no
-    # risk_reward evidence, so it contributes 0 weight, not 0 value:
+    # magnitude: 0.5*1.2 + 1.0*1.0 = 1.6
+    # conviction: 1.0*1.2 + 0.0*1.0 = 1.2
+    # risk_reward_tiebreak: still a weighted MEAN, deliberately — it
+    # aggregates several estimates of ONE quantity in a real unit. Only
+    # technical carries risk_reward evidence (2.40, from its 100/95/112
+    # fixture geometry); "news" contributes 0 weight, not 0 value:
     # (2.40*1.2) / 1.2 = 2.40. Tiebreak only — never folded into `score`.
     assert c.components == {
-        "magnitude": 0.7273, "conviction_score": 0.5455, "risk_reward_tiebreak": 2.4,
+        "magnitude": 1.6, "conviction_score": 1.2, "risk_reward_tiebreak": 2.4,
     }
-    assert c.score == 1.2728
+    assert c.score == 2.8
     assert c.seats == ["news", "technical"]
 
 
-def test_a_single_seat_verdict_is_unaffected_by_its_own_weight():
-    """The weighting only changes how MULTIPLE seats are averaged together.
-    A symbol only one seat has a view on ranks by its own raw score either
-    way, regardless of which seat that is or what its weight is."""
+def test_a_second_agreeing_seat_can_never_lower_a_candidates_score():
+    """**The defect that forced the sum, found by adversarial review before
+    PR #348 merged, 2026-09-13.** Under the weighted AVERAGE the arithmetic
+    below produced 2.0 for the technical read alone and 1.8 once smart_money
+    AGREED with it — the strongest thing that seat can say made the candidate
+    rank lower. Agreement was dilutive, which contradicts the desk's own
+    stated edge (breadth x consistency x asymmetry) and `docs/OUTCOME.md`
+    §9.4's "agreement earns size".
+
+    This is pinned as a PROPERTY, not as two magic numbers: for every subset
+    of agreeing seats, adding one more must not reduce the score.
+    """
+    tech = _tech("XLE", "strong_buy", "high").to_verdict()
+    agreeing = [
+        AnalystVerdict(
+            seat=seat, symbol="XLE", direction="bullish",
+            magnitude=NO_STATED_STRENGTH, conviction=conviction,
+            evidence=_evidence(), invalidation="x",
+        )
+        for seat, conviction in (
+            ("smart_money", "high"),   # `actionable`, the strongest it states
+            ("macro", "medium"),
+            ("news", "low"),           # the weakest a seat can state
+            ("earnings", "high"),
+        )
+    ]
+    scores = []
+    for i in range(len(agreeing) + 1):
+        [c] = rank_verdicts([tech, *agreeing[:i]])
+        scores.append(c.score)
+    assert scores == sorted(scores), scores
+    # And strictly higher wherever the added seat actually said something:
+    # only the low-conviction news seat contributes exactly zero.
+    assert scores[0] == 2.4                      # technical alone, 2.0 * 1.2
+    assert scores[1] > scores[0]                 # + smart_money `actionable`
+    assert scores[4] > scores[1]
+
+
+def test_a_lone_seats_own_weight_now_scales_its_score():
+    """Changed 2026-09-13 with the move from average to sum. Under the
+    average a lone seat's weight cancelled out, so a lone macro read and a
+    lone technical read of identical strength scored the same — which made
+    the researched prior silently inert on every single-seat candidate, the
+    majority of them. Under a sum the weight applies, so the seat this desk
+    has the best-sourced reason to trust ranks above the one it does not."""
     tech = _tech("XLE", "buy", "high").to_verdict()
     [c] = rank_verdicts([tech])
-    assert c.score == score_verdict(tech)
+    assert c.score == round(score_verdict(tech) * SEAT_WEIGHT["technical"], 4) == 1.8
+    macro_like = AnalystVerdict(
+        seat="macro", symbol="XLE", direction="bullish",
+        magnitude=tech.magnitude, conviction=tech.conviction,
+        evidence=_evidence(), invalidation="x",
+    )
+    [m] = rank_verdicts([macro_like])
+    assert m.score == round(score_verdict(macro_like) * SEAT_WEIGHT["macro"], 4)
+    assert c.score > m.score
+
+
+def test_a_seat_that_looked_and_had_no_lean_is_recorded_not_dropped():
+    """2026-09-13. A neutral verdict contributes nothing to the score — there
+    is nothing to contribute — but "this seat looked and came back with
+    nothing" is a different state from "this seat never looked", and until
+    now the two were indistinguishable downstream. It matters because a macro
+    read whose sector rows contradict each other now resolves to neutral."""
+    tech = _tech("XLE", "buy", "high").to_verdict()
+    quiet_macro = AnalystVerdict(
+        seat="macro", symbol="XLE", direction="neutral", magnitude=0.0,
+        conviction="medium", evidence=_evidence(), invalidation="",
+    )
+    [bare] = rank_verdicts([tech])
+    [with_quiet] = rank_verdicts([tech, quiet_macro])
+    assert bare.neutral_seats == []
+    assert with_quiet.neutral_seats == ["macro"]
+    assert with_quiet.score == bare.score      # contributes nothing to the score
+    assert with_quiet.seats == ["technical"]   # and is not a scoring seat
 
 
 def test_two_verdicts_from_the_same_seat_do_not_double_that_seats_weight():
@@ -591,7 +666,9 @@ def test_pm_ranks_equally_eligible_candidates_deterministically():
     )
     assert blocked == {}
     assert [c.symbol for c in ranked] == ["AAA", "BBB", "CCC", "DDD"]
-    assert [c.score for c in ranked] == [2.0, 1.5, 1.0, 0.5]
+    # Each is a lone technical read, so each carries technical's 1.2 weight
+    # (2026-09-13: a weighted sum, so a lone seat's weight no longer cancels).
+    assert [c.score for c in ranked] == [2.4, 1.8, 1.2, 0.6]
 
 
 def test_the_real_ratio_orders_candidates_instead_of_admitting_them():
@@ -705,9 +782,12 @@ def test_rank_candidates_combines_all_five_seats_at_their_researched_weight():
     assert blocked == {}
     assert [c.symbol for c in ranked] == ["MULTI", "SOLO"]
     assert ranked[0].seats == ["earnings", "news", "technical"]
-    # SOLO is untouched by the new seats: still exactly its own raw score.
+    # SOLO is untouched by the new seats: still exactly its own score at its
+    # own seat weight, with nothing added and nothing averaged away.
     solo_candidate = ranked[1]
-    assert solo_candidate.score == score_verdict(solo.to_verdict())
+    assert solo_candidate.score == round(
+        score_verdict(solo.to_verdict()) * SEAT_WEIGHT["technical"], 4
+    )
 
 
 def test_rank_candidates_survives_a_malformed_earnings_entry():
@@ -960,8 +1040,12 @@ def test_the_ranking_is_rendered_into_the_pm_prompt(monkeypatch):
     )
     section = msg.split("## Candidate Ranking")[1].split("\n## ")[0]
     lines = [ln for ln in section.splitlines() if ln[:2] in ("1.", "2.", "3.")]
-    assert lines[0].startswith("1. AAA — bullish | score 2.00")
-    assert lines[1].startswith("2. CCC — bullish | score 1.00")
+    assert lines[0].startswith("1. AAA — bullish | score 2.40")
+    assert lines[1].startswith("2. CCC — bullish | score 1.20")
+    # The prompt must say the aggregation is a SUM and that only technical
+    # states a strength, or the PM reads the number as a 0-2 fraction.
+    assert "summed over 1 seat(s)" in lines[0]
+    assert "an agreeing seat can never pull a name down" in section
     assert "invalid if — technical: closes below MA50 on volume" in lines[0]
     assert "- ZZZ: R2 neutral rating" in section
     # The ranking sits AFTER the reports it orders.
