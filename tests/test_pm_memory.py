@@ -272,8 +272,15 @@ def test_handle_ex_dividends_skips_when_ex_div_is_today(tmp_path):
     pipeline.broker.replace_stop_loss.assert_not_called()
 
 
-def test_run_intra_check_emergency_sells_on_breach(tmp_path):
-    """Intra check at -4% daily: force-sells every position."""
+def test_run_intra_check_halts_and_sells_nothing_on_breach(tmp_path):
+    """Intra check at -4% daily: HALTS. It refuses new risk, cancels resting
+    entry orders and verifies stop coverage — and sells nothing.
+
+    docs/WORK.md item 32 (2026-09-14): this test used to assert the opposite,
+    that every position was force-sold at a limit 1% below market. That
+    liquidation is deleted; on the correlated gap it was built for the limit
+    would not have filled and the no-fill path restored the very stops it had
+    just cancelled."""
     from unittest.mock import MagicMock
     from src.pipeline import TradingPipeline
     from src.storage.db import Database
@@ -310,17 +317,22 @@ def test_run_intra_check_emergency_sells_on_breach(tmp_path):
     pipeline.cost_circuit = MagicMock()
     pipeline.cost_circuit.activate_session.return_value = {"suspended": True}
     pipeline.cost_circuit.require_paid_analysis.side_effect = RuntimeError(
-        "paid path must not precede emergency liquidation"
+        "paid path must not precede the deterministic halt"
     )
 
     result = pipeline.run_intra_check()
-    assert result["status"] == "emergency_sold"
-    assert len(result["orders"]) == 1
-    # Verify the order was a real sell at ~1% below market
-    kw = pipeline.broker.submit_order.call_args.kwargs
-    assert kw["side"] == "sell"
-    assert kw["qty"] == 50
-    assert kw["limit_price"] == round(192 * 0.99, 2)
+    assert result["status"] == "daily_loss_halted"
+    assert result["halted"] is True
+    assert result["orders"] == []
+    # NOTHING was sold — the invariant this change exists to establish.
+    pipeline.broker.submit_order.assert_not_called()
+    # The position is still held, and reported as not verifiably covered:
+    # `snapshot_protective_stops` returns no stops for it.
+    assert result["positions"] == 1
+    assert result["unprotected_at_halt"] == ["NVDA"]
+    # Resting entry orders ARE cancelled — refusing new risk includes
+    # pending intentions to add it.
+    pipeline.broker.cancel_open_entry_orders.assert_called_once_with()
     pipeline.cost_circuit.activate_session.assert_called_once()
     pipeline.cost_circuit.require_paid_analysis.assert_not_called()
 

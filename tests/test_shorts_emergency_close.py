@@ -19,8 +19,10 @@ short). The decision path still cannot open or cover a short:
 `PortfolioConstructor`'s Stage-1 guard, the position-reviewer's midday
 SELL/REDUCE loop, and `ExecutionStage`'s SELL-decision loop all still refuse
 a negative-qty position before ever reaching a qty gate. This file only adds
-an EXIT that fires from forced-close paths (emergency liquidation), never
-from a decision.
+an EXIT that fires from forced-close paths (`_force_delever` and the §11.2
+gross-exposure ladder), never from a decision. The daily-loss circuit
+breaker was a third such path until 2026-09-14, when it was replaced by a
+halt that closes nothing — see section 4.
 
 Same convention as Stage 1/2:
   * ``*_long_*`` — the exact pre-change behaviour, pinned with a literal.
@@ -290,161 +292,121 @@ def test_indeterminate_qty_never_reaches_broker_via_forced_close_gate():
 
 
 # ==========================================================================
-# 4. _midday_emergency_liquidate — production forced-close call site
+# 4. The surviving forced-close call sites, and the one that is gone
+#
+# `_midday_emergency_liquidate` and run_intra_check's inline twin — the two
+# daily-loss liquidation paths this section used to exercise — were DELETED
+# on 2026-09-14 (docs/WORK.md item 32). They submitted LIMIT orders 1%
+# through the market and restored the original stops on any leg that did not
+# fill, so on the correlated gap they existed for they cancelled every
+# protective stop, failed to sell, and put the stops back. The daily-loss
+# breaker now HALTS instead.
+#
+# The direction-aware close primitive this file is really about is NOT gone:
+# `_forced_close_side_and_qty` and `_submit_protected_sell(side=...)` are
+# still what `_force_delever` and the §11.2 gross-exposure ladder use, and
+# sections 1-3 above pin them directly, independent of any caller. What
+# follows is the new invariant at the removed call sites.
 # ==========================================================================
 
-def test_midday_emergency_liquidate_long_unchanged():
-    """Long forced-close behaviour is UNCHANGED: full liquidation still
-    sends a SELL for the held quantity, action EMERGENCY_SELL, limit ~1%
-    BELOW the reference price. Hard literals."""
-    pipe = _emergency_liquidate_pipe()
-    pos = Position(
-        symbol="NVDA", qty=73.0, avg_entry=90.0, current_price=100.0,
-        market_value=7300.0, unrealized_pnl=730.0, sector="Technology",
-    )
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
-
-    orders = pipe._midday_emergency_liquidate([pos], loss_violation, "run-1")
-
-    assert len(orders) == 1
-    pipe.broker.submit_order.assert_called_once_with(
-        symbol="NVDA", qty=73.0, side="sell",
-        limit_price=99.0, reference_price=100.0,
-    )
-    pipe.db.insert_trade.assert_called_once()
-    kwargs = pipe.db.insert_trade.call_args.kwargs
-    assert kwargs["action"] == "EMERGENCY_SELL"
-    assert kwargs["qty"] == 73.0
-    assert kwargs["price"] == 99.0
+def _halted_pipe():
+    pipe = TradingPipeline.__new__(TradingPipeline)
+    pipe.broker = MagicMock()
+    pipe.db = MagicMock()
+    pipe._reconcile_fills = MagicMock()
+    pipe._reconcile_stop_coverage = MagicMock(return_value=[])
+    pipe.broker.snapshot_protective_stops.return_value = (True, [{"qty": 1e9}])
+    pipe._submit_protected_sell = MagicMock()
+    return pipe
 
 
-def test_midday_emergency_liquidate_short_sends_buy_to_cover():
-    """The gap this PR closes: a held short is force-closed by a BUY-to-
-    cover for the absolute quantity, action EMERGENCY_COVER, limit ~1%
-    ABOVE the reference price (mirrors the long case's below-price limit).
-    Before this change, `_full_sell_qty(-73.0)` returned None and this
-    symbol was silently skipped — no order, no log the operator could
-    act on."""
-    pipe = _emergency_liquidate_pipe()
-    pos = Position(
-        symbol="NVDA", qty=-73.0, avg_entry=90.0, current_price=100.0,
-        market_value=-7300.0, unrealized_pnl=-730.0, sector="Technology",
-    )
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
-
-    orders = pipe._midday_emergency_liquidate([pos], loss_violation, "run-1")
-
-    assert len(orders) == 1, "the short must actually be force-closed, not skipped"
-    pipe.broker.submit_order.assert_called_once_with(
-        symbol="NVDA", qty=73.0, side="buy",
-        limit_price=101.0, reference_price=100.0,
-    )
-    kwargs = pipe.db.insert_trade.call_args.kwargs
-    assert kwargs["action"] == "EMERGENCY_COVER"
-    assert kwargs["qty"] == 73.0
-    assert kwargs["price"] == 101.0
-
-
-def test_midday_emergency_liquidate_short_is_the_exact_mirror_of_long():
-    """Same |qty|, same reference price, same 1% cushion magnitude — only
-    the side and the direction of the cushion flip."""
-    long_pipe = _emergency_liquidate_pipe()
-    long_pos = Position(
-        symbol="NVDA", qty=73.0, avg_entry=90.0, current_price=100.0,
-        market_value=7300.0, unrealized_pnl=730.0, sector="Technology",
-    )
-    long_pipe._midday_emergency_liquidate(
-        [long_pos], MagicMock(message="breach"), "run-1",
+def test_the_daily_loss_breaker_never_covers_a_short():
+    """The exact behaviour this section used to assert, inverted. A held
+    short is KEPT on a breach — its own protective BUY-stop is what closes
+    it, and the halt verifies that stop is live rather than covering."""
+    pipe = _halted_pipe()
+    short = Position(
+        symbol="TSLA", qty=-20.0, avg_entry=250.0, current_price=260.0,
+        market_value=-5200.0, unrealized_pnl=-200.0,
+        unrealized_intraday_pnl=-200.0, sector="Consumer Cyclical",
     )
 
-    short_pipe = _emergency_liquidate_pipe()
-    short_pos = Position(
-        symbol="NVDA", qty=-73.0, avg_entry=90.0, current_price=100.0,
-        market_value=-7300.0, unrealized_pnl=-730.0, sector="Technology",
-    )
-    short_pipe._midday_emergency_liquidate(
-        [short_pos], MagicMock(message="breach"), "run-1",
+    out = pipe._halt_on_daily_loss_breach(
+        [short], MagicMock(message="Daily loss 5.0% exceeds max 3%"),
+        "run-h", where="intra_check",
     )
 
-    long_call = long_pipe.broker.submit_order.call_args.kwargs
-    short_call = short_pipe.broker.submit_order.call_args.kwargs
-    assert long_call["qty"] == short_call["qty"] == 73.0
-    assert long_call["side"] == "sell" and short_call["side"] == "buy"
-    # Cushion is the same 1% on both sides of $100, just mirrored.
-    assert long_call["limit_price"] == 99.0
-    assert short_call["limit_price"] == 101.0
-
-
-def test_midday_emergency_liquidate_skips_indeterminate_qty_without_ordering():
-    """A position with a zero/NaN qty must be refused, not guessed —
-    fail closed. No order is submitted for it and the loop moves on."""
-    pipe = _emergency_liquidate_pipe()
-    pos = Position(
-        symbol="GHOST", qty=0.0, avg_entry=0.0, current_price=100.0,
-        market_value=0.0, unrealized_pnl=0.0, sector="Technology",
-    )
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
-
-    orders = pipe._midday_emergency_liquidate([pos], loss_violation, "run-1")
-
-    assert orders == []
     pipe.broker.submit_order.assert_not_called()
+    pipe._submit_protected_sell.assert_not_called()
+    assert out["orders"] == []
+    # It DID check the short's protection, on the BUY side (the side that
+    # protects a short) — that is the halt's precondition, not an extra.
+    pipe.broker.snapshot_protective_stops.assert_called_once_with(
+        "TSLA", side="buy",
+    )
+    assert out["stop_coverage_verified"][0]["state"] == "covered"
 
 
-def test_midday_emergency_liquidate_mixed_book_closes_both_directions():
-    """A book with a long AND a short both force-close in one pass, each
-    on its own side, in the same emergency-liquidate call."""
-    pipe = _emergency_liquidate_pipe()
+def test_the_daily_loss_breaker_never_sells_a_long():
+    """The long-side mirror of the test above."""
+    pipe = _halted_pipe()
     long_pos = Position(
-        symbol="AAPL", qty=10.0, avg_entry=200.0, current_price=210.0,
-        market_value=2100.0, unrealized_pnl=100.0, sector="Technology",
-    )
-    short_pos = Position(
-        symbol="TSLA", qty=-5.0, avg_entry=250.0, current_price=260.0,
-        market_value=-1300.0, unrealized_pnl=-50.0, sector="Consumer Cyclical",
-    )
-    loss_violation = MagicMock(message="Daily loss 4.0% exceeds max 3%")
-
-    orders = pipe._midday_emergency_liquidate(
-        [long_pos, short_pos], loss_violation, "run-1",
+        symbol="GE", qty=26.0, avg_entry=316.0, current_price=300.0,
+        market_value=7800.0, unrealized_pnl=-416.0,
+        unrealized_intraday_pnl=-416.0, sector="Industrials",
     )
 
-    assert len(orders) == 2
-    calls = {c.kwargs["symbol"]: c.kwargs for c in pipe.broker.submit_order.call_args_list}
-    assert calls["AAPL"]["side"] == "sell" and calls["AAPL"]["qty"] == 10.0
-    assert calls["TSLA"]["side"] == "buy" and calls["TSLA"]["qty"] == 5.0
-
-
-def test_midday_emergency_liquidate_short_idempotence_uses_cover_action_name():
-    """The pending-submission dedupe guard must check EMERGENCY_COVER for
-    a short, not EMERGENCY_SELL — otherwise a pending long sell on some
-    OTHER symbol could never collide, but reusing the wrong action name
-    here would make the guard silently never match anything for shorts."""
-    pipe = _emergency_liquidate_pipe()
-    pipe.db.has_pending_action_for_symbol.side_effect = (
-        lambda symbol, action: symbol == "NVDA" and action == "EMERGENCY_COVER"
+    out = pipe._halt_on_daily_loss_breach(
+        [long_pos], MagicMock(message="Daily loss 5.0% exceeds max 3%"),
+        "run-h", where="intra_check",
     )
-    pos = Position(
-        symbol="NVDA", qty=-73.0, avg_entry=90.0, current_price=100.0,
-        market_value=-7300.0, unrealized_pnl=-730.0, sector="Technology",
-    )
-    loss_violation = MagicMock(message="breach")
 
-    orders = pipe._midday_emergency_liquidate([pos], loss_violation, "run-1")
-
-    assert orders == [], "a pending EMERGENCY_COVER must dedupe the short, same as EMERGENCY_SELL does for a long"
     pipe.broker.submit_order.assert_not_called()
+    assert out["orders"] == []
+    pipe.broker.snapshot_protective_stops.assert_called_once_with(
+        "GE", side="sell",
+    )
+
+
+def test_a_mixed_book_is_kept_whole_and_both_sides_are_verified():
+    """The old liquidator's "closes both directions" test, replaced by the
+    invariant that replaces it: neither direction is closed, and BOTH are
+    checked against the right side of the broker's stop book."""
+    pipe = _halted_pipe()
+    positions = [
+        Position(symbol="GE", qty=26.0, avg_entry=316.0, current_price=300.0,
+                 market_value=7800.0, unrealized_pnl=-416.0,
+                 unrealized_intraday_pnl=-416.0, sector="Industrials"),
+        Position(symbol="TSLA", qty=-20.0, avg_entry=250.0, current_price=260.0,
+                 market_value=-5200.0, unrealized_pnl=-200.0,
+                 unrealized_intraday_pnl=-200.0, sector="Consumer Cyclical"),
+    ]
+
+    out = pipe._halt_on_daily_loss_breach(
+        positions, MagicMock(message="Daily loss 5.0% exceeds max 3%"),
+        "run-h", where="intra_check",
+    )
+
+    pipe.broker.submit_order.assert_not_called()
+    assert out["positions"] == 2
+    assert {c["symbol"] for c in out["stop_coverage_verified"]} == {"GE", "TSLA"}
+    sides = {
+        c.args[0]: c.kwargs["side"]
+        for c in pipe.broker.snapshot_protective_stops.call_args_list
+    }
+    assert sides == {"GE": "sell", "TSLA": "buy"}
 
 
 # ==========================================================================
-# 5. run_intra_check — the other forced-close call site (circuit breaker)
+# 5. run_intra_check — the circuit-breaker entry point, end to end
 # ==========================================================================
 
-def test_intra_check_force_closes_a_short_with_buy_to_cover(tmp_path):
-    """End-to-end through the actual circuit-breaker entry point: a daily
-    loss breach during an intra-session tick must cover a held short, not
-    silently skip it. This is literally "even in a circuit-breaker event"
-    from the safety gap this PR closes."""
+def test_intra_check_keeps_a_short_and_halts_instead_of_covering(tmp_path):
+    """End-to-end through the actual circuit-breaker entry point. This test
+    used to assert that a daily-loss breach COVERED a held short. It no
+    longer does: docs/WORK.md item 32 removed the whole-book liquidation,
+    and a short is closed by its own protective BUY-stop, whose presence the
+    halt now verifies and reports."""
     from src.storage.db import Database
 
     db = Database(str(tmp_path / "t.db"))
@@ -464,16 +426,10 @@ def test_intra_check_force_closes_a_short_with_buy_to_cover(tmp_path):
             unrealized_intraday_pnl=-200.0, sector="Consumer Cyclical",
         ),
     ]
-    pipeline.broker.snapshot_protective_stops.return_value = (True, [])
-    pipeline.broker.cancel_snapshotted_stops.return_value = True
-    pipeline.broker.submit_order.return_value = {
-        "id": "cover-1", "status": "accepted", "symbol": "TSLA",
-        "side": "buy", "qty": 20.0, "limit_price": 262.6,
-    }
-    pipeline.broker.get_order_fill_info.return_value = {
-        "status": "filled", "filled_qty": 20.0, "filled_avg_price": 261.0,
-    }
-    pipeline.broker.wait_for_order_terminal.return_value = "filled"
+    # A live BUY-stop over the whole short: it IS protected.
+    pipeline.broker.snapshot_protective_stops.return_value = (
+        True, [{"id": "stp-tsla", "qty": 20.0, "stop_price": 275.0}],
+    )
     pipeline.risk_engine = MagicMock()
     pipeline.risk_engine.check_daily_loss.return_value = MagicMock(
         message="Daily loss 5.0% exceeds max 3%",
@@ -481,15 +437,12 @@ def test_intra_check_force_closes_a_short_with_buy_to_cover(tmp_path):
 
     result = pipeline.run_intra_check()
 
-    assert result["status"] == "emergency_sold"
-    assert len(result["orders"]) == 1
-    pipeline.broker.submit_order.assert_called_once_with(
-        symbol="TSLA", qty=20.0, side="buy",
-        limit_price=262.6, reference_price=260.0,
-    )
-    rows = db.get_trades(symbol="TSLA")
-    assert rows[0]["action"] == "EMERGENCY_COVER"
-    assert rows[0]["qty"] == 20.0
+    assert result["status"] == "daily_loss_halted"
+    assert result["orders"] == []
+    assert result["unprotected_at_halt"] == []
+    pipeline.broker.submit_order.assert_not_called()
+    # No EMERGENCY_COVER row, because no cover happened.
+    assert db.get_trades(symbol="TSLA") == []
     db.close()
 
 
