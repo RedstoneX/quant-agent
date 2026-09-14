@@ -1,0 +1,300 @@
+{
+  "generated_at": "2026-09-14T21:45:39Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 16
+  },
+  "estimate_usd": {
+    "per_model": {
+      "qwen/qwen3.8-flash": 0.031769000000000006
+    },
+    "tokens": {
+      "earnings_filing": {
+        "input": 4966,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      },
+      "smart_money_form4": {
+        "input": 664,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "earnings_filing": {
+      "role": "earnings_analyst",
+      "description": "A real MRVL 10-Q (filed 2026-08-28) fetched from SEC EDGAR; filing text and XBRL facts recomputed by today's provider. Grades identifier echo, real figures, agreement with SEC XBRL, UNSOURCED-token and truncation discipline."
+    },
+    "smart_money_form4": {
+      "role": "smart_money_analyst",
+      "description": "Real SEC Form 4 submissions (2026-08-28..31) run through today's SECForm4Provider. Grades parse survival, stance vs P/S source direction, and the word limit. Narrower discovery window and empty insider history than production \u2014 see the fixture's deviations list."
+    }
+  },
+  "prompts": {
+    "earnings_analyst": {
+      "path": "config/prompts/earnings_analyst.md",
+      "sha256": "2177382e12e172455b8b84102169b831812d3ad902eede96e0ceb6cbe4251167",
+      "bytes": 19864,
+      "lines": 222
+    },
+    "smart_money_analyst": {
+      "path": "config/prompts/smart_money_analyst.md",
+      "sha256": "c9c41a0a4b9501586ba5ee13f77aa66e4db42490b5b09cfb05061a3e5a10ecc9",
+      "bytes": 2657,
+      "lines": 47
+    }
+  },
+  "pricing_used": {
+    "qwen/qwen3.8-flash": {
+      "input": 0.15,
+      "output": 0.47
+    }
+  },
+  "trials": [
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        }
+      ],
+      "input_tokens": 10426,
+      "output_tokens": 15998,
+      "cost_usd": 0.00908296,
+      "latency_s": 267.27,
+      "error": "",
+      "sample_output": "{\"symbol\":\"MRVL\",\"form_type\":\"10-Q\",\"filing_date\":\"2026-08-28\",\"revenue\":{\"total\":\"$2,739.3 million for the three months ended August 1, 2026 (six months: $5,157.1 million)\",\"yoy_growth\":\"Q3: +36.5% YoY (prior-year quarter $2,006.1 million; computed: $2,739.3/$2,006.1 - 1)\",\"segments\":[{\"name\":\"Data center (segment)\",\"revenue\":\"$1,977.3 million (Q3 FY27)\",\"growth\":\"+55.0% YoY (from $1,275.8 million, per segment table)\"},{\"name\":\"Enterprise networking (segment)\",\"revenue\":\"$293.8 million (Q3 FY27)\",\"growth\":\"+26.0% YoY (from $233.2 million, per segment table)\"},{\"name\":\"Telecom (segment)\",\"revenue\":\"$198.6 million (Q3 FY27)\",\"growth\":\"-0.1% YoY (from $198.8 million, per segment table)\"},{\"name\":\"Consumer (segment)\",\"revenue\":\"$269.6 million (Q3 FY27)\",\"growth\":\"+2.0% YoY (from $264.3 million, per segment table)\"}]},\"profitability\":{\"gross_margin\":\"Q3: 53.1% (GAAP, computed: $1,455.6/$2,739.3; non-GAAP GM 60.5% as stated in earnings presentation); prior-year Q3: 50.4% ($1,010.6/$2,006.1)\",\"operating_margin\":\"Q3: 16.8% GAAP (computed: $459.7/$2,739.3; prior-year Q3: 14.5%)\",\"net_income\":\"Q3: $308.0 million (+58.1% YoY vs $194.8 million); six months: $342.5 million (vs $372.7 million prior-year six months)\",\"eps\":\"Diluted $0.33 Q3 (vs $0.22 prior-year Q3, +50% YoY); six months $0.38 (vs $0.43). Non-GAAP diluted EPS $0.76 (+9% YoY)\"},\"cash_flow\":{\"operating_cf\":\"$1,244.3 million for the six months ended Aug 1, 2026 (vs $794.5 million prior-year six months)\",\"free_cf\":\"~$961.9 mill",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "undefined reasons [] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "input truncated=True; data_quality='filing text was truncated (md&a and notes sections). segment data and strategic ' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "ok"
+        }
+      ],
+      "input_tokens": 10426,
+      "output_tokens": 12661,
+      "cost_usd": 0.00751457,
+      "latency_s": 208.49,
+      "error": "",
+      "sample_output": "{\n  \"symbol\": \"MRVL\",\n  \"form_type\": \"10-Q\",\n  \"filing_date\": \"2026-08-28\",\n  \"revenue\": {\n   \"total\": \"$2.74 billion\",\n   \"yoy_growth\": \"+36.6%\",\n   \"segments\": [\n   ]\n  },\n  \"profitability\": {\n   \"gross_margin\": \"53.1%\",\n   \"operating_margin\": \"16.8%\",\n   \"net_income\": \"$308.0 million\",\n   \"eps\": \"$0.33 diluted\"\n  },\n  \"cash_flow\": {\n   \"operating_cf\": \"$1.24 billion (six months)\",\n   \"free_cf\": \"$961.9 million (six months)\",\n   \"capex\": \"$282.4 million (six months)\"\n  },\n  \"balance_sheet\": {\n   \"cash_and_equivalents\": \"$3.93 billion\",\n   \"total_debt\": \"$4.96 billion (long-term debt only)\",\n   \"assessment\": \"Very strong. Cash position increased by ~50% since January (from $2.64B). Debt levels are moderate and largely static. Stockholders' equity surged to $18.53B driven by preferred stock issuance ($2.0B) and acquisitions, alongside continued share repurchases.\"\n  },\n  \"management_highlights\": [\n   \"net revenue growth of 36.6% YoY ($2.006B to $2.739B).\",\n   \"Net income growth of 58.1% YoY ($194.8M to $308.0M).\",\n   \"Strong operational cash flow ($1.24B for the six months) with disciplined capital returns (e.g., $200M quarterly share buybacks).\",\n   \"Continued strategic investment in the Celestial AI acquisition for connectivity and AI data center optimization.\",\n   \"Maintained steady shareholder returns via dividend distributions and share repurchases.\"\n  ],\n  \"guidance\": \"[UNSOURCED:not_in_filing]\",\n  \"strategic_direction\": {\n   \"key_initiatives\": [\n   ],\n   \"capital_alloc",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "error=None (src/agents/smart_money_analyst.py:514, :533)"
+        },
+        {
+          "name": "no_finding_dropped",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "error=None \u2014 a finding is dropped when its stance contradicts its P/S source rows (config/prompts/smart_money_analyst.md:16-20, enforced at src/agents/smart_money_analyst.py:434) or names a symbol that was not presented or already answered (:449)"
+        },
+        {
+          "name": "summary_and_why_now_within_word_limit",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "over 24 words: [] (src/agents/smart_money_analyst.py:91, stated to the model in build_user_message)"
+        },
+        {
+          "name": "covers_every_presented_symbol",
+          "weight": 0.0,
+          "passed": true,
+          "detail": "UNSOURCED, reported not scored: the prompt caps findings ('at most 8, one per presented symbol') but requires none. 8 finding(s); presented but unanswered: []"
+        }
+      ],
+      "input_tokens": 7446,
+      "output_tokens": 5957,
+      "cost_usd": 0.00391669,
+      "latency_s": 26.9,
+      "error": "",
+      "sample_output": "{\"findings\":[{\"symbol\":\"RSG\",\"stance\":\"bullish\",\"economic_role\":\"actionable\",\"summary\":\"Gates/Cascade made five discretionary open-market purchases totaling $123.3M, all classified opportunistic with no 10b5-1.\",\"why_now\":\"Out-of-universe eligible; $51.8M single-day buy and $123M cumulative add 0.2% to an already massive 113.8M-share holding.\"\n\n\n,\"observations\":\n\n [{\"symbol\":\"RSG\",  \"stream\":\"insider\",\"actor\":\" CASCADE INVESTMENT, L.L.C. / GATES WILLIAM H III\",\"actor_cik\": \"1052192\", \"actor_roles\": [\"ten_percent_owner\"],  \"joint_owner_ciks\":  [],  \"direction\": \"buy\",\"amount_range\":\"\",\"transaction_date\": \"2026-08-27\",\"disclosure_date\":\"2026-08-28\",\"accepted_at\": \"2026-08-28T16:50:26-04:00\",\"known_at\": \"2026-08-28T16:50:26-04:00\",\"source_url\":\"https://www.sec.gov/cgi-bin/viewingarchive.pl?type=text&frame=true&action=101527&accession_number=0001104659-26-103265\",\"accession_number\":\"0001104659-26-103265\",\"filing_form\": \"4\",\"transaction_code\":\"P\",\"transaction_row\":3,\"security_title\": \"COM\" , \"shares\":1000000,\"price_per_share\":51.775367,\"transaction_value_usd\":51775366.6328,\"post_transaction_shares\":113886505.0,\"ownership_nature\":\"direct\",\"amendment\": false,\"late_filing\":false, \"is_10b5_1\":false, \"listed_exchange\":\"NYSE\", \"in_core_universe\": false, \"in_trading_universe\":false, \"admission_eligible\":true,\"transient_admission_eligible\":true, \"transient_admitted\":false, \"lag_days\":1,\"disclosure_age_days\":3, \"freshness\":\"fresh\", \"signal_class\":\"opportunistic\", \"signal_class_reason\":\"opp",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "error=None (src/agents/smart_money_analyst.py:514, :533)"
+        },
+        {
+          "name": "no_finding_dropped",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "error=None \u2014 a finding is dropped when its stance contradicts its P/S source rows (config/prompts/smart_money_analyst.md:16-20, enforced at src/agents/smart_money_analyst.py:434) or names a symbol that was not presented or already answered (:449)"
+        },
+        {
+          "name": "summary_and_why_now_within_word_limit",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "over 24 words: [] (src/agents/smart_money_analyst.py:91, stated to the model in build_user_message)"
+        },
+        {
+          "name": "covers_every_presented_symbol",
+          "weight": 0.0,
+          "passed": true,
+          "detail": "UNSOURCED, reported not scored: the prompt caps findings ('at most 8, one per presented symbol') but requires none. 8 finding(s); presented but unanswered: []"
+        }
+      ],
+      "input_tokens": 7486,
+      "output_tokens": 15258,
+      "cost_usd": 0.00829416,
+      "latency_s": 170.54,
+      "error": "",
+      "sample_output": "{\n  \"findings\": [\n   {\"symbol\":\"RSG\",\"stance\":\"bullish\",\"economic_role\":\"actionable\",\"summary\":\"William H. Gates III's Cascade Investment purchased $123M of RSG, significantly adding to insider holdings.\",\"why_now\":\"Fresh filings for August 26 and 27 reveal discretionary buys, signaling conviction in the current price.\"\n   ,\"observations\":[\n{\"symbol\":\"RSG\",\"stream\":\"insider\",\"actor\":\"CASCADE INVESTMENT, L.L.C. / GATES WILLIAM H III\",\"actor_cik\":\"1052192\",\"actor_roles\":[\"ten_percent_owner\"],\"joint_owner_ciks\":[],\"direction\":\"buy\",\"amount_range\":\"\",\"transaction_date\":\"2026-08-27\",\"disclosure_date\":\"2026-08-28\",\"accepted_at\":\"2026-08-28T16:50:26-04:00\",\"known_at\":\"2026-08-28T16:50:26-04:00\",\"source_url\":\"https://www.sec.gov/Archives/edgar/data/1052192/000110465926103265/xsl/form_4_repr/xsl/form_4_repr.xsl?accession=0001104659-26-103265\",\"accession_number\":\"0001104659-26-103265\",\"filing_form\":\"4\",\"transaction_code\":\"P\",\"transaction_row\":3,\"security_title\":\"Rep. CL A\",\"shares\":1085791.0,\"price_per_share\":47.68,\"transaction_value_usd\":51775366.6328,\"post_transaction_shares\":113886505.0,\"ownership_nature\":\"direct\",\"amendment\":false,\"late_filing\":false,\"is_10b5_1\":false,\"listed_exchange\":\"NYSE\",\"in_core_universe\":false,\"in_trading_universe\":false,\"admission_eligible\":true,\"transient_admission_eligible\":true,\"transient_admitted\":false,\"lag_days\":1,\"disclosure_age_days\":3,\"freshness\":\"fresh\",\"signal_class\":\"opportunistic\",\"signal_class_reason\":\"opportunistic_purchase\",\"signal_class_det",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "qwen/qwen3.8-flash|earnings_filing": {
+        "model": "qwen/qwen3.8-flash",
+        "scenario": "earnings_filing",
+        "role": "earnings_analyst",
+        "runs": 2,
+        "quality_mean": 0.5,
+        "quality_min": 0.0,
+        "cost_mean": 0.008299,
+        "latency_mean": 237.88,
+        "errors": [],
+        "misattributed": []
+      },
+      "qwen/qwen3.8-flash|smart_money_form4": {
+        "model": "qwen/qwen3.8-flash",
+        "scenario": "smart_money_form4",
+        "role": "smart_money_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.006105,
+        "latency_mean": 98.72,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "qwen/qwen3.8-flash": {
+        "scenarios": {
+          "earnings_filing": {
+            "model": "qwen/qwen3.8-flash",
+            "scenario": "earnings_filing",
+            "role": "earnings_analyst",
+            "runs": 2,
+            "quality_mean": 0.5,
+            "quality_min": 0.0,
+            "cost_mean": 0.008299,
+            "latency_mean": 237.88,
+            "errors": [],
+            "misattributed": []
+          },
+          "smart_money_form4": {
+            "model": "qwen/qwen3.8-flash",
+            "scenario": "smart_money_form4",
+            "role": "smart_money_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.006105,
+            "latency_mean": 98.72,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.75,
+        "quality_worst": 0.5,
+        "quality_worst_run": 0.0,
+        "cost_per_run_mean": 0.007202,
+        "cost_total_usd": 0.028808,
+        "quality_per_dollar": 104.14
+      }
+    }
+  }
+}

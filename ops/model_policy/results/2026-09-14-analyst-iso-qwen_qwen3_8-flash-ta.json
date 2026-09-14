@@ -1,0 +1,439 @@
+{
+  "generated_at": "2026-09-14T21:57:47Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 24
+  },
+  "estimate_usd": {
+    "per_model": {
+      "qwen/qwen3.8-flash": 0.04830724
+    },
+    "tokens": {
+      "tech_batch": {
+        "input": 24814,
+        "output": 18111,
+        "source": "max measured in committed results"
+      },
+      "news_intel": {
+        "input": 4535,
+        "output": 11112,
+        "source": "max measured in committed results"
+      },
+      "macro_stress": {
+        "input": 7028,
+        "output": 10558,
+        "source": "max measured in committed results"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "tech_batch": {
+      "role": "tech_analyst",
+      "description": "Real yfinance bars for 7 symbols (2026-08-28) run through today's compute_indicators and analyze_batch (src/agents/tech_analyst.py:336). Unblocked 2026-09-14: analyze_batch's own signature defaults prior_ratings to {} and prior_macro_regime/prior_macro_outlook to None (src/agents/tech_analyst.py:339-343) \u2014 the tech seat's prompt rates chart-driven, not prior-ratings-driven (config/prompts/tech_analyst.md). Valuations and the intraday snapshot are omitted the same way (both optional, default None) rather than invented. Grades symbol resolution, thesis_invalid_if discipline, the absolute ATR stop floor, and range R:R >= 2.0."
+    },
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "Real RSS wires (11 feeds, fetched live 2026-09-14) replayed through today's NewsDataProvider.fetch_news / format_for_prompt / tag_symbol_mentions (src/data/news.py). previous_narrative/prior_session_report=None (both optional, src/agents/news_analyst.py:376-380). Unblocked 2026-09-14. Grades schema/enum compliance and 'no invented tickers not in input' only \u2014 no judgement-based answer key for real news."
+    },
+    "macro_stress": {
+      "role": "macro_analyst",
+      "description": "15 real FRED series (2026-09-14), fetched live through the OneCLI credential gateway with a placeholder key \u2014 the real FRED_API_KEY never entered this process \u2014 then recomputed by today's MacroDataProvider.get_macro_summary (src/data/macro.py:1125). last_state/news_narrative=None (both optional, src/agents/macro_analyst.py:203-204). Unblocked 2026-09-14 \u2014 see the retired synthetic-tape note above for why the old scenario was blocked. Grades schema and rule compliance only; real conditions have no forced correct direction to grade against."
+    }
+  },
+  "prompts": {
+    "macro_analyst": {
+      "path": "config/prompts/macro_analyst.md",
+      "sha256": "220dd8f07d5c331d417e02db17e12bd4655c0e6de4e6626078e90adf6a43b9ca",
+      "bytes": 25425,
+      "lines": 228
+    },
+    "news_analyst": {
+      "path": "config/prompts/news_analyst.md",
+      "sha256": "e395669444d2e89c37eef6e89d568ea8789d721f8132daaa8c4aae42ac829afd",
+      "bytes": 17453,
+      "lines": 196
+    },
+    "tech_analyst": {
+      "path": "config/prompts/tech_analyst.md",
+      "sha256": "541e4d81a3a78546534b309e0ad03a06ad34063ebe826a93c3bd3799dab4146d",
+      "bytes": 23459,
+      "lines": 216
+    }
+  },
+  "pricing_used": {
+    "qwen/qwen3.8-flash": {
+      "input": 0.15,
+      "output": 0.47
+    }
+  },
+  "trials": [
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": false,
+          "detail": "unresolved=['CAT', 'JPM', 'MU', 'NVDA', 'SPY', 'UNH', 'XLE'] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": false,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "range R/R < 2.0: [] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 26364,
+      "output_tokens": 16000,
+      "cost_usd": 0.0114746,
+      "latency_s": 232.58,
+      "error": "",
+      "sample_output": "",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": false,
+          "detail": "unresolved=['CAT', 'JPM', 'MU', 'NVDA', 'SPY', 'UNH', 'XLE'] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": false,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "range R/R < 2.0: [] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 26364,
+      "output_tokens": 16000,
+      "cost_usd": 0.0114746,
+      "latency_s": 420.0,
+      "error": "TrialTimeout: exceeded 420s trial deadline",
+      "sample_output": "",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 427 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 10188,
+      "output_tokens": 11435,
+      "cost_usd": 0.00690265,
+      "latency_s": 182.44,
+      "error": "",
+      "sample_output": "{\n  \"macro_narrative\": {\n   \"last_updated\": \"2026-09-14\",\n   \"era_themes\": [\n\"AI infrastructure supercycle and a contested pivot toward slowdown/safety governance\",\n\"Monetary tightening reignited \u2014 rising Fed-hike odds and the 10-year yield at/above 5%\",\n\"Geopolitical energy-supply fragility, led by Middle East disruption and Russia/Ukraine diesel pressures\",\n\"Crypto regulatory normalization and stablecoin adoption as a funding/deposit challenge to banks\"\n   ],\n   \"current_regime\": \"Mixed and increasingly risk-off-leaning: markets are absorbing a hawkish repricing (10Y at/through 5%, ~92% odds of a Fed hike), an AI narrative fault line as Anthropic\u2019s slowdown call sparks backlash, and energy supply concerns tied to Saudi pipeline shutdown risk and Ukraine/Russia diesel dynamics. Defensive and niche AI-adjacent areas (cybersecurity) are attracting flows, while high-duration tech/AI IPOs face turbulence.\",\n   \"key_state_tracker\": {\n\"fed_policy\": \"Hawkish repricing: 10-year yield briefly touched 5%; traders pricing >92% probability of a September hike and >75% chance of another in December; economists warn a hike may be a mistake amid cracks beneath the surface.\",\n\"ai_governance\": \"Polarized: Anthropic leadership calls for slowing capability improvements and mandatory kill-switch mechanisms; Trump administration pushes back, rejecting further AI regulation and defending rapid buildout vs China.\",\n\"ai_ipo_pipeline\": \"Under stress: \u2018major shakeup\u2019 in AI IPO pipeline; Bank of Ameri",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 382 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 10188,
+      "output_tokens": 13725,
+      "cost_usd": 0.00797895,
+      "latency_s": 213.89,
+      "error": "",
+      "sample_output": "{\n  \"macro_narrative\": {\n   \"last_updated\": \"2026-09-14\",\n   \"era_themes\": [\n   \"Hawkish Fed tightening cycle \u2014 markets pricing 92%+ probability of a September hike amid persistent inflation and a brief 5% 10-year yield touch\",\n   \"AI sector bifurcation and valuation reset \u2014 AI infrastructure capex faces pushback and IPO pipeline turbulence, while cybersecurity and defensive software attract rotation\",\n   \"Energy supply fragility and geopolitical risk premium \u2014 Saudi pipeline shutdown and Russia-Ukraine diesel dynamics lifting crude and inflation concerns\",\n   \"Regulatory and monetary inflection point \u2014 mandatory AI kill switch debate and crypto clarity legislation alongside central bank policy pivot\"\n   ],\n   \"current_regime\": \"Risk-off with elevated rate and AI valuation anxiety \u2014 the 10-year Treasury yield briefly touched 5%, VIX jumped to 18, and stocks slid as investors grapple with a widely expected Fed rate hike, an AI IPO pipeline shakeup, and Anthropic's call to slow model development, which is driving a sharp divergence within tech toward cybersecurity while the broader growth complex de-rates.\",\n   \"key_state_tracker\": {\n   \"fiscal_policy\": \"Tightening expectations \u2014 Traders price a >92% chance of a September rate hike and a >75% chance of a December hike; prominent economists warn the Fed may be making a mistake, while the yield curve pressures the housing market with 30-year mortgage rates at 7.17%.\",\n   \"ai_investment_cycle\": \"Cooling / Bifurcating \u2014 Anthropic C",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=75.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 7514,
+      "output_tokens": 12260,
+      "cost_usd": 0.006889299999999999,
+      "latency_s": 190.46,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n   \"volatility_analysis\": \"VIX 15.84 sits in the 'normal' band (15-20), just above the <15 low-vol all-clear threshold, with the 5-day average (16.23) slightly higher than spot \u2014 so the near-term direction is flat-to-lightly rising rather than compressing. This is mildly constructive for equities but nowhere near the complacent sub-15 regime where credit stress tends to be underpriced; volatility is supportive, not threatening, and is not the driver of today's call.\",\n   \"yield_curve_analysis\": \"2Y 4.63% below 10Y 4.96% for a positive +0.33% spread, and 3M 4.07% below 10Y for a positive +0.89% spread \u2014 both segments of the curve are un-inverted, with the front end (3M/10Y, the cleaner recession signal) actually more steeply positive than 2Y/10Y, which reflects the market pricing continued near-term Fed easing (front-end cuts) while long-end term premia and inflation expectations keep the 10Y bid. No inversion on either spread, so no recession lead is active; the mildly steepened front end is consistent with easing expectations, not growth-crash pricing.\",\n   \"monetary_policy_analysis\": \"DFF 3.63% flat over 30 days \u2014 no cut or hike has shown up in the daily effective rate this month, so the policy stance is on hold at a still-restrictive level (DFF well below the 4.63% 2Y, which itself embeds cut expectations not yet delivered). Cross-checking with real yield and breakeven: real 10Y at 2.6% is fairly high (financial conditions not yet fully accommodati",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=80.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 7514,
+      "output_tokens": 10520,
+      "cost_usd": 0.0060715,
+      "latency_s": 161.84,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n   \"volatility_analysis\": \"VIX 15.84 (5d avg 16.23) sits just above the 15 low-vol threshold but firmly below 20, i.e. normal-to-comfortable vol. The trend is labeled rising, yet the 5d average (16.2) is above the spot (15.84), so the spot is actually easing back toward the low-vol band rather than breaking out. Volatility is supportive of equities; it is not a threat, and there is no 'fear premium' being paid.\",\n   \"yield_curve_analysis\": \"Curve is positively sloped on both gauges: 2Y-10Y at +33bps and the NY Fed-favored 3M-10Y at +89bps, neither inverted. This is an unambiguously non-recessive term structure \u2014 steepening/normally-sloped from here signals growth expectations are intact, not broken. The 10Y level of 4.96% is, however, elevated, so while the curve's *slope* is friendly, its *level* keeps the discount-rate headwind for long-duration assets live. No 3M/10Y vs 2Y/10Y divergence this run \u2014 both say the same thing.\",\n   \"monetary_policy_analysis\": \"DFF 3.63% and flat over 30 days = the Fed is on hold, neither cutting nor hiking. Decomposing the 10Y (4.96%) via DFII10 (real 2.60%) and T10YIE (breakeven 2.36%): the elevated nominal is a REAL-rate story, not an inflation-repricing story \u2014 breakeven sits at a tame ~2.4% while the real yield is genuinely tight at 2.6%. That tight real rate is the main constraint on duration/long-dated growth even as the Fed itself pauses. The dollar (118.2, -0.9 over 30d) is drifting weaker, consistent with an o",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "qwen/qwen3.8-flash|tech_batch": {
+        "model": "qwen/qwen3.8-flash",
+        "scenario": "tech_batch",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 0.0,
+        "quality_min": 0.0,
+        "cost_mean": 0.011475,
+        "latency_mean": 326.29,
+        "errors": [
+          "TrialTimeout: exceeded 420s trial deadline"
+        ],
+        "misattributed": []
+      },
+      "qwen/qwen3.8-flash|news_intel": {
+        "model": "qwen/qwen3.8-flash",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.007441,
+        "latency_mean": 198.16,
+        "errors": [],
+        "misattributed": []
+      },
+      "qwen/qwen3.8-flash|macro_stress": {
+        "model": "qwen/qwen3.8-flash",
+        "scenario": "macro_stress",
+        "role": "macro_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.00648,
+        "latency_mean": 176.15,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "qwen/qwen3.8-flash": {
+        "scenarios": {
+          "tech_batch": {
+            "model": "qwen/qwen3.8-flash",
+            "scenario": "tech_batch",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 0.0,
+            "quality_min": 0.0,
+            "cost_mean": 0.011475,
+            "latency_mean": 326.29,
+            "errors": [
+              "TrialTimeout: exceeded 420s trial deadline"
+            ],
+            "misattributed": []
+          },
+          "news_intel": {
+            "model": "qwen/qwen3.8-flash",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.007441,
+            "latency_mean": 198.16,
+            "errors": [],
+            "misattributed": []
+          },
+          "macro_stress": {
+            "model": "qwen/qwen3.8-flash",
+            "scenario": "macro_stress",
+            "role": "macro_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.00648,
+            "latency_mean": 176.15,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.6667,
+        "quality_worst": 0.0,
+        "quality_worst_run": 0.0,
+        "cost_per_run_mean": 0.008465,
+        "cost_total_usd": 0.050792,
+        "quality_per_dollar": 78.76
+      }
+    }
+  }
+}

@@ -1,0 +1,339 @@
+{
+  "generated_at": "2026-09-14T21:38:01Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 24
+  },
+  "estimate_usd": {
+    "per_model": {
+      "google/gemini-2.5-flash-lite": 0.0391002
+    },
+    "tokens": {
+      "tech_batch": {
+        "input": 24814,
+        "output": 18111,
+        "source": "max measured in committed results"
+      },
+      "news_intel": {
+        "input": 4535,
+        "output": 11112,
+        "source": "max measured in committed results"
+      },
+      "macro_stress": {
+        "input": 7028,
+        "output": 10558,
+        "source": "max measured in committed results"
+      }
+    }
+  },
+  "stopped_on_budget": true,
+  "scenarios": {
+    "tech_batch": {
+      "role": "tech_analyst",
+      "description": "Real yfinance bars for 7 symbols (2026-08-28) run through today's compute_indicators and analyze_batch (src/agents/tech_analyst.py:336). Unblocked 2026-09-14: analyze_batch's own signature defaults prior_ratings to {} and prior_macro_regime/prior_macro_outlook to None (src/agents/tech_analyst.py:339-343) \u2014 the tech seat's prompt rates chart-driven, not prior-ratings-driven (config/prompts/tech_analyst.md). Valuations and the intraday snapshot are omitted the same way (both optional, default None) rather than invented. Grades symbol resolution, thesis_invalid_if discipline, the absolute ATR stop floor, and range R:R >= 2.0."
+    },
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "Real RSS wires (11 feeds, fetched live 2026-09-14) replayed through today's NewsDataProvider.fetch_news / format_for_prompt / tag_symbol_mentions (src/data/news.py). previous_narrative/prior_session_report=None (both optional, src/agents/news_analyst.py:376-380). Unblocked 2026-09-14. Grades schema/enum compliance and 'no invented tickers not in input' only \u2014 no judgement-based answer key for real news."
+    },
+    "macro_stress": {
+      "role": "macro_analyst",
+      "description": "15 real FRED series (2026-09-14), fetched live through the OneCLI credential gateway with a placeholder key \u2014 the real FRED_API_KEY never entered this process \u2014 then recomputed by today's MacroDataProvider.get_macro_summary (src/data/macro.py:1125). last_state/news_narrative=None (both optional, src/agents/macro_analyst.py:203-204). Unblocked 2026-09-14 \u2014 see the retired synthetic-tape note above for why the old scenario was blocked. Grades schema and rule compliance only; real conditions have no forced correct direction to grade against."
+    }
+  },
+  "prompts": {
+    "macro_analyst": {
+      "path": "config/prompts/macro_analyst.md",
+      "sha256": "220dd8f07d5c331d417e02db17e12bd4655c0e6de4e6626078e90adf6a43b9ca",
+      "bytes": 25425,
+      "lines": 228
+    },
+    "news_analyst": {
+      "path": "config/prompts/news_analyst.md",
+      "sha256": "e395669444d2e89c37eef6e89d568ea8789d721f8132daaa8c4aae42ac829afd",
+      "bytes": 17453,
+      "lines": 196
+    },
+    "tech_analyst": {
+      "path": "config/prompts/tech_analyst.md",
+      "sha256": "541e4d81a3a78546534b309e0ad03a06ad34063ebe826a93c3bd3799dab4146d",
+      "bytes": 23459,
+      "lines": 216
+    }
+  },
+  "pricing_used": {
+    "google/gemini-2.5-flash-lite": {
+      "input": 0.09999999999999999,
+      "output": 0.39999999999999997
+    }
+  },
+  "trials": [
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 0.75,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "range R/R < 2.0: ['UNH'] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 26084,
+      "output_tokens": 10887,
+      "cost_usd": 0.006963199999999999,
+      "latency_s": 36.29,
+      "error": "",
+      "sample_output": "```json\n[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": null,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price is consolidating between $799.17 and $887.91, below MA20 (838.4) and MA50 (893.19), with MA20/MA50 rolling over. This indicates a bearish bias within a range.\",\n      \"momentum\": \"RSI (38.45) is bearish-leaning. MACD is below signal line with a growing negative histogram, confirming bearish momentum.\",\n      \"volatility\": \"ATR (3.85%) is expanding, indicating increasing volatility, but price remains within Bollinger Bands and the consolidation range.\",\n      \"volume\": \"Up/down volume ratio (0.27) signals distribution, with more volume on down days, supporting a bearish bias.\",\n      \"support_resistance\": \"Price ($800.25) is near the lower bound of the consolidation range ($799.17) and above MA200 (765.12). Nearest structural support is $775.34; nearest resistance is $840.38. The current R/R for a range trade is poor (<1.5).\"\n    },\n    \"reasoning\": \"CAT is consolidating with bearish technical indicators and poor risk/reward for range trades, rendering it a neutral signal.\"\n  },\n  {\n    \"symbol\": \"JPM\",\n    \"rating\": \"buy\",\n    \"conviction\": \"high\",\n    \"entry_price\": 368.00,\n    \"reference_target\": 382.50,\n    \"stop_loss\":",
+      "actual_model": "google/gemini-2.5-flash-lite",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 0.55,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": false,
+          "detail": "inside 1.0xATR: ['CAT', 'MU'] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "range R/R < 2.0: ['XLE', 'CAT', 'MU', 'NVDA'] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 26084,
+      "output_tokens": 11455,
+      "cost_usd": 0.0071904,
+      "latency_s": 179.54,
+      "error": "",
+      "sample_output": "```json\n[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"sell\",\n    \"conviction\": \"high\",\n    \"entry_price\": 800.00,\n    \"reference_target\": 775.34,\n    \"stop_loss\": 815.00,\n    \"support_levels\": [\n      775.34,\n      662.98\n    ],\n    \"resistance_levels\": [\n      840.38,\n      852.47,\n      887.91\n    ],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": 12,\n    \"thesis_invalid_if\": \"Price closes above the $887.91 range high on significant volume\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price $800.25 is below MA20 ($838.4) and MA50 ($893.19), both rolling over. It is at the bottom of a 17-session consolidation range ($799.17-$887.91), indicating a bearish near-term trend within the range.\",\n      \"momentum\": \"RSI is 38.45 (bearish) and MACD is deeply negative with a widening histogram, confirming bearish momentum.\",\n      \"volatility\": \"ATR is expanding and at the 78th percentile, suggesting increased price movement potential. Price is testing the lower bound of its consolidation range.\",\n      \"volume\": \"Up/down volume ratio of 0.27 indicates significant distribution, confirming selling pressure on price declines.\",\n      \"support_resistance\": \"Price is currently at the $799.17 range floor and near the computed support level of $775.34. Nearest resistance is MA20 at $838.4, followed by the range top at $887.91.\"\n    },\n    \"reasoning\": \"Bearish momentum, distribution volume, and price testing the lower bound of a consolidation range at $800.25 signal a likely breakdown.",
+      "actual_model": "google/gemini-2.5-flash-lite",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "google/gemini-2.5-flash-lite",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "google/gemini-2.5-flash-lite|news_intel": {
+        "model": "google/gemini-2.5-flash-lite",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      },
+      "google/gemini-2.5-flash-lite|macro_stress": {
+        "model": "google/gemini-2.5-flash-lite",
+        "scenario": "macro_stress",
+        "role": "macro_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      },
+      "google/gemini-2.5-flash-lite|tech_batch": {
+        "model": "google/gemini-2.5-flash-lite",
+        "scenario": "tech_batch",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 0.65,
+        "quality_min": 0.55,
+        "cost_mean": 0.007077,
+        "latency_mean": 107.91,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "google/gemini-2.5-flash-lite": {
+        "scenarios": {
+          "news_intel": {
+            "model": "google/gemini-2.5-flash-lite",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          },
+          "macro_stress": {
+            "model": "google/gemini-2.5-flash-lite",
+            "scenario": "macro_stress",
+            "role": "macro_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          },
+          "tech_batch": {
+            "model": "google/gemini-2.5-flash-lite",
+            "scenario": "tech_batch",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 0.65,
+            "quality_min": 0.55,
+            "cost_mean": 0.007077,
+            "latency_mean": 107.91,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.65,
+        "quality_worst": 0.65,
+        "quality_worst_run": 0.55,
+        "cost_per_run_mean": 0.007077,
+        "cost_total_usd": 0.014154,
+        "quality_per_dollar": 91.85
+      }
+    }
+  }
+}

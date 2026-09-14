@@ -1,0 +1,435 @@
+{
+  "generated_at": "2026-09-14T21:26:04Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 24
+  },
+  "estimate_usd": {
+    "per_model": {
+      "google/gemini-3.5-flash-lite": 0.2207312
+    },
+    "tokens": {
+      "tech_batch": {
+        "input": 24814,
+        "output": 18111,
+        "source": "max measured in committed results"
+      },
+      "news_intel": {
+        "input": 4535,
+        "output": 11112,
+        "source": "max measured in committed results"
+      },
+      "macro_stress": {
+        "input": 7028,
+        "output": 10558,
+        "source": "max measured in committed results"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "tech_batch": {
+      "role": "tech_analyst",
+      "description": "Real yfinance bars for 7 symbols (2026-08-28) run through today's compute_indicators and analyze_batch (src/agents/tech_analyst.py:336). Unblocked 2026-09-14: analyze_batch's own signature defaults prior_ratings to {} and prior_macro_regime/prior_macro_outlook to None (src/agents/tech_analyst.py:339-343) \u2014 the tech seat's prompt rates chart-driven, not prior-ratings-driven (config/prompts/tech_analyst.md). Valuations and the intraday snapshot are omitted the same way (both optional, default None) rather than invented. Grades symbol resolution, thesis_invalid_if discipline, the absolute ATR stop floor, and range R:R >= 2.0."
+    },
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "Real RSS wires (11 feeds, fetched live 2026-09-14) replayed through today's NewsDataProvider.fetch_news / format_for_prompt / tag_symbol_mentions (src/data/news.py). previous_narrative/prior_session_report=None (both optional, src/agents/news_analyst.py:376-380). Unblocked 2026-09-14. Grades schema/enum compliance and 'no invented tickers not in input' only \u2014 no judgement-based answer key for real news."
+    },
+    "macro_stress": {
+      "role": "macro_analyst",
+      "description": "15 real FRED series (2026-09-14), fetched live through the OneCLI credential gateway with a placeholder key \u2014 the real FRED_API_KEY never entered this process \u2014 then recomputed by today's MacroDataProvider.get_macro_summary (src/data/macro.py:1125). last_state/news_narrative=None (both optional, src/agents/macro_analyst.py:203-204). Unblocked 2026-09-14 \u2014 see the retired synthetic-tape note above for why the old scenario was blocked. Grades schema and rule compliance only; real conditions have no forced correct direction to grade against."
+    }
+  },
+  "prompts": {
+    "macro_analyst": {
+      "path": "config/prompts/macro_analyst.md",
+      "sha256": "220dd8f07d5c331d417e02db17e12bd4655c0e6de4e6626078e90adf6a43b9ca",
+      "bytes": 25425,
+      "lines": 228
+    },
+    "news_analyst": {
+      "path": "config/prompts/news_analyst.md",
+      "sha256": "e395669444d2e89c37eef6e89d568ea8789d721f8132daaa8c4aae42ac829afd",
+      "bytes": 17453,
+      "lines": 196
+    },
+    "tech_analyst": {
+      "path": "config/prompts/tech_analyst.md",
+      "sha256": "541e4d81a3a78546534b309e0ad03a06ad34063ebe826a93c3bd3799dab4146d",
+      "bytes": 23459,
+      "lines": 216
+    }
+  },
+  "pricing_used": {
+    "google/gemini-3.5-flash-lite": {
+      "input": 0.3,
+      "output": 2.5
+    }
+  },
+  "trials": [
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 0.75,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "range R/R < 2.0: ['SPY'] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 26084,
+      "output_tokens": 5924,
+      "cost_usd": 0.0226352,
+      "latency_s": 20.71,
+      "error": "",
+      "sample_output": "[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": null,\n    \"expected_horizon_sessions\": null,\n    \"thesis_invalid_if\": null,\n    \"reasoning_chain\": {\n      \"trend\": \"Price 800.25 sits below declining MA20 (838.40) and MA50 (893.19), but above rising MA200 (765.12); intermediate downtrend.\",\n      \"momentum\": \"RSI 38.45 is weak/bearish; MACD is negative and declining, showing ongoing downward pressure.\",\n      \"volatility\": \"ATR is expanding at 30.8; price is testing the lower Bollinger Band (792.47), indicating heightened volatility.\",\n      \"volume\": \"Up/down volume ratio is 0.27, showing clear distribution and lack of buying interest.\",\n      \"support_resistance\": \"Immediate support sits at 775.34, with major support near the MA200; overhead resistance at 840.38.\"\n    },\n    \"reasoning\": \"Price is in an intermediate correction testing key support near the MA200 with heavy distribution, offering no clean long setup.\"\n  },\n  {\n    \"symbol\": \"JPM\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": null,\n    \"expected_horizon_sessions\": null,\n    \"thesis_invalid_if\": null,\n    \"reasoning_chain\": {\n      \"trend\": \"Price 357.62 is consolidating just below ",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 0.55,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": false,
+          "detail": "inside 1.0xATR: ['NVDA'] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "range R/R < 2.0: ['MU', 'SPY', 'JPM'] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 26084,
+      "output_tokens": 5168,
+      "cost_usd": 0.020745200000000002,
+      "latency_s": 17.72,
+      "error": "",
+      "sample_output": "[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": null,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price $800.25 is below MA20 ($838.40) and MA50 ($893.19), though above MA200 ($765.12); MAs are rolling over.\",\n      \"momentum\": \"RSI at 38.45 indicates bearish momentum; MACD lines are negative and sloping downward.\",\n      \"volatility\": \"ATR is expanding at 30.8 (78th percentile), reflecting heightened uncertainty within a $799.17-$887.91 consolidation range.\",\n      \"volume\": \"Up/down volume ratio is 0.27, showing clear distribution pressure over the last 20 sessions.\",\n      \"support_resistance\": \"Nearest support sits at $775.34 with overhead resistance starting at $840.38.\"\n    },\n    \"reasoning\": \"Consolidating with distribution and bearish momentum below key moving averages; maintaining a neutral stance until a clear directional break occurs.\"\n  },\n  {\n    \"symbol\": \"JPM\",\n    \"rating\": \"buy\",\n    \"conviction\": \"medium\",\n    \"entry_price\": 357.62,\n    \"reference_target\": 366.50,\n    \"stop_loss\": 342.84,\n    \"support_levels\": [350.80, 342.84, 324.19],\n    \"resistance_levels\": [366.50],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": 10,\n    \"thesis_invalid_if\": \"Price closes below support at $342.84 on expanding volum",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 129 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 10160,
+      "output_tokens": 2981,
+      "cost_usd": 0.0105005,
+      "latency_s": 10.24,
+      "error": "",
+      "sample_output": "{\n  \"macro_narrative\": {\n    \"last_updated\": \"2026-09-14\",\n    \"era_themes\": [\n      \"AI infrastructure supercycle meeting regulatory, safety, and valuation headwinds\",\n      \"Fed pivot back to tightening and rate hikes amid persistent inflation and 5% 10-year yield\",\n      \"Sector bifurcation: software/cybersecurity resilience versus high-beta chip/hardware pressure\"\n    ],\n    \"current_regime\": \"Macro tightening and AI sentiment rotation \u2014 10Y yield hits 5%, Fed rate hike expected, AI slowdown debates rattle growth stocks.\",\n    \"key_state_tracker\": {\n      \"fed_policy\": \"Tightening shift \u2014 market pricing >92% probability of a 25 bps rate hike at the September meeting.\",\n      \"yields_and_housing\": \"10-year Treasury yield touches 5%; 30-year mortgage rates jump to 7.17%, a nearly 2-year high.\",\n      \"ai_sector_sentiment\": \"Inflection/Turbulence \u2014 Anthropic CEO calls for AI capability slowdown; cybersecurity soars while chip/IPO pipeline hits turbulence.\",\n      \"energy_geopolitics\": \"Supply constraint \u2014 Saudi Arabia East-West pipeline shutdown threatens oil export capacity.\"\n    }\n  },\n  \"state_changes\": [\n    {\n      \"event\": \"10-year Treasury yield breaches 5%, sparking broad market slide and aggressive rate-hike pricing\",\n      \"previous_state\": \"Yields hovering in the 4.2%\u20134.5% range with easing expectations\",\n      \"new_state\": \"10-year yield hits 5%, Fed rate hike fully priced for September meeting\",\n      \"market_impact\": \"Bearish for broad equities, high-multiple t",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 150 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 10160,
+      "output_tokens": 2487,
+      "cost_usd": 0.0092655,
+      "latency_s": 9.01,
+      "error": "",
+      "sample_output": "{\n  \"macro_narrative\": {\n    \"last_updated\": \"2026-09-14\",\n    \"era_themes\": [\n      \"AI infrastructure supercycle encountering safety, regulatory, and capability slowdown friction\",\n      \"Fed tightening pivot and rate hike resumption amid persistent inflation and 5% 10-year yield\",\n      \"Geopolitical and energy supply volatility driving defensive sector rotation\"\n    ],\n    \"current_regime\": \"Risk-off transitional backdrop characterized by surging Treasury yields, renewed Fed rate hike pricing, and valuation pressures on high-multiple tech.\",\n    \"key_state_tracker\": {\n      \"fed_policy\": \"Tightening pivot \u2014 markets pricing >92% probability of a rate hike at the September meeting and >75% for December.\",\n      \"yields_and_bonds\": \"Elevated \u2014 10-year Treasury yield touches 5%; 30-year mortgage rate jumps to 7.17% (nearly 2-year high).\",\n      \"ai_cycle\": \"Regulatory and capability friction \u2014 Anthropic calls for slowdown clash with administration growth support; software/cyber outperforming chips.\",\n      \"market_volatility\": \"Rising \u2014 Cboe VIX Index jumps to 18 amid equity selling.\"\n    }\n  },\n  \"state_changes\": [\n    {\n      \"event\": \"10-year Treasury yield touches 5% and Fed rate hike expectations surge above 92%\",\n      \"previous_state\": \"Stable to easing rate expectations with anchored yields\",\n      \"new_state\": \"10-yr yield at 5%, active Fed tightening cycle priced in\",\n      \"market_impact\": \"Bearish for broader equities and growth tech, bullish for financials benefi",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=80.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 9131,
+      "output_tokens": 3402,
+      "cost_usd": 0.011244299999999999,
+      "latency_s": 11.45,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"volatility_analysis\": \"VIX stands at 15.84, just below its 5-day average of 16.23 and near the threshold of calm, risk-on conditions. Volatility is gently compressing and supportive of equities.\",\n    \"yield_curve_analysis\": \"The 2Y-10Y spread is 0.33% and the 3M-10Y spread is 0.89%. Both curves are fully un-inverted and positively sloping, signaling that past recession concerns have dissipated.\",\n    \"monetary_policy_analysis\": \"Fed Funds Rate is unchanged at 3.63% over the last 30 days, confirming a policy pause. Real 10Y yield at 2.6% and breakevens at 2.36% reflect stable, non-inflationary real borrowing costs.\",\n    \"inflation_labor_credit\": \"Headline CPI YoY is 3.71% and Core CPI is 2.76%, showing slight stickiness but remaining manageable. Labor is robust with UNRATE at 4.1% and jobless claims falling to 206k. Credit spreads are extremely tight (HY OAS at 265bps, IG OAS at 80bps), indicating zero financial stress.\",\n    \"cross_signal_synthesis\": \"The combination of an un-inverted yield curve, paused monetary policy, robust labor metrics, and exceptionally tight credit spreads creates a supportive risk-on macro environment, despite minor sticky inflation.\",\n    \"sector_implications\": \"Overweight Technology, Consumer Cyclical, and Financial Services as growth expectations normalize and the yield curve steepens. Underweight defensive sectors like Utilities and Consumer Defensive due to the low-vol risk-on regime.\"\n  },\n  \"regime\": \"risk-on\",\n",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "google/gemini-3.5-flash-lite",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=80.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 9131,
+      "output_tokens": 3141,
+      "cost_usd": 0.010591799999999998,
+      "latency_s": 10.98,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"volatility_analysis\": \"VIX at 15.84 sits just above the 15 risk-on threshold, with a 5-day average of 16.23 and a slight upward trend. Volatility remains subdued, reflecting normal risk appetite without acute stress.\",\n    \"yield_curve_analysis\": \"2Y at 4.63% and 10Y at 4.96% yield a positive 2Y-10Y spread of 0.33% (not inverted). The 3M-10Y spread is 0.89%. An upward-sloping curve removes immediate recession signals from the term structure.\",\n    \"monetary_policy_analysis\": \"Fed Funds Rate is steady at 3.63% with zero 30-day change, signaling a stable pause. Real 10Y yield stands at 2.6% with a 2.36% breakeven, indicating restrictive real rates but anchored inflation expectations.\",\n    \"inflation_labor_credit\": \"Headline CPI is 3.71% YoY and Core CPI is 2.76% YoY, showing sticky inflation above target. However, labor remains exceptionally resilient with UNRATE at 4.1% and jobless claims falling to 206k. High Yield credit spreads are tight at 265bps, signaling zero systemic credit distress.\",\n    \"cross_signal_synthesis\": \"Tight credit spreads (265bps) and an un-inverted yield curve point strongly to risk-on, backed by robust labor metrics. Sticky inflation (Core CPI 2.76%) and a VIX hovering near 16 introduce mild friction, keeping confidence at medium given the unknown macro coverage status.\",\n    \"sector_implications\": \"Overweight Technology and Communication Services given un-inverted yields and supportive risk appetite. Overweight Financial",
+      "actual_model": "google/gemini-3.5-flash-lite",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "google/gemini-3.5-flash-lite|tech_batch": {
+        "model": "google/gemini-3.5-flash-lite",
+        "scenario": "tech_batch",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 0.65,
+        "quality_min": 0.55,
+        "cost_mean": 0.02169,
+        "latency_mean": 19.21,
+        "errors": [],
+        "misattributed": []
+      },
+      "google/gemini-3.5-flash-lite|news_intel": {
+        "model": "google/gemini-3.5-flash-lite",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.009883,
+        "latency_mean": 9.62,
+        "errors": [],
+        "misattributed": []
+      },
+      "google/gemini-3.5-flash-lite|macro_stress": {
+        "model": "google/gemini-3.5-flash-lite",
+        "scenario": "macro_stress",
+        "role": "macro_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.010918,
+        "latency_mean": 11.21,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "google/gemini-3.5-flash-lite": {
+        "scenarios": {
+          "tech_batch": {
+            "model": "google/gemini-3.5-flash-lite",
+            "scenario": "tech_batch",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 0.65,
+            "quality_min": 0.55,
+            "cost_mean": 0.02169,
+            "latency_mean": 19.21,
+            "errors": [],
+            "misattributed": []
+          },
+          "news_intel": {
+            "model": "google/gemini-3.5-flash-lite",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.009883,
+            "latency_mean": 9.62,
+            "errors": [],
+            "misattributed": []
+          },
+          "macro_stress": {
+            "model": "google/gemini-3.5-flash-lite",
+            "scenario": "macro_stress",
+            "role": "macro_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.010918,
+            "latency_mean": 11.21,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.8833,
+        "quality_worst": 0.65,
+        "quality_worst_run": 0.55,
+        "cost_per_run_mean": 0.014164,
+        "cost_total_usd": 0.084983,
+        "quality_per_dollar": 62.36
+      }
+    }
+  }
+}

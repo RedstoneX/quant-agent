@@ -1,0 +1,182 @@
+{
+  "generated_at": "2026-09-14T21:25:10Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.2,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.2,
+    "max_calls_per_session": 8
+  },
+  "estimate_usd": {
+    "per_model": {
+      "google-direct:gemini-3.5-flash-lite": null
+    },
+    "tokens": {
+      "news_intel": {
+        "input": 4535,
+        "output": 11112,
+        "source": "max measured in committed results"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "Real RSS wires (11 feeds, fetched live 2026-09-14) replayed through today's NewsDataProvider.fetch_news / format_for_prompt / tag_symbol_mentions (src/data/news.py). previous_narrative/prior_session_report=None (both optional, src/agents/news_analyst.py:376-380). Unblocked 2026-09-14. Grades schema/enum compliance and 'no invented tickers not in input' only \u2014 no judgement-based answer key for real news."
+    }
+  },
+  "prompts": {
+    "news_analyst": {
+      "path": "config/prompts/news_analyst.md",
+      "sha256": "e395669444d2e89c37eef6e89d568ea8789d721f8132daaa8c4aae42ac829afd",
+      "bytes": 17453,
+      "lines": 196
+    }
+  },
+  "pricing_used": {
+    "google-direct:gemini-3.5-flash-lite": null
+  },
+  "trials": [
+    {
+      "model": "google-direct:gemini-3.5-flash-lite",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 128 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 8855,
+      "output_tokens": 1011,
+      "cost_usd": null,
+      "latency_s": 9.47,
+      "error": "",
+      "sample_output": "{\n  \"macro_narrative\": {\n    \"last_updated\": \"2026-09-14\",\n    \"era_themes\": [\n      \"AI/LLM capability and safety debate sparking tech sector rotation and regulatory scrutiny\",\n      \"Fed pivot to aggressive tightening amid persistent inflation and 10-year Treasury yield touching 5%\",\n      \"Software and cybersecurity resilience outperforming semiconductor/hardware turbulence\"\n    ],\n    \"current_regime\": \"Transitional risk-off with surging 10-year yields (5%), rising VIX (18), and mounting rate hike expectations pressuring equities\",\n    \"key_state_tracker\": {\n      \"fed_policy\": \"Tightening \u2014 92% probability of a benchmark rate increase priced in, 10-year yield hitting 5%\",\n      \"ai_cycle\": \"Scrutiny and Inflection \u2014 Anthropic push for AI slowdown sparks regulatory debate, contrasting with aggressive hardware demand\",\n      \"geopolitical_energy\": \"Strained \u2014 Saudi Arabia East-West pipeline shutdown concerns driving energy price volatility\"\n    }\n  },\n  \"state_changes\": [\n    {\n      \"event\": \"10-year Treasury yield touches 5% and mortgage rates jump to 7.17% amid rising rate hike bets\",\n      \"previous_state\": \"Yields fluctuating with moderate rate hike expectations below 70%\",\n      \"new_state\": \"10-yr yield at 5%, 92% odds of a Fed rate increase priced in\",\n      \"market_impact\": \"Bearish for broad equities and tech growth, bullish/defensive for fixed income and select financials\",\n      \"affected_symbols\": [\n        \"SPY\",\n        \"QQQ\",\n        \"XLK\",\n        \"XLU\",\n ",
+      "actual_model": "gemini-3.5-flash-lite",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "google"
+    },
+    {
+      "model": "google-direct:gemini-3.5-flash-lite",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 127 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 8855,
+      "output_tokens": 845,
+      "cost_usd": null,
+      "latency_s": 8.27,
+      "error": "",
+      "sample_output": "{\n  \"macro_narrative\": {\n    \"last_updated\": \"2026-09-14\",\n    \"era_themes\": [\n      \"AI infrastructure supercycle facing regulatory, safety, and growth slowdown debates\",\n      \"Federal Reserve pivot back to tightening amid persistent inflation and surging 10-year yields touching 5%\",\n      \"Energy supply vulnerabilities and geopolitical friction impacting commodity markets\"\n    ],\n    \"current_regime\": \"Risk-off / transitional backdrop with surging bond yields (10Y at 5%), rising mortgage rates (7.17%), and AI sector bifurcation\",\n    \"key_state_tracker\": {\n      \"fed_policy\": \"Tightening \u2014 markets pricing >92% probability of a rate hike at the September meeting amid persistent inflation\",\n      \"ai_cycle\": \"Inflection / slowdown debate \u2014 Anthropic CEO calls for capability slowdown, sparking political pushback and software/chip divergence\",\n      \"bond_yields\": \"Surging \u2014 10-year Treasury yield touches 5%, 30-year mortgage rate jumps to 7.17%\",\n      \"energy_markets\": \"Volatile \u2014 Saudi East-West pipeline shutdown raising export and supply concerns\"\n    }\n  },\n  \"state_changes\": [\n    {\n      \"event\": \"10-year Treasury yield touches 5% as markets price in Fed rate hike\",\n      \"previous_state\": \"Stable rate expectations with moderating yields\",\n      \"new_state\": \"Tightening stance, 10Y at 5%, 30Y mortgage at 7.17%\",\n      \"market_impact\": \"Bearish for equities and housing, defensive rotation, bullish for financials\",\n      \"affected_symbols\": [\n        \"SPY\",\n        \"QQQ\",",
+      "actual_model": "gemini-3.5-flash-lite",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true,
+      "provider": "google"
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "google-direct:gemini-3.5-flash-lite|news_intel": {
+        "model": "google-direct:gemini-3.5-flash-lite",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": null,
+        "latency_mean": 8.87,
+        "errors": [],
+        "misattributed": [
+          "gemini-3.5-flash-lite",
+          "gemini-3.5-flash-lite"
+        ]
+      }
+    },
+    "models": {
+      "google-direct:gemini-3.5-flash-lite": {
+        "scenarios": {
+          "news_intel": {
+            "model": "google-direct:gemini-3.5-flash-lite",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": null,
+            "latency_mean": 8.87,
+            "errors": [],
+            "misattributed": [
+              "gemini-3.5-flash-lite",
+              "gemini-3.5-flash-lite"
+            ]
+          }
+        },
+        "not_run": false,
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_per_run_mean": null,
+        "cost_total_usd": null,
+        "quality_per_dollar": null
+      }
+    }
+  }
+}

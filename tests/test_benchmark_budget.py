@@ -289,6 +289,7 @@ def test_run_trial_routes_google_direct_prefix_to_google_provider(monkeypatch):
     scenario = scenarios_mod.SCENARIOS_BY_KEY["tech_batch"]
     fake_scenario = SimpleNamespace(
         key=scenario.key, role=scenario.role, agent_path=scenario.agent_path,
+        blocked_reason=None, fixture=None,
         max_tokens=scenario.max_tokens,
         invoke=lambda agent: None,
         grade=lambda output: [],

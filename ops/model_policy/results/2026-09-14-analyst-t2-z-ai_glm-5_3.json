@@ -1,0 +1,435 @@
+{
+  "generated_at": "2026-09-14T21:27:19Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 24
+  },
+  "estimate_usd": {
+    "per_model": {
+      "z-ai/glm-5.3": 0.4519284
+    },
+    "tokens": {
+      "tech_batch": {
+        "input": 24814,
+        "output": 18111,
+        "source": "max measured in committed results"
+      },
+      "news_intel": {
+        "input": 4535,
+        "output": 11112,
+        "source": "max measured in committed results"
+      },
+      "macro_stress": {
+        "input": 7028,
+        "output": 10558,
+        "source": "max measured in committed results"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "tech_batch": {
+      "role": "tech_analyst",
+      "description": "Real yfinance bars for 7 symbols (2026-08-28) run through today's compute_indicators and analyze_batch (src/agents/tech_analyst.py:336). Unblocked 2026-09-14: analyze_batch's own signature defaults prior_ratings to {} and prior_macro_regime/prior_macro_outlook to None (src/agents/tech_analyst.py:339-343) \u2014 the tech seat's prompt rates chart-driven, not prior-ratings-driven (config/prompts/tech_analyst.md). Valuations and the intraday snapshot are omitted the same way (both optional, default None) rather than invented. Grades symbol resolution, thesis_invalid_if discipline, the absolute ATR stop floor, and range R:R >= 2.0."
+    },
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "Real RSS wires (11 feeds, fetched live 2026-09-14) replayed through today's NewsDataProvider.fetch_news / format_for_prompt / tag_symbol_mentions (src/data/news.py). previous_narrative/prior_session_report=None (both optional, src/agents/news_analyst.py:376-380). Unblocked 2026-09-14. Grades schema/enum compliance and 'no invented tickers not in input' only \u2014 no judgement-based answer key for real news."
+    },
+    "macro_stress": {
+      "role": "macro_analyst",
+      "description": "15 real FRED series (2026-09-14), fetched live through the OneCLI credential gateway with a placeholder key \u2014 the real FRED_API_KEY never entered this process \u2014 then recomputed by today's MacroDataProvider.get_macro_summary (src/data/macro.py:1125). last_state/news_narrative=None (both optional, src/agents/macro_analyst.py:203-204). Unblocked 2026-09-14 \u2014 see the retired synthetic-tape note above for why the old scenario was blocked. Grades schema and rule compliance only; real conditions have no forced correct direction to grade against."
+    }
+  },
+  "prompts": {
+    "macro_analyst": {
+      "path": "config/prompts/macro_analyst.md",
+      "sha256": "220dd8f07d5c331d417e02db17e12bd4655c0e6de4e6626078e90adf6a43b9ca",
+      "bytes": 25425,
+      "lines": 228
+    },
+    "news_analyst": {
+      "path": "config/prompts/news_analyst.md",
+      "sha256": "e395669444d2e89c37eef6e89d568ea8789d721f8132daaa8c4aae42ac829afd",
+      "bytes": 17453,
+      "lines": 196
+    },
+    "tech_analyst": {
+      "path": "config/prompts/tech_analyst.md",
+      "sha256": "541e4d81a3a78546534b309e0ad03a06ad34063ebe826a93c3bd3799dab4146d",
+      "bytes": 23459,
+      "lines": 216
+    }
+  },
+  "pricing_used": {
+    "z-ai/glm-5.3": {
+      "input": 1.4,
+      "output": 4.4
+    }
+  },
+  "trials": [
+    {
+      "model": "z-ai/glm-5.3",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 0.75,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "range R/R < 2.0: ['CAT'] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 21035,
+      "output_tokens": 5031,
+      "cost_usd": 0.0515854,
+      "latency_s": 42.39,
+      "error": "",
+      "sample_output": "```json\n[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"sell\",\n    \"conviction\": \"high\",\n    \"entry_price\": 800.25,\n    \"reference_target\": 775.34,\n    \"stop_loss\": 852.47,\n    \"support_levels\": [775.34, 662.98],\n    \"resistance_levels\": [840.38, 852.47, 908.72],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": 10,\n    \"thesis_invalid_if\": \"Price closes above 852.47 resistance on above-average volume\",\n    \"reasoning_chain\": {\n      \"trend\": \"Decisive downtrend: price 800.25 below falling MA20 (838) and falling MA50 (893); 17-session consolidation resolving lower as price sits at the range floor (799-888) after failing repeatedly at 840-885.\",\n      \"momentum\": \"RSI 38.45 bearish and drifting; MACD line -18.99 below signal -18.07 with negative histogram -0.92 \u2014 no bullish divergence.\",\n      \"volatility\": \"ATR 30.8 at the 78th percentile and expanding \u2014 sellers are getting range; price near lower Bollinger band (792), consistent with downside continuation out of the range.\",\n      \"volume\": \"Up/down volume 0.27 \u2014 heavy distribution; volume expanded on the Aug 18-20 breakdown (4.1M shares vs ~2M average), confirming supply.\",\n      \"support_resistance\": \"Nearest computed support 775.34 (-3.1%, 2 touches) is the first downside objective; below that 662.98 (-17.2%). Stop placed AT computed resistance 852.47 (+6.5%, 2 touches, 1.7 ATR above entry) \u2014 the level where the bear thesis structurally breaks; intermediate 840.38 sits 1.3 ATR away but 852 gives the short room against",
+      "actual_model": "z-ai/glm-5.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "z-ai/glm-5.3",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 0.75,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "range R/R < 2.0: ['SPY', 'UNH'] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 21035,
+      "output_tokens": 5085,
+      "cost_usd": 0.051823,
+      "latency_s": 36.83,
+      "error": "",
+      "sample_output": "```json\n[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"medium\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": null,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price 800.25 sits below a falling MA20 (838.40) and below MA50 (893.19); only MA200 (765.12, rising) holds beneath \u2014 trend is a lower high sequence inside the 799\u2013888 consolidation but leaning bearish.\",\n      \"momentum\": \"RSI 38.45 bearish-neutral, MACD line below signal (-18.99 vs -18.07) with a negative histogram \u2014 no momentum reversal evidence despite the range floor being tested.\",\n      \"volatility\": \"Price 800 is at/near the lower Bollinger band (792.47) with ATR at the 78th percentile and expanding \u2014 chop risk is high and a breakdown would move fast.\",\n      \"volume\": \"Up/down volume 0.27 is heavy distribution over 20d, though Vol% -32.77 on the latest bar suggests the selling is losing urgency \u2014 conflicting, no confirmation either way for a reversal.\",\n      \"support_resistance\": \"Nearest computed support 775.34 (-3.1%, 2 touches) is only 0.8 ATR below; a short here offers ~25 of reward against a structural stop near 840-861 \u2014 payoff is too thin to underwrite, and the same distribution that kills longs has not yet produced a range-floor break to sell.\"\n    },\n    \"reasoning\": \"Bearish trend and heavy distribution, bu",
+      "actual_model": "z-ai/glm-5.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "z-ai/glm-5.3",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 212 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 8140,
+      "output_tokens": 1620,
+      "cost_usd": 0.018524,
+      "latency_s": 29.01,
+      "error": "",
+      "sample_output": "{\n\"confidence\": \"medium\",\n\"macro_narrative\": {\n\"current_regime\": \"Risk-off tilt \u2014 10-year Treasury yield briefly crossing 5%, a Fed rate HIKE widely expected this week, and a public 'AI slowdown' debate cracking the AI trade, while a Saudi pipeline shutdown lifts oil and energy\",\n\"era_themes\": [\n\"AI capex supercycle hitting its first credibility test \u2014 Anthropic CEO calls for slowing model capability gains, Trump fires back, software/cyber outperforming chips by a historic degree\",\n\"Fed tightening turn \u2014 markets price >92% odds of a September rate hike and >75% for another in December; long yields at 5%, 30-year mortgage at 7.17%\",\n\"Geopolitical supply shocks \u2014 Saudi East-West pipeline shutdown threatening exports; Ukraine open to halting attacks on Russian energy\"\n],\n\"key_state_tracker\": {\n\"fed_policy\": \"Tightening pivot \u2014 September hike ~92% priced, ~75% odds of another in December; Warsh confirmation battle ongoing; some economists warn a hike would be a mistake\",\n\"ai_cycle\": \"Narrative fracture \u2014 Anthropic CEO Amodei urges slowing AI capability improvement and mandatory kill switches ahead of Anthropic IPO; Trump calls slowdown a 'sick conspiracy', opposes more AI regulation; chip-exposed names hit, cyber/software soaring\",\n\"rates_housing\": \"10-year yield at 5%, 30-year mortgage 7.17% (near 2-year high) \u2014 housing under pressure\",\n\"middle_east_energy\": \"Escalating supply risk \u2014 Saudi East-West pipeline shutdown, kingdom reportedly days from curtailed exports; oil rising\",\n",
+      "actual_model": "z-ai/glm-5.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "z-ai/glm-5.3",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 0.8,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 160 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": false,
+          "detail": "state_change affected_symbols outside the given universe: ['JPM']"
+        }
+      ],
+      "input_tokens": 8140,
+      "output_tokens": 2424,
+      "cost_usd": 0.022061599999999997,
+      "latency_s": 15.68,
+      "error": "",
+      "sample_output": "{\n  \"macro_narrative\": {\n    \"last_updated\": \"2026-09-14\",\n    \"era_themes\": [\n      \"AI investment supercycle meets its first credibility test \u2014 Amodei slowdown call, Anthropic IPO pipeline shakeup, software outperforming chips\",\n      \"Monetary tightening redux \u2014 Fed expected to HIKE in September, 10-year at 5%, inflation persistent\",\n      \"Energy supply risk \u2014 Saudi East-West pipeline shutdown, Russia/Ukraine war still driving diesel prices\"\n    ],\n    \"current_regime\": \"Risk-off tilt \u2014 stocks sliding, 10-year yield through 5%, VIX to 18, Fed rate-hike odds >92%, oil rising on Saudi pipeline shutdown; defensive rotation underway\",\n    \"key_state_tracker\": {\n      \"fed_policy\": \"TIGHTENING \u2014 market prices >92% odds of a September quarter-point hike and >75% of another in December; Warsh facing tough confirmation battle; economists warn hike may be a mistake\",\n      \"rates\": \"10-year Treasury yield touched 5%; 30-year mortgage at 7.17%, near 2-year high \u2014 housing under pressure\",\n      \"ai_cycle\": \"Narrative stress \u2014 Anthropic CEO Amodei calls for slowing AI capability gains ahead of Anthropic's imminent IPO; Trump pushes back calling it a 'sick conspiracy'; software/cyber outperforming chips\",\n      \"energy_supply\": \"Saudi Arabia's East-West pipeline shut down; exports constrained within days; Ukraine open to halting attacks on Russian energy after Trump deal claims\",\n      \"crypto\": \"Rallying \u2014 Coinbase +9% on sector rally and regulatory hopes; Clarity Act ethics deal pro",
+      "actual_model": "z-ai/glm-5.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "z-ai/glm-5.3",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=80.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 7175,
+      "output_tokens": 1677,
+      "cost_usd": 0.0174238,
+      "latency_s": 14.11,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"volatility_analysis\": \"VIX 15.84, 5-day average 16.23, trend rising \u2014 hovering at the boundary between low-vol and normal. Supportive for equities, though the rising trend from sub-16 levels bears watching rather than a concern yet.\",\n    \"yield_curve_analysis\": \"Curve steepened to positive territory: 2Y 4.63%, 10Y 4.96%, 2Y/10Y +33bps, 3M/10Y +89bps. Both spread measures un-inverted and steepening \u2014 historically consistent with improving growth expectations and a classic late-cut/recovery configuration.\",\n    \"monetary_policy_analysis\": \"DFF 3.63% with zero 30-day change \u2014 Fed on hold after prior easing. Real 10Y at 2.60% with breakeven 2.36% means nominal 10Y strength is split between real-rate and inflation components; the elevated real yield keeps financial conditions restrictive. Dollar (Fed Broad 118.21, -0.9 in 30d) is softening \u2014 consistent with an easing/on-hold Fed, no policy-divergence contradiction.\",\n    \"inflation_labor_credit\": \"Headline CPI 3.71% YoY, core 2.76%, core MoM 0.29% (annualized ~3.5%) \u2014 sticky above target, no clean disinflation. UNRATE 4.1%, down 0.2pp over 3 and 12 months \u2014 labor firm, no Sahm-rule pressure; ICSA 206k, falling 6k over 4 weeks \u2014 no early labor crack. HY OAS 265bps, -6 in 30d \u2014 benign; IG 80bps, +1bp \u2014 calm; no hidden credit stress, HY and IG agree.\",\n    \"cross_signal_synthesis\": \"Five of six domains align risk-on: curve steepened positive, credit tight, labor firm, VIX low-normal, Fed paused with a s",
+      "actual_model": "z-ai/glm-5.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "z-ai/glm-5.3",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=80.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 7175,
+      "output_tokens": 1713,
+      "cost_usd": 0.0175822,
+      "latency_s": 8.74,
+      "error": "",
+      "sample_output": "{\n\n\n  \"reasoning_chain\": {\n    \"volatility_analysis\": \"VIX 15.84, 5-day avg 16.23, trend rising but still low-vol normal zone (15-20). Supportive for equities, not yet a stress signal; a rise above 20 would be the first warning.\",\n    \"yield_curve_analysis\": \"Curve steep and NOT inverted: 2Y/10Y +0.33%, 3M/10Y +0.89% \u2014 no recession signal from either spread. 10Y at 4.96% is high in absolute terms, a duration headwind, but the steepening configuration is growth-supportive; no divergence between the two curves.\",\n    \"monetary_policy_analysis\": \"DFF 3.63%, flat over 30 days \u2014 Fed on hold. Real 10Y at 2.60% with breakeven 2.36%: nominal 10Y elevated is partly a real-rate/growth story; breakeven at 2.36% slightly above target is not runaway inflation fear. Dollar fell 0.9 over 30 days, consistent with an on-hold/easing-tilt Fed \u2014 no contradiction.\",\n    \"inflation_labor_credit\": \"Headline CPI 3.71% YoY (0.4% MoM), core 2.76% (0.29% MoM) \u2014 inflation above target and sticky; PCE 3.7% confirms. Labor strong: UNRATE 4.1% falling 0.2pp over 3m, claims 206k and falling \u2014 no Sahm signal. HY OAS 265bps tight and tightening 6bps; IG 80bps flat \u2014 credit fully benign, no divergence.\",\n    \"cross_signal_synthesis\": \"Five of six domains align risk-on: low VIX, un-inverted steep curve, tight credit, firm labor, Fed on hold. The lone friction is inflation above target, which limits further Fed easing and keeps the 10Y near 5% \u2014 a cap on duration-heavy and rate-sensitive sectors rather than a ri",
+      "actual_model": "z-ai/glm-5.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "z-ai/glm-5.3|tech_batch": {
+        "model": "z-ai/glm-5.3",
+        "scenario": "tech_batch",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 0.75,
+        "quality_min": 0.75,
+        "cost_mean": 0.051704,
+        "latency_mean": 39.61,
+        "errors": [],
+        "misattributed": []
+      },
+      "z-ai/glm-5.3|news_intel": {
+        "model": "z-ai/glm-5.3",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 2,
+        "quality_mean": 0.9,
+        "quality_min": 0.8,
+        "cost_mean": 0.020293,
+        "latency_mean": 22.34,
+        "errors": [],
+        "misattributed": []
+      },
+      "z-ai/glm-5.3|macro_stress": {
+        "model": "z-ai/glm-5.3",
+        "scenario": "macro_stress",
+        "role": "macro_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.017503,
+        "latency_mean": 11.43,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "z-ai/glm-5.3": {
+        "scenarios": {
+          "tech_batch": {
+            "model": "z-ai/glm-5.3",
+            "scenario": "tech_batch",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 0.75,
+            "quality_min": 0.75,
+            "cost_mean": 0.051704,
+            "latency_mean": 39.61,
+            "errors": [],
+            "misattributed": []
+          },
+          "news_intel": {
+            "model": "z-ai/glm-5.3",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 2,
+            "quality_mean": 0.9,
+            "quality_min": 0.8,
+            "cost_mean": 0.020293,
+            "latency_mean": 22.34,
+            "errors": [],
+            "misattributed": []
+          },
+          "macro_stress": {
+            "model": "z-ai/glm-5.3",
+            "scenario": "macro_stress",
+            "role": "macro_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.017503,
+            "latency_mean": 11.43,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.8833,
+        "quality_worst": 0.75,
+        "quality_worst_run": 0.75,
+        "cost_per_run_mean": 0.029833,
+        "cost_total_usd": 0.179,
+        "quality_per_dollar": 29.61
+      }
+    }
+  }
+}

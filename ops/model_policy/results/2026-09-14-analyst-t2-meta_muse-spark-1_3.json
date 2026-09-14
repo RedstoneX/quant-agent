@@ -1,0 +1,339 @@
+{
+  "generated_at": "2026-09-14T21:27:43Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 24
+  },
+  "estimate_usd": {
+    "per_model": {
+      "meta/muse-spark-1.3": 0.429081
+    },
+    "tokens": {
+      "tech_batch": {
+        "input": 24814,
+        "output": 18111,
+        "source": "max measured in committed results"
+      },
+      "news_intel": {
+        "input": 4535,
+        "output": 11112,
+        "source": "max measured in committed results"
+      },
+      "macro_stress": {
+        "input": 7028,
+        "output": 10558,
+        "source": "max measured in committed results"
+      }
+    }
+  },
+  "stopped_on_budget": true,
+  "scenarios": {
+    "tech_batch": {
+      "role": "tech_analyst",
+      "description": "Real yfinance bars for 7 symbols (2026-08-28) run through today's compute_indicators and analyze_batch (src/agents/tech_analyst.py:336). Unblocked 2026-09-14: analyze_batch's own signature defaults prior_ratings to {} and prior_macro_regime/prior_macro_outlook to None (src/agents/tech_analyst.py:339-343) \u2014 the tech seat's prompt rates chart-driven, not prior-ratings-driven (config/prompts/tech_analyst.md). Valuations and the intraday snapshot are omitted the same way (both optional, default None) rather than invented. Grades symbol resolution, thesis_invalid_if discipline, the absolute ATR stop floor, and range R:R >= 2.0."
+    },
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "Real RSS wires (11 feeds, fetched live 2026-09-14) replayed through today's NewsDataProvider.fetch_news / format_for_prompt / tag_symbol_mentions (src/data/news.py). previous_narrative/prior_session_report=None (both optional, src/agents/news_analyst.py:376-380). Unblocked 2026-09-14. Grades schema/enum compliance and 'no invented tickers not in input' only \u2014 no judgement-based answer key for real news."
+    },
+    "macro_stress": {
+      "role": "macro_analyst",
+      "description": "15 real FRED series (2026-09-14), fetched live through the OneCLI credential gateway with a placeholder key \u2014 the real FRED_API_KEY never entered this process \u2014 then recomputed by today's MacroDataProvider.get_macro_summary (src/data/macro.py:1125). last_state/news_narrative=None (both optional, src/agents/macro_analyst.py:203-204). Unblocked 2026-09-14 \u2014 see the retired synthetic-tape note above for why the old scenario was blocked. Grades schema and rule compliance only; real conditions have no forced correct direction to grade against."
+    }
+  },
+  "prompts": {
+    "macro_analyst": {
+      "path": "config/prompts/macro_analyst.md",
+      "sha256": "220dd8f07d5c331d417e02db17e12bd4655c0e6de4e6626078e90adf6a43b9ca",
+      "bytes": 25425,
+      "lines": 228
+    },
+    "news_analyst": {
+      "path": "config/prompts/news_analyst.md",
+      "sha256": "e395669444d2e89c37eef6e89d568ea8789d721f8132daaa8c4aae42ac829afd",
+      "bytes": 17453,
+      "lines": 196
+    },
+    "tech_analyst": {
+      "path": "config/prompts/tech_analyst.md",
+      "sha256": "541e4d81a3a78546534b309e0ad03a06ad34063ebe826a93c3bd3799dab4146d",
+      "bytes": 23459,
+      "lines": 216
+    }
+  },
+  "pricing_used": {
+    "meta/muse-spark-1.3": {
+      "input": 1.25,
+      "output": 4.25
+    }
+  },
+  "trials": [
+    {
+      "model": "meta/muse-spark-1.3",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "range R/R < 2.0: [] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 19431,
+      "output_tokens": 10183,
+      "cost_usd": 0.0675665,
+      "latency_s": 90.92,
+      "error": "",
+      "sample_output": "[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"low\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": \"range\",\n    \"expected_horizon_sessions\": 10,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Price 800.25 below falling MA20 838.4 (-1.78%/10d) and MA50 893.19 (-2.01%/10d) but above rising MA200 765.12 \u2014 short-term downtrend within longer uptrend, consolidating 799.17-887.91 for 17 sessions at the range low.\",\n      \"momentum\": \"RSI 38.45 weak-bearish, not oversold. MACD -18.99 below signal -18.07, hist -0.92 \u2014 bearish momentum intact, no bottoming turn.\",\n      \"volatility\": \"Price 800.25 just above lower BB 792.47 (mid 838.4); ATR 30.8 (3.85%) expanding at 78th percentile \u2014 elevated noise, breakdown risk.\",\n      \"volume\": \"Vol% -32.77 on recent down days and 20d up/down volume 0.27 distribution \u2014 selling pressure, no accumulation to support a bounce call.\",\n      \"support_resistance\": \"Consolidation low 799.17 and computed support 775.34 (-3.1%, 2 touches) directly below; resistance 840.38 (+5.0%) and 852.47 overhead. Selling here is selling into support with poor range R/R; buying fights the falling MA stack.\"\n    },\n    \"reasoning\": \"Short-term downtrend into range support with distribution and no turn \u2014 poor R/R both ways, wait for hold/break of 775-799 or reclaim of MA20.\"\n  },\n  {\n    \"symbol\": \"JPM\",\n    \"rating\": \"buy\"",
+      "actual_model": "meta/muse-spark-1.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "meta/muse-spark-1.3",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "range R/R < 2.0: [] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 19431,
+      "output_tokens": 8602,
+      "cost_usd": 0.06084725,
+      "latency_s": 81.09,
+      "error": "",
+      "sample_output": "[{\"symbol\": \"CAT\", \"rating\": \"sell\", \"conviction\": \"medium\", \"entry_price\": 800.25, \"reference_target\": 715.0, \"stop_loss\": 842.0, \"support_levels\": [775.34, 662.98], \"resistance_levels\": [840.38, 852.47], \"setup_type\": \"range\", \"expected_horizon_sessions\": 12, \"thesis_invalid_if\": \"Daily close back above $840.38 resistance or back above MA20 ($838.4) on rising volume\", \"reasoning_chain\": {\"trend\": \"Price $800.25 below falling MA20 ($838.4, -1.78% in 10d) and falling MA50 ($893.19, -2.01%) but still above MA200 ($765.12); downtrend within consolidation $799.17-$887.91 for 17 sessions now testing the low end.\", \"momentum\": \"RSI 38.45 bearish-neutral with room to oversold; MACD -18.99 below signal -18.07, hist -0.92 - bearish continuation, no bullish divergence.\", \"volatility\": \"ATR $30.8 (3.85%, 78th percentile) expanding; price near lower band (lower $792.47, mid $838.4, upper $884.32) - breakdown risk, not a squeeze.\", \"volume\": \"Up/down volume 0.27 heavy distribution; Vol% -32.77 on last bar reflects light bounce volume, while prior down bars (e.g., 7/29 5.9M, 8/04 6.2M) expanded on declines - confirming distribution.\", \"support_resistance\": \"Stop $842.0 sits 1.62 above computed $840.38 resistance (0.05x ATR, 1.36x ATR from entry) so level-backed and honoured; support $775.34 is only 0.81x ATR below entry (too close to short into), next support $662.98; target $715 is measured breakdown (range height ~88 projected from ~799) giving R/R ~2.04.\"}, \"reasoning\": \"Below falling ",
+      "actual_model": "meta/muse-spark-1.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "meta/muse-spark-1.3",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "meta/muse-spark-1.3",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "meta/muse-spark-1.3",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "meta/muse-spark-1.3",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "meta/muse-spark-1.3|news_intel": {
+        "model": "meta/muse-spark-1.3",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      },
+      "meta/muse-spark-1.3|macro_stress": {
+        "model": "meta/muse-spark-1.3",
+        "scenario": "macro_stress",
+        "role": "macro_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      },
+      "meta/muse-spark-1.3|tech_batch": {
+        "model": "meta/muse-spark-1.3",
+        "scenario": "tech_batch",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.064207,
+        "latency_mean": 86.0,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "meta/muse-spark-1.3": {
+        "scenarios": {
+          "news_intel": {
+            "model": "meta/muse-spark-1.3",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          },
+          "macro_stress": {
+            "model": "meta/muse-spark-1.3",
+            "scenario": "macro_stress",
+            "role": "macro_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          },
+          "tech_batch": {
+            "model": "meta/muse-spark-1.3",
+            "scenario": "tech_batch",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.064207,
+            "latency_mean": 86.0,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_per_run_mean": 0.064207,
+        "cost_total_usd": 0.128414,
+        "quality_per_dollar": 15.57
+      }
+    }
+  }
+}
