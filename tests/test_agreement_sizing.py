@@ -732,6 +732,41 @@ def test_a_net_score_below_zero_produces_no_order_at_all():
     })) == []
 
 
+def test_a_net_score_at_or_below_zero_leaves_a_durable_machine_readable_reason():
+    """Board item 10 (2026-09-14). This was the SAME defect item 49 already
+    fixed for the portfolio-level budget allocator: the log line
+    ("Constructor: SYM produces no order — ...") does not contain
+    rejected/refused/skipped directly after the symbol, so
+    `_DropReasonCapture._SYMBOL` never matches it and the drop reached the
+    database as a generic `constructor_dropped` with "no matching
+    constructor log line captured" — found here by running the regex
+    against the constructor's own message, statically, no live data needed.
+    """
+    from src.portfolio_constructor import PortfolioConstructor, STOP_REFUSAL_AGREEMENT_CEILING
+
+    constructor = PortfolioConstructor()
+    target = TargetPosition(
+        symbol="NVDA", risk_allocation_pct=5.0, conviction="high",
+        thesis="Seats disagree about this one.",
+    )
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[],
+        analyses=[_analysis("NVDA", entry=100.0, stop=70.0, target=160.0)],
+        total_value=100_000.0, price_map={"NVDA": 100.0},
+        evidence_registry=_registry(NVDA={
+            "technical": "bullish", "earnings": "bearish",
+        }),
+    )
+    assert decisions == []
+    refusals = constructor.drain_refusals()
+    assert refusals["NVDA"]["refusal"] == STOP_REFUSAL_AGREEMENT_CEILING
+    assert "net" in refusals["NVDA"]["detail"]
+    # And the log-scrape fallback now matches it too (via `_note_refusal`'s
+    # own "refused" wording), so neither record path is silent on this
+    # symbol any more.
+    assert "NVDA" in constructor.last_drop_reasons
+
+
 def test_blocking_a_target_leaves_a_held_position_alone():
     """A refusal to BUY is not a decision to SELL. A zero-weight plan would
     read to the delta loop as "PM wants this closed", so a blocked target has

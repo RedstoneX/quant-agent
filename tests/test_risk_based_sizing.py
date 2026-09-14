@@ -1821,3 +1821,161 @@ def test_a_budget_refusal_drops_the_target_and_never_zeroes_it():
         existing_risk_pct={"HELD": 25.0}, clusters=[],
     )
     assert [d for d in decisions if d.symbol == "NVDA"] == []
+
+
+# --------------------------------------------------------------------------
+# board item 10 (2026-09-14) — the rest of the constructor's drop paths,
+# found the same way item 49's was: running `_DropReasonCapture._SYMBOL`
+# statically against every message the module can log ahead of a `return
+# None` / `continue` that produces no order. No live data was needed; the
+# regex and the message templates are both compile-time.
+# --------------------------------------------------------------------------
+
+def test_single_name_ceiling_rounding_to_zero_leaves_a_durable_reason():
+    """`_build_buy` already LOGS when the single-name ceiling caps a
+    request ("alloc capped by the single-name ceiling") but that message
+    contains no rejected/refused/skipped, so it never reached
+    `_DropReasonCapture`. When the ceiling leaves EXACTLY zero headroom the
+    builder silently returns `None` with no compensating log line at all —
+    unlike the ATR/no-stop path in `_resolve_entry_and_stop`, nothing else
+    fires for this symbol afterward."""
+    from src.portfolio_constructor import STOP_REFUSAL_SIZED_TO_ZERO
+
+    constructor = PortfolioConstructor(ConstructorConfig(max_position_pct=5.0))
+    held = _pos("NVDA", qty=50, avg_entry=100.0, current_price=100.0)  # $5,000 = 5% of $100k
+    target = TargetPosition(
+        symbol="NVDA", target_weight_pct=6.0, conviction="high",
+        thesis="Add to an already-full single-name slot.",
+    )
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[held],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
+        total_value=EQUITY, price_map={"NVDA": 100.0},
+    )
+    assert [d for d in decisions if d.symbol == "NVDA" and d.action == "BUY"] == []
+    refusals = constructor.drain_refusals()
+    assert refusals["NVDA"]["refusal"] == STOP_REFUSAL_SIZED_TO_ZERO
+    assert "single-name ceiling" in refusals["NVDA"]["detail"]
+    assert "NVDA" in constructor.last_drop_reasons
+
+
+def test_single_short_ceiling_rounding_to_zero_leaves_a_durable_reason():
+    """The SHORT mirror of the test above — `_build_short`'s single-short
+    ceiling has the identical silent-zero gap."""
+    from src.models import TechAnalysisResult
+    from src.portfolio_constructor import STOP_REFUSAL_SIZED_TO_ZERO
+
+    constructor = PortfolioConstructor(ConstructorConfig(max_single_short_pct=5.0))
+    held = _pos("NVDA", qty=-50, avg_entry=100.0, current_price=100.0)  # -5% (5% short)
+    target = TargetPosition(
+        symbol="NVDA", direction="short", target_weight_pct=6.0,
+        conviction="high", thesis="Add to an already-full short slot.",
+    )
+    short_analysis = TechAnalysisResult(
+        symbol="NVDA", rating="sell", entry_price=100.0, stop_loss=110.0,
+        reference_target=60.0, reasoning="test",
+        support_levels=[60.0], resistance_levels=[110.0],
+        computed_levels=[60.0, 110.0], computed_level_touches={60.0: 5, 110.0: 5},
+        atr_14=(110.0 - 100.0) / 3.5, setup_type="range",
+        expected_horizon_sessions=60, reasoning_chain=_tech_rc(),
+    )
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[held],
+        analyses=[short_analysis],
+        total_value=EQUITY, price_map={"NVDA": 100.0},
+    )
+    assert [d for d in decisions if d.symbol == "NVDA" and d.action == "SHORT"] == []
+    refusals = constructor.drain_refusals()
+    assert refusals["NVDA"]["refusal"] == STOP_REFUSAL_SIZED_TO_ZERO
+    assert "single-short ceiling" in refusals["NVDA"]["detail"]
+    assert "NVDA" in constructor.last_drop_reasons
+
+
+def test_gross_exposure_ceiling_block_leaves_a_durable_reason():
+    """`apply_gross_ceiling` (`src/risk/rules.py`) refuses a BUY outright and
+    logs through the constructor's own `logger.warning("Constructor: %s",
+    note)` relay — but every one of its notes reads "Constructor:
+    max_gross_exposure: SYMBOL refused — ...", with the rule name sitting
+    BETWEEN "Constructor:" and the symbol. `_DropReasonCapture._SYMBOL`
+    requires the symbol to follow immediately (through at most one of
+    BUY/SHORT/SELL/COVER), so this whole refusal class was invisible to it."""
+    from src.risk.rules import GrossCeiling
+    from src.portfolio_constructor import STOP_REFUSAL_GROSS_EXPOSURE_CEILING
+
+    constructor = PortfolioConstructor()
+    tiny_ceiling = GrossCeiling(
+        ceiling_x=0.001, base_x=0.001, drawdown_pct=None,
+        alert_owner=False, rung="test", reason="test-fixture ceiling",
+    )  # $100k equity -> $100 ceiling, under the $500 minimum order
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("NVDA", 5.0)], positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
+        total_value=EQUITY, price_map={"NVDA": 100.0},
+        gross_ceiling=tiny_ceiling,
+    )
+    assert [d for d in decisions if d.symbol == "NVDA" and d.allocation_pct > 0] == []
+    refusals = constructor.drain_refusals()
+    assert refusals["NVDA"]["refusal"] == STOP_REFUSAL_GROSS_EXPOSURE_CEILING
+    assert "ceiling" in refusals["NVDA"]["detail"]
+    assert "NVDA" in constructor.last_drop_reasons
+
+
+def test_below_min_trade_weight_delta_on_a_new_position_leaves_a_reason():
+    """The churn filter's `continue` records a HOLD only when a position is
+    already held (`current_pct > 0`); a brand-new position too small to
+    bother opening got neither a `TradeDecision` row nor any log line at
+    all — nothing for the regex to miss, because nothing was ever logged."""
+    from src.portfolio_constructor import CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA
+
+    constructor = PortfolioConstructor()
+    target = TargetPosition(
+        symbol="NVDA", target_weight_pct=0.1, conviction="low",
+        thesis="A dreg of an idea, below the min trade delta.",
+    )
+    decisions = constructor.construct_orders(
+        targets=[target], positions=[],
+        analyses=[_analysis("NVDA", entry=100, stop=95, target=140)],
+        total_value=EQUITY, price_map={"NVDA": 100.0},
+    )
+    assert decisions == []
+    refusals = constructor.drain_refusals()
+    assert refusals["NVDA"]["refusal"] == CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA
+    assert "minimum trade size" in refusals["NVDA"]["detail"]
+    assert "NVDA" in constructor.last_drop_reasons
+
+
+# --------------------------------------------------------------------------
+# The regex itself, pinned. If a future call site logs a NEW drop message
+# that happens to slip past `_DropReasonCapture._SYMBOL`, this at least
+# proves the pattern's shape hasn't silently drifted — and documents,
+# verbatim, why the messages above needed a structured fix rather than a
+# wider regex (doctrine: the reason must not go on living in log text).
+# --------------------------------------------------------------------------
+
+def test_drop_capture_regex_does_not_match_the_defect_class_this_pr_fixes():
+    """Run the REAL regex object (not a retyped copy) against the exact
+    phrasing each fixed call site used to emit. This is the static
+    verification item 10 asked for — no live data, no reproduction run."""
+    from src.portfolio_constructor import _DropReasonCapture
+
+    rx = _DropReasonCapture._SYMBOL
+    previously_silent = [
+        # _plan_risk_targets — the agreement-ceiling refusal (§9.4).
+        "Constructor: NVDA produces no order — 1 aligned / 2 opposed = "
+        "net -1 independent source(s) for this long.",
+        # _build_buy / _build_short — alloc capped to zero.
+        "Constructor: NVDA alloc capped by risk budget (delta 5.00% -> 0.00% "
+        "at 5.0% risk budget)",
+        "Constructor: NVDA alloc capped by the single-name ceiling "
+        "(delta 5.00% -> 0.00%; 5.0% max position, 5.00% already held)",
+        # apply_gross_ceiling, relayed through the constructor's own logger.
+        "Constructor: max_gross_exposure: NVDA refused — the book would "
+        "own $200,000 against a $100 ceiling (0.0x equity), and what the "
+        "ceiling still allows is below the $500 minimum worth trading.",
+    ]
+    for message in previously_silent:
+        assert rx.search(message) is None, (
+            f"regex now matches a message this PR treats as structurally "
+            f"silent — re-check whether the fix at that call site is still "
+            f"needed: {message!r}"
+        )
