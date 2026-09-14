@@ -159,25 +159,21 @@ _EXEMPTIONS = {
         # like the prose two hundred lines above them. An exemption there put
         # the 2026-09-11 self-contradiction back inside one sheet.
         #
-        # (b) NO SETTINGS KEY EXISTS for these; they are prompt-only ceilings
-        # with no recorded derivation. Exempted so the check can run at all,
-        # NOT closed: docs/WORK.md item 62 carries the open question of where
-        # each number came from and what would settle it. Inventing a setting
-        # to render would give an un-derived number a second home, not a
-        # first justification.
-        "1% risk cap",              # earnings-queued BUY cap (item 62)
-        "1.0% risk — the sleeve ceiling",   # starter sleeve (item 62)
-        "10% floor",                # cash floor (item 62)
-        # (c) NOT LIMITS AT ALL — a table row number, a coin-flip idiom, and
-        # the sizing formula's `stale` multiplier, all of which the pattern
-        # reads as "<number> ... cap/ceiling" purely by adjacency.
+        # (b) WAS three prompt-only ceilings with no settings key and no
+        # derivation — the earnings-queued risk cap, the starter-sleeve
+        # ceiling and a cash floor. All three are GONE from the sheet as of
+        # 2026-09-14 (item 62, retired), so there is nothing left to exempt:
+        # two were second homes for the derived agreement schedule and the
+        # third was a dangling reference to a regime cash-floor rule deleted
+        # from the sheet on 2026-09-01. See
+        # `test_no_prompt_only_order_size_ceilings` below, which fails if any
+        # of the three comes back.
+        #
+        # (c) NOT LIMITS AT ALL — a table row number and a coin-flip idiom,
+        # both of which the pattern reads as "<number> ... cap/ceiling"
+        # purely by adjacency.
         "6 | **Gross exposure ceiling",
         "50/50 thesis, cluster cap",
-        # `stale = ... else 1.0` sits on the line above `queued_cap`. The 1.0
-        # is a multiplier of 1 (i.e. "no haircut"), not a ceiling, and there
-        # is no setting it could restate. The two numbers that ARE limits on
-        # the lines around it now render from config.
-        "1.0\nqueued_cap",
     ),
 }
 
@@ -900,3 +896,117 @@ def test_a_legal_zero_risk_floor_reaches_both_engines_unchanged():
     assert "0" in render_prompt_limits(
         "{{risk.min_position_risk_pct}}", zeroed,
     )
+
+
+# --------------------------------------------------------------------------
+# Item 62 (settled 2026-09-14) — the three prompt-only order-size ceilings
+# --------------------------------------------------------------------------
+
+#: Each entry is (label, regex over the PM sheet, why it must not come back).
+#: These three were ceilings that shaped order size, lived only as text in
+#: `config/prompts/portfolio_manager.md`, had no settings key and no recorded
+#: derivation, and were exempted from the checks above so those checks could
+#: run at all. All three are gone. This test is the mechanical replacement for
+#: that exemption: the exemption recorded a question, this records the answer.
+_RETIRED_PROMPT_ONLY_CEILINGS = (
+    (
+        "earnings-queued risk cap",
+        re.compile(r"queued_cap|JUST FILED[^.\n]{0,60}risk cap", re.I),
+        "A `JUST FILED` name carries no earnings stance, so it reaches the "
+        "sizing formula with one fewer agreeing seat and the DERIVED "
+        "agreement schedule prices it. A separate risk number double-counts "
+        "the same missing evidence. The only enforcement that exists clamps "
+        "position WEIGHT, not risk.",
+    ),
+    (
+        "starter-sleeve ceiling",
+        re.compile(r"sleeve ceiling|starter position \(\s*≤", re.I),
+        "Tech-alone is one seat of evidence and the derived agreement "
+        "schedule already prices one seat; a sleeve figure is a second, "
+        "un-derived home for the same idea.",
+    ),
+    (
+        "cash floor",
+        re.compile(r"\d+(?:\.\d+)?\s*%\s*(?:cash\s+)?floor", re.I),
+        "The regime cash-floor rule was deleted from this sheet on "
+        "2026-09-01; the number that survived it lived only inside a worked "
+        "example and never matched any rung of the rule it referred to.",
+    ),
+)
+
+
+def test_no_prompt_only_order_size_ceilings():
+    """None of item 62's three ceilings has come back to the PM sheet.
+
+    A ceiling that shapes order size must render from `config/settings.yaml`
+    or not exist. Re-adding one as prompt text — with or without a fresh
+    exemption above — puts back exactly the defect item 62 recorded.
+    """
+    sheet = _sheet()
+    found = [
+        f"{label}: {pattern.search(sheet).group(0)!r} — {why}"
+        for label, pattern, why in _RETIRED_PROMPT_ONLY_CEILINGS
+        if pattern.search(sheet)
+    ]
+    assert not found, (
+        "A prompt-only order-size ceiling is back in "
+        "config/prompts/portfolio_manager.md:\n  " + "\n  ".join(found)
+    )
+
+
+def test_item_62_exemptions_are_gone():
+    """The three exemptions are removed, not merely unused.
+
+    Leaving them in place would let any of the three be re-added silently,
+    which is the shape the item warned about ("that exemption is a place to
+    record the question, not an answer to it").
+    """
+    pm_exemptions = _EXEMPTIONS["portfolio_manager.md"]
+    for stale in ("1% risk cap", "1.0% risk — the sleeve ceiling",
+                  "10% floor", "1.0\nqueued_cap"):
+        assert stale not in pm_exemptions, (
+            f"{stale!r} is still exempt from the hand-typed-limit check; "
+            "item 62 removed the ceiling it was covering."
+        )
+
+
+def test_a_just_filed_name_loses_its_earnings_seat():
+    """The mechanism the sheet now relies on instead of a hand-typed number.
+
+    A queued placeholder carries no `analysis`, so it produces no registry
+    stance — the seat is absent, the signed source score is one lower, and
+    `agreement_ceiling_for_score` prices the name at a lower rung. If this
+    ever stopped being true, deleting the earnings-queued risk figure would
+    have removed a live constraint rather than a duplicate one.
+    """
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    analysed = {
+        "symbol": "AAA", "is_new": False, "filing_date": "2026-09-14",
+        "analysis": {"investment_implications": {"sentiment": "bullish"}},
+    }
+    queued = {
+        "symbol": "AAA", "analysis": None, "is_new": True, "queued": True,
+        "form_type": "10-Q", "filing_date": "2026-09-14",
+    }
+    assert PortfolioManagerAgent._earnings_stance_rows([analysed]), (
+        "an analysed filing must produce an earnings stance"
+    )
+    assert PortfolioManagerAgent._earnings_stance_rows([queued]) == [], (
+        "a JUST FILED placeholder must produce NO earnings stance — that "
+        "absence IS the size reduction the sheet now relies on"
+    )
+
+
+def test_the_agreement_schedule_prices_one_fewer_seat_lower():
+    """Losing a seat costs size, and the schedule that says so is derived."""
+    from src.risk.rules import agreement_ceiling_for_score
+
+    schedule = _live_risk_config().agreement_ceiling_pct
+    assert len(schedule) >= 2
+    for score in range(1, len(schedule)):
+        assert (agreement_ceiling_for_score(schedule, score)
+                < agreement_ceiling_for_score(schedule, score + 1)), (
+            "a name with fewer net agreeing seats must be priced strictly "
+            f"lower (score {score} vs {score + 1})"
+        )

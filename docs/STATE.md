@@ -192,8 +192,10 @@ This file records what is accepted and true **now**. Git history preserves imple
   book (`max_portfolio_risk_pct`, previously reporting-only), and no single
   correlated cluster (measured return correlation, `src/data/correlation.py`)
   may consume more than 40% of that total (`max_cluster_risk_share_pct`) —
-  `src/risk/budget.py::allocate_risk_budget`, largest-request-first with an
-  alphabetical tie-break. The gate engages only when the caller supplies the
+  `src/risk/budget.py::allocate_risk_budget`, best-ranked candidate first
+  (owner decision 2026-09-12, item 49; largest-request-first was the rule
+  before that) with an alphabetical tie-break for unranked names. The gate
+  engages only when the caller supplies the
   book's current risk and clusters (`pipeline_stages._book_risk_inputs`); an
   unmeasurable book falls back to per-position sizing and the 5% single-name
   cap only. `target_weight_pct` stays Optional so stored decisions still

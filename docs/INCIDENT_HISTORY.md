@@ -161,6 +161,403 @@ Item 18 stays PARTIALLY FIXED.
 
 ---
 
+### 2026-09-14 — three ceilings that decided how big an order could be existed only as sentences in a prompt; all three are now gone, and two of them were duplicating a limit the desk already derives (board item 62, CLOSED)
+
+**In plain words:** three separate size limits lived nowhere but the text the
+sizing seat reads each morning. No setting held them, no code enforced them,
+and nobody had written down where any of the numbers came from. Checked one
+at a time: one was covering a hazard the desk already prices properly, one
+was a second copy of a rule the desk already derives from its own ratified
+envelope, and one was a leftover pointing at a rule that had been deleted from
+the sheet a fortnight earlier. None of the three could be derived and none of
+the three needed to be. All three are deleted.
+
+**The three, and what each turned out to be.**
+
+*(a) The earnings-queued limit — "a name that just filed may only risk one
+percent".* This was a term in the seat's own sizing arithmetic, so it shaped
+every proposal for a name with a fresh SEC filing. Nothing enforced it. The
+one piece of enforcement that exists clamps the resulting position's WEIGHT,
+not its risk — a different quantity, at a different number, and the sheet
+claimed the opposite. A note under the rule stated that "the engine has always
+used 1% when a filing is JUST FILED"; that was false when it was written and
+had stayed in the sheet since 2026-09-01. No engine path has ever applied a
+risk ceiling to a just-filed name.
+
+Two further things were wrong with it. The event was mis-described: the flag
+fires on a 10-Q or 10-K appearing on EDGAR, which for most US issuers arrives
+*after* the earnings press release, so the overnight gap the rule was written
+to defend against has usually already happened by the time the flag turns on.
+And the hazard it actually covers — the desk is holding fundamentals it knows
+to be superseded and has not read — is already handled, deterministically and
+with a derivation: a just-filed name produces no earnings stance at all, so it
+loses that analyst's seat, arrives at the sizing formula with one fewer seat
+agreeing, and the agreement schedule (derived from the ratified envelope two
+days earlier, items 30/57) prices it a rung lower. Sizing it down again
+through a separate number double-counts the same missing evidence.
+
+*(b) The momentum-leader starter sleeve's per-name ceiling.* Prompt text only;
+nothing in the code has ever read it. The sleeve exists to let a name in with
+only the technical analyst confirming — which is exactly one seat of evidence,
+and the derived agreement schedule already prices one seat at its lowest rung.
+The sleeve's own stated intent, "a toe-hold you can add to on confirmation",
+is what the schedule does: a second confirming seat unlocks the next rung. So
+the sleeve figure was a second, tighter, un-derived home for a rule that
+already has a first, derived one. Worth noting because it confused people
+twice: the desk separately holds a *different* starter number for
+sub-floor reward:risk targets, so "starter size" meant two things at once.
+It now means one.
+
+*(c) The cash floor.* This one was not a live rule at all. The regime cash
+floor it referred to (risk-off / transitional / risk-on rungs) was deleted
+from the sheet on 2026-09-01. What survived was a single phrase inside a
+worked example, and its number never matched any rung of the rule it was
+citing. A cross-reference in the macro analyst's sheet still pointed at the
+deleted rule too; that is corrected.
+
+**What was searched, and ruled out by name.** For the earnings limit: Bartov
+and Konchitchki (2017, *Accounting Horizons*) for the filing timetable —
+"In 1970, the SEC began requiring a quarterly Form 10-Q to be filed within 45
+calendar days after quarter-end", since reduced to 40 days for accelerated
+filers — which establishes when the flag can fire but says nothing about
+position size. Li and Ramesh (2009, *The Accounting Review*) and Griffin
+(2003, *Review of Accounting Studies*) on whether the filing date itself moves
+prices; neither abstract could be fetched directly (Springer, SSRN and
+ProQuest all refuse), so both are relied on only through a fetched
+working paper that quotes them: "Examining the market reaction to 10-Ks issued
+separately from the EA, Li and Ramesh (2009) find a market reaction only for
+the 10-Ks filed at calendar quarter-end. Importantly, Li and Ramesh (2009)
+find a more pronounced market reaction to EAs compared to 10-K filings." The
+same paper establishes the ordering the desk had backwards: "the conventional
+disclosure practice of 'stand-alone' earnings announcements (EAs), which
+preempt 10-K filings, is steadily disappearing over time" — steadily
+disappearing, but still the majority case, since the paper measures concurrent
+releases rising only "from a low of four percent to a high of 25 percent".
+None of this yields a position-size number, which is the point: the literature
+is about information content, not about how much to risk.
+
+For the sleeve: Concretum Group's position-sizing research, Curtis Faith's
+Turtle unit sizing, and the practitioner pyramiding guides (TradersPost,
+LuxAlgo, QuantStrategy.io, Titan FX, HeyGoTrade) were all searched and all
+ruled out. Every one of them either targets a constant portfolio volatility —
+a fund goal this desk has already rejected on mandate grounds — or asserts a
+number with no derivation behind it. Importing either is exactly what the
+desk's no-arbitrary-numbers rule forbids.
+
+For the cash floor: Vanguard's 5–10% guidance and the retail wealth pages
+repeating it (U.S. Bank, SmartAsset, Hennion & Walsh, Beanvest) were searched
+and ruled out on goal: every one is written for a preservation or
+decumulation portfolio, and this desk's mandate says in its own first
+paragraph that it is not a preservation vehicle. It did not matter in the end,
+because the rule the number belonged to no longer exists.
+
+**Does anything get sized differently?** Yes, and this is the part that costs
+money rather than tidiness, so it is stated plainly. Nothing *enforced*
+changes: the weight clamp on a just-filed name, the agreement schedule, the
+single-name risk cap, the drawdown halving and every other deterministic gate
+are untouched, and no code path that computes an order quantity was edited.
+What changes is what the sizing seat is *told*. Before, it was instructed to
+cap a just-filed name and a sleeve starter at one percent of equity at risk.
+Now it is instructed to size both on the seats of evidence they actually
+carry, and the derived schedule's lowest rung is more than double one percent.
+So proposals for those two categories can come in larger than they would have
+yesterday, bounded by the schedule and by every enforced gate above it. The
+desk's mandate treats under-deployment as its largest measured drag, so the
+direction is not obviously wrong — but it is a loosening, it was not
+separately ratified, and the owner should know it happened before paper
+trading restarts.
+
+**What was deliberately not fixed.** The weight clamp behind the earnings flag
+carries a hand-typed number in code with no settings key and no derivation of
+its own. It is enforcement, not prompt text, so it was outside this item; it
+is now the only un-derived number left in this area and it should get its own
+review. Nothing was invented to replace it.
+
+**What catches it next time.** The three test exemptions that let these
+ceilings sit outside the hand-typed-limit check are removed, so the check
+covers the sheet again. Four tests were added: one fails if any of the three
+ceilings reappears in the sheet, one fails if the exemptions are quietly
+restored, one pins the mechanism the deletion depends on (a just-filed name
+must produce no earnings stance — if that ever stopped being true, removing
+the earnings figure would have removed a live constraint rather than a
+duplicate one), and one pins that fewer agreeing seats really do buy a
+strictly smaller position.
+
+---
+
+### 2026-09-14 — the model exam was still marking against a rule the desk deleted three days earlier, and the reason it was blocked was a contamination that never existed (PM test gate item 8, CLOSED)
+
+**In plain words:** we want to find out which AI model should run the seat
+that actually picks the trades. That test was blocked on the board by a
+worry that its input data might be dirty. The worry was groundless — but the
+test really was broken, for a completely different reason nobody had written
+down: the exam paper still had the old answer key. On 2026-09-11 the owner
+retired the rule that every trade must promise at least 1.5 times as much
+reward as risk. The exam went on marking models on how well they obeyed it.
+Running the comparison in that state would have paid real money to discover
+which model is best at following a deleted rule.
+
+**What was actually wrong, verified rather than assumed.**
+
+* **Four of the six marks — 0.80 of the score out of 1.00 — hung off that
+  retired number.** Only "did it produce valid output" and "did it do
+  anything at all", 0.10 each, were clean. A first pass at this called it
+  "roughly half"; counting the weights rather than eyeballing them is what
+  corrected it, and the same pass corrected "16 prompt changes since" to 25
+  commits.
+* On the one real trading day the exam is built from, that definition is
+  wrong three separate ways. Twelve of the 38 tradeable candidates are
+  breakout setups, which the desk now says carry no reward-to-risk judgement
+  at all — including NVDA, the single name this whole line of work was
+  written about. Three of the five "qualified shorts" the exam rewarded are
+  ones the desk refuses outright on a different rule entirely, so it was
+  handing out marks for trades the desk would never place. And every famous
+  mega-cap the exam penalised as "weak" is in fact a name the desk's own
+  rules admit.
+* A third mark, "every thin pick names a catalyst", was grading a
+  requirement that no longer exists: a catalyst is now required only when a
+  trade's payoff cannot be measured at all, not when it is merely thin.
+* **The sharpest single case: SLB.** Ten of the twelve breakout candidates
+  sit below the retired 1.5, SLB among them at 1.28 — and `docs/OUTCOME.md`
+  names SLB that exact morning as the flagship trade the desk WRONGLY
+  REFUSED, because a 3x-ATR stop makes 1.29 the best ratio arithmetic allows
+  over the hold. The exam was set to mark a model DOWN for making the trade
+  the desk's own doctrine says it should have made.
+
+**What the fix does.** The exam no longer holds any opinion of its own about
+what makes a candidate qualified. It asks the desk's own admission rules —
+the same plain-Python replay of them that already shadows production — and
+scores the model on whether it picked names the desk would actually have
+admitted. On this day that is 25 of the 59 names read, of which exactly two
+are shorts. Nothing in the exam is a number anyone typed; every threshold it
+still uses is imported from the live configuration.
+
+**Two marks were deleted rather than reworded**, which is the part worth
+remembering: when a rule is gone, a check that quietly redefines itself to
+survive is worse than no check. The catalyst-discipline mark is gone
+outright. The familiarity mark — "did it reach for the mega-cap it knows" —
+is kept as a REPORTED NUMBER worth nothing, because the three mega-caps in
+question are all names the desk permits, and failing a model for taking a
+permitted trade would be inventing a rule the desk does not have.
+
+**The blocking claim itself was false, and that is the second lesson.** The
+item said past benchmark runs "may be contaminated by bad seat data". They
+cannot be. Every input the exam uses is frozen on disk — hand-built
+scenarios plus one verbatim copy of a real morning session — and no live
+analyst is called anywhere in the harness, so fixing a seat cannot reach
+backwards into a saved file. The one real fixture was not dirty either:
+every seat returned success on that run. The item had sat on the board as a
+blocker on a premise that was impossible by construction, while the actual
+blocker sat in the code unwritten-down. Nobody had checked; the wording
+sounded plausible next to a real spend-baseline contamination that did
+exist, and the resemblance was doing the work of evidence.
+
+**What this exam still cannot tell us, said plainly.** The rule that replaced
+the floor reads a reward-to-risk worked out from the desk's own measured
+price levels, not from the analyst's guessed target. **Not one of the 59 rows
+in the frozen fixture carries those levels** — the field did not exist when
+the copy was taken — so that number cannot be computed for any name on it,
+and no substitute would be the real one. It does not stop the exam working:
+nothing on that day is refused by the payoff rule that is not already refused
+for having no view at all, so admission is decided by coverage, rating,
+eligibility and how many analysts agree, none of which need a ratio. But it
+does mean the exam cannot say whether a model reads payoff geometry the way
+the desk now does, and nobody should claim it can. A day that WOULD support
+that question already exists in the archive — 2026-09-02, where 63 of 64
+readings carry the levels and every one of the 34 tradeable candidates has a
+computable structural ratio. Capturing it as a second fixture is unstarted
+work.
+
+**A stale number found in the same sweep, unrelated but worth the line.** The
+plain-Python replay of the desk's rules was still sizing positions off the
+conviction bands the trade-picking sheet used BEFORE 2026-09-10 (high
+1.5-3.0% rather than the live 2.0-4.0%). Nobody had named it. It changes no
+decision about which names are admitted — conviction only sizes — but it did
+mean the audit understated how far past the risk budget the admitted names
+collectively ask: 47.24% of equity, not the 56.49% they really ask. The bands
+are now parsed out of the live sheet by a test, so they cannot drift again.
+
+**What would catch it next time.** The grader's checks are now pinned by a
+test that fails if any check name reintroduces the retired floor, and the
+admitted set is asserted equal to the desk's own rule replay — so the exam
+can no longer grow a second opinion about what the desk admits without CI
+saying so. That is the mechanical version of the rule this desk keeps
+relearning: a benchmark that hardcodes a number is a copy of the number, and
+copies go stale silently.
+
+---
+
+### 2026-09-14 — the two drawdown systems, set side by side at last: they do not contradict each other, but the shallowest alarm takes the most drastic action, and one of the three has been unable to see since the reset (board item 32, reconciliation half CLOSED)
+
+**In plain words:** the desk has two separate ways of noticing it is losing
+money, and nobody had ever written them down next to each other. That is now
+done. They do not fight: one cannot block the other, and the order they run
+in is defined. But three things came out of the comparison that were not
+known before, and one of them matters a great deal.
+
+**The two systems, side by side.**
+
+| | **Loss alarms (three of them)** | **§11.2 de-levering ladder** |
+|---|---|---|
+| What it measures | The account's return over a window: today, the last 5 sessions, the last 20 | How far the account is below its own best-ever equity (peak-to-trough) |
+| Against what basis | A multiple of the normal daily move of the book *actually held*, rebuilt every session from the holdings' real price history at their real weights, scaled by √(window) | Fixed percentages of the high-water mark: -8%, -15%, -20% |
+| What it does when it trips | **Daily: force-liquidates every position and abandons the session.** 5-day/20-day: halves the size of every new BUY and SHORT | Cuts the gross-exposure ceiling to 1.5x, then 1.0x, then 0.5x, trimming the held book to fit; alerts the owner at -20% |
+| Can it see today | Daily: **yes** — it reads live broker equity. 5-day/20-day: **no** | Yes, but against a one-day-old high-water mark |
+
+**FINDING 1 — the severity is inverted between the two systems, and this is
+the one worth arguing about.** The alarm that trips soonest takes the most
+violent action. The daily circuit breaker fires at roughly a 3-sigma session —
+about a 3% loss on a book that normally moves 1% — and its response is to sell
+the entire book at market and abandon the session. The ladder's *deepest* rung
+is a 20% peak-to-trough drawdown, an incomparably worse state, and its
+response is only to halve the allowed exposure. So the desk's most drastic
+deterministic action is attached to its shallowest trigger. That is not an
+inconsistency in the arithmetic; it is a risk-appetite ordering, and it is
+therefore the owner's to keep or change, not an agent's. It is recorded here
+because it was not visible anywhere before the two were written down together,
+and because the boardnote's phrase "loss alarm" understates what the daily one
+does — it is a liquidation, not an alarm.
+
+**FINDING 2 — the daily breaker's threshold shrinks with deployment, and its
+response is liquidation. The failure mode the owner rejected on 2026-09-11 can
+re-enter through this door.** The volatility yardstick weights holdings as
+fractions of *equity* and deliberately does not renormalise them, so a book
+that is 5% deployed reconstructs a normal daily move about 5% the size of the
+same basket fully deployed, and the threshold tightens to match. That property
+is intended and is right for a *brake*. Attached to a *liquidation* it reads
+differently. A book holding one name at 5% of equity, that name moving 2% on
+an ordinary day, produces a daily limit of about 0.3% of equity — which that
+one position reaches by falling 6%, an unremarkable single-stock day. The
+response is to liquidate the whole book. The desk is in exactly that state
+right now: paused, mostly cash, about to ramp.
+
+Two things make it worse than the arithmetic alone suggests:
+
+- **The numerator and the denominator do not measure the same book.** The
+  threshold is 3 sigma of what is *still held* at the moment of the check. The
+  loss it is compared against is the account's whole-day P&L, which also
+  contains realised losses on positions *closed earlier that day*,
+  commissions, margin interest, and the spread paid on entries made that
+  morning. None of those shrink with deployment and none of them appear in the
+  yardstick. During a ramp from cash they are the dominant term.
+- **It hides its own trace.** Once the breaker liquidates, the book is
+  all-cash, the yardstick becomes unmeasurable, and the limit reverts to the
+  6.7% fixed fallback. An operator looking afterwards sees a wide limit and no
+  obvious reason the desk sold everything.
+
+This is a genuine failure toward *trading*, not away from it: forced selling of
+a healthy book at a 0.3% loss realises losses and pays a round trip. It was
+NOT fixed here, because every available fix is either a trip level (the
+owner's) or an invented floor (forbidden). It is written as an open question
+below.
+
+**FINDING 3 — the 5-day and 20-day brakes are blind, and will stay blind for
+6 and 21 sessions after the desk restarts.** They read the `daily_pnl` table
+by position — the 5-day return needs a sixth row, the 20-day a twenty-first.
+That table is written only by an evening pipeline run, so a paused desk accrues
+nothing; the live table has held one row since the 2026-09-02 reset. With
+fewer rows both returns come back as "no value", `in_drawdown` stays false, and
+nothing anywhere said the brake could not see. **This is not the same
+"currently blind after the reset" the 2026-09-04 note recorded** — that was
+mis-scaling, and the 2026-09-11 basis change fixed it. This is genuine absence
+of data, and the honest response is to say so, not to invent a reading. The
+brakes' *only* action is to halve new BUYs, so blindness here costs no
+protection that the daily breaker and the ladder are not already providing.
+
+**What the comparison did NOT find, stated because it was the thing most
+worth looking for.** The two systems cannot contradict each other:
+
+- A tripped daily breaker cannot block the ladder's de-levering. `check()`
+  returns an empty violation list for SELL and COVER before any rule runs —
+  exits fail open, entries fail closed.
+- They cannot double-sell the same shares. In the morning path the ladder runs
+  first, refreshes the broker snapshot after its fills, and only then is the
+  daily breaker evaluated against the refreshed positions.
+- The 20-day brake cannot be asleep past the point the ladder halves the book:
+  all three alarm thresholds are capped at the ladder's -20% owner-alert
+  point, and the 5-day threshold is additionally clamped to the 20-day one, so
+  |1-day| ≤ |5-day| ≤ |20-day| ≤ 20% holds at every volatility.
+- The √time scaling IS applied consistently: one sensitivity, scaled by
+  √1, √5 and √20, and the fixed fallbacks (1.34, 3, 4 × the 5% risk unit)
+  stand in the same √time relation with the 20-day one clipped by the ladder
+  cap. No second convention was found anywhere.
+
+**Every multiple in either system, and where it actually came from.** None was
+changed; the point of the list is that it exists.
+
+- `drawdown_vol_sensitivity = 3.0` — **INVENTED, and correctly labelled so.**
+  An owner risk-appetite decision of 2026-09-11. A real search that day found
+  no published convention for "N multiples of recent volatility trips a
+  drawdown alarm". Flagged provisional in five places. Not a defect.
+- `daily_loss_risk_multiple = 1.34` — the fallback only. Derived by √time from
+  the 5-day multiple (3 × √(1/5)). The *relation* is sound; the anchor is not.
+- `drawdown_5d_risk_multiple = 3` — **INHERITED, never derived.** The anchor
+  everything above rests on. It came in as "3 losing max-size trades in a
+  week" from an April-2026-era constant and has never been validated.
+- `drawdown_20d_risk_multiple = 4` — not a derivation at all. It is the ladder
+  cap divided by the risk unit (20 ÷ 5). √time would have put it at 6.
+- `GROSS_LADDER` rungs -8% / -15% / -20% and 1.5x / 1.0x / 0.5x — a ratified
+  owner table. No derivation is recorded for the rungs or the multipliers, and
+  none was found. Six invented numbers, ratified rather than derived.
+- `DRAWDOWN_BUY_SCALE = 0.5` (halve new BUYs in drawdown) — inherited, no
+  derivation recorded.
+
+**What was actually changed, and it is deliberately small.** Neither change
+moves a trip level.
+
+- **A volatility yardstick could outlive the session it was measured in.** The
+  measurement is memoised because the daily breaker fires from six places a
+  session. The comment on the memo said it was keyed on the holdings, their
+  weights, "and the latest bar date seen". It was not — the date was never in
+  the key, and `src/scheduler.py` holds one pipeline object for the life of
+  the process, so the memo outlives a day. A book whose weights rounded to the
+  same 4dp on two consecutive days would have priced today's alarms against
+  yesterday's volatility, silently, under all three of them. The key now
+  carries the trading date, and a clock failure forces a re-measurement rather
+  than reusing anything. Low probability, but it was a comment asserting a
+  protection that did not exist on the risk path.
+- **A blind brake now says it is blind.** The Portfolio Manager's prompt
+  rendered an unmeasurable window as "Trailing 5-day return: None%", which a
+  model reads as a number near zero — that is, as an all-clear. It now states
+  that the window is not yet measurable, how many sessions it needs, how many
+  are on record, and that this must not be read as zero. The threshold it
+  would fire at is still printed.
+
+**Two open questions, both named rather than closed.**
+
+1. **The daily breaker's tightness during the ramp (Finding 2).** *What would
+   settle it:* a decision by the owner on either half — whether the
+   liquidation response belongs on the *daily* alarm at all, or whether the
+   volatility yardstick should be measured on the deployed book rather than on
+   equity when the response is liquidation rather than a brake. Both are risk
+   appetite. What would NOT settle it: inventing a minimum threshold, or
+   fitting the sensitivity to this desk's own record. Searched and ruled out:
+   there is no published convention for a volatility multiple that triggers
+   liquidation as opposed to a size reduction — the 2026-09-11 sweep found
+   none for the alarm case either.
+2. **The inherited anchor `drawdown_5d_risk_multiple = 3` (and with it the
+   1.34 derived from it).** *What would settle it:* a published study of
+   rolling-window loss thresholds expressed in risk units, or a derivation
+   from the desk's own measured per-trade risk that does not read its equity
+   curve. Backtesting against this desk's 53-row archive is fitting and
+   settles nothing; it is named only to be ruled out.
+
+**What would catch a regression.**
+`tests/test_drawdown_vol_relative_brake.py` gains two: that a yardstick
+measured on another date is never served to today's alarms, and that an
+unmeasurable rolling window is stated in words rather than printed as a null.
+The existing 55 in that file and the 11 in
+`tests/test_drawdown_brake_rescale.py` are unchanged and still pin the basis,
+the √time relation, the ladder cap and the severity ordering.
+
+**Still open on board item 32, and it is the owner's alone:** whether the two
+systems should be merged into one drawdown response or deliberately kept as
+two. Nothing above answers that, and nothing above depends on the answer. The
+standing recommendation is unchanged — keep them separate until there is real
+drawdown data, because merging them is a redesign, not a repair.
+
+---
+
 ### 2026-09-14 — item 10 closed: every way an idea can die inside the machinery now records why, and a test now fails if someone adds a new way that does not
 
 **In plain words:** most trade ideas the desk has never reached the market —

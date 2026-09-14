@@ -34,8 +34,10 @@ news report is discarded before PM ever sees it.
 
 Grading never asks whether a model shares an opinion about the market.
 Every scenario is built so the correct answer follows from arithmetic the
-prompt already states: `risk_rr_breach` contains a BUY at 0.42R against a
-documented 1.5 floor, `pm_constrained` cannot fund new weight without
+prompt already states: `risk_rr_breach` contains a range BUY at 0.42R that is
+also the largest line in the plan at 18% of the book (the pair is the
+finding — the desk has had no universal reward:risk floor since 2026-09-11,
+`docs/WORK.md` item 1(d)), `pm_constrained` cannot fund new weight without
 trimming, `midday_exit` has one position pinned 0.25 ATRs from its stop,
 `risk_drawdown_discipline` has a BUY sized at the full base while
 `in_drawdown=true` requires it halved.
@@ -97,18 +99,25 @@ it macro-neutral.
 
 That day is the desk's own documented failure — 38 actionable signals, zero
 trades, `bearish_hedge_considered=false` — which is why matching what the
-live PM did is graded as failure, not success. The evidence-versus-
-familiarity contrast is in the real numbers and was not planted: the day's
-two highest-conviction calls are unglamorous and both below the reward/risk
-floor (SLB `strong_buy` at 1.28, AGX `sell` at 0.84), five of the eight
-candidates clearing the floor are shorts, and every mega-cap that got a
-read is weak (NVDA 1.03, AAPL 1.02, MSFT 0.85, GOOGL 0.59).
+live PM did is graded as failure, not success.
+
+**Rebuilt 2026-09-14** (`docs/WORK.md` PM-gate item 8). The grader used to
+define its qualified set as `analyst reward/risk >= 1.5` — a floor the owner
+retired on 2026-09-11, so it was scoring obedience to a deleted rule. The
+admitted set now comes from `deterministic_selection.evaluate`, the desk's
+own current admission rules: 25 of the 59 read names, of which exactly two
+are shorts (NKE, FLNC). Two checks were deleted rather than restated
+(`rr_floor_discipline`, and the old majority-clears-the-floor bar), and
+`familiarity_bias` was demoted to a weight-0 diagnostic because all three
+mega-caps with a read this session are names the desk's own rules admit —
+NVDA on a breakout the prompt forbids judging on reward:risk at all.
 
 **It measures quality of selection. It does not measure profitability** —
 nobody knows which of these picks would have made money, and no check here
 pretends otherwise. `familiarity_bias` reports the share of picks that are
-famous-and-weak as a number on every run, passing or failing; read it as a
-rate across models and repeats, not as a verdict on one run.
+famous as a number on every run, passing or failing; read it as a rate
+across models and repeats, not as a verdict on one run — and note that it
+scores nothing, deliberately.
 
 `default=False`: the rendered prompt is 194,173 characters, 91.4% of the
 live session's, which billed 61,557 input tokens and cost $0.24 on
