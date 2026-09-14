@@ -17,10 +17,11 @@ The rules replayed here, and where each one is stated:
       dated Active News
       State Change row naming the symbol (then capped 0.5% risk)
                                          Rule Priority row 7 / Step 5
-  R5  net independent source score >= 1  Step 5 agreement ceiling (§9.4);
-      `src/risk/rules.py::agreement_ceiling_for_score` refuses net <= 0
+  R5  net independent source score >= 1  Step 5 agreement refusal (§9.4);
+      `src/risk/rules.py::agreement_refuses_trade` refuses net <= 0. It is a
+      refusal ONLY — the graduated ceiling was retired 2026-09-14.
   R6  conviction sizing band, capped by  Step 5 "Base RISK allocation"
-      max_position_risk_pct and by R5's ceiling
+      max_position_risk_pct
 
 Everything above is a GATE or a CEILING. Nothing above is a RANKING — that
 is the finding, and `summarise()` reports it rather than inventing one.
@@ -43,7 +44,7 @@ from src.risk.constants import (  # noqa: E402
     reward_risk_floor_applies,
 )
 from src.risk.rules import (  # noqa: E402
-    agreement_ceiling_for_score,
+    agreement_refuses_trade,
     count_aligned_sources,
     count_opposing_sources,
     signed_source_score,
@@ -53,7 +54,6 @@ from src.risk.rules import (  # noqa: E402
 # validates API keys this audit does not have and does not need. Pinned by
 # `tests/test_deterministic_selection.py` against the YAML so a config edit
 # cannot silently desync them.
-AGREEMENT_CEILING_PCT = [2.236, 3.162, 3.873, 4.472, 5.0]
 MAX_POSITION_RISK_PCT = 5.0
 
 # **Imported, never retyped (2026-09-14).** These two were literals here, and
@@ -189,12 +189,11 @@ def evaluate(selection: dict, analyses, positions, news_intel) -> list[dict]:
                 symbol, sources, direction, ignored_sources=ignored)
             net = signed_source_score(
                 symbol, sources, direction, ignored_sources=ignored)
-        ceiling = agreement_ceiling_for_score(AGREEMENT_CEILING_PCT, net)
-        if ceiling <= 0.0:
-            blocked.append(f"R5 net evidence {net:+d} — no rung, refused")
+        if agreement_refuses_trade(net):
+            blocked.append(f"R5 net evidence {net:+d} — refused")
 
         band = CONVICTION_BANDS.get(a.conviction, (0.0, 0.0))  # R6
-        max_risk = min(band[1], MAX_POSITION_RISK_PCT, ceiling)
+        max_risk = min(band[1], MAX_POSITION_RISK_PCT)
         if subfloor_catalyst:
             max_risk = min(max_risk, SUBFLOOR_CATALYST_RISK_PCT)
 
@@ -208,7 +207,6 @@ def evaluate(selection: dict, analyses, positions, news_intel) -> list[dict]:
             "aligned": aligned,
             "opposed": opposed,
             "net_sources": net,
-            "agreement_ceiling_pct": ceiling,
             "max_risk_pct": round(max_risk, 2),
             "subfloor_catalyst": subfloor_catalyst,
             "held": symbol in held,
@@ -236,11 +234,9 @@ def evaluate(selection: dict, analyses, positions, news_intel) -> list[dict]:
 #                               risk-percent band tops). Not a new number.
 #   aligned, opposed       NO   net_sources IS aligned - opposed; scoring all
 #                               three counts the same evidence three times.
-#   agreement_ceiling_pct  NO   a pure function of net_sources (§9.4 lookup);
-#                               including it double-weights evidence.
-#   max_risk_pct           NO   a function of conviction, the ceiling and the
-#                               sub-floor cap — it re-imports the R/R gate the
-#                               ranking is supposed to be independent of.
+#   max_risk_pct           NO   a function of conviction and the sub-floor
+#                               cap — it re-imports the R/R gate the ranking
+#                               is supposed to be independent of.
 #   subfloor_catalyst,     NO   booleans that restate gate outcomes, not
 #   held, eligible               strength-of-candidate signals.
 #
@@ -322,14 +318,14 @@ def _main() -> None:  # pragma: no cover - operator entry point
           f"total max risk {summary['total_max_risk_pct']}% "
           f"(budget 25%) -> nothing forces a choice")
     header = (f"{'sym':<7}{'dir':<6}{'rating':<12}{'conv':<8}{'R/R':>6}"
-              f"{'net':>5}{'ceil%':>7}{'maxrisk%':>10}  door")
+              f"{'net':>5}{'maxrisk%':>10}  door")
     print(header)
     print("-" * len(header))
     for r in sorted((r for r in rows if r["eligible"]), key=lambda x: -(x["rr"] or 0)):
         door = "catalyst" if r["subfloor_catalyst"] else "R/R floor"
         print(f"{r['symbol']:<7}{r['direction']:<6}{r['rating']:<12}"
               f"{r['conviction']:<8}{(r['rr'] or 0):6.2f}{r['net_sources']:>5}"
-              f"{r['agreement_ceiling_pct']:>7.1f}{r['max_risk_pct']:>10.2f}  {door}")
+              f"{r['max_risk_pct']:>10.2f}  {door}")
 
     ranked = rank_eligible(rows)
     print("\nEQUAL-WEIGHT COMPOSITE RANKING (not wired into production):")

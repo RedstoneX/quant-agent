@@ -68,8 +68,8 @@ class SizeOverride:
 
     - `no_trading` — refuse the target outright. Nothing should happen to
       the position, held or not. This is what a symbol whose agreement score
-      nets at or below zero (`agreement_ceiling_for_score`) now produces,
-      where before it produced a bare `0.0` float.
+      nets at or below zero (`agreement_refuses_trade`) now produces, where
+      before it produced a bare `0.0` float.
     - `close` — a real exit instruction: flatten whatever is held. This is
       the PM's own `TargetPosition.risk_allocation_pct == 0.0` / `is_close`,
       an intentional, sourced instruction — not a computed refusal.

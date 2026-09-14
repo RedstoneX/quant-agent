@@ -1000,52 +1000,19 @@ risk:
   # See RiskConfig.kill_switch_path for why this is the one guard that also
   # blocks a risk-reducing order.
   kill_switch_path: "data/KILL_SWITCH"
-  # Spec §9.4 "agreement earns size" (2026-08-30; signed 2026-09-02) —
-  # ceiling on risk_allocation_pct by the NET number of independent seats
-  # (of technical/news/earnings/macro/smart_money) backing the target:
-  # aligned seats MINUS opposed ones, each at unit weight.
-  # Entry i = ceiling for a net score of (i+1); a net score at or below
-  # zero has no rung and refuses the target outright. See src/risk/rules.py
-  # (signed_source_score / agreement_ceiling_for_score) and
-  # src/config.py::RiskConfig for the full measurement this is based on.
-  # DERIVED, NOT TYPED — 2026-09-14, docs/WORK.md items 30 + 57 (both
-  # retired). These five numbers are the output of
-  #
-  #     ceiling(n) = max_position_risk_pct x sqrt(n / 5 seats)
-  #
-  # and nothing else. Do NOT hand-edit them: `tests/test_agreement_sizing
-  # .py::test_shipped_schedule_is_the_derivation_not_a_typed_list` reads
-  # this file and fails if any entry drifts from the formula, and
-  # `src/config.py` derives the same list when the key is absent. The full
-  # derivation, with the fetched sources it rests on, is the docstring of
-  # `src/risk/constants.py::derive_agreement_ceiling_schedule`.
-  #
-  # In one line: independent estimates of one quantity combine as 1/N in
-  # VARIANCE, so the consensus's standard error falls as 1/sqrt(N) and the
-  # size it can carry rises as sqrt(N) — the same square root Grinold's
-  # fundamental law puts on breadth ("IR* = IC x sqrt(BR)"). Both constants
-  # in the formula are this desk's own: the owner-ratified per-trade
-  # envelope, and the seat roster. Unanimity earns the full envelope
-  # because it is the strongest evidence this desk can ever assemble;
-  # nothing earns more.
-  #
-  # WHAT THIS REPLACED, so nobody re-proposes it: a hand-typed
-  # [3.0, 4.0, 5.0, 5.0, 5.0]. The measurement quoted above it (production
-  # agent_logs 2026-08-25..28: 67% of opening/increasing targets carried
-  # exactly ONE aligned source, always technical; 29% two; 4% three; NONE
-  # four or five) is a COVERAGE count — how often each rung is reached. It
-  # never derived what a rung should BE. It also left four rungs inert:
-  # rungs 3-5 all read 5.0, equal to max_position_risk_pct, and rung 2
-  # (4.0) sat at the top of the PM's own conviction band, so only rung 1
-  # could ever cut anything. Deriving from the cap makes that impossible to
-  # repeat: every rung is a fixed fraction of the envelope, so no rung can
-  # creep up to meet it when the envelope moves.
-  #
-  # Still true of the new schedule, and still the important fact: this only
-  # ever NARROWS max_position_risk_pct, never widens it, and the coverage
-  # count says rung 1 prices about two thirds of everything this desk
-  # sizes.
-  agreement_ceiling_pct: [2.236, 3.162, 3.873, 4.472, 5.0]
+  # Spec §9.4 "agreement earns size" — RETIRED AS A SIZING RULE 2026-09-14
+  # (owner decision). There is deliberately NO key here. The graduated
+  # ceiling (risk.agreement_ceiling_pct) scaled permitted risk by the net
+  # seat count as max_position_risk_pct x sqrt(n / 5 seats); the sqrt law is
+  # the statistics of averaging INDEPENDENT estimates, and this desk's five
+  # seats read overlapping evidence, so its one precondition is unmet. The
+  # key is REJECTED on load (src/config.py) so a stale settings.yaml cannot
+  # resurrect it silently. What survives is the refusal only: a net score at
+  # or below zero refuses the target outright
+  # (src/risk/rules.py::agreement_refuses_trade). Above zero, the ratified
+  # max_position_risk_pct envelope and the portfolio budget allocator are
+  # the only bounds. Agreement still ORDERS which candidates get funded
+  # first (rank_verdicts / allocate_risk_budget priority).
 
 # Idle-cash sweep — park cash above the reserve in a T-bill ETF, release it
 # automatically before BUYs. The vehicle is cash-equivalent everywhere:

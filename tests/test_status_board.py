@@ -513,6 +513,95 @@ def test_open_defects_is_a_ranked_list_not_a_paragraph():
             )
 
 
+def _work_md_base_ref():
+    """The commit this change is measured against, or None when unknowable.
+
+    In CI both events check out a commit whose FIRST PARENT is main as it
+    stands: a pull_request run checks out GitHub's merge commit (parent 1 is
+    the base branch tip, parent 2 the PR head), and a push to main is the
+    merge landing (parent 1 is main before it). So HEAD^1 is exactly "main
+    before this change" in both — measured against current main at run time,
+    not a stale fork point. Actions checks out a depth-1 clone, so the parent
+    is fetched on demand rather than requiring a workflow change.
+
+    A local run measures against the merge base with origin/main.
+    """
+    import os
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[1]
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True, text=True, check=False,
+        )
+
+    if os.environ.get("GITHUB_ACTIONS"):
+        if git("rev-parse", "--verify", "-q", "HEAD^1").returncode != 0:
+            git("fetch", "-q", "--deepen=1", "origin")
+        r = git("rev-parse", "--verify", "-q", "HEAD^1")
+        return r.stdout.strip() if r.returncode == 0 else None
+    git("fetch", "-q", "origin", "main")
+    r = git("merge-base", "HEAD", "origin/main")
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def test_work_md_does_not_grow_without_pruning():
+    """Owner's standing rule: every write to docs/WORK.md cleans it up first.
+    Resolved items that are written up in docs/INCIDENT_HISTORY.md are
+    deleted, not condensed — the file is loaded by every session and every
+    compaction, so every resolved byte is paid for again and again.
+
+    Until 2026-09-14 that rule lived only in memory, and the only mechanical
+    check was the 100,000-byte ceiling below. The ceiling cannot catch it: a
+    change that adds 2,000 bytes and prunes nothing passes it until the day
+    the file hits the cap, and five board items were added that way in one
+    afternoon. This test encodes the rule itself: a change may not leave
+    WORK.md larger than it found it. Adding an item means removing at least
+    as much finished material in the same change.
+
+    Deliberately no escape hatch — an override is how a rule gets bypassed.
+    If a change ever genuinely has nothing left to prune, this failing is the
+    signal to raise that with the owner, not to work around it.
+
+    Fails closed in CI when no base can be read, so a shallow checkout cannot
+    silently skip it. Skips only on a local run with no reachable origin.
+    """
+    import os
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[1]
+    work_md = repo / "docs" / "WORK.md"
+    if not work_md.exists():
+        return
+    base = _work_md_base_ref()
+    if base is None:
+        if os.environ.get("GITHUB_ACTIONS"):
+            raise AssertionError(
+                "cannot read main-before-this-change to measure docs/WORK.md "
+                "against, even after deepening the clone"
+            )
+        import pytest
+        pytest.skip("no reachable origin to measure docs/WORK.md against")
+    r = subprocess.run(
+        ["git", "-C", str(repo), "show", f"{base}:docs/WORK.md"],
+        capture_output=True, check=False,
+    )
+    if r.returncode != 0:
+        return  # WORK.md did not exist at the base; nothing to compare
+    before = len(r.stdout)
+    after = work_md.stat().st_size
+    assert after <= before, (
+        f"docs/WORK.md grew from {before:,} to {after:,} bytes "
+        f"(+{after - before:,}) without pruning. Owner's standing rule: every "
+        "write to WORK.md cleans it up in the same change. Delete resolved "
+        "items already written up in docs/INCIDENT_HISTORY.md (write one up "
+        "first if it is not), and their `## item N` blocks in "
+        "docs/BOARD_NOTES.md, until the file is no larger than it was."
+    )
+
+
 def test_work_md_stays_under_a_hundred_thousand_bytes():
     """`docs/WORK.md` used to be 132,932 bytes — a session had to read the
     whole thing to find the two or three items it actually needed, because
