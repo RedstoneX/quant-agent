@@ -48,6 +48,19 @@ EXTERNAL_SOURCES = (
     "https://data.sec.gov/",
     "https://efts.sec.gov/",
     "yfinance",
+    # FRED (macro_analyst's live provider, src/data/macro.py:325 `Fred(...)`).
+    "https://api.stlouisfed.org/",
+    # RSS feeds news_analyst's live provider fetches
+    # (src/data/news.py:RSS_FEEDS) — one prefix per feed's own host.
+    "https://search.cnbc.com/",
+    "https://feeds.marketwatch.com/",
+    "https://finance.yahoo.com/",
+    "https://seekingalpha.com/",
+    "https://www.investing.com/",
+    "https://www.nasdaq.com/",
+    "https://feeds.bbci.co.uk/",
+    "https://feeds.npr.org/",
+    "https://www.federalreserve.gov/",
 )
 
 #: Anything that points at the desk's own records. Matched case-insensitively

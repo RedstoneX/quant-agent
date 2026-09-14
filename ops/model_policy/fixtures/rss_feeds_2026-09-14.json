@@ -1,0 +1,68 @@
+{
+  "_blobs": {
+    "rss_feeds_2026-09-14.json.gz": {
+      "sha256": "158d7b838af8fe00c00d574fce516d48c4de893666f724cdab423405f3e402e2",
+      "source": "https://feeds.marketwatch.com/"
+    }
+  },
+  "_exam": {
+    "feeds_failed": [],
+    "fetched_at_utc": "2026-09-14T20:20:59.966020+00:00",
+    "note": "Raw RSS feed bytes for every feed in src/data/news.py:RSS_FEEDS that answered, fetched live just now via NewsDataProvider._fetch_feed's exact network path (urlopen + this module's USER_AGENT). Parsed items, dedup, news_text and symbol tagging are all recomputed by today's NewsDataProvider at exam time, not stored here."
+  },
+  "_provenance": {
+    "sections": {
+      "rss_feeds": {
+        "fetch": "NewsDataProvider._fetch_feed, src/data/news.py:582 \u2014 per-feed source URL recorded in `rss_feeds` above; full raw bytes for every feed are in the pinned blob",
+        "fetched_on": "2026-09-14",
+        "source": "https://feeds.marketwatch.com/"
+      }
+    }
+  },
+  "rss_feeds": {
+    "BBC Business": {
+      "byte_length": 41890,
+      "url": "https://feeds.bbci.co.uk/news/business/rss.xml"
+    },
+    "CNBC Economy": {
+      "byte_length": 20115,
+      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"
+    },
+    "CNBC Top News": {
+      "byte_length": 20479,
+      "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
+    },
+    "Fed Press Releases": {
+      "byte_length": 14610,
+      "url": "https://www.federalreserve.gov/feeds/press_all.xml"
+    },
+    "Investing.com News": {
+      "byte_length": 4599,
+      "url": "https://www.investing.com/rss/news.rss"
+    },
+    "MarketWatch Top": {
+      "byte_length": 8173,
+      "url": "https://feeds.marketwatch.com/marketwatch/topstories/"
+    },
+    "NPR Economy": {
+      "byte_length": 12495,
+      "url": "https://feeds.npr.org/1017/rss.xml"
+    },
+    "Nasdaq News": {
+      "byte_length": 15176,
+      "url": "https://www.nasdaq.com/feed/rssoutbound?category=Press-Release"
+    },
+    "SEC Press Releases": {
+      "byte_length": 18313,
+      "url": "https://www.sec.gov/news/pressreleases.rss"
+    },
+    "Seeking Alpha Market Currents": {
+      "byte_length": 5260,
+      "url": "https://seekingalpha.com/market_currents.xml"
+    },
+    "Yahoo Finance News": {
+      "byte_length": 29456,
+      "url": "https://finance.yahoo.com/news/rssindex"
+    }
+  }
+}

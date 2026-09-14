@@ -1823,7 +1823,7 @@ def _smart_money_grade(output) -> list[Check]:
     return checks
 
 
-# ---- tech_analyst: real daily bars (BLOCKED on upstream inputs) ------------
+# ---- tech_analyst: real daily bars ------------------------------------
 
 _TECH_FIXTURE = "yf_daily_bars_2026-08-28.json"
 
@@ -1899,6 +1899,194 @@ def _tech_grade(analyses: dict | None) -> list[Check]:
     return checks
 
 
+# ---- macro_analyst: real FRED series, fetched via the OneCLI gateway ------
+
+_MACRO_FIXTURE = "fred_macro_2026-09-14.json"
+_MACRO_BLOB = "fred_series_2026-09-14.json.gz"
+
+# Same universe shape as the retired synthetic scenario — plain tickers,
+# not fixture-governed data.
+_PUBLIC_MACRO_UNIVERSE = ["SPY", "QQQ", "XLE", "XLU", "XLP", "XLF", "SMH", "AAPL", "NVDA"]
+
+
+def _public_macro_summary():
+    """Today's `MacroDataProvider.get_macro_summary()` (src/data/macro.py:1125),
+    replayed against the pinned raw FRED observations — the fetch (`fred.
+    get_series` / `get_series_info`) is stubbed with the pinned bytes; every
+    computed field (change_pct, trend, percentile, freshness, ...) is
+    produced by today's live provider code, not stored in the fixture.
+    """
+    import pandas as pd
+
+    from src.data.macro import MacroDataProvider
+
+    payload = json.loads(_fixture_policy.load_blob(_MACRO_FIXTURE, _MACRO_BLOB))
+    series_data, series_info = payload["series"], payload["series_info"]
+    provider = MacroDataProvider(api_key="unused-fixture-replay-no-network")
+
+    def _get_series(series_id, **_kw):
+        obs = series_data.get(series_id) or {}
+        return pd.Series(
+            {pd.Timestamp(d): v for d, v in obs.items()}
+        ).sort_index()
+
+    def _get_series_info(series_id):
+        return series_info.get(series_id) or {}
+
+    provider.fred.get_series = _get_series
+    provider.fred.get_series_info = _get_series_info
+    return provider.get_macro_summary()
+
+
+def _public_macro_invoke(agent):
+    analysis, _ = agent.analyze(
+        macro_summary=_public_macro_summary(), universe=_PUBLIC_MACRO_UNIVERSE,
+        last_state=None, news_narrative=None,
+    )
+    return analysis
+
+
+def _public_macro_grade(analysis) -> list[Check]:
+    """Schema/rule compliance only — real market conditions on the fetch
+    date are whatever they are, so there is no forced-arithmetic correct
+    direction to grade against (unlike the retired synthetic `macro_stress`).
+    """
+    checks: list[Check] = [Check(
+        "parsed", 0.40, analysis is not None,
+        "MacroAnalysis validated (src/models.py:2258 — regime/confidence/"
+        "equity_outlook enums enforced by pydantic on parse)",
+    )]
+    if analysis is None:
+        return checks
+
+    pos = getattr(analysis, "position_guidance", None)
+    invested = getattr(pos, "target_invested_pct", None)
+    checks.append(Check(
+        "target_invested_pct_in_range", 0.20,
+        invested is not None and 0.0 <= float(invested) <= 100.0,
+        f"target_invested_pct={invested}",
+    ))
+
+    guidance = getattr(analysis, "sector_guidance", None) or []
+    checks.append(Check(
+        "sector_guidance_present", 0.20,
+        len(guidance) >= 2,
+        f"{len(guidance)} sector calls (config/prompts/macro_analyst.md)",
+    ))
+
+    chain = getattr(analysis, "reasoning_chain", None)
+    checks.append(Check(
+        "reasoning_chain_present", 0.20,
+        chain is not None,
+        "ReasoningChain populated" if chain is not None else "missing",
+    ))
+    return checks
+
+
+# ---- news_analyst: real RSS wires, fetched live at fixture-build time -----
+
+_NEWS_FIXTURE = "rss_feeds_2026-09-14.json"
+_NEWS_BLOB = "rss_feeds_2026-09-14.json.gz"
+
+_PUBLIC_NEWS_UNIVERSE = [
+    "SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "TSLA", "META",
+    "AMD", "MU", "AVGO", "XLE", "XLF", "XLU", "XLK",
+]
+
+
+def _public_news_report(scratch: Path | None = None):
+    """Today's `NewsDataProvider.fetch_news` / `format_for_prompt` /
+    `tag_symbol_mentions` (src/data/news.py), replayed against the pinned
+    raw RSS bytes — `urlopen` is stubbed with the pinned per-feed bytes
+    fetched live at fixture-build time; parsing, dedup, formatting and
+    symbol tagging all run as today's code.
+    """
+    import src.data.news as news_mod
+
+    payload = json.loads(_fixture_policy.load_blob(_NEWS_FIXTURE, _NEWS_BLOB))
+    manifest = _manifest(_NEWS_FIXTURE)
+    feed_urls = {name: v["url"] for name, v in manifest["rss_feeds"].items()}
+
+    def _replay_urlopen(req, timeout=None):
+        url = req.full_url if hasattr(req, "full_url") else str(req)
+        name = next((n for n, u in feed_urls.items() if u == url), None)
+        raw = (payload.get(name) or "").encode("utf-8")
+
+        class _Replay:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *a):
+                return False
+
+            def read(self_inner):
+                return raw
+
+        return _Replay()
+
+    real_urlopen = news_mod.urlopen
+    news_mod.urlopen = _replay_urlopen
+    try:
+        provider = news_mod.NewsDataProvider(feeds=feed_urls, per_symbol_enabled=False)
+        items, coverage = provider.fetch_news(symbols=None)
+    finally:
+        news_mod.urlopen = real_urlopen
+    news_text = provider.format_for_prompt(items, max_items=60)
+    stock_mentions = provider.tag_symbol_mentions(items, _PUBLIC_NEWS_UNIVERSE)
+    return news_text, stock_mentions, coverage
+
+
+def _public_news_invoke(agent):
+    news_text, stock_mentions, coverage = _public_news_report()
+    report, _ = agent.analyze(
+        news_text=news_text, universe=_PUBLIC_NEWS_UNIVERSE,
+        stock_mentions=stock_mentions, previous_narrative=None,
+        session="morning", prior_session_report=None, news_coverage=coverage,
+    )
+    return report
+
+
+def _public_news_grade(report) -> list[Check]:
+    """Rule/schema compliance only, per the owner's 2026-09-14 direction:
+    real fetched news has no engineered correct answer to grade judgement
+    against (unlike the retired synthetic `news_intel`)."""
+    checks: list[Check] = [Check(
+        "parsed", 0.35, report is not None,
+        "NewsIntelligenceReport validated (src/models.py:2758 — enums on "
+        "market_sentiment/confidence/StateChange.conviction/StockNewsItem."
+        "sentiment+conviction all pydantic-enforced on parse)",
+    )]
+    if report is None:
+        return checks
+
+    regime = (getattr(report.macro_narrative, "current_regime", "") or "")
+    checks.append(Check(
+        "macro_narrative_present", 0.20,
+        len(regime.strip()) >= 5,
+        f"current_regime {len(regime.strip())} chars "
+        "(src/models.py:2515 MacroNarrative.current_regime min_length=5)",
+    ))
+
+    universe = set(_PUBLIC_NEWS_UNIVERSE)
+    stock_news_symbols = set(report.stock_news or {})
+    invented_stock_news = sorted(stock_news_symbols - universe)
+    checks.append(Check(
+        "no_invented_stock_news_symbols", 0.25, not invented_stock_news,
+        f"stock_news symbols outside the given universe: {invented_stock_news}",
+    ))
+
+    affected = {
+        s for sc in (report.state_changes or []) for s in (sc.affected_symbols or [])
+    }
+    invented_affected = sorted(affected - universe)
+    checks.append(Check(
+        "no_invented_state_change_symbols", 0.20, not invented_affected,
+        f"state_change affected_symbols outside the given universe: "
+        f"{invented_affected}",
+    ))
+    return checks
+
+
 # --------------------------------------------------------------------------
 # Registry
 # --------------------------------------------------------------------------
@@ -1936,48 +2124,52 @@ SCENARIOS: list[Scenario] = [
         invoke=_tech_invoke,
         grade=_tech_grade,
         fixture=_TECH_FIXTURE,
-        blocked_reason=(
-            "raw daily bars are pinned (yfinance, 7 symbols to 2026-08-28) but the "
-            "live call (src/pipeline_stages.py:3052) also passes the macro seat's "
-            "previous regime/outlook and the tech seat's own previous ratings — "
-            "agent outputs that must come from today's seats, not recordings — "
-            "plus valuation multiples as of the session date (yfinance serves "
-            "today's only) and the ~09:33 ET broker snapshot (not fetched)"
-        ),
-        description="Real yfinance bars for 7 symbols through today's indicator "
-                    "and level code. BLOCKED until upstream inputs exist.",
+        description="Real yfinance bars for 7 symbols (2026-08-28) run through "
+                    "today's compute_indicators and analyze_batch "
+                    "(src/agents/tech_analyst.py:336). Unblocked 2026-09-14: "
+                    "analyze_batch's own signature defaults prior_ratings to "
+                    "{} and prior_macro_regime/prior_macro_outlook to None "
+                    "(src/agents/tech_analyst.py:339-343) — the tech seat's "
+                    "prompt rates chart-driven, not prior-ratings-driven "
+                    "(config/prompts/tech_analyst.md). Valuations and the "
+                    "intraday snapshot are omitted the same way (both "
+                    "optional, default None) rather than invented. Grades "
+                    "symbol resolution, thesis_invalid_if discipline, the "
+                    "absolute ATR stop floor, and range R:R >= 2.0.",
     ),
     Scenario(
         key="macro_stress",
         role="macro_analyst",
         agent_path="src.agents.macro_analyst:MacroAnalystAgent",
-        invoke=_macro_invoke,
-        grade=_macro_grade,
-        blocked_reason=(
-            "input is invented (a synthetic macro tape). The real source is FRED, "
-            "reachable only through the FRED_API_KEY the provider requires "
-            "(src/data/macro.py:318); FRED's keyless CSV endpoint returned nothing "
-            "from this host [measured 2026-09-14]. The live call "
-            "(src/pipeline_stages.py:2928) also passes the macro seat's previous "
-            "state and the news seat's narrative — agent outputs. The grader's "
-            "'target_invested_pct <= 80' has no source in "
-            "config/prompts/macro_analyst.md (UNSOURCED)"
-        ),
-        description="Synthetic stressed macro tape. BLOCKED.",
+        invoke=_public_macro_invoke,
+        grade=_public_macro_grade,
+        fixture=_MACRO_FIXTURE,
+        description="15 real FRED series (2026-09-14), fetched live through the "
+                    "OneCLI credential gateway with a placeholder key — the real "
+                    "FRED_API_KEY never entered this process — then recomputed "
+                    "by today's MacroDataProvider.get_macro_summary "
+                    "(src/data/macro.py:1125). last_state/news_narrative=None "
+                    "(both optional, src/agents/macro_analyst.py:203-204). "
+                    "Unblocked 2026-09-14 — see the retired synthetic-tape note "
+                    "above for why the old scenario was blocked. Grades schema "
+                    "and rule compliance only; real conditions have no forced "
+                    "correct direction to grade against.",
     ),
     Scenario(
         key="news_intel",
         role="news_analyst",
         agent_path="src.agents.news_analyst:NewsAnalystAgent",
-        invoke=_news_invoke,
-        grade=_news_grade,
-        blocked_reason=(
-            "headlines are invented. The live feeds are RSS, which serve only "
-            "current items — no free source returns a past date's feed. The live "
-            "call (src/pipeline.py:8303) also passes the news seat's previous "
-            "narrative and prior-session report — agent outputs"
-        ),
-        description="Seven synthetic headlines. BLOCKED.",
+        invoke=_public_news_invoke,
+        grade=_public_news_grade,
+        fixture=_NEWS_FIXTURE,
+        description="Real RSS wires (11 feeds, fetched live 2026-09-14) replayed "
+                    "through today's NewsDataProvider.fetch_news / "
+                    "format_for_prompt / tag_symbol_mentions "
+                    "(src/data/news.py). previous_narrative/prior_session_report="
+                    "None (both optional, src/agents/news_analyst.py:376-380). "
+                    "Unblocked 2026-09-14. Grades schema/enum compliance and "
+                    "'no invented tickers not in input' only — no judgement-"
+                    "based answer key for real news.",
     ),
     Scenario(
         key="pm_constrained",

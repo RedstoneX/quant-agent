@@ -1,0 +1,98 @@
+{
+  "_blobs": {
+    "fred_series_2026-09-14.json.gz": {
+      "sha256": "47fc497600558262572008f8b936ca3d611ae7872d27aef4e511070e70e201b2",
+      "source": "https://api.stlouisfed.org/fred/series/observations"
+    }
+  },
+  "_exam": {
+    "note": "Raw FRED observations + series metadata for every series MacroDataProvider.get_macro_summary() (src/data/macro.py:1125) calls, fetched live via fredapi through the OneCLI credential gateway (placeholder key substituted server-side; no secret value ever entered this process). macro_summary itself is recomputed by today's MacroDataProvider methods at exam time, not stored here.",
+    "session_date": "2026-09-14"
+  },
+  "_provenance": {
+    "sections": {
+      "fred_series": {
+        "fetch": "fredapi.Fred.get_series / get_series_info via MacroDataProvider.get_macro_summary, src/data/macro.py:1125 (full raw observations + metadata in the pinned blob)",
+        "fetched_on": "2026-09-14",
+        "source": "https://api.stlouisfed.org/fred/series/observations"
+      }
+    }
+  },
+  "fred_series": {
+    "BAMLC0A0CM": {
+      "count": 42,
+      "first_date": "2026-07-16",
+      "last_date": "2026-09-11"
+    },
+    "BAMLH0A0HYM2": {
+      "count": 42,
+      "first_date": "2026-07-16",
+      "last_date": "2026-09-11"
+    },
+    "CPIAUCSL": {
+      "count": 16,
+      "first_date": "2025-05-01",
+      "last_date": "2026-08-01"
+    },
+    "CPILFESL": {
+      "count": 16,
+      "first_date": "2025-05-01",
+      "last_date": "2026-08-01"
+    },
+    "DFF": {
+      "count": 28,
+      "first_date": "2026-08-15",
+      "last_date": "2026-09-11"
+    },
+    "DFII10": {
+      "count": 20,
+      "first_date": "2026-08-17",
+      "last_date": "2026-09-11"
+    },
+    "DGS10": {
+      "count": 10,
+      "first_date": "2026-08-31",
+      "last_date": "2026-09-11"
+    },
+    "DGS2": {
+      "count": 10,
+      "first_date": "2026-08-31",
+      "last_date": "2026-09-11"
+    },
+    "DGS3MO": {
+      "count": 10,
+      "first_date": "2026-08-31",
+      "last_date": "2026-09-11"
+    },
+    "DTWEXBGS": {
+      "count": 42,
+      "first_date": "2026-07-16",
+      "last_date": "2026-09-11"
+    },
+    "ICSA": {
+      "count": 12,
+      "first_date": "2026-06-20",
+      "last_date": "2026-09-05"
+    },
+    "PCEPI": {
+      "count": 15,
+      "first_date": "2025-05-01",
+      "last_date": "2026-07-01"
+    },
+    "T10YIE": {
+      "count": 20,
+      "first_date": "2026-08-17",
+      "last_date": "2026-09-11"
+    },
+    "UNRATE": {
+      "count": 16,
+      "first_date": "2025-05-01",
+      "last_date": "2026-08-01"
+    },
+    "VIXCLS": {
+      "count": 20,
+      "first_date": "2026-08-17",
+      "last_date": "2026-09-11"
+    }
+  }
+}

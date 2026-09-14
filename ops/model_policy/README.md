@@ -12,6 +12,30 @@ order is placed, no broker state is touched, no credential is held.
 The resulting policy and its evidence live in
 [`docs/architecture/MODEL_ROUTING_POLICY.md`](../../docs/architecture/MODEL_ROUTING_POLICY.md).
 
+## Which exams may run
+
+`fixture_policy.py` is the single gate: an exam fixture may hold RAW PUBLIC
+FACTS ONLY (source + fetch date per data section), never a desk recording or
+an agent output — see its module docstring for the full rule and
+`benchmark_models.py`'s `refusal_reason` for how a scenario is refused
+before any paid call. As of 2026-09-14:
+
+- **Runnable:** `earnings_filing`, `smart_money_form4` (real SEC EDGAR
+  fetches), `tech_batch` (real yfinance bars; `analyze_batch`'s own
+  defaults cover the missing prior-ratings/prior-macro agent outputs),
+  `macro_stress` (real FRED series, fetched through the OneCLI credential
+  gateway so no key value ever enters this process), `news_intel` (real
+  RSS wires, fetched live at fixture-build time). The last two grade
+  schema/rule compliance only — real market conditions and real news have
+  no engineered correct answer to grade judgement against.
+- **Blocked** (see each `Scenario.blocked_reason` for the exact citation):
+  `risk_rr_breach`, `risk_drawdown_discipline`, `midday_exit`,
+  `tech_batch_full`.
+- **Quarantined** (fixture is a desk recording, kept not deleted):
+  `pm_selection`.
+- **No exam at all:** `evening_analyst`, `meta_reflector` — see
+  `NO_EXAM_SEATS` in `scenarios.py`.
+
 ## Benchmarking
 
 ```bash
@@ -43,8 +67,10 @@ each call, so a run can overshoot its budget by at most one call.
 are never printed.
 
 This drives the **real** agent classes (`src/agents/*`) with the **real**
-prompts (`config/prompts/*.md`) over frozen inputs — synthetic for every
-scenario except `pm_selection`, which replays a real recorded session — and
+prompts (`config/prompts/*.md`) over frozen inputs — real public-source raw
+facts (SEC EDGAR, yfinance, FRED, live RSS wires) recomputed by today's code
+for the runnable exams listed above, synthetic-but-forced-arithmetic for the
+still-blocked ones, and `pm_selection`'s real recorded session — and
 grades each result with deterministic Python assertions in `scenarios.py`.
 
 That choice is the point of the harness. The question is not "can this
