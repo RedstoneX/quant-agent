@@ -1321,7 +1321,7 @@ class SmartMoneyConfig(BaseModel):
     # directional view" line. The ratio is now reported on every observation
     # (`holdings_fraction`, `holdings_fraction_band`) and gates nothing. Do
     # not reintroduce a cutoff here without a source that measures one; the
-    # open question is WORK.md item 62. See `src/data/insider_signal.py`
+    # open question is WORK.md item 63. See `src/data/insider_signal.py`
     # departure #3 and the 2026-09-13 `docs/INCIDENT_HISTORY.md` entry.
     #
     # How long `data/smart_money/insider_history.json` retains a trade date

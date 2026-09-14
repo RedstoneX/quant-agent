@@ -74,7 +74,7 @@ taken from ``RESEARCH_FINDINGS.md`` rather than from intuition:
    with the paper's finding for that band written into the detail text. The
    seat weighs it. Nothing filters on it. The open question this leaves —
    that `signal_weight` is a single "how much attention" scalar with no way
-   to say "attention, and the sign is the other way" — is WORK.md item 62,
+   to say "attention, and the sign is the other way" — is WORK.md item 63,
    not something to be closed by picking a number.
 
 The classifier is pure Python, deterministic, and makes no model call.
@@ -483,7 +483,7 @@ def classify_transaction(
         # tests, so it is discretionary in the only sense this taxonomy
         # defines; the holding ratio is handed on as evidence, with the sign
         # its band carries in the source, rather than being collapsed into a
-        # yes/no. See departure #3 and WORK.md item 62.
+        # yes/no. See departure #3 and WORK.md item 63.
         band = _band(fraction, no_prior_holding=False)
         evidence = _SELL_BAND_EVIDENCE.get(band, "")
         return InsiderSignalClass.of(

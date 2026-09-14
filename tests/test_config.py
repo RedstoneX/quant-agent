@@ -273,7 +273,7 @@ def test_smart_money_insider_thresholds_default_to_pre_config_values():
     2004) find significantly POSITIVE as routine noise at weight 0.0. The
     point of this test is that a default never drifts unnoticed, not that an
     unsourced knob has to be kept alive — see the 2026-09-13
-    `docs/INCIDENT_HISTORY.md` entry for WORK.md items 52 and 62."""
+    `docs/INCIDENT_HISTORY.md` entry for WORK.md items 52 and 63."""
     from src.config import SmartMoneyConfig
 
     config = SmartMoneyConfig()

@@ -386,8 +386,8 @@ def check_coverage(
 
 
 def alert_text(status: CoverageStatus) -> str:
-    """Severity in the leading word, never colour alone (Rex is red-green
-    colour blind; `src/notifier.py` convention)."""
+    """Severity in the leading word, never colour alone (`src/notifier.py`
+    convention)."""
     lines = []
     for g in status.gaps:
         dollars = f"${g.unprotected_value:,.2f}" if g.unprotected_value else "value unknown"
