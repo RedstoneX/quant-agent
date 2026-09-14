@@ -2,8 +2,11 @@
 
 Evidence basis is ``docs/RESEARCH_FINDINGS.md`` section 1. The tests below
 pin the rules that document actually supports — including the two places it
-contradicts the folk version of this filter (10b5-1 is not a noise marker on
-its own; sell materiality is proportional, not absolute).
+contradicts the folk version of this filter: a 10b5-1 flag is not a noise
+marker, and trade size relative to the insider's own holding is *reported*
+rather than turned into a cutoff, because the source behind it (Scott & Xu,
+FAJ 2004) measures the small-fraction band as significantly positive rather
+than as noise. See that module's docstring, departure #3.
 """
 import json
 from datetime import date, datetime, timedelta
@@ -15,6 +18,7 @@ from src.data.insider_signal import (
     InsiderSignalThresholds,
     classify_observations,
     classify_transaction,
+    holdings_fraction,
 )
 from src.data.smart_money import SECForm4Provider
 from src.models import SmartMoneyObservation
@@ -104,7 +108,7 @@ def test_sale_large_relative_to_the_holding_is_opportunistic():
     )
 
     assert verdict.label == "opportunistic"
-    assert verdict.reason == "material_stake_sale"
+    assert verdict.reason == "discretionary_sale"
     assert "80.0%" in verdict.detail
 
 
@@ -182,29 +186,46 @@ def test_lumpy_discretionary_history_is_not_a_cadence():
     )
 
     assert verdict.label == "opportunistic"
-    assert verdict.reason == "material_stake_sale"
+    assert verdict.reason == "discretionary_sale"
 
 
-def test_small_proportional_sale_is_routine_noise():
-    """Only sales large relative to the insider's own position predict."""
+def test_a_small_proportional_sale_is_not_discarded_as_routine():
+    """The defect this replaced: a sub-10% sale was labelled ROUTINE at
+    weight 0.0 and dropped out of the seat's ranking entirely — while the
+    detail text it carried said the source finds that band mildly bullish.
+
+    Scott & Xu (FAJ 2004): "Small sales that represented small percentages of
+    shares owned not only did not predict poor performance but were
+    associated with significantly positive abnormal returns." ROUTINE means
+    "no predictive power" (Cohen/Malloy/Pomorski), so it is the wrong label
+    for a row the source measures as significant. The ratio is reported and
+    the seat weighs it; nothing is discarded."""
     verdict = classify_transaction(
         _row(direction="sell", shares=1_000.0, post_shares=99_000.0),
         InsiderHistory(),
     )
 
-    assert verdict.label == "routine"
-    assert verdict.reason == "immaterial_stake_sale"
+    assert verdict.label == "opportunistic"
+    assert verdict.reason == "discretionary_sale"
+    assert verdict.weight == 1.0
     assert "1.0%" in verdict.detail
+    # The seat is handed the SIGN, not just the ratio.
+    assert "mildly BULLISH" in verdict.detail
 
 
-def test_small_planned_sale_names_the_10b5_1_plan_in_its_reason():
+def test_a_small_planned_sale_is_no_longer_demoted_by_the_10b5_1_flag():
+    """The 10b5-1 branch existed only to reinforce a proportional-immateriality
+    cutoff that is now gone. RESEARCH_FINDINGS is explicit that the flag is not
+    a clean noise filter, and nothing in it licenses demoting a sale on the flag
+    alone — so with the cutoff removed the flag demotes nothing, and is instead
+    reported in the detail text for the seat to weigh."""
     verdict = classify_transaction(
         _row(direction="sell", shares=1_000.0, post_shares=99_000.0, is_10b5_1=True),
         InsiderHistory(),
     )
 
-    assert verdict.label == "routine"
-    assert verdict.reason == "planned_small_disposition"
+    assert verdict.label == "opportunistic"
+    assert verdict.reason == "discretionary_sale"
     assert "10b5-1" in verdict.detail
 
 
@@ -246,7 +267,7 @@ def test_code_s_open_market_sale_is_opportunistic_when_material():
         InsiderHistory(),
     )
     assert verdict.label == "opportunistic"
-    assert verdict.reason == "material_stake_sale"
+    assert verdict.reason == "discretionary_sale"
     assert verdict.weight == 1.0
 
 
@@ -273,7 +294,7 @@ def test_large_10b5_1_sale_is_not_demoted_for_being_planned():
     )
 
     assert verdict.label == "opportunistic"
-    assert verdict.reason == "material_stake_sale"
+    assert verdict.reason == "discretionary_sale"
     assert "deliberately not treated as a noise marker" in verdict.detail
 
 
@@ -285,22 +306,36 @@ def test_10b5_1_purchase_is_not_routine():
 
 # --- boundaries ------------------------------------------------------------
 
-def test_sale_at_exactly_the_materiality_fraction_is_opportunistic():
-    verdict = classify_transaction(
-        _row(direction="sell", shares=5_000.0, post_shares=95_000.0),
-        InsiderHistory(),
+def test_no_sell_fraction_anywhere_changes_the_label():
+    """There is no materiality cutoff left to sit either side of. A 1-in-1000
+    sale and a near-total liquidation reach the seat with the same label and
+    the same weight, differing only in the evidence they carry — which is the
+    whole point: the ranking no longer silently deletes one of them."""
+    tiny = classify_transaction(
+        _row(direction="sell", shares=100.0, post_shares=99_900.0), InsiderHistory(),
+    )
+    huge = classify_transaction(
+        _row(direction="sell", shares=99_000.0, post_shares=1_000.0), InsiderHistory(),
     )
 
-    assert verdict.label == "opportunistic"
+    assert tiny.label == huge.label == "opportunistic"
+    assert tiny.reason == huge.reason == "discretionary_sale"
+    assert tiny.weight == huge.weight == 1.0
+    assert tiny.detail != huge.detail
 
 
-def test_sale_just_under_the_materiality_fraction_is_routine():
-    verdict = classify_transaction(
-        _row(direction="sell", shares=4_999.0, post_shares=95_001.0),
-        InsiderHistory(),
-    )
+def test_each_sell_band_carries_the_sign_the_paper_measured():
+    """The bands are reporting, so what they must carry is the direction of
+    the evidence. Scott & Xu Table 6 (size- and B/P-adjusted): only the
+    over-50% band predicts negative returns."""
+    def detail_for(shares, post):
+        return classify_transaction(
+            _row(direction="sell", shares=shares, post_shares=post), InsiderHistory(),
+        ).detail
 
-    assert verdict.label == "routine"
+    assert "mildly BULLISH" in detail_for(9_999.0, 90_001.0)
+    assert "+0.44%" in detail_for(30_000.0, 70_000.0)
+    assert "only band that predicts negative returns" in detail_for(60_000.0, 40_000.0)
 
 
 def test_missing_post_transaction_holding_is_indeterminate_not_routine():
@@ -345,7 +380,10 @@ def test_classify_observations_defaults_to_self_derived_history():
     rows = classify_observations([
         _row(),
         _row(direction="sell", shares=40_000.0, post_shares=10_000.0, row=1),
-        _row(direction="sell", row=2),
+        # Routine by a rule that still exists: a zero-price row is not an
+        # open-market decision. The small-fraction sell rule that used to
+        # supply this case was removed on 2026-09-13.
+        _row(direction="sell", price=0.0, row=2),
     ])
 
     assert [row.signal_class for row in rows] == [
@@ -419,9 +457,21 @@ def test_model_validator_refuses_to_mark_a_routine_row_eligible():
 
 
 def test_routine_rows_sort_behind_opportunistic_ones(tmp_path):
-    """A large routine sale must not crowd out a smaller real purchase."""
+    """A large routine sale must not crowd out a smaller real purchase.
+
+    The routine row here is routine for Cohen/Malloy/Pomorski's own reason —
+    the same insider selling the same stock in the same calendar month three
+    years running. It used to be a proportionally small sale, which no longer
+    demotes anything (2026-09-13): the seat is shown the ratio instead of
+    having the row deleted from its ranking. Weight-based ordering itself is
+    unchanged, which is what this test exists to pin."""
     today = date.today()
     provider = _provider(tmp_path, min_transaction_value_usd=10_000)
+    provider._record_history([
+        {"actor_cik": "1", "symbol": "NVDA", "direction": "sell",
+         "transaction_date": today.replace(year=today.year - n).isoformat()}
+        for n in (1, 2, 3)
+    ])
     _cached(provider, [
         _row(symbol="NVDA", owner="1", direction="sell", shares=1_000.0,
              price=900.0, post_shares=999_000.0, transaction_date=today,
@@ -434,6 +484,7 @@ def test_routine_rows_sort_behind_opportunistic_ones(tmp_path):
     observations, _ = provider.fetch(["NVDA"])
 
     assert [row.signal_class for row in observations] == ["opportunistic", "routine"]
+    assert observations[1].signal_class_reason == "calendar_routine"
     assert observations[1].transaction_value_usd > observations[0].transaction_value_usd
 
 
@@ -544,24 +595,20 @@ def test_indeterminate_filing_from_missing_amounts_is_not_downgraded_to_routine(
 #
 # Every number the classifier compares against is an ``InsiderSignalThresholds``
 # field, not a module constant — these tests change the thresholds and check
-# the verdict actually moves, which a hardcoded number could not do.
+# the verdict actually moves, which a hardcoded number could not do. The right
+# fix for a number nothing can source, though, is deletion rather than a knob:
+# the first test below guards one that was deleted.
 
-def test_custom_sell_fraction_threshold_changes_the_verdict():
-    """The same 3% sale is routine noise under the 5% default but material
-    (opportunistic) under a stricter 1% threshold — proving the boundary is
-    read from ``thresholds``, not compiled into the function."""
-    row = _row(direction="sell", shares=3_000.0, post_shares=97_000.0)
+def test_there_is_no_sell_fraction_threshold_left_to_configure():
+    """Guards the removal, not a value. `min_material_sell_fraction` was a
+    cutoff no cited source measures; the fix was to delete it rather than to
+    move it, so the field must not quietly reappear on either the classifier
+    thresholds or the config model. If a future change needs one, it needs a
+    source that measures a boundary first — WORK.md item 63."""
+    from src.config import SmartMoneyConfig
 
-    default_verdict = classify_transaction(row, InsiderHistory())
-    assert default_verdict.label == "routine"
-    assert default_verdict.reason == "immaterial_stake_sale"
-
-    strict_verdict = classify_transaction(
-        row, InsiderHistory(),
-        InsiderSignalThresholds(min_material_sell_fraction=0.01),
-    )
-    assert strict_verdict.label == "opportunistic"
-    assert strict_verdict.reason == "material_stake_sale"
+    assert not hasattr(InsiderSignalThresholds(), "min_material_sell_fraction")
+    assert "insider_min_material_sell_fraction" not in SmartMoneyConfig.model_fields
 
 
 def test_custom_calendar_routine_years_changes_the_verdict():
@@ -580,23 +627,152 @@ def test_custom_calendar_routine_years_changes_the_verdict():
     assert lenient_verdict.reason == "calendar_routine"
 
 
-def test_provider_threading_a_custom_sell_fraction_reaches_fetch(tmp_path):
-    """The same configurability, exercised end-to-end through the provider
-    constructor kwargs that ``src/pipeline.py`` wires from
-    ``config.smart_money.insider_min_material_sell_fraction``."""
-    lenient = _provider(
-        tmp_path, min_transaction_value_usd=10_000,
-        insider_min_material_sell_fraction=0.01,
-    )
+def test_a_proportionally_tiny_sale_survives_the_provider_end_to_end(tmp_path):
+    """End-to-end through the provider that ``src/pipeline.py`` builds: a 3%
+    disposition used to come out of ``fetch`` labelled routine at weight 0.0.
+    It now arrives with its ratio and band attached and nothing suppressed."""
+    provider = _provider(tmp_path, min_transaction_value_usd=10_000)
     row = _row(
         symbol="NVDA", direction="sell", shares=3_000.0, price=100.0,
         post_shares=97_000.0, transaction_date=date.today(),
     )
-    _cached(lenient, [row])
-    observations, _ = lenient.fetch(["NVDA"])
-    assert [obs.signal_class for obs in observations] == ["opportunistic"]
+    _cached(provider, [row])
+    observations, _ = provider.fetch(["NVDA"])
 
-    strict = _provider(tmp_path / "strict", min_transaction_value_usd=10_000)
-    _cached(strict, [row])
-    observations, _ = strict.fetch(["NVDA"])
-    assert [obs.signal_class for obs in observations] == ["routine"]
+    assert [obs.signal_class for obs in observations] == ["opportunistic"]
+    assert [obs.signal_weight for obs in observations] == [1.0]
+    assert [obs.holdings_fraction_band for obs in observations] == ["under_10pct"]
+
+
+# --- Trade size relative to the insider's own holding (WORK.md item 52) ----
+#
+# The board's item 52 assumed the desk had no holdings data for filers. It
+# does: SEC Form 4 carries `postTransactionAmounts/sharesOwnedFollowingTransaction`
+# on every open-market row, `SECForm4Provider._parse_submission` already
+# parses it, and `SmartMoneyObservation.post_transaction_shares` already
+# stores it. These tests pin the ratio that fact makes computable — reported
+# for both directions, and never used as an admission cutoff.
+#
+# Bands are Scott & Xu's own (FAJ 2004): under 10%, 10-50%, over 50% of
+# shares owned. See `src/data/insider_signal.py` module docstring.
+
+def test_sell_fraction_is_measured_against_the_pre_transaction_holding():
+    """Sold 25,000 of a 100,000-share holding is 25%, not 33% of what is left."""
+    fraction, band = holdings_fraction(
+        _row(direction="sell", shares=25_000.0, post_shares=75_000.0)
+    )
+
+    assert fraction == 0.25
+    assert band == "10_to_50pct"
+
+
+def test_buy_fraction_is_measured_against_what_the_insider_already_held():
+    """Bought 20,000 on top of an existing 80,000 is 25% added, not 20%."""
+    fraction, band = holdings_fraction(
+        _row(direction="buy", shares=20_000.0, post_shares=100_000.0)
+    )
+
+    assert fraction == 0.25
+    assert band == "10_to_50pct"
+
+
+def test_purchase_by_an_insider_holding_nothing_is_a_distinct_band_not_a_gap():
+    """Scott & Xu report initial purchases separately (no ratio exists), so
+    an insider who held none beforehand must not read as missing data."""
+    fraction, band = holdings_fraction(
+        _row(direction="buy", shares=5_000.0, post_shares=5_000.0)
+    )
+
+    assert fraction is None
+    assert band == "no_prior_holding"
+
+
+def test_missing_post_transaction_shares_reports_no_band_at_all():
+    fraction, band = holdings_fraction(
+        _row(direction="sell", shares=1_000.0, post_shares=None)
+    )
+
+    assert fraction is None
+    assert band == ""
+
+
+def test_bands_follow_the_papers_own_boundaries():
+    """Under 10% / 10-50% / over 50%, inclusive at the upper edge of the
+    middle band, exactly as the paper's columns are cut."""
+    def band_for(shares, post):
+        return holdings_fraction(
+            _row(direction="sell", shares=shares, post_shares=post)
+        )[1]
+
+    assert band_for(9_999.0, 90_001.0) == "under_10pct"
+    assert band_for(10_000.0, 90_000.0) == "10_to_50pct"
+    assert band_for(50_000.0, 50_000.0) == "10_to_50pct"
+    assert band_for(50_001.0, 49_999.0) == "over_50pct"
+
+
+def test_the_bands_label_and_never_gate():
+    """``BANDS_ARE_REPORTING_ONLY`` is a claim, and this is what makes it one.
+    Two sales sitting either side of every band edge classify identically; the
+    band appears on the observation and nowhere in the decision."""
+    rows = [
+        _row(direction="sell", shares=s, post_shares=p) for s, p in (
+            (9_999.0, 90_001.0), (10_000.0, 90_000.0),
+            (50_000.0, 50_000.0), (50_001.0, 49_999.0),
+        )
+    ]
+    classified = classify_observations(rows, InsiderHistory())
+
+    assert {row.signal_class for row in classified} == {"opportunistic"}
+    assert {row.signal_weight for row in classified} == {1.0}
+    assert [row.holdings_fraction_band for row in classified] == [
+        "under_10pct", "10_to_50pct", "10_to_50pct", "over_50pct",
+    ]
+
+
+def test_classified_rows_carry_the_ratio_even_when_another_rule_decided():
+    """A calendar-routine sale is still sized against the position: the label
+    came from the routine rule, but the ratio is reported regardless."""
+    history = _history(direction="sell", days=[
+        date(2025, 8, 14), date(2024, 8, 11), date(2023, 8, 9),
+    ])
+    row = _row(direction="sell", shares=30_000.0, post_shares=70_000.0)
+
+    classified = classify_observations([row], history)
+
+    assert classified[0].signal_class_reason == "calendar_routine"
+    assert classified[0].holdings_fraction == 0.30
+    assert classified[0].holdings_fraction_band == "10_to_50pct"
+
+
+def test_purchase_detail_names_the_added_fraction_for_the_seat():
+    verdict = classify_transaction(
+        _row(direction="buy", shares=20_000.0, post_shares=100_000.0),
+        InsiderHistory(),
+    )
+
+    assert verdict.label == "opportunistic"
+    assert "25.0%" in verdict.detail
+
+
+def test_the_ratio_never_admits_or_rejects_a_row(tmp_path):
+    """Item 52's decision: report the ratio, do not build a second gate on
+    it. Two purchases identical in dollars but far apart in holdings share
+    must both survive the provider's admission and materiality filters."""
+    today = date.today()
+    tiny = _row(symbol="AAPL", owner="1", direction="buy", transaction_date=today,
+                shares=1_000.0, price=100.0, post_shares=1_000_000.0,
+                accession="0000000001-26-000101")
+    huge = _row(symbol="AAPL", owner="2", direction="buy", transaction_date=today,
+                shares=1_000.0, price=100.0, post_shares=1_500.0,
+                accession="0000000001-26-000102", row=1)
+
+    provider = _provider(tmp_path / "ratio", min_transaction_value_usd=50_000)
+    _cached(provider, [tiny, huge])
+    observations, _ = provider.fetch(["AAPL"])
+
+    assert {obs.accession_number for obs in observations} == {
+        "0000000001-26-000101", "0000000001-26-000102",
+    }
+    bands = {obs.accession_number: obs.holdings_fraction_band for obs in observations}
+    assert bands["0000000001-26-000101"] == "under_10pct"
+    assert bands["0000000001-26-000102"] == "over_50pct"
