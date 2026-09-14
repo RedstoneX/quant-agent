@@ -124,15 +124,9 @@ macro, earnings, smart_money, evening) has data-quality issues — empty
 fields, silent death, or empty data passed to the PM as if it were real.
 Audited from real production logs, not assumed. Ranked by measured severity:
 
-(Items 1-3 and 5's full write-ups already live in `docs/INCIDENT_HISTORY.md`;
+(Items 1-6's full write-ups already live in `docs/INCIDENT_HISTORY.md`;
 see the struck-through index above for status.)
 
-6. **Macro analyst — CORRECTED 2026-09-03, prior "no defect" claim was
-   wrong.** Fires on 52% of runs, not rare. NOT a fetch/pipeline defect —
-   FRED's real publication lag is 2 days, but the gate's freshness bar
-   assumes 1. Calibration bug, not broken data. Replacement number is a
-   risk-threshold call for the owner — see DECIDE BY below. Full
-   measurement: `docs/INCIDENT_HISTORY.md`.
 
 **Also shipped: a bad analyst seat now gets its OWN Telegram alert.** Moved to `docs/INCIDENT_HISTORY.md`, 2026-09-11.
 

@@ -22,6 +22,64 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — item 6 was fixed three days ago and the board never noticed; the question it was holding for the owner was never his to answer
+
+**In plain words:** the board carried an open job saying the macro seat's
+freshness check was mis-calibrated and that picking its replacement number was
+a decision only the owner could make. Both halves were out of date. The check
+was rebuilt on 2026-09-11 and the rebuilt version does not have a replacement
+number at all, so there was nothing left to decide and nothing left to fix.
+The job entry simply outlived the work. Removing it is the whole of today's
+change — no code was touched.
+
+**Why it survived.** The 2026-09-11 fix did most of the tidying: it took the
+item out of the gate index, added its number to the retired list, and recorded
+that the owner's pending question was superseded rather than answered. What it
+missed was the item's own detail block further down the file. The result was a
+board that listed the item as retired in two places and as open in a third,
+with the open copy pointing at a countdown that no longer existed. Worth
+naming as a pattern: an item lives in more than one place in this file, and
+closing it in the index is not closing it.
+
+**The mislabel, which matters more than the stale entry.** The block said the
+replacement freshness number was "a risk-threshold call for the owner." It was
+not. How long a government statistics agency takes to publish its own figures
+is a published fact about that agency — you look it up, you do not have an
+appetite about it. Routing it to the owner would have asked him to guess at
+something knowable, and it would have sat on his queue counting down while it
+waited. Only money, mandate and risk-appetite questions belong to him. This is
+the second time a knowable fact has been queued at him as a threshold call.
+
+**What the check does now, so nobody re-loosens it.** The old rule demanded
+that two of the six headline indicators be no more than one day old before the
+macro seat was allowed to call a change in market conditions. FRED's daily
+series do not publish that fast, so the rule was rejecting healthy data — it
+fired on roughly half of all recorded runs. The rebuilt check asks a different
+question entirely: is this the newest reading that has actually been
+published, and was a newer one due by now and never arrived? It reads each
+series' own publication timestamp and works out that series' own normal
+publishing rhythm from its own history, so there is no lag number anywhere in
+it and it corrects itself when a release schedule changes.
+
+**It did not become permissive.** It still blocks on an indicator that is
+missing entirely, on one where the fetch quietly returned less than the
+provider actually holds, and on one whose next reading is genuinely overdue by
+its own schedule — a feed breaking, a publication failure, a government
+shutdown. What it no longer blocks on is data that is simply old because
+nothing newer exists, which is the normal state of monthly inflation and
+employment figures. A five-week-old inflation print is the current inflation
+print.
+
+**Stated honestly, not hidden:** the 52%-of-runs figure was measured against a
+production journal that no longer exists in this environment, so it could not
+be re-derived today — it is confirmed only as far as the recorded measurement
+and the code history go. The one-day bar, by contrast, was confirmed directly
+from the pre-fix source. And the rebuilt check has still never been measured
+against live production; it was reasoned forward, not validated backward. That
+residue was recorded on 2026-09-11 and remains true.
+
+---
+
 ### 2026-09-14 — PM TEST GATE item 4 closed: a stock whose news answer got lost now says so, instead of looking like a quiet day
 
 **In plain words:** on 2026-08-25 the news-reading AI produced a real answer
