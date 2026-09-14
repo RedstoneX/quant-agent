@@ -645,8 +645,9 @@ extraction, an easy task; concluding is a different, harder task and needs
 re-measuring before relying on it again.
 
 **Still genuinely open, not solved by the above:**
-  - `familiarity_bias` is graded but never stated in the PROMPT (the
-    catalyst-door existence-vs-direction gap itself was fixed 2026-09-03).
+  - ~~`familiarity_bias` is graded but never stated in the PROMPT~~ —
+    MOOT since PR #385: it scores nothing now (weight-0 diagnostic, see
+    `ops/model_policy/README.md`), so there is no grade to state.
   - ~~Earnings is still the single largest prompt section post-fix~~ —
     DONE 2026-09-13. 38 of 65 filings were rendering a four-line verdict
     block with no direction, no thesis and the literal words "not disclosed
