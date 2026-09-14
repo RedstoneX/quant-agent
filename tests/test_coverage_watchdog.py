@@ -73,6 +73,23 @@ def _orcl_broker(held=5.3089, stops=(5.0,), price=150.28, trading_days=True):
 
     broker.snapshot_protective_stops.side_effect = _snapshot
     broker.is_trading_day.return_value = trading_days
+
+    # The exchange calendar the placement gate reads. A MagicMock's default
+    # answer here would be a Mock object, and comparing one to a datetime
+    # raises — which the gate treats as "shut", so the default is already
+    # safe. Wiring real edges anyway makes the market-hours tests say what
+    # they mean instead of relying on a TypeError.
+    def _edge(hour, minute):
+        def _get(on_date=None):
+            if not trading_days or on_date is None:
+                return None
+            return datetime(
+                on_date.year, on_date.month, on_date.day, hour, minute, tzinfo=ET,
+            )
+        return _get
+
+    broker.get_session_open.side_effect = _edge(9, 30)
+    broker.get_session_close.side_effect = _edge(16, 0)
     return broker
 
 
@@ -100,7 +117,12 @@ def test_the_orcl_case_alerts_when_no_session_ran_on_the_last_trading_day(db, st
     assert status.should_alert is True
     text = coverage_watchdog.alert_text(status)
     assert "UNPROTECTED" in text and "ORCL" in text and "$46.42" in text
-    assert "Nothing has been placed, changed or cancelled" in text
+    assert "Nothing has been sold, resized or cancelled" in text
+    # 06:15 ET is hours before the bell: the alert must say the stop goes
+    # back at the open, and must not pretend the overnight gap is solved.
+    assert "The market is shut right now" in text
+    assert "unprotected OVERNIGHT no matter what" in text
+    assert status.repairs == []
     # Read-only against the broker, always.
     assert not broker.submit_order.called
     assert not broker.cancel_order_by_id.called
@@ -308,3 +330,282 @@ def test_run_coverage_check_sends_the_owner_alert_exactly_when_exposed(monkeypat
         line = hb.run_coverage_check(now=_SAT_0615)
     assert len(sent) == 1 and "ORCL" in sent[0]
     assert "EXPOSED" in line and "delivered" in line
+
+
+# ===========================================================================
+# 6. It now PUTS THE STOP BACK — item 53, closed 2026-09-14
+#
+# The load-bearing tests here are the refusals: it must not place into a shut
+# market, must not place a second stop over shares a live order already
+# covers, and must never reach a path that sells anything. Placing is the
+# easy half.
+# ===========================================================================
+
+_FRI_1005 = datetime(2026, 9, 11, 10, 5, tzinfo=ET).astimezone(timezone.utc)
+
+
+def _repairable_broker(**kw):
+    """`_orcl_broker` plus the two things a placement needs: a live price and
+    the retrying submit. The recorded BUY stop is $137.53, below the price,
+    so no guard blocks the repair for the wrong reason."""
+    broker = _orcl_broker(**kw)
+    broker.get_latest_price.return_value = 150.28
+    broker.STOP_LIMIT_BUFFER_PCT = 0.01
+    broker._submit_protective_stop_retrying.return_value = {
+        "id": "new-day-stop", "uncovered_qty": 0.0, "day_qty": 0.3089,
+    }
+    return broker
+
+
+def _last_buy(_symbol):
+    return {"stop_loss": 137.53}
+
+
+def test_pre_open_run_places_nothing_and_says_the_market_is_shut(db, state_path):
+    """06:15 ET, three hours before the bell. The unit this rides on fires
+    then, and a fractional DAY stop submitted into a shut market is a
+    rejection at best. It must report, not hope."""
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+    broker = _repairable_broker()
+    status = coverage_watchdog.check_coverage(
+        broker, now=_SAT_0615, sweep_symbol="SGOV", db_path=db,
+        state_path=state_path, last_buy=_last_buy,
+    )
+    assert status.market_open is False
+    assert "has not opened yet" in status.market_reason
+    assert status.repairs == []
+    assert not broker._submit_protective_stop_retrying.called
+    # and the exposure is still reported
+    assert status.should_alert is True
+
+
+def test_inside_the_session_it_re_places_the_missing_day_stop(db, state_path):
+    """Friday 10:05 ET, desk paused, ORCL's 0.3089 remainder bare. The stop
+    goes back through the same repair the in-session sweep uses."""
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+    broker = _repairable_broker()
+    covered = {"n": 0}
+
+    def _snapshot(symbol, side="sell"):
+        if symbol != "ORCL":
+            return True, []
+        if covered["n"] == 0:
+            return True, [{"id": "gtc", "qty": 5.0, "stop_price": 137.53}]
+        return True, [
+            {"id": "gtc", "qty": 5.0, "stop_price": 137.53},
+            {"id": "new-day-stop", "qty": 0.3089, "stop_price": 137.53},
+        ]
+
+    broker.snapshot_protective_stops.side_effect = _snapshot
+
+    def _place(**kwargs):
+        covered["n"] = 1
+        return {"id": "new-day-stop", "uncovered_qty": 0.0}
+
+    broker._submit_protective_stop_retrying.side_effect = _place
+
+    status = coverage_watchdog.check_coverage(
+        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
+        state_path=state_path, last_buy=_last_buy,
+    )
+    assert status.market_open is True
+    assert [r.symbol for r in status.repaired] == ["ORCL"]
+    assert status.repaired[0].qty == pytest.approx(0.3089)
+    # The re-read after placing shows the position whole again, so there is
+    # no exposure left to alert about.
+    assert status.gaps == []
+    assert status.should_alert is False
+    assert "RE-PLACED" in coverage_watchdog.status_line(status)
+    kwargs = broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["symbol"] == "ORCL"
+    assert kwargs["qty"] == pytest.approx(0.3089)
+    assert kwargs["stop_price"] == pytest.approx(137.53)
+    assert kwargs["side"] == "sell"
+
+
+def test_it_cannot_double_cover_a_remainder_a_live_order_already_holds(db, state_path):
+    """The gap list is a snapshot; the broker is re-read immediately before
+    placing. `snapshot_protective_stops` filters Alpaca's OPEN set, which
+    includes an order still in flight from an earlier tick — so a remainder
+    already covered shrinks the shortfall to zero and zero is not placed."""
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+    broker = _repairable_broker()
+    reads = {"n": 0}
+
+    def _snapshot(symbol, side="sell"):
+        if symbol != "ORCL":
+            return True, []
+        reads["n"] += 1
+        if reads["n"] == 1:            # the survey pass: a gap is real here
+            return True, [{"id": "gtc", "qty": 5.0, "stop_price": 137.53}]
+        # by the time we go to place, a DAY stop from an earlier tick is live
+        return True, [
+            {"id": "gtc", "qty": 5.0, "stop_price": 137.53},
+            {"id": "in-flight-day", "qty": 0.3089, "stop_price": 137.53},
+        ]
+
+    broker.snapshot_protective_stops.side_effect = _snapshot
+    status = coverage_watchdog.check_coverage(
+        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
+        state_path=state_path, last_buy=_last_buy,
+    )
+    assert reads["n"] >= 2, "the broker must be re-read right before placing"
+    assert not broker._submit_protective_stop_retrying.called
+    assert status.repairs == []
+
+
+def test_a_failed_placement_alerts_and_is_not_swallowed(db, state_path, monkeypatch):
+    """A placement that does not land is its own alarm, on its own
+    once-a-day marker — the exposure report must not absorb it."""
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+    broker = _repairable_broker()
+    broker._submit_protective_stop_retrying.return_value = None
+    status = coverage_watchdog.check_coverage(
+        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
+        state_path=state_path, last_buy=_last_buy,
+    )
+    assert [r.symbol for r in status.repair_failures] == ["ORCL"]
+    assert status.should_alert_repair_failure is True
+    text = coverage_watchdog.repair_failure_text(status)
+    assert "COULD NOT PUT THE PROTECTIVE STOP BACK" in text and "ORCL" in text
+    assert "FAILED to place" in coverage_watchdog.status_line(status)
+    # second run the same trading day: still exposed, but not paged twice
+    again = coverage_watchdog.check_coverage(
+        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
+        state_path=state_path, last_buy=_last_buy,
+    )
+    assert again.repair_failures and again.should_alert_repair_failure is False
+
+
+def test_a_placement_error_is_reported_not_swallowed(db, state_path):
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+    broker = _repairable_broker()
+    broker._submit_protective_stop_retrying.side_effect = RuntimeError("429")
+    status = coverage_watchdog.check_coverage(
+        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
+        state_path=state_path, last_buy=_last_buy,
+    )
+    assert status.repair_failures and "429" in status.repair_failures[0].detail
+
+
+def test_it_never_sells_resizes_or_cancels_anything(db, state_path):
+    """A 0% target is read by this desk as 'sell it'. Nothing in this path
+    may reach a close, a cancel or an order that is not a protective stop."""
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+    broker = _repairable_broker()
+    coverage_watchdog.check_coverage(
+        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
+        state_path=state_path, last_buy=_last_buy,
+    )
+    assert not broker.close_position.called
+    assert not broker.submit_order.called
+    assert not broker.cancel_snapshotted_stops.called
+    assert not broker.cancel_open_orders.called
+    assert not broker.replace_stop_loss.called
+
+
+def test_the_cash_sweep_vehicle_is_never_repaired(db, state_path):
+    """SGOV is deliberately stopless. It is skipped from the survey, and the
+    repair pass skips it a second time."""
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+    broker = _repairable_broker()
+    coverage_watchdog.check_coverage(
+        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
+        state_path=state_path, last_buy=_last_buy,
+    )
+    placed = [
+        c.kwargs.get("symbol")
+        for c in broker._submit_protective_stop_retrying.call_args_list
+    ]
+    assert "SGOV" not in placed
+
+
+def test_a_short_is_flagged_and_never_repaired(db, state_path):
+    """No recorded BUY row exists for a short, so its protective level is
+    unknown — the same line the in-session sweep draws."""
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+    broker = _repairable_broker()
+    broker.get_positions.return_value = [
+        SimpleNamespace(symbol="TSLA", qty=-3.0, current_price=200.0),
+    ]
+    broker.snapshot_protective_stops.side_effect = lambda symbol, side="sell": (True, [])
+    status = coverage_watchdog.check_coverage(
+        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
+        state_path=state_path, last_buy=_last_buy,
+    )
+    assert status.gaps and status.gaps[0].is_short is True
+    assert not broker._submit_protective_stop_retrying.called
+    assert status.repairs == []
+
+
+def test_no_recorded_stop_lookup_means_it_stays_a_pure_reader(db, state_path):
+    _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
+    broker = _repairable_broker()
+    status = coverage_watchdog.check_coverage(
+        broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
+        state_path=state_path, last_buy=None,
+    )
+    assert not broker._submit_protective_stop_retrying.called
+    assert "nothing was placed" in status.market_reason
+
+
+# ---- the placement gate reads the exchange calendar, and fails closed ----
+
+def test_session_gate_says_shut_on_a_non_trading_day():
+    broker = MagicMock()
+    broker.is_trading_day.return_value = False
+    open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
+    assert open_now is False and "not a trading day" in reason
+
+
+def test_session_gate_fails_closed_when_the_calendar_cannot_be_read():
+    broker = MagicMock()
+    broker.is_trading_day.side_effect = RuntimeError("calendar down")
+    open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
+    assert open_now is False and "calendar down" in reason
+
+
+def test_session_gate_fails_closed_when_an_edge_is_missing():
+    broker = MagicMock()
+    broker.is_trading_day.return_value = True
+    broker.get_session_open.return_value = None
+    broker.get_session_close.return_value = datetime(2026, 9, 11, 16, 0, tzinfo=ET)
+    open_now, reason = coverage_watchdog.session_is_open(broker, _FRI_1005)
+    assert open_now is False and "both session edges" in reason
+
+
+def test_session_gate_respects_an_early_close_from_the_calendar():
+    """13:00 on a half-day is the calendar's answer, not ours. Nothing here
+    may assume 16:00."""
+    broker = MagicMock()
+    broker.is_trading_day.return_value = True
+    broker.get_session_open.return_value = datetime(2026, 9, 11, 9, 30, tzinfo=ET)
+    broker.get_session_close.return_value = datetime(2026, 9, 11, 13, 0, tzinfo=ET)
+    after = datetime(2026, 9, 11, 14, 0, tzinfo=ET).astimezone(timezone.utc)
+    open_now, reason = coverage_watchdog.session_is_open(broker, after)
+    assert open_now is False and "has closed" in reason
+    open_now, _ = coverage_watchdog.session_is_open(broker, _FRI_1005)
+    assert open_now is True
+
+
+# ---- the coverage-only entry point ----
+
+def test_coverage_only_runs_the_check_and_never_the_channel_probe(monkeypatch):
+    import scripts.alert_heartbeat as hb
+
+    probe = MagicMock()
+    monkeypatch.setattr(hb, "run_probe", probe)
+    monkeypatch.setattr(hb, "run_coverage_check", lambda: "coverage_watchdog: OK")
+    assert hb.main(["--coverage-only"]) == 0
+    assert not probe.called
+
+
+def test_coverage_only_reports_a_broker_it_cannot_build(monkeypatch, capsys):
+    import scripts.alert_heartbeat as hb
+
+    def boom():
+        raise RuntimeError("no credentials")
+
+    monkeypatch.setattr(hb, "run_coverage_check", boom)
+    assert hb.main(["--coverage-only"]) == 1
+    assert "no credentials" in capsys.readouterr().err

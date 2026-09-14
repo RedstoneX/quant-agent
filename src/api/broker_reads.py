@@ -50,6 +50,70 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _iso_or_none(value) -> str | None:
+    """Best-effort ISO-8601 rendering of a provider timestamp for the wire.
+
+    `value` is whatever the SDK handed back (a real `datetime`, or already
+    a string in some SDK shapes) — never invents a timestamp when `value`
+    is `None`.
+    """
+    if value is None:
+        return None
+    iso = getattr(value, "isoformat", None)
+    if callable(iso):
+        try:
+            return iso()
+        except Exception:
+            pass
+    return str(value)
+
+
+def _as_utc_datetime(value) -> datetime | None:
+    """Normalize a provider timestamp (datetime or ISO string) to aware UTC.
+
+    Returns `None` on anything unparsable rather than raising — a
+    freshness check must degrade to "unknown", never crash the read.
+    """
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _quote_freshness(market_as_of, session_open) -> str:
+    """Classify a live quote as `"current"` / `"stale"` / `"unknown"` from
+    an EXCHANGE SESSION BOUNDARY — never an invented elapsed-time cutoff
+    (docs/WORK.md item 15; no-arbitrary-numbers doctrine).
+
+    `session_open` is today's regular-session open per Alpaca's own trading
+    calendar (`AlpacaBroker.get_session_open`) — a fact the exchange
+    publishes months in advance, not fitted from this desk's own data. A
+    last-trade timestamp from BEFORE that boundary means nothing has traded
+    for this symbol since the market opened (or today isn't a trading day
+    at all, or the calendar lookup failed) — in every one of those cases we
+    do not know the quote is current, so "stale" (not "current") is the
+    honest, safe-by-default answer. `market_as_of` is missing (`None`) only
+    when the read supplied no timestamp at all, which is genuinely
+    "unknown", not "stale".
+    """
+    observed = _as_utc_datetime(market_as_of)
+    if observed is None:
+        return "unknown"
+    if session_open is None:
+        # Not a trading day, or the calendar lookup failed — cannot
+        # honestly derive a boundary. Do not guess "current".
+        return "unknown"
+    return "current" if observed >= session_open else "stale"
+
+
 @lru_cache(maxsize=1)
 def _get_broker() -> AlpacaBroker:
     """Lazily-built, process-wide singleton `AlpacaBroker`.
@@ -332,33 +396,57 @@ def read_price_bars(
 ) -> dict:
     """Best-effort read of chart OHLCV bars for one symbol/timeframe.
 
-    Wraps `AlpacaBroker.get_bars` — a market-data read (Alpaca's
-    `StockHistoricalDataClient.get_stock_bars`), not a trading/account
-    call. `get_bars` itself already never raises and returns `[]` on any
+    Wraps `AlpacaBroker.get_bars` / `get_intraday_chart_bars` — market-data
+    reads (Alpaca's `StockHistoricalDataClient.get_stock_bars`), never a
+    trading/account call. Both already never raise and return `[]` on any
     failure; this wrapper only adds the same `{"bars": [...], "error":
     None|str}` degradation contract every other function in this module
     uses, so a chart panel can distinguish "no data" from "read failed."
+
+    Each bar also carries `close_price`, a `PriceObservation`-shaped dict
+    (docs/WORK.md item 15): `market_as_of` is the bar's OWN date/timestamp
+    as Alpaca reports it (never our retrieval time standing in for it) and
+    `freshness` is always `"historical"` — a completed/forming OHLCV bar is
+    a look-back structure by construction, not a claim about "right now."
+    `feed` is only ever set to `"iex"` when the request explicitly asked
+    for it (5m/15m/1h, `get_intraday_chart_bars`); daily bars don't select
+    a feed explicitly, so `feed` is left `None` there rather than guessed.
     """
     try:
         broker = _get_broker()
+        retrieved_at = _utc_now().isoformat()
         if timeframe == "1d":
             bars = broker.get_bars(symbol, lookback_days=lookback_days)
         else:
             bars = broker.get_intraday_chart_bars(
                 symbol, timeframe=timeframe, lookback_days=lookback_days
             )
-        out = [
-            {
-                "date": b.date.isoformat() if timeframe == "1d" else b["date"],
-                "timestamp": None if timeframe == "1d" else b["timestamp"],
+        out = []
+        for b in bars:
+            date_str = b.date.isoformat() if timeframe == "1d" else b["date"]
+            timestamp = None if timeframe == "1d" else b["timestamp"]
+            close = b.close if timeframe == "1d" else b["close"]
+            out.append({
+                "date": date_str,
+                "timestamp": timestamp,
                 "open": b.open if timeframe == "1d" else b["open"],
                 "high": b.high if timeframe == "1d" else b["high"],
                 "low": b.low if timeframe == "1d" else b["low"],
-                "close": b.close if timeframe == "1d" else b["close"],
+                "close": close,
                 "volume": b.volume if timeframe == "1d" else b["volume"],
-            }
-            for b in bars
-        ]
+                "close_price": {
+                    "value": close,
+                    "price_kind": (
+                        "historical_daily_close" if timeframe == "1d"
+                        else "historical_intraday_close"
+                    ),
+                    "provider": "alpaca",
+                    "feed": None if timeframe == "1d" else "iex",
+                    "market_as_of": timestamp if timestamp is not None else date_str,
+                    "retrieved_at": retrieved_at,
+                    "freshness": "historical",
+                },
+            })
         return {"bars": out, "error": None}
     except Exception as exc:
         logger.warning(
@@ -391,18 +479,46 @@ def read_live_quotes(symbols: list[str]) -> dict:
     symbol Alpaca couldn't price at all still comes back with every field
     `None` (never dropped), so the caller can tell "no data for this
     symbol" from "didn't ask."
+
+    `quote` (each symbol's `PriceObservation`-shaped provenance for
+    `last_price`, docs/WORK.md item 15) uses Alpaca's own `latest_trade
+    .timestamp` as `market_as_of` — a real per-trade exchange timestamp
+    the SDK's `Trade` model actually carries (verified against the
+    installed SDK, 2026-09-13; an existing docstring elsewhere claiming
+    the snapshot object exposes no such timestamp was wrong and is being
+    corrected alongside this). `freshness` is derived from today's regular
+    -session open (`AlpacaBroker.get_session_open`, an exchange session
+    boundary), never an invented elapsed-minutes cutoff — see
+    `_quote_freshness`.
     """
     try:
         broker = _get_broker()
         raw = broker.get_intraday_snapshots(symbols)
+        retrieved_at = _utc_now()
+        try:
+            session_open = broker.get_session_open()
+        except Exception as exc:
+            logger.warning("broker_reads.read_live_quotes: session_open lookup failed: %s", exc)
+            session_open = None
         quotes = {}
         any_data = False
         for sym in symbols:
             snap = raw.get(sym) or {}
-            if snap.get("last_price") is not None or snap.get("prev_close") is not None:
+            last_price = snap.get("last_price")
+            if last_price is not None or snap.get("prev_close") is not None:
                 any_data = True
+            last_trade_at = snap.get("last_trade_at")
             quotes[sym] = {
-                "last_price": snap.get("last_price"),
+                "last_price": last_price,
+                "quote": {
+                    "value": last_price,
+                    "price_kind": "current_quote",
+                    "provider": "alpaca",
+                    "feed": None,  # snapshot request doesn't explicitly select a feed
+                    "market_as_of": _iso_or_none(last_trade_at),
+                    "retrieved_at": retrieved_at.isoformat(),
+                    "freshness": _quote_freshness(last_trade_at, session_open),
+                } if last_price is not None else None,
                 "prev_close": snap.get("prev_close"),
                 "session_open": snap.get("session_open"),
                 "session_high": snap.get("session_high"),

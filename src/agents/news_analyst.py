@@ -8,7 +8,9 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.agents.base import BaseAgent, AgentResult
-from src.models import NewsIntelligenceReport, StateChange, StockNewsItem
+from src.models import (
+    NewsIntelligenceReport, StateChange, StockNewsItem, parse_telemetry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -415,7 +417,45 @@ Analyze all the above and produce your intelligence report as JSON."""
         report = self._filter_hallucinated_state_changes(
             report, news_text, prior_session_report=prior_session_report,
         )
+        report.dropped_news_symbols = self._find_dropped_news_symbols(
+            stock_mentions=stock_mentions, report=report,
+        )
         return report, result
+
+    @staticmethod
+    def _find_dropped_news_symbols(
+        *, stock_mentions: dict | None, report: NewsIntelligenceReport,
+    ) -> list[str]:
+        """Which requested symbols the seat's own answer omits — PM TEST GATE
+        item 4, second half.
+
+        `stock_mentions` is `NewsDataProvider.tag_symbol_mentions`'s output:
+        real headline/summary text the model was actually shown for that
+        symbol, matched deterministically (word-boundary regex) BEFORE the
+        LLM ever ran. It is the "what was asked for" half of the comparison.
+        `report.stock_news` keys are the "what came back" half.
+
+        A symbol present in `stock_mentions` but absent from `stock_news` is
+        recorded here — not repaired, not guessed at. This is a
+        presence/absence check, not a threshold: no count or ratio decides
+        anything, a single missing key is enough. It will also flag a
+        symbol the model legitimately judged incidental and chose to skip
+        (the prompt explicitly permits that) — this design accepts that
+        false positive on purpose, per the owner's framing: a real "lost"
+        symbol read as silence is the worse failure of the two.
+        """
+        requested = {str(s).strip().upper() for s in (stock_mentions or {}) if str(s).strip()}
+        answered = {str(s).strip().upper() for s in (report.stock_news or {})}
+        dropped = sorted(requested - answered)
+        for sym in dropped:
+            parse_telemetry.record_dropped_item("StockNewsItem", sym)
+        if dropped:
+            logger.error(
+                "News analyst: seat's answer is missing %d requested "
+                "symbol(s) that had real headline coverage — treat as LOST, "
+                "not as absence of news: %s", len(dropped), dropped,
+            )
+        return dropped
 
     @staticmethod
     def _drop_invalid_state_changes(parsed: dict) -> dict:
