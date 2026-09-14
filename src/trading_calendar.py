@@ -45,6 +45,17 @@ SESSION_WINDOWS: dict[str, tuple[int, int]] = {
 }
 
 
+# US equities regular (core) trading session, minutes of day in ET:
+# 09:30-16:00. Source: NYSE "Hours & Calendars" (core trading session
+# 9:30 a.m.-4:00 p.m. ET), the same bounds `SESSION_WINDOWS` already uses
+# for the intra_check window. Early-close days (13:00 ET) are NOT modelled
+# here — the holiday/early-close calendar needs a broker connection (see
+# module docstring); on those days this errs toward "bar not yet complete"
+# (stale-but-labelled), never toward treating a partial bar as complete.
+REGULAR_SESSION_OPEN_MIN = 570   # 09:30 ET
+REGULAR_SESSION_CLOSE_MIN = 960  # 16:00 ET
+
+
 def et_now() -> datetime:
     """Current instant as a timezone-aware datetime in US/Eastern."""
     return datetime.now(ET)
@@ -194,6 +205,56 @@ def in_session_window(mode: SessionMode, when: datetime | None = None) -> bool:
     lo, hi = window
     minute = _minute_of_day(now)
     return lo <= minute <= hi
+
+
+def in_regular_session(when: datetime | None = None) -> bool:
+    """True while the regular US equities session is in progress.
+
+    [09:30, 16:00) ET on a weekday. While this is True, TODAY's daily bar is
+    still forming: any price-vs-level comparison must use a live price, and
+    the completed-bar series ends at the previous session. Holidays are not
+    known here (weekday heuristic); a holiday reads as "in session" but the
+    live-price freshness check (`live_price_is_today`) then marks the price
+    stale because no trade prints today.
+    """
+    now = when if when is not None else et_now()
+    if not is_weekday(to_et(now).date()):
+        return False
+    minute = _minute_of_day(now)
+    return REGULAR_SESSION_OPEN_MIN <= minute < REGULAR_SESSION_CLOSE_MIN
+
+
+def last_completed_bar_date(when: datetime | None = None) -> date:
+    """Latest calendar date whose DAILY bar can be complete at `when`.
+
+    On a weekday at/after 16:00 ET that is today; at any other time it is
+    the previous calendar day. The result is a filter bound (`bar.date <=
+    this`), not a claim that a bar exists on that date — weekends and
+    holidays simply have no bar, so the bound needs no holiday calendar.
+    """
+    from datetime import timedelta
+
+    now = when if when is not None else et_now()
+    d = to_et(now).date()
+    if is_weekday(d) and _minute_of_day(now) >= REGULAR_SESSION_CLOSE_MIN:
+        return d
+    return d - timedelta(days=1)
+
+
+def live_price_is_today(last_trade_at, when: datetime | None = None) -> bool:
+    """True when a provider trade timestamp falls on the current ET date.
+
+    A snapshot's last trade from a prior session (holiday, halt, feed gap)
+    is NOT a live price for today and must be labelled stale, never shown as
+    current. A missing or naive timestamp is treated as not-today (unknown
+    freshness fails visible rather than passing as live).
+    """
+    if last_trade_at is None or not isinstance(last_trade_at, datetime):
+        return False
+    if last_trade_at.tzinfo is None:
+        return False
+    now = when if when is not None else et_now()
+    return to_et(last_trade_at).date() == to_et(now).date()
 
 
 def format_window(mode: SessionMode) -> str:

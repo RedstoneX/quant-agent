@@ -6,6 +6,7 @@ import pandas as pd
 import yfinance as yf
 
 from src.models import OHLCV
+from src.trading_calendar import last_completed_bar_date
 from src.util.time import et_today
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,24 @@ SECTOR_ETFS = {
     "Real Estate": "XLRE",
     "Basic Materials": "XLB",
 }
+
+
+def _completed_only(bars: list, cutoff, symbol: str, source: str) -> list:
+    """Drop any bar dated after `cutoff` (a still-forming session bar).
+
+    Logged, not silent: a dropped bar means a source handed back an
+    in-progress day, which must never be read as a finished close.
+    """
+    if not bars:
+        return bars
+    kept = [b for b in bars if getattr(b, "date", None) is None or b.date <= cutoff]
+    if len(kept) < len(bars):
+        logger.info(
+            "get_ohlcv %s: dropped %d in-progress bar(s) dated after %s from %s "
+            "(completed bars only; live price comes from the broker snapshot)",
+            symbol, len(bars) - len(kept), cutoff, source,
+        )
+    return kept
 
 
 class MarketDataProvider:
@@ -66,8 +85,28 @@ class MarketDataProvider:
             return []
 
     def get_ohlcv(self, symbol: str, lookback_days: int = 120) -> list[OHLCV]:
-        end = et_today()  # yfinance end (exclusive) — use ET to match US-market sessions
-        start = end - timedelta(days=lookback_days)
+        """COMPLETED daily bars only, oldest first.
+
+        Contract (2026-09-14, docs/INCIDENT_HISTORY.md): the series ends at
+        the latest session whose daily bar is finished —
+        `trading_calendar.last_completed_bar_date()`. During regular hours
+        that is the PREVIOUS session; after the 16:00 ET close it is today.
+        Before this, `end` was always `et_today()` passed to yfinance's
+        EXCLUSIVE `end`, so even the evening session never saw the day that
+        had just closed.
+
+        This series is for smoothed indicators and structure (ATR, MAs,
+        pivots, levels). It is never "the current price" during market
+        hours — a caller comparing price against a level, stop, target or
+        breakout while the session is open must use a live price
+        (`AlpacaBroker.get_intraday_snapshots` / `get_latest_price`) and
+        label it as in-progress. A still-forming bar for today is dropped
+        here from every source (yfinance or the Alpaca fallback, which can
+        return one), so it can never be silently mixed into the series.
+        """
+        cutoff = last_completed_bar_date()
+        end = cutoff + timedelta(days=1)  # yfinance `end` is exclusive
+        start = et_today() - timedelta(days=lookback_days)
 
         def _download():
             return yf.download(symbol, start=str(start), end=str(end), progress=False)
@@ -82,7 +121,10 @@ class MarketDataProvider:
             logger.warning("yfinance download crashed for %s: %s", symbol, e)
         if df is None or df.empty:
             # yfinance returned nothing — try fallback before giving up.
-            return self._try_fallback(symbol, lookback_days, reason="yfinance empty")
+            return _completed_only(
+                self._try_fallback(symbol, lookback_days, reason="yfinance empty"),
+                cutoff, symbol, "fallback",
+            )
         # yfinance may return MultiIndex columns for single ticker
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -114,7 +156,7 @@ class MarketDataProvider:
                     volume=int(row["Volume"]),
                 )
             )
-        return bars
+        return _completed_only(bars, cutoff, symbol, "yfinance")
 
     def get_upcoming_ex_dividend(self, symbol: str) -> dict:
         """Return {date, amount} for a symbol's upcoming ex-dividend, or {}.

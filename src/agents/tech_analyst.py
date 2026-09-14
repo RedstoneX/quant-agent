@@ -188,6 +188,18 @@ class TechAnalystAgent(BaseAgent):
             ic = intraday_context.get(symbol)
             if not ic:
                 return ""
+            unavailable = ic.get("live_unavailable")
+            if unavailable:
+                # Session is open but no trustworthy live price (2026-09-14).
+                # Fail visible: the model must not read yesterday's close as
+                # today's price.
+                return (
+                    f"\n⚠️ LIVE PRICE UNAVAILABLE ({unavailable}) — the trading "
+                    f"session is IN PROGRESS but no current price could be "
+                    f"read. The last completed close above is STALE for today; "
+                    f"do not treat it as the current price, and say so in your "
+                    f"reasoning_chain."
+                )
             last = ic.get("last_price")
             prev = ic.get("prev_close")
             if not isinstance(last, (int, float)) or last <= 0:
@@ -264,11 +276,24 @@ class TechAnalystAgent(BaseAgent):
             # analyst saw 20 bars and could only cite moving averages and the
             # 20-day range as "levels" — which is why the structural stops and
             # targets the exit system depends on were effectively absent.
-            supports, resistances = find_structural_levels(bars)
+            # In-progress session: classify support/resistance against the
+            # LIVE price, not yesterday's close (2026-09-14, ORCL 2026-09-10).
+            ic = intraday_context.get(symbol) or {}
+            live_price = ic.get("last_price")
+            if (
+                ic.get("live_unavailable")
+                or not isinstance(live_price, (int, float))
+                or live_price <= 0
+            ):
+                live_price = None
+            supports, resistances = find_structural_levels(
+                bars, reference_price=live_price,
+            )
             levels_text = format_levels_block(
                 supports,
                 resistances,
                 last_close if isinstance(last_close, (int, float)) else 0.0,
+                live_price=live_price,
             )
             context_text = format_context_block(
                 compute_market_context(

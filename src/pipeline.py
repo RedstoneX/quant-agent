@@ -1180,6 +1180,7 @@ class TradingPipeline:
             event_calendar=self.event_calendar,
             fomc_calendar=self.fomc_calendar,
             has_actionable_signal_fn=self._has_actionable_signal_fn,
+            live_session_context_fn=self._live_session_context,
             run_news_update_fn=self._run_news_update,
             load_earnings_analyses_fn=self._load_earnings_analyses,
         )
@@ -2670,12 +2671,18 @@ class TradingPipeline:
         return None
 
     @staticmethod
-    def _has_actionable_signal_fn(indicators, symbol: str, bars, positions) -> bool:
+    def _has_actionable_signal_fn(
+        indicators, symbol: str, bars, positions, live_price: float | None = None,
+    ) -> bool:
         """Pre-filter: only send symbols with interesting signals to the LLM.
 
         Lifted from a nested function in run_morning so MorningResearchStage
         can inject it as a dependency. Takes positions explicitly rather than
         closing over an outer scope.
+
+        `live_price` (2026-09-14): during market hours the price-vs-band
+        proximity check uses the live price, not the last completed close;
+        the bands themselves stay on completed bars.
         """
         held_symbols = {p.symbol for p in positions}
         if symbol in held_symbols:
@@ -2685,7 +2692,11 @@ class TradingPipeline:
         if indicators.rsi_14 is not None and (indicators.rsi_14 < 35 or indicators.rsi_14 > 65):
             return True
         if indicators.bb_upper and indicators.bb_lower and bars:
-            last_close = bars[-1].close
+            last_close = (
+                live_price
+                if isinstance(live_price, (int, float)) and live_price > 0
+                else bars[-1].close
+            )
             band_width = indicators.bb_upper - indicators.bb_lower
             if band_width > 0:
                 if abs(last_close - indicators.bb_upper) / band_width < 0.1:
@@ -2719,6 +2730,62 @@ class TradingPipeline:
                 if spread / indicators.ma_50 < 0.02:
                     return True
         return False
+
+    def _live_session_context(self, symbols) -> dict[str, dict]:
+        """Live, in-progress-session price facts for `symbols`, or {}.
+
+        2026-09-14 (docs/INCIDENT_HISTORY.md, ORCL 2026-09-10): the morning
+        Tech pass compared price against levels using bars that end at the
+        PREVIOUS close, so a stock that opened below its support still
+        read as above it. This supplies the live price for the same
+        seats, from the broker snapshot the intraday scan already uses
+        (`get_intraday_snapshots` — no new data source).
+
+        - Outside regular hours: {} — completed bars ARE current (after the
+          close today's bar is complete; pre-market/weekend the last close
+          is the latest price that exists).
+        - In session: one bulk snapshot. A symbol with no last trade, or
+          whose last trade is not from today (holiday, halt, feed gap), gets
+          `{"live_unavailable": reason}` and a WARNING — rendered as an
+          explicit STALE label, never silently replaced by yesterday.
+        Never raises.
+        """
+        from src.trading_calendar import in_regular_session, live_price_is_today
+
+        symbols = [s for s in (symbols or []) if s]
+        if not symbols or not in_regular_session():
+            return {}
+        try:
+            snapshots = self.broker.get_intraday_snapshots(symbols) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("live session context: snapshot read failed: %s", exc)
+            snapshots = {}
+        out: dict[str, dict] = {}
+        missing: list[str] = []
+        stale: list[str] = []
+        for sym in symbols:
+            snap = snapshots.get(sym) or {}
+            last = snap.get("last_price")
+            if not isinstance(last, (int, float)) or last <= 0:
+                missing.append(sym)
+                out[sym] = {"live_unavailable": "no live trade price returned"}
+                continue
+            if not live_price_is_today(snap.get("last_trade_at")):
+                stale.append(sym)
+                out[sym] = {
+                    "live_unavailable": "last trade is not from today's session",
+                }
+                continue
+            out[sym] = dict(snap)
+        if missing or stale:
+            logger.warning(
+                "live session context: in-session price unavailable for %d/%d "
+                "symbol(s) (no price: %s; not today: %s) — labelled STALE in "
+                "the Tech prompt, not replaced by the last close",
+                len(missing) + len(stale), len(symbols),
+                missing[:10], stale[:10],
+            )
+        return out
 
     # Statuses Alpaca uses for terminal/non-terminal orders. Kept as a
     # class attribute so tests can introspect the exact set the
@@ -5650,8 +5717,9 @@ class TradingPipeline:
                     spy_latest_close = 0.0
         except Exception as e:
             logger.warning("recent_buys: SPY bars fetch failed (relative-move disabled): %s", e)
-        # audit round 2: get_ohlcv's end is exclusive, so bars stop at
-        # YESTERDAY's close — while the stock leg uses a LIVE quote. For a
+        # audit round 2: get_ohlcv returns COMPLETED bars only, so during
+        # market hours they stop at the previous close — while the stock leg
+        # uses a LIVE quote. For a
         # same-day BUY that mismatch made spy_pct read 0.0 and every
         # market_relative grade compare a live price against a stale
         # benchmark. Same-instant legs: prefer the live SPY quote.

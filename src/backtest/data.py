@@ -9,7 +9,8 @@ bars get to those functions in the first place (see
 identical path the live system does.
 
 `MarketDataProvider.get_ohlcv(symbol, lookback_days)` fetches yfinance daily
-bars ending TODAY and going back `lookback_days` calendar days, falling back
+COMPLETED bars — ending at the previous session while the market is open,
+today after the 16:00 ET close — going back `lookback_days` calendar days, falling back
 to `broker.get_bars` (Alpaca) when yfinance is empty and a fallback was
 wired in. This module does not wire the Alpaca fallback by default — doing
 so needs live Alpaca credentials this tool has no other reason to require —
