@@ -22,6 +22,60 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the retired-item-numbers line was quietly corrupted, and it was making the corruption worse
+
+**In plain words:** the one line in the job board that says "these numbers are
+closed, never reuse them" had been wrong for a while, and being wrong made it
+actively dangerous: every branch that opened a new item read that line to
+decide the next free number, so a wrong line handed out numbers that were
+either already live or already retired for real. Two agents collided on
+number 63 because of it. A repair on 2026-09-14 (PR #370) reconstructed the
+list from the file's own git history rather than trusting the accumulated
+prose, and even that repair immediately collided again.
+
+**What was actually wrong.** A "mis-resolved merge" earlier on 2026-09-13
+(the same one item 65's original prose already blamed for wrongly retiring
+items 55-59) had also swept several unrelated numbers — 1, 3, 4, 8, 10, 20 —
+into the retired list, and separately the list carried 67, 90, 101 and 200,
+none of which ever appeared as a real item heading anywhere in the file's own
+history. 1, 3, 4, 8, 10 and 20 were, and remain, live open items; 4 and 8 are
+legitimately live in both the funnel-queue and PM-test-gate numbering
+schemes, which is a separate, correct kind of duplication the corruption was
+not distinguishing from its own error.
+
+**How the reconstruction was done, and why it is trustworthy.** `git log
+--follow` was walked one revision at a time, matching `**N.` item headings
+directly rather than regex-scraping numbers out of surrounding prose — the
+exact failure mode that caused the corruption in the first place. That
+produced a clean base list current as of commit `61871c0d`, missing only the
+closures that landed on `main` after that snapshot (items 15, 31, 58 and 59),
+which were folded back in on merge.
+
+**The collisions this forced, in order.** (1) Two branches independently
+numbered new findings 62 and 63 at the same time; the corrupted retired list
+gave neither branch a reason to expect a collision, and both were restored by
+hand as 62-64. (2) A branch documenting the doc-resolver's own item-deletion
+bug independently claimed 65, which a different branch's review notes had
+already used for an unrelated finding (seat strength scales) and landed
+first; renumbered to 68 under the belief — correct at the time — that 67 was
+retired. (3) The reconstruction in this very entry showed 67 was never real
+and is actually free, but 68 had already shipped under that number, so it
+stays; nothing is renumbered backward once merged. (4) A fourth branch (item
+60's exit-check fix) independently claimed 68 and 69 for two new findings
+while 68 was already the doc-resolver item from (2); renumbered on this merge
+to 69 and 70.
+
+**What would catch it next time.** `tests/test_status_board.py` now asserts
+the retired list parses as clean integers with no duplicates
+(`test_the_retired_numbers_line_parses_as_a_clean_integer_list`) and that no
+retired number names an item still live in either scheme
+(`test_no_retired_number_names_an_item_that_is_still_live`). Neither test can
+catch a *future* two-branch race on the same fresh number — that is a merge-
+time discipline, not a static check — but both make the specific corruption
+that caused this entry impossible to reintroduce silently.
+
+---
+
 ### 2026-09-14 — the one exit class the ATR noise band actually judges was the one class nobody checked the chart for
 
 **In plain words:** when the desk decides to sell because "the reason I bought
@@ -93,6 +147,90 @@ deleted.** Both belong to item 55 and are summarised in place there.
 *Item 55, "already searched and ruled out", as it stood in WORK.md:*
 
 **Already searched and ruled out — do not repeat any of this.** *First pass, 2026-09-13, the window:* TA-Lib's `FRACTAL` defaults both arms to 2 with no rationale stated; MetaTrader 5's fractal doc defines five bars and gives no reason; fxssi records that five became standard because it shipped as a MetaTrader 4 default, which is a distribution fact and not a measurement; LuxAlgo's swing reference says outright there is no universally best setting. *Second pass, 2026-09-13, the zone, every source named so nobody re-fetches them:* Osler (2000), *Support for Resistance*, FRBNY Economic Policy Review — the origin of the bounce-frequency test and cited by everything downstream, but it evaluates levels PUBLISHED by six dealing firms and so never has to define a zone width of its own; ruled out as a source for (b). Osler (2003), *Currency Orders and Exchange Rate Dynamics*, FRBNY Staff Report 125 — explains WHY zones exist (stop-loss and take-profit orders cluster at round numbers) and gives no width; ruled out. Zapranis & Tsinaslanidis (2012) / Tsinaslanidis (2012) — the closest match to this desk's construction and the source of everything above; leaves x a user input; ruled out as a derivation, kept as a placement. Bulkowski, `thepatternsite.com/SAR.html` and `/TallCandleSAR.html` — the "thick bands of molasses" phrase originates with him and he quantifies nothing; his tall-candle study reports only "Reversals are evenly distributed over the candle body", which says no sub-location within a bar is privileged but gives no zone width; ruled out. Brock, Lakonishok & LeBaron (1992) — the canonical 1% band in this literature is a whipsaw filter on a moving-average crossover, not a support-zone width, and is chosen not derived; ruled out, and do not treat the coincidence with the desk's 1% as a source. `arXiv:2507.01971` (DeepSupp) — states a 3% figure only as an evaluation tolerance for one metric and derives nothing; ruled out. *Structural facts, settled, not to be re-derived:* the two windows never meet — no module imports both, pinned by `tests/test_pivot_window_independence.py` — and a bar dominating 5 bars either side necessarily dominates 3, so the trailing window sees strictly more. Making both 3 or both 5 was rejected: that is picking a number. Moving `CLUSTER_TOLERANCE_PCT` to the literature's illustrative 3% is rejected for the same reason — adopting a foreign default is the same unsourced act in the other direction. Re-tuning the *match tolerance* against the width was ruled out earlier and the tolerance is instead derived from the width itself (`level_zone_halfwidth`), which made the pair CONSISTENT and did not make the width RIGHT.
+
+---
+
+### 2026-09-14 — a "three strikes and you're out" rule for repeat trade ideas was REFUSED; the conversion rate turned out to measure our own plumbing, not the stocks (item 10, gating half ANSWERED NO)
+
+**In plain words:** the desk kept suggesting the same stocks and never buying
+them, so the obvious idea was to stop it re-asking for a name with a bad
+record. The owner rejected that framing outright — "this proposal is a hack,
+not a solution" — and told us to settle it ourselves. We did, and the data
+says he was right for a reason nobody had articulated: **how often a stock
+converts is not a fact about the stock. It is a self-portrait of the desk's
+own gates and its own broken plumbing.** Blocking on it means blacklisting a
+company for our bug. Answered NO, closed, not deferred.
+
+**The census (re-run read-only over the archive, `scripts/blocked_proposals_census.py`).**
+65 entry proposals, 14 filled, 51 blocked. By cause: `no_order_built` 18,
+`order_not_placed` 9, `rm_rejected:rr_fail` 7, `order_canceled` 6,
+`geometry_rr` 4, `qty_zero` 3, `rm_rejected:other` 2, `insufficient_cash` 1,
+`slippage_gated` 1. Machinery ABSENCE is 27 of the 51; real execution or
+price events are only 7. Restricted to proposals after the limit-is-ceiling
+fix (`0eb4a115`, 2026-08-27 14:18:58Z): 28 proposals, 3 filled, 25 blocked,
+`no_order_built` alone 16, and exactly ONE broker cancel.
+
+**VLO is the proof — a gate would blacklist a symbol for a dead defect.**
+Two of VLO's three strikes are `order_canceled`, dated 2026-08-21 and
+2026-08-27 13:36. The limit-is-ceiling fix landed at 14:18 that same
+afternoon, and the comment shipping it names VLO explicitly as the trade it
+was written for. Both strikes predate the fix by hours. A conversion counter
+has no way to know that; it would have barred VLO for a fault that no longer
+exists. The other repeat zero-fill names, JPM and PATH, are the same story:
+between the three of them there is not one spread, book or partial-fill
+event on record — their causes are `order_not_placed`, `order_canceled`,
+`no_order_built`, `geometry_rr`, `rr_fail`. Every one of those is us.
+
+**NVDA is the cost — a gate would have killed the best trade in the record.**
+NVDA was proposed 8 times, refused across six distinct causes, and then
+FILLED on the eighth — at 2.75% risk and high conviction, the largest and
+most confident ask in the whole dataset. Any three-strikes rule kills that
+trade five proposals earlier. XLE tells the same story more quietly: 6
+proposals, one fill. `docs/AGENT_ROLE_AUDIT.md` §1.6 already recorded that
+XLE and NVDA "have each since recorded one fill and are no longer zero-fill
+under any count."
+
+**And the input churns daily.** 2026-09-01's offender list was XLE and NVDA;
+2026-09-02's was VLO, COP, JPM, XLF, CRM, PATH — no overlap. A gate whose
+input turns over completely inside a day is gating on noise. §1.6 also
+records the diagnostic UNDER-counts: roughly 7% of sized targets never reach
+`specialist_evidence`, plus 10 decisions with no evidence rows at all.
+
+**Why no threshold is needed at all — the reformulation.** Partition the
+refusals by cause and every class answers itself. *Deterministic* refusals
+(`geometry_rr`, `qty_zero`, `rr_fail`, constructor refusals) re-fire on their
+own against an unchanged repeat, in the same session, consuming zero capital
+— a counter adds nothing; and a repeat whose geometry has CHANGED should
+pass, which is precisely what NVDA did. *Machinery absences* are a bug to
+fix, not a name to blacklist. *Execution events* are fixed at the execution
+layer, per-order, never per-symbol. The portfolio manager's prompt already
+carries the correct shape and a count cannot express it: "re-proposing it
+unchanged will fail the same way again — either fix what the reason names …
+or drop the name. This is information, not a prohibition." The conditional
+on UNCHANGED is the entire content of the rule.
+
+**"Slots burned" was a false premise — verified, not assumed.** There is no
+position-count cap in `config/settings.yaml` and no target-count cap in the
+portfolio manager; `docs/OUTCOME.md` records position count as "Not fixed.
+Determined dynamically by the risk budget." A blocked proposal consumes zero
+risk budget, so it burns no slot. Whether a repeat displaces a fresher
+candidate inside the PM's own shortlist is UNMEASURED and is recorded as
+unmeasured — not asserted either way.
+
+**What is left OPEN, and it is the real finding.** Under current code
+`no_order_built` is 16 of 25 blocked proposals — the majority of trade ideas
+die inside the machinery — and for every measured row the cause is
+**unrecoverable**, because the constructor's drop-reason capture (PR #222,
+#226, 2026-09-03) postdates all of them. That capture has never been
+measured, because the desk has produced no proposals since. What would
+settle it: re-run the census once post-2026-09-03 proposals exist, carrying
+the two §1.6 undercounts. Until then, no claim about the cause is defensible.
+Tracked as `docs/WORK.md` item 10(a); the gating half, 10(b), is closed.
+
+**The stale label, stripped in four places.** "Owner decision" had propagated
+to `docs/WORK.md` item 10, `docs/BOARD_NOTES.md` item 10, the 2026-09-03
+entry in this file, and `docs/AGENT_ROLE_AUDIT.md` §1.6. It was never the
+owner's decision — he had refused it. All four now say answered.
 
 ---
 
@@ -4356,6 +4494,14 @@ alone.**
   its prior-refusal count — a new risk/quality threshold (how many refusals
   before a block, and for how long), which is an owner decision, not one
   to make unilaterally in this pass.
+  > **CORRECTION, 2026-09-14.** The two sentences above are wrong on both
+  > counts and are superseded. The owner refused the framing outright
+  > ("this proposal is a hack, not a solution") and directed that it be
+  > settled without him, so it was never his decision to hold. It is now
+  > ANSWERED NO on the evidence — no count-based gate, no threshold, closed
+  > rather than deferred. Reasoning and census: the 2026-09-14 entry at the
+  > top of this file, and `docs/WORK.md` item 10(b). "Slots burned" is also
+  > a false premise — there is no position-count cap to burn.
 
 **Recommendation, not a decision:** re-run this measurement after several
 full trading days have accumulated post-reset (the 21-day lookback needs
@@ -4363,6 +4509,10 @@ that much history to say anything about a 3+ repeat pattern), and treat
 "should a repeat block ever restrict a name" as its own open decision for
 the owner — it is already flagged as such in `docs/AGENT_ROLE_AUDIT.md`
 §1.6.
+> **CORRECTION, 2026-09-14.** The second half of that recommendation is
+> withdrawn: it is not an owner decision and is no longer open. See the
+> 2026-09-14 entry at the top of this file. The first half — re-run the
+> measurement — stands, and was done on 2026-09-14.
 
 ---
 
