@@ -149,9 +149,9 @@ Analysis artefacts such as `docs/QAMC_REMEDIATION_SPEC.md`, `docs/AGENT_ROLE_AUD
 
 Long-lived, unlike Tier 2 — they are maintained rather than consumed, and **must be updated in the same change that alters the subsystem they describe**. They are authoritative on mechanism and never on status: if one implies a capability exists, `STATE.md` decides whether it actually does.
 
-**Conceptual — `docs/FUTURE_*`. Binding on nothing.**
+**Conceptual — `docs/FUTURE.md`, `docs/FUTURE_*`. Binding on nothing.**
 
-`FUTURE_LIVE_SENTINEL.md`, `FUTURE_SECURITY_OBSERVATORY.md`. Ideas recorded so they are not lost. They authorize no work, describe nothing that exists, and must carry their `Status: CONCEPTUAL / NOT AUTHORIZED` header. Never cite one as a requirement or as evidence that something is planned.
+`FUTURE.md` (options desk, live trading safety architecture), `FUTURE_SECURITY_OBSERVATORY.md`. Ideas recorded so they are not lost. They authorize no work, describe nothing that exists, and must carry their `Status: CONCEPTUAL / NOT AUTHORIZED` header. Never cite one as a requirement or as evidence that something is planned.
 
 **Project-standard — `README.md`, `SECURITY.md`.**
 
