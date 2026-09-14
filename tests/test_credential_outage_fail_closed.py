@@ -38,7 +38,7 @@ from src.pipeline import TradingPipeline
 # Reuse test_pipeline.py's model stubs rather than re-deriving them — they
 # already track the real pydantic shapes, and a second copy would drift.
 from tests.test_pipeline import (  # noqa: E402
-    _macro_stub, _mock_agent_result, _pm_rc, _risk_rc, _trc,
+    _macro_stub, _mock_agent_result, _news_stub, _pm_rc, _risk_rc, _trc,
 )
 
 
@@ -160,9 +160,11 @@ def _wire_happy_path(mocks, tmp_path, cfg):
 
     mock_na = MagicMock()
     # NewsAnalystAgent.analyze() -> tuple[NewsIntelligenceReport | None,
-    # AgentResult]; None is a real, typed outcome, not a stand-in for a
-    # type nothing produces (mirrors tests/test_pipeline.py's fixtures).
-    mock_na.analyze.return_value = (None, _mock_agent_result())
+    # AgentResult]. A real report, not None: since docs/WORK.md item 20, a
+    # None here is `data_status["news"] = "parse_error"` and the evidence
+    # gate refuses the decision, so the CONTROL case would stop trading and
+    # prove nothing (mirrors tests/test_pipeline.py's fixtures).
+    mock_na.analyze.return_value = (_news_stub(), _mock_agent_result())
     mock_na_cls.return_value = mock_na
     mock_ndp = MagicMock()
     mock_ndp.fetch_news.return_value = ([], None)  # (items, coverage) — see src/data/news.py NewsCoverage

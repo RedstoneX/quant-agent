@@ -199,6 +199,23 @@ def test_the_settled_cost_ceiling_still_stops_the_portfolio_manager(tmp_path):
     # own internal asserts, which would have raised already.
     assert any("byte-identical" in c for c in baseline.isolation_checks)
 
+    # docs/WORK.md item 20 (2026-09-14): the session now refuses to DECIDE
+    # when a research seat was asked and its answer never arrived. A
+    # rehearsal replays the LLM side but calls the DATA providers for real,
+    # so on a box without working FRED / wire-feed credentials the macro and
+    # news seats genuinely have no answer and the gate correctly stops the
+    # session before the Portfolio Manager. That is the harness's
+    # environment, not the spending behaviour this test exists to measure —
+    # skip rather than assert against it, and never bypass the gate to make
+    # a test reach further than a real session would.
+    if baseline.status == "evidence_gate_skip":
+        pytest.skip(
+            "the rehearsal's research seats had no data on this box, so the "
+            "evidence gate refused the decision before the Portfolio "
+            "Manager; the cost ceiling cannot be measured from here "
+            f"(status={baseline.status!r}, agents_ran={baseline.agents_ran})"
+        )
+
     # The chunk un-merge regression guard. Before that fix, replay had one
     # recorded answer for four real tech_analyst chunk calls and the session
     # died on the second chunk, nowhere near the Portfolio Manager. Reaching

@@ -1860,7 +1860,14 @@ def _status_emoji(status: str) -> str:
     # reflection step itself failed (LLM exception / parse error). The
     # learning loop is half-broken until next quarter — operator should
     # notice via 🟡 rather than skim past a green check.
-    if status in ("emergency_sold", "hard_risk_block", "digest_only"):
+    # `evidence_gate_skip` (docs/WORK.md item 20) is a WARNING, never the
+    # white "nothing happened" bucket: the desk deliberately declined to
+    # decide because a seat's answer never arrived. It looks like a quiet
+    # day and is not one, which is exactly how retired item 11 hid.
+    if status in (
+        "emergency_sold", "hard_risk_block", "digest_only",
+        "evidence_gate_skip",
+    ):
         return "🟡"
     if ("error" in status or status.startswith("pm_")
             or status in (

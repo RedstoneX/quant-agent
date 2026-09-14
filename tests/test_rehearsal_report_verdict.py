@@ -229,6 +229,11 @@ _BRIDGE_FUNCTION_NAMES = {
     # helper rather than at each return site, the same shape as the entries
     # above. Its status dict lives in `_kill_switch_halt_result`.
     "_kill_switch_halt_result",
+    # 2026-09-14 (docs/WORK.md item 20): run_morning refuses to DECIDE when a
+    # seat's answer never arrived, from a shared helper whose status dict
+    # lives in `_evidence_gate_skip` — same shape as the entries above, and
+    # bridged below so its status is derived rather than hand-listed.
+    "_evidence_gate_skip",
 }
 
 
@@ -282,6 +287,10 @@ def _derive_known_pipeline_statuses() -> set[str]:
         _find_function(pipeline_tree, "_check_late_breach_and_emergency_liquidate")
     )
     statuses |= _status_literals(_find_function(pipeline_tree, "_paid_suspended_payload"))
+
+    # Bridge 5: the item-20 evidence gate — run_morning bare-returns this
+    # helper's result when a seat's answer never arrived.
+    statuses |= _status_literals(_find_function(pipeline_tree, "_evidence_gate_skip"))
 
     return statuses
 

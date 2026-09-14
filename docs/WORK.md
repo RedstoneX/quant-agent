@@ -712,7 +712,8 @@ or a stale belief in its training. Both are worth seeing.
 straws, and the real answer is fully understanding what the model receives.
 That is item 18. Treat everything here as secondary to it.
 
-**20. GATE THE DECISION ON EVIDENCE COVERAGE — owner's design, 2026-09-02. Do not trade on partial evidence.**
+**20. GATE THE DECISION ON EVIDENCE COVERAGE — owner's design, 2026-09-02.
+PARTLY BUILT 2026-09-14. Do not trade on partial evidence.**
 
 **Owner's ruling, and it overrides my weaker proposal.** I suggested letting
 the run continue with reduced coverage and warning the PM which inputs were
@@ -721,33 +722,77 @@ make a decision when it doesn't have enough information to make an informed
 logical decision."* A decision on incomplete evidence is not a degraded
 decision, it is a fabricated one.
 
-**The retry mechanism already exists and costs nothing to use.** `intra_check`
-fires every 30 minutes, 09:30-16:00 ET. A skipped run costs half an hour, not
-a day. There is no need to choose between "trade on garbage" and "lose the
-session".
+**BUILT (2026-09-14) — the categorical half, which needs no number.** The
+morning session now refuses to reach the Portfolio Manager at all when a
+seat's answer was LOST, and that word is doing precise work. `src/evidence_gate.py`
+sorts every value any seat writes into `data_status` into one of three
+categories: a usable answer arrived; the seat answered and the honest answer
+is empty (no Form 4 filings today is a fact, not a gap); or the answer was
+LOST — the call raised, the response would not parse, the provider failed,
+the generation was cut off, or every analyzed filing came back with no
+content. Only the third refuses the run. That line is categorical, so it
+needs no threshold, cannot drift, and cannot be fitted to the desk's own
+history. It reads the statuses the seats already self-report and adds no
+second notion of coverage. A test enumerates the vocabulary, so a seat that
+gains a new status word must classify it in the same diff rather than
+silently widening or narrowing the gate.
 
-**It is also CHEAPER.** A run on bad evidence still spends a full
-portfolio_manager call (~$0.55, and that seat is 93% of the bill) to produce
-a decision nobody should act on. Checking coverage first is free.
+The skip is loud by three independent paths (its own owner alert, the
+existing standalone `maybe_alert_data_quality` page off the `data_status`
+carried in the result, and a session status of its own that is classified as
+a warning, not as a quiet day). It drops no candidate and emits no target —
+it returns before any target exists, so it cannot produce the 0%-target-means-
+SELL shape. Every symbol that had reached a technical read still gets its own
+durable, machine-readable evidence row saying why the desk never decided on
+it.
 
-**Design:**
-  a. **Compute coverage BEFORE the expensive call.** Deterministic Python,
-     no model: how many earnings reports are usable, how many technical
-     reads survived validation, is smart money present at all.
-  b. **Below threshold → do not decide.** Skip the run, record the coverage
-     figures and which seats were short, spend nothing.
-  c. **The next scheduled run tries again.** No new infrastructure.
-  d. **THE SKIP MUST BE LOUD.** Retired item 11 was the desk producing zero
-     proposals for a whole day and nobody noticing (closed 2026-09-13, see
-     `docs/INCIDENT_HISTORY.md`). A silent skip is that bug again. A skip
-     is an event to surface, not an absence to infer.
+**MEASURED BITE, because a refusal gate whose bite is unknown must not
+ship.** Replayed against the desk's own `agent_logs` + `specialist_evidence`
+for every historical morning run: **5 of the 27 runs that actually reached
+the Portfolio Manager (19%) would have been refused**, on 4 of 13 trading
+days. Four of those five are one recurring upstream bug — the news analyst
+returning non-JSON (`data_status["news"] = "parse_error"`), seen on 08-17
+(twice), 08-18 and 08-25, and again in two saved parse-failure records dated
+2026-09-04. The fifth is the smart-money seat's SEC provider failing with no
+findings on 08-26. So the gate's bite today is dominated by ONE fixable
+seat, and fixing that seat is not this item — but the desk should expect the
+gate to fire until it is fixed.
 
-**The signal already exists — read it, do not rebuild it.** Every earnings
-report already carries a `data quality` line, and 11 of them say outright
-"insufficient information" or "filing text heavily truncated". The agents
-ARE reporting that they did not get what they needed. It is couriered to the
-PM as prose inside 140,000 characters instead of being extracted as a
-status. **Pull the field the agent already writes.**
+**STILL OPEN — question 1, the counting half, and it is yours, not an
+agent's.** Design (a) also asked for "how many earnings reports are usable,
+how many technical reads survived validation" — a count, compared against a
+minimum. That minimum was NOT invented and NOT shipped, per your own ruling
+below. What was searched: no published source states how many of five
+research seats a discretionary equity desk needs before a decision is sound,
+and the desk's own trade history cannot supply one without fitting a number
+to it, which this document forbids outright. What would settle it: your
+ratified number, or a decision that partial coverage should never gate at
+all and the categorical rule above is the whole of item 20.
+
+**STILL OPEN — question 2, found while building this.** The intraday
+opportunity scan writes `not_run_intraday` for macro and news BOTH when it
+deliberately chose not to re-fetch a seat AND when this morning's
+carry-forward came back empty because the morning seat itself failed. "Not
+asked" and "asked and lost" are wearing one word there, so the gate is
+deliberately NOT applied to the intraday path — it would be classifying a
+state the data cannot distinguish. Splitting that value in
+`_carry_forward_macro` / `_carry_forward_news` is a small, separate change.
+
+**CORRECTION to this item's own premise, verified 2026-09-14.** It says a
+skipped run "costs half an hour, not a day" because `intra_check` retries
+every 30 minutes. `run_intra_check` does not re-run research or the PM. The
+thing that can decide again is the intraday opportunity scan inside it, and
+that scan only looks at symbols that have moved at least 3% since the last
+close (`config/settings.yaml`, `intraday_scan.move_threshold_pct`), capped at
+5 candidates. On a quiet day a refused morning is closer to a lost day than
+to a lost half-hour. That does not change the ruling — a fabricated decision
+is worse than no decision — but the cost of a refusal is higher than the item
+assumed.
+
+**The signal already existed and is now read, not rebuilt.** The earnings
+`data quality` line the agents were already writing is extracted as a status
+(`_classify_earnings_status` → `content_missing`) rather than couriered to
+the PM as prose, which is what this item asked for.
 
 **Threshold is NOT an agent's to invent.** It is a risk judgement. Propose a
 number with reasoning and have it ratified; do not let a coding agent pick
