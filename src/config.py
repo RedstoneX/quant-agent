@@ -13,9 +13,17 @@ from src.agents.base import (
 )
 from src.risk.constants import (
     DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
+    INDEPENDENT_SEAT_COUNT,
     REWARD_RISK_FLOOR,
     STARTER_POSITION_RISK_PCT,
+    derive_agreement_ceiling_schedule,
 )
+
+_DEFAULT_MAX_POSITION_RISK_PCT = 5.0
+"""The owner-ratified per-trade risk envelope, as a module constant so
+`agreement_ceiling_pct`'s default_factory can derive the whole agreement
+ladder from it at class-definition time (docs/WORK.md items 30/57).
+"""
 
 
 class ApiKeysConfig(BaseModel):
@@ -541,7 +549,9 @@ class RiskConfig(BaseModel):
     # A wider stop therefore yields a SMALLER position rather than a rejected
     # trade, which is what removes the incentive to squeeze stops. The prior
     # 0.5% ceiling lived in a constructor dataclass default nobody chose.
-    max_position_risk_pct: float = Field(default=5.0, gt=0, le=100)
+    max_position_risk_pct: float = Field(
+        default=_DEFAULT_MAX_POSITION_RISK_PCT, gt=0, le=100,
+    )
     # docs/WORK.md item 32 / docs/INCIDENT_HISTORY.md 2026-09-04. The two
     # rolling-return "drawdown brake" windows (`in_drawdown` in
     # `src/pipeline.py::_compute_recent_performance`) that halve new BUY
@@ -967,21 +977,35 @@ class RiskConfig(BaseModel):
     # prices exactly what it priced before, and the measurement that chose
     # these numbers still stands.
     #
-    # Measured against production `agent_logs` 2026-08-25 through 08-28 —
-    # the pre-nomination "technical-analysis bot" era the spec describes,
-    # and the most conservative case this schedule has to survive: of 75
-    # opening/increasing targets carrying live provenance, 67% (50/75)
-    # named exactly ONE aligned source (always `technical`), 29% (22/75)
-    # named two, 4% (3/75) named three, and NONE ever reached four or
-    # five. A schedule with tier 1 near the 5% envelope would do nothing;
-    # one with tier 1 much below ~2% would have clamped roughly nine in
-    # ten of the book's trades to a token size. [3.0, 4.0, 5.0, 5.0, 5.0]
-    # cuts single-source risk 40% (5.0% -> 3.0%, still 6x the 0.5% floor)
-    # and two-source risk 20%, while leaving three-or-more-source
-    # agreement — the rare, never-yet-observed high-conviction case — at
-    # the full envelope.
+    # DERIVED, 2026-09-14 (docs/WORK.md items 30 + 57, both retired) —
+    # `ceiling(n) = max_position_risk_pct x sqrt(n / INDEPENDENT_SEAT_COUNT)`.
+    # Full derivation and the fetched sources live on
+    # `src/risk/constants.py::derive_agreement_ceiling_schedule`. Read that
+    # before touching anything here.
+    #
+    # WHAT THIS REPLACED, so it is not re-proposed: a hand-typed
+    # [3.0, 4.0, 5.0, 5.0, 5.0]. Beside it sat a real measurement of
+    # production `agent_logs` 2026-08-25..28 — of 75 opening/increasing
+    # targets, 67% (50/75) named exactly ONE aligned source (always
+    # `technical`), 29% (22/75) two, 4% (3/75) three, NONE four or five.
+    # That measurement is COVERAGE: it says how often each rung is
+    # REACHED. It never said what any rung should BE, and it was the only
+    # thing standing behind those five numbers. It is kept here because it
+    # remains the best description of where this schedule actually bites;
+    # it is no longer offered as a justification for the values.
+    #
+    # It also made four of the five rungs inert: rungs 3-5 all read 5.0,
+    # equal to `max_position_risk_pct`, so they narrowed nothing, and rung
+    # 2 (4.0) sat at the top of the PM's own conviction band and so could
+    # only bite a request the prompt already forbade. Only rung 1 could
+    # ever cut a position. Deriving the schedule from the cap fixes that
+    # class of drift permanently: every rung is now a fixed fraction of
+    # whatever the ratified envelope is, so no rung can silently rise to
+    # meet the cap when the cap moves.
     agreement_ceiling_pct: list[float] = Field(
-        default_factory=lambda: [3.0, 4.0, 5.0, 5.0, 5.0],
+        default_factory=lambda: derive_agreement_ceiling_schedule(
+            _DEFAULT_MAX_POSITION_RISK_PCT, INDEPENDENT_SEAT_COUNT,
+        ),
     )
 
     #: Spec §10.3. Multiple of `max_sector_pct` used as the absolute sector
@@ -1075,12 +1099,33 @@ class RiskConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _derive_agreement_ceiling_when_unset(self):
+        """No hand-typed default. An unset schedule is DERIVED from the
+        envelope this very config carries, so the two can never disagree —
+        `docs/WORK.md` items 30/57, retired 2026-09-14. An explicit
+        schedule is still honoured (tests and the backtest supply their
+        own); `tests/test_agreement_sizing.py` pins the SHIPPED one to the
+        derivation so `config/settings.yaml` cannot drift away from it.
+        """
+        unset = "agreement_ceiling_pct" not in self.model_fields_set
+        if unset and self.max_position_risk_pct != _DEFAULT_MAX_POSITION_RISK_PCT:
+            object.__setattr__(
+                self,
+                "agreement_ceiling_pct",
+                derive_agreement_ceiling_schedule(
+                    self.max_position_risk_pct, INDEPENDENT_SEAT_COUNT,
+                ),
+            )
+        return self
+
+    @model_validator(mode="after")
     def _agreement_ceiling_is_well_formed(self):
         schedule = self.agreement_ceiling_pct
-        if len(schedule) != 5:
+        if len(schedule) != INDEPENDENT_SEAT_COUNT:
             raise ValueError(
-                "risk.agreement_ceiling_pct must have exactly 5 entries "
-                f"(net scores 1..5); got {len(schedule)}"
+                "risk.agreement_ceiling_pct must have exactly "
+                f"{INDEPENDENT_SEAT_COUNT} entries (net scores "
+                f"1..{INDEPENDENT_SEAT_COUNT}); got {len(schedule)}"
             )
         if any(v <= 0 for v in schedule):
             # 0.0 is not a configurable rung — it is the value

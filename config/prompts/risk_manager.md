@@ -83,9 +83,12 @@ was the outer envelope.** Three narrow the request, in this order, and the
 first two usually bind before the last one is reached:
 
 1. **The §9.4 agreement ceiling** (`agreement_ceiling_pct`, a five-rung
-   schedule indexed by how many independent sources agree). At the low net
-   scores that are ordinary, this is the real per-trade budget, and it is
-   SMALLER than the outer envelope below. A note citing a figure under that
+   schedule indexed by how many independent sources agree). Each rung is
+   the outer envelope scaled by the square root of (agreeing seats / 5
+   seats), so only UNANIMOUS agreement reaches the full envelope and every
+   lower rung genuinely narrows it. At the low net scores that are
+   ordinary, this is the real per-trade budget, and it is SMALLER than the
+   outer envelope below. A note citing a figure under that
    envelope has almost certainly been cut here, and that is the expected
    path, not an anomaly.
 2. **The portfolio risk-budget allocator**, which rations what is left under

@@ -1008,27 +1008,44 @@ risk:
   # zero has no rung and refuses the target outright. See src/risk/rules.py
   # (signed_source_score / agreement_ceiling_for_score) and
   # src/config.py::RiskConfig for the full measurement this is based on.
-  # Measured against production agent_logs 2026-08-25..28 (pre-nomination
-  # era): 67% of opening/increasing targets carried exactly ONE aligned
-  # source (always technical), 29% two, 4% three, and NONE ever reached
-  # four or five — so tier 1 is the number that matters. Never exceeds
-  # max_position_risk_pct; only ever narrows it.
+  # DERIVED, NOT TYPED — 2026-09-14, docs/WORK.md items 30 + 57 (both
+  # retired). These five numbers are the output of
   #
-  # READ THIS BEFORE TUNING ANY OF THESE (2026-09-13, docs/WORK.md item 30).
-  # Two things the note above does not say:
-  #   1. That measurement is a COVERAGE count — how often each rung is
-  #      reached. It does not derive what any rung should BE. The stated
-  #      reasoning fixes only a range for rung 1 ("not near 5, not much
-  #      under 2"); 3.0 and 4.0 sit inside it by choice.
-  #   2. Four of the five rungs cannot bind as configured.
-  #      max_position_risk_pct is 5, and the PM's restored conviction bands
-  #      (config/prompts/portfolio_manager.md) top out at 4. So rungs 3-5
-  #      (all 5.0) sit at or above the hard ceiling, and rung 2 (4.0) can
-  #      only bite on a request the prompt already forbids. Only rung 1
-  #      (3.0) can ever cut a position, over the 3-4% slice.
-  # Whether a chosen five-rung ladder should price size at all is an open
-  # owner decision. Do not "fix" this by picking new rungs.
-  agreement_ceiling_pct: [3.0, 4.0, 5.0, 5.0, 5.0]
+  #     ceiling(n) = max_position_risk_pct x sqrt(n / 5 seats)
+  #
+  # and nothing else. Do NOT hand-edit them: `tests/test_agreement_sizing
+  # .py::test_shipped_schedule_is_the_derivation_not_a_typed_list` reads
+  # this file and fails if any entry drifts from the formula, and
+  # `src/config.py` derives the same list when the key is absent. The full
+  # derivation, with the fetched sources it rests on, is the docstring of
+  # `src/risk/constants.py::derive_agreement_ceiling_schedule`.
+  #
+  # In one line: independent estimates of one quantity combine as 1/N in
+  # VARIANCE, so the consensus's standard error falls as 1/sqrt(N) and the
+  # size it can carry rises as sqrt(N) — the same square root Grinold's
+  # fundamental law puts on breadth ("IR* = IC x sqrt(BR)"). Both constants
+  # in the formula are this desk's own: the owner-ratified per-trade
+  # envelope, and the seat roster. Unanimity earns the full envelope
+  # because it is the strongest evidence this desk can ever assemble;
+  # nothing earns more.
+  #
+  # WHAT THIS REPLACED, so nobody re-proposes it: a hand-typed
+  # [3.0, 4.0, 5.0, 5.0, 5.0]. The measurement quoted above it (production
+  # agent_logs 2026-08-25..28: 67% of opening/increasing targets carried
+  # exactly ONE aligned source, always technical; 29% two; 4% three; NONE
+  # four or five) is a COVERAGE count — how often each rung is reached. It
+  # never derived what a rung should BE. It also left four rungs inert:
+  # rungs 3-5 all read 5.0, equal to max_position_risk_pct, and rung 2
+  # (4.0) sat at the top of the PM's own conviction band, so only rung 1
+  # could ever cut anything. Deriving from the cap makes that impossible to
+  # repeat: every rung is a fixed fraction of the envelope, so no rung can
+  # creep up to meet it when the envelope moves.
+  #
+  # Still true of the new schedule, and still the important fact: this only
+  # ever NARROWS max_position_risk_pct, never widens it, and the coverage
+  # count says rung 1 prices about two thirds of everything this desk
+  # sizes.
+  agreement_ceiling_pct: [2.236, 3.162, 3.873, 4.472, 5.0]
 
 # Idle-cash sweep — park cash above the reserve in a T-bill ETF, release it
 # automatically before BUYs. The vehicle is cash-equivalent everywhere:

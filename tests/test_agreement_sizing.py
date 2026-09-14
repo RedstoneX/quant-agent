@@ -16,6 +16,9 @@ file is the rule's own behaviour, end to end.
 """
 
 from src.config import RiskConfig
+from src.risk.constants import (
+    INDEPENDENT_SEAT_COUNT, derive_agreement_ceiling_schedule,
+)
 from src.models import Position, TargetPosition, TechAnalysisResult, TechReasoningChain
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
 from src.risk.rules import (
@@ -102,11 +105,11 @@ def test_macro_polarity_flips_for_inverse_etf():
 # agreement_ceiling_for_score — the schedule lookup
 # --------------------------------------------------------------------------
 
-SCHEDULE = [3.0, 4.0, 5.0, 5.0, 5.0]
+SCHEDULE = derive_agreement_ceiling_schedule(5.0, INDEPENDENT_SEAT_COUNT)
 
 
 def test_ceiling_schedule_one_net_source_is_the_strictest_tier():
-    assert agreement_ceiling_for_score(SCHEDULE, 1) == 3.0
+    assert agreement_ceiling_for_score(SCHEDULE, 1) == 2.236
 
 
 def test_ceiling_schedule_zero_or_negative_is_a_block():
@@ -120,13 +123,21 @@ def test_ceiling_schedule_zero_or_negative_is_a_block():
 
 
 def test_ceiling_schedule_two():
-    assert agreement_ceiling_for_score(SCHEDULE, 2) == 4.0
+    assert agreement_ceiling_for_score(SCHEDULE, 2) == 3.162
 
 
-def test_ceiling_schedule_three_or_more_is_the_full_envelope():
-    assert agreement_ceiling_for_score(SCHEDULE, 3) == 5.0
-    assert agreement_ceiling_for_score(SCHEDULE, 4) == 5.0
+def test_ceiling_schedule_every_rung_is_a_distinct_binding_number():
+    """Items 30/57, retired 2026-09-14. Under the hand-typed
+    [3, 4, 5, 5, 5] the top three rungs all equalled
+    `max_position_risk_pct`, so four of five rungs could not narrow
+    anything and the ladder was decoration above rung 1. Derived from the
+    envelope, every rung is strictly below the one above it and only
+    UNANIMOUS agreement reaches the full envelope."""
+    assert agreement_ceiling_for_score(SCHEDULE, 3) == 3.873
+    assert agreement_ceiling_for_score(SCHEDULE, 4) == 4.472
     assert agreement_ceiling_for_score(SCHEDULE, 5) == 5.0
+    assert SCHEDULE == sorted(set(SCHEDULE))
+    assert all(v < 5.0 for v in SCHEDULE[:-1])
 
 
 def test_ceiling_schedule_score_past_schedule_length_uses_last_entry():
@@ -157,7 +168,52 @@ def _risk_kwargs(**overrides):
 
 def test_risk_config_default_agreement_schedule_is_well_formed():
     cfg = RiskConfig(**_risk_kwargs())
-    assert cfg.agreement_ceiling_pct == [3.0, 4.0, 5.0, 5.0, 5.0]
+    assert cfg.agreement_ceiling_pct == [2.236, 3.162, 3.873, 4.472, 5.0]
+
+
+def test_unset_schedule_is_derived_from_this_config_own_envelope():
+    """The ladder cannot drift away from the cap that bounds it, because
+    it is a function of that cap. Move the envelope and every rung moves
+    with it — the failure items 30/57 named (rungs creeping up to equal
+    the cap and going inert) is now unrepresentable."""
+    for envelope in (5.0, 4.0, 2.5, 10.0):
+        cfg = RiskConfig(**_risk_kwargs(max_position_risk_pct=envelope))
+        assert cfg.agreement_ceiling_pct == derive_agreement_ceiling_schedule(
+            envelope, INDEPENDENT_SEAT_COUNT,
+        )
+        assert cfg.agreement_ceiling_pct[-1] == pytest.approx(envelope)
+        assert all(v < envelope for v in cfg.agreement_ceiling_pct[:-1])
+
+
+def test_shipped_schedule_is_the_derivation_not_a_typed_list():
+    """Reads `config/settings.yaml` itself. A hand-edit of those five
+    numbers fails here — the whole point of retiring items 30/57 was that
+    nobody should ever be able to type a rung again."""
+    import yaml
+    from pathlib import Path
+
+    settings = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "config" / "settings.yaml").read_text()
+    )["risk"]
+    assert settings["agreement_ceiling_pct"] == derive_agreement_ceiling_schedule(
+        float(settings["max_position_risk_pct"]), INDEPENDENT_SEAT_COUNT,
+    )
+
+
+def test_derivation_is_the_square_root_law_and_has_no_free_constant():
+    """`ceiling(n) = cap x sqrt(n / seats)`. Pinned as arithmetic so a
+    future edit to the helper that quietly reshapes the curve (linear,
+    or a fudged exponent) fails rather than passes."""
+    import math
+
+    cap, seats = 5.0, INDEPENDENT_SEAT_COUNT
+    derived = derive_agreement_ceiling_schedule(cap, seats)
+    for n, value in enumerate(derived, start=1):
+        assert value == pytest.approx(cap * math.sqrt(n / seats), abs=5e-4)
+    # Concave, not linear: each extra agreeing seat buys strictly less
+    # than the one before it. That IS the published shape.
+    gaps = [b - a for a, b in zip(derived, derived[1:])]
+    assert all(b < a for a, b in zip(gaps, gaps[1:]))
 
 
 def test_risk_config_rejects_schedule_exceeding_the_envelope():
@@ -227,7 +283,7 @@ def test_ceiling_binds_and_says_so_in_the_order_reasoning():
     # Wide stop so the single-name (20%) ceiling does NOT also bind here —
     # isolates the agreement ceiling's effect.
     analysis = _analysis("NVDA", entry=100.0, stop=80.0, target=140.0)
-    registry = _registry(NVDA={"technical": "bullish"})  # 1 aligned -> ceiling 3.0
+    registry = _registry(NVDA={"technical": "bullish"})  # 1 aligned -> ceiling 2.236
 
     decisions = constructor.construct_orders(
         targets=[target], positions=[], analyses=[analysis],
@@ -238,8 +294,8 @@ def test_ceiling_binds_and_says_so_in_the_order_reasoning():
     d = decisions[0]
     assert "agreement ceiling" in d.reasoning
     assert "not PM inconsistency" in d.reasoning
-    # risk 3.0% (post-ceiling) / $20 risk-per-share * $100 entry = 15% weight
-    assert abs(d.allocation_pct - 15.0) < 0.05
+    # risk 2.236% (post-ceiling) / $20 risk-per-share * $100 entry = 11.18%
+    assert abs(d.allocation_pct - 11.18) < 0.05
 
 
 def test_ceiling_never_exceeds_the_five_percent_envelope_even_if_misconfigured():
@@ -374,19 +430,19 @@ def test_composition_agreement_ceiling_then_budget_allocator_then_single_name():
     for d in buys.values():
         assert "agreement ceiling" in d.reasoning
 
-    # Both requests were narrowed 5.0% -> 3.0% by the agreement ceiling
-    # BEFORE the allocator ever saw them (6.0% combined). Alphabetical
+    # Both requests were narrowed 5.0% -> 2.236% by the agreement ceiling
+    # BEFORE the allocator ever saw them (4.472% combined). Alphabetical
     # tie-break processes CEG first: it fits the 4.0% cluster cap in full
-    # (risk 3.0% / $10 risk-per-share * $100 entry = 30% notional weight,
-    # then clamped to 20% by the single-name ceiling). OKLO is processed
-    # second with only 1.0% of cluster headroom left (4.0 - 3.0), rationed
-    # by the allocator down to 1.0% risk = 10% notional weight, which never
-    # reaches the single-name ceiling.
+    # (risk 2.236% / $10 risk-per-share * $100 entry = 22.36% notional
+    # weight, then clamped to 20% by the single-name ceiling). OKLO is
+    # processed second with only 1.764% of cluster headroom left
+    # (4.0 - 2.236), rationed by the allocator down to 1.764% risk = 17.64%
+    # notional weight, which never reaches the single-name ceiling.
     assert "single-name ceiling" in buys["CEG"].reasoning
     assert buys["CEG"].allocation_pct == pytest.approx(20.0, abs=0.05)
     assert "cluster" in buys["OKLO"].reasoning
     assert "single-name ceiling" not in buys["OKLO"].reasoning
-    assert buys["OKLO"].allocation_pct == pytest.approx(10.0, abs=0.05)
+    assert buys["OKLO"].allocation_pct == pytest.approx(17.64, abs=0.05)
 
 
 # ==========================================================================
@@ -398,7 +454,7 @@ def test_composition_agreement_ceiling_then_budget_allocator_then_single_name():
 # `src/portfolio_constructor.py` ever looked at the age of an earnings stance.
 # A bullish earnings view therefore counted as a full live corroborating
 # source forever: one stale stance moved a name from 1 aligned source to 2 and
-# bought it a 3.0% -> 4.0% risk allowance, a 33% larger allowance, on evidence
+# bought it a 2.236% -> 3.162% risk allowance, a 41% larger allowance, on evidence
 # that had confirmed nothing about today.
 #
 # The gate is a REMOVAL FROM THE TALLY only. The stance stays in the canonical
@@ -532,9 +588,9 @@ def _stale_ceiling_decisions(stale_sources):
     """One full-envelope long on NVDA with technical + earnings both bullish.
 
     Geometry: entry 100 / stop 70 / target 160. Risk-per-share $30, so a
-    ceiling of 4.0% risk is a 13.33% weight and 3.0% is a 10.00% weight —
-    both far below the 20% single-name cap, which therefore cannot be what
-    moves the number.
+    ceiling of 3.162% risk is a 10.54% weight and 2.236% is a 7.45% weight
+    — both far below the 20% single-name cap, which therefore cannot be
+    what moves the number.
 
     Returns the raw decision LIST, because gating every aligned source now
     leaves a net score of zero and produces no order at all.
@@ -561,17 +617,17 @@ def _stale_ceiling_decision(stale_sources):
 
 def test_a_fresh_second_source_earns_the_two_source_ceiling():
     d = _stale_ceiling_decision(None)
-    # 2 aligned -> 4.0% risk / $30 rps * $100 = 13.33% weight
-    assert abs(d.allocation_pct - 13.333) < 0.05
+    # 2 aligned -> 3.162% risk / $30 rps * $100 = 10.54% weight
+    assert abs(d.allocation_pct - 10.54) < 0.05
 
 
 def test_a_stale_bullish_earnings_view_no_longer_earns_the_higher_ceiling():
     """The defect, priced. Same registry, same trade — the only difference
     is that the earnings filing is older than the threshold, and the risk
-    allowance drops a rung from 4.0% to 3.0%."""
+    allowance drops a rung from 3.162% to 2.236%."""
     d = _stale_ceiling_decision({"NVDA": frozenset({"earnings"})})
-    # 1 aligned -> 3.0% risk / $30 rps * $100 = 10.00% weight
-    assert abs(d.allocation_pct - 10.0) < 0.05
+    # 1 aligned -> 2.236% risk / $30 rps * $100 = 7.45% weight
+    assert abs(d.allocation_pct - 7.45) < 0.05
     assert "agreement ceiling" in d.reasoning
 
 
@@ -664,9 +720,9 @@ def test_opposing_count_flips_with_macro_polarity_on_an_inverse_etf():
 def _dissent_decisions(registry, *, risk_pct: float = 5.0):
     """One NVDA long, entry 100 / stop 70 / target 160 (risk-per-share $30).
 
-    At that geometry 5.0% risk is a 16.67% weight, 4.0% is 13.33% and 3.0% is
-    10.00% — all under the 20% single-name cap, so any movement here is the
-    agreement ceiling and nothing else.
+    At that geometry 5.0% risk is a 16.67% weight, 3.162% is 10.54% and
+    2.236% is 7.45% — all under the 20% single-name cap, so any movement
+    here is the agreement ceiling and nothing else.
     """
     constructor = PortfolioConstructor()
     target = TargetPosition(
@@ -683,7 +739,7 @@ def _dissent_decisions(registry, *, risk_pct: float = 5.0):
 
 def test_dissent_moves_the_size_down_a_ceiling_rung():
     """The subtraction test that actually bites. 2-aligned/1-opposed nets to
-    +1, so the ceiling drops 4.0% -> 3.0% and the weight 13.33% -> 10.00%.
+    +1, so the ceiling drops 3.162% -> 2.236% and the weight 10.54% -> 7.45%.
     (1-aligned/1-opposed cannot distinguish a rung drop from a block, which
     is why this case and not that one.)"""
     decisions = _dissent_decisions(_registry(NVDA={
@@ -691,7 +747,7 @@ def test_dissent_moves_the_size_down_a_ceiling_rung():
     }))
     assert len(decisions) == 1
     d = decisions[0]
-    assert abs(d.allocation_pct - 10.0) < 0.05
+    assert abs(d.allocation_pct - 7.45) < 0.05
     assert "1 independent source(s) took the OPPOSITE side" in d.reasoning
     assert "already been subtracted" in d.reasoning
 

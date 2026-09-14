@@ -816,7 +816,7 @@ phases:
       - kind: setting_present
         path: "config/settings.yaml"
         key: "risk.agreement_ceiling_pct"
-        note: "§9.4: indexed ceiling schedule applied by the signed source score (default [3.0, 4.0, 5.0, 5.0, 5.0]%, not pinned — expected to be re-tuned as agreement rises)"
+        note: "§9.4: indexed ceiling schedule applied by the signed source score. DERIVED 2026-09-14 (retired items 30/57) as max_position_risk_pct x sqrt(n/5 seats) = [2.236, 3.162, 3.873, 4.472, 5.0]% — a function of the ratified envelope, never hand-tuned"
       - kind: test_exists
         path: "tests/test_conflict_adjudication.py"
         test: "test_unadjudicated_conflict_drops_only_its_own_target"

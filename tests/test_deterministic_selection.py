@@ -73,12 +73,20 @@ def test_rules_admit_twentyfive_names_and_rank_none_of_them(rows):
     # is UNMEASURABLE still need it. That is the redundancy item 1(d)
     # creates, visible on real data.
     assert summary["enters_via_catalyst_door"] == ["MSFT", "TSM"]
-    # 48% against a 25% total-risk budget. NEW as of item 1(d) and worth
+    # 47.24% against a 25% total-risk budget. NEW as of item 1(d) and worth
     # stating plainly: the eligible set no longer fits at once, so the
     # RISK BUDGET — not the reward:risk floor — is now what forces a choice
     # between permitted names. `allocate_risk_budget` rations it; the rule
     # set still names no single pick.
-    assert summary["total_max_risk_pct"] == 48.0
+    #
+    # 48.0 -> 47.24 on 2026-09-14, items 30/57: the agreement ceiling is now
+    # derived from the envelope rather than hand-typed, so its first rung is
+    # 2.236% instead of 3.0%. On this real day the ceiling binds on very
+    # little — the drop is 0.76 points across 25 names — because most
+    # eligible names were already asking under the old rung. That is itself
+    # the measured answer to "how much does this change cost": on the one
+    # day with good records, almost nothing in aggregate.
+    assert summary["total_max_risk_pct"] == 47.24
     assert summary["total_max_risk_pct"] > 25.0
     assert summary["rules_name_a_single_pick"] is False
 
