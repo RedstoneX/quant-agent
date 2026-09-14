@@ -240,6 +240,101 @@ with an invented score.
 
 ---
 
+### 2026-09-13 — the desk could refuse every idea, every day, tell the truth each time, and never raise its voice (item 59)
+
+**In plain words:** every kind of empty day already had its own honest
+wording and its own alarm. What nothing watched was the PATTERN. If a fault
+had jammed one gate shut, the desk would have reported "no trades today"
+every morning, truthfully, forever, and nobody would have been told. That
+matters more here than it sounds: in the window the census measured, 6
+sessions out of 11 placed no trades at all, so a run of empty days is the
+normal state of this desk — which is exactly what would have made a broken
+run invisible. There is now an alarm for it, and it counts no days.
+
+**Why no day count.** The obvious alarm — "tell me after N identical empty
+days" — was refused, because there is no honest place to read N off. It
+would have been invented, and an invented number is the thing this desk
+does not ship. The reformulation that replaced it: **a jammed gate and a
+quiet market differ in SHAPE, not in duration.** A quiet market kills
+different candidates for different reasons — this one has no usable
+structure, that one's reward:risk is thin, another is too young to measure.
+A jammed gate kills every candidate with the SAME reason, and keeps doing it
+while the candidates underneath it change.
+
+So the trigger is stated with no threshold in it at all:
+
+> every candidate, in every consecutive no-entry session back to the last
+> session that ended any other way, was refused by ONE reason — the same
+> one — while the set of candidates was NOT the same set each time.
+
+The run of sessions is bounded by the data, not by a constant: it ends at
+the last session that entered something, let a candidate through, refused
+its candidates for more than one reason, or refused them for a different
+one. "The candidate set was not the same set each time" is what forces more
+than one session into it — you cannot observe that a reason did not vary
+from a single observation, nor that the input varied from identical inputs.
+Nothing is tuned and nothing was fitted to the desk's own trade history.
+
+**A worked example, on real rows.** Two real sessions from 2026-09-02, the
+last day the desk ran before the timers were paused, replayed through the
+new check straight out of the production evidence table:
+
+    intra_check-f90ec0ba   candidates: NVDA
+    intra_check-ab906349   candidates: CEG, DE, VST, ZS
+
+Every one of those five names ended on the identical terminal record —
+`portfolio_manager / omitted / candidate_not_selected_for_target`. One
+reason, five names, two sessions, and the candidate set changed completely
+between them. Run against a database holding only those two sessions, the
+check fires and says so in the owner's words. It does NOT fire against the
+real database, because the session that actually sits between those two
+placed an entry (ORCL) and the session after them let the cash-sweep
+vehicle fill — either one ends the run. That is the alarm working, not the
+alarm being lucky: both of those are cases where "it refused every idea" is
+simply false.
+
+**What made this buildable, and what it exposed.** The durable per-candidate
+evidence rows written since 2026-09-03 (and extended 2026-09-12) do carry
+what the plan assumed: a per-symbol, machine-readable row for every dropped
+candidate, drained exactly once per session, already read by the funnel
+census and by the evening blocked-proposals digest. Two things about them
+are worth writing down before anyone trusts them further:
+
+* **Only two refusals are recorded as named CODES** — a stop wider than the
+  instrument's reach, and too little history to measure. Every other
+  constructor drop reaches the record as `constructor_dropped` with a detail
+  string recovered by a **regular expression over the constructor's own log
+  lines**, and with a literal fallback of "no matching constructor log line
+  captured" when the pattern misses. That is a real per-symbol row, so the
+  candidate is never silently absent — but the reason inside it is prose,
+  not a code, and a refactor that rewords a log line changes it. This alarm
+  works around that by normalising the prose (the ticker and every numeric
+  literal are replaced before two reasons are compared), which can only ever
+  merge two texts describing the same rule, never split one rule in two — so
+  its failure mode is a missed alarm, never a false one. It is a workaround
+  for a gap, not a fix for it.
+* **None of it has ever run in production.** The timers were paused on
+  2026-09-03; the production evidence table contains 38 `pipeline_event`
+  rows, all from 2026-09-02, and not one `constructor_dropped` or
+  `constructor_refused` row among them. The refusal-recording path has been
+  exercised only by tests. Nobody should cite it as proven in the field.
+
+**How it behaves while the desk is paused.** It is silent, and needs no flag
+to be. The check requires the newest session in the run to fall on the most
+recent completed trading day — the same calendar the stop-coverage watchdog
+already uses. A paused desk runs no sessions, so its newest session is
+never current, so nothing is sent: a deliberately paused desk is not a
+defect. It re-arms itself the moment sessions resume, because that is the
+same moment the newest session becomes current again. Verified against a
+copy of the live database: it reports the desk as not running and sends
+nothing.
+
+**Cadence.** At most one alert per trading day while the condition holds —
+item 41's existing ruling, the same one the stop-coverage watchdog uses. No
+new cadence was invented. It rides the daily alert-heartbeat unit, the one
+thing proven to run whether or not the trading timers are on, and it can
+never change that unit's own verdict or exit code.
+
 ### 2026-09-13 — item 15 (price provenance) closed: live quotes and price bars now carry the same honest freshness the position-mark slice shipped
 
 **In plain words:** the piece of item 15 left open on 2026-09-03 — telling a
