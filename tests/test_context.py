@@ -228,3 +228,111 @@ def test_context_is_a_frozen_value_object():
     except Exception:
         return
     raise AssertionError("MarketContext must be immutable")
+
+
+# ---------------------------------------------------------------------------
+# docs/WORK.md item 58 (closed 2026-09-13): the shape constants are read off
+# the instrument, not picked. These pin the READING, not any number — a
+# regression here would silently reintroduce a flat percentage.
+# ---------------------------------------------------------------------------
+
+
+def _steady(n: int, *, price: float, half_range: float, start_day: int = 0) -> list[OHLCV]:
+    """`n` bars at `price` whose every true range is exactly 2*half_range."""
+    base = date(2023, 1, 2) + timedelta(days=start_day)
+    return [
+        OHLCV(
+            date=base + timedelta(days=i),
+            open=price,
+            high=price + half_range,
+            low=price - half_range,
+            close=price,
+            volume=1_000_000,
+        )
+        for i in range(n)
+    ]
+
+
+class TestInstrumentReadShapeConstants:
+    """No flat percentage may decide what the analyst is told."""
+
+    def test_module_states_no_percentage_thresholds(self):
+        """The named convention constants are gone, not renamed."""
+        import src.data.context as context_mod
+
+        for gone in (
+            "_MIN_GAP_PCT",
+            "_CONSOLIDATION_MAX_RANGE_PCT",
+            "_CONSOLIDATION_MAX_DRIFT_RATIO",
+        ):
+            assert not hasattr(context_mod, gone), (
+                f"{gone} is back — item 58 replaced it with an instrument read"
+            )
+
+    def test_consolidation_window_is_the_atr_period_not_a_picked_number(self):
+        from src.data.context import _CONSOLIDATION_WINDOW
+        from src.data.technical import ATR_PERIOD
+
+        assert _CONSOLIDATION_WINDOW == ATR_PERIOD
+
+    def test_same_percentage_gap_is_an_event_on_a_quiet_name(self):
+        quiet = _steady(40, price=100.0, half_range=0.2)
+        # Gap up to a level price never revisits. Width 2.8 vs an ATR of 0.4.
+        quiet += _steady(6, price=104.0, half_range=0.2, start_day=40)
+        ctx = compute_market_context(quiet)
+        assert ctx is not None
+        ups = [g for g in ctx.unfilled_gaps if g.direction == "up"]
+        assert ups, "a gap many times the name's ordinary day must be reported"
+        assert ups[0].size_atr is not None and ups[0].size_atr > 1.0
+
+    def test_the_same_percentage_gap_is_noise_on_a_volatile_name(self):
+        """Identical ~3.6% gap, ATR ten times larger — not worth reporting."""
+        volatile = _steady(40, price=100.0, half_range=3.0)
+        volatile += _steady(6, price=104.0, half_range=0.4, start_day=40)
+        ctx = compute_market_context(volatile)
+        assert ctx is not None
+        assert [g for g in ctx.unfilled_gaps if g.direction == "up"] == [], (
+            "a gap smaller than the name's own ordinary day is not an event"
+        )
+
+    def test_gap_size_is_reported_in_the_names_own_atr(self):
+        quiet = _steady(40, price=100.0, half_range=0.2)
+        quiet += _steady(6, price=104.0, half_range=0.2, start_day=40)
+        ctx = compute_market_context(quiet)
+        assert ctx is not None
+        text = format_context_block(ctx)
+        assert "× its ATR then" in text
+
+    def test_contraction_against_the_names_own_prior_stretch(self):
+        """Wide, then tight and sideways — a base by contraction."""
+        bars = _steady(20, price=100.0, half_range=6.0)
+        bars += _steady(14, price=100.0, half_range=1.0, start_day=20)
+        ctx = compute_market_context(bars)
+        assert ctx is not None and ctx.is_consolidating
+
+    def test_expansion_is_not_a_base_however_tight_it_looks(self):
+        """Tight, then wider — the envelope grew, so it is not coiling."""
+        bars = _steady(20, price=100.0, half_range=1.0)
+        bars += _steady(14, price=100.0, half_range=6.0, start_day=20)
+        ctx = compute_market_context(bars)
+        assert ctx is not None and not ctx.is_consolidating
+
+    def test_a_base_wider_than_the_old_eight_percent_still_qualifies(self):
+        """The old flat 8% refused this; the instrument says it is a base.
+
+        A high-beta name whose envelope has halved is consolidating even
+        though 20% of price is nowhere near 8%.
+        """
+        bars = _steady(20, price=100.0, half_range=20.0)
+        bars += _steady(14, price=100.0, half_range=10.0, start_day=20)
+        ctx = compute_market_context(bars)
+        assert ctx is not None and ctx.is_consolidating
+        assert ctx.consolidation_range_pct is not None
+        assert ctx.consolidation_range_pct > 8.0
+        assert ctx.consolidation_range_atr is not None
+        assert "× its own ATR" in format_context_block(ctx)
+
+    def test_a_steady_trend_is_still_not_a_base(self):
+        """Drift must not exceed oscillation — the sideways half is intact."""
+        ctx = compute_market_context(_bars(_ramp(200, 100.0, 300.0)))
+        assert ctx is not None and not ctx.is_consolidating

@@ -22,80 +22,99 @@ what would catch it next time.
 
 ---
 
-### 2026-09-13 — the Risk Manager's and Portfolio Manager's prompt sheets now render their limits from settings, not hand-typed prose
+### 2026-09-14 — the four numbers that describe every chart to every analyst seat were all round figures somebody liked; they are now read off the stock itself (item 58)
 
-The reviewer's standing sheet stated its limits as hand-typed prose. It said
-the long single-name ceiling was **33%** against a real `max_position_pct` of
-**65** — and that was **wrong at birth, not drift**: commit `e1c639a2`
-(PR #297, titled "single-name cap 100 -> 33") set the setting to 65 and typed
-33 into the sheet in the same diff. The same commit ALSO wrote
-`max_position_pct=65` correctly into the sheet's hard-rule inventory, so the
-sheet contradicted itself from minute one. **No verdict or log row has been
-found showing the stale 33 changed an outcome, and none is claimed** — what
-was fixed is an internal contradiction and the mechanism that allowed it.
+**In plain words:** before any analyst seat looks at a chart, the desk writes
+it a short description — has this stock gapped, is it going sideways. Four
+round numbers decided what got written: a gap had to be at least 2% to be
+mentioned, and "going sideways" meant a total range under 8% across 15
+sessions with a small net move. None of them came from anywhere. The problem
+is not that they are wrong, it is that they mean different things on
+different stocks: a 2% gap on a sleepy utility is a real event, a 2% gap on a
+high-volatility name is an ordinary Tuesday, and both were reported to the
+seats in exactly the same words. Every number in that description is now
+measured against the stock's own recent behaviour instead, so there is no
+percentage left in it at all.
 
-The line that commit replaced was relational ("half the long single-name
-ceiling") and therefore drift-immune; it was swapped for a literal. That
-sentence is now relational again. A second, genuinely stale one said the
-constructor caps a stop-out at 0.5% of equity against a ratified
-`max_position_risk_pct` of 5 — and it named the wrong binding mechanism as
-well, since the §9.4 agreement ceiling and the budget allocator narrow the
-real per-trade budget before the 5% envelope is reached. Rewritten to name
-what binds first.
+**What each number actually moved, established before any of it was changed.**
+This mattered more than the fix. Nothing in the trading rules reads the gap
+list or the consolidation flag directly — no gate, no stop, no size. Both
+reach a real decision only one way: they are sentences in the Technical
+Analyst's prompt, and that analyst's own `setup_type` verdict *does* move
+real machinery downstream (a sizing multiplier, whether the reward/risk floor
+applies at all, and how the position is tracked after entry). So the honest
+answer is that these constants can change a trade taken or refused in a live
+session, but only by persuading a model, never by mechanically refusing
+anything. The one place a constant does gate deterministically is the
+backtest engine, which substitutes the consolidation flag for the analyst's
+chart read; that path does not touch live trading.
 
-The sheet now carries `{{risk.<setting>}}` placeholders rendered by
-`src/agents/prompt_limits.py` from the same config object the engine is built
-from, **at agent construction** (not on first LLM call, which is the risk
-stage — after the whole day's analysis is paid for). Two build checks: a
-number beside a setting's name, and a number stated as the value of a
-ceiling/cap/budget/limit/floor phrase. Only the second catches the 2026-09-11
-shape; that gap is pinned by its own test.
+**What replaced them.**
 
-**FOUND WHILE FIXING — pre-existing, latent, NOT swept.** `src/pipeline.py`
-builds the risk engine's `RiskConfig` from a hand-enumerated argument list.
-**22 declared risk settings were absent from it** and silently fell back to
-pydantic class defaults, ignoring settings.yaml. Every one of those defaults
-currently equals its settings value, so nothing is live-wrong — but
-`allow_margin` was the same omission and did bite (it defaulted False while
-settings said True, blocking a user's BUYs). The seven settings the two sheets
-render are now threaded; **the remaining 15 are open work**, pinned by a test
-that fails if the count grows or if any omitted setting ever diverges from its
-default. Threading them changes enforcement and needs its own review.
+* *Gap worth reporting.* Bulkowski's definition of a gap is purely structural
+  and carries no size floor: today's low above yesterday's high, or today's
+  high below yesterday's low. The detection code was already exactly that;
+  the 2% was a second screen bolted on top, justified in a comment as
+  "smaller ones are noise that ordinary intraday movement fills within
+  hours". That sentence is now the test, measured: a gap is reported when it
+  is wider than one ordinary day's trading range for that name — which is
+  what ATR is — so ordinary intraday movement demonstrably cannot close it in
+  a session. The published prescription is to express gap size in ATR rather
+  than to threshold it, so the multiple is now printed on the line and the
+  seat can see the significance for itself.
+* *Consolidation.* Two tests, neither containing a number. First, the
+  trailing window's high-low envelope must be no wider than the envelope of
+  the equal-length stretch immediately before it — Toby Crabel's narrow-range
+  shape (NR4/NR7: the narrowest range of the last four or seven bars) lifted
+  from a single bar to a window, and the same idea as Minervini's volatility
+  contraction. It is a comparison against the name's own immediate past, so
+  it means the same thing on a utility and on a high-beta name. Second, the
+  window must be sideways rather than drifting: the range is spent either on
+  net drift or on oscillation, and a base oscillates more than it drifts.
+  That second test is arithmetically identical to the old
+  `_CONSOLIDATION_MAX_DRIFT_RATIO = 0.5` — the 0.5 turned out not to be a
+  tuned cut at all but the break-even point between drift-dominated and
+  oscillation-dominated. Behaviour unchanged; only the framing was arbitrary.
+* *Window length.* The 15 is now the ATR period the same file already reads
+  volatility over. A stretch shorter than one full volatility-measurement
+  period has no volatility reading of its own to be judged tight against, so
+  there is nothing to compare it to. The window sets a minimum and a
+  resolution, not a pass/fail line: the detector already extends the base
+  backwards for as long as price stays inside the envelope, so the base
+  length that gets reported is read off the instrument either way.
 
-**PM's sheet, same treatment, same PR series.** `portfolio_manager.md` now
-renders ten settings and `tests/test_prompts_anchors.py`'s two value anchors
-are retargeted to the placeholders. Correcting an earlier claim in this
-entry: PM's sheet did not stay correct on 2026-09-11 because the human
-process was better — it stayed correct because that anchor test pinned the
-literal and the reviewer's sheet had no such anchor. The check held; it just
-cost a third hand-maintained copy of the number.
+**What was ruled out, by name.** O'Neil's flat base ("roughly five weeks or
+more of sideways trade with a correction of no more than about 15 percent")
+was rejected because the same source says outright that "Both numbers are
+conventions from studies of past leaders, not laws" — adopting them would
+swap one convention for another with a citation stapled to it, which is the
+same unsourced act in the other direction. Also rejected: picking any ATR
+multiple for the gap floor, the move already refused for the level-match
+tolerance. The multiple used is one, and one is not a tuned parameter — it is
+the identity "wider than an ordinary day". The academic route was searched
+too, after the item 55 precedent: the one directly relevant rule-based
+recognizer for horizontal/rectangle consolidation patterns is Tsinaslanidis
+and Zapranis' 2016 Springer book, whose identification criteria are behind a
+paywall and could not be fetched. It is recorded here as unread, not as
+unsupportive.
 
-**PM's parity is against TWO objects, not one.** `src/risk/rules.py` contains
-no reference at all to `max_cluster_risk_share_pct`, `short_gap_risk_multiple`,
-`min_position_risk_pct` or `max_portfolio_risk_pct` — those four are enforced
-by `PortfolioConstructor` from a separately built `ConstructorConfig`. The
-parity tests now build BOTH objects through the pipeline's own extracted
-builders (`build_risk_config`, `build_constructor_config`) and check that
-MOVING a setting moves what the objects carry, rather than scanning
-`src/pipeline.py` for a keyword name — a scan a hard-coded
-`max_gross_bearish_pct=20.0` would have satisfied.
+**Known weakness, stated rather than hidden.** A purely relative contraction
+test flags dead tape as consolidating, because in a dead market every stretch
+is narrow and nothing is coiled. That is a real limitation of the shape and
+the usual remedy is to add an absolute floor as some fraction of ATR — a
+fraction nobody can source, so it was not added. It bites less here than it
+would elsewhere: this flag tells the analyst "range-bound, not breakout",
+and a dead stock genuinely is range-bound. The flag would be wrong if it
+were read as "expansion is imminent". Nothing reads it that way today; if
+something ever does, this is the paragraph to come back to.
 
-**Still open, pre-existing:** `build_constructor_config`'s `_risk_setting(name,
-default)` pattern types a literal fallback for roughly twenty settings, so each
-of those keeps a home in `src/pipeline.py` on top of settings.yaml and the
-dataclass field default. Not touched here — sweeping it changes sizing
-fallbacks nobody has reviewed. The equivalent literals on the risk engine's
-side were removed in this PR (`_threaded_risk_settings` omits a non-numeric
-read instead of substituting a number), and `min_position_risk_pct` now passes
-a legal **0** through both paths rather than being swallowed into a default.
-
-**Also open:** `config/settings.yaml`'s own `max_single_short_pct` comment
-still says "At 33 this cap is now roughly a THIRD of the long ceiling" —
-stale from the same commit, in the settings file itself.
-
+**What catches it next time.** A test asserts the three deleted constants
+have not reappeared under any name, and another asserts the consolidation
+window is still the ATR period rather than a figure of its own. Two more
+feed the same percentage gap to a quiet name and to a volatile one and
+require opposite answers, which no flat threshold can pass.
 
 ---
-
 
 ### 2026-09-14 — item 49 closed: the desk was choosing which trades to fund by how much they asked for, and nobody had chosen that
 
@@ -218,6 +237,80 @@ exists. The backtest engine still rations largest-first, which with its
 uniform requests means alphabetically; it has no candidate ranking to spend
 down, so it was filed as its own open board item rather than papered over
 with an invented score.
+
+---
+
+### 2026-09-13 — the Risk Manager's and Portfolio Manager's prompt sheets now render their limits from settings, not hand-typed prose
+
+The reviewer's standing sheet stated its limits as hand-typed prose. It said
+the long single-name ceiling was **33%** against a real `max_position_pct` of
+**65** — and that was **wrong at birth, not drift**: commit `e1c639a2`
+(PR #297, titled "single-name cap 100 -> 33") set the setting to 65 and typed
+33 into the sheet in the same diff. The same commit ALSO wrote
+`max_position_pct=65` correctly into the sheet's hard-rule inventory, so the
+sheet contradicted itself from minute one. **No verdict or log row has been
+found showing the stale 33 changed an outcome, and none is claimed** — what
+was fixed is an internal contradiction and the mechanism that allowed it.
+
+The line that commit replaced was relational ("half the long single-name
+ceiling") and therefore drift-immune; it was swapped for a literal. That
+sentence is now relational again. A second, genuinely stale one said the
+constructor caps a stop-out at 0.5% of equity against a ratified
+`max_position_risk_pct` of 5 — and it named the wrong binding mechanism as
+well, since the §9.4 agreement ceiling and the budget allocator narrow the
+real per-trade budget before the 5% envelope is reached. Rewritten to name
+what binds first.
+
+The sheet now carries `{{risk.<setting>}}` placeholders rendered by
+`src/agents/prompt_limits.py` from the same config object the engine is built
+from, **at agent construction** (not on first LLM call, which is the risk
+stage — after the whole day's analysis is paid for). Two build checks: a
+number beside a setting's name, and a number stated as the value of a
+ceiling/cap/budget/limit/floor phrase. Only the second catches the 2026-09-11
+shape; that gap is pinned by its own test.
+
+**FOUND WHILE FIXING — pre-existing, latent, NOT swept.** `src/pipeline.py`
+builds the risk engine's `RiskConfig` from a hand-enumerated argument list.
+**22 declared risk settings were absent from it** and silently fell back to
+pydantic class defaults, ignoring settings.yaml. Every one of those defaults
+currently equals its settings value, so nothing is live-wrong — but
+`allow_margin` was the same omission and did bite (it defaulted False while
+settings said True, blocking a user's BUYs). The seven settings the two sheets
+render are now threaded; **the remaining 15 are open work**, pinned by a test
+that fails if the count grows or if any omitted setting ever diverges from its
+default. Threading them changes enforcement and needs its own review.
+
+**PM's sheet, same treatment, same PR series.** `portfolio_manager.md` now
+renders ten settings and `tests/test_prompts_anchors.py`'s two value anchors
+are retargeted to the placeholders. Correcting an earlier claim in this
+entry: PM's sheet did not stay correct on 2026-09-11 because the human
+process was better — it stayed correct because that anchor test pinned the
+literal and the reviewer's sheet had no such anchor. The check held; it just
+cost a third hand-maintained copy of the number.
+
+**PM's parity is against TWO objects, not one.** `src/risk/rules.py` contains
+no reference at all to `max_cluster_risk_share_pct`, `short_gap_risk_multiple`,
+`min_position_risk_pct` or `max_portfolio_risk_pct` — those four are enforced
+by `PortfolioConstructor` from a separately built `ConstructorConfig`. The
+parity tests now build BOTH objects through the pipeline's own extracted
+builders (`build_risk_config`, `build_constructor_config`) and check that
+MOVING a setting moves what the objects carry, rather than scanning
+`src/pipeline.py` for a keyword name — a scan a hard-coded
+`max_gross_bearish_pct=20.0` would have satisfied.
+
+**Still open, pre-existing:** `build_constructor_config`'s `_risk_setting(name,
+default)` pattern types a literal fallback for roughly twenty settings, so each
+of those keeps a home in `src/pipeline.py` on top of settings.yaml and the
+dataclass field default. Not touched here — sweeping it changes sizing
+fallbacks nobody has reviewed. The equivalent literals on the risk engine's
+side were removed in this PR (`_threaded_risk_settings` omits a non-numeric
+read instead of substituting a number), and `min_position_risk_pct` now passes
+a legal **0** through both paths rather than being swallowed into a default.
+
+**Also open:** `config/settings.yaml`'s own `max_single_short_pct` comment
+still says "At 33 this cap is now roughly a THIRD of the long ceiling" —
+stale from the same commit, in the settings file itself.
+
 
 ---
 

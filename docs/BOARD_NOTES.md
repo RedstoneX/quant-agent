@@ -259,13 +259,6 @@ this line, one heading per item.
 **The decision —** Not yet. If research shows agreement between independent seats does not actually predict anything, the honest answer is to delete the schedule and let the 5% ceiling stand alone — and that would be a real change to how the desk sizes, so it would come back to you then. Right now there is nothing to rule on.
 **Recommendation —** Answer the underlying question first: does more agreement mean a better trade? If it cannot be shown, collapse the schedule rather than tune it.
 
-## item 58
-
-**Plain language —** Before the analysts look at a chart, the desk describes it to them — whether the stock has gapped, whether it has been going sideways. Four numbers decide what gets described: a gap must be at least 2% to be mentioned; "going sideways" means a total range under 8% across 15 sessions with a small net move. Every one of those is a round figure someone picked. They are not trading rules and they refuse nothing, which is why this is filed as research rather than a fault — but they shape what every seat is told, so they bias every decision without ever appearing in one.
-**Example —** A 2% gap on a sleepy utility is a genuine event. A 2% gap on a high-volatility name is an ordinary Tuesday. Both get reported to the analysts in exactly the same words, and the seats have no way to tell which is which.
-**The decision —** None for you. Chart-description question, so it goes to research.
-**Recommendation —** Same fix as the level width: replace the flat percentages with the stock's own normal movement, so a gap is "unusual for this name" rather than "over 2%". That needs no number at all and is probably a small job.
-
 ## item 59
 
 **Plain language —** After 13 September the desk can no longer go quiet for a day without telling you — every way it can produce nothing now has an alarm, and each kind of empty day has its own distinct wording. What it still cannot do is notice a PATTERN. If a fault caused it to refuse every single idea, every single day, it would report that truthfully each morning and never once raise its voice. Nobody has decided how many identical empty days should set something off, and no number was invented for it.
