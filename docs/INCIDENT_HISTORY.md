@@ -22,6 +22,276 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — item 49 closed: the desk was choosing which trades to fund by how much they asked for, and nobody had chosen that
+
+**In plain words:** the desk can only risk so much in total — a quarter of the
+account. Until 2026-09-11 that ceiling almost never got in the way, because
+another rule was throwing out so many trades that there was always room. That
+rule was removed for being wrong, and the number of trades the desk is allowed
+to take roughly doubled. So the ceiling now binds on an ordinary day: the desk
+wants to risk about twice what it is permitted to, and something has to decide
+which trades actually get the money. Nothing did. The money went to whichever
+trade had asked for the BIGGEST amount — a measure of size, not of quality, so
+a mediocre idea asking for a lot beat an excellent idea asking for a little,
+every time. The owner's decision was best-ranked first: fund the strongest
+idea, then the next, until the money runs out. That is now what happens. A
+second, smaller problem was found and fixed alongside it: a trade that missed
+out purely because the money ran out was leaving no record at all of why — it
+simply vanished off the order list.
+
+**Both halves are now ratified.** The owner settled the ORDER on 2026-09-12
+("be ran by the best, why bother with crappy ones if you've got a choice, go
+with the best") and the CUT LINE on 2026-09-14. The item is closed; number 49
+is retired and is never reused.
+
+**The measured case this was built against.** Run `run-64290730`, after the
+reward:risk floor was removed by setup type: eligible names went 12 → 25, and
+the eligible set asked for **48% of equity at risk against the 25%
+`max_portfolio_risk_pct` ceiling**. Those two aggregates are what was measured;
+the per-name split below is arithmetic on their average (48 / 25 = 1.92% per
+name), NOT recovered per-symbol data, and is labelled so nobody quotes it back
+as a measurement.
+
+Worked through at that average, with the desk's own 0.5% minimum tradeable
+size:
+
+- 12 names funded in full at 1.92% each — 23.04% committed.
+- The 13th finds 1.96% of headroom left, asks 1.92%, and is funded in full —
+  24.96% committed.
+- The 14th finds 0.04% left. That is under the 0.5% floor, so it is DENIED
+  rather than shrunk to a token position — unchanged behaviour, and the
+  reason the floor exists.
+- Names 15 through 25 find nothing at all.
+
+So roughly half the eligible sheet cannot be funded on a normal day. **Before
+this change**, the 13 that got funded were the 13 that had asked for the most
+risk, ties broken alphabetically. **After**, they are the top 13 of the desk's
+own candidate ranking. The count funded is identical; which names they are is
+not, and that was the whole point.
+
+**The cut line: taken at reduced size, not skipped. Ratified 2026-09-14.**
+When the ranking runs out of money part-way through a name, that name is
+funded with whatever is left rather than passed over. The reason, recorded
+because a decision without one rots: **cutting the size does not damage the
+trade.** Same instrument, same stop, same reward-to-risk geometry — fewer
+shares. Nothing about the idea is degraded by owning less of it. And it needs
+no invented number, because the existing `min_position_risk_pct` floor (0.5)
+already decides when a remainder is too small to be worth taking; below the
+floor the target is DROPPED, never zeroed.
+
+**Explicitly rejected at the cut line:** skipping the partially-affordable
+name and continuing down the ranking for a cheaper one that fits in full. That
+funds a worse-ranked idea purely because it costs less, which directly
+contradicts the "go with the best" ruling. The rejected branch is kept written
+and tested behind the named switch `PARTIAL_FIT_POLICY`, so revisiting the
+ruling would be a decision rather than a rewrite — a ratified default is not a
+reason to delete the alternative.
+
+**Also rejected, at the 2026-09-12 decision:** proportional scale-down (sizing
+everyone smaller turns every strong idea into a weak one), conviction tiering,
+a hard cap on names per session, and re-tightening the reward:risk floor that
+had just been removed.
+
+**What "best-ranked" actually resolves to, and whether it is sound.** It is
+`src/verdicts.py::rank_verdicts`, reused unchanged — no new score was invented
+and none could be, under the no-arbitrary-numbers rule. Its order is: the
+composite of each reporting seat's direction magnitude and conviction (seats
+weighted by a research-informed prior, 2026-09-03), then the trade's real
+structure-derived reward:risk as a tiebreak, then the symbol name as a final
+stabiliser. Two honest caveats, stated rather than papered over:
+
+- The symbol-name stabiliser is alphabetical. It is only reached when two
+  candidates are equal on BOTH real signals, so this is not the "ranking is
+  mostly alphabetical" defect already recorded against the EXIT path — that
+  was checked for specifically. Entry ranking does not have it.
+- The seat weights (1.2 technical/earnings, 1.0 news, 0.8 smart_money/macro)
+  are a research-informed prior, not a measurement of THIS desk's analysts.
+  That is already flagged on the board as item 31's posture. It was true
+  before this change and is unchanged by it — but it is now load-bearing for
+  which trades get funded, not only for the order they are listed in, which
+  is a real increase in what that prior decides.
+
+**The ranking that is used is the ranking the model was shown.** It is taken
+from the Portfolio Manager's own prompt-rendering pass and threaded through to
+the allocator, never recomputed downstream. Recomputing would risk rationing
+against numbers the model never saw. Same pattern, and the same reason, as the
+rotation pre-check.
+
+**A candidate that loses the budget is no longer silent.** This was the one
+constructor drop path with no durable per-symbol record. Its log line read
+"Constructor: X produces no order — risk budget granted 0% ...", and the
+drop-reason capture's pattern requires the words rejected/refused/skipped
+after the symbol, so it did not match — every budget-rationed name reached the
+database as the generic `constructor_dropped` with the detail "no matching
+constructor log line captured". Verified by running the capture's own regex
+against the real message before changing anything. It now goes through the
+same structured refusal channel every other named constructor refusal uses,
+under the code `risk_budget_exhausted`, with the requested percentage, the
+binding ceiling and the plain statement that nothing is wrong with the idea —
+it passed every gate and lost only the queue. Once the budget binds on a
+normal day, that was about to become the largest unexplained bucket on the
+sheet.
+
+**Not zeroed, dropped.** A 0% risk target is read downstream as "sell it". A
+budget refusal leaves no plan for the symbol at all, so the delta loop skips
+it and a held position is left exactly where it is. Refusing to open is not a
+decision to close. Pinned by a test.
+
+**What was deliberately NOT done.** No new constant was introduced — the
+change is an ordering, and it reads its order off machinery that already
+exists. The backtest engine still rations largest-first, which with its
+uniform requests means alphabetically; it has no candidate ranking to spend
+down, so it was filed as its own open board item rather than papered over
+with an invented score.
+
+---
+
+
+### 2026-09-13 — the insider holdings data the board said we did not have was already being downloaded, parsed and stored — and the filter using it was throwing away the one band the research calls a buy signal (item 52)
+
+**In plain words:** the board carried an open owner decision asking whether to
+go and buy, or somehow approximate, data on how much stock an insider already
+owns — because judging a sale by its dollar size is weaker than judging it by
+what share of the person's own position it represents. The premise was wrong.
+Every SEC Form 4 the desk downloads already states the filer's holding
+immediately after the trade, the desk already parses that number, and it
+already stores it on every observation. This was never an acquisition
+problem. It was a wiring problem, and the wiring was half done.
+
+**How the premise was checked rather than assumed.** Pulled the SEC EDGAR
+daily index for 2026-09-11 (895 Form 4 filings), downloaded the first 120
+submissions and parsed them with the desk's own XPath. Of 77 open-market
+purchase/sale rows across those filings, 77 carried
+`postTransactionAmounts/sharesOwnedFollowingTransaction` — 100%, no gaps. The
+ratio needs no new source, no subscription and no approximation.
+
+**What was already half-built.** The routine/opportunistic classifier has had
+a proportional sell test since it was written: it reconstructs the
+pre-transaction holding and asks what fraction was sold. So the item's
+substance was partly live already. What was missing: purchases had no such
+measure at all, and nothing outside that one classifier branch ever saw the
+ratio — the number was computed, used for a single yes/no, and thrown away
+before the analyst seat or the operator could weigh it.
+
+**The number that filter used was invented.** The materiality boundary was
+0.05. Traced through the code comments and the research notes, that 5%
+matches no published band anywhere; the research note it cites carried the
+claim with no citation attached at all. Chasing the claim to its actual
+source: Scott & Xu, *Some Insider Sales Are Positive Signals*, Financial
+Analysts Journal 60(3), 2004 — 512,133 transactions, 80,742 company-quarters,
+1987-2002, and genuinely a measurement rather than an assertion. They cut
+"shares traded as a percentage of shares owned" at **10% and 50%**, not 5%.
+Their size- and book-to-price-adjusted quarterly excess returns: sales over
+100,000 shares are significantly negative only in the over-50% band (-0.81%);
+in the two lower bands they are -0.06% and +0.08%, both insignificant. Sales
+under 100,000 shares in the under-10% band are significantly *positive*
+(+0.68%) — a proportionally small sale is a mildly good sign, not a neutral
+one. Purchases scale the same way: +0.38% / +1.06% / +1.42% across the three
+bands, with initial purchases (no prior holding, so no ratio exists) earning
+an insignificant +0.10%.
+
+**What the source does NOT license, and was therefore not built.** Their
+ratio is a net, per-stock-quarter figure, computed over a six-month formation
+window against holdings aggregated across every insider in that stock who
+reported a holding. One Form 4 row is not that object. So their band returns
+do not carry over to a per-transaction admission gate, and no second cutoff
+was invented to fill the gap. The ratio is reported on every row, for buys
+and sells alike, and banded with the paper's own boundaries; the dollar
+materiality filter that admits a symbol is untouched. A test pins this: two
+purchases identical in dollars but at opposite ends of the holdings range
+both survive admission unchanged.
+
+**The first attempt at the fix was also wrong, and this is the part worth
+remembering.** The obvious repair was to move the cutoff from the invented
+0.05 to 0.10, the paper's lowest band edge. That was written, reviewed
+adversarially, and rejected before it merged. Three things were wrong with
+it, and all three are visible in the paper itself.
+
+*The desk's question was not the paper's question.* The setting asks "below
+what fraction of a holding is a sale not a directional view". The only place
+the paper's prose marks a significance boundary is at half, not a tenth:
+"The group of stocks with net total sales exceeding 100,000 shares had an
+average excess return of −0.55 percent, but of that group, those stocks for
+which shares sold accounted for more than half of shares owned had average
+excess return of −1.17 percent. Excess returns on stocks with the same level
+of shares sold but a lower percentage of holdings were negative but
+statistically insignificant." A band edge on a results table is a place the
+authors chose to cut a column. It is not a measured threshold, and 10% was
+being read as one purely because it was the smallest number printed.
+
+*The label being applied stated the opposite of the evidence.* "Small sales
+that represented small percentages of shares owned not only did not predict
+poor performance but were associated with significantly positive abnormal
+returns." ROUTINE, in this classifier, means Cohen/Malloy/Pomorski's "carries
+no predictive power", and carries weight 0.0 — which is both the ranking sort
+key and the dollar multiplier deciding what the analyst seat ever sees. So a
+row the source measures at +0.68% with 1% significance was being labelled
+"no information" and then deleted from the ranking. The detail string the
+rejected version generated even said the paper finds these mildly positive,
+one line above the code that discarded the row for it.
+
+*The PR had already made the correct argument, for purchases only.* It
+refused to gate buys on the same bands, on the ground that the paper's ratio
+is a net per-stock-quarter figure over a six-month window against holdings
+aggregated across insiders, which is not the same object as one Form 4 row.
+That refusal is owed to sells too. Applying it to one direction and not the
+other was inconsistency, not judgement.
+
+**What was actually done.** The cutoff was removed, not moved, and no
+replacement was invented. `insider_min_material_sell_fraction` is deleted
+from the config model, from settings.yaml, from the classifier thresholds and
+from the provider and pipeline wiring; a test now fails if it reappears on
+either the thresholds dataclass or the config model. A sale that survives the
+two Cohen/Malloy/Pomorski routine tests is `discretionary_sale`, and carries
+its holdings ratio, its band, and — new — the sign the paper measured for
+that band, so the seat is handed the direction of the evidence and not just a
+number. Under 10%: mildly bullish, +0.68%. 10–50%: +0.44%. Over 50%: the only
+band that predicts negative returns, and only above 100,000 shares, −0.81%.
+
+**What this costs, stated plainly.** A proportionally tiny sale now ranks at
+weight 1.0 alongside an insider liquidating most of a position. That is not
+right either — the paper says their signs differ. It is less wrong than
+weight 0.0, which asserts the row is uninformative when the source says it is
+informative and positive, and it does not require inventing a number. The
+real gap is structural: `signal_weight` is a single "how much attention"
+scalar with no way to express "attention, and the sign is the other way".
+That is now WORK.md item 62, and it is deliberately left open rather than
+closed by choosing a multiplier.
+
+**The 10b5-1 branch went with it.** A small planned sale used to be demoted
+to routine. That branch existed only to reinforce the immateriality cutoff —
+the research note is explicit that the flag is not a clean noise filter, and
+nothing in it licenses demoting a sale on the flag alone. With no cutoff, the
+flag demotes nothing and is reported in the detail text instead.
+
+**Also corrected.** The research note's "size relative to holdings" bullet had
+been carrying the conclusion with no source behind it since it was written.
+It now names Scott & Xu, the sample, the bands, the numbers and the two
+sentences above, so the next reader does not have to re-derive where the
+claim came from — or repeat the mistake of reading a column edge as a
+finding.
+
+**What would catch it next time.** The tell was available without reading the
+paper: the code's own generated text contradicted the code's own decision in
+adjacent lines. When a detail string explains why a row matters and the
+branch it sits in throws that row away, one of the two is wrong. The second
+tell was a citation used at the wrong altitude — the paper was quoted
+accurately, every figure checked out, and the conclusion still did not
+follow, because nobody asked whether the paper had measured the boundary the
+setting needed or merely printed a number near it.
+
+**Decision recorded.** No owner call is needed: nothing had to be acquired and
+nothing paid for. Item 52 is NOT deleted — it was independently reframed on
+main the same day into a different, genuinely open question (should an insider
+trade be admitted or refused on ANY measure of its size), which this work does
+not answer and deliberately did not build. What this work does settle is that
+item's original premise: the holdings data exists, and the relative measure is
+computed and reported. That correction is written into item 52, and the one
+piece that cannot be settled by any source found is filed separately as item
+63.
+
+---
+
 ### 2026-09-13 — item 17 closed: the desk-wide silence alarm's own systemd timer was finally installed on the production box, ten days after it started warning about itself
 
 **In plain words:** item 17 was "the desk can switch itself off silently."
