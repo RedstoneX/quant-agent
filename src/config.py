@@ -107,6 +107,13 @@ AGENT_NAMES = (
 )
 
 
+# OpenRouter's documented reasoning.effort values — see
+# https://openrouter.ai/docs/use-cases/reasoning-tokens.
+_VALID_REASONING_EFFORTS = frozenset(
+    {"max", "xhigh", "high", "medium", "low", "minimal", "none"}
+)
+
+
 class LLMConfig(BaseModel):
     tech_analyst_model: str = "claude-opus-4-7"
     news_analyst_model: str = "claude-opus-4-7"
@@ -172,6 +179,21 @@ class LLMConfig(BaseModel):
     # Global output-ceiling fallback — used by any agent without an explicit
     # override below.
     max_tokens: int
+    # ONE explicit reasoning-effort setting for EVERY seat calling through
+    # OpenRouter, so every model is measured (and later traded) under
+    # identical, declared thinking budget rather than each provider's own
+    # undeclared default. "medium" is OpenRouter's documented default when
+    # `reasoning.enabled=true` is set without an explicit effort — see
+    # https://openrouter.ai/docs/use-cases/reasoning-tokens. No per-model
+    # overrides: the whole point is one comparable setting across seats.
+    reasoning_effort: str = "medium"
+    # Ask OpenRouter to constrain the response to this agent's pydantic
+    # result schema via `response_format` (json_schema), instead of relying
+    # on prose-JSON prompting alone. See
+    # https://openrouter.ai/docs/features/structured-outputs. Applies only
+    # to agents that have a known result model (BaseAgent.result_model) and
+    # only on the OpenRouter wire path.
+    structured_output: bool = True
     # Per-agent overrides. Each agent emits a different output shape; the PM
     # writes 7-step reasoning + 20-35 target positions, while Macro emits a
     # single compact regime call. One-size-fits-all can silently truncate the
@@ -230,6 +252,16 @@ class LLMConfig(BaseModel):
             raise ValueError(
                 f"per-agent max_tokens override must be >= 512 (or null to "
                 f"inherit global); got {v}"
+            )
+        return v
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _reasoning_effort_is_valid(cls, v: str) -> str:
+        if v not in _VALID_REASONING_EFFORTS:
+            raise ValueError(
+                f"llm.reasoning_effort must be one of "
+                f"{sorted(_VALID_REASONING_EFFORTS)}; got {v!r}"
             )
         return v
 

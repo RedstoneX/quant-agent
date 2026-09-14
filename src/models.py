@@ -1717,6 +1717,17 @@ class SmartMoneyFinding(LLMOutputModel):
         )
 
 
+class SmartMoneySynthesis(LLMOutputModel):
+    """Top-level shape of the smart money analyst's response: a single
+    `findings` list. Exists ONLY to declare the OpenRouter response_format
+    schema (src/agents/base.py) — the agent still reads `parsed["findings"]`
+    and validates each entry as SmartMoneyFinding directly, per-entry
+    isolated (src/agents/smart_money_analyst.py._parse_findings); this model
+    is never itself constructed from a response."""
+
+    findings: list[SmartMoneyFinding]
+
+
 class TargetPosition(LLMOutputModel):
     """PM's per-symbol intent — WHAT the book should look like, not HOW to get there.
 

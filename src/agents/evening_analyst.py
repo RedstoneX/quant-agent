@@ -311,6 +311,9 @@ def _fmt_outlook_calibration(calib: dict) -> str:
 
 
 class EveningAnalystAgent(BaseAgent):
+    # See generate(): parsed JSON is validated as EveningReport(**parsed).
+    result_model = EveningReport
+
     @property
     def name(self) -> str:
         return "evening_analyst"

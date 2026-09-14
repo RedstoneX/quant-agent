@@ -246,3 +246,60 @@ def test_pm_production_macro_fixture_validates():
     from src.models import MacroAnalysis
     parsed = MacroAnalysis.model_validate(scenarios_mod._PM_PRODUCTION_MACRO)
     assert parsed.regime == "risk-on"
+
+
+# --- Google-direct route (owner requirement, 2026-09-14) --------------------
+# The benchmark must be able to test a model over the EXACT route the live
+# desk uses for it, not always assume OpenRouter. A "google-direct:" model
+# id prefix routes the trial through src/agents/base.py's provider="google"
+# OpenAI-wire path instead.
+
+def test_parse_benchmark_model_strips_google_direct_prefix():
+    assert bm.parse_benchmark_model("google-direct:gemini-3.5-flash-lite") == (
+        "gemini-3.5-flash-lite", "google",
+    )
+
+
+def test_parse_benchmark_model_defaults_to_openrouter():
+    assert bm.parse_benchmark_model("qwen/qwen3.7-flash") == (
+        "qwen/qwen3.7-flash", "openrouter",
+    )
+
+
+def test_run_trial_routes_google_direct_prefix_to_google_provider(monkeypatch):
+    """run_trial must strip the prefix before constructing the agent, pass
+    provider='google', and record it on the Trial for the results file."""
+    captured = {}
+
+    class _FakeAgent:
+        result_model = None
+
+        def __init__(self, *, api_key, model, max_tokens, provider):
+            captured["api_key"] = api_key
+            captured["model"] = model
+            captured["provider"] = provider
+            self._reasoning_effort = "medium"
+            self._structured_output = True
+
+        def _execute(self, user_message, **kwargs):
+            return SimpleNamespace(raw_text="{}", actual_provider="google",
+                                   used_fallback=False)
+
+    monkeypatch.setattr(bm, "_load_agent_cls", lambda path: _FakeAgent)
+    scenario = scenarios_mod.SCENARIOS_BY_KEY["tech_batch"]
+    fake_scenario = SimpleNamespace(
+        key=scenario.key, role=scenario.role, agent_path=scenario.agent_path,
+        max_tokens=scenario.max_tokens,
+        invoke=lambda agent: None,
+        grade=lambda output: [],
+    )
+
+    trial = bm.run_trial(fake_scenario, "google-direct:gemini-3.5-flash-lite", pricing={})
+
+    assert captured["model"] == "gemini-3.5-flash-lite"
+    assert captured["provider"] == "google"
+    assert captured["api_key"] == bm.PLACEHOLDER_KEY
+    assert trial.provider == "google"
+    assert trial.model == "google-direct:gemini-3.5-flash-lite"
+    assert trial.reasoning_effort == "medium"
+    assert trial.structured_output is False  # _FakeAgent has no result_model

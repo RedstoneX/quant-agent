@@ -136,6 +136,19 @@ llm:
   # the observed production PM payload (~11K output tokens) while making the
   # maximum liability of every request finite and useful to the breaker.
   max_tokens: 16000
+  # One explicit reasoning budget for EVERY seat on the OpenRouter path, so
+  # every model is measured/traded under identical, declared settings
+  # instead of its own undeclared default (some reasoning models were
+  # exhausting max_completion_tokens on hidden thinking and returning
+  # truncated answers). "medium" is OpenRouter's documented default for
+  # `reasoning.enabled=true` with no effort given — see
+  # https://openrouter.ai/docs/use-cases/reasoning-tokens.
+  reasoning_effort: "medium"
+  # Ask OpenRouter to constrain output to this agent's pydantic result
+  # schema via response_format (json_schema) — see
+  # https://openrouter.ai/docs/features/structured-outputs. One setting for
+  # every seat; no per-model exceptions.
+  structured_output: true
   tech_analyst_max_tokens: 16000
   news_analyst_max_tokens: 16000
   macro_analyst_max_tokens: 16000

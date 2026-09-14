@@ -36,6 +36,10 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
     # `src/agents/prompt_limits.py` for the mechanism, and for the
     # 2026-09-11 defect (a limit that was wrong at birth, replacing a
     # relational phrasing that could not go wrong at all) that motivated it.
+    # `result_model` is set on the INSTANCE in review(), not as a class
+    # attribute: this seat's verdict schema is RiskVerdict or ExitRiskVerdict
+    # depending on review_mode, decided per-call.
+    result_model = None
     _prompt_path = PROMPT_PATH
     _settings_path = SETTINGS_PATH
     _fallback_prompt = "You are a risk manager. Respond with JSON."
@@ -525,6 +529,17 @@ Review these proposed trades and provide your verdict as JSON."""
                event_risk_block: str | None = None,
                review_mode: str = risk_review_mode.MORNING_PLAN,
                ) -> tuple["RiskVerdict | ExitRiskVerdict | None", "AgentResult"]:
+        # WHICH verdict shape this path returns, computed BEFORE the call so
+        # `result_model` can be set for it (see BaseAgent.result_model /
+        # _openai_wire_call's response_format). The exit review's schema is
+        # `RiskVerdict` minus `modifications` and `scale_all_buys`: nothing on
+        # that path applies either (`_apply_risk_modifications` is called only
+        # from the morning `RiskStage`), so they are not asked for and not
+        # stored. See `src/models.ExitRiskVerdict`.
+        exit_mode = risk_review_mode.is_exit_review(review_mode)
+        verdict_model = ExitRiskVerdict if exit_mode else RiskVerdict
+        schema_name = verdict_model.__name__
+        self.result_model = verdict_model
         # audit round 2 #5: total_value / cash are optional so existing call
         # sites keep working; when omitted, build_user_message approximates
         # the book denominator from the sum of position market values.
@@ -558,14 +573,6 @@ Review these proposed trades and provide your verdict as JSON."""
             # renders byte-identically. See src/agents/risk_review_mode.py.
             review_mode=review_mode,
         )
-        # WHICH verdict shape this path returns. The exit review's schema is
-        # `RiskVerdict` minus `modifications` and `scale_all_buys`: nothing on
-        # that path applies either (`_apply_risk_modifications` is called only
-        # from the morning `RiskStage`), so they are not asked for and not
-        # stored. See `src/models.ExitRiskVerdict`.
-        exit_mode = risk_review_mode.is_exit_review(review_mode)
-        verdict_model = ExitRiskVerdict if exit_mode else RiskVerdict
-        schema_name = verdict_model.__name__
         # `modifications` and `scale_all_buys` are decision-bearing ONLY where
         # they decide something. On the exit path they are not fields at all,
         # so a repair that "changed" one changed nothing that can reach the

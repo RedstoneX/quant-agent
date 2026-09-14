@@ -13,6 +13,9 @@ PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "macr
 
 
 class MacroAnalystAgent(BaseAgent):
+    # See analyze(): parsed JSON is validated as MacroAnalysis(**parsed).
+    result_model = MacroAnalysis
+
     @property
     def name(self) -> str:
         return "macro_analyst"
