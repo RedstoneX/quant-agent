@@ -205,10 +205,10 @@ coverage should never stop a decision at all.
 
 ## item 32
 
-**Plain language —** The desk was approved to risk 5% of the account per trade, but an old never-approved size limit was quietly capping real trades at about 1%. That is fixed, and so is the trade-sizing band question — the wider bands were restored and merged on 10 September, though this board wrongly kept calling them undecided until 13 September. One thing genuinely remains: the desk has two separate loss-alarm systems, one watching how much the account has fallen over a rolling window and one watching how far it is below its best-ever level. They were set up independently and nobody has decided whether the desk should have one loss response or two.
-**Example —** The two systems are currently pinned together only by a shared -20% alert point. That is a floor on how far apart they can drift, not evidence that they agree.
-**The decision —** Should the two loss-alarm systems be merged into one, or deliberately kept as two?
-**Recommendation —** Leave them as two for now. Both work, neither conflicts with the other today, and merging them means re-deciding trip points you have already set once — worth doing when there is live evidence about how each behaves, not before.
+**Plain language —** The desk has two separate ways of noticing it is losing money: one watches how much the account has fallen over a rolling window, the other watches how far it is below its best-ever level. They were built independently and had never been written down side by side. That comparison is now done, and the answer is that they do not fight each other — neither can block the other, they cannot both sell the same shares, and neither can be asleep past the point the other acts. What the comparison did turn up is that the alarm which goes off soonest takes the most drastic action of the two: it sells the entire book and abandons the day, while the mechanism that only triggers after a much worse fall merely halves how much the desk may own.
+**Example —** A roughly 3% loss in one day on a normal book empties the account into cash. Being 20% below the best-ever level — far worse — only cuts the allowed exposure in half.
+**The decision —** Should the two be merged into one loss response, or deliberately kept as two? Separately, and this is the same kind of question: should the "sell everything" response really sit on the shallowest of the alarms?
+**Recommendation —** Keep them as two for now. They do not conflict, and merging means re-deciding trip points already set once — worth doing when there is real evidence of how each behaves, not before. The severity question is worth a look sooner, because while the desk is ramping out of cash the "sell everything" alarm sits unusually close.
 
 
 ## item 35

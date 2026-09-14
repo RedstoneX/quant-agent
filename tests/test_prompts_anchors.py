@@ -320,23 +320,32 @@ def test_hard_anchor_preserved(prompt_name: str, anchor: str, motivation: str) -
 
 
 def test_pm_sizing_formula_intact() -> None:
-    """PM's explicit sizing formula (`risk = min(raw, queued_cap, 5.0)`)
-    is the contract for how morning + midday + close arrive at the
-    same risk_allocation_pct given the same inputs. Compression of
-    surrounding prose is fine — losing the formula is not.
+    """PM's explicit sizing formula is the contract for how morning +
+    midday + close arrive at the same risk_allocation_pct given the same
+    inputs. Compression of surrounding prose is fine — losing the formula
+    is not.
 
     The formula emits RISK, not notional weight, as of spec §2.1
     (2026-08-27): conviction states what an idea may cost when it is
     wrong, and the stop distance converts that to a size.
+
+    The `queued_cap` term this test used to pin was DELETED on 2026-09-14
+    (docs/WORK.md item 62, retired): it was a hand-typed ceiling with no
+    settings key, no code behind it and no derivation, and the evidence it
+    stood for is already priced by the derived agreement schedule — a
+    just-filed name reaches this formula carrying one fewer agreeing seat.
+    Do not re-add it here without a derivation; `tests/
+    test_risk_prompt_limits_live.py::test_no_prompt_only_order_size_ceilings`
+    fails if it comes back to the sheet.
     """
     path = PROMPT_DIR / "portfolio_manager.md"
     text = path.read_text()
-    # The formula box is anchored by the explicit min() call referencing
-    # both queued_cap and the 5.0 single-name RISK cap.
-    assert "min(raw, queued_cap" in text and "5.0" in text, (
+    # The formula box is anchored by the explicit min() call against the
+    # single-name RISK cap, which renders from `max_position_risk_pct`.
+    assert "min(raw, {{risk.max_position_risk_pct}})" in text, (
         "portfolio_manager.md no longer contains the canonical sizing "
-        "formula `risk = min(raw, queued_cap, 5.0)`. This is the "
-        "deterministic contract; without it, two sessions with the "
+        "formula `risk = min(raw, {{risk.max_position_risk_pct}})`. This "
+        "is the deterministic contract; without it, two sessions with the "
         "same inputs can produce different risk_allocation_pct."
     )
     # The formula must stay in RISK units. A reversion to notional
@@ -345,9 +354,9 @@ def test_pm_sizing_formula_intact() -> None:
         "portfolio_manager.md sizing formula must emit risk_allocation_pct, "
         "not a notional weight — see docs/QAMC_REMEDIATION_SPEC.md §2.1."
     )
-    # The 5 multipliers must all be named — compression that drops
+    # The multipliers must all be named — compression that drops
     # any one of them creates a silent sizing inconsistency.
-    for mult in ("base", "rr_mult", "evening", "stale", "drawdown", "queued_cap"):
+    for mult in ("base", "rr_mult", "evening", "stale", "drawdown"):
         assert mult in text, (
             f"portfolio_manager.md sizing formula must keep the "
             f"`{mult}` multiplier named. If you renamed it, also "

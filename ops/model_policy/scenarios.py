@@ -16,9 +16,15 @@ Why synthetic (not recorded market) inputs: the grading has to be
 deterministic and re-runnable by a reviewer months later, so every scenario
 is constructed so that the *correct* answer is forced by arithmetic, not by
 market opinion. `tech_uptrend` has an unambiguous uptrend; `risk_rr_breach`
-contains a BUY whose reward/risk is 0.41 against a documented 1.5 floor.
-Grading never asks "did the model agree with me about the market" — only
-"did it apply the rule the prompt states".
+contains a RANGE buy whose payoff is 0.42R and which is at the same time the
+largest line in the plan at 18% of the book — two facts, and it is the pair
+that the risk-manager prompt requires action on. **There is no universal
+reward:risk floor to cite anywhere in this file any more** — the owner
+retired it on 2026-09-11 (docs/WORK.md item 1(d)): a breakout carries no
+reward:risk judgement at all, and a range trade's real ratio is a ranking
+input and a starter-size cap, never a pass mark. Grading never asks "did the
+model agree with me about the market" — only "did it apply the rule the
+prompt states", which means the rule the prompt states TODAY.
 
 ONE scenario is an exception to "synthetic", deliberately: `pm_selection`
 replays a frozen, verbatim pull of a real production session
@@ -51,7 +57,13 @@ from src.models import (
     TechnicalIndicators,
     TradeDecision,
 )
+from src.risk.constants import reward_risk_floor_applies
 from src.risk.rules import RiskViolation
+
+# The desk's own admission rules, replayed in plain Python with no LLM call.
+# Imported at module level and safe from circularity: that module imports
+# THIS one only inside its operator entry point.
+from ops.model_policy import deterministic_selection as _deterministic_selection
 
 
 # --------------------------------------------------------------------------
@@ -621,10 +633,26 @@ def _pm_production_grade(decision: PortfolioDecision | None) -> list[Check]:
 # WHAT IT DOES NOT MEASURE: profitability. Nobody knows which of these picks
 # would have made money, and this scenario does not pretend to. Every check
 # below is answerable from the run's own recorded numbers — the ratings,
-# convictions and reward/risk ratios the tech analyst emitted, and the
-# reward/risk floor the prompts already state. A model that scores 1.00 here
-# has selected in line with the evidence it was shown; whether that evidence
-# was RIGHT about the market is a separate, unmeasured question.
+# convictions, setup types and evidence the seats emitted — put through the
+# desk's OWN CURRENT admission rules (`deterministic_selection.evaluate`,
+# the shadow of production `candidate_eligibility`). A model that scores 1.00
+# here has selected in line with the evidence it was shown; whether that
+# evidence was RIGHT about the market is a separate, unmeasured question.
+#
+# **REBUILT 2026-09-14 (docs/WORK.md PM-gate item 8).** Every check here used
+# to key off `analyst reward/risk >= 1.5`. That floor was retired on
+# 2026-09-11 (item 1(d)) and this scenario went on grading against it, so it
+# was scoring obedience to a deleted rule. Three of its consequences on this
+# exact fixture, all measured, none hypothetical:
+#   * NVDA is a `breakout`. The PM prompt now forbids any reward:risk
+#     judgement on it — so the old `familiarity_bias` check faulted a model
+#     for a ratio the desk tells it not to look at.
+#   * Three of the five "qualified shorts" it rewarded (GEV, UNH, NEE) are
+#     REFUSED deterministically by the §9.4 net-evidence rule. The old check
+#     credited picks production would never have placed.
+#   * Two of the eight "qualified" names (XLE 1.67, PFE 1.50) are breakouts,
+#     whose ratio the desk no longer computes for gating at all — as are 12
+#     of the 38 actionable candidates, every one of them a long.
 #
 # WHY IT IS NOT SYNTHETIC. The first draft of this scenario hand-built ~30
 # candidates in tiers with planted "traps". That measures whether a model can
@@ -648,45 +676,90 @@ def _pm_production_grade(decision: PortfolioDecision | None) -> list[Check]:
 # WHY THAT RUN. It is the desk's own documented failure. 82 candidates
 # entered the funnel, 59 got a technical read, 38 were actionable, and the
 # session placed ZERO trades. `bearish_hedge_considered` was false: fifteen
-# validated bearish candidates were on the table, five of them clearing the
-# reward/risk floor, and not one short was proposed on a day the market fell.
-# The live PM emitted three long targets (XLE, CHPX, NVDA), two reached a
-# proposed order, none executed, and the risk manager rejected the plan for
-# `rr_fail`. Matching what the live desk did is therefore FAILURE, not
-# success, and nothing below grades against its output.
+# validated bearish candidates were on the table, two of them admitted by the
+# desk's own rules end to end, and not one short was proposed on a day the
+# market fell. The live PM emitted three long targets (XLE, CHPX, NVDA), two
+# reached a proposed order, none executed, and the risk manager rejected the
+# plan for `rr_fail` — a refusal reason the desk has since deleted. Matching
+# what the live desk did is therefore FAILURE, not success, and nothing below
+# grades against its output.
 #
-# WHY IT SEPARATES EVIDENCE FROM FAMILIARITY WITHOUT PLANTING ANYTHING. The
-# real numbers did that on their own. The two highest-conviction calls of the
-# day are unglamorous and both sit BELOW the floor — SLB `strong_buy`/high at
-# 1.28 and AGX `sell`/high at 0.84. Five of the eight candidates that clear
-# the floor are SHORTS, on NKE / GEV / UNH / NEE / FLNC. Meanwhile every
-# famous mega-cap that got a read is weak: NVDA 1.03, AAPL 1.02, MSFT 0.85,
-# GOOGL 0.59, and AMZN / META / QQQ / SPY were not analysed at all, so they
-# cannot be targeted. A model selecting on evidence lands on the unglamorous
-# names; a model selecting on familiarity reaches for the mega-caps it knows.
-# `familiarity_bias` reports that share as a number on every run, pass or fail.
+# WHAT "QUALIFIED" MEANS NOW, AND WHY IT IS NOT A NUMBER THIS FILE CHOOSES.
+# The admitted set is whatever `deterministic_selection.evaluate` admits: the
+# desk's own stated rules — current technical coverage, an actionable rating,
+# BUY-eligibility for a long, a MEASURABLE payoff (its size no longer gates)
+# or a dated catalyst row, and a net independent source score of at least 1
+# so the §9.4 agreement ceiling leaves a rung to stand on. On this fixture
+# that admits 25 of the 59 read names, of which exactly 2 are shorts (NKE
+# 2.28 and FLNC 1.84, which are also the day's two best-paying shorts). Every
+# one of those gates exists in production today and every refusal below is
+# one production would actually make. Nothing here is tuned, and this file
+# introduces no threshold of its own.
+#
+# WHAT THIS FIXTURE CANNOT MEASURE, STATED RATHER THAN PAPERED OVER.
+# The rule that replaced the floor reads a STRUCTURAL reward:risk — derived
+# from the desk's own computed levels, not from the analyst's guessed target.
+# **Zero of this fixture's 59 rows carry `computed_levels`** (the key is
+# absent entirely; the field post-dates the pull), so
+# `PortfolioConstructor.real_reward_risk_preview` returns None for every name
+# on it. The quantity the current rule reads simply is not in this file, and
+# no constant swapped in for it would be the real one. Two consequences, and
+# the first is why this scenario is still usable:
+#   * The admitted set does NOT depend on it. Measured: not one name on this
+#     fixture is blocked by the payoff rule that is not already blocked for a
+#     neutral rating. Admission here is decided by coverage, rating,
+#     BUY-eligibility and net evidence — none of which need a ratio.
+#   * Whether a model READS payoff geometry the way the desk now does is
+#     therefore NOT measured here, and must not be claimed from this scenario.
+#     Scoring that needs a fixture carrying `computed_levels` and
+#     `setup_type`. One exists in the archive — production `run-bba4d4f3`,
+#     2026-09-02, where 63 of 64 analyses carry computed levels and all 34
+#     actionable candidates have a computable structural ratio (14 breakout /
+#     20 range). It has not been captured as a fixture, and doing so is its
+#     own job, not this one.
+#
+# WHY IT STILL SEPARATES EVIDENCE FROM FAMILIARITY. Thirteen bearish names
+# the desk refuses, two it admits, and a live session that took neither — the
+# bearish gap is real and is keyed entirely off ratings and evidence, not off
+# any ratio. What is NOT gradeable any more is famousness: NVDA, AAPL and
+# MSFT are all ADMITTED by the desk's own rules (net evidence +3, +3, +2), and
+# NVDA is a breakout the prompt forbids judging on reward:risk at all. So
+# `familiarity_bias` survives as a weight-0 DIAGNOSTIC — the share is
+# reported on every run, and it scores nothing, because the desk has no rule
+# against picking a well-evidenced mega-cap and the score must not invent one.
 #
 # THE CHECKS, and why they weigh what they weigh:
 #   parsed_and_grounded          0.10  survived the grounding validator
 #   opens_a_position             0.10  did anything at all
-#   selection_from_qualified_set 0.25  majority of picks clear the R/R floor
-#   takes_a_qualified_short      0.25  took one of the five qualified shorts
-#   rr_floor_discipline          0.15  every sub-floor pick names a catalyst
-#   familiarity_bias             0.15  no famous-and-weak pick
-# The two 0.25s are the measurement; everything else is a guard around it.
-# A model that opens nothing scores 0.10 — BELOW a book full of sub-floor
-# names — because the last two checks are gated on having made a pick.
-# Inaction is the failure being studied, so it must not collect credit for
-# rules it never had the chance to break.
+#   selection_from_eligible_set  0.25  every pick is one the desk admits
+#   takes_an_eligible_short      0.25  took one of the two admitted shorts
+#   familiarity_bias             0.00  DIAGNOSTIC ONLY, reported not scored
+# The two 0.25s are the measurement; the two 0.10s are a guard around it.
+# **The surviving shares are deliberately NOT rescaled to sum to 1.0.**
+# `benchmark_models._run_scenario` divides by the actual total weight, so the
+# four scoring checks keep exactly the proportions they had; rescaling them
+# would mean typing four new weights, which is precisely the invented number
+# this rewrite exists to remove. A model that opens nothing therefore scores
+# 0.10/0.70 — below any book of real picks — because the two selection checks
+# are gated on having made a pick. Inaction is the failure being studied, so
+# it must not collect credit for rules it never had the chance to break.
+#
+# TWO CHECKS WERE DELETED RATHER THAN RESTATED, because neither could be
+# stated honestly against the desk that exists:
+#   * `rr_floor_discipline` (was 0.15) graded "every sub-floor pick names a
+#     catalyst". The live rule (`PortfolioManagerAgent._apply_subfloor_
+#     catalyst_rule`) requires a catalyst ONLY when a range trade's real
+#     payoff is UNMEASURABLE; a thin-but-measurable one is kept, uncited, and
+#     capped at starter size. There is no longer any rule that a sub-floor
+#     pick must cite anything, so there is nothing left to grade.
+#   * `selection_from_qualified_set`'s old majority-of-picks-clear-1.5 bar is
+#     gone with the floor. Its replacement above is a different check with
+#     the same weight, not a renamed one: it asks whether the desk would have
+#     ADMITTED each pick, which is a rule, not a ratio.
 
 _SELECTION_FIXTURE =Path(__file__).resolve().parent / "fixtures" / "run_64290730_pm_input.json"
 
-# Reward/risk floor the PM and RM prompts both state. A target below it is
-# not forbidden — it requires a named catalyst — which is what
-# `rr_floor_discipline` grades.
-_SELECTION_RR_FLOOR = 1.5
-
-# The famous names the familiarity check is about. Fixed list, not derived:
+# The famous names the familiarity diagnostic is about. Fixed list, not derived:
 # deriving "famous" from the data would let the fixture redefine the very
 # thing being measured. Only those with a technical read this session can be
 # targeted at all; the rest are listed so a future fixture that DOES cover
@@ -729,19 +802,55 @@ _SELECTION_ACTIONABLE = {a.symbol for a in _SELECTION_ANALYSES if a.rating != "n
 _SELECTION_BEARISH = {
     a.symbol for a in _SELECTION_ANALYSES if a.rating in ("sell", "strong_sell")
 }
-_SELECTION_QUALIFIED = {
-    symbol for symbol in _SELECTION_ACTIONABLE
-    if (_SELECTION_RR.get(symbol) or 0.0) >= _SELECTION_RR_FLOOR
+_SELECTION_BREAKOUT = {
+    a.symbol for a in _SELECTION_ANALYSES
+    if not reward_risk_floor_applies(a.setup_type)
 }
-_SELECTION_QUALIFIED_SHORTS = _SELECTION_QUALIFIED & _SELECTION_BEARISH
-# Famous AND weak: covered this session, and its own reward/risk is below the
-# floor. Every mega-cap with a read on 2026-09-01 lands here; that is the
-# finding, not a construction.
-_SELECTION_FAMOUS_WEAK = {
-    symbol for symbol in _SELECTION_FAMOUS
-    if symbol in _SELECTION_RR
-    and (_SELECTION_RR[symbol] or 0.0) < _SELECTION_RR_FLOOR
+
+# THE ADMITTED SET, computed by the desk's own rules rather than restated
+# here. `deterministic_selection.evaluate` is the maintained shadow of
+# production `PortfolioManagerAgent.candidate_eligibility` and is itself
+# pinned against `config/settings.yaml` by `tests/test_deterministic_
+# selection.py`, so this scenario cannot drift from the desk without that
+# test failing first. It runs no LLM call and touches no network.
+_SELECTION_ELIGIBILITY = {
+    row["symbol"]: row for row in _deterministic_selection.evaluate(
+        _SELECTION, _SELECTION_ANALYSES, _SELECTION_POSITIONS, _SELECTION_NEWS,
+    )
 }
+#: symbol -> the ONE direction the desk admits it in ("long" / "short"),
+#: derived from the analyst's own rating exactly as production derives it.
+_SELECTION_ELIGIBLE_DIRECTION = {
+    symbol: row["direction"]
+    for symbol, row in _SELECTION_ELIGIBILITY.items() if row["eligible"]
+}
+_SELECTION_ELIGIBLE = set(_SELECTION_ELIGIBLE_DIRECTION)
+_SELECTION_ELIGIBLE_SHORTS = {
+    symbol for symbol, direction in _SELECTION_ELIGIBLE_DIRECTION.items()
+    if direction == "short"
+}
+# Famous AND admitted. Not "famous and weak" — that phrase needed the retired
+# floor to define "weak", and the three mega-caps with a read this session are
+# all names the desk's own rules let through (NVDA on a breakout, which the
+# prompt forbids judging on reward:risk at all). Reported, never scored.
+_SELECTION_FAMOUS_ELIGIBLE = {
+    symbol for symbol in _SELECTION_FAMOUS if symbol in _SELECTION_ELIGIBLE
+}
+
+
+def _selection_blocked_by(symbol: str, direction: str) -> str:
+    """Why the desk would refuse this pick, in its own words."""
+    row = _SELECTION_ELIGIBILITY.get(symbol)
+    if row is None:
+        return "R1 no current technical coverage"
+    if not row["eligible"]:
+        return "; ".join(row["blocked_by"])
+    if row["direction"] != direction:
+        return (
+            f"admitted {row['direction']}, not {direction} "
+            f"(rating {row['rating']})"
+        )
+    return ""
 
 # The shape of the day, asserted at import. These six numbers are what the
 # checks below mean; if a fixture edit moves any of them, the benchmark has
@@ -751,21 +860,21 @@ _SELECTION_FAMOUS_WEAK = {
 _SELECTION_SHAPE = {
     "analysed": len(_SELECTION_ANALYSES),
     "actionable": len(_SELECTION_ACTIONABLE),
-    "below_rr_floor": len(_SELECTION_ACTIONABLE) - len(_SELECTION_QUALIFIED),
-    "qualified": len(_SELECTION_QUALIFIED),
-    "qualified_shorts": len(_SELECTION_QUALIFIED_SHORTS),
+    "breakout_actionable": len(_SELECTION_BREAKOUT & _SELECTION_ACTIONABLE),
+    "eligible": len(_SELECTION_ELIGIBLE),
+    "eligible_shorts": len(_SELECTION_ELIGIBLE_SHORTS),
     "bearish_actionable": len(_SELECTION_BEARISH),
-    "famous_weak": len(_SELECTION_FAMOUS_WEAK),
+    "famous_eligible": len(_SELECTION_FAMOUS_ELIGIBLE),
     "positions_held": len(_SELECTION_POSITIONS),
 }
 _SELECTION_SHAPE_EXPECTED = {
     "analysed": 59,
     "actionable": 38,
-    "below_rr_floor": 30,
-    "qualified": 8,
-    "qualified_shorts": 5,
+    "breakout_actionable": 12,
+    "eligible": 25,
+    "eligible_shorts": 2,
     "bearish_actionable": 15,
-    "famous_weak": 4,
+    "famous_eligible": 3,
     "positions_held": 5,
 }
 if _SELECTION_SHAPE != _SELECTION_SHAPE_EXPECTED:
@@ -833,11 +942,20 @@ def _selection_opens_or_adds(decision: PortfolioDecision) -> list:
 
 
 def _selection_evidence_repr(target) -> str:
-    """`SYM long rr=1.67 buy/high` — the real evidence behind one pick."""
+    """`SYM long rr=1.67 buy/high` — the real evidence behind one pick.
+
+    A breakout reports `rr=n/a[breakout]` rather than its arithmetic ratio,
+    for the same reason the PM prompt renders it that way: there is no
+    overhead level to measure a reward against, so the number would be an
+    invented one and printing it invites a reader to judge on it.
+    """
     analysis = _SELECTION_BY_SYMBOL.get(target.symbol)
     if analysis is None:
         return f"{target.symbol} {target.direction} NO-COVERAGE"
-    rr = _SELECTION_RR.get(target.symbol)
+    rr = (
+        "n/a[breakout]" if target.symbol in _SELECTION_BREAKOUT
+        else _SELECTION_RR.get(target.symbol)
+    )
     return (
         f"{target.symbol} {target.direction} rr={rr} "
         f"{analysis.rating}/{analysis.conviction}"
@@ -865,83 +983,73 @@ def _pm_selection_grade(decision: PortfolioDecision | None) -> list[Check]:
         f"{len(picks)} opening/adding target(s): {evidence}",
     ))
 
-    # THE selection signal. Eight of the 38 actionable candidates cleared the
-    # 1.5 reward/risk floor on the analyst's own arithmetic. Requiring a
-    # majority rather than purity is deliberate: a sub-floor pick WITH a
-    # named catalyst is legal under the prompt, and `rr_floor_discipline`
-    # below is where that is judged. This check asks whether the book is
-    # built mostly out of the best evidence available, not whether it is
-    # built exclusively out of it.
-    qualified_picks = [s for s in pick_symbols if s in _SELECTION_QUALIFIED]
-    share = len(qualified_picks) / len(picks) if picks else 0.0
+    # THE selection signal. Did every pick come out of the set the desk's own
+    # rules admit? Purity, not a majority: each of these is a HARD refusal in
+    # production (no coverage, a neutral rating, not BUY-eligible, no
+    # measurable payoff and no dated catalyst row, or a net evidence score
+    # with no agreement rung), so a pick outside the set is a proposal that
+    # could not have become a trade. The old majority bar existed because a
+    # sub-floor-with-catalyst pick was legal-but-lesser under a floor that no
+    # longer exists; with a set built out of refusals, "mostly admitted" is
+    # not a meaningful standard.
+    ineligible = [
+        f"{t.symbol}({_selection_blocked_by(t.symbol, t.direction)})"
+        for t in picks
+        if _selection_blocked_by(t.symbol, t.direction)
+    ]
     checks.append(Check(
-        "selection_from_qualified_set", 0.25,
-        bool(picks) and share >= 0.5,
-        f"{len(qualified_picks)}/{len(picks)} picks clear the {_SELECTION_RR_FLOOR} "
-        f"R/R floor ({share * 100:.0f}%); qualified set was "
-        f"{sorted(_SELECTION_QUALIFIED)}",
+        "selection_from_eligible_set", 0.25,
+        bool(picks) and not ineligible,
+        f"{len(picks) - len(ineligible)}/{len(picks)} picks are admitted by "
+        f"the desk's own rules; refused: {ineligible}; admitted set was "
+        f"{sorted(_SELECTION_ELIGIBLE)}"
+        if picks else
+        "no picks to judge — an empty book selects from nothing",
     ))
 
     # The specific failure this scenario exists to detect. Fifteen validated
-    # bearish candidates were on offer and five of them — NKE 2.28, GEV 2.12,
-    # UNH 1.90, NEE 1.84, FLNC 1.84 — carried the best reward/risk of the
-    # day. The live desk proposed none, and its funnel recorded
+    # bearish candidates were on offer; the desk's own rules admit two of them
+    # — NKE (sell/medium, net evidence +1) and FLNC (sell/medium, +1) — which
+    # are also the two best-paying shorts of the day. The other thirteen are
+    # refused deterministically, mostly by the §9.4 net-evidence rule, so this
+    # check credits only a short production would actually have placed. The
+    # live desk proposed none at all and its funnel recorded
     # `bearish_hedge_considered=false`. Shorts are a first-class, prompt-
     # documented instrument here (`direction: "short"`, its own caps and
     # borrow gate) and are not blocked by the cash-only account, so declining
     # every one of them is a choice, not a constraint.
     shorts = [t for t in picks if t.direction == "short"]
-    qualified_shorts = [t.symbol for t in shorts if t.symbol in _SELECTION_QUALIFIED_SHORTS]
-    other_shorts = [t.symbol for t in shorts if t.symbol not in _SELECTION_QUALIFIED_SHORTS]
-    checks.append(Check(
-        "takes_a_qualified_short", 0.25, bool(qualified_shorts),
-        f"qualified shorts taken={qualified_shorts} other shorts={other_shorts} "
-        f"(available: {sorted(_SELECTION_QUALIFIED_SHORTS)})",
-    ))
-
-    # A sub-floor idea is allowed WITH a named catalyst and forbidden without
-    # one — the rule both the PM and RM prompts state, and the rule the live
-    # run's risk manager rejected the plan on (`rr_fail`, XLE at 1.18). This
-    # is the trap check: 30 of the 38 actionable candidates fail the floor,
-    # so an undisciplined selector trips it immediately.
-    #
-    # Gated on `picks` so an empty book cannot pass it. Vacuous truth is the
-    # wrong answer here: a model that opens nothing has not demonstrated
-    # discipline, it has declined to be measured — and "opened nothing" is
-    # precisely what the live desk did. Same for `familiarity_bias` below.
-    # The two together are 0.30 of the score, and handing that to inaction
-    # would have made doing nothing outscore a bad-but-real book.
-    undisciplined = [
-        f"{t.symbol}(rr={_SELECTION_RR.get(t.symbol)})"
-        for t in picks
-        if (_SELECTION_RR.get(t.symbol) or 0.0) < _SELECTION_RR_FLOOR
-        and not (t.catalyst or "").strip()
+    eligible_shorts = [
+        t.symbol for t in shorts if t.symbol in _SELECTION_ELIGIBLE_SHORTS
+    ]
+    other_shorts = [
+        t.symbol for t in shorts if t.symbol not in _SELECTION_ELIGIBLE_SHORTS
     ]
     checks.append(Check(
-        "rr_floor_discipline", 0.15,
-        bool(picks) and not undisciplined,
-        f"{len(undisciplined)} sub-floor pick(s) with no catalyst: {undisciplined}"
-        if undisciplined else (
-            "every sub-floor pick names a catalyst" if picks
-            else "no picks to judge — an empty book cannot demonstrate discipline"
-        ),
+        "takes_an_eligible_short", 0.25, bool(eligible_shorts),
+        f"admitted shorts taken={eligible_shorts} other shorts={other_shorts} "
+        f"(available: {sorted(_SELECTION_ELIGIBLE_SHORTS)})",
     ))
 
-    # The diagnostic the owner asked for, reported as a NUMBER on every run
-    # including a passing one. A famous-and-weak pick is a mega-cap whose own
-    # reward/risk was below the floor while unglamorous candidates that
-    # cleared it went untaken — which is what choosing on familiarity looks
-    # like from the outside. It is not proof of bias in a single run; it is
-    # the rate to watch across models and repeats.
-    famous_picks = [s for s in pick_symbols if s in _SELECTION_FAMOUS_WEAK]
-    passed_over = sorted(_SELECTION_QUALIFIED - set(pick_symbols))
+    # DIAGNOSTIC, WEIGHT 0 — reported on every run, scores nothing. The owner
+    # asked for the familiarity rate as a number, and it is still worth
+    # watching across models and repeats. It is no longer a pass/fail because
+    # it cannot be one honestly: the three mega-caps with a read this session
+    # are all ADMITTED by the desk's own rules, and NVDA is a breakout the PM
+    # prompt explicitly forbids judging on reward:risk. Failing a model for
+    # taking a well-evidenced name the desk permits would be scoring a rule
+    # this desk does not have. What the number still shows is the shape of a
+    # book: reaching for the names everyone knows while admitted candidates
+    # sit untaken is what selecting on familiarity looks like from outside.
+    famous_picks = [s for s in pick_symbols if s in _SELECTION_FAMOUS_ELIGIBLE]
+    passed_over = sorted(_SELECTION_ELIGIBLE - set(pick_symbols))
     famous_share = len(famous_picks) / len(picks) if picks else 0.0
     checks.append(Check(
-        "familiarity_bias", 0.15,
-        bool(picks) and not famous_picks,
-        f"famous-but-weak picks {len(famous_picks)}/{len(picks)} "
+        "familiarity_bias", 0.0,
+        not famous_picks,
+        f"DIAGNOSTIC (not scored): famous picks {len(famous_picks)}/{len(picks)} "
         f"({famous_share * 100:.0f}%)={famous_picks}; "
-        f"qualified candidates passed over={passed_over}",
+        f"admitted candidates passed over={passed_over}",
     ))
     return checks
 
@@ -966,8 +1074,15 @@ def _pm_reasoning_chain() -> ReasoningChain:
 # The BUY below is deliberately indefensible on the arithmetic the RM prompt
 # tells it to audit:
 #   MU:  entry 118.0, stop 112.0 (risk 6.0), target 120.5 (reward 2.5) => 0.42R
-#        against the prompt's >= 1.5 floor, with no catalyst field set, AND
-#        sized at 18% of the book — the largest line in the plan.
+#        on a RANGE setup, AND sized at 18% of the book — the largest line in
+#        the plan.
+# **The thin ratio alone is NOT the finding, and has not been since 2026-09-11
+# (docs/WORK.md item 1(d)).** The prompt now says in terms that "below 1.5" is
+# not by itself grounds to refuse, and that Python has already capped a
+# sub-floor range target at starter size before the risk manager ever sees it.
+# What makes this plan indefensible is the PAIR: a payoff that thin arriving
+# as the biggest line in the book is a sizing fact the prompt still requires
+# to be audited, and a state the live cap should have made impossible.
 # A competent risk manager must not approve this untouched. Everything else
 # in the plan is clean, so a model that rejects the whole plan for the wrong
 # reason still has to name MU in its chain to score the rr_audit check.
@@ -1096,9 +1211,9 @@ def _risk_grade(verdict) -> list[Check]:
 #         cites a Tech downgrade — which portfolio_manager.md names
 #         explicitly as NOT sufficient.
 #
-#     MSFT's R/R is 2.5 (entry 100 / stop 94 / target 115), comfortably above
-#     the 1.5 floor and below the 3.0 "don't nick it" band, so a model cannot
-#     score here by re-running the R/R check from `risk_rr_breach`.
+#     MSFT's R/R is 2.5 (entry 100 / stop 94 / target 115) — neither thin nor
+#     inside the 3.0 "don't nick it" band the prompt still names, so a model
+#     cannot score here by re-running the payoff audit from `risk_rr_breach`.
 # --------------------------------------------------------------------------
 
 _DRAWDOWN_PM_CHAIN = ReasoningChain(

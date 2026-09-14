@@ -544,8 +544,17 @@ def agreement_ceiling_for_score(schedule: list[float] | tuple[float, ...], score
 #: rung — the ladder can only ever tighten it, never raise it, so an operator
 #: who lowers the setting lowers every rung with it.
 #:
-#: **This is not the desk's only drawdown response, and the two were never
-#: reconciled (docs/WORK.md item 32, bug 2).** The rolling-return "drawdown
+#: **This is not the desk's only drawdown response.** The two were set side
+#: by side on 2026-09-14 (docs/INCIDENT_HISTORY.md; docs/WORK.md item 32).
+#: They cannot contradict each other — a tripped daily breaker cannot block
+#: this ladder's de-levering (SELL and COVER return no violations before any
+#: rule runs), the two cannot double-sell the same shares (this ladder runs
+#: first in the session preamble and refreshes the broker snapshot before the
+#: breaker is evaluated), and the cap below keeps the severity ordering
+#: coherent. What the comparison DID find is a severity inversion, recorded
+#: rather than changed because it is risk appetite: the daily breaker trips
+#: soonest and force-LIQUIDATES, while this ladder's deepest rung only halves
+#: exposure. The rolling-return "drawdown
 #: brakes" (`RiskConfig.drawdown_5d_threshold_pct` /
 #: `drawdown_20d_threshold_pct`, halving new BUY size via
 #: `apply_drawdown_scale`) measure a DIFFERENT quantity — rolling window

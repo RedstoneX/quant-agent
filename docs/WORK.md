@@ -51,18 +51,34 @@ settled. Restored:**
   `config/prompts/portfolio_manager.md` hashes to `00ca991d...` and no result
   file in the repo was produced against it. Deciding without a re-run would be
   picking a model from numbers already written down as invalid.
-  **The blocking dependency is a benchmark re-run, and it SPENDS OPENROUTER
-  CREDITS — real money, and the owner's single stated financial concern.** It
-  is therefore an owner call to authorise, not an agent one, and that is why
-  this line moved rather than resolved. Weight it against the fact that the
+  **STRUCK 2026-09-14 — this paragraph used to say "the blocking dependency
+  is a benchmark re-run … therefore an owner call to authorise", and that
+  framing is stale and was actively harmful.** It invited exactly the
+  proposal he had already refused: on 2026-09-13 he ruled that no model test
+  runs while any PM-gate item is open, and the recommendation to spend ~$5
+  and settle it was put to him once already and was wrong. The spend is of
+  course his money and nobody may spend it without him — that is not in
+  question and does not need restating as a pending "authorisation" he owes
+  anyone. **Nobody proposes this run to him. He raises it or it does not
+  happen.** Weight it against the fact that the
   `portfolio_manager` seat is ~93% of the LLM bill, so this is also the
   largest available saving. See `qamc-llm-cost-concentration`.
-  **NOT DECIDED. Do not act on the existing benchmark numbers** — every score in
-  `ops/model_policy/results/*2026-09-01*.json` was measured against the OLD
-  prompt and is stale (see below). Owner's instruction was to RE-MEASURE after
-  the rewritten prompt ships, then decide. The incumbent `openai/gpt-5.5`
-  stays until that re-run exists. Re-running is a re-run, not a rebuild — the
-  rig reads the prompt from disk.
+  **NOT DECIDED, and it is a FIRST run — not a re-run. Corrected 2026-09-14
+  after checking the stored results rather than repeating the wording.**
+  There has never been a PM model comparison on the measurement that matters.
+  Multi-model runs exist only on the hand-built `pm_constrained` scenario,
+  which is saturated (nearly every model scores full marks, so it separates
+  nothing), and on `pm_production_scale`, whose own README says it cannot
+  measure stock-picking because every candidate gets an identical analysis.
+  `pm_selection` — the only scenario built from a real trading day — has only
+  ever been run against ONE model. Re-scoring the stored outputs instead is
+  not available: they are truncated to the first 1,500 characters and 3 of 8
+  trials carry nothing at all. **What actually invalidated the old numbers**
+  is prompt churn (25 commits have touched
+  `config/prompts/portfolio_manager.md` since 2026-09-01, and it is roughly a
+  fifth longer) plus a grader keyed to the retired reward:risk
+  floor — the second of those is FIXED as of 2026-09-14, gate item 8. The
+  incumbent `openai/gpt-5.5` stays until a first run exists.
 
 - [x] RESOLVED 2026-09-03 — Level quality bar for Phase 12.1 (a stop is
   honoured however tight only when its level has 5+ touches). Detail:
@@ -109,8 +125,31 @@ Index into the audit below, for the board. Cleared seats are deleted from
 here once written up in `docs/INCIDENT_HISTORY.md` — this list is what is
 still wrong, not a history of what was.
 
-**7. PM-input shape/volume redesign — MEASURED and the null-content slice SHIPPED 2026-09-13; two named pieces left, neither of them volume.** The step that was actually missing — nobody had counted the CURRENT prompt, only the 2026-09-02 one — is done: the frozen `run_64290730` fixture rendered through the live `build_user_message` is 100,968 chars over 25 sections, and 22,094 of them (21.9%) were content-free. Full per-section table and the confirmation of item 18's "70%" (it was exactly 70.4%) in `docs/INCIDENT_HISTORY.md` ("item 18d"). Prompt is now 85,933 chars. **What is left is not volume:** (a) macro is the one seat still couriering full reasoning — its 6-paragraph `reasoning_chain` (2,287 chars) is verbatim, deliberately, under "audit these for logic errors"; deciding whether the audit hook is worth a non-bounded seat is a PROMPT change and needs the paid `--replay-run` benchmark, which the rig cannot substitute for; (b) the two largest remaining sections, Technical Analysis (16,736) and Independent Source Agreement (11,902), are both already bounded and both scale linearly with the number of candidates covered — there is no honest cap to put on either, so the lever is how many names get covered, not how each one renders. Earnings, news and tech all now hand over call + conviction + thesis + falsifier. Do NOT re-open this as a size problem.
-**8. Every past model-comparison benchmark may be contaminated by bad seat data — OPEN, no re-run yet.** Same shape as the already-known spend-baseline contamination: a benchmark run before tonight's data-honesty fixes could have scored a model on how well it coped with (or quietly hid) empty/wrong input, not on real analytical quality. Combine with the PM model test itself — same re-run, same gate, not two separate jobs.
+**7. PM-input shape/volume redesign — NOT A GATE ON THE MODEL TEST (corrected 2026-09-14); open WORK with two named pieces left, neither of them volume.** **Why it is not a gate:** a model comparison shows every candidate model the IDENTICAL frozen input, macro block included, so the size or shape of that block cannot change which model wins. It is a one-model prompt question, not a between-model one. The line that said this needed "the paid `--replay-run` benchmark" named something that does not exist: `--replay-run` is a flag on the REHEARSAL RIG (`scripts/rehearse.py`), and `ops/model_policy/benchmark_models.py` has no such flag. What a prompt change actually needs is a benchmark run on the same scenario before and after — and that is not the owner's to authorise, because it is not the model decision he ruled on. **The macro audit-hook evidence, recorded here so it is not lost:** across 56 archived `portfolio_manager` calls, 27 carried macro's full `reasoning_chain` under an instruction to audit it for logic errors, and ZERO responses named that chain or reported a macro logic error. The structural reason is that the PM's output schema has no field a macro audit finding could go in, so there is nowhere to put one. **Caveat, stated rather than buried:** the archive ends 2026-09-02 and 27 calls is a modest sample — that is "no evidence it works", not proof it cannot. The step that was actually missing — nobody had counted the CURRENT prompt, only the 2026-09-02 one — is done: the frozen `run_64290730` fixture rendered through the live `build_user_message` is 100,968 chars over 25 sections, and 22,094 of them (21.9%) were content-free. Full per-section table and the confirmation of item 18's "70%" (it was exactly 70.4%) in `docs/INCIDENT_HISTORY.md` ("item 18d"). Prompt is now 85,933 chars. **What is left is not volume:** (a) macro is the one seat still couriering full reasoning — its 6-paragraph `reasoning_chain` (2,287 chars) is verbatim, deliberately, under "audit these for logic errors"; deciding whether the audit hook is worth a non-bounded seat is a PROMPT change and needs a paid before/after benchmark run on one model, which the rig cannot substitute for (item 1's own lesson); (b) the two largest remaining sections, Technical Analysis (16,736) and Independent Source Agreement (11,902), are both already bounded and both scale linearly with the number of candidates covered — there is no honest cap to put on either, so the lever is how many names get covered, not how each one renders. Earnings, news and tech all now hand over call + conviction + thesis + falsifier. Do NOT re-open this as a size problem.
+**ITEM 8 CLOSED 2026-09-14** (`docs/INCIDENT_HISTORY.md`). Its premise was
+false by construction — every benchmark input is frozen on disk and no live
+seat is called anywhere in the harness — and the real defect it was standing
+in front of, a grader still marking against the retired reward:risk floor, is
+fixed. **Item 7 is NOT a gate on the model test** and the claim that it was
+has been struck from it: a comparison shows every model the identical frozen
+input, so the shape of that input cannot change which model wins. It stays
+listed here under its own number because it is genuine open work and the
+board reads this section by number.
+
+**None of this authorises running the benchmark, and nobody proposes it to
+the owner.** He ruled on 2026-09-13 that no model test runs while any PM-gate
+item is open; item 7 is open. **A known limit on what the test would measure,
+recorded 2026-09-14 so it is not discovered mid-spend:** the only
+real-day scenario, `pm_selection`, runs on a fixture where zero of 59 rows
+carry `computed_levels`, so the STRUCTURAL reward:risk the current rule reads
+cannot be computed for any name on it. Admission does not depend on that
+quantity (verified — nothing is refused by the payoff rule that a neutral
+rating does not already refuse), so the scenario still measures selection
+against the desk's live admission rules; what it CANNOT measure is whether a
+model reads payoff geometry the way the desk now does. A fixture that could
+exists in the archive — production `run-bba4d4f3`, 2026-09-02, 63 of 64
+analyses carrying computed levels and all 34 actionable candidates with a
+computable structural ratio — and capturing it is unstarted work, not a gate.
 
 Detail below, under "DATA QUALITY AUDIT" and "PM-INPUT ARCHITECTURE".
 
@@ -748,30 +787,20 @@ the PM as prose, which is what this item asked for.
 number with reasoning and have it ratified; do not let a coding agent pick
 one, and do not ship a placeholder.
 
-**32. The two drawdown systems have never been reconciled — OPEN,
-unchanged since 2026-09-11.** *Owner-call label removed 2026-09-14, see
-`docs/INCIDENT_HISTORY.md`.*
+**32. Should the desk have ONE drawdown response or two — OWNER CALL, the only thing left on this item.** *Reconciliation half closed 2026-09-14; everything below the question is context for answering it, not work.*
 
-Everything else once on this item has landed and is written up; what is left
-is one decision, described at the bottom. The 5% envelope itself was restored
-2026-09-04 (an old unratified
-position-size cap was binding first and collapsing delivered risk to ~1%); a
-portfolio-level volatility-target overlay was investigated and REJECTED in the
-same pass (`docs/OUTCOME.md`); the three loss alarms were rebuilt on a
-volatility-relative basis 2026-09-11, owner call, at a PROVISIONAL sensitivity
-of 3.0 that is explicitly not researched and is reversible. The PM conviction
-bands were restored to 2.0-4.0% / 1.0-2.5% / 0.5-1.0% and merged by the owner
-2026-09-10; this file carried a stale "PENDING REVIEW" note against them until
-2026-09-13. Detail for all of it: `docs/INCIDENT_HISTORY.md`, 2026-09-04 and
-2026-09-11.
+**The question.** The desk has two drawdown mechanisms. The three loss alarms measure the account's return over a rolling window (today / 5 sessions / 20 sessions) against a multiple of the normal daily move of the book actually held. The §11.2 de-levering ladder measures how far the account is below its own equity high-water mark, against fixed percentages. Should they be merged into one response, or deliberately kept as two?
 
-**What is actually left.** The drawdown brakes measure rolling-window return;
-the §11.2 ladder measures peak-to-trough. They were calibrated independently,
-and nobody has decided whether the desk should have one drawdown response or
-two. All three alarms are capped at the ladder's -20% owner-alert point, which
-is a floor on the disagreement rather than agreement between them. At a
-sensitivity of 3.0 that cap no longer binds below roughly 1.5%/session; it
-stays as the guarantee for violent regimes.
+**Recommendation, unchanged: keep them as two for now.** Merging is a redesign, not a repair, and it means re-deciding trip points already set once. Worth doing when there is live evidence of how each behaves — there is none yet.
+
+**What is now established, so this can be answered without re-deriving it** (full detail, `docs/INCIDENT_HISTORY.md` 2026-09-14):
+
+- **They cannot contradict each other.** A tripped daily breaker cannot block the ladder's de-levering (exits fail open, entries fail closed); the two cannot double-sell the same shares (the ladder runs first and refreshes the broker snapshot before the breaker is evaluated); and all three alarm thresholds are capped at the ladder's -20% owner-alert point, with the 5-day clamped to the 20-day, so `|1d| <= |5d| <= |20d| <= 20%` holds at every volatility. The √time scaling is applied consistently across all three, with no second convention anywhere.
+- **The severity is inverted between them, and that IS a risk-appetite question.** The daily breaker trips soonest (~3 sigma, about a 3% loss on a 1%/session book) and its response is the most drastic the desk has — force-liquidate every position and abandon the session. The ladder's deepest rung, a 20% peak-to-trough drawdown, only halves the allowed exposure. Shallowest trigger, most violent action.
+- **Two things are recorded as open, neither of them a blocker on this decision.** The daily breaker's threshold shrinks with deployment while its response stays liquidation, so during a ramp from cash a single ordinary-looking single-name day can liquidate the book — and its numerator (whole-account daily P&L, including realised losses on positions already closed, commissions and spread) does not measure the same book as its denominator. Separately, the 5-day and 20-day brakes cannot evaluate until 6 and 21 evening runs have been recorded, and a paused desk accrues none; they now say so instead of printing a null.
+- **The inherited anchor.** `drawdown_5d_risk_multiple = 3` is an April-2026-era constant that everything else scales from and has never been validated. `drawdown_vol_sensitivity = 3.0` is an owner risk-appetite value, correctly labelled provisional in five places. The ladder's six numbers (-8/-15/-20 and 1.5/1.0/0.5) are ratified, not derived.
+
+No DECIDE BY. Nothing is blocked on the answer.
 
 **35. A stop-widening was observed in pre-clean-slate trade history (Visa, Aug 2026) — DEFERRED, not investigated further for now.**
 
@@ -847,8 +876,6 @@ No DECIDE BY — revisit only if it recurs.
 
 **60 — a related gate hole is CLOSED (2026-09-14): the ATR band's only non-redundant domain now consults `check_structural_protection`, additively.** `docs/INCIDENT_HISTORY.md`, 2026-09-14. **Still open:** the questions above, and the band's own multiple (item 70).
 
-**62. Three ceilings that shape order size live only in the Portfolio Manager's prompt, with no settings key and no recorded derivation — OPEN, found 2026-09-13 while rendering PM's limits from config (PR #349).** Every other number on that sheet now renders from `config/settings.yaml`; these three cannot, because no setting exists to render. They are: (a) the **earnings-queued 1% RISK cap** on a BUY in a name that has `JUST FILED` (`config/prompts/portfolio_manager.md`, the sizing formula's `queued_cap` and the hard-rule table's row 3); (b) the **momentum-leader starter sleeve's 1.0% RISK per-name ceiling**; (c) the **10% cash floor** the sheet's worked example measures against. What was searched, and found: `grep -rn` across `src/` and `config/settings.yaml` for a settings key or a constant behind any of the three returns nothing — there is no `cash_floor`/`min_cash` anywhere in the repo, and no key for either 1% figure. The one piece of enforcement that exists does not match what the sheet says: `TradingPipeline._clamp_queued_earnings_buys` (`src/pipeline.py`) caps the resulting **position WEIGHT** at a `max_pct` defaulting to **5.0**, and its only call site (`src/pipeline_stages.py`) passes no override — so the belt behind the sheet's "1% risk" is a 5% weight cap, which is neither the same quantity nor the same number. The other two have no deterministic backstop at all. `tests/test_risk_prompt_limits_live.py` exempts all three from the hand-typed-limit check, pointing here; **that exemption is a place to record the question, not an answer to it.** Under the desk's no-arbitrary-numbers rule a live ceiling must be read off the instrument or cited to a published source, and none of the three has either on record. **What would settle it:** for each of the three, a derivation or a published source for the number, or a decision that the ceiling should not exist. For (a) specifically, whether the intended quantity is risk or weight — and if the number survives, all three become settings and render like the rest of the sheet. Deliberately NOT answered inside PR #349: that PR removes second homes for numbers that already have a first one; deciding what an un-derived number should be is a different question and this one is the owner's.
-
 **63. `signal_weight` cannot say "pay attention, and the sign is the other way" — OPEN, no source found, carried out of item 52.** One scalar in `[0,1]` does two jobs: it is the ranking sort key and the dollar multiplier deciding what reaches the analyst seat. It has no way to express direction. Scott & Xu (FAJ 2004) measure an insider sale under 10% of the holding at **+0.68%** size/B-P-adjusted quarterly excess return, significant at 1% — a mildly *bullish* fact arriving on a *sell* row. Today that row gets weight 1.0, identical to an insider dumping 80% of a position at −0.81%; before 2026-09-13 it got 0.0 and vanished from the ranking. Both are wrong, in opposite directions. **Not a number to pick.** Choosing a multiplier that splits the difference would be fitting, and the ratio and band are already reported on every observation so the seat can read the sign itself — this item is about whether the *deterministic* ranking should also know it. **Searched and ruled out:** Scott & Xu themselves (they report band returns, never a weighting scheme); Cohen/Malloy/Pomorski, whose routine/opportunistic split is a binary with no magnitude and no direction; the desk's own history, which has too few insider-sourced fills to measure anything. **What would settle it:** a published source that scores insider signals on a signed scale rather than sorting them into bins, or enough of this desk's own outcome data to read a separation directly — neither exists yet. Until one does, the ratio stays reported and unweighted. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-13.
 
 **64. The backtest rations the risk budget alphabetically, and cannot do otherwise until it has a candidate ranking — OPEN, found 2026-09-13 while building the best-ranked-first rationing rule (retired item 49; see `docs/INCIDENT_HISTORY.md`, 2026-09-14).** `src/backtest/engine.py` builds every day's candidates and hands `allocate_risk_budget` one `RiskRequest` per candidate at `config.risk.max_position_risk_pct` — the SAME number for all of them. The allocator's pre-decision ordering is largest-request-first with an alphabetical tie-break, so with every request identical the tie-break is the ONLY thing ordering them: on any day the budget binds, the backtest funds candidates in alphabetical order. That work fixed the production path by spending the budget down `rank_verdicts`' own order, and deliberately did NOT touch this one: the backtest is signal-driven and produces no analyst verdicts, so there is no ranking to spend down and inventing a score to stand in for one is exactly what the no-arbitrary-numbers rule forbids. **The consequence:** any backtest run on a day where total requested risk exceeds `max_portfolio_risk_pct` measures a desk that picks trades by ticker spelling — so its results on those days do not describe the desk that now runs in production, and neither the old nor the new production rule can be evaluated by backtesting until this is closed. **What would settle it:** either the backtest gains a deterministic per-candidate score derived from the same signal machinery it already computes (and that score has to be read off something, not fitted), or the engine is honestly documented as unable to evaluate rationing behaviour and every result is reported alongside how many of its days had a binding budget. Nothing was searched for yet beyond confirming the requests are uniform, which was read directly off the code.
@@ -874,7 +901,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **70. One underived `1.0` is doing two different jobs in the exit path, and neither is read off anything — OPEN, filed 2026-09-14 while wiring the structural check into thesis-invalidation exits (item 60).** `NOISE_BAND_ATR_MULTIPLE = 1.0` in `src/risk/exit_guard.py` sets how far an adverse move must travel before it stops being noise, and is reused inside `check_structural_protection` as the margin a close must clear to count as beyond its backing level. `absolute_min_stop_atr_multiple: 1.0` in `config/settings.yaml` sets how tight a stop is allowed to be. They are the same round number in the same unit answering two different questions, and neither has a derivation or a cited source on record. That they agree is a coincidence of both being 1, not a relationship anyone established — nothing in the code ties one to the other, so a future change to either silently breaks whatever alignment is being assumed. **Deliberately NOT fixed in the item-60 PR**, which adds information to a gate and changes no number. **What would settle it:** for each of the two independently, a published measurement of the quantity it claims to bound (an ATR multiple at which adverse moves stop being noise; an ATR multiple below which a stop sits inside ordinary daily range), or a decision that one of them should be derived from the other and made a single named constant. Nothing has been searched for yet beyond confirming that neither number is referenced to anything in-repo.
 
-**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 57, 58, 59, 61, 66, 68 in this queue, and 1, 2, 3, 4, 5, 6 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Item 10 retired 2026-09-14 (`docs/INCIDENT_HISTORY.md`, that date) — every constructor drop path files a machine-readable reason and an AST guard fails on a new one that does not. Item 38's open follow-up survives as item 52, whose own unresolvable residue is item 63. Reconstructed from git history 2026-09-14 after corruption; 1, 3, 8 and 20 are NOT retired in this queue (live items; 8 is live here AND retired in the PM test gate, a legitimate cross-scheme split); 67, 90, 101, 200 never existed. PM test gate's own item 4 (news analyst data quality) closed 2026-09-14 and is retired in that scheme only — the funnel queue's own item 4 is unrelated and stays live. Full account, and every renumbering the corruption forced (62/63, then 65, then 68/69/70): `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
+**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54, 57, 58, 59, 61, 62, 66, 68 in this queue, and 1, 2, 3, 4, 5, 6, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Item 10 retired 2026-09-14 (`docs/INCIDENT_HISTORY.md`, that date) — every constructor drop path files a machine-readable reason and an AST guard fails on a new one that does not. Item 38's open follow-up survives as item 52, whose own unresolvable residue is item 63. Reconstructed from git history 2026-09-14 after corruption; 1, 3, 8 and 20 are NOT retired in this queue (live items; 8 is live here AND retired in the PM test gate, a legitimate cross-scheme split); 67, 90, 101, 200 never existed. PM test gate's own item 4 (news analyst data quality) closed 2026-09-14 and is retired in that scheme only — the funnel queue's own item 4 is unrelated and stays live. Full account, and every renumbering the corruption forced (62/63, then 65, then 68/69/70): `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
 
 ## Evidence-only follow-ups
 
