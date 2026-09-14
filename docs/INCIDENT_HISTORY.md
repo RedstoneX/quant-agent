@@ -22,6 +22,67 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — the Visa position that "traded through its own stop" never did; the desk's archive was reading a stop that had been retired four days earlier (WORK.md items 35 and 69, both CLOSED)
+
+**In plain words:** our own records showed Visa trading 63 cents below the
+price where we said we had a protective stop, with the position still open —
+which looks like the safety net simply failed. It did not. The stop had been
+deliberately moved lower four days before, and the broker's record proves the
+position was protected the whole time. The number in our archive was just
+never updated when the stop changed. The genuinely alarming thing the check
+turned up is different and worse: on the same evening the desk widened the
+stops on the exact three positions it had just decided it wanted OUT of.
+
+**What was checked.** Alpaca's own order history for the account (read-only,
+`status=all`, nested), plus IEX minute bars for the day in question and the
+archived run database. Not inferred from the desk's logs — the broker's side.
+
+**The Visa sequence, from the broker.** Bought 1 share at 380.33 on
+2026-08-27. A stop-limit protective order at stop 374.27 went on 31 seconds
+later and stayed live until it was cancelled at `2026-08-31T20:20:29.145Z`; a
+replacement at stop 362.58 was created 126 ms after that. So on 2026-09-01 the
+live stop was 362.58. Visa's regular-hours low that day was 372.27 — ten
+dollars above the stop. The broker was right not to fire. The position was
+closed on 2026-09-02 at 378.73 in the deliberate book-wide liquidation, with
+its stop cancelled 0.13 s before the sell, which is the cancel-write-ahead
+discipline behaving exactly as designed. Visa is not held today.
+
+**Why the archive disagreed.** The `trades.stop_loss` column is written once,
+when the trade is opened, and nothing writes it back when a stop is cancelled
+and replaced. The desk's *running* logic was never confused — the position
+reviewer's `distance_to_stop` on 2026-09-01 was 2.98% against 373.70, which is
+exactly the real 362.58 stop, and 362.58 appears in its prompts from that day
+on. Only the stored row was stale. Item 69 was the same illusion on Disney: the
+reviewer said 4.49% while the archive implied 0.39%, and the broker record
+shows Disney's stop had likewise moved from 105.80 to 101.44 — 4.49% is the
+correct figure against the real stop. **The reviewer was right in both cases
+and the archive was wrong in both cases.** The lesson to carry: the archived
+trades table cannot be used to audit stop distance, and two board items were
+filed as anomalies because someone did.
+
+**What was ruled out.** A stop that was never accepted, a stop-limit whose
+limit was unreachable, and an out-of-hours print — none apply. The orders were
+accepted GTC stop-limits, and the low that mattered was a regular-hours print
+at 15:57 ET.
+
+**The real finding.** At that one instant, `2026-08-31T20:20:29Z`, the account
+cancelled and re-placed the protective stop on exactly three symbols — CMCSA
+(25.80 -> 24.98), DIS (105.80 -> 101.44) and V (374.27 -> 362.58). Every one
+moved AWAY from price; Visa's entry-to-stop risk went from 1.59% to 4.67% of
+entry. Those three are precisely the three names the position reviewer had
+asked to REDUCE 48 minutes earlier, each of which
+`exit_blocked_inside_atr_noise_band` refused. So the desk's answer to "I want
+out of these three" was to give all three more room to fall. None of the three
+new stop prices appears in any agent log before 2026-09-01, so this was a code
+path and not a model decision. **Which code path is UNVERIFIED** — no local log
+from that date survives on this box, and nothing here should be read as
+identifying the mechanism. This is filed to WORK.md item 60 (the exit path's
+refusal layers), where the over-refusal evidence already lives.
+
+**What would catch it next time.** Writing the stop back to the trades row on
+every cancel/replace, so the archive and the broker cannot silently diverge.
+That is not built.
+
 ### 2026-09-14 — the model exam was still marking against a rule the desk deleted three days earlier, and the reason it was blocked was a contamination that never existed (PM test gate item 8, CLOSED)
 
 **In plain words:** we want to find out which AI model should run the seat
