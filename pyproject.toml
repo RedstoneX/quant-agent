@@ -75,6 +75,6 @@ build-backend = "setuptools.build_meta"
 # 0 failures, on two separate runs with different schedulers. Tests never
 # touch the live desk or its database; each worker gets its own tmp_path.
 # A test that genuinely needs to run alone should be fixed to isolate its
-# state, not taken out of the parallel run. `-p no:xdist` runs serially for
+# state, not taken out of the parallel run. `-n 0` runs serially for
 # debugging.
 addopts = "-n auto"
