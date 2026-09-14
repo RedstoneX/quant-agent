@@ -994,8 +994,8 @@ def test_heading_present_but_items_unparseable_is_reported(tmp_path):
 
 
 def test_classification_is_carried_by_the_word_not_only_colour():
-    """The owner is red/green colour blind. Every status must be legible with
-    all colour stripped out, so the label text itself has to be in the markup."""
+    """Every status must be legible with all colour stripped out, so the
+    label text itself has to be in the markup."""
     items = [
         sb.QueueItem(1, "A blocked thing", "TOO STRICT", "17 of 68 (25%)", 25, False),
         sb.QueueItem(2, "A broken thing", "DEFECT", "2 of 68 (3%)", 3, False),
@@ -2240,8 +2240,8 @@ def test_a_missing_backlog_file_does_not_break_the_page(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_no_status_on_the_page_depends_on_colour_alone():
-    """The owner is red/green colour blind. Every verdict has to survive all
-    colour being stripped out, so each one must be a WORD in the markup."""
+    """Every verdict has to survive all colour being stripped out, so each
+    one must be a WORD in the markup."""
     for _cls, label in sb.VERDICT_PILL.values():
         assert label and label.strip() == label
         assert not label.lower() in ("red", "green", "amber")
@@ -2288,10 +2288,9 @@ _CONTRAST_PAIRS = [
 
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_every_text_pairing_on_the_board_clears_wcag_aa(theme):
-    """The owner is red/green colour blind and reported the page as "almost
-    black and white". Contrast is computed from the stylesheet's own tokens,
-    not assumed, so a future palette change that quietly fails him fails
-    here first."""
+    """Contrast is computed from the stylesheet's own tokens, not assumed,
+    so a future palette change that quietly fails contrast fails here
+    first."""
     pal = _palettes()[theme]
     for fg, bg, need in _CONTRAST_PAIRS:
         ratio = _contrast(pal[fg], pal[bg])
@@ -2302,13 +2301,11 @@ def test_every_text_pairing_on_the_board_clears_wcag_aa(theme):
 def test_the_two_accent_hues_are_blue_and_orange_never_red_or_green(theme):
     """The owner set the palette himself on 2026-09-12: violet against blue,
     the conventional modern-web scheme, asked for explicitly and asked for
-    STRONG. The earlier blue/orange palette was chosen on colour-blindness
-    grounds and he rejected both the look and the reasoning — "forget that
-    I'm colourblind". So this test no longer makes an accessibility
-    argument. What it still pins is his two stated dislikes: nothing pink,
-    and nothing washed out. Meaning is carried by text and edge shape
-    rather than hue anyway — see the sibling tests — so the palette is free
-    to be a preference."""
+    STRONG. The earlier blue/orange palette and its rationale were retired.
+    So this test no longer makes an accessibility argument. What it still
+    pins is his two stated dislikes: nothing pink, and nothing washed out.
+    Meaning is carried by text and edge shape rather than hue anyway — see
+    the sibling tests — so the palette is free to be a preference."""
     def hue(h):
         r, g, b = (int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
         mx, mn = max(r, g, b), min(r, g, b)

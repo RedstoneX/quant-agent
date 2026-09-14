@@ -42,8 +42,7 @@ function readThemeColors() {
   // the existing --c-agent token (purple) rather than introducing a new
   // CSS color — it carries no meaning elsewhere on THIS panel (entry uses
   // accent/blue, stop uses amber, P&L uses green/red), and purple vs. blue
-  // is a colorblind-safe pairing for the owner's red-green color
-  // vision (see CLAUDE.md), unlike anything bordering red/orange/green.
+  // is a colorblind-safe pairing, unlike anything bordering red/orange/green.
   const agent = rgb("--c-agent");
   return {
     text: solid(text),
@@ -62,9 +61,9 @@ function readThemeColors() {
     // lines. See livePriceLineRef below.
     textMuted: alpha(text, 0.6),
     // Upcoming (not-yet-reported) earnings are the SAME hue as a past
-    // report, just faded — a lightness/alpha distinction reads correctly
-    // regardless of color vision, rather than relying on a second hue that
-    // could land near red/green/amber by accident.
+    // report, just faded — a lightness/alpha distinction reads reliably,
+    // rather than relying on a second hue that could land near
+    // red/green/amber by accident.
     agentFaded: alpha(agent, 0.45),
   };
 }
@@ -322,8 +321,9 @@ function eventMarkerTime(dateKey: string, timeframe: ChartTimeframe, availableTi
  * source; see src/data/market.py's get_price_chart_events and the
  * /events/{symbol} route. A round marker per ex-dividend date; a square
  * marker per earnings-report date, colored distinctly for already-reported
- * vs. upcoming/estimated (see readThemeColors' agent/agentFaded — a
- * colorblind-safe hue the rest of this panel doesn't otherwise use).
+ * vs. upcoming/estimated (see readThemeColors' agent/agentFaded — a hue
+ * the rest of this panel doesn't otherwise use, chosen for a
+ * colorblind-safe pairing against the panel's other colors).
  * Returns [] on empty input, same "never fabricate" contract as every
  * other marker builder in this file. */
 // Fix (owner re-test, 2026-09-10): `position: "belowBar"` was the previous

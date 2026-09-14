@@ -53,6 +53,26 @@ from src.risk.constants import is_trend_trade
 # setting. So 5 stays, honestly labelled, rather than being changed to
 # another number with no better claim.
 #
+# 2026-09-13, second pass (docs/WORK.md item 55): the ACADEMIC literature on
+# this exact construction was found, and it does not derive the window either
+# — but it does bound what is known. Tsinaslanidis, "Technical Trading
+# Strategies, Pattern Recognition and Financial Risk Management" (PhD thesis,
+# University of Macedonia, 2012, §4.3, the published method of Zapranis &
+# Tsinaslanidis 2012a) defines a pivot exactly as this module does, as a
+# symmetric rolling-window extreme: "in order to characterize the closing
+# price observed at time t (Pt) as a regional peak, when a rolling window
+# with a length of 50 days is used, this price has to be greater than the 25
+# preceding and 25 following days simultaneously." The shape is the same; the
+# scale is not. Their tested windows are 50, 100 and 150 days TOTAL — 25, 50
+# and 75 bars either side — and they report the results "robust to any
+# different parameterization" ACROSS THAT RANGE. Nothing in that finding
+# reaches down to 3 or 5 bars either side, so it does not license this
+# constant; it only says the object is insensitive somewhere else entirely.
+# Two further differences that stop this being a like-for-like citation:
+# they read CLOSES, this module reads highs and lows; and their window is
+# tuned to identify multi-month swing structure, not the multi-day structure
+# a stop sits on.
+#
 # `src/risk/trailing.py` uses 3, NOT 5, and that is not an error to fix by
 # copying. Consumers of THIS window are `find_structural_levels` and
 # `structure_coverage` in this file (and `MIN_SCAN_BARS` below, which is read
@@ -75,6 +95,37 @@ MIN_SCAN_BARS = max(PIVOT_WINDOW * 2 + 1, ATR_PERIOD)
 
 # Two pivots within this percentage of each other are the same level. Price
 # does not respect a number to the cent — it respects a zone.
+#
+# **Still a convention with no derivation. It is now a PLACED one.**
+# docs/WORK.md item 55, 2026-09-13.
+#
+# That a level is a band and not a price is sourced, not assumed. Bulkowski,
+# quoted in Tsinaslanidis (PhD thesis, University of Macedonia, 2012, §4.2):
+# "Support and resistance are not individual price points, but rather thick
+# bands of molasses that slow or even stop price movement." The same section
+# derives the requirement from Murphy and Bulkowski together: "it can be
+# inferred that a support or a resistant level is an area of prices, rather
+# than a specific individual price level, in where local peaks and bottoms
+# reside." So the SHAPE — a percentage-width band around a cluster of pivots
+# — is the published archetype and is adopted here deliberately.
+#
+# The WIDTH is not derived by that literature. Its own construction (§4.4)
+# leaves it as a user input: "The third variable 'x' is the desired
+# percentage distance of each bin." What the literature does supply is a
+# measured insensitivity range, and this desk sits at the edge of it. Their
+# illustrated default is 3%, and footnote 32 records that "desired distances
+# of 2%, 4% and 5% are also implemented", with the body stating "Any further
+# parameterization does not affect the empirical findings" — measured over
+# 733 NASDAQ/NYSE names, 1990-2010. `_cluster` below chains a pivot in when
+# it sits within this percentage of the cluster's ANCHOR, so a cluster spans
+# at most 1.0% — HALF the narrowest bin that literature has tested. The
+# match zone built from it (`level_zone_halfwidth`, +/-1%) spans 2.0%, which
+# is exactly that narrowest tested bin.
+#
+# So: 1.0 is not shown to be right, and it is not shown to be wrong either.
+# It stays, labelled, rather than being moved to 3.0 — moving it would be
+# adopting a foreign default, which is the same unsourced act in the other
+# direction. What would settle it is named in docs/WORK.md item 55.
 CLUSTER_TOLERANCE_PCT = 1.0
 
 
@@ -113,6 +164,22 @@ def level_zone_halfwidth(
     return level_price * tolerance_pct / 100.0
 
 # A level touched once is a coincidence, not structure.
+#
+# **This one IS sourced, and 2 is the answer the source gives.** docs/WORK.md
+# item 55, 2026-09-13. It is not a tuned parameter: two points are the fewest
+# that can define a horizontal line at all, and the published construction of
+# this exact object uses the same figure — Tsinaslanidis (PhD thesis,
+# University of Macedonia, 2012, §4.4): "Only price areas (bins) with
+# frequencies greater or equal to two are considered as HSAR."
+#
+# Raising it is ruled out by measurement, not by preference. The same work
+# tested whether more touches make a level better and found they do not
+# (§4.6.1, 733 NASDAQ/NYSE names): "results indicate that these 'strengths'
+# play no major role in predicting trend interruptions." Concretely, on
+# NASDAQ two-local levels were hit 26,868 times and bounced 60.99% of the
+# time, three-local levels 6,661 times and bounced 61.04%. Anything above 2
+# would discard levels for no measured gain, so 2 is a floor read from the
+# geometry and confirmed against published measurement — do not "tighten" it.
 MIN_TOUCHES = 2
 
 # No MAX_DISTANCE_PCT here. Until 2026-09-12 a level only counted if it sat

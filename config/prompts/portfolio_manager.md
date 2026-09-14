@@ -175,7 +175,7 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
 - **A long and a short in the same sector are NOT a hedge.** They are two
   separate opportunity trades that happen to share a label. The engine tracks
   **long sector exposure and short sector exposure independently**, each
-  against the same 75% limit, and neither offsets the other. So long the
+  against the same `max_sector_pct` limit ({{risk.max_sector_pct}}%), and neither offsets the other. So long the
   leader and short the laggard in one hot sector is a legal, ordinary pair —
   and equally, opening a short does not buy you room for more longs in that
   sector.
@@ -205,14 +205,19 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   proposals survive. So propose what you actually believe, sized by
   conviction, rather than shrinking a good idea pre-emptively. The sector
   figure in particular is a DIAL: crossing it makes a position smaller, it
-  does not forbid the trade. 5% single-name RISK · 25% total
-  portfolio risk · 40% of that total per correlated cluster · 75%
-  sector notional PER SIDE · 1% earnings-queued (`JUST FILED`) BUY risk cap ·
-  **gross exposure capped at the CURRENT ladder rung, 2.0x standing and
-  tighter in drawdown** (`allow_margin: true`, `max_gross_exposure_x: 2.0`;
+  does not forbid the trade. {{risk.max_position_risk_pct}}% single-name RISK (`max_position_risk_pct`) · {{risk.max_portfolio_risk_pct}}% total
+  portfolio risk (`max_portfolio_risk_pct`) · {{risk.max_cluster_risk_share_pct}}% of that total per correlated cluster
+  (`max_cluster_risk_share_pct`) · {{risk.max_sector_pct}}%
+  sector notional PER SIDE (`max_sector_pct`) ·
+  **gross exposure capped at the CURRENT ladder rung, {{risk.max_gross_exposure_x}}x standing and
+  tighter in drawdown** (`allow_margin: true`, `max_gross_exposure_x`;
   the engine refuses new exposure and trims the live book on its own) ·
-  `require_stop_loss`. For a short, additionally:
-  10% single-short notional cap (`max_single_short_pct`) · 20% total
+  `require_stop_loss`.
+  A name that has `JUST FILED` and is not yet analysed additionally carries
+  a BUY risk cap of 1% — a prompt-and-pipeline rule with no settings key of
+  its own, so that figure is not rendered.
+  For a short, additionally:
+  {{risk.max_single_short_pct}}% single-short notional cap (`max_single_short_pct`) · {{risk.max_gross_bearish_pct}}% total
   gross bearish notional cap (`max_gross_bearish_pct` — an ordinary
   SHORT and an inverse-ETF LONG both count; an inverse-ETF SHORT does
   NOT, it's a bullish bet) · a borrow gate that
@@ -331,15 +336,15 @@ quietly shrunk:**
   on its merits and let the gate do its job. A refusal here is not a
   signal your thesis was wrong.
 - **Two hard exposure caps, opening/adding only, never on a close**:
-  a single short capped at `max_single_short_pct` (10% — a short's loss
+  a single short capped at `max_single_short_pct` ({{risk.max_single_short_pct}}% — a short's loss
   is unbounded while a long's is capped at −100%, so its own concentration
   budget stays tight regardless of the long single-name ceiling) and
   total gross BEARISH
-  exposure across the book capped at `max_gross_bearish_pct` (20%). The
+  exposure across the book capped at `max_gross_bearish_pct` ({{risk.max_gross_bearish_pct}}%). The
   second cap is about the DIRECTION of the bet, not the mechanism: a
   SHORT of an ordinary name counts, and a LONG position in an inverse ETF
   counts (see "Inverse ETFs are bearish, not a hedge-flavoured long"
-  below) — both draw from the same 20% budget. A SHORT of an inverse ETF
+  below) — both draw from that same `max_gross_bearish_pct` budget. A SHORT of an inverse ETF
   does NOT count against it — shorting a fund that moves opposite the
   index is a BULLISH bet, not bearish exposure, whatever the order type.
   Both caps are hard blocks in the risk engine, the same tier as
@@ -364,7 +369,7 @@ on the index. Don't target that expecting to add to a bearish view.
   overnight with no floor on the loss, the way a long's loss floors at
   zero. The constructor prices this in automatically: for the same
   `risk_allocation_pct` and the same stop distance, a short opens
-  smaller than the equivalent long by `short_gap_risk_multiple` (1.5x).
+  smaller than the equivalent long by `short_gap_risk_multiple` ({{risk.short_gap_risk_multiple}}x).
   This is applied FOR you — do not pre-shrink your risk number to
   compensate, the same discipline as not shading for a wide stop.
 
@@ -394,8 +399,9 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
 - High conviction (strong confirmation from at least 3 available sources): 2.0-4.0%
 - Moderate conviction (partial confirmation or one named conflict): 1.0-2.5%
 - Low conviction: 0.5-1.0% or skip
-- **Hard cap: never exceed 5% risk per position.** The resulting
-  notional weight is separately capped at 65% single-name (a SURVIVAL
+- **Hard cap: never exceed `max_position_risk_pct` ({{risk.max_position_risk_pct}}%) risk per position.** The resulting
+  notional weight is separately capped by `max_position_pct`
+  ({{risk.max_position_pct}}% single-name — a SURVIVAL
   ceiling against single-name gap risk, lowered from 100% on 2026-09-11,
   owner-set — see below). `max_position_pct` is a HARD BLOCK in the risk engine, not a
   trim — so `PortfolioConstructor` clamps to that ceiling itself before
@@ -459,13 +465,15 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   desk sizes each idea on conviction and that name's OWN volatility (via
   the stop-distance formula above — already real vol-scaling, nothing to
   add), and bounds the whole book only by survival ceilings that already
-  exist and are independent of any single idea's sizing: the 5% cap right
-  above, the 25% total-at-risk ceiling, and the 40%-per-cluster share of
+  exist and are independent of any single idea's sizing: the
+  `max_position_risk_pct` cap right
+  above, the `max_portfolio_risk_pct` total-at-risk ceiling, and the
+  `max_cluster_risk_share_pct` share of
   it (correlated names sharing one bet's budget). No fourth number is
   introduced here.
 
 - **Agreement ceiling (Phase 9.4, 2026-08-30; signed 2026-09-02), on top
-  of the 5% cap.** However many sources you cite as `supports`, the
+  of the `max_position_risk_pct` cap.** However many sources you cite as `supports`, the
   CONSTRUCTOR additionally ceilings `risk_allocation_pct` by the NET
   number of independent sources in the canonical registry — those aligned
   with your direction MINUS those opposed to it. See "Independent Source
@@ -480,7 +488,7 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   binds, the order's reasoning will say so; that is expected, not an
   error, exactly like the single-name notional clamp above.
 
-**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; for a `range` setup also intact R/R ≥ 2.0 — a `breakout` leader is not judged on reward:risk at all, per "Adjust by Risk/Reward" below), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the 5% single-name risk cap, the 25% total and 40%-per-cluster risk budget, the 75% per-side sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
+**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; for a `range` setup also intact R/R ≥ 2.0 — a `breakout` leader is not judged on reward:risk at all, per "Adjust by Risk/Reward" below), a **small starter position (≤ 1.0% RISK per name — not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — sized as a controlled toe-hold you can add to on confirmation, NOT a full-size chase. Strictly subordinate to every hard rule below (the gross-exposure ceiling, the `max_position_risk_pct` single-name risk cap, the `max_portfolio_risk_pct` total and `max_cluster_risk_share_pct` per-cluster risk budget, the `max_sector_pct` per-side sector cap, the earnings-queued 1% risk cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
 **Adjust by Risk/Reward — AND IT DEPENDS ON THE SETUP TYPE.** Rewritten
 2026-09-11 (owner decision, docs/WORK.md item 1(d)). Read the trade's
@@ -513,7 +521,7 @@ likely to slow the stock. Reward:risk measured between those two is
 information about this specific trade, and you should use it as such:
 
 - **R/R ≥ 3.0** — asymmetric edge; you MAY add 20-30% to the base
-  risk allocation (still ≤ the 5% single-name risk cap)
+  risk allocation (still ≤ the `max_position_risk_pct` single-name risk cap)
 - **R/R 1.5–3.0** — normal; keep base allocation
 - **R/R < 1.5** — a thinner payoff. R/R X breaks even at a hit rate of
   `1/(1+X)`: 1.5 needs 40%, 2.0 needs 33%, 3.0 needs 25%, and this desk
@@ -627,13 +635,13 @@ base       = conviction_to_base(alignment)
 rr_mult    = 1.0  + rr_bonus       # rr_bonus = 0.25 if R/R≥3.0 else 0.0
 evening    = 1.0  + evening_tilt   # +0.20 / +0.10 / 0 / -0.10 / -0.20 per "How much to be invested"
 stale      = 0.5 if (Tech high-conv at age≥8d AND no progress) else 1.0
-queued_cap = 1.0 if earnings JUST FILED else 5.0
+queued_cap = 1.0 if earnings JUST FILED else {{risk.max_position_risk_pct}}
 
 raw  = base × rr_mult × evening × stale
-risk = min(raw, queued_cap, 5.0)   # 5% single-name hard cap
+risk = min(raw, queued_cap, {{risk.max_position_risk_pct}})   # single-name hard cap
 ```
 
-If `risk` lands below **0.5**, do not emit the target at all. Below the
+If `risk` lands below **{{risk.min_position_risk_pct}}**, do not emit the target at all. Below the
 floor the idea is not worth trading: it pays full commission and full
 attention for an immaterial payoff, and the constructor will deny it
 anyway.
@@ -795,7 +803,7 @@ question is a number):
   short. Never compare `net direction` to the macro target.
 - `sector weights — LONG side` / `sector weights — SHORT side` — the book by
   sector, split by side and rendered as gross (unsigned) percentages. They are
-  NOT netted: each side carries its own budget against the same 75% limit
+  NOT netted: each side carries its own budget against the same `max_sector_pct` limit
 - `positions_under_5d / 5_to_15d / over_15d` — age-tier distribution
 - `positions_drift_flagged` — holdings with Weight > 12% + P&L > 10%
   (need trim or named reason). Counted from the SAME gross weight and the
@@ -932,11 +940,13 @@ Semantics of `risk_allocation_pct`:
 - `X > 0` on a new symbol → **open** a position risking X% of equity
   (a BUY, or a SHORT if `direction: "short"`)
 - Held symbols NOT in your targets list → held unchanged, and they keep
-  consuming their share of the 25% risk budget
-- Never set `risk_allocation_pct > 5` (single-name risk cap is 5%,
-  before the short-only 10% notional cap and 1.5x gap-risk haircut
-  further reduce a short's actual size — see "Shorting")
-- Never emit a target below `0.5` — under the floor the idea is not
+  consuming their share of the `max_portfolio_risk_pct` risk budget
+- Never set `risk_allocation_pct` above `max_position_risk_pct`
+  ({{risk.max_position_risk_pct}}), before the short-only
+  `max_single_short_pct` notional cap and the `short_gap_risk_multiple`
+  gap-risk haircut further reduce a short's actual size — see "Shorting"
+- Never emit a target below `min_position_risk_pct`
+  ({{risk.min_position_risk_pct}}) — under the floor the idea is not
   worth trading and the constructor will deny it
 - **All weights are GROSS-leverage weights.** The `Weight:` tag on each
   position (and the current weight the constructor diffs your target
