@@ -109,7 +109,6 @@ Index into the audit below, for the board. Cleared seats are deleted from
 here once written up in `docs/INCIDENT_HISTORY.md` — this list is what is
 still wrong, not a history of what was.
 
-**4. News analyst seat data quality — PARTIALLY FIXED, one gap open.**
 **7. PM-input shape/volume redesign — MEASURED and the null-content slice SHIPPED 2026-09-13; two named pieces left, neither of them volume.** The step that was actually missing — nobody had counted the CURRENT prompt, only the 2026-09-02 one — is done: the frozen `run_64290730` fixture rendered through the live `build_user_message` is 100,968 chars over 25 sections, and 22,094 of them (21.9%) were content-free. Full per-section table and the confirmation of item 18's "70%" (it was exactly 70.4%) in `docs/INCIDENT_HISTORY.md` ("item 18d"). Prompt is now 85,933 chars. **What is left is not volume:** (a) macro is the one seat still couriering full reasoning — its 6-paragraph `reasoning_chain` (2,287 chars) is verbatim, deliberately, under "audit these for logic errors"; deciding whether the audit hook is worth a non-bounded seat is a PROMPT change and needs the paid `--replay-run` benchmark, which the rig cannot substitute for; (b) the two largest remaining sections, Technical Analysis (16,736) and Independent Source Agreement (11,902), are both already bounded and both scale linearly with the number of candidates covered — there is no honest cap to put on either, so the lever is how many names get covered, not how each one renders. Earnings, news and tech all now hand over call + conviction + thesis + falsifier. Do NOT re-open this as a size problem.
 **8. Every past model-comparison benchmark may be contaminated by bad seat data — OPEN, no re-run yet.** Same shape as the already-known spend-baseline contamination: a benchmark run before tonight's data-honesty fixes could have scored a model on how well it coped with (or quietly hid) empty/wrong input, not on real analytical quality. Combine with the PM model test itself — same re-run, same gate, not two separate jobs.
 
@@ -128,11 +127,6 @@ Audited from real production logs, not assumed. Ranked by measured severity:
 (Items 1-3 and 5's full write-ups already live in `docs/INCIDENT_HISTORY.md`;
 see the struck-through index above for status.)
 
-4. **News analyst — root cause found and fixed: one dropped opening quote
-   broke whole-document JSON parsing, not a real 4-field gap.** See
-   `docs/INCIDENT_HISTORY.md`. **Still open:** a second, different
-   failure (a dropped symbol key) — left unfixed, can't be auto-repaired
-   without inventing data.
 6. **Macro analyst — CORRECTED 2026-09-03, prior "no defect" claim was
    wrong.** Fires on 52% of runs, not rare. NOT a fetch/pipeline defect —
    FRED's real publication lag is 2 days, but the gate's freshness bar
@@ -1072,7 +1066,7 @@ No DECIDE BY — revisit only if it recurs.
 
 **64. The backtest rations the risk budget alphabetically, and cannot do otherwise until it has a candidate ranking — OPEN, found 2026-09-13 while building the best-ranked-first rationing rule (retired item 49; see `docs/INCIDENT_HISTORY.md`, 2026-09-14).** `src/backtest/engine.py` builds every day's candidates and hands `allocate_risk_budget` one `RiskRequest` per candidate at `config.risk.max_position_risk_pct` — the SAME number for all of them. The allocator's pre-decision ordering is largest-request-first with an alphabetical tie-break, so with every request identical the tie-break is the ONLY thing ordering them: on any day the budget binds, the backtest funds candidates in alphabetical order. That work fixed the production path by spending the budget down `rank_verdicts`' own order, and deliberately did NOT touch this one: the backtest is signal-driven and produces no analyst verdicts, so there is no ranking to spend down and inventing a score to stand in for one is exactly what the no-arbitrary-numbers rule forbids. **The consequence:** any backtest run on a day where total requested risk exceeds `max_portfolio_risk_pct` measures a desk that picks trades by ticker spelling — so its results on those days do not describe the desk that now runs in production, and neither the old nor the new production rule can be evaluated by backtesting until this is closed. **What would settle it:** either the backtest gains a deterministic per-candidate score derived from the same signal machinery it already computes (and that score has to be read off something, not fitted), or the engine is honestly documented as unable to evaluate rationing behaviour and every result is reported alongside how many of its days had a binding budget. Nothing was searched for yet beyond confirming the requests are uniform, which was read directly off the code.
 
-**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 11, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54 in this queue, and 1, 2, 3, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52, whose own unresolvable residue is item 63.
+**Retired item numbers — never reuse.** 2, 5, 6, 7, 9, 11, 12, 14, 16, 25, 29, 33, 34, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 54 in this queue, and 1, 2, 3, 4, 5, 6 in the PM test gate, were resolved and deleted from this file once written up in `docs/INCIDENT_HISTORY.md`. This file carries what is still wrong; the history file carries what went wrong. Item 38's still-open follow-up survives as item 52, whose own unresolvable residue is item 63.
 
 ## Evidence-only follow-ups
 

@@ -848,6 +848,31 @@ Bear triggers (would turn defensive):
                     stock_items.append(f"- {sym}: [{a.conviction.upper()}] {a.sentiment} — {a.impact_summary}")
             stock_text = "\n".join(stock_items) if stock_items else "No stock-specific news."
 
+            # PM TEST GATE item 4, second half (2026-09-14). Mirrors the
+            # earnings "read, no call" rollup (`_render_earnings_no_call_
+            # rollup`) and the ranking table's "no lean from: {seat}" note
+            # (2026-09-13): an absence must be STATED, never left to read as
+            # silence. `dropped_news_symbols` is computed by the agent, not
+            # the model — see `NewsAnalystAgent._find_dropped_news_symbols`.
+            # A symbol listed here had real headline coverage shown to the
+            # news seat and the seat's structured answer for it did not
+            # survive — this is NOT "no news for this name" and must not be
+            # read as one.
+            if news_intel.dropped_news_symbols:
+                lost_text = (
+                    "\n\n### News Answer Lost — {n} symbol(s) — NOT an absence of news\n"
+                    "The news seat had real headline coverage for these symbols "
+                    "but its structured answer for them did not survive parsing "
+                    "(a dropped response, not a judgment that there was nothing "
+                    "to report). Treat coverage for these names as UNKNOWN, "
+                    "never as clean and never as \"no news\":\n"
+                ).format(n=len(news_intel.dropped_news_symbols))
+                lost_text += "\n".join(
+                    f"- {sym}" for sym in news_intel.dropped_news_symbols
+                )
+            else:
+                lost_text = ""
+
             news_section = f"""## News Intelligence
 ### PM Briefing
 {news_intel.pm_briefing}
@@ -862,7 +887,7 @@ Bear triggers (would turn defensive):
 {changes_text}
 
 ### Stock-Specific News
-{stock_text}
+{stock_text}{lost_text}
 
 Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confidence})"""
         else:

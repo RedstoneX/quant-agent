@@ -2501,6 +2501,21 @@ class NewsIntelligenceReport(LLMOutputModel):
     # even when the symbol never tripped the tech prefilter. Default []
     # so an old persisted/replayed report parses unchanged.
     nominations: list[Nomination] = []
+    # PM TEST GATE item 4, second half (2026-09-14). Computed by
+    # `NewsAnalystAgent.analyze()` AFTER parsing, exactly like
+    # `TechAnalysisResult.computed_levels` — never asked of the model,
+    # never invented from it either. Holds every symbol `stock_mentions`
+    # (the deterministic, pre-LLM word-boundary match over real wire text —
+    # see `NewsDataProvider.tag_symbol_mentions`) proves had real headline
+    # content shown to the model, but which has no key at all in `stock_news`
+    # above. This is the presence/absence check the 2026-09-03 incident
+    # ("a dropped `\"AMD\": [`-style opener spliced one symbol's news items
+    # onto another's") needed and did not have: that failure produces
+    # syntactically valid JSON, so it is invisible to any parser-level
+    # check and can only be caught by comparing what the model was shown
+    # against what it returned. Default `[]` so an old persisted/replayed
+    # report — and every caller that hasn't been updated — parses unchanged.
+    dropped_news_symbols: list[str] = []
 
     @model_validator(mode="before")
     @classmethod
