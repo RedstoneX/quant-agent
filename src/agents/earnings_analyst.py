@@ -67,6 +67,9 @@ _UNSOURCED_VALUATION_DISCLOSURE = (
 
 
 class EarningsAnalystAgent(BaseAgent):
+    # See _validate_analysis(): parsed JSON is validated as EarningsAnalysis(**parsed).
+    result_model = EarningsAnalysis
+
     @property
     def name(self) -> str:
         return "earnings_analyst"

@@ -93,6 +93,8 @@ class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
     _prompt_path = PROMPT_PATH
     _settings_path = SETTINGS_PATH
     _fallback_prompt = "You are a portfolio manager. Respond with JSON."
+    # See decide(): parsed JSON is validated as PortfolioDecision(**parsed).
+    result_model = PortfolioDecision
 
     #: Phase 14b. The rotation comparison this agent's LAST prompt was
     #: rendered from (`rotation_precheck`), reset at the top of every

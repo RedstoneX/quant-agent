@@ -93,6 +93,9 @@ _STATE_CHANGE_STOPWORDS = frozenset({
 
 
 class NewsAnalystAgent(BaseAgent):
+    # See analyze(): parsed JSON is validated as NewsIntelligenceReport(**parsed).
+    result_model = NewsIntelligenceReport
+
     @property
     def name(self) -> str:
         return "news_analyst"

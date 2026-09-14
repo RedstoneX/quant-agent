@@ -177,6 +177,13 @@ class Trial:
     # excluded from every quality/cost aggregate. Defaulted so results files
     # written before this field existed still load.
     status: str = "run"
+    # The uniform-testing settings actually sent with this trial's request
+    # (src/agents/base.py's BaseAgent.result_model / _openai_wire_call) — so
+    # a results file is self-describing evidence of what was measured,
+    # rather than requiring a reader to cross-check the benchmark's source
+    # against whatever config.llm defaults were live at run time.
+    reasoning_effort: str = "medium"
+    structured_output: bool = True
 
 
 STATUS_RUN = "run"
@@ -617,6 +624,8 @@ def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) 
         actual_model=meter.actual_model,
         used_fallback=meter.used_fallback,
         picks=_extract_picks(output),
+        reasoning_effort=agent._reasoning_effort,
+        structured_output=agent._structured_output and agent.result_model is not None,
     )
 
 

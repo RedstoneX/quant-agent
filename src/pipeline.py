@@ -868,6 +868,8 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.tech_analyst_provider,
             provider_order=config.llm.get_provider_order("tech_analyst"),
+            reasoning_effort=config.llm.reasoning_effort,
+            structured_output=config.llm.structured_output,
         )
         self.portfolio_manager = PortfolioManagerAgent(
             api_key=_key_for(config.llm.portfolio_manager_model, config.llm.portfolio_manager_provider),
@@ -878,6 +880,8 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.portfolio_manager_provider,
             provider_order=config.llm.get_provider_order("portfolio_manager"),
+            reasoning_effort=config.llm.reasoning_effort,
+            structured_output=config.llm.structured_output,
             # Same reason as the Risk Manager below, and it bites harder here:
             # without this the sizing seat's sheet falls back to
             # `load_risk_config_from_settings(config/settings.yaml)` — a
@@ -898,6 +902,8 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.risk_manager_provider,
             provider_order=config.llm.get_provider_order("risk_manager"),
+            reasoning_effort=config.llm.reasoning_effort,
+            structured_output=config.llm.structured_output,
             # The reviewer's standing sheet renders its limits from THIS
             # object (`{{risk.*}}` placeholders, src/agents/prompt_limits.py),
             # which is the same `config.risk` the engine below is built from.
@@ -927,6 +933,8 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.position_reviewer_provider,
             provider_order=config.llm.get_provider_order("position_reviewer"),
+            reasoning_effort=config.llm.reasoning_effort,
+            structured_output=config.llm.structured_output,
         )
         self.evening_analyst = EveningAnalystAgent(
             api_key=_key_for(config.llm.evening_analyst_model, config.llm.evening_analyst_provider),
@@ -937,6 +945,8 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.evening_analyst_provider,
             provider_order=config.llm.get_provider_order("evening_analyst"),
+            reasoning_effort=config.llm.reasoning_effort,
+            structured_output=config.llm.structured_output,
         )
         self.news_analyst = NewsAnalystAgent(
             api_key=_key_for(config.llm.news_analyst_model, config.llm.news_analyst_provider),
@@ -947,6 +957,8 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.news_analyst_provider,
             provider_order=config.llm.get_provider_order("news_analyst"),
+            reasoning_effort=config.llm.reasoning_effort,
+            structured_output=config.llm.structured_output,
         )
         self.macro_analyst = MacroAnalystAgent(
             api_key=_key_for(config.llm.macro_analyst_model, config.llm.macro_analyst_provider),
@@ -957,6 +969,8 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.macro_analyst_provider,
             provider_order=config.llm.get_provider_order("macro_analyst"),
+            reasoning_effort=config.llm.reasoning_effort,
+            structured_output=config.llm.structured_output,
         )
         # sec_user_agent reuses config.smart_money.user_agent — the same
         # contact-bearing UA this repo already sends to SEC EDGAR for Form 4
@@ -984,6 +998,8 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.earnings_analyst_provider,
             provider_order=config.llm.get_provider_order("earnings_analyst"),
+            reasoning_effort=config.llm.reasoning_effort,
+            structured_output=config.llm.structured_output,
         )
         self.smart_money_analyst = SmartMoneyAnalystAgent(
             api_key=_key_for(config.llm.smart_money_analyst_model, config.llm.smart_money_analyst_provider),
@@ -994,6 +1010,8 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.smart_money_analyst_provider,
             provider_order=config.llm.get_provider_order("smart_money_analyst"),
+            reasoning_effort=config.llm.reasoning_effort,
+            structured_output=config.llm.structured_output,
         )
         sec_form4_provider = SECForm4Provider(
             search_url=config.smart_money.search_url,
@@ -1058,6 +1076,8 @@ class TradingPipeline:
             fallback_model=config.llm.fallback_model,
             provider=config.llm.meta_reflector_provider,
             provider_order=config.llm.get_provider_order("meta_reflector"),
+            reasoning_effort=config.llm.reasoning_effort,
+            structured_output=config.llm.structured_output,
         )
         self.earnings_provider = EarningsDataProvider()
         # Guard 1 (2026-09-02): resolve the kill-switch flag path the same

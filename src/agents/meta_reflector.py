@@ -274,6 +274,9 @@ def _fmt_agent_prompts_snapshot(snapshot: dict | None) -> str:
 
 
 class MetaReflectorAgent(BaseAgent):
+    # See reflect(): parsed JSON is validated as QuarterlyMetaReflection(**parsed).
+    result_model = QuarterlyMetaReflection
+
     @property
     def name(self) -> str:
         return "meta_reflector"

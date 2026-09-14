@@ -80,7 +80,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.agents.base import AgentResult, BaseAgent
-from src.models import SmartMoneyFinding, SmartMoneyObservation
+from src.models import SmartMoneyFinding, SmartMoneyObservation, SmartMoneySynthesis
 
 logger = logging.getLogger(__name__)
 PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "smart_money_analyst.md"
@@ -111,6 +111,11 @@ _SIGNAL_CLASS_RANK = {
 
 
 class SmartMoneyAnalystAgent(BaseAgent):
+    # See analyze(): parsed JSON is read as {"findings": [...]}, each entry
+    # validated individually as SmartMoneyFinding. SmartMoneySynthesis
+    # declares that wrapper shape for response_format only.
+    result_model = SmartMoneySynthesis
+
     def __init__(self, *args, synthesis_cache_path: str | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.synthesis_cache_path = Path(

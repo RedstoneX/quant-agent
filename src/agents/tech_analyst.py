@@ -117,6 +117,14 @@ def _merge_agent_results(first: AgentResult, second: AgentResult) -> AgentResult
 
 
 class TechAnalystAgent(BaseAgent):
+    # NOT set: this agent's top-level response is a JSON ARRAY of
+    # TechAnalysisResult (one per symbol), not a single object — OpenAI/
+    # OpenRouter strict structured-output schemas require an object root,
+    # so declaring TechAnalysisResult here would ask the model for a shape
+    # that doesn't match what this agent actually parses. Left unformatted;
+    # see the reasoning-uniformity PR report.
+    result_model = None
+
     @property
     def name(self) -> str:
         return "tech_analyst"

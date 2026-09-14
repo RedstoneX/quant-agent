@@ -22,6 +22,49 @@ what would catch it next time.
 
 ---
 
+### 2026-09-14 — reasoning models were let think themselves out of an answer, and every model was graded under its own hidden settings instead of one shared one
+
+**In plain words:** when the benchmark tested candidate models through
+OpenRouter, it never told them how hard to think or what shape to answer in.
+Two reasoning models (qwen3.8-flash, glm-5.3) spent their entire answer
+budget on hidden "thinking" and had nothing left to write the actual
+decision — they scored 0, not because they were bad at the job, but because
+nobody told them how much of the budget thinking was allowed to use. Every
+other model was silently using its own default too, so the models were never
+being compared on a level footing to begin with.
+
+**Cause.** `src/agents/base.py`'s OpenRouter request sent only
+`usage.include` and `provider.order` as extras — no `reasoning` effort and
+no `response_format`. Every model defaulted to its own provider-chosen
+thinking budget and its own idea of how to format JSON.
+
+**Fix.** One explicit setting for every OpenRouter seat, sourced from
+OpenRouter's own docs (reasoning tokens:
+https://openrouter.ai/docs/use-cases/reasoning-tokens; structured outputs:
+https://openrouter.ai/docs/features/structured-outputs), no per-model
+exceptions:
+- `reasoning: {"effort": "medium"}` sent on every OpenRouter call
+  (`llm.reasoning_effort` in `config/settings.yaml`, default `"medium"` —
+  OpenRouter's own documented default).
+- `response_format` (strict JSON schema) sent for every seat that has a
+  known result model (`BaseAgent.result_model`); a schema that can't be made
+  strict-compatible falls back to `strict:false` rather than being dropped,
+  logged once per model.
+- The benchmark (`ops/model_policy/benchmark_models.py`) drives the same
+  agent classes, so it inherits this automatically, and its results file
+  now records the `reasoning_effort`/`structured_output` actually used per
+  trial.
+
+**Deliberately unchanged.** The Google AI Studio direct path (used by most
+live analyst seats today) and any other non-OpenRouter path are untouched —
+this fix is scoped to the OpenRouter wire only, per the owner's brief. The
+Tech Analyst and Smart Money seats, whose top-level response is a JSON
+array/list wrapper rather than a single object, are left without
+`response_format`: OpenAI/OpenRouter strict schemas require an object root,
+and reshaping those two agents' output contract was out of scope.
+
+---
+
 ### 2026-09-14 — during market hours the desk judged every price against yesterday's close, so a stock trading below its support still read as above it
 
 **In plain words:** the price history every seat reads always stopped at

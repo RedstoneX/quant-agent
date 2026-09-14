@@ -1755,3 +1755,114 @@ def test_healthy_stream_is_unaffected_by_the_error_check():
         agent = ConcreteAgent(api_key="k", model="gpt-5.5", max_tokens=4096)
         result = agent.run(data="x")
     assert result.raw_text == '{"result": "ok"}'
+
+
+# === Uniform reasoning + structured output (owner requirement, 2026-09-14) ===
+# Every OpenRouter-routed seat must send the SAME explicit reasoning effort,
+# and (when it has a known result schema) the SAME response_format, so every
+# candidate model is measured/traded under identical settings instead of its
+# own undeclared default. See src/agents/base.py's _openai_wire_call and
+# _response_format_for.
+
+from pydantic import BaseModel as _PydanticBaseModel
+
+
+class _FakeResult(_PydanticBaseModel):
+    symbol: str
+    note: str | None = None
+
+
+class ConcreteAgentWithSchema(ConcreteAgent):
+    result_model = _FakeResult
+
+
+def test_openrouter_sends_default_medium_reasoning_effort():
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                      max_tokens=64, provider="openrouter").run(data="x")
+    _, kwargs = oai_cls.return_value.chat.completions.create.call_args
+    assert kwargs["extra_body"]["reasoning"] == {"effort": "medium"}
+
+
+def test_openrouter_sends_configured_reasoning_effort():
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                      max_tokens=64, provider="openrouter",
+                      reasoning_effort="high").run(data="x")
+    _, kwargs = oai_cls.return_value.chat.completions.create.call_args
+    assert kwargs["extra_body"]["reasoning"] == {"effort": "high"}
+
+
+def test_openrouter_omits_response_format_when_agent_has_no_result_model():
+    """ConcreteAgent declares no result_model (BaseAgent's default None) —
+    the request must not carry response_format at all."""
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgent(api_key="ork", model="anthropic/claude-3.5-sonnet",
+                      max_tokens=64, provider="openrouter").run(data="x")
+    _, kwargs = oai_cls.return_value.chat.completions.create.call_args
+    assert "response_format" not in kwargs["extra_body"]
+
+
+def test_openrouter_sends_strict_json_schema_when_result_model_set():
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgentWithSchema(
+            api_key="ork", model="anthropic/claude-3.5-sonnet",
+            max_tokens=64, provider="openrouter",
+        ).run(data="x")
+    _, kwargs = oai_cls.return_value.chat.completions.create.call_args
+    fmt = kwargs["extra_body"]["response_format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["json_schema"]["name"] == "_FakeResult"
+    assert fmt["json_schema"]["strict"] is True
+    schema = fmt["json_schema"]["schema"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {"symbol", "note"}
+
+
+def test_openrouter_structured_output_false_omits_response_format():
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgentWithSchema(
+            api_key="ork", model="anthropic/claude-3.5-sonnet",
+            max_tokens=64, provider="openrouter", structured_output=False,
+        ).run(data="x")
+    _, kwargs = oai_cls.return_value.chat.completions.create.call_args
+    assert "response_format" not in kwargs["extra_body"]
+
+
+def test_google_direct_sends_neither_reasoning_nor_response_format():
+    """Non-OpenRouter OpenAI-wire path (Google direct) is unaffected — the
+    uniform-testing settings are OpenRouter-only."""
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgentWithSchema(api_key="gk", model="gemini-3.5-flash-lite",
+                                max_tokens=64, provider="google").run(data="x")
+    _, kwargs = oai_cls.return_value.chat.completions.create.call_args
+    assert "extra_body" not in kwargs
+
+
+def test_strict_schema_fallback_logs_once_and_still_sends_response_format(caplog):
+    """A result model whose schema cannot be made strict-compatible must
+    fall back to strict:false rather than silently dropping response_format
+    entirely — and the fallback is logged only ONCE per model class."""
+    from src.agents import base as base_mod
+
+    base_mod._RESPONSE_FORMAT_CACHE.pop("_FakeResult", None)
+    base_mod._STRICT_SCHEMA_FALLBACK_LOGGED.discard("_FakeResult")
+    with patch.object(base_mod, "_strictify_schema", side_effect=RuntimeError("boom")):
+        with caplog.at_level("WARNING"):
+            fmt1 = base_mod._response_format_for(_FakeResult)
+    assert fmt1["json_schema"]["strict"] is False
+    assert fmt1["json_schema"]["schema"] == _FakeResult.model_json_schema()
+    assert sum(1 for r in caplog.records if "_FakeResult" in r.message) == 1
+
+    # Cached on the first call — a second lookup neither recomputes nor
+    # logs again.
+    caplog.clear()
+    fmt2 = base_mod._response_format_for(_FakeResult)
+    assert fmt2 == fmt1
+    assert not caplog.records

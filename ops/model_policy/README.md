@@ -42,6 +42,18 @@ each call, so a run can overshoot its budget by at most one call.
 `set -a && . ./.env` step is needed; the values are OneCLI placeholders and
 are never printed.
 
+**Every trial runs under the same explicit reasoning and output-format
+settings as the live desk** (2026-09-14, see `docs/INCIDENT_HISTORY.md`):
+`reasoning: {"effort": config.llm.reasoning_effort}` (default `"medium"`,
+OpenRouter's own documented default — see
+https://openrouter.ai/docs/use-cases/reasoning-tokens) and, for any agent
+with a known result schema, a strict `response_format` json_schema (see
+https://openrouter.ai/docs/features/structured-outputs). This is inherited
+automatically because the benchmark drives the same `BaseAgent` subclasses
+the live pipeline uses — there is no separate benchmark-only code path for
+it — and each row in the results file records which `reasoning_effort` /
+`structured_output` value actually went out with that trial.
+
 This drives the **real** agent classes (`src/agents/*`) with the **real**
 prompts (`config/prompts/*.md`) over frozen inputs — synthetic for every
 scenario except `pm_selection`, which replays a real recorded session — and

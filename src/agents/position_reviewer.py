@@ -74,6 +74,9 @@ class PositionReviewerAgent(BaseAgent):
     """Sell-only agent: reviews open positions, outputs HOLD / TRAIL_STOP /
     REDUCE / SELL. Never BUYs. Used at midday and close sessions."""
 
+    # See review(): parsed JSON is validated as PositionReview(**parsed).
+    result_model = PositionReview
+
     @staticmethod
     def _trade_executed(trade: dict) -> bool:
         """Belt-and-braces guard for BUY rows surfaced to the LLM prompt.
