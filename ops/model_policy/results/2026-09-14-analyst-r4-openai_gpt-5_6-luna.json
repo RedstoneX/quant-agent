@@ -1,0 +1,330 @@
+{
+  "generated_at": "2026-09-14T21:09:33Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.4,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.4,
+    "max_calls_per_session": 16
+  },
+  "estimate_usd": {
+    "per_model": {
+      "openai/gpt-5.6-luna": 0.07905200000000001
+    },
+    "tokens": {
+      "earnings_filing": {
+        "input": 4966,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      },
+      "smart_money_form4": {
+        "input": 664,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "earnings_filing": {
+      "role": "earnings_analyst",
+      "description": "A real MRVL 10-Q (filed 2026-08-28) fetched from SEC EDGAR; filing text and XBRL facts recomputed by today's provider. Grades identifier echo, real figures, agreement with SEC XBRL, UNSOURCED-token and truncation discipline."
+    },
+    "smart_money_form4": {
+      "role": "smart_money_analyst",
+      "description": "Real SEC Form 4 submissions (2026-08-28..31) run through today's SECForm4Provider. Grades parse survival, stance vs P/S source direction, and the word limit. Narrower discovery window and empty insider history than production \u2014 see the fixture's deviations list."
+    }
+  },
+  "prompts": {
+    "earnings_analyst": {
+      "path": "config/prompts/earnings_analyst.md",
+      "sha256": "2177382e12e172455b8b84102169b831812d3ad902eede96e0ceb6cbe4251167",
+      "bytes": 19864,
+      "lines": 222
+    },
+    "smart_money_analyst": {
+      "path": "config/prompts/smart_money_analyst.md",
+      "sha256": "c9c41a0a4b9501586ba5ee13f77aa66e4db42490b5b09cfb05061a3e5a10ecc9",
+      "bytes": 2657,
+      "lines": 47
+    }
+  },
+  "pricing_used": {
+    "openai/gpt-5.6-luna": {
+      "input": 0.19999999999999998,
+      "output": 1.2
+    }
+  },
+  "trials": [
+    {
+      "model": "openai/gpt-5.6-luna",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "undefined reasons [] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "input truncated=True; data_quality='the filing text is explicitly truncated after the celestial ai acquisition discu' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "ok"
+        }
+      ],
+      "input_tokens": 10453,
+      "output_tokens": 2679,
+      "cost_usd": 0.0053054,
+      "latency_s": 26.41,
+      "error": "",
+      "sample_output": "{\"symbol\":\"MRVL\",\"form_type\":\"10-Q\",\"filing_date\":\"2026-08-28\",\"revenue\":{\"total\":\"$2,739.3 million for the three months ended August 1, 2026; $5,157.1 million for the six months ended August 1, 2026\",\"yoy_growth\":\"+36.5% for the quarter, calculated from $2,739.3 million versus $2,006.1 million; +32.2% for the six-month period, calculated from $5,157.1 million versus $3,901.4 million\",\"segments\":[]},\"profitability\":{\"gross_margin\":\"53.1% for the quarter, calculated from gross profit of $1,455.6 million divided by revenue of $2,739.3 million; six-month gross margin was 52.7%, calculated from $2,716.4 million divided by $5,157.1 million\",\"operating_margin\":\"16.8% for the quarter, calculated from operating income of $459.7 million divided by revenue of $2,739.3 million; six-month operating margin was 15.5%, calculated from $799.1 million divided by $5,157.1 million\",\"net_income\":\"$308.0 million for the quarter and $342.5 million for the six months ended August 1, 2026, versus $194.8 million and $372.7 million, respectively, in the comparable 2025 periods\",\"eps\":\"$0.33 diluted for the quarter and $0.38 diluted for the six months ended August 1, 2026, versus $0.22 and $0.43, respectively, in the comparable 2025 periods\"},\"cash_flow\":{\"operating_cf\":\"$1,244.3 million for the six months ended August 1, 2026, versus $794.5 million in the comparable 2025 period\",\"free_cf\":\"$961.9 million for the six months ended August 1, 2026, calculated as operating cash flow of $1,244.3 million les",
+      "actual_model": "openai/gpt-5.6-luna",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "openai/gpt-5.6-luna",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "undefined reasons [] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "input truncated=True; data_quality='the filing text is explicitly truncated after the celestial ai acquisition discl' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "ok"
+        }
+      ],
+      "input_tokens": 10453,
+      "output_tokens": 2550,
+      "cost_usd": 0.0051506,
+      "latency_s": 23.92,
+      "error": "",
+      "sample_output": "{\"symbol\":\"MRVL\",\"form_type\":\"10-Q\",\"filing_date\":\"2026-08-28\",\"revenue\":{\"total\":\"$2,739.3 million for the three months ended August 1, 2026; $5,157.1 million for the six months ended August 1, 2026\",\"yoy_growth\":\"+36.5% for the quarter, calculated from $2,739.3 million versus $2,006.1 million; +32.2% for the six-month period, calculated from $5,157.1 million versus $3,901.4 million\",\"segments\":[]},\"profitability\":{\"gross_margin\":\"53.1% for the quarter, calculated from gross profit of $1,455.6 million divided by revenue of $2,739.3 million; six-month gross margin was 52.7%, calculated from $2,716.4 million divided by $5,157.1 million\",\"operating_margin\":\"16.8% for the quarter, calculated from operating income of $459.7 million divided by revenue of $2,739.3 million; six-month operating margin was 15.5%, calculated from $799.1 million divided by $5,157.1 million\",\"net_income\":\"$308.0 million for the quarter and $342.5 million for the six-month period. Quarterly net income increased from $194.8 million in the prior-year quarter; six-month net income declined from $372.7 million.\",\"eps\":\"$0.33 diluted for the quarter versus $0.22 in the prior-year quarter; $0.38 diluted for the six-month period versus $0.43 in the prior-year period\"},\"cash_flow\":{\"operating_cf\":\"$1,244.3 million for the six months ended August 1, 2026, versus $794.5 million in the prior-year period\",\"free_cf\":\"Approximately $961.9 million for the six months, calculated as operating cash flow of $1,244.3 million",
+      "actual_model": "openai/gpt-5.6-luna",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "openai/gpt-5.6-luna",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "error=None (src/agents/smart_money_analyst.py:514, :533)"
+        },
+        {
+          "name": "no_finding_dropped",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "error=None \u2014 a finding is dropped when its stance contradicts its P/S source rows (config/prompts/smart_money_analyst.md:16-20, enforced at src/agents/smart_money_analyst.py:434) or names a symbol that was not presented or already answered (:449)"
+        },
+        {
+          "name": "summary_and_why_now_within_word_limit",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "over 24 words: [] (src/agents/smart_money_analyst.py:91, stated to the model in build_user_message)"
+        },
+        {
+          "name": "covers_every_presented_symbol",
+          "weight": 0.0,
+          "passed": true,
+          "detail": "UNSOURCED, reported not scored: the prompt caps findings ('at most 8, one per presented symbol') but requires none. 8 finding(s); presented but unanswered: []"
+        }
+      ],
+      "input_tokens": 7535,
+      "output_tokens": 4147,
+      "cost_usd": 0.006483399999999999,
+      "latency_s": 39.67,
+      "error": "",
+      "sample_output": "{\"findings\":[{\"symbol\":\"RSG\",\"stance\":\"bullish\",\"economic_role\":\"actionable\",\"summary\":\"Five opportunistic purchases totaling $123.3 million provide strong bullish evidence from one ten-percent owner.\",\"why_now\":\"Transactions occurred August 26\u201327 and were publicly accepted August 28, with only one-to-two-day reporting lags.\",\"observations\":[{\"symbol\":\"RSG\",\"stream\":\"insider\",\"actor\":\"CASCADE INVESTMENT, L.L.C. / GATES WILLIAM H III\",\"actor_cik\":\"1052192\",\"actor_roles\":[\"ten_percent_owner\"],\"joint_owner_ciks\":[],\"direction\":\"buy\",\"amount_range\":\"\",\"transaction_date\":\"2026-08-27\",\"disclosure_date\":\"2026-08-28\",\"accepted_at\":\"2026-08-28T16:50:26-04:00\",\"known_at\":null,\"source_url\":\"SEC Form 4\",\"accession_number\":\"0001104659-26-103265\",\"filing_form\":\"4\",\"transaction_code\":\"P\",\"transaction_row\":3,\"security_title\":\"\",\"shares\":null,\"price_per_share\":null,\"transaction_value_usd\":51775366.6328,\"post_transaction_shares\":113886505.0,\"ownership_nature\":\"direct\",\"amendment\":false,\"late_filing\":false,\"is_10b5_1\":false,\"listed_exchange\":\"\",\"in_core_universe\":false,\"in_trading_universe\":false,\"admission_eligible\":true,\"transient_admission_eligible\":true,\"transient_admitted\":false,\"lag_days\":1,\"disclosure_age_days\":3,\"freshness\":\"fresh\",\"signal_class\":\"opportunistic\",\"signal_class_reason\":\"opportunistic_purchase\",\"signal_class_detail\":\"Discretionary open-market purchase of $51,775,367 matching no routine pattern.\",\"signal_weight\":1,\"holdings_fraction\":0.0020763476090172464,\"holdings_fraction",
+      "actual_model": "openai/gpt-5.6-luna",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "openai/gpt-5.6-luna",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "error=None (src/agents/smart_money_analyst.py:514, :533)"
+        },
+        {
+          "name": "no_finding_dropped",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "error=None \u2014 a finding is dropped when its stance contradicts its P/S source rows (config/prompts/smart_money_analyst.md:16-20, enforced at src/agents/smart_money_analyst.py:434) or names a symbol that was not presented or already answered (:449)"
+        },
+        {
+          "name": "summary_and_why_now_within_word_limit",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "over 24 words: [] (src/agents/smart_money_analyst.py:91, stated to the model in build_user_message)"
+        },
+        {
+          "name": "covers_every_presented_symbol",
+          "weight": 0.0,
+          "passed": true,
+          "detail": "UNSOURCED, reported not scored: the prompt caps findings ('at most 8, one per presented symbol') but requires none. 8 finding(s); presented but unanswered: []"
+        }
+      ],
+      "input_tokens": 7535,
+      "output_tokens": 4278,
+      "cost_usd": 0.006640599999999999,
+      "latency_s": 39.11,
+      "error": "",
+      "sample_output": "{\"findings\":[{\"symbol\":\"RSG\",\"stance\":\"bullish\",\"economic_role\":\"actionable\",\"summary\":\"Five fresh, discretionary purchases totaling $123.3 million by one ten-percent owner support a bullish read.\",\"why_now\":\"Trades dated August 26\u201327 were accepted August 28 after one-to-two days; eligible out-of-universe candidate, not yet admitted.\"  ,\"observations\":[{\"symbol\":\"RSG\",\"stream\":\"insider\",\"actor\":\"CASCADE INVESTMENT, L.L.C. / GATES WILLIAM H III\",\"actor_cik\":\"1052192\",\"actor_roles\":[\"ten_percent_owner\"],\"joint_owner_ciks\":[],\"direction\":\"buy\",\"amount_range\":\"\",\"transaction_date\":\"2026-08-27\",\"disclosure_date\":\"2026-08-28\",\"accepted_at\":\"2026-08-28T16:50:26-04:00\",\"known_at\":null,\"source_url\":\"SEC Form 4 accession 0001104659-26-103265\",\"accession_number\":\"0001104659-26-103265\",\"filing_form\":\"4\",\"transaction_code\":\"P\",\"transaction_row\":3,\"security_title\":\"\",\"shares\":null,\"price_per_share\":null,\"transaction_value_usd\":51775366.6328,\"post_transaction_shares\":113886505.0,\"ownership_nature\":\"direct\",\"amendment\":false,\"late_filing\":false,\"is_10b5_1\":false,\"listed_exchange\":\"\",\"in_core_universe\":false,\"in_trading_universe\":false,\"admission_eligible\":true,\"transient_admission_eligible\":true,\"transient_admitted\":false,\"lag_days\":1,\"disclosure_age_days\":3,\"freshness\":\"fresh\",\"signal_class\":\"opportunistic\",\"signal_class_reason\":\"opportunistic_purchase\",\"signal_class_detail\":\"Discretionary open-market purchase of $51,775,367 matching no routine pattern. Adds 0.2% to the insider's existing h",
+      "actual_model": "openai/gpt-5.6-luna",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "openai/gpt-5.6-luna|earnings_filing": {
+        "model": "openai/gpt-5.6-luna",
+        "scenario": "earnings_filing",
+        "role": "earnings_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.005228,
+        "latency_mean": 25.16,
+        "errors": [],
+        "misattributed": []
+      },
+      "openai/gpt-5.6-luna|smart_money_form4": {
+        "model": "openai/gpt-5.6-luna",
+        "scenario": "smart_money_form4",
+        "role": "smart_money_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.006562,
+        "latency_mean": 39.39,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "openai/gpt-5.6-luna": {
+        "scenarios": {
+          "earnings_filing": {
+            "model": "openai/gpt-5.6-luna",
+            "scenario": "earnings_filing",
+            "role": "earnings_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.005228,
+            "latency_mean": 25.16,
+            "errors": [],
+            "misattributed": []
+          },
+          "smart_money_form4": {
+            "model": "openai/gpt-5.6-luna",
+            "scenario": "smart_money_form4",
+            "role": "smart_money_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.006562,
+            "latency_mean": 39.39,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_per_run_mean": 0.005895,
+        "cost_total_usd": 0.02358,
+        "quality_per_dollar": 169.64
+      }
+    }
+  }
+}

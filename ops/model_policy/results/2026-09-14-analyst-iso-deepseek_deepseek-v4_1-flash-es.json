@@ -1,0 +1,316 @@
+{
+  "generated_at": "2026-09-14T21:43:58Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 16
+  },
+  "estimate_usd": {
+    "per_model": {
+      "deepseek/deepseek-v4.1-flash": 0.040089
+    },
+    "tokens": {
+      "earnings_filing": {
+        "input": 4966,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      },
+      "smart_money_form4": {
+        "input": 664,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "earnings_filing": {
+      "role": "earnings_analyst",
+      "description": "A real MRVL 10-Q (filed 2026-08-28) fetched from SEC EDGAR; filing text and XBRL facts recomputed by today's provider. Grades identifier echo, real figures, agreement with SEC XBRL, UNSOURCED-token and truncation discipline."
+    },
+    "smart_money_form4": {
+      "role": "smart_money_analyst",
+      "description": "Real SEC Form 4 submissions (2026-08-28..31) run through today's SECForm4Provider. Grades parse survival, stance vs P/S source direction, and the word limit. Narrower discovery window and empty insider history than production \u2014 see the fixture's deviations list."
+    }
+  },
+  "prompts": {
+    "earnings_analyst": {
+      "path": "config/prompts/earnings_analyst.md",
+      "sha256": "2177382e12e172455b8b84102169b831812d3ad902eede96e0ceb6cbe4251167",
+      "bytes": 19864,
+      "lines": 222
+    },
+    "smart_money_analyst": {
+      "path": "config/prompts/smart_money_analyst.md",
+      "sha256": "c9c41a0a4b9501586ba5ee13f77aa66e4db42490b5b09cfb05061a3e5a10ecc9",
+      "bytes": 2657,
+      "lines": 47
+    }
+  },
+  "pricing_used": {
+    "deepseek/deepseek-v4.1-flash": {
+      "input": 0.15,
+      "output": 0.6
+    }
+  },
+  "trials": [
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 0.9,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "undefined reasons [] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "input truncated=True; data_quality='filing text was truncated: the notes, the bulk of md&a (item 2), and the full ri' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": false,
+          "detail": "src/agents/earnings_analyst.py:358 redacted a valuation claim the filing cannot ground"
+        }
+      ],
+      "input_tokens": 9194,
+      "output_tokens": 4815,
+      "cost_usd": 0.0042681,
+      "latency_s": 17.22,
+      "error": "",
+      "sample_output": "{\n  \"symbol\": \"MRVL\",\n  \"form_type\": \"10-Q\",\n  \"filing_date\": \"2026-08-28\",\n  \"revenue\": {\n    \"total\": \"$2,739.3 million (three months ended 2026-08-01)\",\n    \"yoy_growth\": \"+36.5% (vs $2,006.1M in the three months ended 2025-08-02); six-month revenue $5,157.1M, +32.2% YoY vs $3,901.4M\",\n    \"segments\": []\n  },\n  \"profitability\": {\n    \"gross_margin\": \"53.1% ($1,455.6M gross profit on $2,739.3M revenue); prior-year quarter 50.4% ($1,010.6M on $2,006.1M)\",\n    \"operating_margin\": \"16.8% ($459.7M operating income); prior-year quarter 14.5% ($290.1M)\",\n    \"net_income\": \"$308.0 million (Q2); six-month net income $342.5M, DOWN from $372.7M a year ago\",\n    \"eps\": \"$0.33 diluted (vs $0.22); six-month diluted EPS $0.38 vs $0.43\"\n  },\n  \"cash_flow\": {\n    \"operating_cf\": \"$1,244.3 million (six months); up from $794.5M in the prior-year period\",\n    \"free_cf\": \"\u2248$961.9 million (operating CF $1,244.3M less purchases of property and equipment $282.4M); excludes $5.0M technology-license purchases\",\n    \"capex\": \"$282.4 million purchases of property and equipment (six months), up from $166.3M\"\n  },\n  \"balance_sheet\": {\n    \"cash_and_equivalents\": \"$3,932.8 million (up from $2,638.8M at 2026-01-31)\",\n    \"total_debt\": \"$4,962.9 million long-term debt; short-term debt $0 (down from $499.8M at 2026-01-31)\",\n    \"assessment\": \"Solid liquidity: current ratio \u22483.2x ($7,919.3M current assets vs $2,499.5M current liabilities), net debt roughly $1.0B. Equity jumped to $18,531.6M from $14,308.4M ",
+      "actual_model": "deepseek/deepseek-v4.1-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 0.9,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "undefined reasons [] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "input truncated=True; data_quality='structured financial facts are sec xbrl (not text-extracted) and internally cons' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": false,
+          "detail": "src/agents/earnings_analyst.py:358 redacted a valuation claim the filing cannot ground"
+        }
+      ],
+      "input_tokens": 9193,
+      "output_tokens": 4043,
+      "cost_usd": 0.00380475,
+      "latency_s": 63.62,
+      "error": "",
+      "sample_output": "{\n  \"symbol\": \"MRVL\",\n  \"form_type\": \"10-Q\",\n  \"filing_date\": \"2026-08-28\",\n  \"revenue\": {\n    \"total\": \"$2,739.3 million (three months ended 2026-08-01)\",\n    \"yoy_growth\": \"+36.5% (vs $2,006.1M in the three months ended 2025-08-02)\",\n    \"segments\": []\n  },\n  \"profitability\": {\n    \"gross_margin\": \"53.1% ($1,455.6M gross profit on $2,739.3M revenue)\",\n    \"operating_margin\": \"16.8% ($459.7M operating income)\",\n    \"net_income\": \"$308.0 million (three months ended 2026-08-01)\",\n    \"eps\": \"$0.33 diluted; $0.34 basic (three months ended 2026-08-01)\"\n  },\n  \"cash_flow\": {\n    \"operating_cf\": \"$1,244.3 million (six months ended 2026-08-01)\",\n    \"free_cf\": \"$961.9 million (operating CF $1,244.3M less purchases of property and equipment $282.4M; six months ended 2026-08-01)\",\n    \"capex\": \"$282.4 million purchases of property and equipment (six months ended 2026-08-01)\"\n  },\n  \"balance_sheet\": {\n    \"cash_and_equivalents\": \"$3,932.8 million (as of 2026-08-01; $2,638.8M as of 2026-01-31)\",\n    \"total_debt\": \"$4,962.9 million long-term debt (short-term debt $0 as of 2026-08-01; total debt was $4,470.6M at 2026-01-31 including $499.8M short-term)\",\n    \"assessment\": \"Liquidity improved with cash up to $3,932.8M, but the balance sheet enlarged materially: total assets grew from $22,285.3M to $27,554.6M, goodwill rose from $11,062.2M to $13,873.9M and acquired intangibles from $1,754.7M to $2,346.6M, driven by the Celestial AI acquisition and $2,000M Series A Convertible Preferred St",
+      "actual_model": "deepseek/deepseek-v4.1-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "error=None (src/agents/smart_money_analyst.py:514, :533)"
+        },
+        {
+          "name": "no_finding_dropped",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "error=None \u2014 a finding is dropped when its stance contradicts its P/S source rows (config/prompts/smart_money_analyst.md:16-20, enforced at src/agents/smart_money_analyst.py:434) or names a symbol that was not presented or already answered (:449)"
+        },
+        {
+          "name": "summary_and_why_now_within_word_limit",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "over 24 words: [] (src/agents/smart_money_analyst.py:91, stated to the model in build_user_message)"
+        },
+        {
+          "name": "covers_every_presented_symbol",
+          "weight": 0.0,
+          "passed": false,
+          "detail": "UNSOURCED, reported not scored: the prompt caps findings ('at most 8, one per presented symbol') but requires none. 1 finding(s); presented but unanswered: ['AAT', 'DKS', 'KLAR', 'OPTU', 'PETZ', 'SLGL', 'SUJA']"
+        }
+      ],
+      "input_tokens": 8750,
+      "output_tokens": 522,
+      "cost_usd": 0.0016257,
+      "latency_s": 71.23,
+      "error": "",
+      "sample_output": "{\"findings\":[{\"symbol\":\"RSG\",\"stance\":\"bullish\",\"economic_role\":\"actionable\",\"summary\":\"Ten-percent owner Cascade/Gates bought 5 open-market lots totaling $123.3M, adding modestly to a 113.9M-share holding.\",\"why_now\":\"All five purchases are fresh, opportunistic and non-10b5-1, disclosed 2026-08-28 with 1-2 day lag; out-of-universe candidate.\",\"observations\":[{\"symbol\":\"RSG\",\"stream\":\"insider\",\"actor\":\"CASCADE INVESTMENT, L.L.C. / GATES WILLIAM H III\",\"actor_cik\":\"1052192\",\"actor_roles\":[\"ten_percent_owner\"],\"joint_owner_ciks\":[],\"direction\":\"buy\",\"amount_range\":\"\",\"transaction_date\":\"2026-08-27\",\"disclosure_date\":\"2026-08-28\",\"accepted_at\":\"2026-08-28T16:50:26-04:00\",\"known_at\":\"2026-08-28T16:50:26-04:00\",\"source_url\":\"\",\"accession_number\":\"0001104659-26-103265\",\"filing_form\":\"4\",\"transaction_code\":\"P\",\"transaction_row\":3,\"security_title\":\"\",\"shares\":null,\"price_per_share\":null,\"transaction_value_usd\":51775366.6328,\"post_transaction_shares\":113886505.0,\"ownership_nature\":\"direct\",\"amendment\":false,\"late_filing\":false,\"is_10b5_1\":false,\"listed_exchange\":\"\",\"in_core_universe\":false,\"in_trading_universe\":false,\"admission_eligible\":true,\"transient_admission_eligible\":true,\"transient_admitted\":false,\"lag_days\":1,\"disclosure_age_days\":3,\"freshness\":\"fresh\",\"signal_class\":\"opportunistic\",\"signal_class_reason\":\"opportunistic_purchase\",\"signal_class_detail\":\"Discretionary open-market purchase of $51,775,367 matching no routine pattern. Adds 0.2% to the insider's existing holding.\",\"s",
+      "actual_model": "deepseek/deepseek-v4.1-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": false,
+          "detail": "no output"
+        }
+      ],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 420.0,
+      "error": "TrialTimeout: exceeded 420s trial deadline",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "deepseek/deepseek-v4.1-flash|earnings_filing": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "scenario": "earnings_filing",
+        "role": "earnings_analyst",
+        "runs": 2,
+        "quality_mean": 0.9,
+        "quality_min": 0.9,
+        "cost_mean": 0.004036,
+        "latency_mean": 40.42,
+        "errors": [],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4.1-flash|smart_money_form4": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "scenario": "smart_money_form4",
+        "role": "smart_money_analyst",
+        "runs": 2,
+        "quality_mean": 0.5,
+        "quality_min": 0.0,
+        "cost_mean": 0.001626,
+        "latency_mean": 245.62,
+        "errors": [
+          "TrialTimeout: exceeded 420s trial deadline"
+        ],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "deepseek/deepseek-v4.1-flash": {
+        "scenarios": {
+          "earnings_filing": {
+            "model": "deepseek/deepseek-v4.1-flash",
+            "scenario": "earnings_filing",
+            "role": "earnings_analyst",
+            "runs": 2,
+            "quality_mean": 0.9,
+            "quality_min": 0.9,
+            "cost_mean": 0.004036,
+            "latency_mean": 40.42,
+            "errors": [],
+            "misattributed": []
+          },
+          "smart_money_form4": {
+            "model": "deepseek/deepseek-v4.1-flash",
+            "scenario": "smart_money_form4",
+            "role": "smart_money_analyst",
+            "runs": 2,
+            "quality_mean": 0.5,
+            "quality_min": 0.0,
+            "cost_mean": 0.001626,
+            "latency_mean": 245.62,
+            "errors": [
+              "TrialTimeout: exceeded 420s trial deadline"
+            ],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.7,
+        "quality_worst": 0.5,
+        "quality_worst_run": 0.0,
+        "cost_per_run_mean": 0.002831,
+        "cost_total_usd": 0.009699,
+        "quality_per_dollar": 247.26
+      }
+    }
+  }
+}

@@ -1,0 +1,304 @@
+{
+  "generated_at": "2026-09-14T21:53:15Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 16
+  },
+  "estimate_usd": {
+    "per_model": {
+      "deepseek/deepseek-v4-flash-0731": 0.008355600000000001
+    },
+    "tokens": {
+      "earnings_filing": {
+        "input": 4966,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      },
+      "smart_money_form4": {
+        "input": 664,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "earnings_filing": {
+      "role": "earnings_analyst",
+      "description": "A real MRVL 10-Q (filed 2026-08-28) fetched from SEC EDGAR; filing text and XBRL facts recomputed by today's provider. Grades identifier echo, real figures, agreement with SEC XBRL, UNSOURCED-token and truncation discipline."
+    },
+    "smart_money_form4": {
+      "role": "smart_money_analyst",
+      "description": "Real SEC Form 4 submissions (2026-08-28..31) run through today's SECForm4Provider. Grades parse survival, stance vs P/S source direction, and the word limit. Narrower discovery window and empty insider history than production \u2014 see the fixture's deviations list."
+    }
+  },
+  "prompts": {
+    "earnings_analyst": {
+      "path": "config/prompts/earnings_analyst.md",
+      "sha256": "2177382e12e172455b8b84102169b831812d3ad902eede96e0ceb6cbe4251167",
+      "bytes": 19864,
+      "lines": 222
+    },
+    "smart_money_analyst": {
+      "path": "config/prompts/smart_money_analyst.md",
+      "sha256": "c9c41a0a4b9501586ba5ee13f77aa66e4db42490b5b09cfb05061a3e5a10ecc9",
+      "bytes": 2657,
+      "lines": 47
+    }
+  },
+  "pricing_used": {
+    "deepseek/deepseek-v4-flash-0731": {
+      "input": 0.06,
+      "output": 0.12
+    }
+  },
+  "trials": [
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 0.85,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "undefined reasons [] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "input truncated=True; data_quality='dcf_notes' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "ok"
+        }
+      ],
+      "input_tokens": 11574,
+      "output_tokens": 7864,
+      "cost_usd": 0.0016381199999999999,
+      "latency_s": 370.02,
+      "error": "",
+      "sample_output": " {\n  \"balance_sheet\": {\n    \"assessment\": \"ok\"\n  , \"cash_and_equivalents\":  \"review\"\n  , \"total_debt\": \"review\"\n  } \n  ,\n  \"cash_flow\": {\n    \"capex\": \"missing\",\n    \"free_cf\": \"missing\"\n  ,\n  \"operating_cf\": \"missing\"\n  }\n  ,\n  \"data_quality\": \"DCF_notes\",\n  \"filing_date\": \"2026-08-28\",\n  \"form_type\": \"10-Q\",\n  \"guidance\": \"no_guidance_populated\",\n  \"investment_implications\": {\n    \"bear_case\": \"Revenue\",\n    \"bull_case\": \"Revenue\"\n  ,\n    \"conviction\": \"medium\"\n  ,\n    \"key_thesis\": \"Revenue acceleration\" \n  , \n  \"reasoning_chain\": {\n    \"fundamental_quality\": \"Revenue\",\n    \"growth_trajectory\": \"Revenue\",\n    \"management_execution\": \"Revenue\",\n    \"strategic_risks\": \"Revenue\",\n    \"valuation_context\": \"Revenue\"\n  }\n  ,\n  \"sentiment\": \"neutral\"\n  } \n  ,\n  \"management_highlights\": [\n    \"Revenue\",\n    \"Revenue\"\n  ] \n  ,\n  \"nominations\":[\n  ] \n  ,\n  \"profitability\": {\n    \"eps\": \"review\",\n    \"gross_margin\": \"review\",\n    \"net_income\": \"review\",\n    \"operating_margin\": \"review\"\n  }\n  ,\n  \"revenue\": {\n    \"segments\": [\n      {\n        \"growth\": \"unknown\",\n        \"name\": \"Not\",\n        \"revenue\": \"not\"\n      }\n    ] \n  ,\n    \"total\":  \"review\"\n  \n  ,\n  \"yoy_growth\": \"missing_prior_period\"\n  } \n  ,\n  \"risk_flags\": [\n    \"Dilution\",\n    \"Debt\",\n    \"Acquisition\"\n  ] \n  ,\n  \"strategic_direction\": {\n    \"capital_allocation\": \"Acquisition\",\n    \"competitive_positioning\": \"AI\",\n    \"key_initiatives\": [\n      \"Celestial AI\"\n    ]\n  }\n  ,\n  \"strategy_consistency\": \"strong\",\n  \"symbol\"",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        }
+      ],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 420.0,
+      "error": "TrialTimeout: exceeded 420s trial deadline",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "error=None (src/agents/smart_money_analyst.py:514, :533)"
+        },
+        {
+          "name": "no_finding_dropped",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "error=None \u2014 a finding is dropped when its stance contradicts its P/S source rows (config/prompts/smart_money_analyst.md:16-20, enforced at src/agents/smart_money_analyst.py:434) or names a symbol that was not presented or already answered (:449)"
+        },
+        {
+          "name": "summary_and_why_now_within_word_limit",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "over 24 words: [] (src/agents/smart_money_analyst.py:91, stated to the model in build_user_message)"
+        },
+        {
+          "name": "covers_every_presented_symbol",
+          "weight": 0.0,
+          "passed": false,
+          "detail": "UNSOURCED, reported not scored: the prompt caps findings ('at most 8, one per presented symbol') but requires none. 1 finding(s); presented but unanswered: ['AAT', 'DKS', 'KLAR', 'PETZ', 'RSG', 'SLGL', 'SUJA']"
+        }
+      ],
+      "input_tokens": 8804,
+      "output_tokens": 3677,
+      "cost_usd": 0.00096948,
+      "latency_s": 159.67,
+      "error": "",
+      "sample_output": " {\"findings\":[{\"economic_role\":\"actionable\",\"evidence_hash\":\"none\",\"observations\":  [{\"accepted_at\":\"2026-08-28T16:50:26-04:00\",\"accession_number\":\"0001104659-26-103265\",\"actor\":\"CASCADE INVESTMENT, L.L.C. / GATES WILLIAM H III\",\"actor_cik\":\"1052192\",\"actor_roles\":[\"ten_percent_owner\"],\"admission_eligible\":true,\"amendment\":false,\"amount_range\":\"\",\"cross_source_agreement\":  \"\",\"cross_source_note\":  \"\",\"direction\":\"buy\",\"disclosure_age_days\":  3,\"disclosure_date\":  \"2026-08-28\",\"economic_role\":  \"actionable\",\"filing_form\":  \"4\",\"freshness\":  \"fresh\",\"holdings_fraction\":  0.002076,\"holdings_fraction_band\":  \"under_10pct\",\"in_core_universe\":  false,\"in_trading_universe\":  false,\"is_10b5_1\":  false,\"joint_owner_ciks\":  [],\"known_at\":  \"2026-08-28T16:50:26-04:00\",\"lag_days\":  1,\"late_filing\":  false,\"listed_exchange\":  \"\",\"ownership_nature\":  \"direct\",\"post_transaction_shares\":  0,\"price_per_share\":  0,\"security_title\":  \"Class A Common\",\"shares\":  0,\"signal_class\":  \"opportunistic\",\"signal_class_detail\":  \"Structure: 3 buys, no sells, no 10b5-1; discretionary open-market purchase.\",\"signal_class_reason\":  \"Discretionary buy cluster without 10b5-1; no sales; classified as opportunistic.\",\"signal_weight\": 1,\"source_url\":  \"unknown\",\"stream\":  \"insider\",\"symbol\":  \"OPTU\",\"transaction_code\":  \"P\",\"transaction_date\":  \"2026-08-27\",\"transaction_row\":  0,\"transaction_value_usd\":  690000.0,\"transient_admission_eligible\":  true,\"transient_admitted\":  false}],\"stance\":\"bullish\",\"summary\":\"T",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "error=None (src/agents/smart_money_analyst.py:514, :533)"
+        },
+        {
+          "name": "no_finding_dropped",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "error=None \u2014 a finding is dropped when its stance contradicts its P/S source rows (config/prompts/smart_money_analyst.md:16-20, enforced at src/agents/smart_money_analyst.py:434) or names a symbol that was not presented or already answered (:449)"
+        },
+        {
+          "name": "summary_and_why_now_within_word_limit",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "over 24 words: [] (src/agents/smart_money_analyst.py:91, stated to the model in build_user_message)"
+        },
+        {
+          "name": "covers_every_presented_symbol",
+          "weight": 0.0,
+          "passed": false,
+          "detail": "UNSOURCED, reported not scored: the prompt caps findings ('at most 8, one per presented symbol') but requires none. 1 finding(s); presented but unanswered: ['AAT', 'DKS', 'KLAR', 'PETZ', 'RSG', 'SLGL', 'SUJA']"
+        }
+      ],
+      "input_tokens": 8804,
+      "output_tokens": 4199,
+      "cost_usd": 0.0010321199999999999,
+      "latency_s": 180.66,
+      "error": "",
+      "sample_output": " {\n  \"findings\": [\n    {\n      \"economic_role\": \"actionable\",\n      \"evidence_hash\": \"\u2026\",\n      \"observations\":  [\n        {\n          \"accepted_at\": \"2026-08-28T16:50:26-04:00\",\n          \"accession_number\": \"0001104659-26-103265\",\n          \"actor\": \"CASCADE INVESTMENT, L.L.C. / GATES WILLIAM H III\",\n          \"actor_cik\": \"1052192\",\n          \"actor_roles\": [\n            \"ten_percent_owner\"\n          ],\n          \"admission_eligible\": true,\n          \"amendment\": false,\n          \"amount_range\": \"\",\n          \"cross_source_agreement\": \"\",\n          \"cross_source_note\": \"\",\n          \"direction\": \"buy\",\n          \"disclosure_age_days\": 3,\n          \"disclosure_date\": \"2026-08-28\",\n          \"economic_role\": \"actionable\",\n          \"filing_form\": \"4\",\n          \"freshness\": \"fresh\",\n          \"holdings_fraction\": 0.002076,\n          \"holdings_fraction_band\": \"under_10pct\",\n          \"in_core_universe\": false,\n          \"in_trading_universe\": false,\n          \"is_10b5_1\": false,\n          \"joint_owner_ciks\": [],\n          \"known_at\": \"2026-08-28T16:50:26-04:00\",\n          \"lag_days\": 1,\n          \"late_filing\": false,\n          \"listed_exchange\": \"\",\n          \"ownership_nature\": \"direct\",\n          \"post_transaction_shares\": null,\n          \"price_per_share\": null,\n          \"security_title\": \"\",\n          \"shares\": null,\n          \"signal_class\": \"opportunistic\",\n          \"signal_class_detail\": \"discretionary open-market purchase with no 10b5-1 plan\",\n          \"signal_cla",
+      "actual_model": "deepseek/deepseek-v4-flash-0731",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "deepseek/deepseek-v4-flash-0731|earnings_filing": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "earnings_filing",
+        "role": "earnings_analyst",
+        "runs": 2,
+        "quality_mean": 0.425,
+        "quality_min": 0.0,
+        "cost_mean": 0.001638,
+        "latency_mean": 395.01,
+        "errors": [
+          "TrialTimeout: exceeded 420s trial deadline"
+        ],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4-flash-0731|smart_money_form4": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "smart_money_form4",
+        "role": "smart_money_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.001001,
+        "latency_mean": 170.16,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "deepseek/deepseek-v4-flash-0731": {
+        "scenarios": {
+          "earnings_filing": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "earnings_filing",
+            "role": "earnings_analyst",
+            "runs": 2,
+            "quality_mean": 0.425,
+            "quality_min": 0.0,
+            "cost_mean": 0.001638,
+            "latency_mean": 395.01,
+            "errors": [
+              "TrialTimeout: exceeded 420s trial deadline"
+            ],
+            "misattributed": []
+          },
+          "smart_money_form4": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "smart_money_form4",
+            "role": "smart_money_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.001001,
+            "latency_mean": 170.16,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.7125,
+        "quality_worst": 0.425,
+        "quality_worst_run": 0.0,
+        "cost_per_run_mean": 0.001319,
+        "cost_total_usd": 0.00364,
+        "quality_per_dollar": 540.18
+      }
+    }
+  }
+}

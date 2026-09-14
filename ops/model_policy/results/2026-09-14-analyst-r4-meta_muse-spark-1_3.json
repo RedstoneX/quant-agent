@@ -1,0 +1,330 @@
+{
+  "generated_at": "2026-09-14T21:10:05Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.4,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.4,
+    "max_calls_per_session": 16
+  },
+  "estimate_usd": {
+    "per_model": {
+      "meta/muse-spark-1.3": 0.28607499999999997
+    },
+    "tokens": {
+      "earnings_filing": {
+        "input": 4966,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      },
+      "smart_money_form4": {
+        "input": 664,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": true,
+  "scenarios": {
+    "earnings_filing": {
+      "role": "earnings_analyst",
+      "description": "A real MRVL 10-Q (filed 2026-08-28) fetched from SEC EDGAR; filing text and XBRL facts recomputed by today's provider. Grades identifier echo, real figures, agreement with SEC XBRL, UNSOURCED-token and truncation discipline."
+    },
+    "smart_money_form4": {
+      "role": "smart_money_analyst",
+      "description": "Real SEC Form 4 submissions (2026-08-28..31) run through today's SECForm4Provider. Grades parse survival, stance vs P/S source direction, and the word limit. Narrower discovery window and empty insider history than production \u2014 see the fixture's deviations list."
+    }
+  },
+  "prompts": {
+    "earnings_analyst": {
+      "path": "config/prompts/earnings_analyst.md",
+      "sha256": "2177382e12e172455b8b84102169b831812d3ad902eede96e0ceb6cbe4251167",
+      "bytes": 19864,
+      "lines": 222
+    },
+    "smart_money_analyst": {
+      "path": "config/prompts/smart_money_analyst.md",
+      "sha256": "c9c41a0a4b9501586ba5ee13f77aa66e4db42490b5b09cfb05061a3e5a10ecc9",
+      "bytes": 2657,
+      "lines": 47
+    }
+  },
+  "pricing_used": {
+    "meta/muse-spark-1.3": {
+      "input": 1.25,
+      "output": 4.25
+    }
+  },
+  "trials": [
+    {
+      "model": "meta/muse-spark-1.3",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 0.75,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": false,
+          "detail": "undefined reasons ['truncated \\\\u2014 full MD&A and Risk Factors not in input'] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "input truncated=True; data_quality='structured xbrl plus statements and balance sheet complete through cash flows an' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": false,
+          "detail": "src/agents/earnings_analyst.py:358 redacted a valuation claim the filing cannot ground"
+        }
+      ],
+      "input_tokens": 10476,
+      "output_tokens": 4595,
+      "cost_usd": 0.03262375,
+      "latency_s": 36.79,
+      "error": "",
+      "sample_output": "{\n  \"balance_sheet\": {\n    \"assessment\": \"Strong near-term liquidity with cash $3,932.8 million covering current liabilities $2,499.5 million, but leverage and intangibles increased after Celestial acquisition: long-term debt $4,962.9 million vs $3,970.8 million at Jan 31, 2026, goodwill $13,873.9 million vs $11,062.2 million, acquired intangibles $2,346.6 million vs $1,754.7 million.\",\n    \"cash_and_equivalents\": \"$3,932.8 million as of August 1, 2026 vs $2,638.8 million as of January 31, 2026\",\n    \"total_debt\": \"$4,962.9 million long-term debt plus $0 short-term debt as of August 1, 2026 vs $3,970.8 million long-term plus $499.8 million short-term at January 31, 2026\"\n  },\n  \"cash_flow\": {\n    \"capex\": \"$282.4 million purchases of property and equipment for six months ended August 1, 2026\",\n    \"free_cf\": \"$961.9 million derived as $1,244.3 million operating cash less $282.4 million capex for six months ended August 1, 2026\",\n    \"operating_cf\": \"$1,244.3 million net cash provided by operating activities for six months ended August 1, 2026 vs $794.5 million prior-year period\"\n  },\n  \"data_quality\": \"Structured XBRL plus statements and balance sheet complete through cash flows and equity; MD&A and Risk Factors text truncated in input (only headings/pages listed), no segment or geographic revenue breakout disclosed, no forward guidance excerpt provided; segment detail not disclosed this filing. Filing fresh: filed 2026-08-28, 17d before 2026-09-14. No injection-like content ",
+      "actual_model": "meta/muse-spark-1.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "meta/muse-spark-1.3",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 0.9,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "undefined reasons [] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "input truncated=True; data_quality='structured xbrl and statements complete for balance sheet, operations, cash flow' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": false,
+          "detail": "src/agents/earnings_analyst.py:358 redacted a valuation claim the filing cannot ground"
+        }
+      ],
+      "input_tokens": 10476,
+      "output_tokens": 3700,
+      "cost_usd": 0.02882,
+      "latency_s": 33.41,
+      "error": "",
+      "sample_output": "{\n  \"balance_sheet\": {\n    \"assessment\": \"Strong liquidity with cash $3,932.8M up from $2,638.8M at Jan 31, 2026; long-term debt $4,962.9M with zero short-term debt vs $499.8M prior; equity $18,531.6M supports acquisition-driven balance sheet expansion to $27,554.6M total assets\",\n    \"cash_and_equivalents\": \"$3,932.8 million\",\n    \"total_debt\": \"$4,962.9 million long-term debt, $0 short-term debt\"\n  },\n  \"cash_flow\": {\n    \"capex\": \"$282.4 million purchases of property and equipment (six months ended Aug 1, 2026)\",\n    \"free_cf\": \"$961.9 million (six months: $1,244.3M operating CF less $282.4M capex)\",\n    \"operating_cf\": \"$1,244.3 million (six months ended Aug 1, 2026)\"\n  },\n  \"data_quality\": \"Structured XBRL and statements complete for balance sheet, operations, cash flows (six-month basis). MD&A (p.28-37) and Risk Factors sections truncated in input; segment/geography revenue breakdown not disclosed this filing; guidance not present in provided text; quarterly-only cash flow not disclosed.\",\n  \"filing_date\": \"2026-08-28\",\n  \"form_type\": \"10-Q\",\n  \"guidance\": \"[UNSOURCED:not_in_filing]\",\n  \"investment_implications\": {\n    \"bear_case\": \"Celestial integration fails to deliver AI interconnect revenue while $433.7M contingent consideration volatility, $440.1M six-month intangible amortization, and $2.0B preferred overhang pressure earnings and dilution\",\n    \"bull_case\": \"36.5% YoY revenue growth with gross margin expansion to 53.1% confirms AI/cloud connectivity demand and Ce",
+      "actual_model": "meta/muse-spark-1.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "meta/muse-spark-1.3",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "error=None (src/agents/smart_money_analyst.py:514, :533)"
+        },
+        {
+          "name": "no_finding_dropped",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "error=None \u2014 a finding is dropped when its stance contradicts its P/S source rows (config/prompts/smart_money_analyst.md:16-20, enforced at src/agents/smart_money_analyst.py:434) or names a symbol that was not presented or already answered (:449)"
+        },
+        {
+          "name": "summary_and_why_now_within_word_limit",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "over 24 words: [] (src/agents/smart_money_analyst.py:91, stated to the model in build_user_message)"
+        },
+        {
+          "name": "covers_every_presented_symbol",
+          "weight": 0.0,
+          "passed": true,
+          "detail": "UNSOURCED, reported not scored: the prompt caps findings ('at most 8, one per presented symbol') but requires none. 8 finding(s); presented but unanswered: []"
+        }
+      ],
+      "input_tokens": 7786,
+      "output_tokens": 12302,
+      "cost_usd": 0.062016,
+      "latency_s": 46.98,
+      "error": "",
+      "sample_output": "{\"findings\": [{\"economic_role\": \"actionable\", \"evidence_hash\": \"\", \"observations\": [{\"accepted_at\": \"2026-08-28T16:50:26-04:00\", \"accession_number\": \"0001104659-26-103265\", \"actor\": \"CASCADE INVESTMENT, L.L.C. / GATES WILLIAM H III\", \"actor_cik\": \"1052192\", \"actor_roles\": [\"ten_percent_owner\"], \"admission_eligible\": true, \"amendment\": false, \"amount_range\": \"\", \"cross_source_agreement\": \"single_source\", \"cross_source_note\": \"\", \"direction\": \"buy\", \"disclosure_age_days\": 3, \"disclosure_date\": \"2026-08-28\", \"economic_role\": \"actionable\", \"filing_form\": \"4\", \"freshness\": \"fresh\", \"holdings_fraction\": 0.0020763476090172464, \"holdings_fraction_band\": \"under_10pct\", \"in_core_universe\": false, \"in_trading_universe\": false, \"is_10b5_1\": false, \"joint_owner_ciks\": [], \"known_at\": \"2026-08-28T16:50:26-04:00\", \"lag_days\": 1, \"late_filing\": false, \"listed_exchange\": \"\", \"ownership_nature\": \"direct\", \"post_transaction_shares\": 113886505.0, \"price_per_share\": null, \"security_title\": \"\", \"shares\": null, \"signal_class\": \"opportunistic\", \"signal_class_detail\": \"Discretionary open-market purchase of $51,775,367 matching no routine pattern. Adds 0.2% to the insider's existing holding.\", \"signal_class_reason\": \"opportunistic_purchase\", \"signal_weight\": 1.0, \"source_url\": \"https://www.sec.gov/Archives/edgar/data/1052192/000110465926103265/\", \"stream\": \"insider\", \"symbol\": \"RSG\", \"transaction_code\": \"P\", \"transaction_date\": \"2026-08-27\", \"transaction_row\": 3, \"transaction_value_usd\": 51775366.6328",
+      "actual_model": "meta/muse-spark-1.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "meta/muse-spark-1.3",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "error=None (src/agents/smart_money_analyst.py:514, :533)"
+        },
+        {
+          "name": "no_finding_dropped",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "error=None \u2014 a finding is dropped when its stance contradicts its P/S source rows (config/prompts/smart_money_analyst.md:16-20, enforced at src/agents/smart_money_analyst.py:434) or names a symbol that was not presented or already answered (:449)"
+        },
+        {
+          "name": "summary_and_why_now_within_word_limit",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "over 24 words: [] (src/agents/smart_money_analyst.py:91, stated to the model in build_user_message)"
+        },
+        {
+          "name": "covers_every_presented_symbol",
+          "weight": 0.0,
+          "passed": true,
+          "detail": "UNSOURCED, reported not scored: the prompt caps findings ('at most 8, one per presented symbol') but requires none. 8 finding(s); presented but unanswered: []"
+        }
+      ],
+      "input_tokens": 7786,
+      "output_tokens": 8499,
+      "cost_usd": 0.04585325,
+      "latency_s": 37.34,
+      "error": "",
+      "sample_output": "{\"findings\": [{\"economic_role\": \"actionable\", \"evidence_hash\": \"\", \"observations\": [{\"accepted_at\": \"2026-08-28T16:50:26-04:00\", \"accession_number\": \"0001104659-26-103265\", \"actor\": \"CASCADE INVESTMENT, L.L.C. / GATES WILLIAM H III\", \"actor_cik\": \"1052192\", \"actor_roles\": [\"ten_percent_owner\"], \"admission_eligible\": true, \"amendment\": false, \"amount_range\": \"\", \"cross_source_agreement\": \"single_source\", \"cross_source_note\": \"\", \"direction\": \"buy\", \"disclosure_age_days\": 3, \"disclosure_date\": \"2026-08-28\", \"economic_role\": \"actionable\", \"filing_form\": \"4\", \"freshness\": \"fresh\", \"holdings_fraction\": 0.0020763476090172464, \"holdings_fraction_band\": \"under_10pct\", \"in_core_universe\": false, \"in_trading_universe\": false, \"is_10b5_1\": false, \"joint_owner_ciks\": [], \"known_at\": \"2026-08-28T16:50:26-04:00\", \"lag_days\": 1, \"late_filing\": false, \"listed_exchange\": \"\", \"ownership_nature\": \"direct\", \"post_transaction_shares\": 113886505.0, \"price_per_share\": null, \"security_title\": \"Common Stock\", \"shares\": null, \"signal_class\": \"opportunistic\", \"signal_class_detail\": \"Discretionary open-market purchase of $51,775,367 matching no routine pattern. Adds 0.2% to the insider's existing holding.\", \"signal_class_reason\": \"opportunistic_purchase\", \"signal_weight\": 1.0, \"source_url\": \"https://www.sec.gov/Archives/edgar/data/1052192/000110465926103265/\", \"stream\": \"insider\", \"symbol\": \"RSG\", \"transaction_code\": \"P\", \"transaction_date\": \"2026-08-27\", \"transaction_row\": 3, \"transaction_value_usd\": 5",
+      "actual_model": "meta/muse-spark-1.3",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "meta/muse-spark-1.3|earnings_filing": {
+        "model": "meta/muse-spark-1.3",
+        "scenario": "earnings_filing",
+        "role": "earnings_analyst",
+        "runs": 2,
+        "quality_mean": 0.825,
+        "quality_min": 0.75,
+        "cost_mean": 0.030722,
+        "latency_mean": 35.1,
+        "errors": [],
+        "misattributed": []
+      },
+      "meta/muse-spark-1.3|smart_money_form4": {
+        "model": "meta/muse-spark-1.3",
+        "scenario": "smart_money_form4",
+        "role": "smart_money_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.053935,
+        "latency_mean": 42.16,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "meta/muse-spark-1.3": {
+        "scenarios": {
+          "earnings_filing": {
+            "model": "meta/muse-spark-1.3",
+            "scenario": "earnings_filing",
+            "role": "earnings_analyst",
+            "runs": 2,
+            "quality_mean": 0.825,
+            "quality_min": 0.75,
+            "cost_mean": 0.030722,
+            "latency_mean": 35.1,
+            "errors": [],
+            "misattributed": []
+          },
+          "smart_money_form4": {
+            "model": "meta/muse-spark-1.3",
+            "scenario": "smart_money_form4",
+            "role": "smart_money_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.053935,
+            "latency_mean": 42.16,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.9125,
+        "quality_worst": 0.825,
+        "quality_worst_run": 0.75,
+        "cost_per_run_mean": 0.042328,
+        "cost_total_usd": 0.169313,
+        "quality_per_dollar": 21.56
+      }
+    }
+  }
+}

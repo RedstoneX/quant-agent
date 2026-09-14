@@ -1,0 +1,245 @@
+{
+  "generated_at": "2026-09-14T21:27:42Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.4,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.4,
+    "max_calls_per_session": 16
+  },
+  "estimate_usd": {
+    "per_model": {
+      "qwen/qwen3.8-flash": 0.031769000000000006
+    },
+    "tokens": {
+      "earnings_filing": {
+        "input": 4966,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      },
+      "smart_money_form4": {
+        "input": 664,
+        "output": 16000,
+        "source": "UNMEASURED: prompt bytes/4 + output cap"
+      }
+    }
+  },
+  "stopped_on_budget": true,
+  "scenarios": {
+    "earnings_filing": {
+      "role": "earnings_analyst",
+      "description": "A real MRVL 10-Q (filed 2026-08-28) fetched from SEC EDGAR; filing text and XBRL facts recomputed by today's provider. Grades identifier echo, real figures, agreement with SEC XBRL, UNSOURCED-token and truncation discipline."
+    },
+    "smart_money_form4": {
+      "role": "smart_money_analyst",
+      "description": "Real SEC Form 4 submissions (2026-08-28..31) run through today's SECForm4Provider. Grades parse survival, stance vs P/S source direction, and the word limit. Narrower discovery window and empty insider history than production \u2014 see the fixture's deviations list."
+    }
+  },
+  "prompts": {
+    "earnings_analyst": {
+      "path": "config/prompts/earnings_analyst.md",
+      "sha256": "2177382e12e172455b8b84102169b831812d3ad902eede96e0ceb6cbe4251167",
+      "bytes": 19864,
+      "lines": 222
+    },
+    "smart_money_analyst": {
+      "path": "config/prompts/smart_money_analyst.md",
+      "sha256": "c9c41a0a4b9501586ba5ee13f77aa66e4db42490b5b09cfb05061a3e5a10ecc9",
+      "bytes": 2657,
+      "lines": 47
+    }
+  },
+  "pricing_used": {
+    "qwen/qwen3.8-flash": {
+      "input": 0.15,
+      "output": 0.47
+    }
+  },
+  "trials": [
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed_and_identifiers_echoed",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "survived EarningsAnalystAgent._validate_analysis (src/agents/earnings_analyst.py:285): schema, and symbol / form / filing date echoed verbatim (config/prompts/earnings_analyst.md:39)"
+        },
+        {
+          "name": "has_real_figures",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "src/pipeline_stages.py:1590 \u2014 the live content check behind data_status['earnings']"
+        },
+        {
+          "name": "figures_match_sec_xbrl",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "contradicted=[] (src/pipeline_stages.py:1752; the live desk reports such a filing as figures_contradicted, :1850)"
+        },
+        {
+          "name": "unsourced_tokens_valid",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "undefined reasons [] (config/prompts/earnings_analyst.md:37, :83)"
+        },
+        {
+          "name": "truncation_flagged",
+          "weight": 0.15,
+          "passed": true,
+          "detail": "input truncated=True; data_quality='filing text was truncated, missing the complete md&a section and strategic direc' (config/prompts/earnings_analyst.md:14 \u2014 'must flag truncation')"
+        },
+        {
+          "name": "no_price_derived_valuation_claim",
+          "weight": 0.1,
+          "passed": true,
+          "detail": "ok"
+        }
+      ],
+      "input_tokens": 10426,
+      "output_tokens": 11502,
+      "cost_usd": 0.006969839999999999,
+      "latency_s": 180.95,
+      "error": "",
+      "sample_output": "{\n  \"symbol\": \"MRVL\",\n  \"form_type\": \"10-Q\",\n  \"filing_date\": \"2026-08-28\",\n  \"revenue\": {\n   \"total\": \"$2,739.3 million\",\n   \"yoy_growth\": \"+36.5% (from $2,006.1M in Q2 FY2026)\",\n   \"segments\": [\n   ]\n  },\n  \"profitability\": {\n   \"gross_margin\": \"53.1% (1,455.6 / 2,739.3)\",\n   \"operating_margin\": \"16.8% (459.7 / 2,739.3)\",\n   \"net_income\": \"$308.0 million\",\n   \"eps\": \"$0.33 diluted\"\n  },\n  \"cash_flow\": {\n   \"operating_cf\": \"$1,244.3 million (6 months)\",\n   \"free_cf\": \"$961.9 million (est. 1,244.3 op CF - 282.4 capex, 6 months)\",\n   \"capex\": \"$282.4 million (6 months)\"\n  },\n  \"balance_sheet\": {\n   \"cash_and_equivalents\": \"$3,932.8 million\",\n   \"total_debt\": \"$4,962.9 million (long-term)\",\n   \"assessment\": \"Significantly strengthened; equity increased from $14.3B to $18.5B driven by preferred stock issuance and acquisition equity. Debt-to-equity ratio is roughly 0.27x.\"\n  },\n  \"management_highlights\": [\n   \"Net revenue for the three months ended August 1, 2026 was $2,739.3 million, a 36.5% increase year-over-year.\",\n   \"The Company completed the acquisition of Celestial AI to accelerate its connectivity strategy in AI and cloud data centers.\",\n   \"Operating income rose to $459.7 million, driven by revenue scale and despite a 42.8% increase in R&D expenses.\",\n   \"Net income for the quarter was $308.0 million, resulting in diluted EPS of $0.33.\"\n  ],\n  \"guidance\": \"[UNSOURCED:not_in_filing]\",\n  \"strategic_direction\": {\n   \"key_initiatives\": [\n   ],\n   \"capital_allocation\": \"The ",
+      "actual_model": "qwen/qwen3.8-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "earnings_filing",
+      "role": "earnings_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "scenario": "smart_money_form4",
+      "role": "smart_money_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "qwen/qwen3.8-flash|smart_money_form4": {
+        "model": "qwen/qwen3.8-flash",
+        "scenario": "smart_money_form4",
+        "role": "smart_money_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      },
+      "qwen/qwen3.8-flash|earnings_filing": {
+        "model": "qwen/qwen3.8-flash",
+        "scenario": "earnings_filing",
+        "role": "earnings_analyst",
+        "runs": 1,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.00697,
+        "latency_mean": 180.95,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "qwen/qwen3.8-flash": {
+        "scenarios": {
+          "smart_money_form4": {
+            "model": "qwen/qwen3.8-flash",
+            "scenario": "smart_money_form4",
+            "role": "smart_money_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          },
+          "earnings_filing": {
+            "model": "qwen/qwen3.8-flash",
+            "scenario": "earnings_filing",
+            "role": "earnings_analyst",
+            "runs": 1,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.00697,
+            "latency_mean": 180.95,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 1.0,
+        "quality_worst": 1.0,
+        "quality_worst_run": 1.0,
+        "cost_per_run_mean": 0.00697,
+        "cost_total_usd": 0.00697,
+        "quality_per_dollar": 143.47
+      }
+    }
+  }
+}

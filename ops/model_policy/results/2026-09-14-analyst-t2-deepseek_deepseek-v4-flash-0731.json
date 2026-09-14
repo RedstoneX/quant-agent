@@ -1,0 +1,291 @@
+{
+  "generated_at": "2026-09-14T21:31:49Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 24
+  },
+  "estimate_usd": {
+    "per_model": {
+      "deepseek/deepseek-v4-flash-0731": 0.01391268
+    },
+    "tokens": {
+      "tech_batch": {
+        "input": 24814,
+        "output": 18111,
+        "source": "max measured in committed results"
+      },
+      "news_intel": {
+        "input": 4535,
+        "output": 11112,
+        "source": "max measured in committed results"
+      },
+      "macro_stress": {
+        "input": 7028,
+        "output": 10558,
+        "source": "max measured in committed results"
+      }
+    }
+  },
+  "stopped_on_budget": true,
+  "scenarios": {
+    "tech_batch": {
+      "role": "tech_analyst",
+      "description": "Real yfinance bars for 7 symbols (2026-08-28) run through today's compute_indicators and analyze_batch (src/agents/tech_analyst.py:336). Unblocked 2026-09-14: analyze_batch's own signature defaults prior_ratings to {} and prior_macro_regime/prior_macro_outlook to None (src/agents/tech_analyst.py:339-343) \u2014 the tech seat's prompt rates chart-driven, not prior-ratings-driven (config/prompts/tech_analyst.md). Valuations and the intraday snapshot are omitted the same way (both optional, default None) rather than invented. Grades symbol resolution, thesis_invalid_if discipline, the absolute ATR stop floor, and range R:R >= 2.0."
+    },
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "Real RSS wires (11 feeds, fetched live 2026-09-14) replayed through today's NewsDataProvider.fetch_news / format_for_prompt / tag_symbol_mentions (src/data/news.py). previous_narrative/prior_session_report=None (both optional, src/agents/news_analyst.py:376-380). Unblocked 2026-09-14. Grades schema/enum compliance and 'no invented tickers not in input' only \u2014 no judgement-based answer key for real news."
+    },
+    "macro_stress": {
+      "role": "macro_analyst",
+      "description": "15 real FRED series (2026-09-14), fetched live through the OneCLI credential gateway with a placeholder key \u2014 the real FRED_API_KEY never entered this process \u2014 then recomputed by today's MacroDataProvider.get_macro_summary (src/data/macro.py:1125). last_state/news_narrative=None (both optional, src/agents/macro_analyst.py:203-204). Unblocked 2026-09-14 \u2014 see the retired synthetic-tape note above for why the old scenario was blocked. Grades schema and rule compliance only; real conditions have no forced correct direction to grade against."
+    }
+  },
+  "prompts": {
+    "macro_analyst": {
+      "path": "config/prompts/macro_analyst.md",
+      "sha256": "220dd8f07d5c331d417e02db17e12bd4655c0e6de4e6626078e90adf6a43b9ca",
+      "bytes": 25425,
+      "lines": 228
+    },
+    "news_analyst": {
+      "path": "config/prompts/news_analyst.md",
+      "sha256": "e395669444d2e89c37eef6e89d568ea8789d721f8132daaa8c4aae42ac829afd",
+      "bytes": 17453,
+      "lines": 196
+    },
+    "tech_analyst": {
+      "path": "config/prompts/tech_analyst.md",
+      "sha256": "541e4d81a3a78546534b309e0ad03a06ad34063ebe826a93c3bd3799dab4146d",
+      "bytes": 23459,
+      "lines": 216
+    }
+  },
+  "pricing_used": {
+    "deepseek/deepseek-v4-flash-0731": {
+      "input": 0.06,
+      "output": 0.12
+    }
+  },
+  "trials": [
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 0.0,
+      "error": "NOT RUN: benchmark budget exhausted before this trial",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "skipped_budget",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "deepseek/deepseek-v4-flash-0731|tech_batch": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "tech_batch",
+        "role": "tech_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4-flash-0731|news_intel": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4-flash-0731|macro_stress": {
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "scenario": "macro_stress",
+        "role": "macro_analyst",
+        "runs": 0,
+        "not_run": true,
+        "quality_mean": null,
+        "quality_min": null,
+        "cost_mean": null,
+        "latency_mean": null,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "deepseek/deepseek-v4-flash-0731": {
+        "scenarios": {
+          "tech_batch": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "tech_batch",
+            "role": "tech_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          },
+          "news_intel": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          },
+          "macro_stress": {
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "scenario": "macro_stress",
+            "role": "macro_analyst",
+            "runs": 0,
+            "not_run": true,
+            "quality_mean": null,
+            "quality_min": null,
+            "cost_mean": null,
+            "latency_mean": null,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": true,
+        "quality_mean": null,
+        "quality_worst": null,
+        "quality_worst_run": null,
+        "cost_per_run_mean": null,
+        "cost_total_usd": null,
+        "quality_per_dollar": null
+      }
+    }
+  }
+}

@@ -165,15 +165,13 @@ In progress 2026-09-14: standard technical sell rules (cited defaults, no tuning
 
 The volume/shape redesign is done (`docs/INCIDENT_HISTORY.md`, 2026-09-13 "item 18d / PM gate item 7"; 2026-09-14 "item 18e"). The PM output schema now has `reasoning_chain.macro_audit`; across 56 archived `portfolio_manager` calls, 27 carried macro's full `reasoning_chain` under an instruction to audit it and zero responses used it — no evidence it works, not proof it cannot (archive ends 2026-09-02). Settles with: a before/after benchmark run. Do NOT reopen as a size problem — Technical Analysis and Independent Source Agreement are bounded and scale with candidate count.
 
-**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 61, 62, 66, 68, 69, 72 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Gate item 7 was moved, not closed: it is item 76. Item 72 (benchmark fixture) was filed and closed 2026-09-14. The two schemes are separate — 1, 3, 4 and 8 are live in this queue while retired in the gate, and 20 is live here; 67, 90, 101 and 200 never existed. Item 38's follow-up survives as item 52, whose residue is item 63. Item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file. Next free number is 77. Reconstruction after corruption, and every renumbering it forced: `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the retired-item-numbers line was quietly corrupted, and it was making the corruption worse".
+**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 61, 62, 66, 68, 69, 72 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Gate item 7 was moved, not closed: it is item 76. Item 72 (benchmark fixture) was filed and closed 2026-09-14. The two schemes are separate — 1, 3, 4 and 8 are live in this queue while retired in the gate, and 20 is live here; 67, 90, 101 and 200 never existed. Item 38's follow-up survives as item 52, whose residue is item 63. Item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file. Next free number is 78.
 
-## Evidence-only follow-ups
+**77. Model selection: analyst seats re-tested, PM seat is the next open question — pointer, 2026-09-14.**
 
-- news-narrative factual drift;
-- `actual_provider` attribution oddity.
+Results, faults fixed and the decision: `docs/architecture/MODEL_ROUTING_POLICY.md` ("2026-09-14 analyst seat re-test"). Next: fresh PM practice day from analyst output, then PM model test, then risk_manager/position_reviewer, then restart the paused desk.
 
-Do not interrupt natural validation for these unless current evidence shows they materially distort decision quality, truthfulness, or operator understanding.
+## Evidence-only follow-ups — do not interrupt natural validation unless evidence shows material harm
 
-`get_latest_price` is **not** on this list solely because its request omits `feed`; that concern has been reconciled. Reopen only on concrete production evidence.
-
-- invalid_if: 9/3 log.
+- news-narrative factual drift; `actual_provider` attribution oddity (reopen only on concrete production evidence).
+- `get_latest_price` omits `feed` — reconciled, not open.

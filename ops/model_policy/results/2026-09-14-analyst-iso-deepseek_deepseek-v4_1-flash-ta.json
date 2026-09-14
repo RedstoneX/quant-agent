@@ -1,0 +1,425 @@
+{
+  "generated_at": "2026-09-14T21:52:48Z",
+  "wiring_source": "onecli container-config",
+  "baseline": "openai/gpt-5.5",
+  "repeats": 2,
+  "budget_usd": 0.6,
+  "benchmark_circuit": {
+    "session_cost_limit_usd": 0.6,
+    "max_calls_per_session": 24
+  },
+  "estimate_usd": {
+    "per_model": {
+      "deepseek/deepseek-v4.1-flash": 0.0586503
+    },
+    "tokens": {
+      "tech_batch": {
+        "input": 24814,
+        "output": 18111,
+        "source": "max measured in committed results"
+      },
+      "news_intel": {
+        "input": 4535,
+        "output": 11112,
+        "source": "max measured in committed results"
+      },
+      "macro_stress": {
+        "input": 7028,
+        "output": 10558,
+        "source": "max measured in committed results"
+      }
+    }
+  },
+  "stopped_on_budget": false,
+  "scenarios": {
+    "tech_batch": {
+      "role": "tech_analyst",
+      "description": "Real yfinance bars for 7 symbols (2026-08-28) run through today's compute_indicators and analyze_batch (src/agents/tech_analyst.py:336). Unblocked 2026-09-14: analyze_batch's own signature defaults prior_ratings to {} and prior_macro_regime/prior_macro_outlook to None (src/agents/tech_analyst.py:339-343) \u2014 the tech seat's prompt rates chart-driven, not prior-ratings-driven (config/prompts/tech_analyst.md). Valuations and the intraday snapshot are omitted the same way (both optional, default None) rather than invented. Grades symbol resolution, thesis_invalid_if discipline, the absolute ATR stop floor, and range R:R >= 2.0."
+    },
+    "news_intel": {
+      "role": "news_analyst",
+      "description": "Real RSS wires (11 feeds, fetched live 2026-09-14) replayed through today's NewsDataProvider.fetch_news / format_for_prompt / tag_symbol_mentions (src/data/news.py). previous_narrative/prior_session_report=None (both optional, src/agents/news_analyst.py:376-380). Unblocked 2026-09-14. Grades schema/enum compliance and 'no invented tickers not in input' only \u2014 no judgement-based answer key for real news."
+    },
+    "macro_stress": {
+      "role": "macro_analyst",
+      "description": "15 real FRED series (2026-09-14), fetched live through the OneCLI credential gateway with a placeholder key \u2014 the real FRED_API_KEY never entered this process \u2014 then recomputed by today's MacroDataProvider.get_macro_summary (src/data/macro.py:1125). last_state/news_narrative=None (both optional, src/agents/macro_analyst.py:203-204). Unblocked 2026-09-14 \u2014 see the retired synthetic-tape note above for why the old scenario was blocked. Grades schema and rule compliance only; real conditions have no forced correct direction to grade against."
+    }
+  },
+  "prompts": {
+    "macro_analyst": {
+      "path": "config/prompts/macro_analyst.md",
+      "sha256": "220dd8f07d5c331d417e02db17e12bd4655c0e6de4e6626078e90adf6a43b9ca",
+      "bytes": 25425,
+      "lines": 228
+    },
+    "news_analyst": {
+      "path": "config/prompts/news_analyst.md",
+      "sha256": "e395669444d2e89c37eef6e89d568ea8789d721f8132daaa8c4aae42ac829afd",
+      "bytes": 17453,
+      "lines": 196
+    },
+    "tech_analyst": {
+      "path": "config/prompts/tech_analyst.md",
+      "sha256": "541e4d81a3a78546534b309e0ad03a06ad34063ebe826a93c3bd3799dab4146d",
+      "bytes": 23459,
+      "lines": 216
+    }
+  },
+  "pricing_used": {
+    "deepseek/deepseek-v4.1-flash": {
+      "input": 0.15,
+      "output": 0.6
+    }
+  },
+  "trials": [
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": false,
+          "detail": "unresolved=['CAT', 'JPM', 'MU', 'NVDA', 'SPY', 'UNH', 'XLE'] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": false,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": false,
+          "detail": "range R/R < 2.0: [] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 420.01,
+      "error": "TrialTimeout: exceeded 420s trial deadline",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "tech_batch",
+      "role": "tech_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "all_symbols_resolved",
+          "weight": 0.3,
+          "passed": true,
+          "detail": "unresolved=[] (a row failing TechAnalysisResult validation resolves to None, src/agents/tech_analyst.py analyze_batch)"
+        },
+        {
+          "name": "thesis_invalid_if_discipline",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "wrong=[] (config/prompts/tech_analyst.md:11 and :133 \u2014 filled on actionable, empty on neutral)"
+        },
+        {
+          "name": "stop_outside_absolute_atr_floor",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "inside 1.0xATR: [] (config/prompts/tech_analyst.md:65, :71; config/settings.yaml:843 risk.absolute_min_stop_atr_multiple)"
+        },
+        {
+          "name": "range_setups_designed_to_2r",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "range R/R < 2.0: [] (config/prompts/tech_analyst.md:83 \u2014 'design the trade so R/R is >= 2.0'; a breakout carries no such rule)"
+        }
+      ],
+      "input_tokens": 19422,
+      "output_tokens": 9912,
+      "cost_usd": 0.0088605,
+      "latency_s": 103.6,
+      "error": "",
+      "sample_output": "[\n  {\n    \"symbol\": \"CAT\",\n    \"rating\": \"neutral\",\n    \"conviction\": \"high\",\n    \"entry_price\": null,\n    \"reference_target\": null,\n    \"stop_loss\": null,\n    \"support_levels\": [],\n    \"resistance_levels\": [],\n    \"setup_type\": null,\n    \"expected_horizon_sessions\": null,\n    \"thesis_invalid_if\": \"\",\n    \"reasoning_chain\": {\n      \"trend\": \"Close 800.25 sits below MA20 (838.4) and MA50 (893.2) but above MA200 (765.1); MA20 -1.78% and MA50 -2.01% over 10 sessions \u2014 short-term downtrend, with price pinned at the floor of a 17-session $799.17\u2013$887.91 range.\",\n      \"momentum\": \"RSI 38.5 is weak but not oversold; MACD -18.99 is below signal -18.07 with histogram -0.92 \u2014 bearish, though the histogram is flattening rather than expanding.\",\n      \"volatility\": \"ATR 30.8 (3.85% of price) is expanding at the 78th percentile and price is pressed against the lower Bollinger band (792.5) \u2014 downside volatility risk, no squeeze.\",\n      \"volume\": \"Up/down volume 0.27 over 20 days is clear distribution, and the last bar's 1.79M shares is light \u2014 sellers are persistent but there is no capitulation flush to mark a low.\",\n      \"support_resistance\": \"Range floor $799.17 and computed support $775.34 (-3.1%, 2 touches) below; MA20 838.4 then computed resistance $840.38 (+5.0%, 2 touches) above. A sell here risks a 1.30 ATR stop to $840 for only ~0.6 R/R, so neither side offers an edge.\"\n    },\n    \"reasoning\": \"Weak trend and distribution volume argue lower, but price is already at range-floor ",
+      "actual_model": "deepseek/deepseek-v4.1-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": false
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": false,
+      "quality": 0.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": false,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        }
+      ],
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "latency_s": 420.0,
+      "error": "TrialTimeout: exceeded 420s trial deadline",
+      "sample_output": "",
+      "actual_model": "",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "news_intel",
+      "role": "news_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.35,
+          "passed": true,
+          "detail": "NewsIntelligenceReport validated (src/models.py:2758 \u2014 enums on market_sentiment/confidence/StateChange.conviction/StockNewsItem.sentiment+conviction all pydantic-enforced on parse)"
+        },
+        {
+          "name": "macro_narrative_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "current_regime 240 chars (src/models.py:2515 MacroNarrative.current_regime min_length=5)"
+        },
+        {
+          "name": "no_invented_stock_news_symbols",
+          "weight": 0.25,
+          "passed": true,
+          "detail": "stock_news symbols outside the given universe: []"
+        },
+        {
+          "name": "no_invented_state_change_symbols",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "state_change affected_symbols outside the given universe: []"
+        }
+      ],
+      "input_tokens": 8249,
+      "output_tokens": 5276,
+      "cost_usd": 0.00440295,
+      "latency_s": 72.47,
+      "error": "",
+      "sample_output": "{\n  \"macro_narrative\": {\n    \"last_updated\": \"2026-09-14\",\n    \"era_themes\": [\n      \"AI infrastructure supercycle meets its first credible slowdown debate \u2014 Anthropic's CEO calls for slowing capability gains, AI-exposed chips de-rate while cyber/software outperform\",\n      \"Monetary policy REVERSAL \u2014 Fed pivoting to HIKING into sticky inflation, 10-year yield briefly at 5%, 30yr mortgage 7.17%\",\n      \"Energy supply fragility \u2014 Saudi East-West pipeline shutdown and Russia/Ukraine diesel risk keep crude bid\",\n      \"Crypto regulatory thaw \u2014 Clarity Act advances, sector rallying\"\n    ],\n    \"current_regime\": \"Risk-off tilt with a hawkish Fed shock \u2014 policy tightening into sticky inflation, 10Y at 5%, VIX to 18, and leadership rotating out of AI beta into cyber, software and defensives. AI slowdown fears, not geopolitics, are the marginal driver.\",\n    \"key_state_tracker\": {\n      \"fed_policy\": \"TIGHTENING \u2014 market prices >92% odds of a quarter-point HIKE at the September meeting and >75% chance of another in December. 10Y briefly touched 5%; 30yr mortgage at 7.17%. Economists warn the hike could be a 'serious mistake'.\",\n      \"ai_cycle\": \"Cooling at the margin \u2014 Anthropic CEO Amodei calls for slowing AI capability improvements and a mandatory 'kill switch'; AI-exposed chips de-rate, cyber/software outperform by a historic margin. Trump pushes back, says no need for more AI regulation.\",\n      \"energy_oil\": \"Supply risk rising \u2014 Saudi East-West pipeline shutdown threatens expo",
+      "actual_model": "deepseek/deepseek-v4.1-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=75.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 7329,
+      "output_tokens": 4382,
+      "cost_usd": 0.0037285499999999997,
+      "latency_s": 61.14,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"volatility_analysis\": \"VIX 15.84, sitting at the low end of the 15-20 'normal' band and just above the <15 low-vol threshold, but the 5-day average is 16.23 and the trend is rising \u2014 so vol is supportive but drifting the wrong way, not an all-clear. A rising VIX from a low base is a mild caution flag rather than a threat; it does not by itself undercut the risk-on tape.\",\n    \"yield_curve_analysis\": \"2Y 4.63% vs 10Y 4.96%, 2Y-10Y spread +0.33% \u2014 positively sloped, not inverted. The 3M-10Y spread is +0.89% (3M 4.07%), also clearly positive and steeper; the two curves AGREE this run (no divergence to reconcile), and both being un-inverted removes the classic 12-18 month recession signal. The steepness is Fed-on-hold term-premium steepening rather than growth-exuberance steepening, and the absolute 10Y level near 5% is a real duration headwind.\",\n    \"monetary_policy_analysis\": \"DFF 3.63%, 30-day change 0.0 \u2014 the Fed is unambiguously on hold. Real 10Y yield 2.6% against a 2.36% breakeven: the nominal 10Y (4.96%) decomposes almost entirely into a high real rate plus a breakeven modestly above the 2% target, which reads as restrictive real-rate conditions, not an inflation-expectations blowout. The dollar index at 118.2, down 0.905 over 30 days, is a mild weakening that is broadly consistent with an on-hold-to-easing-leaning Fed rather than a contradiction \u2014 no policy-divergence red flag, but a soft-dollar tailwind for multinationals.\",\n    \"inflation",
+      "actual_model": "deepseek/deepseek-v4.1-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "scenario": "macro_stress",
+      "role": "macro_analyst",
+      "ok": true,
+      "quality": 1.0,
+      "checks": [
+        {
+          "name": "parsed",
+          "weight": 0.4,
+          "passed": true,
+          "detail": "MacroAnalysis validated (src/models.py:2258 \u2014 regime/confidence/equity_outlook enums enforced by pydantic on parse)"
+        },
+        {
+          "name": "target_invested_pct_in_range",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "target_invested_pct=80.0"
+        },
+        {
+          "name": "sector_guidance_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "12 sector calls (config/prompts/macro_analyst.md)"
+        },
+        {
+          "name": "reasoning_chain_present",
+          "weight": 0.2,
+          "passed": true,
+          "detail": "ReasoningChain populated"
+        }
+      ],
+      "input_tokens": 7329,
+      "output_tokens": 3751,
+      "cost_usd": 0.00334995,
+      "latency_s": 24.97,
+      "error": "",
+      "sample_output": "{\n  \"reasoning_chain\": {\n    \"volatility_analysis\": \"VIX at 15.84, just above the 15 'low-vol all-clear' line, with a 5-day average of 16.23 and a RISING trend. This is normal-to-low volatility \u2014 supportive for equities and not threatening, but the rising drift means the calm is not fully settled; it is a constructive, not euphoric, vol backdrop.\",\n    \"yield_curve_analysis\": \"3M 4.07%, 2Y 4.63%, 10Y 4.96%. 2Y-10Y spread +0.33% and 3M-10Y +0.89% \u2014 both POSITIVELY sloped and NOT inverted. No recession signal from either the 2Y/10Y or the 3M/10Y curve the NY Fed model leans on; the two agree, so there is no inversion divergence to reconcile. The 10Y near 5% sets a high discount-rate floor and keeps duration assets on the back foot, but the upward slope itself is a growth-friendly, risk-on configuration.\",\n    \"monetary_policy_analysis\": \"DFF at 3.63% with a 0.0 change over 30 days \u2014 the Fed is firmly ON HOLD. Real 10Y yield 2.6% and 10Y breakeven 2.36% together: nominal 10Y ~4.96% is being driven mostly by a HIGH REAL rate (restrictive financial conditions) with breakeven just modestly above the 2% target \u2014 this is a real-rate/restrictive-policy story, not an inflation re-acceleration repricing. Dollar index 118.2, down 0.9 over 30 days: a weakening dollar alongside an on-hold Fed is not a hawkish policy-divergence signal \u2014 mildly supportive for multinational earnings and risk appetite, and not internally contradictory.\",\n    \"inflation_labor_credit\": \"Core CPI 2.76% YoY with M",
+      "actual_model": "deepseek/deepseek-v4.1-flash",
+      "used_fallback": false,
+      "picks": [],
+      "status": "run",
+      "reasoning_effort": "medium",
+      "structured_output": true
+    }
+  ],
+  "aggregate": {
+    "pairs": {
+      "deepseek/deepseek-v4.1-flash|tech_batch": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "scenario": "tech_batch",
+        "role": "tech_analyst",
+        "runs": 2,
+        "quality_mean": 0.5,
+        "quality_min": 0.0,
+        "cost_mean": 0.008861,
+        "latency_mean": 261.81,
+        "errors": [
+          "TrialTimeout: exceeded 420s trial deadline"
+        ],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4.1-flash|news_intel": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "scenario": "news_intel",
+        "role": "news_analyst",
+        "runs": 2,
+        "quality_mean": 0.5,
+        "quality_min": 0.0,
+        "cost_mean": 0.004403,
+        "latency_mean": 246.24,
+        "errors": [
+          "TrialTimeout: exceeded 420s trial deadline"
+        ],
+        "misattributed": []
+      },
+      "deepseek/deepseek-v4.1-flash|macro_stress": {
+        "model": "deepseek/deepseek-v4.1-flash",
+        "scenario": "macro_stress",
+        "role": "macro_analyst",
+        "runs": 2,
+        "quality_mean": 1.0,
+        "quality_min": 1.0,
+        "cost_mean": 0.003539,
+        "latency_mean": 43.05,
+        "errors": [],
+        "misattributed": []
+      }
+    },
+    "models": {
+      "deepseek/deepseek-v4.1-flash": {
+        "scenarios": {
+          "tech_batch": {
+            "model": "deepseek/deepseek-v4.1-flash",
+            "scenario": "tech_batch",
+            "role": "tech_analyst",
+            "runs": 2,
+            "quality_mean": 0.5,
+            "quality_min": 0.0,
+            "cost_mean": 0.008861,
+            "latency_mean": 261.81,
+            "errors": [
+              "TrialTimeout: exceeded 420s trial deadline"
+            ],
+            "misattributed": []
+          },
+          "news_intel": {
+            "model": "deepseek/deepseek-v4.1-flash",
+            "scenario": "news_intel",
+            "role": "news_analyst",
+            "runs": 2,
+            "quality_mean": 0.5,
+            "quality_min": 0.0,
+            "cost_mean": 0.004403,
+            "latency_mean": 246.24,
+            "errors": [
+              "TrialTimeout: exceeded 420s trial deadline"
+            ],
+            "misattributed": []
+          },
+          "macro_stress": {
+            "model": "deepseek/deepseek-v4.1-flash",
+            "scenario": "macro_stress",
+            "role": "macro_analyst",
+            "runs": 2,
+            "quality_mean": 1.0,
+            "quality_min": 1.0,
+            "cost_mean": 0.003539,
+            "latency_mean": 43.05,
+            "errors": [],
+            "misattributed": []
+          }
+        },
+        "not_run": false,
+        "quality_mean": 0.6667,
+        "quality_worst": 0.5,
+        "quality_worst_run": 0.0,
+        "cost_per_run_mean": 0.005601,
+        "cost_total_usd": 0.020342,
+        "quality_per_dollar": 119.03
+      }
+    }
+  }
+}
