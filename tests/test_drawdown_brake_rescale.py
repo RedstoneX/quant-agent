@@ -85,10 +85,6 @@ def test_drawdown_thresholds_rescale_when_the_risk_unit_changes():
         max_position_pct=100, max_total_position_pct=200,
         max_sector_pct=75, require_stop_loss=True,
         max_position_risk_pct=1.0,
-        # Schedule capped to the 1% envelope — unrelated to this test,
-        # just satisfies the "ceiling can only narrow, never widen"
-        # invariant `agreement_ceiling_pct` is checked against.
-        agreement_ceiling_pct=[0.6, 0.8, 1.0, 1.0, 1.0],
         drawdown_5d_risk_multiple=3.0, drawdown_20d_risk_multiple=8.0,
     )
     high_risk = RiskConfig(
@@ -201,7 +197,6 @@ def test_daily_multiple_still_rescales_with_the_risk_unit():
         max_position_pct=100, max_total_position_pct=200,
         max_sector_pct=75, require_stop_loss=True,
         max_position_risk_pct=2.0,
-        agreement_ceiling_pct=[0.6, 0.8, 1.0, 1.5, 2.0],
     )
     assert cfg.effective_max_daily_loss_pct == pytest.approx(2.68)  # 1.34 x 2
 

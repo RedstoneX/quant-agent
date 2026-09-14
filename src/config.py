@@ -13,17 +13,9 @@ from src.agents.base import (
 )
 from src.risk.constants import (
     DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
-    INDEPENDENT_SEAT_COUNT,
     REWARD_RISK_FLOOR,
     STARTER_POSITION_RISK_PCT,
-    derive_agreement_ceiling_schedule,
 )
-
-_DEFAULT_MAX_POSITION_RISK_PCT = 5.0
-"""The owner-ratified per-trade risk envelope, as a module constant so
-`agreement_ceiling_pct`'s default_factory can derive the whole agreement
-ladder from it at class-definition time (docs/WORK.md items 30/57).
-"""
 
 
 class ApiKeysConfig(BaseModel):
@@ -549,9 +541,7 @@ class RiskConfig(BaseModel):
     # A wider stop therefore yields a SMALLER position rather than a rejected
     # trade, which is what removes the incentive to squeeze stops. The prior
     # 0.5% ceiling lived in a constructor dataclass default nobody chose.
-    max_position_risk_pct: float = Field(
-        default=_DEFAULT_MAX_POSITION_RISK_PCT, gt=0, le=100,
-    )
+    max_position_risk_pct: float = Field(default=5.0, gt=0, le=100)
     # docs/WORK.md item 32 / docs/INCIDENT_HISTORY.md 2026-09-04. The two
     # rolling-return "drawdown brake" windows (`in_drawdown` in
     # `src/pipeline.py::_compute_recent_performance`) that halve new BUY
@@ -957,56 +947,6 @@ class RiskConfig(BaseModel):
     # broker from before the halt is untouched and keeps protecting the
     # position.
     kill_switch_path: str = Field(default="data/KILL_SWITCH")
-    # --- Spec §9.4 "agreement earns size" --------------------------------
-    # Ceiling on `TargetPosition.risk_allocation_pct`, indexed by the SIGNED
-    # score over the independent seats (of technical/news/earnings/macro/
-    # smart_money): those whose canonical stance is directionally aligned
-    # with the target's proposed action, MINUS those opposed to it, at unit
-    # weight each — see `src/risk/rules.py::signed_source_score` /
-    # `agreement_ceiling_for_score`. Index 0 is the ceiling for a net score
-    # of 1, index 4 for a net of 5; a net at or below zero has no rung and
-    # refuses the target outright (2026-09-02). A REDUCTION only: applied in
-    # the constructor strictly BEFORE `allocate_risk_budget` and the
-    # single-name clamps, so it can shrink what a target receives but can
-    # never grow it past what the PM asked for or past
-    # `max_position_risk_pct` (enforced below and again at the point of
-    # use).
-    #
-    # UNANIMOUS cases are unchanged by the 2026-09-02 signing: with nothing
-    # opposed the net score IS the aligned count, so every rung below still
-    # prices exactly what it priced before, and the measurement that chose
-    # these numbers still stands.
-    #
-    # DERIVED, 2026-09-14 (docs/WORK.md items 30 + 57, both retired) —
-    # `ceiling(n) = max_position_risk_pct x sqrt(n / INDEPENDENT_SEAT_COUNT)`.
-    # Full derivation and the fetched sources live on
-    # `src/risk/constants.py::derive_agreement_ceiling_schedule`. Read that
-    # before touching anything here.
-    #
-    # WHAT THIS REPLACED, so it is not re-proposed: a hand-typed
-    # [3.0, 4.0, 5.0, 5.0, 5.0]. Beside it sat a real measurement of
-    # production `agent_logs` 2026-08-25..28 — of 75 opening/increasing
-    # targets, 67% (50/75) named exactly ONE aligned source (always
-    # `technical`), 29% (22/75) two, 4% (3/75) three, NONE four or five.
-    # That measurement is COVERAGE: it says how often each rung is
-    # REACHED. It never said what any rung should BE, and it was the only
-    # thing standing behind those five numbers. It is kept here because it
-    # remains the best description of where this schedule actually bites;
-    # it is no longer offered as a justification for the values.
-    #
-    # It also made four of the five rungs inert: rungs 3-5 all read 5.0,
-    # equal to `max_position_risk_pct`, so they narrowed nothing, and rung
-    # 2 (4.0) sat at the top of the PM's own conviction band and so could
-    # only bite a request the prompt already forbade. Only rung 1 could
-    # ever cut a position. Deriving the schedule from the cap fixes that
-    # class of drift permanently: every rung is now a fixed fraction of
-    # whatever the ratified envelope is, so no rung can silently rise to
-    # meet the cap when the cap moves.
-    agreement_ceiling_pct: list[float] = Field(
-        default_factory=lambda: derive_agreement_ceiling_schedule(
-            _DEFAULT_MAX_POSITION_RISK_PCT, INDEPENDENT_SEAT_COUNT,
-        ),
-    )
 
     #: Spec §10.3. Multiple of `max_sector_pct` used as the absolute sector
     #: ceiling when `max_sector_hard_pct` is not set explicitly. ClassVar, so
@@ -1098,55 +1038,24 @@ class RiskConfig(BaseModel):
             )
         return self
 
-    @model_validator(mode="after")
-    def _derive_agreement_ceiling_when_unset(self):
-        """No hand-typed default. An unset schedule is DERIVED from the
-        envelope this very config carries, so the two can never disagree —
-        `docs/WORK.md` items 30/57, retired 2026-09-14. An explicit
-        schedule is still honoured (tests and the backtest supply their
-        own); `tests/test_agreement_sizing.py` pins the SHIPPED one to the
-        derivation so `config/settings.yaml` cannot drift away from it.
-        """
-        unset = "agreement_ceiling_pct" not in self.model_fields_set
-        if unset and self.max_position_risk_pct != _DEFAULT_MAX_POSITION_RISK_PCT:
-            object.__setattr__(
-                self,
-                "agreement_ceiling_pct",
-                derive_agreement_ceiling_schedule(
-                    self.max_position_risk_pct, INDEPENDENT_SEAT_COUNT,
-                ),
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _agreement_ceiling_is_well_formed(self):
-        schedule = self.agreement_ceiling_pct
-        if len(schedule) != INDEPENDENT_SEAT_COUNT:
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_deleted_agreement_ceiling_key(cls, data):
+        # Same pattern as `_reject_renamed_short_gross_key` below and
+        # `ExecutionConfig._reject_deleted_repeg_keys`: BaseModel's default
+        # `extra="ignore"` would let a stale deployment's settings.yaml keep
+        # the key and load silently, and an operator would believe a sizing
+        # ladder they set was in force when nothing reads it.
+        if isinstance(data, dict) and "agreement_ceiling_pct" in data:
             raise ValueError(
-                "risk.agreement_ceiling_pct must have exactly "
-                f"{INDEPENDENT_SEAT_COUNT} entries (net scores "
-                f"1..{INDEPENDENT_SEAT_COUNT}); got {len(schedule)}"
+                "risk.agreement_ceiling_pct was removed 2026-09-14: the "
+                "graduated agreement sizing ladder is retired (the sqrt(n/5) "
+                "law prices INDEPENDENT estimates and this desk's seats are "
+                "not independent). Agreement is now a refusal gate only — "
+                "see src/risk/rules.py::agreement_refuses_trade. Delete the "
+                "key from the settings file."
             )
-        if any(v <= 0 for v in schedule):
-            # 0.0 is not a configurable rung — it is the value
-            # `agreement_ceiling_for_score` returns for a net score at or
-            # below zero, i.e. the block. A schedule entry of 0 would make a
-            # POSITIVE net score unbuyable, which is a different rule than
-            # anything ratified here.
-            raise ValueError("risk.agreement_ceiling_pct entries must be > 0")
-        if any(v > self.max_position_risk_pct for v in schedule):
-            raise ValueError(
-                "risk.agreement_ceiling_pct entries must never exceed "
-                f"max_position_risk_pct ({self.max_position_risk_pct}) — "
-                "the agreement ceiling can only narrow the per-trade "
-                "envelope, never widen it"
-            )
-        if any(b < a for a, b in zip(schedule, schedule[1:])):
-            raise ValueError(
-                "risk.agreement_ceiling_pct must be non-decreasing — more "
-                "independent agreement can never earn a SMALLER ceiling"
-            )
-        return self
+        return data
 
     @model_validator(mode="before")
     @classmethod

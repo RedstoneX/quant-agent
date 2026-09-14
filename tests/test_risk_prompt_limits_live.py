@@ -260,7 +260,7 @@ def _unrendered_limit_phrases(text: str, sheet: str = "risk_manager.md") -> list
     check (a) misses entirely.
     """
     # Spec section references (§9.4, §12.3) are numbered pointers, not
-    # values; blanked so "§9.4 agreement ceiling" does not read as a limit
+    # values; blanked so a §9.4 mention does not read as a limit
     # stated at 9.4.
     marked = re.sub(r"§\s*[\d.]+", "", PLACEHOLDER_RE.sub(_RENDERED, text))
     findings = []
@@ -712,8 +712,8 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
     live_divergence = [
         f for f in omitted
         # `get_default(call_default_factory=True)` — a field declared with a
-        # default_factory (agreement_ceiling_pct) reports `.default` as
-        # PydanticUndefined, which would read as a false divergence.
+        # default_factory reports `.default` as PydanticUndefined, which
+        # would read as a false divergence.
         if raw[f] != RiskConfig.model_fields[f].get_default(
             call_default_factory=True,
         )
@@ -730,9 +730,11 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
     # threaded through `ConstructorConfig` in `pipeline.py`, not engine
     # `RiskConfig` fields — the new one is omitted here for exactly the same
     # reason its sibling directly above it in this list always was.
-    assert len(omitted) == 16, (
+    # 16 -> 15 on 2026-09-14: `agreement_ceiling_pct` was deleted outright
+    # with the graduated agreement sizing ladder.
+    assert len(omitted) == 15, (
         f"the engine's hand-enumerated RiskConfig now omits {len(omitted)} "
-        f"settings present in settings.yaml, not 16 — if that grew, thread "
+        f"settings present in settings.yaml, not 15 — if that grew, thread "
         f"the new one; if it shrank, lower this number. Omitted: {omitted}"
     )
 
@@ -974,10 +976,17 @@ def test_a_just_filed_name_loses_its_earnings_seat():
     """The mechanism the sheet now relies on instead of a hand-typed number.
 
     A queued placeholder carries no `analysis`, so it produces no registry
-    stance — the seat is absent, the signed source score is one lower, and
-    `agreement_ceiling_for_score` prices the name at a lower rung. If this
-    ever stopped being true, deleting the earnings-queued risk figure would
-    have removed a live constraint rather than a duplicate one.
+    stance — the seat is absent and the signed source score is one lower.
+
+    **Read this with the test below.** Item 62 justified deleting the
+    prompt's earnings-queued risk figure partly on the ground that the §9.4
+    ceiling already priced that missing seat at a lower rung. The graduated
+    ceiling was retired on 2026-09-14 (owner decision — the sqrt law prices
+    INDEPENDENT estimates and these seats are not independent), so a lower
+    net no longer costs size; it only refuses at or below zero. What still
+    caps a just-filed name is the deterministic Python belt,
+    `TradingPipeline._clamp_queued_earnings_buys` (5% NOTIONAL weight),
+    which is untouched by any of this.
     """
     from src.agents.portfolio_manager import PortfolioManagerAgent
 
@@ -998,15 +1007,18 @@ def test_a_just_filed_name_loses_its_earnings_seat():
     )
 
 
-def test_the_agreement_schedule_prices_one_fewer_seat_lower():
-    """Losing a seat costs size, and the schedule that says so is derived."""
-    from src.risk.rules import agreement_ceiling_for_score
+def test_losing_a_seat_no_longer_costs_size_only_the_refusal_remains():
+    """The other half of item 62's justification, corrected 2026-09-14.
 
-    schedule = _live_risk_config().agreement_ceiling_pct
-    assert len(schedule) >= 2
-    for score in range(1, len(schedule)):
-        assert (agreement_ceiling_for_score(schedule, score)
-                < agreement_ceiling_for_score(schedule, score + 1)), (
-            "a name with fewer net agreeing seats must be priced strictly "
-            f"lower (score {score} vs {score + 1})"
-        )
+    Losing a seat used to drop the name a rung on the graduated agreement
+    ceiling. That ladder is retired: the net is now a go/no-go, so every
+    positive net sizes identically and only a net at or below zero stops the
+    trade. Asserted here, in the file that carries item 62's reasoning, so
+    the reasoning cannot keep resting on a mechanism that no longer exists.
+    """
+    from src.risk.rules import agreement_refuses_trade
+
+    assert not hasattr(_live_risk_config(), "agreement_ceiling_pct")
+    assert not agreement_refuses_trade(1)
+    assert not agreement_refuses_trade(2)
+    assert agreement_refuses_trade(0)

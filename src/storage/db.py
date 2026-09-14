@@ -2148,7 +2148,7 @@ class Database:
         the ledger reads per analyst. Returns the number of rows written.
 
         The stance itself is NOT re-derived here: it is the canonical
-        evidence-registry stance the §9.4 agreement ceiling already counts
+        evidence-registry stance the §9.4 agreement gate already counts
         (`PortfolioManagerAgent.build_evidence_registry`), so what the ledger
         scores and what sizing counted are the same fact.
         """

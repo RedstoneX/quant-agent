@@ -28,7 +28,7 @@ desk went long SUPPORTED the trade; one that rated it bearish OPPOSED it. A
 neutral seat took no side and is not scored — crediting "no view" either way
 would let a seat accumulate a record by abstaining. Alignment is decided by
 `src/risk/rules.py::stance_is_aligned`, the same vocabulary the §9.4
-agreement ceiling and `validate_grounding` already share; a second, divergent
+agreement refusal and `validate_grounding` already share; a second, divergent
 notion of "aligned" here would let the ledger and the sizing gate disagree
 about identical evidence.
 
@@ -50,7 +50,7 @@ own declared conviction (high 1.0 / medium 0.6 / low 0.3). **Owner decision,
    small sample (see `_CONVICTION_OUTCOME_MIN_N` in `src/storage/db.py`);
    under weighting that finding would have been hidden inside the score.
 2. ~~**It double-counts.** A confident call already earns a larger position
-   through the §9.4 agreement ceiling, and a larger position already produces
+   through the §9.4 agreement ceiling (retired 2026-09-14), and a larger position already produces
    a proportionally larger R.~~ **WRONG, corrected 2026-09-02.** This was
    false when it was written and is still false. §9.4 never read a conviction:
    `count_aligned_sources` / `count_opposing_sources` collapse each seat to

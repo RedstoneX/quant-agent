@@ -4244,7 +4244,7 @@ class DecisionStage:
         # function of these exact inputs, so recomputing it here from the
         # identical arguments passed to `decide()` above is guaranteed to
         # agree with what PM was actually shown). Feeds the constructor's
-        # agreement ceiling — never invented from PM's own provenance,
+        # agreement refusal — never invented from PM's own provenance,
         # which the PM could under-cite.
         evidence_registry = PortfolioManagerAgent.build_evidence_registry(
             analyses=analyses, positions=positions, news_intel=news_intel,
