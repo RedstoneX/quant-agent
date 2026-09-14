@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from src.agents.base import BaseAgent
+from src.agents.prompt_limits import LiveLimitPrompt
 from src.models import (
     AnalystVerdict, EarningsAnalysis, MacroAnalysis, NewsIntelligenceReport,
     PortfolioDecision, Position, TargetPosition, TechAnalysisResult,
@@ -42,6 +43,7 @@ from src.verdicts import RankedCandidate, rank_verdicts
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).parent.parent.parent / "config" / "prompts" / "portfolio_manager.md"
+SETTINGS_PATH = Path(__file__).parent.parent.parent / "config" / "settings.yaml"
 
 # §9.3 — greppable status key for a target dropped over an unadjudicated
 # seat conflict, matching the naming convention of Phase 3.3's
@@ -76,22 +78,42 @@ _SYMBOL_DIRECTION_RE = re.compile(r"^([A-Z0-9.\-]+)\((\w+)\)$")
 _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
-class PortfolioManagerAgent(BaseAgent):
+class PortfolioManagerAgent(LiveLimitPrompt, BaseAgent):
+    # This seat SIZES under the desk's limits, so it is shown them rather
+    # than told them: `{{risk.*}}` placeholders in
+    # `config/prompts/portfolio_manager.md`, rendered from the live config at
+    # construction time. Same mechanism as the Risk Manager — see
+    # `src/agents/prompt_limits.py`. PM's sheet was CORRECT when the
+    # reviewer's went wrong on 2026-09-11, and the reason is NOT that anyone
+    # was more careful: `tests/test_prompts_anchors.py` pinned the literal
+    # "capped at 65% single-name" here and had no equivalent anchor on the
+    # reviewer's sheet. The mechanical check is what held. It held by keeping
+    # a THIRD hand-maintained copy of the value, which is what this change
+    # removes — the anchor is retargeted to the placeholder.
+    _prompt_path = PROMPT_PATH
+    _settings_path = SETTINGS_PATH
+    _fallback_prompt = "You are a portfolio manager. Respond with JSON."
+
     #: Phase 14b. The rotation comparison this agent's LAST prompt was
     #: rendered from (`rotation_precheck`), reset at the top of every
     #: `build_user_message`. `DecisionStage._apply_rotation_execution`
     #: reads it so the desk acts on exactly what the model was shown.
     last_rotation_precheck: RotationPrecheck | None = None
 
+    #: retired board item 49, owner decision 2026-09-12 (`docs/INCIDENT_HISTORY.md`, 2026-09-14) ("best-ranked first").
+    #: The candidate ranking this agent's LAST prompt was rendered from, in
+    #: `rank_verdicts` order, best first. Reset at the top of every
+    #: `build_user_message` exactly like `last_rotation_precheck` above, and
+    #: for the same reason: `pipeline_stages.DecisionStage` reads it to tell
+    #: the constructor which order to spend the risk budget in, and a stale
+    #: ranking from a previous session must never leak into this one. None
+    #: means "no ranking view this session" — the allocator then falls back
+    #: to its pre-decision ordering rather than having one invented for it.
+    last_candidate_ranking: list[RankedCandidate] | None = None
+
     @property
     def name(self) -> str:
         return "portfolio_manager"
-
-    @property
-    def system_prompt(self) -> str:
-        if PROMPT_PATH.exists():
-            return PROMPT_PATH.read_text()
-        return "You are a portfolio manager. Respond with JSON."
 
     @staticmethod
     def _collapse_stances(values) -> str | None:
@@ -592,6 +614,10 @@ class PortfolioManagerAgent(BaseAgent):
         # shown IN ORDER, so "which of the twelve" is a stated rule rather
         # than whatever the model defaults toward. Names a gate refuses
         # are listed with the gate that refused them and are NOT ordered.
+        # Item 49: reset FIRST, so a raise inside `rank_candidates` leaves no
+        # previous session's ranking behind for the constructor to spend this
+        # session's budget against.
+        self.last_candidate_ranking = None
         ranked, blocked = self.rank_candidates(
             analyses=analyses,
             evidence_registry=evidence_registry,
@@ -605,7 +631,12 @@ class PortfolioManagerAgent(BaseAgent):
             smart_money_findings=smart_money_findings,
             real_reward_risk_by_symbol=kwargs.get("real_reward_risk_by_symbol"),
             constructor_refusals_by_symbol=kwargs.get("constructor_refusals_by_symbol"),
+            # The same mapping `build_evidence_registry` is given a few lines
+            # above, so macro's ranked verdict and macro's registry stance
+            # resolve one symbol's sector identically (item 31, 2026-09-13).
+            symbol_sectors=kwargs.get("symbol_sectors") or {},
         )
+        self.last_candidate_ranking = list(ranked)
         ranking_section = self._render_candidate_ranking(ranked, blocked)
 
         # Phase 14 — opportunity-cost rotation. The ranking above orders
@@ -1449,6 +1480,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         macro_analysis: dict | None,
         earnings_analyses: list[dict],
         smart_money_findings: list[SmartMoneyFinding] | None,
+        symbol_sectors: dict[str, str] | None = None,
     ) -> list[AnalystVerdict]:
         """Every seat's Phase 13 verdict, best-effort, one bad entry never
         drops another's or the run's.
@@ -1476,17 +1508,28 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         never-block-the-run posture already established by
         `_record_seat_stances` and `_check_levels_coverage`.
 
-        Macro is applied via its OWN plain `equity_outlook`, the same for
-        every symbol — NOT the sector-adjusted stance
-        `build_evidence_registry` computes for the evidence-registry prompt
-        section. Those two can disagree for a symbol whose sector view
-        differs from the broad market view (see
-        `build_evidence_registry`'s sector-guidance branch). Known
-        simplification, not an oversight — `MacroAnalysis` carries one
-        conviction/evidence/invalidation set for its whole read, not one per
-        sector, so there is nothing sector-specific to attach to a
-        sector-overridden direction without inventing content. Flagged in
-        `docs/WORK.md` as a follow-up, not resolved here.
+        **2026-09-13, retired item 31 — macro is now sector-adjusted.**
+        It used to be applied via its plain `equity_outlook`, the same for
+        every symbol, while `build_evidence_registry` — the same macro read,
+        rendered into the same prompt — already resolved a per-symbol stance
+        from `sector_guidance`. The two could and did disagree for any symbol
+        whose sector view differed from the broad market view: one belief,
+        two answers, in one prompt.
+
+        `symbol_sectors` (the same mapping `build_evidence_registry` takes,
+        from the same `pipeline._last_symbol_sectors` cache) is now passed
+        per symbol into `MacroAnalysis.to_verdict`, which resolves the sector
+        stance through the identical `collapse_stances` reduction the
+        registry uses and falls back to `equity_outlook` when the read stated
+        nothing for that sector. See that method for why the old objection
+        ("nothing sector-specific to attach") only held for conviction, and
+        what is done about it.
+
+        Sectors arrive keyed however the caller had them; matching is
+        case-insensitive on the symbol, so a lower-case key still resolves.
+        A symbol absent from the mapping simply gets the broad read, exactly
+        as before — this can only ever make a verdict agree with the
+        registry, never introduce a stance neither of them held.
         """
         verdicts: list[AnalystVerdict] = []
 
@@ -1519,10 +1562,16 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 macro = None
                 logger.warning("Phase 13: macro_analysis failed to parse", exc_info=True)
             if macro is not None:
+                sectors = {
+                    str(k).strip().upper(): str(v)
+                    for k, v in (symbol_sectors or {}).items()
+                }
                 symbols = {a.symbol.upper() for a in analyses}
                 for symbol in symbols:
                     try:
-                        verdicts.append(macro.to_verdict(symbol))
+                        verdicts.append(
+                            macro.to_verdict(symbol, sector=sectors.get(symbol)),
+                        )
                     except Exception:
                         logger.warning(
                             "Phase 13: macro verdict failed for %s", symbol, exc_info=True,
@@ -1594,6 +1643,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         smart_money_findings: list[SmartMoneyFinding] | None = None,
         real_reward_risk_by_symbol: dict[str, float | None] | None = None,
         constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
+        symbol_sectors: dict[str, str] | None = None,
     ) -> tuple[list[RankedCandidate], dict[str, list[str]]]:
         """The eligible names in ranked order, plus the blocked names with
         their reasons. Ordering is `src/verdicts.py::rank_verdicts` over
@@ -1636,6 +1686,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             macro_analysis=macro_analysis,
             earnings_analyses=earnings_analyses or [],
             smart_money_findings=smart_money_findings,
+            symbol_sectors=symbol_sectors,
         )
         eligible_verdicts = [
             v for v in all_verdicts
@@ -1668,11 +1719,18 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             "The names below passed every rule that can be checked before you "
             "decide (actionable rating; longs BUY-eligible; R/R at or above "
             "the floor, or a current state-change row naming the symbol; net "
-            "independent evidence ≥ 1). They are ORDERED by a composite of "
-            "each reporting seat's direction magnitude and conviction — "
-            "technical and earnings weighted 1.2x, news at 1.0x baseline, "
-            "smart_money and macro at 0.8x, a research-informed prior "
-            "(2026-09-03), not a measurement of THIS desk's own analysts. "
+            "independent evidence ≥ 1). They are ORDERED by the SUM across "
+            "every seat that reported a direction on the name, of that "
+            "seat's stated strength plus its stated conviction — technical "
+            "and earnings weighted 1.2x, news at 1.0x baseline, smart_money "
+            "and macro at 0.8x, a research-informed prior (2026-09-03), not "
+            "a measurement of THIS desk's own analysts. A SUM, so more "
+            "agreeing seats always score higher: breadth is the point, and "
+            "an agreeing seat can never pull a name down. Only technical "
+            "states a strength of its own (its rating rungs); the other four "
+            "seats have no strength scale, so they contribute their "
+            "conviction only. The score is therefore NOT capped at 2.0 and "
+            "not comparable across sessions with different coverage. "
             "This is the tiebreak among equally eligible names: to take a "
             "lower-ranked name over a higher one, say what the ranking does "
             "not see. It is not a size, and it does not waive any rule "
@@ -1685,11 +1743,20 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 invalidation = "; ".join(
                     f"{v.seat}: {v.invalidation}" for v in c.verdicts if v.invalidation
                 )
+                # A seat that looked and came back with no lean is stated,
+                # not omitted (2026-09-13). Otherwise "macro's own sector
+                # rows contradicted each other on this name" is invisible
+                # here and reads exactly like "macro never covered it".
+                no_lean = (
+                    f" | no lean from: {', '.join(c.neutral_seats)}"
+                    if c.neutral_seats else ""
+                )
                 lines.append(
                     f"{i}. {c.symbol} — {c.direction} | score {c.score:.2f} "
-                    f"(magnitude {c.components['magnitude']:.2f} + conviction "
-                    f"{c.components['conviction_score']:.2f}) | seats: {seats} "
-                    f"({convictions}) | invalid if — {invalidation}"
+                    f"(strength {c.components['magnitude']:.2f} + conviction "
+                    f"{c.components['conviction_score']:.2f}, summed over "
+                    f"{len(c.verdicts)} seat(s)) | seats: {seats} "
+                    f"({convictions}){no_lean} | invalid if — {invalidation}"
                 )
         else:
             lines.append("(no name passes every pre-decision rule today)")

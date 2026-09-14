@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -79,8 +80,11 @@ from src.agents.prompt_limits import (
     PLACEHOLDER_RE, PromptPlaceholderError, load_risk_config_from_settings,
     placeholders_in, render_prompt_limits, resolve_placeholder,
 )
+from src.agents.portfolio_manager import PortfolioManagerAgent
+from src.agents.portfolio_manager import PROMPT_PATH as PM_PROMPT_PATH
 from src.agents.risk_manager import PROMPT_PATH, SETTINGS_PATH, RiskManagerAgent
 from src.config import RiskConfig
+from src.pipeline import build_constructor_config, build_risk_config
 
 #: Settings whose value the sheet states and must therefore render. This IS a
 #: hand-maintained list — the module docstring's "no hand-maintained table"
@@ -100,6 +104,23 @@ WIRED_SETTINGS = (
     "max_gross_bearish_pct",
 )
 
+#: Settings the Portfolio Manager's sheet states. PM SIZES under these where
+#: the reviewer AUDITS against them, so the two lists differ: PM needs the
+#: cluster share and the gross-exposure multiple it sizes into, RM does not.
+PM_WIRED_SETTINGS = (
+    "max_position_pct",
+    "max_position_risk_pct",
+    "min_position_risk_pct",
+    "max_portfolio_risk_pct",
+    "max_cluster_risk_share_pct",
+    "max_sector_pct",
+    "max_gross_exposure_x",
+    "max_single_short_pct",
+    "max_gross_bearish_pct",
+    "short_gap_risk_multiple",
+)
+
+
 #: Nouns that mark a numeral as being stated AS a limit rather than used in an
 #: illustration. This is the pattern that catches the 2026-09-11 shape.
 _LIMIT_NOUN = r"(?:ceiling|caps?|budget|limit|maximum|floor|allowance)\b"
@@ -109,17 +130,56 @@ _LIMIT_PHRASE = re.compile(
     r"(?<![\w.$])(\d+(?:\.\d+)?)\s*%?[^.\n]{0,32}?" + _LIMIT_NOUN, re.I,
 )
 
-#: Phrases the limit-noun check must not flag, each with the reason it is not
-#: a limit statement. Kept explicit and short: an exemption is a hole, so it
-#: should be readable in one screen and argued for individually.
-_LIMIT_PHRASE_EXEMPTIONS = (
-    # The sheet states TWICE that the 1.5 reward:risk floor no longer exists,
-    # once as a forbidden phrasing to quote back. Both are negations of a
-    # removed gate, not statements of a live limit, and there is no setting
-    # to render (the gate was deleted, not reconfigured — PR #341).
-    "1.5 floor",
-    "1.5\nfloor",
-)
+#: Phrases each sheet's checks must not flag, with the reason each is not a
+#: statement of a live limit. Kept explicit, short and per-sheet: an exemption
+#: is a hole, so it should be readable at a glance and argued for individually.
+#: Every entry here is either (a) a PAST value in a provenance note, which is
+#: history and must stay literal or the note stops meaning anything, or (b) a
+#: rule with no settings key to render.
+_EXEMPTIONS = {
+    "risk_manager.md": (
+        # The sheet states TWICE that the 1.5 reward:risk floor no longer
+        # exists, once as a forbidden phrasing to quote back. Negations of a
+        # REMOVED gate; there is no setting to render (PR #341 deleted the
+        # gate rather than reconfiguring it).
+        "1.5 floor",
+        "1.5\nfloor",
+    ),
+    "portfolio_manager.md": (
+        # (a) PROVENANCE. Past values of settings, in notes explaining why a
+        # limit is what it is. Rendering these would rewrite history every
+        # time a setting moved, which is the opposite of what they are for.
+        "has since moved 3.0 ",     # min_stop_atr_multiple: 3.0 -> 1.5 -> 2.5
+        "20% notional ceiling",     # the pre-2026-09-04 max_position_pct
+        "20% ceiling",              # same, second mention in that narrative
+        # NOTE: the sizing formula's `min(raw, queued_cap, 5.0)` and its 0.5
+        # emit floor were exempted here as "pseudo-code illustration" and are
+        # NOT exempt any more. They are the arithmetic the seat performs, so
+        # they render from `max_position_risk_pct` / `min_position_risk_pct`
+        # like the prose two hundred lines above them. An exemption there put
+        # the 2026-09-11 self-contradiction back inside one sheet.
+        #
+        # (b) NO SETTINGS KEY EXISTS for these; they are prompt-only ceilings
+        # with no recorded derivation. Exempted so the check can run at all,
+        # NOT closed: docs/WORK.md item 62 carries the open question of where
+        # each number came from and what would settle it. Inventing a setting
+        # to render would give an un-derived number a second home, not a
+        # first justification.
+        "1% risk cap",              # earnings-queued BUY cap (item 62)
+        "1.0% risk — the sleeve ceiling",   # starter sleeve (item 62)
+        "10% floor",                # cash floor (item 62)
+        # (c) NOT LIMITS AT ALL — a table row number, a coin-flip idiom, and
+        # the sizing formula's `stale` multiplier, all of which the pattern
+        # reads as "<number> ... cap/ceiling" purely by adjacency.
+        "6 | **Gross exposure ceiling",
+        "50/50 thesis, cluster cap",
+        # `stale = ... else 1.0` sits on the line above `queued_cap`. The 1.0
+        # is a multiplier of 1 (i.e. "no haircut"), not a ceiling, and there
+        # is no setting it could restate. The two numbers that ARE limits on
+        # the lines around it now render from config.
+        "1.0\nqueued_cap",
+    ),
+}
 
 #: How far past a setting's name a digit still counts as "restating its
 #: value". Short on purpose: `name=65` and `` `name` (10%, `` are the two
@@ -160,7 +220,7 @@ def _risk_setting_names() -> list[str]:
 _RENDERED = "\x00"
 
 
-def _hand_typed_limits(text: str) -> list[str]:
+def _hand_typed_limits(text: str, sheet: str = "risk_manager.md") -> list[str]:
     """Every place a setting's name is followed by a hand-typed value.
 
     Placeholders collapse to a marker rather than to nothing, so
@@ -183,6 +243,8 @@ def _hand_typed_limits(text: str) -> list[str]:
                 continue
             claimed.append((match.start(), match.end()))
             window = _NOT_A_LIMIT.sub("", marked[match.end():match.end() + ADJACENCY_CHARS])
+            if any(ex in window for ex in _EXEMPTIONS.get(sheet, ())):
+                continue
             digit = re.search(r"\d", window)
             if digit is None:
                 continue
@@ -192,7 +254,7 @@ def _hand_typed_limits(text: str) -> list[str]:
     return findings
 
 
-def _unrendered_limit_phrases(text: str) -> list[str]:
+def _unrendered_limit_phrases(text: str, sheet: str = "risk_manager.md") -> list[str]:
     """Every numeral stated as the value of a limit noun without being
     rendered.
 
@@ -206,9 +268,10 @@ def _unrendered_limit_phrases(text: str) -> list[str]:
     # stated at 9.4.
     marked = re.sub(r"§\s*[\d.]+", "", PLACEHOLDER_RE.sub(_RENDERED, text))
     findings = []
+    exempt = _EXEMPTIONS.get(sheet, ())
     for match in _LIMIT_PHRASE.finditer(marked):
         phrase = match.group(0).replace(_RENDERED, "<rendered>")
-        if any(ex in match.group(0) for ex in _LIMIT_PHRASE_EXEMPTIONS):
+        if any(ex in match.group(0) for ex in exempt):
             continue
         findings.append(phrase)
     return findings
@@ -484,28 +547,116 @@ def test_settings_file_without_a_risk_block_fails_loudly(tmp_path: Path):
 # settings.yaml is ignored for that field — the exact bug already found once
 # for `allow_margin` (Codex r11 P2, see the comment at that argument).
 
-def _engine_config_arguments() -> set[str]:
-    """Field names `Pipeline.__init__` actually passes when it builds the
-    risk engine's config. Parsed from source rather than by constructing a
-    Pipeline, which needs brokers, keys and a database."""
-    src = Path(__file__).parent.parent.joinpath("src/pipeline.py").read_text()
-    start = src.index("self.risk_engine = RiskRuleEngine(RiskConfig(")
-    depth = 0
-    for offset, char in enumerate(src[start:]):
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-            if depth == 0:
-                break
-    return set(re.findall(r"^\s*([a-z_]+)=", src[start:start + offset], re.M))
+# WHY THIS IS A BEHAVIOURAL CHECK AND NOT A SOURCE SCAN. The first version of
+# these tests regex-scanned `src/pipeline.py` for `^\s*([a-z_]+)=` inside the
+# `RiskConfig(` call, which proved only that a KEYWORD NAME was typed there.
+# `max_gross_bearish_pct=20.0`, hard-coded, would have satisfied it — the very
+# defect the test claims to exclude. So instead: move the setting, rebuild the
+# enforcing object through the pipeline's OWN builder, and see whether the
+# object moved with it.
+
+
+def _config_for(risk_config) -> SimpleNamespace:
+    """The minimum `config` shape the two builders read. Only `risk` and
+    `cash_sweep` are touched (grep either builder for `config.`)."""
+    return SimpleNamespace(
+        risk=risk_config,
+        cash_sweep=SimpleNamespace(min_order_usd=None, symbol=None, enabled=False),
+    )
+
+
+def _perturb(live: RiskConfig, field: str):
+    """A legal, DIFFERENT value for `field`, or None if nothing legal exists.
+
+    Derived from the live value and the field's own validators rather than
+    typed, so this file keeps no copy of any limit. Candidates are tried in
+    order and the first that survives `RiskConfig`'s validation wins; a field
+    hemmed in by a cross-field validator can legitimately yield None.
+    """
+    current = getattr(live, field, None)
+    if isinstance(current, bool):
+        candidates = [not current]
+    elif isinstance(current, (int, float)):
+        candidates = [current * 0.9, current * 1.1, current + 1,
+                      current - 1, current / 2, current * 2]
+    elif current is None:
+        # An UNSET optional numeric setting (`max_daily_loss_pct` is null in
+        # settings.yaml today — the volatility-relative breaker derives it).
+        # Probe with numbers ALREADY PRESENT elsewhere in the live config
+        # rather than inventing one, so this file still holds no number of
+        # its own. A field that is optional but not numeric simply finds no
+        # candidate that validates and yields None.
+        candidates = sorted({
+            float(value) for value in live.model_dump().values()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            and value > 0
+        })
+    else:
+        return None
+    base = live.model_dump()
+    for candidate in candidates:
+        if candidate == current:
+            continue
+        try:
+            RiskConfig(**{**base, field: candidate})
+        except Exception:  # noqa: BLE001 — an illegal probe is simply skipped
+            continue
+        return candidate
+    return None
+
+
+def _built_pair(risk_config):
+    """`(engine RiskConfig, sizer ConstructorConfig)` as the pipeline builds
+    them. These are the two objects that ENFORCE the desk's numeric limits."""
+    config = _config_for(risk_config)
+    engine_config = build_risk_config(config)
+    return engine_config, build_constructor_config(config, engine_config)
+
+
+def _numbers_carried(obj) -> set[float]:
+    """Every numeric value an enforcing config object carries.
+
+    Compared by VALUE, not by field name, because the sizer renames as it
+    threads — `max_position_risk_pct` arrives as `risk_budget_pct` and
+    `min_position_risk_pct` as `min_risk_pct`.
+    """
+    fields = (getattr(type(obj), "model_fields", None)
+              or getattr(obj, "__dataclass_fields__", {}))
+    carried = set()
+    for name in fields:
+        value = getattr(obj, name, None)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        carried.add(float(value))
+    return carried
+
+
+def _engine_threaded_fields() -> set[str]:
+    """Every `RiskConfig` field that DEMONSTRABLY reaches the risk engine:
+    move the setting, and `build_risk_config` returns the moved value.
+
+    A hard-coded literal in `src/pipeline.py` does not appear here, which is
+    the whole difference from scanning the keyword names.
+    """
+    live = _live_risk_config()
+    base = live.model_dump()
+    threaded = set()
+    for field in RiskConfig.model_fields:
+        probe = _perturb(live, field)
+        if probe is None:
+            continue
+        moved = RiskConfig(**{**base, field: probe})
+        built = build_risk_config(_config_for(moved))
+        if getattr(built, field, None) == probe:
+            threaded.add(field)
+    return threaded
 
 
 def test_every_rendered_setting_is_also_threaded_into_the_engine():
     """A setting the sheet SHOWS must be one the engine READS from the same
     file. Without this, the seat could be briefed with settings.yaml's value
     while the engine hard-blocked against a class default."""
-    threaded = _engine_config_arguments()
+    threaded = _engine_threaded_fields()
     # `effective_max_daily_loss_pct` is derived, not a field; it is covered by
     # its three inputs, all of which are threaded.
     rendered_fields = [
@@ -514,18 +665,40 @@ def test_every_rendered_setting_is_also_threaded_into_the_engine():
     missing = [s for s in rendered_fields if s not in threaded]
     assert not missing, (
         "config/prompts/risk_manager.md renders these settings from "
-        "settings.yaml, but src/pipeline.py does not pass them when building "
-        "the risk engine's RiskConfig — so the engine enforces the pydantic "
-        "class default instead, and the reviewer is shown a number the "
-        "engine may not be using: " + ", ".join(missing)
+        "settings.yaml, but moving them does not move what the risk engine's "
+        "RiskConfig carries — so the engine enforces something else, and the "
+        "reviewer is shown a number the engine is not using: "
+        + ", ".join(missing)
     )
 
 
 def test_daily_loss_inputs_are_threaded_too():
-    threaded = _engine_config_arguments()
+    threaded = _engine_threaded_fields()
     for field in ("max_daily_loss_pct", "daily_loss_risk_multiple",
                   "max_position_risk_pct"):
         assert field in threaded, field
+
+
+def test_the_parity_check_would_actually_catch_a_hard_coded_limit():
+    """Teeth. An UNTHREADED setting must fail the same check the threaded ones
+    pass — otherwise `test_every_rendered_setting_is_also_threaded_into_the_
+    engine` is asserting nothing. The witness is drawn from the omitted list
+    below rather than named here, so it cannot go stale."""
+    threaded = _engine_threaded_fields()
+    live = _live_risk_config()
+    unthreaded = sorted(
+        f for f in RiskConfig.model_fields
+        if f not in threaded and _perturb(live, f) is not None
+    )
+    assert unthreaded, (
+        "every declared risk setting now reaches the engine — good, but this "
+        "test can no longer prove the check has teeth. Delete it and say so."
+    )
+    witness = unthreaded[0]
+    probe = _perturb(live, witness)
+    moved = RiskConfig(**{**live.model_dump(), witness: probe})
+    built = build_risk_config(_config_for(moved))
+    assert getattr(built, witness, None) != probe, witness
 
 
 def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
@@ -534,7 +707,7 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
     currently latent (every omitted field's class default equals its
     settings.yaml value). Pinned here so the count cannot grow unnoticed and
     so nobody reads this file as a claim that the whole list is wired."""
-    threaded = _engine_config_arguments()
+    threaded = _engine_threaded_fields()
     raw = yaml.safe_load(SETTINGS_PATH.read_text())["risk"]
     omitted = sorted(
         f for f in RiskConfig.model_fields
@@ -555,9 +728,9 @@ def test_the_rest_of_the_omission_is_recorded_not_silently_swept():
         "something settings.yaml does not say. This is live-wrong, not "
         "latent: " + ", ".join(live_divergence)
     )
-    assert len(omitted) == 18, (
+    assert len(omitted) == 15, (
         f"the engine's hand-enumerated RiskConfig now omits {len(omitted)} "
-        f"settings present in settings.yaml, not 18 — if that grew, thread "
+        f"settings present in settings.yaml, not 15 — if that grew, thread "
         f"the new one; if it shrank, lower this number. Omitted: {omitted}"
     )
 
@@ -572,7 +745,8 @@ def test_a_bad_placeholder_fails_at_construction_not_at_first_llm_call(tmp_path,
     commissioning render in `__init__` moves that failure to startup."""
     broken = tmp_path / "risk_manager.md"
     broken.write_text("ceiling is {{risk.no_such_setting}}%\n")
-    monkeypatch.setattr("src.agents.risk_manager.PROMPT_PATH", broken)
+    # `_prompt_path` is the class attribute the LiveLimitPrompt mixin reads.
+    monkeypatch.setattr(RiskManagerAgent, "_prompt_path", broken)
     with pytest.raises(PromptPlaceholderError):
         RiskManagerAgent(api_key="k", model="m")
 
@@ -580,3 +754,143 @@ def test_a_bad_placeholder_fails_at_construction_not_at_first_llm_call(tmp_path,
 def test_a_good_sheet_constructs_cleanly():
     agent = RiskManagerAgent(api_key="k", model="m")
     agent.assert_prompt_renders()  # idempotent, callable by a commissioning script
+
+
+# --------------------------------------------------------------------------
+# 7. The Portfolio Manager's sheet — same treatment, same checks
+# --------------------------------------------------------------------------
+#
+# PM's sheet was CORRECT when the reviewer's went wrong, and that is precisely
+# why it gets the same mechanism rather than a note saying it is fine: commit
+# e1c639a2 edited both sheets and got one right and one wrong, so the human
+# process protecting this copy is exactly as reliable as the one that failed.
+# PM is also the seat that picks the sizes, so a wrong ceiling here shapes the
+# order rather than only the review of it.
+
+
+def _pm_sheet() -> str:
+    return PM_PROMPT_PATH.read_text()
+
+
+def test_pm_sheet_has_no_hand_typed_limit_beside_a_risk_setting():
+    findings = _hand_typed_limits(_pm_sheet(), "portfolio_manager.md")
+    assert not findings, (
+        "A numeric limit is hand-typed next to the setting it restates in "
+        "config/prompts/portfolio_manager.md:\n  " + "\n  ".join(findings)
+    )
+
+
+def test_pm_sheet_has_no_unrendered_limit_phrase():
+    findings = _unrendered_limit_phrases(_pm_sheet(), "portfolio_manager.md")
+    assert not findings, (
+        "A numeral is stated as the value of a limit in "
+        "config/prompts/portfolio_manager.md without being rendered:\n  "
+        + "\n  ".join(findings)
+    )
+
+
+def test_pm_sheet_renders_every_setting_it_states():
+    keys = placeholders_in(_pm_sheet())
+    missing = [s for s in PM_WIRED_SETTINGS if f"risk.{s}" not in keys]
+    assert not missing, (
+        "config/prompts/portfolio_manager.md no longer renders: "
+        + ", ".join(missing)
+        + ". Restore the placeholder; do not type the number back in, and do "
+        "not delete the entry here to make this pass."
+    )
+
+
+def test_pm_sheet_resolves_and_tracks_the_live_config():
+    cfg = _live_risk_config()
+    rendered = render_prompt_limits(_pm_sheet(), cfg)
+    assert "{{" not in rendered
+    for setting in PM_WIRED_SETTINGS:
+        assert f"{getattr(cfg, setting):g}" in rendered, setting
+    moved = cfg.model_copy(update={"max_position_pct": 44.0})
+    after = render_prompt_limits(_pm_sheet(), moved)
+    assert "44% single-name" in after
+    assert "44% single-name" not in rendered
+
+
+def test_pm_agent_renders_at_construction():
+    agent = PortfolioManagerAgent(api_key="k", model="m")
+    assert "{{" not in agent.system_prompt
+    assert (
+        f"{_live_risk_config().max_position_pct:g}% single-name"
+        in agent.system_prompt
+    )
+
+
+def test_pm_bad_placeholder_fails_at_construction(tmp_path, monkeypatch):
+    broken = tmp_path / "portfolio_manager.md"
+    broken.write_text("cap is {{risk.no_such_setting}}%\n")
+    monkeypatch.setattr(PortfolioManagerAgent, "_prompt_path", broken)
+    with pytest.raises(PromptPlaceholderError):
+        PortfolioManagerAgent(api_key="k", model="m")
+
+
+def test_every_setting_pm_renders_reaches_the_object_that_enforces_it():
+    """Same parity requirement as the reviewer's sheet, against the RIGHT
+    object.
+
+    The sizing seat's limits are NOT all enforced by the risk engine. Grep
+    `src/risk/rules.py`: it contains no reference at all to
+    `max_cluster_risk_share_pct`, `short_gap_risk_multiple`,
+    `min_position_risk_pct` or `max_portfolio_risk_pct`. Those four are
+    enforced by `PortfolioConstructor`, from a separately built
+    `ConstructorConfig` with its own fallbacks — so checking PM's sheet only
+    against `RiskConfig` would declare parity for four settings whose
+    enforcement home was never looked at.
+
+    Compared by value across BOTH objects, because the sizer renames as it
+    threads.
+    """
+    live = _live_risk_config()
+    for setting in PM_WIRED_SETTINGS:
+        probe = _perturb(live, setting)
+        assert probe is not None, (
+            f"{setting} admits no legal alternative value, so this test "
+            f"cannot tell whether it is threaded. Fix the probe, do not "
+            f"delete the entry."
+        )
+        moved = RiskConfig(**{**live.model_dump(), setting: probe})
+        engine_config, constructor_config = _built_pair(moved)
+        carried = (_numbers_carried(engine_config)
+                   | _numbers_carried(constructor_config))
+        assert float(probe) in carried, (
+            f"config/prompts/portfolio_manager.md renders `{setting}` from "
+            f"settings.yaml, but moving it to {probe} moved nothing in either "
+            f"object that enforces the desk's limits (the risk engine's "
+            f"RiskConfig or the constructor's ConstructorConfig). The sizing "
+            f"seat would be shown a number nothing enforces."
+        )
+
+
+def test_the_value_pm_is_shown_is_the_value_the_two_engines_carry():
+    """The live case of the test above: with settings.yaml as it stands, every
+    number PM's sheet renders is a number one of the enforcing objects holds."""
+    live = _live_risk_config()
+    engine_config, constructor_config = _built_pair(live)
+    carried = (_numbers_carried(engine_config)
+               | _numbers_carried(constructor_config))
+    missing = [s for s in PM_WIRED_SETTINGS
+               if float(getattr(live, s)) not in carried]
+    assert not missing, (
+        "PM's sheet renders these from settings.yaml but neither the risk "
+        "engine nor the constructor carries the value: " + ", ".join(missing)
+    )
+
+
+def test_a_legal_zero_risk_floor_reaches_both_engines_unchanged():
+    """`min_position_risk_pct` is declared `ge=0` — zero is a legal "no
+    floor". A `> 0` read would swallow it into a hand-typed default, briefing
+    the sizing seat on a floor nothing enforces. That is the same two-homes
+    defect pointed inward, so it is pinned."""
+    live = _live_risk_config()
+    zeroed = RiskConfig(**{**live.model_dump(), "min_position_risk_pct": 0.0})
+    engine_config, constructor_config = _built_pair(zeroed)
+    assert engine_config.min_position_risk_pct == 0.0
+    assert constructor_config.min_risk_pct == 0.0
+    assert "0" in render_prompt_limits(
+        "{{risk.min_position_risk_pct}}", zeroed,
+    )

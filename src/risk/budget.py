@@ -25,13 +25,36 @@ return correlation over five years, transitive, thresholded. They are not a
 hand-maintained sector table, so a theme that trades together is caught whether
 or not anyone thought to name it.
 
-**Rationing rule.** When a ceiling binds, the largest request is served first
-and later ones take the remainder. Requests are ordered by requested risk
-descending, ties broken alphabetically so the outcome never depends on dict
-ordering or the order the PM happened to list its targets. A request cut below
-`floor_pct` is DENIED rather than shrunk to a token position: below the floor
-the idea is not worth trading, and a 0.1%-risk position pays full commission
-and full attention for an immaterial payoff.
+**Rationing rule — best-ranked first (owner decision, 2026-09-12, item 49).**
+When a ceiling binds, the budget is spent on the BEST-RANKED candidate first
+and continues down the ranking until it is exhausted. The ranking is not
+computed here and is never invented here: the caller passes `priority`, which
+is `src/verdicts.py::rank_verdicts`' own already-sorted symbol order — the
+identical order the Portfolio Manager was shown in its prompt. This module
+orders; it does not score.
+
+Until 2026-09-12 the order was "largest request first", which is a SIZE, not a
+quality judgement: the biggest ask won the budget regardless of whether the
+idea behind it was the best one on the sheet. That was never a decision anybody
+made — it was the arbitrary order the item-49 board entry names. Requests
+carrying no ranking (a symbol the PM targeted that the ranking never scored,
+or any caller that supplies no `priority` at all) keep exactly the old
+largest-first, alphabetical-tie ordering, placed AFTER every ranked name: a
+caller with no ranking view must not have one invented for it, and an unranked
+symbol must never outrank a ranked one.
+
+Ties and unranked names still break alphabetically, so the outcome never
+depends on dict ordering or the order the PM happened to list its targets.
+
+A request cut below `floor_pct` is DENIED rather than shrunk to a token
+position: below the floor the idea is not worth trading, and a 0.1%-risk
+position pays full commission and full attention for an immaterial payoff.
+
+**The candidate on the cut line** — whose request only partly fits what is
+left — is taken at the REDUCED SIZE, not skipped. Owner decision, 2026-09-14,
+completing the 2026-09-12 ruling. See `PARTIAL_FIT_POLICY` below for the
+reason and for what was rejected. It is a named switch, not a default nobody
+chose.
 
 **Held positions are not rationed.** A symbol already in the book consumes its
 existing risk whether or not this session names it. The budget available to new
@@ -43,14 +66,55 @@ allocator to pretend an open position is not there.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 __all__ = [
+    "PARTIAL_FIT_POLICY",
     "RiskRequest",
     "RiskGrant",
     "BudgetAllocation",
     "allocate_risk_budget",
 ]
+
+#: What happens to the candidate sitting EXACTLY on the cut line — the
+#: next-best name whose request only partly fits what is left of the budget.
+#:
+#: "fill"  — take it at the reduced size the remaining budget affords (still
+#:           subject to `floor_pct`, so it is never a token position).
+#: "skip"  — do not take it at all; leave the remainder for the next name down
+#:           the ranking that fits in full, or unspent.
+#:
+#: **DECIDED "fill" by the owner, 2026-09-14** (retired board item 49; the
+#: write-up is `docs/INCIDENT_HISTORY.md`, 2026-09-14). This completes the
+#: 2026-09-12 ruling, which settled the ORDER (best-ranked first) and
+#: explicitly rejected proportional scale-down, conviction tiers and a
+#: names-per-session cap, but left the cut line itself open.
+#:
+#: **The reason, recorded because a decision without one rots:** cutting the
+#: size does not damage the trade. Same instrument, same stop, same
+#: reward-to-risk geometry — fewer shares. Nothing about the idea is degraded
+#: by owning less of it. And it needs no invented number: `floor_pct`
+#: (`RiskConfig.min_position_risk_pct`, 0.5) already decides when a remainder
+#: is too small to be worth taking, and below it the target is DROPPED, never
+#: zeroed — a 0% target is read downstream as "sell it".
+#:
+#: **Explicitly rejected:** skipping the cut-line name and continuing down the
+#: ranking for a cheaper one. That funds a worse-ranked idea purely because it
+#: costs less, which directly contradicts the owner's "go with the best"
+#: ruling — the one thing the 2026-09-12 decision was about.
+#:
+#: The "skip" branch below stays written and tested. A ratified default is not
+#: a reason to delete the alternative: the rejected option should stay legible
+#: and one line away, so revisiting the ruling is a decision rather than a
+#: rewrite.
+PARTIAL_FIT_POLICY = "fill"
+
+#: Sort key for a request the caller's ranking does not name. Placed after
+#: every ranked symbol; among themselves these keep the pre-2026-09-12
+#: largest-first ordering. `math.inf` rather than a magic integer, so no
+#: length of ranking can ever collide with it.
+_UNRANKED = math.inf
 
 
 @dataclass(frozen=True)
@@ -74,7 +138,8 @@ class RiskGrant:
     requested_pct: float
     granted_pct: float
     #: Set when granted < requested. One of "total_ceiling", "cluster_cap",
-    #: "below_floor". None when the request was served in full.
+    #: "below_floor", "partial_fit_skipped". None when the request was served
+    #: in full.
     limited_by: str | None = None
     #: Cluster the symbol was rationed within, when a cluster cap applied.
     cluster: tuple[str, ...] | None = None
@@ -128,6 +193,8 @@ def allocate_risk_budget(
     ceiling_pct: float = 25.0,
     cluster_share_pct: float = 40.0,
     floor_pct: float = 0.5,
+    priority: Sequence[str] | None = None,
+    partial_fit: str = PARTIAL_FIT_POLICY,
 ) -> BudgetAllocation:
     """Ration `requests` under the total and per-cluster risk ceilings.
 
@@ -139,6 +206,16 @@ def allocate_risk_budget(
     `clusters` is `correlation_clusters()` output: groups of correlated
     symbols, singletons omitted. A symbol in no cluster is rationed only by
     the total ceiling.
+
+    `priority` is the desk's own candidate ranking, BEST FIRST — pass
+    `[c.symbol for c in rank_verdicts(...)]`, the identical order the PM was
+    shown. Item 49's owner decision (2026-09-12): the budget is spent down
+    this order. Omitted, or missing a symbol, the pre-decision largest-first
+    ordering applies to whatever it does not name, after everything it does.
+    No ranking is ever computed here.
+
+    `partial_fit` decides the candidate on the cut line — see
+    `PARTIAL_FIT_POLICY`. Open with the owner; do not change it here.
 
     Returns grants for every request (including denials, so the caller can
     explain a missing order) and the resulting committed risk.
@@ -182,10 +259,24 @@ def allocate_risk_budget(
         if key is not None:
             cluster_committed[key] = cluster_committed.get(key, 0.0) + pct
 
-    # Largest request first, alphabetical tie-break: when the budget binds,
-    # conviction is served before the remainder is shared out, and the result
-    # never depends on the order PM listed its targets in.
-    ordered = sorted(by_symbol.items(), key=lambda kv: (-kv[1], kv[0]))
+    # Item 49, owner decision 2026-09-12: BEST-RANKED FIRST. The budget goes
+    # to the strongest idea and continues down the caller's ranking until it
+    # is exhausted. `-kv[1]` (largest first) survives only as the tie-break
+    # among names the ranking does not place, which sort after every name it
+    # does; `kv[0]` is the deterministic final stabiliser, reached only when
+    # two requests are genuinely indistinguishable on both.
+    rank_of: dict[str, float] = {}
+    for position, sym in enumerate(priority or []):
+        key = str(sym).strip().upper()
+        # First mention wins: a duplicated symbol in the ranking must not be
+        # able to demote itself, and the ranking is already best-first.
+        if key and key not in rank_of:
+            rank_of[key] = float(position)
+    ordered = sorted(
+        by_symbol.items(),
+        key=lambda kv: (rank_of.get(kv[0], _UNRANKED), -kv[1], kv[0]),
+    )
+    skip_partial = str(partial_fit).strip().lower() == "skip"
 
     grants: dict[str, RiskGrant] = {}
     for symbol, requested in ordered:
@@ -213,6 +304,26 @@ def allocate_risk_budget(
             continue
 
         granted = round(allowed, 4)
+        if skip_partial:
+            # `PARTIAL_FIT_POLICY == "skip"`. The name on the cut line is not
+            # taken at a size its own idea did not ask for. The remainder is
+            # left for the next name down the ranking that fits in full, so
+            # this is a `continue`, not a stop. NOT the shipped branch —
+            # see `PARTIAL_FIT_POLICY`; this is the open question's other
+            # side, kept executable so switching it is one line and not a
+            # rewrite.
+            grants[symbol] = RiskGrant(
+                symbol, requested, 0.0, limited_by="partial_fit_skipped",
+                cluster=key,
+                note=(
+                    f"[risk budget: {symbol} skipped — "
+                    f"{binding.replace('_', ' ')} leaves {granted:.2f}% risk "
+                    f"against the {requested:.2f}% asked for, and this desk "
+                    f"does not take a partly-funded idea at a size it did not "
+                    f"ask for. Deterministic, not PM inconsistency]"
+                ),
+            )
+            continue
         if granted < floor:
             # Below the floor the idea is not worth trading. A token position
             # pays full commission and full attention for an immaterial payoff.

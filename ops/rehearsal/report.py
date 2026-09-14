@@ -1021,18 +1021,31 @@ def _stage_plain(stage: str) -> str:
 
 
 def _collect_counts(conn, run_id: str, report: RehearsalReport, result: dict) -> None:
+    # "Orders the portfolio manager proposed" counts specialist_evidence rows
+    # written by the PM stage after its decision passes validation. These rows
+    # have agent_name='portfolio_manager', kind='proposed_order'. This source
+    # is more reliable than the trades table because:
+    #
+    # 1. Trades BUY/SELL rows come from other sources that share the run_id
+    #    (daily-loss emergency liquidation, position reviewer exits) and would
+    #    be wrongly attributed to the PM.
+    # 2. The PM stage's agent_logs entry is written unconditionally, even when
+    #    the call fails or returns no valid decision; specialist_evidence rows
+    #    are written only after validation succeeds.
     row = conn.execute(
-        "SELECT COUNT(*) FROM trades WHERE run_id = ? AND action IN ('BUY', 'SELL')",
+        "SELECT COUNT(*) FROM specialist_evidence "
+        "WHERE run_id = ? AND agent_name = 'portfolio_manager' AND kind = 'proposed_order'",
         (run_id,),
     ).fetchone()
     report.proposed = int(row[0] or 0)
-    holds = conn.execute(
-        "SELECT COUNT(*) FROM trades WHERE run_id = ? AND action = 'HOLD'", (run_id,),
+
+    # Candidates are analyst ideas — all BUY/SELL/HOLD trades, regardless of
+    # whether PM ran. These come from the analyst layer before PM filtering.
+    candidates_row = conn.execute(
+        "SELECT COUNT(*) FROM trades WHERE run_id = ? AND action IN ('BUY', 'SELL', 'HOLD')",
+        (run_id,),
     ).fetchone()
-    report.candidates = report.proposed + int(holds[0] or 0)
-    orders = result.get("orders") or []
-    if orders and not report.proposed:
-        report.proposed = len(orders)
+    report.candidates = int(candidates_row[0] or 0)
 
 
 _SYMBOL_IN_ERROR = re.compile(r"(?:^|[;,]\s*)([A-Z][A-Z0-9.\-]{0,6})\s*:")

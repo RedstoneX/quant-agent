@@ -1004,6 +1004,21 @@ risk:
   # source (always technical), 29% two, 4% three, and NONE ever reached
   # four or five — so tier 1 is the number that matters. Never exceeds
   # max_position_risk_pct; only ever narrows it.
+  #
+  # READ THIS BEFORE TUNING ANY OF THESE (2026-09-13, docs/WORK.md item 30).
+  # Two things the note above does not say:
+  #   1. That measurement is a COVERAGE count — how often each rung is
+  #      reached. It does not derive what any rung should BE. The stated
+  #      reasoning fixes only a range for rung 1 ("not near 5, not much
+  #      under 2"); 3.0 and 4.0 sit inside it by choice.
+  #   2. Four of the five rungs cannot bind as configured.
+  #      max_position_risk_pct is 5, and the PM's restored conviction bands
+  #      (config/prompts/portfolio_manager.md) top out at 4. So rungs 3-5
+  #      (all 5.0) sit at or above the hard ceiling, and rung 2 (4.0) can
+  #      only bite on a request the prompt already forbids. Only rung 1
+  #      (3.0) can ever cut a position, over the 3-4% slice.
+  # Whether a chosen five-rung ladder should price size at all is an open
+  # owner decision. Do not "fix" this by picking new rungs.
   agreement_ceiling_pct: [3.0, 4.0, 5.0, 5.0, 5.0]
 
 # Idle-cash sweep — park cash above the reserve in a T-bill ETF, release it
@@ -1084,7 +1099,9 @@ smart_money:
   insider_cadence_min_mean_gap_days: 20
   insider_cadence_max_mean_gap_days: 120
   insider_cadence_max_gap_dispersion: 0.25
-  insider_min_material_sell_fraction: 0.05
+  # insider_min_material_sell_fraction REMOVED 2026-09-13 — it was a cutoff no
+  # published source measures, and it discarded a band Scott & Xu find
+  # significantly positive. The ratio is reported, not gated. See src/config.py.
   insider_history_retention_days: 1830
 
 nominations:

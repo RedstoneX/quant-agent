@@ -35,8 +35,23 @@ _HARD_ANCHORS = (
     # Sizing math + caps that mirror RiskRuleEngine in src/risk/rules.py
     # + the HARD_BLOCK_RULES set in src/pipeline.py:53.
     (
-        "portfolio_manager.md", "capped at 65% single-name",
-        "single-name hard cap mirrors RiskConfig.max_position_pct=65 "
+        # RETARGETED 2026-09-13, from the literal "capped at 65% single-name".
+        # This anchor is the reason PM's sheet stayed CORRECT on 2026-09-11
+        # while the Risk Manager's — which had no value anchor at all — was
+        # given a 33% ceiling in the same commit. It worked. But it worked by
+        # keeping a THIRD hand-maintained copy of the number (settings.yaml,
+        # the prompt, and this string), so every change to the cap had to
+        # touch all three or CI went red on the last one.
+        #
+        # The value is now RENDERED from settings.yaml at agent construction
+        # (src/agents/prompt_limits.py), so the copy is gone and there is no
+        # literal left to anchor. What still needs pinning is that the
+        # sentence continues to CITE the setting — a placeholder silently
+        # deleted would otherwise leave the sheet simply not stating the cap.
+        # `tests/test_risk_prompt_limits_live.py` enforces the rendering
+        # itself; this anchor guards the sentence it lives in.
+        "portfolio_manager.md", "{{risk.max_position_pct}}% single-name",
+        "single-name hard cap is RENDERED from RiskConfig.max_position_pct "
         "(20 -> 100 on 2026-09-04, then 100 -> 33 -> 65 on 2026-09-11, the "
         "last an owner risk-appetite override of the survival-ceiling "
         "derivation; see settings.yaml) and HARD_BLOCK_RULES['max_position_pct']",
@@ -49,8 +64,12 @@ _HARD_ANCHORS = (
         # at a 40% hit rate" arithmetic), so an anchor on the bare string
         # would have passed while the sector number was wrong. Anchor the
         # sector figure by its own phrase instead.
-        "portfolio_manager.md", "75%",
-        "sector cap mirrors RiskConfig.max_sector_pct=75 (spec §12.3) + "
+        # RETARGETED 2026-09-13 for the same reason as the cap above, and it
+        # also fixes the weakness this entry's own comment describes: "75%"
+        # was a bare string that other, unrelated mechanisms could satisfy.
+        # The placeholder cannot be satisfied by accident.
+        "portfolio_manager.md", "{{risk.max_sector_pct}}%",
+        "sector cap is RENDERED from RiskConfig.max_sector_pct (spec §12.3) + "
         "HARD_BLOCK_RULES['max_sector_hard_pct']",
     ),
     (

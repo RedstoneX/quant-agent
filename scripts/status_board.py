@@ -564,6 +564,9 @@ _PROSE_LABELS = {
     "decision": "decision",
     "recommendation": "recommendation",
     "my recommendation": "recommendation",
+    "why only you": "why_him",
+    "why only him": "why_him",
+    "why him": "why_him",
 }
 
 #: `**Plain language —** text`, `Plain language: text`, `  EXAMPLE - text`.
@@ -617,11 +620,20 @@ class Prose:
     example: str = ""
     decision: str = ""
     recommendation: str = ""
+    #: The one reason THIS decision cannot be made without him — money,
+    #: mandate, risk appetite, or public disclosure. Deliberately separate
+    #: from `decision`: a decision can be real and still not be his (a
+    #: chart-structure constant is a real open question with nobody to rule
+    #: on it but a published source or this desk's own data — see items
+    #: 52/55/56/58, which all write "The decision — None for you" for
+    #: exactly that reason). Only an item with BOTH a live `decision` and a
+    #: `why_him` is drawn in "Waiting on you"; see `_is_live_owner_ask`.
+    why_him: str = ""
 
     @property
     def has_any(self) -> bool:
         return bool(self.plain or self.example or self.decision
-                    or self.recommendation)
+                    or self.recommendation or self.why_him)
 
     @property
     def jargon_markers(self) -> list[str]:
@@ -659,6 +671,7 @@ def parse_prose(body_lines: list[str]) -> Prose:
         example=_strip_markdown(" ".join(found.get("example", []))),
         decision=_strip_markdown(" ".join(found.get("decision", []))),
         recommendation=_strip_markdown(" ".join(found.get("recommendation", []))),
+        why_him=_strip_markdown(" ".join(found.get("why_him", []))),
     )
 
 
@@ -966,15 +979,25 @@ class QueueItem:
         Reads only `status_tail`, never the whole headline, for the same
         reason: "a fixed-interval poll" describes a mechanism and claims
         nothing.
+
+        The closure-word search itself reads `tail` with every cross-
+        reference to another PR or item stripped first (`_strip_cross_
+        references`) — a status word cited about something ELSE this item's
+        tail happens to mention ("...while PR #343 (merged) repaired...")
+        is not a claim about this item. Negation is still read on the
+        UNSTRIPPED tail: "STILL OPEN" and friends are claims about the item
+        itself and must not depend on whether a reference happens to sit
+        nearby.
         """
         tail = self.status_tail
         if any(w in tail for w in _CLOSURE_NEGATIONS):
             return ""
-        if not _closure_hit(tail, _RENDER_CLOSURE_WORDS):
+        scan = _strip_cross_references(tail)
+        if not _closure_hit(scan, _RENDER_CLOSURE_WORDS):
             return ""
-        if _closure_hit(tail, _RENDER_PART_DONE_WORDS):
+        if _closure_hit(scan, _RENDER_PART_DONE_WORDS):
             return "part_done"
-        if _closure_hit(tail, _RENDER_REVIEW_OWED_WORDS):
+        if _closure_hit(scan, _RENDER_REVIEW_OWED_WORDS):
             return "review_owed"
         return "finished"
 
@@ -1357,6 +1380,35 @@ def _closure_hit(tail: str, words: tuple[str, ...]) -> bool:
     return any(re.search(r"\b" + re.escape(w) + r"\b", tail) for w in words)
 
 
+#: A closure word describing a DIFFERENT artifact — a pull request, another
+#: item — cited inline in this item's own status tail. Item 60's real tail
+#: is "OPEN, owner call, deferred 2026-09-13 while PR #343 (merged) repaired
+#: the seat's honesty about the exceptions rather than replacing it.": the
+#: item's own word is "OPEN", but "PR #343 (merged)" put "MERGED" — a real
+#: closure word — right next to it, about a PR, not about item 60. Read
+#: naively that put a live, owner-call item in the "finished, not struck
+#: through" bucket, i.e. it looked FINISHED. Same failure family the
+#: `status_tail` split already guards (`status_tail`'s own docstring: reading
+#: the whole headline read "a fixed-interval poll" as a claim of being
+#: fixed) — a closure vocabulary word means nothing until it is confirmed to
+#: be ABOUT this item, not about something this item's own text happens to
+#: mention. Matches "PR #343 (merged)", "#343 (merged)", "item 12 (fixed)" —
+#: a numbered reference immediately followed by its own parenthetical status
+#: — and only that shape, so an item's OWN status is never touched: nothing
+#: here strips a bare "MERGED" or "FIXED" sitting on its own.
+_CROSS_REF_STATUS_RE = re.compile(
+    r"(?:\bPR\s*)?#\d+\s*\([^)]*\)"       # "PR #343 (merged)", "#343 (fixed)"
+    r"|\bitems?\s+#?\d+\s*\([^)]*\)",     # "item 12 (fixed)"
+    re.I)
+
+
+def _strip_cross_references(tail: str) -> str:
+    """`tail` with every parenthetical status about a DIFFERENT numbered
+    artifact removed, so `_closure_hit` can never read one as a claim about
+    the item whose own tail merely cites it. See `_CROSS_REF_STATUS_RE`."""
+    return _CROSS_REF_STATUS_RE.sub(" ", tail)
+
+
 def find_closed_items_not_marked_done(work_md: Path) -> list[str]:
     """Items whose own title claims full closure but were never marked
     `done` (the `~~title~~` convention `load_funnel_queue` reads).
@@ -1716,7 +1768,7 @@ def _render_summary(summary: Any) -> str:
 
 
 #: Every verdict is spelled out in words. There is no colour-only version of
-#: any of these, by requirement: the owner is red/green colour blind.
+#: any of these, by requirement.
 VERDICT_PILL = {
     "CONFIRMED": ("chip-quiet", "still proves out"),
     "CONTRADICTED": ("chip-strong", "proof no longer holds"),
@@ -1766,10 +1818,10 @@ def _row(p: PhaseView) -> str:
 # --------------------------------------------------------------------------
 # Rendering the plain-language blocks
 #
-# Status is ALWAYS carried by a word. The owner is red/green colour blind, so
-# nothing on this page may depend on hue to be understood: every marker is a
-# text label, and the shapes that carry emphasis are border weight, position
-# and a glyph, never a colour swapped for another colour of similar lightness.
+# Status is ALWAYS carried by a word. Nothing on this page may depend on hue
+# to be understood: every marker is a text label, and the shapes that carry
+# emphasis are border weight, position and a glyph, never a colour swapped
+# for another colour of similar lightness.
 # --------------------------------------------------------------------------
 
 #: What an item is missing, phrased as the gap it is rather than as an error.
@@ -1940,9 +1992,89 @@ def _when_label(d: PendingDecision) -> str:
     return f"{d.days_left} day{'s' if d.days_left != 1 else ''} left"
 
 
-def _render_decisions(decisions: list[PendingDecision]) -> str:
-    """Decisions waiting on the owner. Nothing here is an agent's to make."""
-    if not decisions:
+#: A `Prose.decision` that says, in as many words, "not currently his" —
+#: the backlog's own convention (see items 52/55/56/58: "The decision — None
+#: for you", and item 30/57's "Not yet.", and the model-choice decision's
+#: "Not yet yours to make."). Checked at the START of the field only, so a
+#: decision that merely MENTIONS "none" or "not yet" mid-sentence still
+#: counts as live.
+_NOT_LIVE_DECISION_RE = re.compile(r"^\s*(none\b|not yet\b|possibly\b)", re.I)
+
+
+def _is_live_owner_ask(prose: Prose) -> bool:
+    """Whether this item belongs in "Waiting on you", derived from nothing
+    but its own two authored fields — never inferred from engineering text.
+
+    Both must be true:
+
+      * `decision` is real AND currently his (not "None for you" and not
+        "Not yet" — see `_NOT_LIVE_DECISION_RE`). A live decision on a
+        market-structure number (items 55-58: how wide a level's zone is,
+        how a stop should be sized) is real work, but it is answered by a
+        published source or this desk's own data, never by him — which is
+        exactly why those items write "None for you" and are excluded here.
+      * `why_him` is written — the one reason it is MONEY, MANDATE, RISK
+        APPETITE or PUBLIC DISCLOSURE, not a technical or research call.
+        Requiring an explicit reason (rather than guessing from keywords)
+        is what keeps a number-only item from sneaking in here just because
+        somebody wrote a decision paragraph for it.
+    """
+    if not prose.decision or not prose.why_him:
+        return False
+    return not _NOT_LIVE_DECISION_RE.match(prose.decision)
+
+
+#: Where a `Prose.decision` paragraph naturally ends its first sentence —
+#: used only to build the one-line headline "Waiting on you" shows; the
+#: full paragraph still renders underneath via `_render_prose`. Splits on a
+#: '.' or '?' followed by a space and a capital letter or open-paren, so
+#: "3.0x ATR" and "R/R" never trigger a false break.
+_SENTENCE_END_RE = re.compile(r"(?<=[.?])\s+(?=[A-Z(])")
+
+
+def _first_sentence(text: str) -> str:
+    """The first sentence of a decision paragraph, for use as a headline."""
+    text = text.strip()
+    return _SENTENCE_END_RE.split(text, maxsplit=1)[0]
+
+
+def owner_call_items(items: list[QueueItem]) -> list[QueueItem]:
+    """Open items whose own prose names a live decision only he can make.
+
+    Reused by both the funnel queue and the PM test gate, so "Waiting on
+    you" never has to know which numbered sequence an item came from.
+    """
+    return [i for i in items if not i.done and _is_live_owner_ask(i.prose)]
+
+
+def _render_owner_call_cards(items: list[QueueItem]) -> str:
+    """One card per backlog item flagged `_is_live_owner_ask` — the same
+    card shape as a formal pending decision, so the two read as one list."""
+    rows = []
+    for i in items:
+        rows.append(
+            '<article class="card">'
+            '<div class="chips"><span class="chip chip-strong">Your call</span>'
+            f'{_ref_chips(i.refs)}</div>'
+            f'<h3>{_ref_tag(i.ref)}{_esc(_first_sentence(i.prose.decision))}</h3>'
+            f'{_prose_block("Why only you", i.prose.why_him, "pb-dec")}'
+            f'{_render_prose(i.prose, want_recommendation=True, raw_source=i.raw_body)}'
+            '</article>'
+        )
+    return "\n".join(rows)
+
+
+def _render_decisions(decisions: list[PendingDecision],
+                      owner_calls: list[QueueItem] | None = None) -> str:
+    """Everything waiting on the owner: formal DECIDE-BY lines first (they
+    carry a due date CI enforces), then backlog items whose own prose names
+    a live decision that is his alone. Nothing here is an agent's to make.
+
+    A single combined empty state, not two — an owner with nothing pending
+    in either source should see one quiet line, not two.
+    """
+    owner_calls = owner_calls or []
+    if not decisions and not owner_calls:
         return ('<div class="note">Nothing is waiting on you. Every judgement '
                 'call that was open has been answered.</div>')
     rows = []
@@ -1958,7 +2090,7 @@ def _render_decisions(decisions: list[PendingDecision]) -> str:
             f'{_wording_note(d.question, "question")}'
             '</article>'
         )
-    return "\n".join(rows)
+    return "\n".join(rows) + _render_owner_call_cards(owner_calls)
 
 
 def _render_open_queue(items: list[QueueItem], problem: str | None) -> str:
@@ -2462,11 +2594,30 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     # under way. Drawn BELOW everything that is actually his to answer.
     in_hand = [i for i in queue_items if i.bucket == "in_hand"]
     no_action = [i for i in queue_items if i.bucket == "no_action"]
+
+    # Roadblocks only he can clear — money, mandate, risk appetite, or
+    # public disclosure (see `_is_live_owner_ask`). Pulled out of BOTH
+    # numbered sequences and lifted to "Waiting on you" so they stop
+    # competing with ordinary engineering work for his attention, which was
+    # his own complaint. Removed from every bucket below by reference, never
+    # copied, so one item can never show twice.
+    owner_calls = sorted(
+        owner_call_items(queue_items) + owner_call_items(pm_gate_items),
+        key=lambda i: (i.source, i.rank))
+    owner_call_refs = {i.ref for i in owner_calls}
+    open_items = [i for i in open_items if i.ref not in owner_call_refs]
+    paused_items = [i for i in paused_items if i.ref not in owner_call_refs]
+    resolved_items = [i for i in resolved_items if i.ref not in owner_call_refs]
+    finished_unmarked = [i for i in finished_unmarked
+                         if i.ref not in owner_call_refs]
+    review_owed = [i for i in review_owed if i.ref not in owner_call_refs]
+    in_hand = [i for i in in_hand if i.ref not in owner_call_refs]
+    no_action = [i for i in no_action if i.ref not in owner_call_refs]
     unexplained = [i for i in open_items if not i.prose.plain]
 
     body = body.replace("{{RIGHT_NOW}}",
                         _render_right_now(contradicted, decisions, open_items))
-    body = body.replace("{{DECISIONS}}", _render_decisions(decisions))
+    body = body.replace("{{DECISIONS}}", _render_decisions(decisions, owner_calls))
     body = body.replace("{{QUEUE}}", _render_open_queue(open_items, queue_problem))
     body = body.replace("{{PAUSED}}", _render_one_liners(
         paused_items,
@@ -2495,7 +2646,8 @@ def render(phases: list[PhaseView], state: dict[str, Any], template: Path,
     body = body.replace("{{UNEXPLAINED_NOTE}}",
                         _unexplained_note(len(unexplained), len(open_items)))
 
-    pm_gate_open = [i for i in pm_gate_items if not i.done]
+    pm_gate_open = [i for i in pm_gate_items
+                   if not i.done and i.ref not in owner_call_refs]
     body = body.replace("{{PM_GATE}}", _render_open_queue(pm_gate_open, pm_gate_problem))
     body = body.replace("{{PM_GATE_DONE}}", _render_one_liners(
         [i for i in pm_gate_items if i.done],
