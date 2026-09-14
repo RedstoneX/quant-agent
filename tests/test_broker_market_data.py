@@ -349,10 +349,29 @@ def test_intraday_snapshots_reads_last_trade_prior_close_and_session_bar():
     })
     out = b.get_intraday_snapshots(["NVDA"])
     assert out == {"NVDA": {
-        "last_price": 185.0, "prev_close": 180.0,
+        "last_price": 185.0, "last_trade_at": None, "prev_close": 180.0,
         "session_open": 181.0, "session_high": 186.0,
         "session_low": 180.5, "session_volume": 1_250_000.0,
     }}
+
+
+def test_intraday_snapshots_carries_the_trades_own_timestamp():
+    """docs/WORK.md item 15 — `broker_reads._quote_freshness` needs the
+    provider's own per-trade timestamp, not a fabricated one. Alpaca's
+    `Trade` model does carry `timestamp` (verified against the installed
+    SDK); this pins that it survives the flatten unmodified."""
+    from datetime import datetime, timezone
+    trade_ts = datetime(2026, 9, 13, 14, 30, tzinfo=timezone.utc)
+    b = _broker()
+    b._data_client = _snapshot_client({
+        "NVDA": SimpleNamespace(
+            symbol="NVDA",
+            latest_trade=SimpleNamespace(price=185.0, timestamp=trade_ts),
+            previous_daily_bar=SimpleNamespace(close=180.0),
+        ),
+    })
+    out = b.get_intraday_snapshots(["NVDA"])
+    assert out["NVDA"]["last_trade_at"] == trade_ts
 
 
 def test_intraday_snapshots_is_a_single_bulk_call_for_many_symbols():
@@ -422,7 +441,7 @@ def test_intraday_snapshots_degrades_to_none_fields_for_a_missing_symbol():
     b._data_client = _snapshot_client({})  # SGOV not in the response at all
     out = b.get_intraday_snapshots(["SGOV"])
     assert out == {"SGOV": {
-        "last_price": None, "prev_close": None,
+        "last_price": None, "last_trade_at": None, "prev_close": None,
         "session_open": None, "session_high": None,
         "session_low": None, "session_volume": None,
     }}

@@ -19,11 +19,52 @@ inside the sessions cannot fire on the absence of sessions.
 
 WHAT THIS IS, AND IS NOT
 -------------------------
-It is a READER: positions and open stops from the broker, session evidence
-from `alert_channel_checks` (the same rows `src/silence_watchdog.py` reads),
-and one owner alert. It never places, modifies or cancels an order, and it
-never writes to the trading database. Repair is the session sweep's job;
-this only says, loudly, when that job has not been done.
+It reads positions and open stops from the broker and session evidence from
+`alert_channel_checks` (the same rows `src/silence_watchdog.py` reads), and
+it sends one owner alert. It never cancels, modifies, resizes or closes
+anything: the ONE mutation it can make is to ADD a protective stop over
+shares the broker is not watching.
+
+IT NOW REPAIRS, NOT ONLY REPORTS (docs/INCIDENT_HISTORY.md, 2026-09-14)
+------------------------------------------------------------------------
+Alerting alone left the owner holding the only repair tool, once a day, by
+hand. Item 53's ruling is that the daily path should put the missing DAY
+stop back instead of only naming it — the desk's protection should not
+depend on the desk being switched on.
+
+The re-placement is NOT a new code path. It calls
+`src.execution.stop_repair.repair_stop_coverage`, the same function
+`TradingPipeline._reconcile_stop_coverage` calls during a normal session,
+at the same level (the stop recorded on the position's own last BUY), with
+the same guards (never at/above the live price, never invented when the row
+has none) and the same tif derivation (`_derive_stop_tif`: whole shares GTC,
+sub-share DAY, because the broker refuses anything else).
+
+WHAT IT STILL CANNOT DO — say it plainly
+-----------------------------------------
+It cannot make a sub-share remainder safe OVERNIGHT. No durable fractional
+stop exists at this broker; a DAY order is the only fractional order it will
+accept, and a DAY order stops existing at the close. Every re-placement here
+buys protection for ONE session and lapses at 16:00 ET like the one before
+it. The overnight gap on the remainder is not solved by this change and is
+not solvable in code — only by holding whole shares or by not holding the
+remainder.
+
+IT CANNOT FIRE BEFORE THE OPEN
+-------------------------------
+The unit it rides on fires at 06:15 ET, more than three hours before the
+bell. A fractional DAY stop submitted into a shut market is a rejection at
+best and a surprise queued order at worst (the same judgement
+`TradingPipeline._reconcile_stop_coverage` already makes for case (a)), and
+this desk does not guess at broker behaviour it has not measured. So
+`session_is_open` gates every placement on the exchange calendar the broker
+publishes — `is_trading_day`, `get_session_open`, `get_session_close`, no
+clock arithmetic of our own — and an unreadable calendar means NO placement,
+never a hopeful one. At 06:15 the answer is always "shut": that run alerts
+exactly as it did before and says the stop goes back at the open. The run
+that actually repairs is the session-hours one
+(`scripts/systemd/quant-agent-coverage-sweep.timer`, the same `*:0/30` tick
+the desk's own session timers use, self-gating on the calendar).
 
 It is not a nightly alert. An uncovered remainder at 06:15 ET is the
 ORDINARY state of every fractional position on a healthy desk, and the
@@ -55,11 +96,15 @@ once per trading day matches docs/WORK.md item 41's "at most once every
 
 WHERE IT RUNS
 --------------
-From `scripts/alert_heartbeat.py`, after the channel probe. That unit is
-the daily floor that fires at 06:15 ET seven days a week whether or not the
-trading timers are enabled — the one place proven to still run while the
-desk is paused, which is precisely when this check matters. Its result
-never changes the probe's own verdict or exit code.
+Two entry points, one function, both through `scripts/alert_heartbeat.py`:
+
+  * after the channel probe on the 06:15 ET alert-heartbeat unit — the
+    daily floor that fires seven days a week whether or not the trading
+    timers are enabled. Market shut, so this run reports and never places.
+    Its result never changes the probe's own verdict or exit code.
+  * `--coverage-only`, on the every-30-minutes coverage-sweep unit. Sends no
+    probe, touches nothing outside a real session, and is the run that puts
+    the DAY stop back.
 """
 from __future__ import annotations
 
@@ -105,11 +150,27 @@ class CoverageGap:
     covered_qty: float
     uncovered_qty: float
     unprotected_value: float  # dollars; 0.0 when the price is unknowable
+    #: A short is protected by a BUY stop and has no recorded BUY row to read
+    #: a level from, so it is reported and never repaired — the same line the
+    #: in-session sweep draws.
+    is_short: bool = False
+
+
+@dataclass(frozen=True)
+class RepairOutcome:
+    """One attempt to put a missing protective stop back. `placed` False with
+    a `detail` is a FAILURE that must be reported, never swallowed."""
+
+    symbol: str
+    qty: float
+    placed: bool
+    detail: str = ""
 
 
 @dataclass(frozen=True)
 class CoverageStatus:
-    """`should_alert` is the only field callers act on."""
+    """`should_alert` and `should_alert_repair_failure` are the only fields
+    callers act on."""
 
     trading_day: str | None            # the session judged, YYYY-MM-DD (ET)
     session_ran: bool | None           # None: database unreadable
@@ -117,21 +178,50 @@ class CoverageStatus:
     broker_error: str | None = None
     db_error: str | None = None
     already_alerted_for_day: bool = False
+    #: Placement attempts made THIS run. Empty when the market was shut.
+    repairs: list[RepairOutcome] = field(default_factory=list)
+    #: Why placement was or was not possible — the exchange calendar's answer,
+    #: rendered for the journal and the alert. Never a guess.
+    market_open: bool = False
+    market_reason: str = ""
+    already_alerted_repair_failure_for_day: bool = False
 
     @property
     def unprotected_total(self) -> float:
         return round(sum(g.unprotected_value for g in self.gaps), 2)
 
     @property
+    def repaired(self) -> list[RepairOutcome]:
+        return [r for r in self.repairs if r.placed]
+
+    @property
+    def repair_failures(self) -> list[RepairOutcome]:
+        return [r for r in self.repairs if not r.placed]
+
+    @property
     def is_exposed(self) -> bool:
         """Coverage is short AND the sweep that should have fixed it did
         not run. An unreadable database counts as "did not run": we
-        cannot prove the sweep happened, and that is the finding."""
+        cannot prove the sweep happened, and that is the finding.
+
+        `gaps` is the RESIDUAL gap — what is still uncovered after any
+        placement this run made — so a remainder that was successfully
+        re-covered does not report itself as exposure it no longer is.
+        """
         return bool(self.gaps) and not self.session_ran
 
     @property
     def should_alert(self) -> bool:
         return self.is_exposed and not self.already_alerted_for_day
+
+    @property
+    def should_alert_repair_failure(self) -> bool:
+        """A failed placement is its own alarm, on its own once-a-day
+        marker. Sharing the exposure marker would let the 06:15 report
+        swallow a 10:00 failure to put the stop back — a silence with an
+        uncovered position behind it, which is the whole defect item 53
+        was opened on."""
+        return bool(self.repair_failures) and not self.already_alerted_repair_failure_for_day
 
 
 def _utc_now() -> datetime:
@@ -289,6 +379,7 @@ def uncovered_positions(broker: Any, *, sweep_symbol: str | None = None) -> tupl
                 symbol=str(symbol), held_qty=held, covered_qty=covered,
                 uncovered_qty=uncovered,
                 unprotected_value=_notional(p, uncovered),
+                is_short=is_short,
             ))
     return gaps, None
 
@@ -304,6 +395,142 @@ def _notional(position: Any, qty: float) -> float:
 
 
 # ---------------------------------------------------------------------------
+# may we place an order right now? the exchange calendar answers, nobody else
+# ---------------------------------------------------------------------------
+
+def session_is_open(broker: Any, now: datetime) -> tuple[bool, str]:
+    """`(open_now, reason)` from the calendar the BROKER publishes.
+
+    Both edges are read (`get_session_open` / `get_session_close`) rather
+    than assumed: 09:30-16:00 is the usual session, not a guaranteed one, and
+    a number typed here would be exactly the invented threshold this desk
+    refuses. `is_trading_day` rules out weekends and holidays first.
+
+    FAILS CLOSED. Any unreadable edge returns False: a protective stop is
+    worth placing only when we know the market will accept it, and this
+    module has no measurement of what Alpaca does with a fractional DAY stop
+    submitted into a shut market. "We could not tell" is reported as a
+    reason, never rounded up to "go ahead".
+    """
+    today = now.astimezone(ET).date()
+    try:
+        if not broker.is_trading_day(today):
+            return False, f"{today} is not a trading day"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"trading-calendar lookup failed ({exc})"
+    try:
+        opens = broker.get_session_open(today)
+        closes = broker.get_session_close(today)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"session-hours lookup failed ({exc})"
+    if opens is None or closes is None:
+        return False, "the broker's calendar did not give both session edges"
+    try:
+        if now < opens:
+            return False, f"the session has not opened yet (opens {opens:%H:%M %Z})"
+        if now >= closes:
+            return False, f"the session has closed (closed {closes:%H:%M %Z})"
+    except TypeError as exc:  # noqa: BLE001 - naive/aware mismatch
+        return False, f"session-hours comparison failed ({exc})"
+    return True, f"the session is open until {closes:%H:%M %Z}"
+
+
+# ---------------------------------------------------------------------------
+# the one mutation: ADD a protective stop over shares nobody is watching
+# ---------------------------------------------------------------------------
+
+def replace_missing_stops(
+    broker: Any,
+    gaps: list[CoverageGap],
+    *,
+    last_buy: Any,
+    sweep_symbol: str | None = None,
+) -> list[RepairOutcome]:
+    """Put back the protective stop for each uncovered gap. ADD-ONLY.
+
+    The caller has already established that the session is open; this does
+    not consult the clock, exactly as the in-session sweep's repair does not.
+
+    IT CANNOT DOUBLE-COVER. Each symbol's open protective orders are re-read
+    from the broker immediately before its own placement, and the quantity
+    placed is the shortfall in THAT read. `snapshot_protective_stops` filters
+    `QueryOrderStatus.OPEN`, which is Alpaca's live-order set — new, accepted,
+    pending_new, partially_filled — so an order still in flight from an
+    earlier tick of this same unit counts as coverage and shrinks the
+    shortfall to zero, and zero is not placed. The gap list handed in is a
+    snapshot taken earlier in the pass and is deliberately NOT trusted for
+    this decision.
+
+    IT CANNOT SELL. The only broker call underneath is
+    `_submit_protective_stop_retrying`. Nothing here computes a target, and
+    no quantity reaches a close/reduce path — a zero shortfall skips, it does
+    not zero a position.
+
+    Shorts are skipped, as the in-session sweep skips them: there is no
+    recorded BUY row to read a short's protective level from, and inventing
+    one is the policy call neither path will make.
+    """
+    from src.execution.stop_repair import repair_stop_coverage
+
+    outcomes: list[RepairOutcome] = []
+    for gap in gaps:
+        if sweep_symbol and gap.symbol == sweep_symbol:
+            continue
+        if gap.is_short:
+            logger.warning(
+                "coverage sweep: %s is a SHORT with %.4f share(s) uncovered — "
+                "flagged, not repaired: there is no recorded BUY row to read "
+                "its protective level from and inventing one is a policy "
+                "call this path will not make.",
+                gap.symbol, gap.uncovered_qty,
+            )
+            continue
+        # Fresh broker truth for THIS symbol, taken as late as possible.
+        try:
+            _ok, specs = broker.snapshot_protective_stops(gap.symbol, side="sell")
+        except Exception as exc:  # noqa: BLE001
+            outcomes.append(RepairOutcome(
+                gap.symbol, gap.uncovered_qty, False,
+                f"could not re-read open stops before placing ({exc})",
+            ))
+            continue
+        covered_now = 0.0
+        for s in specs or []:
+            try:
+                covered_now += float(s.get("qty", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+        shortfall = round(gap.held_qty - covered_now, 9)
+        if shortfall <= _QTY_EPSILON:
+            logger.info(
+                "coverage sweep: %s is already covered (%.4f of %.4f) by the "
+                "time we got to it — placing nothing.",
+                gap.symbol, covered_now, gap.held_qty,
+            )
+            continue
+        try:
+            placed = repair_stop_coverage(
+                broker=broker, last_buy=last_buy,
+                symbol=gap.symbol, uncovered_qty=shortfall,
+            )
+        except Exception as exc:  # noqa: BLE001
+            outcomes.append(RepairOutcome(
+                gap.symbol, shortfall, False, f"placement raised ({exc})",
+            ))
+            continue
+        outcomes.append(RepairOutcome(
+            gap.symbol, shortfall, bool(placed),
+            "" if placed else (
+                "the broker did not accept a protective stop for the "
+                "shortfall — see the journal for which guard stopped it "
+                "(no recorded BUY stop level, stop at/above the live price, "
+                "or retries exhausted)"
+            ),
+        ))
+    return outcomes
+
+
+# ---------------------------------------------------------------------------
 # on-box state — one alert per trading day
 # ---------------------------------------------------------------------------
 
@@ -315,6 +542,7 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raw = {}
     raw.setdefault("alerted_for_day", None)
+    raw.setdefault("repair_failure_alerted_for_day", None)
     raw.setdefault("last_result", None)
     raw.setdefault("updated_at", None)
     return raw
@@ -353,15 +581,48 @@ def check_coverage(
     sweep_symbol: str | None = None,
     db_path: str | Path | None = None,
     state_path: Path | None = None,
+    last_buy: Any = None,
 ) -> CoverageStatus:
-    """Read broker coverage and session evidence, decide, persist the
-    once-per-day marker. Never raises; never writes to the broker."""
+    """Read broker coverage and session evidence, put back what is missing if
+    the market is open, decide, persist the once-per-day markers. Never
+    raises.
+
+    `last_buy` is the callable that answers "what stop level did this
+    position's own BUY record?" — pass it and placement is possible; leave it
+    None and this stays the pure reader it was, which is what a caller with
+    no database handle must do rather than repair against a guessed level.
+    """
     moment = now or _utc_now()
     state = load_state(state_path)
 
     gaps, broker_error = uncovered_positions(broker, sweep_symbol=sweep_symbol)
     day = most_recent_trading_day(moment, broker)
     ran, db_error = session_ran_during(day, db_path)
+
+    # ---- the repair pass ----------------------------------------------
+    # Only inside a session the exchange calendar confirms, only when a
+    # level can be read, only ever ADDING an order. Then re-read the broker
+    # so `gaps` is the RESIDUAL exposure rather than the pre-repair one: an
+    # alert must describe the book as it stands after this run, not before.
+    repairs: list[RepairOutcome] = []
+    market_open, market_reason = session_is_open(broker, moment)
+    if gaps and market_open and last_buy is not None:
+        repairs = replace_missing_stops(
+            broker, gaps, last_buy=last_buy, sweep_symbol=sweep_symbol,
+        )
+        if any(r.placed for r in repairs):
+            refreshed, refresh_error = uncovered_positions(
+                broker, sweep_symbol=sweep_symbol,
+            )
+            if refresh_error is None:
+                gaps = refreshed
+            else:
+                broker_error = broker_error or refresh_error
+    elif gaps and market_open and last_buy is None:
+        market_reason = (
+            f"{market_reason}, but no recorded-stop lookup was supplied, so "
+            "nothing was placed"
+        )
 
     status = CoverageStatus(
         trading_day=day.isoformat(),
@@ -370,15 +631,26 @@ def check_coverage(
         broker_error=broker_error,
         db_error=db_error,
         already_alerted_for_day=(state.get("alerted_for_day") == day.isoformat()),
+        repairs=repairs,
+        market_open=market_open,
+        market_reason=market_reason,
+        already_alerted_repair_failure_for_day=(
+            state.get("repair_failure_alerted_for_day") == day.isoformat()
+        ),
     )
     if status.should_alert:
         state["alerted_for_day"] = day.isoformat()
+    if status.should_alert_repair_failure:
+        state["repair_failure_alerted_for_day"] = day.isoformat()
     state["last_result"] = {
         "trading_day": status.trading_day,
         "session_ran": status.session_ran,
         "gaps": [g.__dict__ for g in gaps],
         "broker_error": broker_error,
         "db_error": db_error,
+        "market_open": market_open,
+        "market_reason": market_reason,
+        "repairs": [r.__dict__ for r in repairs],
     }
     state["updated_at"] = moment.replace(microsecond=0).isoformat()
     save_state(state, state_path)
@@ -400,6 +672,27 @@ def alert_text(status: CoverageStatus) -> str:
         if status.session_ran is None
         else "no scheduled session completed during that session"
     )
+    if status.market_open:
+        what_happens = (
+            "The market is OPEN and the automatic re-placement did NOT close "
+            f"this gap ({status.market_reason}). Nothing was sold, resized or "
+            "cancelled — the only action this check can take is adding a "
+            "protective stop, and it could not.\n\n"
+        )
+    else:
+        what_happens = (
+            f"The market is shut right now ({status.market_reason}), so no "
+            "stop can be placed at this moment. The coverage sweep will put "
+            "a DAY stop back over the remainder at the open, automatically, "
+            "whether or not the desk is switched on.\n\n"
+            "THE PART THAT IS NOT FIXED, AND CANNOT BE: a sub-share remainder "
+            "is unprotected OVERNIGHT no matter what. This broker accepts "
+            "fractional orders only as DAY orders, so every stop over a "
+            "remainder stops existing at 16:00 ET. Re-placing it each session "
+            "restores intraday protection and does nothing at all for a gap "
+            "down before the open. The only ways to remove that exposure are "
+            "to hold whole shares or not to hold the remainder.\n\n"
+        )
     return (
         "🔴 UNPROTECTED SHARES, AND THE DESK IS NOT RUNNING\n"
         f"{len(status.gaps)} position(s) at the broker have protective-stop "
@@ -408,16 +701,37 @@ def alert_text(status: CoverageStatus) -> str:
         f"({reason}).\n"
         + "\n".join(lines) + "\n"
         f"Total with no stop: ${status.unprotected_total:,.2f}.\n\n"
-        "A sub-share remainder losing its DAY stop overnight is expected — "
-        "the broker will not hold a fractional stop past the close. What is "
-        "NOT expected is a whole trading day passing with no session to put "
-        "it back. While the trading timers stay off, this exposure repeats "
-        "every session.\n\n"
-        "Your options: resume the desk (the first session sweep re-covers "
-        "it), place the missing stop by hand (fractional stops must be DAY "
-        "orders), or close the uncovered remainder. Nothing has been "
-        "placed, changed or cancelled automatically. This message repeats "
-        "at most once per trading day while the condition holds."
+        + what_happens +
+        "Your options: resume the desk, place the missing stop by hand "
+        "(fractional stops must be DAY orders), or close the uncovered "
+        "remainder. Nothing has been sold, resized or cancelled. This "
+        "message repeats at most once per trading day while the condition "
+        "holds."
+    )
+
+
+def repair_failure_text(status: CoverageStatus) -> str:
+    """The alarm for a placement that was attempted and did NOT land.
+
+    Separate from the exposure alert and on its own once-a-day marker: a
+    failure to put the stop back is the state item 53 exists to make
+    impossible to miss, and it must not be swallowed by an earlier report
+    that merely described the same shares as uncovered.
+    """
+    lines = [
+        f"  {r.symbol}: {r.qty:.4f} share(s) still with no stop — {r.detail}"
+        for r in status.repair_failures
+    ]
+    return (
+        "🔴 COULD NOT PUT THE PROTECTIVE STOP BACK\n"
+        f"The coverage sweep found {len(status.repair_failures)} position(s) "
+        "short of stop coverage during OPEN market hours and tried to place "
+        "the missing protective stop. It did not land.\n"
+        + "\n".join(lines) + "\n\n"
+        "These shares are unprotected right now, during the session, which "
+        "is not the expected overnight lapse. Nothing was sold, resized or "
+        "cancelled. Place the stop by hand or close the position. This "
+        "message repeats at most once per trading day."
     )
 
 
@@ -425,21 +739,36 @@ def status_line(status: CoverageStatus) -> str:
     """One journal line for the heartbeat unit."""
     if status.broker_error:
         return f"coverage_watchdog: could NOT check the broker ({status.broker_error})"
+    placed = ""
+    if status.repaired:
+        placed = (
+            "; RE-PLACED " + ", ".join(
+                f"{r.symbol} {r.qty:.4f}" for r in status.repaired
+            ) + " (DAY over any sub-share part — lapses at the close again)"
+        )
+    if status.repair_failures:
+        placed += "; FAILED to place " + ", ".join(
+            f"{r.symbol} {r.qty:.4f}" for r in status.repair_failures
+        )
     if not status.gaps:
-        return "coverage_watchdog: OK — every held position is fully stop-covered"
+        return (
+            "coverage_watchdog: OK — every held position is fully stop-covered"
+            + placed
+        )
     if status.session_ran:
         return (
             f"coverage_watchdog: {len(status.gaps)} position(s) short-covered "
             f"(${status.unprotected_total:,.2f}) but a session ran on "
-            f"{status.trading_day}; the sweep owns it, not alerting"
+            f"{status.trading_day}; the sweep owns it, not alerting" + placed
         )
     if status.already_alerted_for_day:
         return (
             f"coverage_watchdog: STILL EXPOSED (${status.unprotected_total:,.2f}) "
-            f"with no session on {status.trading_day}; already alerted for that day"
+            f"with no session on {status.trading_day}; already alerted for "
+            "that day" + placed
         )
     return (
         f"coverage_watchdog: EXPOSED — {len(status.gaps)} position(s), "
         f"${status.unprotected_total:,.2f} with no stop and no session on "
-        f"{status.trading_day}"
+        f"{status.trading_day} [{status.market_reason}]" + placed
     )
