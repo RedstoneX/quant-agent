@@ -52,7 +52,13 @@ https://openrouter.ai/docs/features/structured-outputs). This is inherited
 automatically because the benchmark drives the same `BaseAgent` subclasses
 the live pipeline uses — there is no separate benchmark-only code path for
 it — and each row in the results file records which `reasoning_effort` /
-`structured_output` value actually went out with that trial.
+`structured_output` value, and which `provider`, actually went out with that
+trial. To test a model over Google AI Studio direct instead of OpenRouter —
+the route 7 live seats actually use — prefix its id with `google-direct:`
+(e.g. `google-direct:gemini-3.5-flash-lite`); Google's own OpenAI-compat
+endpoint gets the same two settings via its documented `reasoning_effort`/
+`response_format` fields (see `docs/INCIDENT_HISTORY.md`'s 2026-09-14
+follow-up).
 
 This drives the **real** agent classes (`src/agents/*`) with the **real**
 prompts (`config/prompts/*.md`) over frozen inputs — synthetic for every

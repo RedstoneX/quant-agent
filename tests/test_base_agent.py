@@ -1278,8 +1278,10 @@ def test_google_uses_dedicated_semaphore_not_openai_relay_or_openrouter():
 
 def test_google_primary_run_succeeds_end_to_end():
     """Full run() through the streamed OpenAI-wire path for a Google primary:
-    content assembled, usage extracted, no OpenRouter-only extra_body sent
-    (that's OpenRouter-specific; Google gets a plain request), and
+    content assembled, usage extracted, and the uniform-testing settings
+    (owner requirement, 2026-09-14) ARE sent — Google's own OpenAI-compat
+    endpoint documents `reasoning_effort` as a top-level field (see
+    test_google_sends_default_medium_reasoning_effort below) — and
     attribution reports 'google' with no failover."""
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
@@ -1291,7 +1293,7 @@ def test_google_primary_run_succeeds_end_to_end():
     assert result.actual_provider == "google"
     assert result.used_fallback is False
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
-    assert "extra_body" not in kwargs
+    assert kwargs["extra_body"]["reasoning_effort"] == "medium"
 
 
 def test_explicit_provider_field_overrides_prefix_inference():
@@ -1834,15 +1836,70 @@ def test_openrouter_structured_output_false_omits_response_format():
     assert "response_format" not in kwargs["extra_body"]
 
 
-def test_google_direct_sends_neither_reasoning_nor_response_format():
-    """Non-OpenRouter OpenAI-wire path (Google direct) is unaffected — the
-    uniform-testing settings are OpenRouter-only."""
+def test_google_sends_default_medium_reasoning_effort():
+    """Google AI Studio direct (Google's own OpenAI-compatibility endpoint,
+    NOT OpenRouter) must get the SAME llm.reasoning_effort setting as the
+    OpenRouter path — the owner requirement is identical settings on the
+    route the live desk actually uses. Google's endpoint documents
+    `reasoning_effort` as a flat top-level field (see
+    https://ai.google.dev/gemini-api/docs/openai, fetched 2026-09-14),
+    unlike OpenRouter's nested `reasoning: {effort: ...}`."""
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite",
+                      max_tokens=64, provider="google").run(data="x")
+    _, kwargs = oai_cls.return_value.chat.completions.create.call_args
+    assert kwargs["extra_body"]["reasoning_effort"] == "medium"
+    assert "reasoning" not in kwargs["extra_body"]  # that key is OpenRouter's shape
+
+
+def test_google_sends_configured_reasoning_effort():
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite",
+                      max_tokens=64, provider="google",
+                      reasoning_effort="high").run(data="x")
+    _, kwargs = oai_cls.return_value.chat.completions.create.call_args
+    assert kwargs["extra_body"]["reasoning_effort"] == "high"
+
+
+def test_google_undocumented_reasoning_effort_left_unset_and_logged(caplog):
+    """No documented Google equivalent must never be invented — leave
+    thinking unset for that call and log a clear warning instead."""
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        with caplog.at_level("WARNING"):
+            ConcreteAgent(api_key="gk", model="gemini-3.5-flash-lite",
+                          max_tokens=64, provider="google",
+                          reasoning_effort="ultrathink").run(data="x")
+    _, kwargs = oai_cls.return_value.chat.completions.create.call_args
+    assert "reasoning_effort" not in kwargs.get("extra_body", {})
+    assert any("no documented Google" in r.message for r in caplog.records)
+
+
+def test_google_sends_strict_json_schema_when_result_model_set():
+    """Same _response_format_for helper, same schema, as the OpenRouter
+    path — Google's compat endpoint is OpenAI-wire-compatible for
+    response_format too."""
     with patch("openai.OpenAI") as oai_cls:
         oai_cls.return_value = _openai_stream_mock()
         ConcreteAgentWithSchema(api_key="gk", model="gemini-3.5-flash-lite",
                                 max_tokens=64, provider="google").run(data="x")
     _, kwargs = oai_cls.return_value.chat.completions.create.call_args
-    assert "extra_body" not in kwargs
+    fmt = kwargs["extra_body"]["response_format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["json_schema"]["name"] == "_FakeResult"
+
+
+def test_google_structured_output_false_omits_response_format():
+    with patch("openai.OpenAI") as oai_cls:
+        oai_cls.return_value = _openai_stream_mock()
+        ConcreteAgentWithSchema(
+            api_key="gk", model="gemini-3.5-flash-lite",
+            max_tokens=64, provider="google", structured_output=False,
+        ).run(data="x")
+    _, kwargs = oai_cls.return_value.chat.completions.create.call_args
+    assert "response_format" not in kwargs["extra_body"]
 
 
 def test_strict_schema_fallback_logs_once_and_still_sends_response_format(caplog):

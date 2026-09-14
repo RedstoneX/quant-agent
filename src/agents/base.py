@@ -1691,6 +1691,37 @@ class BaseAgent(ABC):
             extra_body["reasoning"] = {"effort": self._reasoning_effort}
             if self._structured_output and self.result_model is not None:
                 extra_body["response_format"] = _response_format_for(self.result_model)
+        elif provider == "google":
+            # Google AI Studio direct is served through Google's own
+            # OpenAI-compatibility endpoint (_GOOGLE_BASE_URL, .../v1beta/
+            # openai/), which documents its OWN `reasoning_effort` /
+            # `response_format` support — not OpenRouter's. Per
+            # https://ai.google.dev/gemini-api/docs/openai (fetched
+            # 2026-09-14): `reasoning_effort` is a top-level request field
+            # accepting "minimal"|"low"|"medium"|"high"|"none" (the last
+            # 2.5-models-only), which the endpoint itself maps internally to
+            # that model's `thinking_level`/`thinking_budget` — the same
+            # documented table lists Gemini 3 / 3.1 and 2.5 families, so we
+            # forward the SAME llm.reasoning_effort value used for
+            # OpenRouter rather than inventing our own token/level mapping.
+            # Same page's structured-output section documents `response_
+            # format` accepting a schema (shown there via Pydantic/Zod
+            # helpers); since this endpoint is OpenAI-wire-compatible we
+            # reuse the identical OpenAI-style {"type": "json_schema", ...}
+            # dict `_response_format_for` already builds for OpenRouter.
+            _GOOGLE_DOCUMENTED_EFFORTS = {"minimal", "low", "medium", "high", "none"}
+            if self._reasoning_effort in _GOOGLE_DOCUMENTED_EFFORTS:
+                extra_body["reasoning_effort"] = self._reasoning_effort
+            else:
+                logger.warning(
+                    "Agent %s: reasoning_effort=%r has no documented Google "
+                    "AI Studio equivalent (see https://ai.google.dev/gemini-"
+                    "api/docs/openai) — leaving thinking level UNSET for "
+                    "this call rather than inventing one.",
+                    self.name, self._reasoning_effort,
+                )
+            if self._structured_output and self.result_model is not None:
+                extra_body["response_format"] = _response_format_for(self.result_model)
         with semaphore:
             if authorize is not None:
                 authorize(model)

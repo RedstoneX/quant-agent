@@ -59,6 +59,28 @@ ONECLI_DASHBOARD = "http://127.0.0.1:10254/api/container-config"
 OPENROUTER_CATALOG = "https://openrouter.ai/api/v1/models"
 PLACEHOLDER_KEY = "placeholder-managed-by-onecli"
 
+# A model id prefixed with this routes the trial over Google AI Studio
+# direct (src/agents/base.py's `provider="google"` OpenAI-wire path)
+# instead of OpenRouter — e.g. "google-direct:gemini-3.5-flash-lite". This
+# is the owner requirement (2026-09-14): the benchmark must be able to test
+# a model on the EXACT route the live desk uses for it, not always assume
+# OpenRouter. The bare id after the prefix is passed to the agent
+# unmodified; credentials still come from the same OneCLI/.env placeholder
+# wiring (GOOGLE_API_KEY), never printed.
+GOOGLE_DIRECT_PREFIX = "google-direct:"
+
+
+def parse_benchmark_model(model: str) -> tuple[str, str]:
+    """(effective_model_id, provider) for a `--models` entry.
+
+    Strips `GOOGLE_DIRECT_PREFIX` when present and routes to "google";
+    otherwise unchanged and routed to "openrouter", exactly as before this
+    prefix existed.
+    """
+    if model.startswith(GOOGLE_DIRECT_PREFIX):
+        return model[len(GOOGLE_DIRECT_PREFIX):], "google"
+    return model, "openrouter"
+
 BASELINE_MODEL = "openai/gpt-5.5"
 
 # The candidate slate. Chosen from a full sweep of OpenRouter's catalog
@@ -184,6 +206,11 @@ class Trial:
     # against whatever config.llm defaults were live at run time.
     reasoning_effort: str = "medium"
     structured_output: bool = True
+    # Which route this trial actually used ("openrouter" or "google") — the
+    # owner requirement (2026-09-14) is that a model is tested under the
+    # SAME route the live desk uses for it, so the results file must say
+    # which route produced each row rather than assuming openrouter.
+    provider: str = "openrouter"
 
 
 STATUS_RUN = "run"
@@ -414,6 +441,10 @@ def run_sweep(models, scenarios, repeats: int, *, budget_usd: float,
 _REQUIRED_ENV_KEYS = (
     "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "FRED_API_KEY",
     "ALPACA_API_KEY", "ALPACA_SECRET_KEY",
+    # Needed only for a "google-direct:" model entry, but listed here (like
+    # the other provider keys) so a missing value forces the same .env
+    # placeholder load rather than failing deep inside agent construction.
+    "GOOGLE_API_KEY",
 )
 
 
@@ -551,11 +582,12 @@ def _extract_picks(output) -> list[str]:
 
 def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) -> Trial:
     agent_cls = _load_agent_cls(scenario.agent_path)
+    effective_model, provider = parse_benchmark_model(model)
     agent = agent_cls(
         api_key=PLACEHOLDER_KEY,
-        model=model,
+        model=effective_model,
         max_tokens=scenario.max_tokens,
-        provider="openrouter",
+        provider=provider,
     )
     if cost_circuit is not None:
         agent.set_cost_circuit(cost_circuit)
@@ -596,7 +628,11 @@ def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) 
     total_weight = sum(c.weight for c in checks) or 1.0
     quality = sum(c.weight for c in checks if c.passed) / total_weight
 
-    rates = pricing.get(model)
+    # Google direct is a free tier, not in the OpenRouter catalog `pricing`
+    # is keyed from — looked up by the bare id so a future priced entry
+    # would still be picked up, but today this is always a miss and cost
+    # stays None ("$?"), same as any other unpriced model.
+    rates = pricing.get(effective_model)
     cost = None
     if rates and (meter.input_tokens or meter.output_tokens):
         cost = (
@@ -626,6 +662,7 @@ def run_trial(scenario: Scenario, model: str, pricing: dict, cost_circuit=None) 
         picks=_extract_picks(output),
         reasoning_effort=agent._reasoning_effort,
         structured_output=agent._structured_output and agent.result_model is not None,
+        provider=provider,
     )
 
 

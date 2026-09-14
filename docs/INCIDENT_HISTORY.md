@@ -63,6 +63,16 @@ array/list wrapper rather than a single object, are left without
 `response_format`: OpenAI/OpenRouter strict schemas require an object root,
 and reshaping those two agents' output contract was out of scope.
 
+**Follow-up, same day (PR #412 update).** "Deliberately unchanged" above was
+wrong for the owner's actual requirement (identical settings on the route
+the live desk uses) — 7 live seats call Google AI Studio direct, not
+OpenRouter. Google's own OpenAI-compatibility endpoint documents an
+equivalent `reasoning_effort` (flat, not nested under `reasoning`) and the
+same `response_format` support (https://ai.google.dev/gemini-api/docs/openai,
+fetched 2026-09-14); both now go out on the Google-direct path too, driven
+by the same `llm.reasoning_effort`/`llm.structured_output` config, and the
+benchmark gained a `google-direct:<model>` prefix to test that exact route.
+
 ---
 
 ### 2026-09-14 — during market hours the desk judged every price against yesterday's close, so a stock trading below its support still read as above it
