@@ -245,7 +245,17 @@ State changes captured earlier:
                 summary = getattr(item_by_key[key], "summary", "")
                 if summary:
                     stock_lines.append(f"    > {summary[:200]}")
-            stock_section = f"## Stock-Specific News (mentions of universe symbols)\n\n" + "\n".join(stock_lines)
+            shown = ", ".join(sorted({str(s).strip().upper() for s in stock_mentions if str(s).strip()}))
+            stock_section = (
+                "## Stock-Specific News (mentions of universe symbols)\n\n"
+                + "\n".join(stock_lines)
+                + "\n\n## Shown symbols (must each be a key in stock_news)\n"
+                + shown
+                + "\nEvery ticker listed here was tagged in the headlines above. "
+                "Emit a `stock_news` key for each. If the mention is incidental "
+                "or not decision-relevant, emit `\"TICKER\": []` — an empty list. "
+                "Do not invent headlines. Do not omit a key."
+            )
         else:
             stock_section = "## Stock-Specific News\nNo universe symbols detected in today's headlines."
 
@@ -423,6 +433,17 @@ Analyze all the above and produce your intelligence report as JSON."""
         report.dropped_news_symbols = self._find_dropped_news_symbols(
             stock_mentions=stock_mentions, report=report,
         )
+        # Complete the structured map without inventing headlines: a shown
+        # symbol the seat omitted becomes an explicit empty list, so
+        # downstream consumers iterating `stock_news` keys see UNCOVERED
+        # rather than silence. `dropped_news_symbols` still names the
+        # omission so data_status stays `symbol_dropped` and PM/risk do
+        # not read the empty list as "no news today".
+        if report.dropped_news_symbols:
+            filled = dict(report.stock_news)
+            for sym in report.dropped_news_symbols:
+                filled.setdefault(sym, [])
+            report.stock_news = filled
         return report, result
 
     @staticmethod
@@ -439,13 +460,14 @@ Analyze all the above and produce your intelligence report as JSON."""
         `report.stock_news` keys are the "what came back" half.
 
         A symbol present in `stock_mentions` but absent from `stock_news` is
-        recorded here — not repaired, not guessed at. This is a
-        presence/absence check, not a threshold: no count or ratio decides
-        anything, a single missing key is enough. It will also flag a
-        symbol the model legitimately judged incidental and chose to skip
-        (the prompt explicitly permits that) — this design accepts that
-        false positive on purpose, per the owner's framing: a real "lost"
-        symbol read as silence is the worse failure of the two.
+        recorded here. An explicit empty list (`"BAC": []`) is an answer —
+        uncovered / incidental, no headlines invented — and is not a drop.
+        A missing key is the drop. This is a presence/absence check, not a
+        threshold: no count or ratio decides anything, a single missing key
+        is enough. The prompt now requires a key for every shown symbol;
+        this check still catches a key the model omitted, and `analyze()`
+        then fills `[]` so the structured map is complete without inventing
+        a headline or a sentiment.
         """
         requested = {str(s).strip().upper() for s in (stock_mentions or {}) if str(s).strip()}
         answered = {str(s).strip().upper() for s in (report.stock_news or {})}
@@ -507,8 +529,11 @@ Analyze all the above and produce your intelligence report as JSON."""
         with an empty headline (the most common LLM glitch) currently
         kills the whole NewsIntelligenceReport — including macro_narrative
         and pm_briefing, which PM needs even if a single per-symbol
-        bullet is malformed. Drop bad items per-symbol; if a symbol's
-        list ends up empty, drop the symbol entry too.
+        bullet is malformed. Drop bad items per-symbol. An explicit empty
+        list from the model (`"TICKER": []`) is kept: that is the uncovered
+        / incidental marker, not an omission. If the model emitted items
+        and every one was malformed, drop the key so `_find_dropped_news_symbols`
+        can flag the loss.
         """
         raw = parsed.get("stock_news")
         if raw is None:
@@ -548,5 +573,10 @@ Analyze all the above and produce your intelligence report as JSON."""
                 valid.append(item)
             if valid:
                 cleaned[sym] = valid
+            elif not items:
+                # Model emitted an explicit empty list: shown, not
+                # decision-relevant, no headlines invented. Keep the key
+                # so this is distinct from omitting the symbol entirely.
+                cleaned[sym] = []
         parsed["stock_news"] = cleaned
         return parsed

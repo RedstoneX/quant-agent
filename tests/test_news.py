@@ -229,7 +229,12 @@ def test_news_analyst_analyze_flags_symbol_dropped_from_response(mock_cls):
     )
 
     assert report is not None
-    assert "AMD" not in report.stock_news
+    # Structured map is completed with an empty list — uncovered, not
+    # silent absence. The drop list still names the omission so
+    # data_status stays symbol_dropped and PM/risk do not read [] as
+    # "no news today".
+    assert report.stock_news.get("AMD") == []
+    assert "NVDA" in report.stock_news
     assert report.dropped_news_symbols == ["AMD"]
     assert parse_telemetry.dropped_snapshot() == {("StockNewsItem", "AMD"): 1}
 
@@ -283,6 +288,88 @@ def test_news_analyst_analyze_no_symbols_dropped_when_response_covers_every_ment
     assert report is not None
     assert report.dropped_news_symbols == []
     assert parse_telemetry.dropped_snapshot() == {}
+
+
+@patch("anthropic.Anthropic")
+def test_news_analyst_explicit_empty_list_is_uncovered_not_dropped(mock_cls):
+    """The model answering `"AMD": []` is a complete uncovered marker —
+    incidental / not decision-relevant, no headline invented. That is
+    not a dropped key and must not trip symbol_dropped."""
+    response_json = json.dumps({
+        "macro_narrative": {
+            "last_updated": "2026-04-15",
+            "era_themes": ["AI supercycle"],
+            "current_regime": "Risk-on",
+            "key_state_tracker": {},
+        },
+        "state_changes": [],
+        "stock_news": {
+            "NVDA": [
+                {
+                    "headline": "New chip announcement",
+                    "sentiment": "bullish",
+                    "conviction": "medium",
+                    "impact_summary": "Accelerates AI adoption",
+                }
+            ],
+            "AMD": [],
+        },
+        "pm_briefing": "NVDA bullish; AMD mention incidental.",
+        "market_sentiment": "bullish",
+        "confidence": "medium",
+    })
+
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=response_json)]
+    mock_response.usage.input_tokens = 2000
+    mock_response.usage.output_tokens = 500
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    amd_item = NewsItem(
+        title="AMD mentioned in passing in a market wrap", summary="",
+        source="wire", published=datetime(2026, 4, 12, tzinfo=timezone.utc),
+        link="",
+    )
+    nvda_item = NewsItem(
+        title="NVDA new chip", summary="", source="wire",
+        published=datetime(2026, 4, 12, tzinfo=timezone.utc), link="",
+    )
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    report, _ = agent.analyze(
+        news_text="NVDA new chip. AMD mentioned in passing...",
+        universe=["NVDA", "AMD"],
+        stock_mentions={"AMD": [amd_item], "NVDA": [nvda_item]},
+    )
+
+    assert report is not None
+    assert report.stock_news.get("AMD") == []
+    assert report.dropped_news_symbols == []
+    assert parse_telemetry.dropped_snapshot() == {}
+
+
+@patch("anthropic.Anthropic")
+def test_news_user_message_requires_a_stock_news_key_for_every_shown_symbol(mock_cls):
+    """The user message must name every tagged ticker and require a
+    stock_news key (real items or an empty list) so the seat cannot
+    omit a shown symbol and have that read as silence."""
+    spy_item = NewsItem(
+        title="SPY wraps a quiet session", summary="", source="wire",
+        published=datetime(2026, 4, 12, tzinfo=timezone.utc), link="",
+    )
+    agent = NewsAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    msg = agent.build_user_message(
+        news_text="Quiet session.",
+        universe=["SPY", "NVDA"],
+        stock_mentions={"SPY": [spy_item]},
+        session="morning",
+    )
+    assert "## Shown symbols (must each be a key in stock_news)" in msg
+    assert "SPY" in msg
+    assert '\"TICKER\": []' in msg or '"TICKER": []' in msg
+    assert "Do not invent headlines" in msg
+    assert "Do not omit a key" in msg
 
 
 def _make_news_intel_report(state_changes: list[dict]):
@@ -640,6 +727,20 @@ def test_state_change_symbol_direction_defaults_to_empty():
 
     sc = StateChange(**_valid_state_change())
     assert sc.symbol_direction == {}
+
+
+def test_drop_invalid_stock_news_keeps_explicit_empty_list():
+    """An explicit `"GOOGL": []` from the model is the uncovered marker
+    and must survive cleaning — dropping the key would make it
+    indistinguishable from an omitted symbol."""
+    parsed = _valid_news_json()
+    parsed["stock_news"] = {
+        "NVDA": [_valid_stock_news_item("real")],
+        "GOOGL": [],
+    }
+    out = NewsAnalystAgent._drop_invalid_stock_news(parsed)
+    assert out["stock_news"]["NVDA"]
+    assert out["stock_news"]["GOOGL"] == []
 
 
 def test_drop_invalid_stock_news_drops_symbol_when_all_items_bad():

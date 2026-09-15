@@ -934,3 +934,39 @@ def test_prompt_tags_a_long_position_and_leaves_its_pnl_pct_unchanged():
 
     assert "[LONG]" in msg
     assert "P&L $150.00 (15.0%)" in msg
+
+
+def test_dropped_news_symbols_are_stated_as_unknown_not_silence():
+    """Held-name news that the seat omitted must not read as 'no alerts'."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+    from src.models import MacroNarrative, NewsIntelligenceReport
+
+    news_intel = NewsIntelligenceReport(
+        macro_narrative=MacroNarrative(
+            last_updated="2026-09-15", era_themes=["test"],
+            current_regime="risk-on",
+        ),
+        stock_news={},
+        pm_briefing="quiet.",
+        market_sentiment="neutral", confidence="medium",
+    )
+    news_intel.dropped_news_symbols = ["ORCL"]
+    news_intel.stock_news["ORCL"] = []
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            session_type="midday",
+            positions=[Position(
+                symbol="ORCL", qty=10, avg_entry=100.0, current_price=110.0,
+                market_value=1100.0, unrealized_pnl=100.0, sector="Tech",
+            )],
+            macro_summary={"vix": {"current": 18.0}},
+            cash_balance=1_000.0,
+            total_value=10_000.0,
+            news_intel=news_intel,
+        )
+
+    assert "News Answer Lost" in msg
+    assert "ORCL" in msg
+    assert "NOT an absence of news" in msg

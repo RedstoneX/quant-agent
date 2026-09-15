@@ -88,13 +88,15 @@ Identify what CHANGED today vs. the previous narrative. For each change:
 If nothing significant changed, say so — an empty list is fine.
 
 ### Layer 3: Stock-Specific News
-For each symbol from the trading universe that appears in the news:
-- What is the headline?
+The input lists **Shown symbols** — every ticker that was tagged in today's headlines. `stock_news` MUST contain a key for each of them.
+
+For each shown symbol that has genuinely relevant news:
+- What is the headline? (quote or closely paraphrase a headline you were shown — do not invent one)
 - Is it bullish, bearish, or neutral for the stock?
 - Conviction: high (e.g., government contract worth $10B) / medium / low
 - Brief impact summary
 
-Only include symbols with genuinely relevant news. Skip mentions that are just incidental.
+If the mention is incidental or not decision-relevant, emit `"TICKER": []` — an empty list. That is a complete answer for that symbol. Do **not** omit the key. Do **not** invent a headline, sentiment, or impact to fill the slot.
 
 ## Output
 

@@ -3951,3 +3951,89 @@ def test_broker_paper_flag_false_still_passes_through_unmodified(
 
     _, kwargs = mock_broker_cls.call_args
     assert kwargs.get("paper") is False
+
+
+def test_sync_positions_from_broker_writes_full_snapshot_not_a_stale_subset(tmp_path):
+    """Helper used after session snapshot/execution: broker book replaces
+    the local table, including names the previous snapshot never had."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "pos.db"))
+    db.initialize()
+    db.execute(
+        """INSERT INTO positions (symbol, qty, avg_entry, current_price, market_value, unrealized_pnl, sector, updated_at)
+           VALUES ('ORCL', 10, 140, 145, 1450, 50, 'Tech', datetime('now'))"""
+    )
+    db.conn.commit()
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+    pipeline.broker = MagicMock()
+    fresh = [
+        Position(symbol=sym, qty=1.0, avg_entry=10.0, current_price=11.0,
+                 market_value=11.0, unrealized_pnl=1.0, sector="Tech")
+        for sym in ("ORCL", "MSFT", "NVDA", "AAPL", "AMZN", "GOOGL")
+    ]
+    pipeline.broker.get_positions.return_value = fresh
+
+    pipeline._sync_positions_from_broker()
+
+    rows = db.execute("SELECT symbol FROM positions ORDER BY symbol").fetchall()
+    assert [r["symbol"] for r in rows] == ["AAPL", "AMZN", "GOOGL", "MSFT", "NVDA", "ORCL"]
+    db.close()
+
+
+def test_sync_positions_from_broker_uses_provided_snapshot_without_a_broker_call(tmp_path):
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "pos.db"))
+    db.initialize()
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+    pipeline.broker = MagicMock()
+    snapshot = [
+        Position(symbol="MSFT", qty=2.0, avg_entry=400.0, current_price=410.0,
+                 market_value=820.0, unrealized_pnl=20.0, sector="Tech"),
+    ]
+    pipeline._sync_positions_from_broker(snapshot)
+    pipeline.broker.get_positions.assert_not_called()
+    rows = db.execute("SELECT symbol, qty FROM positions").fetchall()
+    assert rows[0]["symbol"] == "MSFT"
+    assert rows[0]["qty"] == 2.0
+    db.close()
+
+
+def test_sync_positions_from_broker_failure_does_not_abort():
+    """A snapshot-write failure must not take down the trading session."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = MagicMock()
+    pipeline.db.sync_positions.side_effect = RuntimeError("sqlite locked")
+    pipeline.broker = MagicMock()
+    pipeline.broker.get_positions.return_value = []
+    pipeline._sync_positions_from_broker()  # must not raise
+
+
+def test_pipeline_morning_syncs_positions_at_snapshot_and_after_reconcile():
+    """Morning previously never wrote the local table. Snapshot + finally
+    after reconcile_fills are the two moments the book is known."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    pipeline.broker.is_trading_day.return_value = True
+    pipeline.broker.cancel_open_entry_orders.return_value = None
+    pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
+    pipeline.broker.get_positions.return_value = []
+    pipeline.morning_research_stage = MagicMock()
+    pipeline._reconcile_fills = MagicMock()
+    pipeline._sync_positions_from_broker = MagicMock()
+    pipeline.risk_engine = MagicMock()
+    pipeline.risk_engine.check_daily_loss.return_value = None
+
+    def _populate_empty_research(ctx):
+        ctx.analyses = []
+
+    pipeline.morning_research_stage.run.side_effect = _populate_empty_research
+
+    result = pipeline.run_morning()
+
+    assert result["status"] == "no_data"
+    assert pipeline._sync_positions_from_broker.call_count >= 2
