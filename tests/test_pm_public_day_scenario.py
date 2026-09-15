@@ -211,3 +211,18 @@ def test_decide_signature_still_accepts_every_argument_this_scenario_passes():
         "allowed_buy_symbols", "transient_admitted_symbols",
     }
     assert used <= params, used - params
+
+
+def test_earnings_rows_use_the_live_pipeline_wrapper_shape():
+    """2026-09-15: the fixture stored flat analyses; PortfolioManagerAgent
+    skips any row without a dict `analysis` (portfolio_manager.py
+    `_earnings_stance_rows` and the prompt's earnings section), so the PM
+    test ran with zero earnings evidence. Every row must carry the wrapper."""
+    import json
+    from pathlib import Path
+    fx = Path(__file__).resolve().parents[1] / "ops/model_policy/fixtures/pm_public_day_pm_input.json"
+    rows = json.loads(fx.read_text())["earnings_analyses"]
+    assert rows, "fixture has no earnings rows"
+    for row in rows:
+        assert isinstance(row.get("analysis"), dict), row.get("symbol")
+        assert row.get("symbol") and row.get("filing_date")
