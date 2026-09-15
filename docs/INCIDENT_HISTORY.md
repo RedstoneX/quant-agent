@@ -12,13 +12,53 @@ owner. Rex asked for a record that does not disappear. This is it.
 **Rules for this file.** Append, never trim. Never delete an entry to save
 space; if it gets long, split by year. Every entry leads with one
 non-technical line stating what actually broke in ordinary words, because the
-person who most needs to read this is not a developer. Detail goes underneath
-for whoever has to fix it again.
+person who most needs to read this is the owner, not a developer. Detail goes
+underneath for whoever has to fix it again.
 
 **Never record here what the repo already records** — no restating code, no
 commit IDs as the substance of an entry. Record the *reasoning*: what the
 symptom was, what the real cause turned out to be, what was ruled out, and
 what would catch it next time.
+
+---
+
+### 2026-09-15 — a short that lost its protective stop was never given one back (WORK.md item 73, CLOSED)
+
+**In plain words:** if the desk bets against a stock and the protective order
+on that bet goes missing, nothing put it back. The same gap on a stock the
+desk owns was already repaired automatically. Both repair checks noticed the
+short's gap, wrote it down, and walked away.
+
+**Cause.** Four long-only leftovers from when shorts could not be opened, all
+still live after SHORT became a real opening action. The lookup that finds
+"where should this stop sit" only read purchase rows. The repair itself always
+placed a sell-stop and refused if that stop was at or above the live price —
+correct for a long, the wrong side and the wrong guard for a short. The
+session sweep and the half-hourly coverage check both skipped shorts on the
+false claim that there was no recorded level to restore. There was: the short
+entry row already stores the stop the same way a purchase does.
+
+**Fix.** The lookup can now read a short entry without changing what
+purchase-memory callers see. Repair places a buy-stop at that recorded level,
+refuses if the stop would fire immediately (at or below the live price), and
+uses the same stop-limit buffer the entry path already uses, on the ask side
+of a buy-stop. Both repair callers invoke it. A lookup that cannot say "this
+is a short row" fails closed rather than silently using a purchase's stop. No
+new percentage was invented, and nothing here re-pegs an entry.
+
+**What this does not close.** When a stop is later trailed, the desk's own
+record of it is still not updated (item 71). Repair restores the *entry* stop,
+the same as it already did for longs. A winning long whose live stop had been
+tightened can therefore be re-protected wider than it actually was; a short
+does not currently trail in-code at all (the trail path still asks only for a
+purchase row), so the same widened-restore case on a short can arise only from
+an out-of-band change. That is item 71, and a separate long-bias in trailing,
+not a reason to leave shorts naked.
+
+**What would catch it next time.** A test that removes a short's stop and
+asserts a buy-stop comes back at the short row's own level, plus a test that a
+purchase-only lookup cannot repair a short. Those fail if any one of the four
+sites is left long-biased.
 
 ---
 

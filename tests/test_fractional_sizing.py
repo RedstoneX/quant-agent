@@ -782,7 +782,9 @@ def test_repair_retries_a_transient_failure_in_band():
     pipeline = _repair_pipeline()
     pipeline.broker._submit_protective_stop_retrying.return_value = {"id": "r1"}
 
-    out = TradingPipeline._repair_stop_coverage(pipeline, "NVDA", 10.0)
+    out = TradingPipeline._repair_stop_coverage(
+        pipeline, "NVDA", 10.0, is_short=False,
+    )
 
     assert out is True
     pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
@@ -795,7 +797,9 @@ def test_repair_exhausted_reports_unrepaired():
     pipeline = _repair_pipeline()
     pipeline.broker._submit_protective_stop_retrying.return_value = None
 
-    out = TradingPipeline._repair_stop_coverage(pipeline, "NVDA", 10.0)
+    out = TradingPipeline._repair_stop_coverage(
+        pipeline, "NVDA", 10.0, is_short=False,
+    )
 
     assert out is False
 
@@ -810,7 +814,9 @@ def test_repair_of_a_fractional_gap_that_only_partially_covers_keeps_escalating(
         "id": "r1", "covered_qty": 12.0, "uncovered_qty": 0.3456,
     }
 
-    out = TradingPipeline._repair_stop_coverage(pipeline, "NVDA", 12.3456)
+    out = TradingPipeline._repair_stop_coverage(
+        pipeline, "NVDA", 12.3456, is_short=False,
+    )
 
     assert out is False, "a real but partial cover must not read as repaired"
     pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(

@@ -523,9 +523,11 @@ def test_the_cash_sweep_vehicle_is_never_repaired(db, state_path):
 
 
 def test_a_naked_short_is_repaired_with_a_buy_stop(db, state_path):
-    """Uncovered short → BUY stop at the SHORT row's recorded level. A
-    BUY-only last_buy returning 137.53 (below the $200 tape) would refuse
-    the price-side guard, so this cannot go green on a long-biased lookup."""
+    """Uncovered short → BUY stop at the SHORT row's recorded level.
+    Dropping is_short here would take the long path: a SELL stop at the
+    BUY row's $137.53 sits below the $200 tape, so the price-side guard
+    would pass and the gap would look repaired. Assert side=buy and the
+    SHORT row's $220."""
     _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
     broker = _repairable_broker()
     broker.get_positions.return_value = [
@@ -563,6 +565,29 @@ def test_a_naked_short_is_repaired_with_a_buy_stop(db, state_path):
     assert kwargs["stop_price"] == pytest.approx(220.0)
     assert kwargs["side"] == "buy"
     assert abs(kwargs["limit_price"] - 220.0 * (1 + broker.STOP_LIMIT_BUFFER_PCT)) < 0.01
+
+
+def test_heartbeat_last_buy_reader_forwards_short_action(tmp_path, monkeypatch):
+    """The 30-minute sweep's production lookup must pass action=SHORT.
+    A reader that only queries BUY would leave this SHORT row invisible
+    and the watchdog-suite doubles would not catch it."""
+    import scripts.alert_heartbeat as hb
+    from src.storage.db import Database
+
+    db_path = tmp_path / "quant_agent.db"
+    db = Database(str(db_path))
+    db.initialize()
+    db.insert_trade(
+        symbol="TSLA", action="SHORT", qty=3, price=200.0,
+        reasoning="opened short", run_id="r1", stop_loss=220.0,
+        fill_status="filled",
+    )
+    monkeypatch.setattr("src.api.deps.get_db_path", lambda: str(db_path))
+    reader = hb._last_buy_reader()
+    assert reader is not None
+    row = reader("TSLA", action="SHORT")
+    assert row is not None and row["stop_loss"] == 220.0
+    assert reader("TSLA") is None  # default BUY must not see the SHORT row
 
 
 def test_no_recorded_stop_lookup_means_it_stays_a_pure_reader(db, state_path):
