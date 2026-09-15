@@ -312,3 +312,133 @@ def test_price_protection_still_refuses_a_genuinely_abnormal_book():
 
     pipeline.broker.submit_order.assert_not_called()
     assert ctx.execution_skips[0]["reason"] == "slippage_gated"
+
+
+# ---------------------------------------------------------------------------
+# SHORT birth-pricing — fillability parity with the BUY ceiling above.
+# Same `max_entry_slippage_bps` as a floor vs the bid; not a new budget.
+# ---------------------------------------------------------------------------
+
+def _short_pipeline(live_price=100.0, cash=50_000.0, *, slippage_bps=40.0):
+    pipeline = _pipeline(live_price=live_price, cash=cash)
+    pipeline.config.execution.max_entry_slippage_bps = slippage_bps
+    pipeline.broker.get_shortability.return_value = {
+        "shortable": True, "easy_to_borrow": True, "reason": "eligible",
+    }
+    pipeline.broker.submit_order.return_value = {
+        "id": "ord-short", "status": "accepted",
+    }
+    return pipeline
+
+
+def _short_decision(symbol="NKE", entry=100.0, stop=105.0, target=90.0):
+    return TradeDecision(
+        action="SHORT", symbol=symbol, allocation_pct=10,
+        entry_price=entry, stop_loss=stop, take_profit=target,
+        reasoning="short birth-pricing",
+    )
+
+
+def test_short_limit_is_a_floor_marketable_versus_the_bid():
+    """The NKE shape: last ~ reference, bid a few bp below, short limit
+    parked at the last — a sell limit above the bid cannot fill.
+
+    The limit must be set AT the existing slippage floor
+    (`reference * (1 - max_entry_slippage_bps/10000)`), not shaved up
+    toward the displayed bid, and not at an invented 1% haircut. Alpaca
+    fills a short at the NBBO or better, so a lower floor costs nothing
+    extra when the bid is inside it and is what makes the order marketable.
+    """
+    pipeline = _short_pipeline(live_price=100.0, slippage_bps=40.0)
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 99.90, "ask_price": 100.10,
+    }
+    ctx = _ctx([_short_decision()])
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+    # The floor, not the bid: 100.0 * (1 - 40/10000) = 99.60.
+    assert limit_price == pytest.approx(99.60, abs=0.01)
+    assert limit_price < 99.90, "must sit at or through the bid to be fillable"
+    # Not Alpaca staff's ~1% example, which would have been $99.00.
+    assert limit_price == pytest.approx(100.0 * (1 - 40 / 10_000.0), abs=0.01)
+    assert ctx.execution_skips == []
+
+
+def test_short_uses_the_configured_bps_not_a_new_constant():
+    """25bp floor at $100 is $99.75 — the configured bound, not 40 and not 1%."""
+    pipeline = _short_pipeline(live_price=100.0, slippage_bps=25.0)
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 99.90, "ask_price": 100.10,
+    }
+    ctx = _ctx([_short_decision()])
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+    assert limit_price == pytest.approx(99.75, abs=0.01)
+
+
+def test_short_skips_when_bid_is_beyond_the_slippage_floor():
+    """A 300bp gap must refuse, loudly — same `slippage_gated` as BUY."""
+    pipeline = _short_pipeline(live_price=100.0, slippage_bps=40.0)
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 97.00, "ask_price": 97.10,  # 300bp below reference
+    }
+    ctx = _ctx([_short_decision()])
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    pipeline.broker.submit_order.assert_not_called()
+    assert ctx.execution_skips[0]["reason"] == "slippage_gated"
+    assert "floor" in ctx.execution_skips[0]["detail"]
+    assert "97.0000" in ctx.execution_skips[0]["detail"]
+
+
+def test_short_within_iex_noise_still_submits_at_the_floor():
+    """Mirror of the BUY tight-ceiling case: bid a little through the floor
+    but inside the existing 2% IEX-noise multiple is still submitted at the
+    floor — it may fill against a better NBBO than IEX shows. What must NOT
+    happen is a limit shaved up toward the bid, or an unbound order."""
+    pipeline = _short_pipeline(live_price=100.0, slippage_bps=40.0)
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": 98.50, "ask_price": 98.60,
+    }
+    ctx = _ctx([_short_decision()])
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    assert pipeline.broker.submit_order.called
+    limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+    assert limit_price == pytest.approx(99.60, abs=0.01)
+    assert ctx.execution_skips == []
+
+
+def test_short_still_lowers_to_market_when_quote_has_no_bid():
+    """Degraded quote: keep the pre-existing lower-to-market SHORT path.
+    Limit 101 vs last 100 is inside the 5% stale gate, so pull it down to
+    last — not skip, not invent a floor without a bid."""
+    pipeline = _short_pipeline(live_price=100.0, slippage_bps=40.0)
+    pipeline.broker.get_latest_quote.return_value = {
+        "bid_price": None, "ask_price": 100.10,
+    }
+    ctx = _ctx([_short_decision(entry=101.0, stop=106.0, target=90.0)])
+
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    limit_price = pipeline.broker.submit_order.call_args.kwargs["limit_price"]
+    assert limit_price == pytest.approx(100.0, abs=0.01)
+    assert ctx.execution_skips == []
+
+
+def test_short_stale_entry_still_skips():
+    """The >5% stale-entry gate is unchanged for shorts."""
+    pipeline = _short_pipeline(live_price=100.0)
+    ctx = _ctx([_short_decision(entry=120.0, stop=126.0, target=90.0)])
+
+    orders = ExecutionStage(pipeline=pipeline).run(ctx)
+
+    assert orders == []
+    assert [s["reason"] for s in ctx.execution_skips] == ["stale_entry"]
+    pipeline.broker.submit_order.assert_not_called()

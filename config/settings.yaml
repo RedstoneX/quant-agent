@@ -210,7 +210,8 @@ llm:
 # position risk. A too-tight cap does not make the book safer — it silently
 # stops it trading: on 2026-08-27 VLO's ask sat 28bp above the reference
 # seconds after the open, a hardcoded 25bp cap produced a limit BELOW the
-# offer, and the order could never fill.
+# offer, and the order could never fill. A SHORT uses the same number as a
+# floor below the reference (fillability parity with BUY, not a second budget).
 execution:
   max_entry_slippage_bps: 40
   # Single-shot reprice (rebuilt 2026-09-12): when a working entry limit
