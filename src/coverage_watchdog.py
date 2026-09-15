@@ -35,10 +35,12 @@ depend on the desk being switched on.
 The re-placement is NOT a new code path. It calls
 `src.execution.stop_repair.repair_stop_coverage`, the same function
 `TradingPipeline._reconcile_stop_coverage` calls during a normal session,
-at the same level (the stop recorded on the position's own last BUY), with
-the same guards (never at/above the live price, never invented when the row
-has none) and the same tif derivation (`_derive_stop_tif`: whole shares GTC,
-sub-share DAY, because the broker refuses anything else).
+at the same level (the stop recorded on the position's own last opening
+row: BUY for a long, SHORT for a short), with
+the same guards (never a sell-stop at/above the live price, never a
+buy-stop at/below it, never invented when the row has none) and the same
+tif derivation (`_derive_stop_tif`: whole shares GTC, sub-share DAY,
+because the broker refuses anything else).
 
 WHAT IT STILL CANNOT DO — say it plainly
 -----------------------------------------
@@ -150,9 +152,8 @@ class CoverageGap:
     covered_qty: float
     uncovered_qty: float
     unprotected_value: float  # dollars; 0.0 when the price is unknowable
-    #: A short is protected by a BUY stop and has no recorded BUY row to read
-    #: a level from, so it is reported and never repaired — the same line the
-    #: in-session sweep draws.
+    #: A short is protected by a BUY stop read off its SHORT entry row —
+    #: the mirrored repair of a long's SELL stop off its BUY row.
     is_short: bool = False
 
 
@@ -466,9 +467,9 @@ def replace_missing_stops(
     no quantity reaches a close/reduce path — a zero shortfall skips, it does
     not zero a position.
 
-    Shorts are skipped, as the in-session sweep skips them: there is no
-    recorded BUY row to read a short's protective level from, and inventing
-    one is the policy call neither path will make.
+    Shorts are repaired the same way as longs: the SHORT entry row carries
+    the recorded stop, and the protective order is a BUY stop above the
+    tape. Inventing a level when that row has none is still refused.
     """
     from src.execution.stop_repair import repair_stop_coverage
 
@@ -476,18 +477,13 @@ def replace_missing_stops(
     for gap in gaps:
         if sweep_symbol and gap.symbol == sweep_symbol:
             continue
-        if gap.is_short:
-            logger.warning(
-                "coverage sweep: %s is a SHORT with %.4f share(s) uncovered — "
-                "flagged, not repaired: there is no recorded BUY row to read "
-                "its protective level from and inventing one is a policy "
-                "call this path will not make.",
-                gap.symbol, gap.uncovered_qty,
-            )
-            continue
+        protective_side = "buy" if gap.is_short else "sell"
+        opening = "SHORT" if gap.is_short else "BUY"
         # Fresh broker truth for THIS symbol, taken as late as possible.
         try:
-            _ok, specs = broker.snapshot_protective_stops(gap.symbol, side="sell")
+            _ok, specs = broker.snapshot_protective_stops(
+                gap.symbol, side=protective_side,
+            )
         except Exception as exc:  # noqa: BLE001
             outcomes.append(RepairOutcome(
                 gap.symbol, gap.uncovered_qty, False,
@@ -512,6 +508,7 @@ def replace_missing_stops(
             placed = repair_stop_coverage(
                 broker=broker, last_buy=last_buy,
                 symbol=gap.symbol, uncovered_qty=shortfall,
+                is_short=gap.is_short,
             )
         except Exception as exc:  # noqa: BLE001
             outcomes.append(RepairOutcome(
@@ -522,9 +519,9 @@ def replace_missing_stops(
             gap.symbol, shortfall, bool(placed),
             "" if placed else (
                 "the broker did not accept a protective stop for the "
-                "shortfall — see the journal for which guard stopped it "
-                "(no recorded BUY stop level, stop at/above the live price, "
-                "or retries exhausted)"
+                f"shortfall — see the journal for which guard stopped it "
+                f"(no recorded {opening} stop level, stop on the live-price "
+                "side, or retries exhausted)"
             ),
         ))
     return outcomes
@@ -588,9 +585,10 @@ def check_coverage(
     raises.
 
     `last_buy` is the callable that answers "what stop level did this
-    position's own BUY record?" — pass it and placement is possible; leave it
-    None and this stays the pure reader it was, which is what a caller with
-    no database handle must do rather than repair against a guessed level.
+    position's own opening row record?" — BUY for a long, SHORT for a
+    short. Pass it and placement is possible; leave it None and this stays
+    the pure reader it was, which is what a caller with no database handle
+    must do rather than repair against a guessed level.
     """
     moment = now or _utc_now()
     state = load_state(state_path)

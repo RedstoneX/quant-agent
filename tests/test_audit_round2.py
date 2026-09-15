@@ -216,6 +216,29 @@ def test_repair_reads_the_in_flight_buy_row(tmp_path):
     assert in_flight["stop_loss"] == 140.0      # repair reads today's intent
 
 
+def test_repair_reads_the_in_flight_short_row(tmp_path):
+    """Mirrored belt: a same-session SHORT still at fill_status='submitted'
+    is the row whose stop the short-side repair wants."""
+    from src.storage.db import Database
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade(symbol="TSLA", action="SHORT", qty=10, price=200.0,
+                    reasoning="old short", run_id="r0",
+                    stop_loss=220.0, fill_status="filled")
+    db.insert_trade(symbol="TSLA", action="SHORT", qty=10, price=210.0,
+                    reasoning="today", run_id="r1",
+                    stop_loss=232.0, broker_order_id="s9",
+                    fill_status="submitted")
+    strict = db.get_symbol_last_buy("TSLA", action="SHORT")
+    in_flight = db.get_symbol_last_buy(
+        "TSLA", include_in_flight=True, action="SHORT",
+    )
+    assert strict["stop_loss"] == 220.0
+    assert in_flight["stop_loss"] == 232.0
+    # Default last-buy must not start returning SHORT rows.
+    assert db.get_symbol_last_buy("TSLA") is None
+
+
 # ---------- round-2 backlog fixes (pipeline/data/db bucket) ----------
 
 def test_pm_parse_failure_is_analysis_error_not_no_trades():

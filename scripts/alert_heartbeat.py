@@ -363,14 +363,15 @@ def _cash_sweep_symbol() -> str:
 
 
 def _last_buy_reader():
-    """`symbol -> the position's own last BUY row`, or None when the trading
-    database cannot be opened.
+    """`symbol, action='BUY'|'SHORT' -> that position's own last opening row`,
+    or None when the trading database cannot be opened.
 
     This is the ONLY thing the re-placement needs beyond the broker: the stop
-    level the PM/RM agreed, recorded on the BUY. `Database` is used rather
-    than a private read-only query so the executed-trade predicate has one
-    home — a hand-rolled copy of that SQL here is how the repair would start
-    reading a different row from the one the in-session sweep reads.
+    level the PM/RM agreed, recorded on the BUY or SHORT entry. `Database`
+    is used rather than a private read-only query so the executed-trade
+    predicate has one home — a hand-rolled copy of that SQL here is how the
+    repair would start reading a different row from the one the in-session
+    sweep reads.
 
     Returning None (rather than raising, or guessing a level) means the
     coverage check stays a pure reader for this run and says so.
@@ -388,7 +389,9 @@ def _last_buy_reader():
             file=sys.stderr,
         )
         return None
-    return lambda symbol: db.get_symbol_last_buy(symbol, include_in_flight=True)
+    return lambda symbol, action="BUY": db.get_symbol_last_buy(
+        symbol, include_in_flight=True, action=action,
+    )
 
 
 def run_coverage_check(now: datetime | None = None) -> str:

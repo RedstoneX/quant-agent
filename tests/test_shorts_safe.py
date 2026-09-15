@@ -534,18 +534,29 @@ def test_reconcile_stop_coverage_short_with_live_stop_is_protected_not_naked():
     pipe.broker.snapshot_protective_stops.assert_called_once_with("TSLA", side="buy")
 
 
-def test_reconcile_stop_coverage_naked_short_is_flagged_not_repaired():
-    """A short with NO live stop at all is a real gap and must be reported —
-    but not auto-repaired, since there is no BUY trade row to reconstruct
-    its original stop from (no order path can open a short yet)."""
+def test_reconcile_stop_coverage_naked_short_is_repaired_from_short_row():
+    """A short with NO live stop is a real gap and must be auto-repaired
+    from the SHORT row the same way a long is repaired from its BUY row.
+    Stage 3 writes that row; the old 'no order path can open a short' line
+    is false."""
     def _snap(sym, side="sell"):
+        assert side == "buy"
         return (True, [])
     pipe = _pipeline_for_reconcile([_mock_position("TSLA", -40.0)], _snap)
+    pipe.db.get_symbol_last_buy.return_value = {"stop_loss": 220.0, "action": "SHORT"}
+    pipe.broker.get_latest_price.return_value = 200.0
+    pipe.broker.STOP_LIMIT_BUFFER_PCT = 0.03
+    pipe.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-1"}
     gaps = pipe._reconcile_stop_coverage()
     assert len(gaps) == 1
     assert gaps[0]["symbol"] == "TSLA"
-    assert gaps[0]["repaired"] is False
-    pipe.broker._submit_stop_limit_order.assert_not_called()
+    assert gaps[0]["repaired"] is True
+    kwargs = pipe.broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["side"] == "buy"
+    assert kwargs["stop_price"] == 220.0
+    assert kwargs["qty"] == 40.0
+    pipe.db.get_symbol_last_buy.assert_called()
+    assert pipe.db.get_symbol_last_buy.call_args.kwargs.get("action") == "SHORT"
 
 
 # ==========================================================================

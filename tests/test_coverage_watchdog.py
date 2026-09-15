@@ -357,7 +357,9 @@ def _repairable_broker(**kw):
     return broker
 
 
-def _last_buy(_symbol):
+def _last_buy(_symbol, action="BUY"):
+    if action == "SHORT":
+        return {"stop_loss": 220.0}
     return {"stop_loss": 137.53}
 
 
@@ -520,22 +522,47 @@ def test_the_cash_sweep_vehicle_is_never_repaired(db, state_path):
     assert "SGOV" not in placed
 
 
-def test_a_short_is_flagged_and_never_repaired(db, state_path):
-    """No recorded BUY row exists for a short, so its protective level is
-    unknown — the same line the in-session sweep draws."""
+def test_a_naked_short_is_repaired_with_a_buy_stop(db, state_path):
+    """Uncovered short → BUY stop at the SHORT row's recorded level. A
+    BUY-only last_buy returning 137.53 (below the $200 tape) would refuse
+    the price-side guard, so this cannot go green on a long-biased lookup."""
     _seed_session(db, source="evening", when=datetime(2026, 9, 3, 0, 3, tzinfo=timezone.utc))
     broker = _repairable_broker()
     broker.get_positions.return_value = [
         SimpleNamespace(symbol="TSLA", qty=-3.0, current_price=200.0),
     ]
-    broker.snapshot_protective_stops.side_effect = lambda symbol, side="sell": (True, [])
+    broker.get_latest_price.return_value = 200.0
+    covered = {"n": 0}
+
+    def _snapshot(symbol, side="sell"):
+        if symbol != "TSLA":
+            return True, []
+        assert side == "buy", "a short's protective stops are BUY-side"
+        if covered["n"] == 0:
+            return True, []
+        return True, [{"id": "new-buy-stop", "qty": 3.0, "stop_price": 220.0}]
+
+    broker.snapshot_protective_stops.side_effect = _snapshot
+
+    def _place(**kwargs):
+        covered["n"] = 1
+        return {"id": "new-buy-stop", "uncovered_qty": 0.0}
+
+    broker._submit_protective_stop_retrying.side_effect = _place
     status = coverage_watchdog.check_coverage(
         broker, now=_FRI_1005, sweep_symbol="SGOV", db_path=db,
         state_path=state_path, last_buy=_last_buy,
     )
-    assert status.gaps and status.gaps[0].is_short is True
-    assert not broker._submit_protective_stop_retrying.called
-    assert status.repairs == []
+    assert status.market_open is True
+    assert [r.symbol for r in status.repaired] == ["TSLA"]
+    assert status.repaired[0].qty == pytest.approx(3.0)
+    assert status.gaps == []
+    kwargs = broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["symbol"] == "TSLA"
+    assert kwargs["qty"] == pytest.approx(3.0)
+    assert kwargs["stop_price"] == pytest.approx(220.0)
+    assert kwargs["side"] == "buy"
+    assert abs(kwargs["limit_price"] - 220.0 * (1 + broker.STOP_LIMIT_BUFFER_PCT)) < 0.01
 
 
 def test_no_recorded_stop_lookup_means_it_stays_a_pure_reader(db, state_path):

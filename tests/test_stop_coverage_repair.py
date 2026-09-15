@@ -1,4 +1,4 @@
-"""2026-07-16 audit CRITICAL — belt: naked longs get their stop re-placed.
+"""Naked-position stop repair — longs AND shorts.
 
 The BUY-attached OTO stop inherited the parent's DAY tif and was expired by
 the broker at 16:00 ET, so positions bought in the morning sat unprotected
@@ -6,20 +6,34 @@ overnight. The primary fix places a GTC stop post-fill; this reconciler is the
 belt that (a) repairs anything the old bug left naked and (b) covers a crash
 between an entry fill and the stop placement.
 
-Repair uses the stop level RECORDED ON THE LAST BUY — the reviewed intent, not
-an invented one — and refuses to place a stop at/above the live price (that
-would fire instantly and turn a janitor into an exit decision).
+Repair uses the stop level RECORDED ON THE LAST OPENING ROW — BUY for a long,
+SHORT for a short — the reviewed intent, not an invented one. A long's
+sell-stop at/above the live price, or a short's buy-stop at/below it, would
+fire instantly and turn a janitor into an exit decision, so those are refused.
+
+A test that only checks "the gap is flagged" is not enough: a BUY-only lookup
+or a sell-only place path can still leave a short naked while the long tests
+stay green. The short cases below require the SHORT row's stop and side="buy".
 """
 from unittest.mock import MagicMock
 
 from src.pipeline import TradingPipeline
+from src.storage.db import Database
 
 
-def _pipeline(held_qty=31.0, covered=0.0, buy_stop=158.75, price=165.0):
+def _pipeline(
+    held_qty=31.0,
+    covered=0.0,
+    buy_stop=158.75,
+    price=165.0,
+    *,
+    symbol="VST",
+    last_buy=None,
+):
     p = TradingPipeline.__new__(TradingPipeline)
     p.broker = MagicMock()
     p.broker.get_positions.return_value = [
-        MagicMock(symbol="VST", qty=held_qty),
+        MagicMock(symbol=symbol, qty=held_qty),
     ]
     p.broker.snapshot_protective_stops.return_value = (
         True, ([{"qty": covered, "stop_price": 158.0}] if covered else []),
@@ -28,9 +42,26 @@ def _pipeline(held_qty=31.0, covered=0.0, buy_stop=158.75, price=165.0):
     p.broker.STOP_LIMIT_BUFFER_PCT = 0.03
     p.db = MagicMock()
     p.db.get_pending_protection_restores.return_value = []
-    p.db.get_symbol_last_buy.return_value = {"stop_loss": buy_stop}
+    if last_buy is not None:
+        p.db.get_symbol_last_buy.side_effect = last_buy
+    else:
+        p.db.get_symbol_last_buy.return_value = {"stop_loss": buy_stop}
     p.cash_sweeper = None
     return p
+
+
+def _opening_lookup(**stops_by_action):
+    """Return a last-open callable that only answers the actions it was given.
+
+    A BUY-only half-fix fails the short tests because `action='SHORT'` returns
+    None. A SHORT-only table cannot accidentally feed the long path.
+    """
+    def _lookup(symbol, include_in_flight=False, action="BUY"):
+        stop = stops_by_action.get(action)
+        if stop is None:
+            return None
+        return {"stop_loss": stop, "action": action, "symbol": symbol}
+    return _lookup
 
 
 def test_naked_long_is_repaired_from_the_recorded_buy_stop():
@@ -101,3 +132,167 @@ def test_covered_long_needs_no_repair():
     p = _pipeline(covered=31.0)
     assert p._reconcile_stop_coverage() == []
     p.broker._submit_protective_stop_retrying.assert_not_called()
+
+
+def test_naked_short_is_repaired_from_the_recorded_short_stop():
+    """The load-bearing short case: uncovered short → BUY stop at the SHORT
+    row's recorded level. A BUY-only lookup returns None here, so a half-fix
+    that only un-skips shorts cannot pass."""
+    p = _pipeline(
+        held_qty=-40.0, covered=0.0, price=200.0, symbol="TSLA",
+        last_buy=_opening_lookup(SHORT=220.0),
+    )
+    p.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-1"}
+    gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is True
+    kwargs = p.broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["symbol"] == "TSLA"
+    assert kwargs["qty"] == 40.0
+    assert kwargs["stop_price"] == 220.0
+    assert abs(kwargs["limit_price"] - 220.0 * 1.03) < 0.01
+    assert kwargs["side"] == "buy"
+    p.broker.snapshot_protective_stops.assert_called_with("TSLA", side="buy")
+    p.db.get_symbol_last_buy.assert_called()
+    assert p.db.get_symbol_last_buy.call_args.kwargs.get("action") == "SHORT"
+
+
+def test_short_repair_does_not_use_a_stale_buy_stop():
+    """A prior long on the same ticker must not donate its sell-stop to a
+    later short. The BUY row's $80 would sit *below* $200 and, placed as a
+    buy-stop, would fire immediately — or as a sell-stop would be the wrong
+    side. Repair must read the SHORT row."""
+    p = _pipeline(
+        held_qty=-10.0, covered=0.0, price=200.0, symbol="TSLA",
+        last_buy=_opening_lookup(BUY=80.0, SHORT=220.0),
+    )
+    p.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-1"}
+    gaps = p._reconcile_stop_coverage()
+    assert gaps[0]["repaired"] is True
+    kwargs = p.broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["side"] == "buy"
+    assert kwargs["stop_price"] == 220.0
+    assert kwargs["stop_price"] != 80.0
+
+
+def test_buy_only_lookup_cannot_repair_a_short():
+    """Half-fix tripwire: un-skipping shorts while still reading action=BUY
+    finds no row and must leave the gap flagged, not invent a level."""
+    p = _pipeline(
+        held_qty=-40.0, covered=0.0, price=200.0, symbol="TSLA",
+        last_buy=_opening_lookup(BUY=180.0),
+    )
+    gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is False
+    p.broker._submit_protective_stop_retrying.assert_not_called()
+
+
+def test_short_repair_refuses_a_stop_at_or_below_the_live_price():
+    """Recorded buy-stop $180 but the stock is now $200 — placing it would
+    cover the short instantly. That's an exit decision; flag, don't act."""
+    p = _pipeline(
+        held_qty=-40.0, covered=0.0, price=200.0, symbol="TSLA",
+        last_buy=_opening_lookup(SHORT=180.0),
+    )
+    gaps = p._reconcile_stop_coverage()
+    assert gaps[0]["repaired"] is False
+    p.broker._submit_protective_stop_retrying.assert_not_called()
+
+
+def test_short_repair_skipped_when_the_short_row_has_no_stop():
+    p = _pipeline(
+        held_qty=-40.0, covered=0.0, price=200.0, symbol="TSLA",
+        last_buy=_opening_lookup(SHORT=0.0),
+    )
+    gaps = p._reconcile_stop_coverage()
+    assert gaps[0]["repaired"] is False
+    p.broker._submit_protective_stop_retrying.assert_not_called()
+
+
+def test_long_path_ignores_a_short_row_on_the_same_symbol():
+    """Mirror of the stale-BUY case: a currently-held long must not pick up
+    a later SHORT row's stop above the tape."""
+    p = _pipeline(
+        held_qty=10.0, covered=0.0, price=150.0, symbol="NVDA",
+        last_buy=_opening_lookup(BUY=140.0, SHORT=170.0),
+    )
+    p.broker._submit_protective_stop_retrying.return_value = {"id": "sell-stop-1"}
+    gaps = p._reconcile_stop_coverage()
+    assert gaps[0]["repaired"] is True
+    kwargs = p.broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["side"] == "sell"
+    assert kwargs["stop_price"] == 140.0
+
+
+def test_get_symbol_last_buy_default_does_not_see_a_short_row(tmp_path):
+    """PM-memory callers keep the BUY-only contract. A SHORT on the same
+    ticker is a different position and must not overwrite last-buy."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade(
+        symbol="TSLA", action="BUY", qty=5, price=180.0,
+        reasoning="old long", run_id="r0", stop_loss=160.0,
+        fill_status="filled",
+    )
+    db.insert_trade(
+        symbol="TSLA", action="SHORT", qty=8, price=200.0,
+        reasoning="new short", run_id="r1", stop_loss=220.0,
+        fill_status="filled",
+    )
+    last_buy = db.get_symbol_last_buy("TSLA")
+    last_short = db.get_symbol_last_buy("TSLA", action="SHORT")
+    assert last_buy is not None and last_buy["stop_loss"] == 160.0
+    assert last_buy["action"] == "BUY"
+    assert last_short is not None and last_short["stop_loss"] == 220.0
+    assert last_short["action"] == "SHORT"
+    assert db.get_symbol_last_buy("TSLA", action="COVER") is None
+
+
+def test_get_symbol_last_buy_short_include_in_flight(tmp_path):
+    """Same-session in-flight SHORT is the row repair wants, mirroring the
+    BUY audit-round-2 belt."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade(
+        symbol="TSLA", action="SHORT", qty=8, price=190.0,
+        reasoning="old short", run_id="r0", stop_loss=210.0,
+        fill_status="filled",
+    )
+    db.insert_trade(
+        symbol="TSLA", action="SHORT", qty=8, price=200.0,
+        reasoning="today", run_id="r1", stop_loss=222.0,
+        broker_order_id="s9", fill_status="submitted",
+    )
+    strict = db.get_symbol_last_buy("TSLA", action="SHORT")
+    in_flight = db.get_symbol_last_buy(
+        "TSLA", include_in_flight=True, action="SHORT",
+    )
+    assert strict["stop_loss"] == 210.0
+    assert in_flight["stop_loss"] == 222.0
+
+
+def test_naked_short_repair_through_a_real_short_row(tmp_path):
+    """End-to-end: the pipeline's last_buy lambda actually queries action=
+    SHORT on a real Database. Mocking get_symbol_last_buy.return_value would
+    let a BUY-only SQL still look repaired."""
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade(
+        symbol="TSLA", action="SHORT", qty=40, price=200.0,
+        reasoning="opened short", run_id="r1", stop_loss=220.0,
+        fill_status="filled",
+    )
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.broker = MagicMock()
+    p.broker.get_positions.return_value = [MagicMock(symbol="TSLA", qty=-40.0)]
+    p.broker.snapshot_protective_stops.return_value = (True, [])
+    p.broker.get_latest_price.return_value = 200.0
+    p.broker.STOP_LIMIT_BUFFER_PCT = 0.03
+    p.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-1"}
+    p.db = db
+    p.cash_sweeper = None
+    gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is True
+    kwargs = p.broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["side"] == "buy"
+    assert kwargs["stop_price"] == 220.0
+    assert kwargs["qty"] == 40.0
