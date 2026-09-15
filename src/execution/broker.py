@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import math
+import random
 import re
 import threading
 import time
@@ -22,6 +24,184 @@ from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderS
 from src.models import Position, _ALLOWED_SECTORS, _SECTOR_ALIASES
 
 logger = logging.getLogger(__name__)
+
+# Alpaca allows one `trade_updates` websocket per account. Each fill wait
+# used to construct its own TradingStream; a second handshake while the
+# first socket was still registered is HTTP 429, and older alpaca-py
+# `_run_forever` loops retried that handshake every 10ms (alpacahq/alpaca-py
+# #740). One lock for the process so only one stream is connecting/running.
+_TRADE_UPDATES_STREAM_LOCK = threading.Lock()
+
+# Fallback reconnect bounds, used only when the installed TradingStream
+# does not expose `_reconnect_min_backoff` / `_reconnect_max_backoff`.
+# They are alpaca-py's own values for this exact storm (TradingStream.__init__
+# on versions that shipped `reconnect_delay`), not a desk-invented constant.
+_ALPACA_STREAM_RECONNECT_MIN_S = 1.0
+_ALPACA_STREAM_RECONNECT_MAX_S = 30.0
+
+
+def _stream_http_status(exc: BaseException) -> int | None:
+    """Best-effort HTTP status on a websocket handshake error. Never raises."""
+    for attr in ("status_code", "status"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, int):
+            return val
+    response = getattr(exc, "response", None)
+    if response is not None:
+        for attr in ("status_code", "status"):
+            val = getattr(response, attr, None)
+            if isinstance(val, int):
+                return val
+    match = re.search(r"\bHTTP\s*429\b|\bstatus(?:\s+code)?\s*[:=]?\s*429\b",
+                      str(exc), re.IGNORECASE)
+    if match:
+        return 429
+    return None
+
+
+def _stream_retry_after_seconds(exc: BaseException) -> float | None:
+    """Retry-After from a handshake 429, when the server sent one.
+
+    Numeric seconds only (same restriction as `_retry_after_hint_seconds`
+    in src/agents/base.py). The HTTP-date form is not worth parsing here:
+    the fill wait already has its own wall-clock ceiling.
+    """
+    sources = [exc, getattr(exc, "response", None)]
+    for src in sources:
+        if src is None:
+            continue
+        headers = getattr(src, "headers", None)
+        if headers is None:
+            continue
+        try:
+            raw = headers.get("retry-after") or headers.get("Retry-After")
+        except Exception:  # noqa: BLE001
+            raw = None
+        if raw is None:
+            continue
+        try:
+            hint = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if hint > 0:
+            return hint
+    match = re.search(
+        r'retry[_-]after["\']?\s*[:=]\s*"?(\d+(?:\.\d+)?)',
+        str(exc), re.IGNORECASE,
+    )
+    if match:
+        hint = float(match.group(1))
+        if hint > 0:
+            return hint
+    return None
+
+
+def _equal_jitter_backoff(attempt: int, min_backoff: float, max_backoff: float) -> float:
+    """Equal-jitter exponential backoff.
+
+    Same shape as `alpaca.common.utils.reconnect_delay`, which exists to
+    stop this exact reconnect/HTTP 429 storm. Copied so an older alpaca-py
+    that still sleeps 10ms in `_run_forever` still backs off.
+    """
+    if min_backoff <= 0:
+        min_backoff = _ALPACA_STREAM_RECONNECT_MIN_S
+    if max_backoff < min_backoff:
+        max_backoff = min_backoff
+    capped = min_backoff
+    for _ in range(max(0, int(attempt) - 1)):
+        if capped >= max_backoff / 2:
+            capped = max_backoff
+            break
+        capped *= 2
+    capped = min(max_backoff, capped)
+    return capped / 2 + random.uniform(0, capped / 2)
+
+
+def _trading_stream_reconnect_delay(
+    attempt: int, exc: BaseException, stream: object | None = None,
+) -> float:
+    """Seconds to wait before the next trade_updates handshake.
+
+    Prefer the server's Retry-After. Otherwise the stream's own reconnect
+    bounds (alpaca-py's fix for this storm), else that library's documented
+    1s/30s equal-jitter curve.
+    """
+    hint = _stream_retry_after_seconds(exc)
+    if hint is not None:
+        return hint
+    min_b = float(getattr(stream, "_reconnect_min_backoff", 0) or 0) if stream else 0.0
+    max_b = float(getattr(stream, "_reconnect_max_backoff", 0) or 0) if stream else 0.0
+    if min_b <= 0:
+        min_b = _ALPACA_STREAM_RECONNECT_MIN_S
+    if max_b < min_b:
+        max_b = _ALPACA_STREAM_RECONNECT_MAX_S
+    return _equal_jitter_backoff(max(1, int(attempt)), min_b, max_b)
+
+
+def _install_trading_stream_reconnect_guard(stream: object) -> None:
+    """Stop older alpaca-py TradingStream clients tight-looping on HTTP 429.
+
+    Public `run()`/`stop()` stay the entry points. We wrap `_start_ws` so a
+    failed handshake waits (Retry-After, else equal-jitter backoff) before
+    the SDK's `_run_forever` retries. Newer alpaca-py already waits in
+    `_wait_before_reconnect`; wrapping then would double the delay, so we
+    only insert the sleep when that helper is missing. Logging is throttled
+    to once per backoff interval either way.
+
+    No-op when the object has no `_start_ws` (the test double).
+    """
+    original_start = getattr(stream, "_start_ws", None)
+    if not callable(original_start):
+        return
+    original_stop_ws = getattr(stream, "stop_ws", None)
+    sdk_backs_off = callable(getattr(stream, "_wait_before_reconnect", None))
+    failures = 0
+    last_log_mono = 0.0
+
+    async def stop_ws() -> None:
+        event = getattr(stream, "_reconnect_stop", None)
+        if event is None:
+            event = asyncio.Event()
+            setattr(stream, "_reconnect_stop", event)
+        event.set()
+        if callable(original_stop_ws):
+            await original_stop_ws()
+
+    async def start_ws():
+        nonlocal failures, last_log_mono
+        event = getattr(stream, "_reconnect_stop", None)
+        if event is None:
+            event = asyncio.Event()
+            setattr(stream, "_reconnect_stop", event)
+        try:
+            await original_start()
+            failures = 0
+        except Exception as exc:
+            failures += 1
+            delay = _trading_stream_reconnect_delay(failures, exc, stream)
+            now = time.monotonic()
+            status = _stream_http_status(exc)
+            # Log at most once per wait: a 10ms loop otherwise reprints the
+            # same HTTP 429 thousands of times during one fill window.
+            if last_log_mono == 0.0 or now - last_log_mono >= delay:
+                logger.warning(
+                    "trade_updates websocket handshake failed "
+                    "(status=%s, attempt %d); reconnect in %.1fs",
+                    status if status is not None else "unknown",
+                    failures, delay,
+                )
+                last_log_mono = now
+            if not sdk_backs_off and delay > 0 and getattr(stream, "_should_run", True):
+                try:
+                    await asyncio.wait_for(event.wait(), timeout=delay)
+                except asyncio.TimeoutError:
+                    pass
+            raise
+
+    stream._start_ws = start_ws
+    if callable(original_stop_ws):
+        stream.stop_ws = stop_ws
+
 
 # Index ETFs that have no single sector — bucket them as "Broad".
 _INDEX_ETFS = {"SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "IVV"}
@@ -2253,20 +2433,45 @@ class AlpacaBroker:
 
         Runs Alpaca's own `TradingStream` (the same class its own docs
         recommend for order-fill notification instead of polling) on a
-        background thread via its public `run()`/`stop()` API — deliberately
-        NOT reaching into its private `_run_forever` coroutine, so this
-        keeps working across `alpaca-py` versions that change internals.
+        background thread via its public `run()`/`stop()` API. Handshake
+        retries are guarded (`_install_trading_stream_reconnect_guard`) so
+        an HTTP 429 cannot tight-loop; only one stream is live at a time
+        (`_TRADE_UPDATES_STREAM_LOCK`) because Alpaca allows one
+        `trade_updates` connection per account. A second concurrent wait
+        falls through to REST polling rather than opening another socket.
         Never raises: any failure here is reported as `(None, False)` so the
         caller's fallback path is the only thing that can fail loudly.
         """
         if TradingStream is None:
             return None, False
 
+        # Non-blocking: fill monitoring continues on REST for the waiter
+        # that lost the race, instead of stacking a second websocket onto
+        # the one-connection slot (that is the 429 storm).
+        if not _TRADE_UPDATES_STREAM_LOCK.acquire(blocking=False):
+            logger.info(
+                "trade_updates stream already in use — REST polling for %s",
+                order_id,
+            )
+            return None, False
+
+        try:
+            return self._wait_for_order_status_via_stream_locked(
+                order_id, timeout_seconds, stop_states=stop_states,
+            )
+        finally:
+            _TRADE_UPDATES_STREAM_LOCK.release()
+
+    def _wait_for_order_status_via_stream_locked(
+        self, order_id: str, timeout_seconds: float, *,
+        stop_states: frozenset,
+    ) -> tuple[str | None, bool]:
         result: dict = {"status": None}
         matched = threading.Event()
         connected = threading.Event()
         run_error: list[Exception] = []
         stream = TradingStream(self.api_key, self.secret_key, paper=self._paper)
+        _install_trading_stream_reconnect_guard(stream)
 
         async def _handler(update) -> None:
             try:
