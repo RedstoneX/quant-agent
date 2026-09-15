@@ -603,7 +603,8 @@ Accepted behavior includes:
 - dividend/earnings markers on the price chart are sourced from `GET /events/{symbol}` (`MarketDataProvider.get_price_chart_events`, yfinance), separate from the single-next-value ex-div/earnings helpers stop adjustment and risk prompts use;
 - a position's entry marker is placed at the real entry-fill bar, not an approximation;
 - the Positions/Orders panel row uses a real resize sash (draggable, minimum-height floor) rather than a CSS-only hack that could crush the panel;
-- Positions/Orders table columns support resize and drag-to-reorder, opt-in per table via `DataTable` props, persisted to `localStorage`.
+- Positions/Orders table columns support resize and drag-to-reorder, opt-in per table via `DataTable` props, persisted to `localStorage`;
+- a read-only Desk diary at `/diary` (and `/diary/`) served from gitignored `data/diary/`, same posture as `/board`; Mission Control does not generate the entries.
 
 The chart live-price/current-price truth issue is **already resolved**. Commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b` (`fix(qamc): show session fills and live chart price`, 2026-08-21) introduced the genuinely live `/quotes` path and separated live/current price from historical bars. Current `PriceChartPanel` also hides the historical series' default last-value line and renders explicit `LIVE` and `PREV CLOSE` lines. This is accepted behavior and is not an outstanding task.
 

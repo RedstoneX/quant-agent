@@ -51,8 +51,8 @@ function healthColor(health: HealthResponse | null): { dot: string; label: strin
   return { dot: "bg-pos", label: "all systems reachable" };
 }
 
-// Slim app-chrome header — brand, PAPER/LIVE mode, system health, legacy
-// link. The actual account KPIs (equity/P&L/exposure/regime) live in
+// Slim app-chrome header — brand, PAPER/LIVE mode, system health, desk
+// diary and legacy links. The actual account KPIs (equity/P&L/exposure/regime) live in
 // `HeroBand` below this, which owns the "what do I own, what's the market
 // doing" first-glance job; this bar is identity/status only.
 export function TopStrip({
@@ -94,6 +94,13 @@ export function TopStrip({
       <div className="ml-auto flex flex-wrap items-center gap-3 text-[0.8125rem] text-dim">
         <span>{label}</span>
         {updatedAt && <span>updated {updatedAt.toLocaleTimeString()}</span>}
+        <a
+          href="/diary/"
+          className="px-2.5 py-1 rounded border border-border text-ink hover:text-accent hover:border-accent font-semibold no-underline"
+          title="Daily desk diary"
+        >
+          Desk diary
+        </a>
         <a href="/ui/" className="underline hover:text-accent" title="Original Stage 3-5 dashboard">
           legacy view
         </a>
