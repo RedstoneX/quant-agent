@@ -1,5 +1,8 @@
 # Model Routing Policy — Accepted Contract
 
+> **OWNER DECISION 2026-09-15 — NO MORE TEST-ENVIRONMENT WORK.** The owner is no longer interested in model tests, practice days or benchmark rigs: too many flaws, too much setup, too many resources for too little. The paper desk runs LIVE and problems are fixed from what live sessions show. Do not propose, build, repair or run tests/benchmarks/practice days unless the owner explicitly asks. Current seats: PM `openai/gpt-5.5`; analysts `gemini-3.5-flash-lite` (Google direct, free); risk manager and position reviewer unchanged. Desk switched back on 2026-09-15.
+
+
 Status: **accepted — externally reviewed and merged via PR #30 on 2026-08-14**.
 
 > **2026-08-31 update:** the eight `google/gemini-2.5-flash-lite` seats below
