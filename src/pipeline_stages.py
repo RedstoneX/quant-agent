@@ -2352,24 +2352,43 @@ def _alert_owner_protection_failed(pipeline, spec: dict, protection,
                 return
             held = _fmt_shares(filled) if filled is not None else "an unknown number of"
             is_short = str(spec.get("side", "buy")).lower() != "buy"
-            remedy = (
-                "An IMMEDIATE market cover is being submitted — a naked short "
-                "has unbounded loss and is not left to a sweep. Confirm it "
-                "landed."
-                if is_short else
-                "Place a stop manually or flatten the position. The 30-minute "
-                "coverage sweep will also attempt an automatic repair."
-            )
-            body = (
-                "🛑🛑🛑 NO STOP AT ALL\n"
-                f"{symbol}: the entry filled ({held} share(s)) but the "
-                "protective stop could not be placed after every immediate "
-                "retry. The position is open at the broker with NOTHING "
-                "standing watch.\n"
-                f"Intended stop: {stop_price}\n"
-                f"Entry order: {entry_order_id}\n"
-                f"{remedy}"
-            )
+            is_scale_in = bool(spec.get("cover_full_position"))
+            if is_scale_in:
+                remedy = (
+                    "The resting protective sell was cancelled so this add "
+                    "could submit. Place a stop over the FULL position now "
+                    "or flatten. The coverage sweep will also try to repair "
+                    "from the write-ahead recovery row."
+                )
+                body = (
+                    "STOP NOT REARMED AFTER A SCALE-IN\n"
+                    f"{symbol}: the entry filled ({held} share(s)) but the "
+                    "protective sell covering the full position could not be "
+                    "placed after every immediate retry. The position is "
+                    "open at the broker with NOTHING standing watch.\n"
+                    f"Intended stop: {stop_price}\n"
+                    f"Entry order: {entry_order_id}\n"
+                    f"{remedy}"
+                )
+            else:
+                remedy = (
+                    "An IMMEDIATE market cover is being submitted — a naked short "
+                    "has unbounded loss and is not left to a sweep. Confirm it "
+                    "landed."
+                    if is_short else
+                    "Place a stop manually or flatten the position. The 30-minute "
+                    "coverage sweep will also attempt an automatic repair."
+                )
+                body = (
+                    "🛑🛑🛑 NO STOP AT ALL\n"
+                    f"{symbol}: the entry filled ({held} share(s)) but the "
+                    "protective stop could not be placed after every immediate "
+                    "retry. The position is open at the broker with NOTHING "
+                    "standing watch.\n"
+                    f"Intended stop: {stop_price}\n"
+                    f"Entry order: {entry_order_id}\n"
+                    f"{remedy}"
+                )
         else:
             covered = protection.get("covered_qty")
             body = (
@@ -5831,7 +5850,12 @@ class ExecutionStage:
             if decision.action not in ("BUY", "SHORT"):
                 continue
             is_short = decision.action == "SHORT"
+            add_prep = None
+            buy_accepted = False
+            submit_attempted = False
             try:
+                from src.execution.scale_in import LongAddPrep
+                add_prep = LongAddPrep.not_scale_in()
                 # D6 (Stage 3): the borrow gate. Refuse to open a short
                 # unless the broker reports it BOTH shortable AND easy to
                 # borrow — an API error or an unreadable/unknown symbol
@@ -5866,6 +5890,21 @@ class ExecutionStage:
                         )
                         _record_execution_skip(
                             pipeline, ctx, decision.symbol, "borrow_gate", reason,
+                        )
+                        continue
+                    from src.execution.scale_in import short_add_is_blocked
+                    if short_add_is_blocked(positions, decision.symbol):
+                        logger.warning(
+                            "SHORT %s skipped: adding to an existing short is "
+                            "blocked until short stop-repair (item 73) lands",
+                            decision.symbol,
+                        )
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol,
+                            "short_add_blocked_until_stop_repair",
+                            "adding to a short is blocked until short "
+                            "stop-repair lands — a missing BUY stop on a "
+                            "short is not repaired today",
                         )
                         continue
 
@@ -6413,6 +6452,40 @@ class ExecutionStage:
                         order_ceiling=order_ceiling,
                     )
 
+                # Long scale-in path B (owner 2026-09-15): if this BUY adds
+                # to a name that already has a resting protective sell,
+                # cancel that sell, confirm the cancel via trade_updates,
+                # then submit. WAL is written first so a crash cannot leave
+                # the position naked without a recovery row. Short adds are
+                # blocked above until item 73.
+                if not is_short:
+                    from src.execution.scale_in import prepare_long_add
+                    add_prep = prepare_long_add(
+                        broker=pipeline.broker, db=pipeline.db,
+                        symbol=decision.symbol, positions=positions,
+                        intended_stop=stop_price,
+                    )
+                    if add_prep.skip_reason:
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol,
+                            add_prep.skip_reason, add_prep.skip_detail,
+                        )
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "scale_in",
+                            "skipped", add_prep.skip_reason,
+                            detail=add_prep.skip_detail,
+                        )
+                        continue
+                    if add_prep.cancelled:
+                        _record_pipeline_event(
+                            pipeline, ctx, decision.symbol, "scale_in",
+                            "protective_sell_cancelled",
+                            "cancel_confirmed_via_trade_updates",
+                            wal_row_id=add_prep.wal_row_id,
+                            intended_stop=add_prep.intended_stop,
+                            held_qty_before=add_prep.held_qty_before,
+                        )
+
                 # Write-ahead intent: insert a pending row BEFORE calling
                 # the broker. Closes the BUY-side phantom-fill window the
                 # audit surfaced — pre-fix, submit_order could return
@@ -6465,6 +6538,13 @@ class ExecutionStage:
                 )
 
                 try:
+                    # Set BEFORE the call: if submit raises, the broker may
+                    # still have accepted the BUY. Restoring the cancelled
+                    # stop at the OLD size is the daily-breaker / partial-
+                    # fill bug (under-cover a grown position, and a working
+                    # BUY plus a restored SELL is the wash-trade block).
+                    # Leave the scale-in WAL row; drain rearms at broker qty.
+                    submit_attempted = True
                     order = pipeline.broker.submit_order(
                         symbol=decision.symbol, qty=qty, side=entry_side,
                         limit_price=limit_price,
@@ -6496,6 +6576,10 @@ class ExecutionStage:
                     # calibration as a "submitted" trade we never tracked.
                     # Distinct from the submit-raised case: here we KNOW
                     # the broker rejected, so there's no orphan to sweep.
+                    from src.execution.scale_in import restore_after_failed_add
+                    restore_after_failed_add(
+                        pipeline.broker, pipeline.db, add_prep, decision.symbol,
+                    )
                     pipeline.db.mark_trade_submit_failed(pending_row_id)
                     _record_pipeline_event(
                         pipeline, ctx, decision.symbol, "order", "rejected",
@@ -6514,6 +6598,7 @@ class ExecutionStage:
                 pipeline.db.confirm_trade_submitted(
                     pending_row_id, broker_order_id=order.get("id"),
                 )
+                buy_accepted = True
                 _record_pipeline_event(
                     pipeline, ctx, decision.symbol, "order", "submitted",
                     "broker_accepted", broker_order_id=order.get("id"), qty=qty,
@@ -6545,12 +6630,27 @@ class ExecutionStage:
                 # 16:00 ET the same day (2026-07-16 audit — positions were
                 # naked every night). Deferred until all BUYs are submitted so
                 # the fill waits don't serialize the submission burst.
-                if isinstance(order, dict) and order.get("pending_stop_price"):
+                if isinstance(order, dict) and (
+                    order.get("pending_stop_price") or (
+                        add_prep is not None and add_prep.cancelled
+                    )
+                ):
+                    # Scale-in: the add's own stop is not automatically the
+                    # live one. Most-protective for a long is the HIGHEST
+                    # trigger (already computed on the prep). Prefer that
+                    # over pending_stop_price or a looser cancelled stop
+                    # would be replaced by the add's wider number.
+                    protect_stop = order.get("pending_stop_price") or 0
+                    if (
+                        add_prep is not None and add_prep.is_scale_in
+                        and add_prep.intended_stop > 0
+                    ):
+                        protect_stop = add_prep.intended_stop
                     pending_entry_stops.append({
                         "symbol": decision.symbol,
                         "side": entry_side,
                         "order_id": order.get("id"),
-                        "stop_price": order["pending_stop_price"],
+                        "stop_price": protect_stop,
                         "qty": qty,
                         # Carried for the bounded re-peg (off by default).
                         # `reference_price` is the verified reference the
@@ -6561,8 +6661,42 @@ class ExecutionStage:
                         "reference_price": market_price,
                         "limit_price": limit_price,
                         "trade_row_id": pending_row_id,
+                        "cover_full_position": bool(
+                            add_prep is not None and add_prep.is_scale_in
+                        ),
+                        "held_qty_before": (
+                            add_prep.held_qty_before if add_prep else 0.0
+                        ),
+                        "wal_row_id": (
+                            add_prep.wal_row_id if add_prep else None
+                        ),
+                        "cancelled_specs": (
+                            add_prep.specs if add_prep else []
+                        ),
+                        "intended_stop": (
+                            add_prep.intended_stop if add_prep else 0.0
+                        ),
                     })
             except Exception as e:
+                if (
+                    add_prep is not None and add_prep.cancelled
+                    and not buy_accepted
+                ):
+                    if submit_attempted:
+                        logger.critical(
+                            "scale-in: BUY submit for %s failed after the "
+                            "protective sell was cancelled — WAL row %s "
+                            "stays so drain rearms at the broker's current "
+                            "qty; restoring the old stop size would under-"
+                            "cover a fill that may already have landed",
+                            decision.symbol, add_prep.wal_row_id,
+                        )
+                    else:
+                        from src.execution.scale_in import restore_after_failed_add
+                        restore_after_failed_add(
+                            pipeline.broker, pipeline.db, add_prep,
+                            decision.symbol,
+                        )
                 logger.error("Order failed for %s %s: %s", decision.action, decision.symbol, e)
 
         # Protect every filled entry (GTC stop-limit keyed to the ACTUAL fill).
@@ -6605,6 +6739,8 @@ class ExecutionStage:
                         lambda info, _spec=spec:
                         _alert_owner_entry_cancelled(pipeline, _spec, info)
                     ),
+                    cover_full_position=bool(spec.get("cover_full_position")),
+                    held_qty_before=float(spec.get("held_qty_before") or 0),
                 )
                 _record_pipeline_event(
                     pipeline, ctx, spec["symbol"], "protection",
@@ -6626,6 +6762,39 @@ class ExecutionStage:
                 _alert_owner_protection_failed(
                     pipeline, spec, protection, entry_order_id,
                 )
+                if spec.get("cover_full_position") or spec.get("wal_row_id") is not None:
+                    from src.execution.scale_in import (
+                        discharge_scale_in_wal,
+                        restore_cancelled_stops,
+                    )
+                    filled_here = 0.0
+                    try:
+                        info = pipeline.broker.get_order_fill_info(
+                            entry_order_id,
+                        ) or {}
+                        filled_here = float(info.get("filled_qty") or 0)
+                    except Exception:  # noqa: BLE001
+                        filled_here = 0.0
+                    uncovered = 0.0
+                    if isinstance(protection, dict):
+                        try:
+                            uncovered = float(protection.get("uncovered_qty") or 0)
+                        except (TypeError, ValueError):
+                            uncovered = 0.0
+                    if protection is None and filled_here <= 0:
+                        if restore_cancelled_stops(
+                            pipeline.broker, spec["symbol"],
+                            spec.get("cancelled_specs") or [],
+                        ):
+                            discharge_scale_in_wal(
+                                pipeline.db, spec.get("wal_row_id"),
+                            )
+                    elif protection is not None and uncovered <= 0:
+                        discharge_scale_in_wal(
+                            pipeline.db, spec.get("wal_row_id"),
+                        )
+                    # else: fill happened and rearm did not fully cover.
+                    # WAL stays. Guard 2 already paged the owner.
                 # D7 (Stage 3): MANDATORY escalation for a SHORT. A long's
                 # loss is bounded at -100%; a naked short's is not, so
                 # relying on the next session's coverage-reconcile belt (the

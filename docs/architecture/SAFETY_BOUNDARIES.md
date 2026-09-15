@@ -45,6 +45,18 @@
   analysis, PM grounding, AI Risk, deterministic risk/funding rules, broker
   protection or Alpaca Paper authorization. The configured universe is not
   mutated, and any uncertainty fails closed.
+- **Long scale-in cancel window** (2026-09-15): adding to a long that already
+  has a resting protective sell requires cancelling that sell first (the
+  broker will not work a BUY against a resting SELL stop on the same name).
+  Between confirmed cancel and post-fill rearm the position is unprotected.
+  Mitigations, not elimination: a write-ahead recovery row is persisted
+  before cancel; cancel is confirmed via `trade_updates` / broker status
+  before the BUY is sent; rearm sizes to the broker's full position, not the
+  add's fill; trail / coverage repair / the coverage watchdog skip a name
+  mid-sequence; a failed rearm pages the owner. This is the same cancel-to-
+  free-shares shape that made the old whole-book daily breaker dangerous, but
+  one symbol at a time with confirmed cancel and full-qty restore. Short adds
+  are blocked until item 73. Verified by `tests/test_scale_in.py`.
 - `scripts/desk_reset.py` is the only operator tool that issues broker
   liquidations (`DELETE /v2/positions?cancel_orders=true`). It is outside the
   trading pipeline and outside the risk engine, so it carries its own
