@@ -237,3 +237,35 @@ def test_prompt_describes_correct_pipeline_order():
     text = PROMPT_PATH.read_text()
     assert "already ran, before you" in text
     assert "After you, `PortfolioConstructor` submits orders" not in text
+
+
+@patch("anthropic.Anthropic")
+def test_dropped_news_symbols_are_stated_as_unknown_not_silence(mock_cls, sample_portfolio_decision):
+    """Incomplete news must reach Risk as UNKNOWN, matching the PM block."""
+    from src.models import MacroNarrative, NewsIntelligenceReport
+    news_intel = NewsIntelligenceReport(
+        macro_narrative=MacroNarrative(
+            last_updated="2026-09-15", era_themes=["test"],
+            current_regime="risk-on",
+        ),
+        stock_news={"NVDA": [{
+            "headline": "chip news", "sentiment": "bullish",
+            "conviction": "medium", "impact_summary": "positive",
+        }]},
+        pm_briefing="NVDA bullish.",
+        market_sentiment="bullish", confidence="medium",
+    )
+    news_intel.dropped_news_symbols = ["MSFT"]
+    news_intel.stock_news["MSFT"] = []
+
+    agent = RiskManagerAgent(api_key="test", model="test-model")
+    msg = agent.build_user_message(
+        portfolio_decision=sample_portfolio_decision,
+        positions=[],
+        macro_summary={"vix": {"current": 18.0}},
+        rule_violations=[],
+        news_intel=news_intel,
+    )
+    assert "News Answer Lost" in msg
+    assert "MSFT" in msg
+    assert "NOT an absence of news" in msg

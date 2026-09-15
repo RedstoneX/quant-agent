@@ -528,3 +528,31 @@ def test_no_dropped_news_symbols_renders_no_lost_section(mock_cls):
     section = msg[start: end if end != -1 else len(msg)]
 
     assert "News Answer Lost" not in section
+
+
+@patch("anthropic.Anthropic")
+def test_collect_seat_verdicts_skips_uncovered_empty_stock_news(mock_cls):
+    """An empty stock_news list is uncovered, not a fake neutral news lean.
+    Ranking must skip it the same way a missing key was skipped."""
+    from src.models import AnalystVerdict
+    news_intel = _news_intel_with_dropped_symbols(["AMD"])
+    news_intel.stock_news["AMD"] = []
+    verdicts = PortfolioManagerAgent._collect_seat_verdicts(
+        analyses=[], news_intel=news_intel, macro_analysis=None,
+        earnings_analyses=[], smart_money_findings=None,
+    )
+    news_verdicts = [v for v in verdicts if isinstance(v, AnalystVerdict) and v.seat == "news"]
+    assert {v.symbol for v in news_verdicts} == {"NVDA"}
+
+
+@patch("anthropic.Anthropic")
+def test_evidence_registry_does_not_file_a_news_stance_for_empty_stock_news(mock_cls):
+    news_intel = _news_intel_with_dropped_symbols([])
+    news_intel.stock_news["AMD"] = []
+    registry = PortfolioManagerAgent.build_evidence_registry(
+        analyses=[], positions=[], news_intel=news_intel,
+        earnings_analyses=[], smart_money_findings=[],
+        macro_analysis=None,
+    )
+    assert "AMD" not in registry or "news" not in registry.get("AMD", {})
+    assert registry["NVDA"]["news"] == "bullish"

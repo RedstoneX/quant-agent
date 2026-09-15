@@ -414,6 +414,7 @@ class RiskManagerAgent(LiveLimitPrompt, BaseAgent):
                         f"- {sym}: [{a.conviction.upper()}] {a.sentiment} — {a.impact_summary}"
                     )
             alerts_text = "\n".join(alert_lines) or "No alerts on traded symbols."
+            lost_text = news_intel.format_dropped_symbols_block()
             news_section = f"""## News Intelligence (use to verify PM hasn't contradicted today's events)
 PM Briefing: {news_intel.pm_briefing[:300]}
 
@@ -421,7 +422,7 @@ State changes today:
 {state_text}
 
 Alerts on PM's traded symbols:
-{alerts_text}
+{alerts_text}{lost_text}
 
 Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})
 """

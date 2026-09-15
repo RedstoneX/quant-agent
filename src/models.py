@@ -2716,11 +2716,12 @@ def news_verdict_for_symbol(symbol: str, items: list["StockNewsItem"]) -> "Analy
     """Collapse every `StockNewsItem` the News seat filed for one symbol
     into the one `AnalystVerdict` the Portfolio Manager compares seats by.
 
-    Precondition: `items` is non-empty. News never calls this for a symbol
-    it did not cover (`NewsIntelligenceReport.stock_news` only has keys for
-    symbols with at least one item) — an empty list is handled below only
-    so the function fails soft (neutral, no lean) rather than raising, but
-    that path should never be exercised in production.
+    Precondition: `items` is the list filed under one `stock_news` key.
+    An empty list is the uncovered marker (`analyze()` fills `[]` for a
+    shown symbol the seat omitted, and the model may emit `[]` for an
+    incidental mention). Callers that build ranking verdicts skip empty
+    lists so UNKNOWN is not collapsed into a fake neutral lean; this
+    function itself fails soft (neutral, no lean) rather than raising.
 
     **direction** — the collapsed sentiment across every item, via
     `src.quantities.collapse_stances` — the SAME reduction
@@ -2855,15 +2856,33 @@ class NewsIntelligenceReport(LLMOutputModel):
     # never invented from it either. Holds every symbol `stock_mentions`
     # (the deterministic, pre-LLM word-boundary match over real wire text —
     # see `NewsDataProvider.tag_symbol_mentions`) proves had real headline
-    # content shown to the model, but which has no key at all in `stock_news`
-    # above. This is the presence/absence check the 2026-09-03 incident
-    # ("a dropped `\"AMD\": [`-style opener spliced one symbol's news items
-    # onto another's") needed and did not have: that failure produces
-    # syntactically valid JSON, so it is invisible to any parser-level
-    # check and can only be caught by comparing what the model was shown
-    # against what it returned. Default `[]` so an old persisted/replayed
-    # report — and every caller that hasn't been updated — parses unchanged.
+    # content shown to the model, but which had no key at all in the
+    # model's `stock_news`. `analyze()` then fills those keys with `[]`
+    # so the structured map is complete without inventing a headline;
+    # this list still names the omission so data_status stays
+    # `symbol_dropped` and downstream seats do not read the empty list
+    # as "no news". Default `[]` so an old persisted/replayed report —
+    # and every caller that hasn't been updated — parses unchanged.
     dropped_news_symbols: list[str] = []
+
+    def format_dropped_symbols_block(self) -> str:
+        """Prompt text naming symbols shown real headlines but omitted from
+        the seat's structured answer. Empty string when nothing was lost.
+
+        Shared by PM, Risk, and the position reviewer so incomplete news is
+        stated as UNKNOWN in every downstream seat, never left as silence.
+        """
+        if not self.dropped_news_symbols:
+            return ""
+        header = (
+            "\n\n### News Answer Lost — {n} symbol(s) — NOT an absence of news\n"
+            "The news seat had real headline coverage for these symbols "
+            "but its structured answer for them did not survive parsing "
+            "(a dropped response, not a judgment that there was nothing "
+            "to report). Treat coverage for these names as UNKNOWN, "
+            "never as clean and never as \"no news\":\n"
+        ).format(n=len(self.dropped_news_symbols))
+        return header + "\n".join(f"- {sym}" for sym in self.dropped_news_symbols)
 
     @model_validator(mode="before")
     @classmethod

@@ -206,6 +206,24 @@ def test_sync_positions_empty_clears_table(db):
     assert _read_positions(db) == []
 
 
+def test_sync_positions_replaces_stale_subset_with_full_broker_book(db):
+    """The local table must not keep showing ORCL-only when the broker
+    holds a larger book — journal/notifier/rehearsal read this table."""
+    from types import SimpleNamespace
+
+    _seed_position(db, "ORCL", 10.0, 140.0, 145.0, 1450.0, 50.0, "Tech")
+    snapshot = [
+        SimpleNamespace(
+            symbol=sym, qty=1.0, avg_entry=10.0, current_price=11.0,
+            market_value=11.0, unrealized_pnl=1.0, sector="Tech",
+        )
+        for sym in ("ORCL", "MSFT", "NVDA", "AAPL", "AMZN", "GOOGL")
+    ]
+    db.sync_positions(snapshot)
+    remaining = {row["symbol"] for row in _read_positions(db)}
+    assert remaining == {"ORCL", "MSFT", "NVDA", "AAPL", "AMZN", "GOOGL"}
+
+
 def test_prune_trades_respects_ttl(db):
     """Trades older than keep_days are dropped; recent ones are retained."""
     db.insert_trade("OLD", "BUY", 1.0, 100.0, "ancient", "r-old")

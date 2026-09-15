@@ -359,11 +359,12 @@ class PositionReviewerAgent(BaseAgent):
                         f"- {sym}: [{a.conviction.upper()}] {a.sentiment} — {a.impact_summary}"
                     )
             stock_text = "\n".join(stock_lines) or "No per-position news alerts."
+            lost_text = news_intel.format_dropped_symbols_block()
             news_section = (
                 f"### Session News Intelligence\n"
                 f"PM Briefing: {news_intel.pm_briefing[:300]}\n\n"
                 f"State changes this session:\n{state_text}\n\n"
-                f"Held-position alerts:\n{stock_text}\n\n"
+                f"Held-position alerts:\n{stock_text}{lost_text}\n\n"
                 f"Overall sentiment: {news_intel.market_sentiment} ({news_intel.confidence})\n"
             )
         else:

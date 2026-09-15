@@ -4839,8 +4839,8 @@ class TradingPipeline:
         @ 107.465, bought 2026-08-27) were both closed by their broker-
         resident GTC protective stop-limit order on 2026-08-28 — ONDS at
         7.93 (realized -$10.20), CCJ at 102.955 (realized -$9.02). The
-        `positions` table (synced directly from `AlpacaBroker.get_positions`
-        every session — see `Database.sync_positions`) correctly went to
+        `positions` table (a derived snapshot of `AlpacaBroker.get_positions`
+        via `_sync_positions_from_broker` / `Database.sync_positions`) correctly went to
         zero for both. The `trades` table did not: no SELL/exit row was
         ever written, and the original BUY rows sat forever at
         `realized_pnl IS NULL`. Across the whole ledger, `realized_pnl` was
@@ -8260,6 +8260,27 @@ class TradingPipeline:
         price_map = {p.symbol: p.current_price for p in positions}
         return account, positions, price_map
 
+    def _sync_positions_from_broker(self, positions=None) -> None:
+        """Refresh the local SQLite `positions` table from broker truth.
+
+        Broker is book of record. The local table is a derived snapshot for
+        Mission Control journal / evening notifier / rehearsal consumers —
+        it must not lag the broker after a session snapshot or after fills.
+
+        `positions` is the already-fetched broker list when the caller has
+        one (avoids a duplicate round-trip). Omit it to re-read the broker
+        after execution. Fail-soft: a snapshot write must never abort a
+        trading session.
+        """
+        try:
+            snapshot = (
+                list(positions) if positions is not None
+                else self.broker.get_positions()
+            )
+            self.db.sync_positions(snapshot)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("local positions table refresh failed: %s", exc)
+
     def _run_news_update(
         self, run_id: str, session: str = "morning",
         universe: list[str] | None = None,
@@ -10735,6 +10756,12 @@ class TradingPipeline:
             cash = ctx.cash
             total_value = ctx.total_value
             last_equity = ctx.last_equity
+            # Local `positions` table is a derived snapshot (journal /
+            # notifier / rehearsal). Morning used to never write it, so a
+            # midday/close that last ran when only one name was held left
+            # the table lying after later fills. Refresh from the broker
+            # book we just read, before the long research window.
+            self._sync_positions_from_broker(positions)
 
             # Hard circuit breaker before any LLM/research work. If the account
             # opens through the daily-loss limit, the deterministic response
@@ -11035,6 +11062,9 @@ class TradingPipeline:
             # Phase 3: ask broker which of today's submitted orders actually filled.
             # Unfilled ones get flagged so PM memory / calibration skip them.
             self._reconcile_fills(ctx)
+            # Fills (or stop-outs since snapshot) change the book. Re-read
+            # the broker; do not reuse the pre-execution list.
+            self._sync_positions_from_broker()
 
     def run_midday(self) -> dict:
         """13:00 ET — position reviewer, patient disposition."""
@@ -11460,7 +11490,7 @@ class TradingPipeline:
         ctx.last_equity = last_equity
 
         # Replace the positions snapshot (drops rows for symbols no longer held).
-        self.db.sync_positions(positions)
+        self._sync_positions_from_broker(positions)
 
         # 1a. Cash-only safety net — force-sell if the account drifted into
         # margin. Refreshes ctx fields on completion.
@@ -11484,6 +11514,7 @@ class TradingPipeline:
         cash = ctx.cash
         total_value = ctx.total_value
         last_equity = ctx.last_equity
+        self._sync_positions_from_broker(positions)
 
         # Hard circuit breaker: if the session is already through the daily-loss
         # limit, bypass all LLM/news/earnings work and HALT (docs/WORK.md item
@@ -11874,6 +11905,10 @@ class TradingPipeline:
             except Exception as e:  # noqa: BLE001
                 logger.warning("cash sweep: park_excess failed (non-fatal): %s", e)
 
+        # Session execution (reviewer exits, sweep) may have changed the
+        # book since the start-of-session snapshot.
+        self._sync_positions_from_broker()
+
         return {
             "status": (
                 "reviewed" if not review_positions or review is not None
@@ -12136,6 +12171,7 @@ class TradingPipeline:
         ctx.total_value = total_value
         ctx.last_equity = last_equity
         ctx.daily_pnl = daily_pnl
+        self._sync_positions_from_broker(positions)
         daily_return_pct = (daily_pnl / last_equity * 100) if last_equity > 0 else 0
         logger.info(
             "Intra snapshot: equity=$%.2f, last_close=$%.2f, pnl=$%.2f (%.2f%%), positions=%d",
@@ -12197,6 +12233,11 @@ class TradingPipeline:
                     }
                 if scan_result is not None:
                     result["intraday_scan"] = scan_result
+                    if scan_result.get("status") == "intraday_executed":
+                        # Scan went through ExecutionStage; refresh the
+                        # local table from broker truth (the start-of-tick
+                        # snapshot above is now stale).
+                        self._sync_positions_from_broker()
             return result
 
         # docs/WORK.md item 32 (2026-09-14): this was a near-verbatim copy of
@@ -12892,6 +12933,9 @@ class TradingPipeline:
         ctx.total_value = total_value
         ctx.last_equity = last_equity
         ctx.daily_pnl = daily_pnl
+        # Sync the full broker book (before the LLM-view split below).
+        # Evening's Telegram snapshot reads this table, not the in-memory list.
+        self._sync_positions_from_broker(ctx.positions)
 
         # LLM view: hide the cash-sweep vehicle from evening's position
         # narratives (facts / thesis-health / missed-ops held-set) — parked
@@ -13382,6 +13426,7 @@ class TradingPipeline:
         # Evening is the last chance to reconcile today's orders before the
         # next trading day. Sweep everything still marked submitted.
         self._reconcile_fills()
+        self._sync_positions_from_broker()
 
         meta_result = self._maybe_run_quarterly_meta()
         missing_sessions = self._expected_sessions_missing_today()

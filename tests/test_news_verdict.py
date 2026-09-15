@@ -163,10 +163,9 @@ def test_all_neutral_items_produce_a_neutral_verdict():
 
 
 def test_empty_items_fail_soft_to_neutral():
-    """Documented precondition: news_verdict_for_symbol should never be
-    called with an empty list in production (NewsIntelligenceReport.
-    stock_news only has keys for symbols with >=1 item), but it fails soft
-    to neutral rather than raising or crashing."""
+    """Empty `stock_news` list is the uncovered marker (shown symbol, no
+    items). Ranking callers skip it so UNKNOWN is not a fake neutral lean;
+    the function itself fails soft rather than raising."""
     v = news_verdict_for_symbol("ORCL", [])
     assert v.direction == "neutral"
     assert v.magnitude == 0.0
