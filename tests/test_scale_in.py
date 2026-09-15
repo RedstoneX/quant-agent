@@ -334,7 +334,7 @@ def test_execution_stage_does_not_submit_when_cancel_unconfirmed():
     assert ctx.execution_skips[0]["reason"] == "scale_in_cancel_unconfirmed"
 
 
-def test_short_add_is_recorded_as_blocked_until_item_73():
+def test_short_add_is_recorded_as_blocked():
     held = [Position(
         symbol="TSLA", qty=-10.0, avg_entry=260.0, current_price=250.0,
         market_value=2500.0, unrealized_pnl=100.0, sector="Consumer",
