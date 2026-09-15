@@ -2119,6 +2119,10 @@ def _pm_public_day_inputs():
 
 
 def _pm_public_day_eligible_set(analyses: list[TechAnalysisResult]) -> dict[str, list[str]]:
+    # 2026-09-15: this used to build the registry with news/earnings/macro/
+    # smart-money EMPTY, admitting 15 names where the evidence decide() really
+    # renders admits 11 (AGX, NEE, OKLO, ONDS refused once earnings count).
+    # The grader must replay the same evidence the prompt shows.
     """The desk's own pre-decision admission gate, replayed with no LLM call.
 
     `PortfolioManagerAgent.candidate_eligibility` (src/agents/
@@ -2130,9 +2134,12 @@ def _pm_public_day_eligible_set(analyses: list[TechAnalysisResult]) -> dict[str,
     """
     from src.agents.portfolio_manager import PortfolioManagerAgent
 
+    manifest, _a, news_intel, smart_money_findings, _acct = _pm_public_day_inputs()
     evidence_registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=analyses, positions=[], news_intel=None,
-        earnings_analyses=[], macro_analysis=None, smart_money_findings=[],
+        analyses=analyses, positions=[], news_intel=news_intel,
+        earnings_analyses=manifest["earnings_analyses"],
+        macro_analysis=manifest["macro_analysis"],
+        smart_money_findings=smart_money_findings,
     )
     # allowed_buy_symbols: every analysed symbol is treated as within the
     # session's research universe (this fixture has no separate "configured

@@ -93,11 +93,13 @@ def test_eligible_set_matches_the_live_candidate_eligibility_gate():
     that the two diverge, the scenario has silently grown its own rules."""
     from src.agents.portfolio_manager import PortfolioManagerAgent
 
-    _, analyses, *_ = scenarios._pm_public_day_inputs()
+    manifest, analyses, news_intel, smart_money, _acct = scenarios._pm_public_day_inputs()
     eligible = scenarios._pm_public_day_eligible_set(analyses)
     evidence_registry = PortfolioManagerAgent.build_evidence_registry(
-        analyses=analyses, positions=[], news_intel=None,
-        earnings_analyses=[], macro_analysis=None, smart_money_findings=[],
+        analyses=analyses, positions=[], news_intel=news_intel,
+        earnings_analyses=manifest["earnings_analyses"],
+        macro_analysis=manifest["macro_analysis"],
+        smart_money_findings=smart_money,
     )
     replay = PortfolioManagerAgent.candidate_eligibility(
         analyses=analyses, evidence_registry=evidence_registry,
@@ -107,8 +109,8 @@ def test_eligible_set_matches_the_live_candidate_eligibility_gate():
     assert eligible == replay
     admitted = {s for s, why in eligible.items() if not why}
     assert admitted == {
-        "AAPL", "AGX", "BRK-B", "COP", "CVX", "EQNR", "JPM", "MU",
-        "NEE", "NET", "OKLO", "ONDS", "OXY", "TSM", "ZS",
+        "AAPL", "BRK-B", "COP", "CVX", "EQNR", "JPM", "MU",
+        "NET", "OXY", "TSM", "ZS",
     }
     assert eligible["UNH"] and eligible["AMZN"]  # neutral, refused
 
@@ -226,3 +228,14 @@ def test_earnings_rows_use_the_live_pipeline_wrapper_shape():
     for row in rows:
         assert isinstance(row.get("analysis"), dict), row.get("symbol")
         assert row.get("symbol") and row.get("filing_date")
+
+
+def test_grader_admitted_set_uses_the_same_evidence_the_prompt_renders():
+    """2026-09-15: grader replayed eligibility with empty news/earnings/macro/
+    smart-money evidence and admitted 4 names the live gate refuses."""
+    from ops.model_policy import scenarios as sc
+    _m, analyses, _n, _s, _a = sc._pm_public_day_inputs()
+    elig = sc._pm_public_day_eligible_set(analyses)
+    admitted = sorted(sym for sym, reasons in elig.items() if not reasons)
+    for refused in ("AGX", "NEE", "OKLO", "ONDS"):
+        assert refused not in admitted
