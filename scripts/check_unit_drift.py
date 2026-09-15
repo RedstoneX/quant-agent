@@ -173,10 +173,11 @@ def is_enabled(units_dir: Path, unit_name: str, target: str) -> bool:
 def load_paused_units(repo_dir: Path) -> tuple[list[str], str | None]:
     """Unit names declared in `<repo_dir>/paused_units.yaml`.
 
-    Missing file means nothing is deliberately paused right now — not an
-    error. A file that exists but cannot be parsed as expected IS an error:
-    silently treating it as "nothing paused" would turn a typo in the list
-    into six new false alarms with no clue why.
+    Missing file, or a file whose `paused_units` list is empty, means
+    nothing is deliberately paused — the desk is fully running. That is
+    not an error. A file that exists but cannot be parsed as expected IS
+    an error: silently treating it as "nothing paused" would turn a typo
+    in the list into six new false alarms with no clue why.
     """
     path = repo_dir / PAUSED_UNITS_FILENAME
     if not path.is_file():

@@ -655,7 +655,12 @@ def test_no_paused_units_file_means_nothing_is_paused(tmp_path):
 def test_the_seeded_paused_list_only_names_units_tracked_in_the_repo():
     """The real seed file, not a fixture: every unit it names must actually
     exist in scripts/systemd/, or the drift check would report the desk's
-    own paused-unit bookkeeping as broken on day one."""
+    own paused-unit bookkeeping as broken on day one.
+
+    An empty list is valid — that is the fully-running desk. The file must
+    still exist and parse as a list; any name that IS present must be
+    tracked.
+    """
     import yaml
 
     from scripts.check_unit_drift import PAUSED_UNITS_FILENAME
@@ -664,7 +669,10 @@ def test_the_seeded_paused_list_only_names_units_tracked_in_the_repo():
     assert seed.is_file(), f"{seed} is missing"
     data = yaml.safe_load(seed.read_text()) or {}
     entries = data.get("paused_units") or []
-    assert entries, "paused_units.yaml declares no paused units"
+    assert isinstance(entries, list), (
+        "paused_units.yaml must declare paused_units as a list "
+        "(empty means the desk is fully running)"
+    )
     tracked = {p.name for p in ALL_UNITS}
     for entry in entries:
         name = entry["unit"]
