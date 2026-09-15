@@ -819,6 +819,25 @@ def test_repair_of_a_fractional_gap_that_only_partially_covers_keeps_escalating(
     )
 
 
+def test_short_repair_places_a_buy_stop_above_the_tape():
+    """The wrapper must pass is_short through: a SHORT's recorded stop sits
+    above the live price, the protective order is BUY, and the limit buffer
+    is the existing STOP_LIMIT_BUFFER_PCT on the ask side of the trigger."""
+    pipeline = _repair_pipeline(stop_loss=160.0, live_price=150.0)
+    pipeline.broker._submit_protective_stop_retrying.return_value = {"id": "r1"}
+
+    out = TradingPipeline._repair_stop_coverage(
+        pipeline, "TSLA", 10.0, is_short=True,
+    )
+
+    assert out is True
+    pipeline.broker._submit_protective_stop_retrying.assert_called_once_with(
+        symbol="TSLA", qty=10.0, stop_price=160.0,
+        limit_price=pytest.approx(160.0 * (1 + 0.03)), side="buy",
+    )
+    assert pipeline.db.get_symbol_last_buy.call_args.kwargs.get("action") == "SHORT"
+
+
 # ==========================================================================
 # 7. Spec §11.1 HYBRID FRACTIONAL STOPS — the whole/fractional split, the
 #    re-placement path, and THE ALERTING DISTINCTION.

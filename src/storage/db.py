@@ -3117,31 +3117,49 @@ class Database:
             self.conn.commit()
 
     def get_symbol_last_buy(self, symbol: str,
-                            include_in_flight: bool = False) -> dict | None:
-        """Most recent executed BUY row for a symbol.
+                            include_in_flight: bool = False,
+                            *,
+                            action: str = "BUY") -> dict | None:
+        """Most recent executed opening row for a symbol.
 
-        Submitted-but-never-filled BUYs must not show up in PM memory, but a
+        Default `action='BUY'` is the PM-memory contract and must not start
+        returning SHORT rows — a later short on the same ticker is a different
+        position, and mixing the two would feed a long's reviewers a short's
+        stop. Pass `action='SHORT'` for the mirrored lookup the stop-coverage
+        repair uses on an uncovered short.
+
+        Only opening actions (`BUY` / `SHORT`) are accepted. Anything else is
+        a caller bug and returns None rather than guessing.
+
+        Submitted-but-never-filled opens must not show up in PM memory, but a
         partial fill that later ended canceled or expired still created real
         exposure and should be surfaced.
 
         `include_in_flight=True` also accepts fill_status in
         ('submitted', 'pending_submit') — used by the stop-coverage repair
-        (audit round 2): a same-session BUY whose fill hasn't been reconciled
+        (audit round 2): a same-session open whose fill hasn't been reconciled
         yet is invisible under the executed predicate, so the repair either
-        no-op'd or read a MONTHS-OLD prior BUY's stop level in exactly the
-        crash/late-fill scenarios the belt exists for. An in-flight BUY's
+        no-op'd or read a MONTHS-OLD prior row's stop level in exactly the
+        crash/late-fill scenarios the belt exists for. An in-flight open's
         recorded stop_loss is precisely the reviewed intent the repair wants.
         PM-memory callers keep the strict default.
         """
+        opening = (action or "BUY").upper()
+        if opening not in _POSITION_OPEN_ACTIONS:
+            logger.warning(
+                "get_symbol_last_buy: refusing unknown opening action %r for %s",
+                action, symbol,
+            )
+            return None
         predicate = self._executed_trade_predicate()
         if include_in_flight:
             predicate = f"({predicate} OR fill_status IN ('submitted', 'pending_submit'))"
         with self._lock:
             row = self.conn.execute(
-                "SELECT * FROM trades WHERE symbol = ? AND action = 'BUY' "
+                "SELECT * FROM trades WHERE symbol = ? AND action = ? "
                 f"AND {predicate} "
                 "ORDER BY timestamp DESC, id DESC LIMIT 1",
-                (symbol,),
+                (symbol, opening),
             ).fetchone()
         return dict(row) if row else None
 

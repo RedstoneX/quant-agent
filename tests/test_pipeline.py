@@ -3867,30 +3867,37 @@ def test_reconcile_stop_coverage_skips_pending_flags_neither_when_covered():
     pipe.broker.snapshot_protective_stops.assert_any_call("SQQQ", side="buy")
 
 
-def test_reconcile_stop_coverage_flags_undercovered_short():
-    """The headline Stage 2 property for this reconciler: a short with a
-    real coverage gap is REPORTED, not silently skipped — but not
-    auto-repaired, because there is no BUY row to reconstruct its original
-    stop from (no order path can open a short yet)."""
+def test_reconcile_stop_coverage_repairs_undercovered_short():
+    """A short with a real coverage gap is reported AND repaired from the
+    SHORT row — the Stage 2 'flag only' line was false once SHORT became a
+    live opening action."""
     from types import SimpleNamespace
     pipe = TradingPipeline.__new__(TradingPipeline)
     pipe.broker = MagicMock()
     pipe.db = MagicMock()
     pipe.db.get_pending_protection_restores.return_value = []
+    pipe.db.get_symbol_last_buy.return_value = {"stop_loss": 220.0, "action": "SHORT"}
     pipe.broker.get_positions.return_value = [
         SimpleNamespace(symbol="TSLA", qty=-40.0),
     ]
     pipe.broker.snapshot_protective_stops.return_value = (
         True, [{"id": "s1", "qty": 25.0}],   # only 25 of 40 covered
     )
+    pipe.broker.get_latest_price.return_value = 200.0
+    pipe.broker.STOP_LIMIT_BUFFER_PCT = 0.03
+    pipe.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-1"}
 
     gaps = pipe._reconcile_stop_coverage()
     assert len(gaps) == 1
     assert gaps[0]["symbol"] == "TSLA"
     assert gaps[0]["held_qty"] == -40.0 and gaps[0]["covered_qty"] == 25.0
-    assert gaps[0]["repaired"] is False
+    assert gaps[0]["repaired"] is True
     pipe.broker.snapshot_protective_stops.assert_called_once_with("TSLA", side="buy")
-    pipe.broker._submit_stop_limit_order.assert_not_called()
+    kwargs = pipe.broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["side"] == "buy"
+    assert kwargs["qty"] == 15.0
+    assert kwargs["stop_price"] == 220.0
+    assert pipe.db.get_symbol_last_buy.call_args.kwargs.get("action") == "SHORT"
 
 
 # === Stage 1 (QAMC provider/model plumbing) — paper/live isolation ===

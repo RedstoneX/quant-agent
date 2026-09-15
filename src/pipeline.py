@@ -2874,16 +2874,13 @@ class TradingPipeline:
         audit of ACTUAL broker coverage. This reconciler closes that gap by
         reading broker truth directly.
 
-        Read-only for longs, auto-repairing for longs only (see
-        `_repair_stop_coverage` — it reconstructs the stop from the recorded
-        BUY row, which only exists for a long). A short's gap is still
-        detected and returned — Stage 1 made a held short visible to this
-        audit; leaving it unchecked would have made a naked short the ONE
-        risk state this reconciler can't see — but it is flagged rather than
-        repaired: no order path can open a short yet, so there is no
-        recorded entry row to reconstruct its original stop from, and
-        inventing a level here would be exactly the policy call this
-        reconciler has always refused to make for an unrecorded stop.
+        Auto-repairing for longs AND shorts (see `_repair_stop_coverage` —
+        it reconstructs the stop from the recorded opening row: BUY for a
+        long, SHORT for a short). Inventing a level is still refused when
+        that row has none; the SHORT row stores `stop_loss` the same way
+        BUY does, so the old "no recorded entry for a short" objection is
+        false.
+
         Symbols already queued for WAL recovery are skipped — the drain owns
         them. Returns the list of under-covered ``{symbol, held_qty,
         covered_qty, coverage, repaired}`` for the caller to surface to the
@@ -3037,9 +3034,8 @@ class TradingPipeline:
                         "failure, not the expected overnight lapse. Repairing.",
                         symbol, qty, covered,
                     )
-                    repaired = (
-                        False if is_short
-                        else self._repair_stop_coverage(symbol, held - covered)
+                    repaired = self._repair_stop_coverage(
+                        symbol, held - covered, is_short=is_short,
                     )
                     gap["repaired"] = repaired
                     if repaired:
@@ -3089,16 +3085,9 @@ class TradingPipeline:
                         "no WAL recovery row.", symbol, qty, covered,
                         "buy" if is_short else "sell",
                     )
-                if is_short:
-                    # No order path can open a short yet, so there is no BUY
-                    # trade row to reconstruct its original stop level from
-                    # (_repair_stop_coverage reads the last BUY). Flag it for
-                    # the operator; inventing a level would be exactly the
-                    # policy call this reconciler refuses to make for a long
-                    # too when the level is unknown.
-                    gap["repaired"] = False
-                else:
-                    gap["repaired"] = self._repair_stop_coverage(symbol, held - covered)
+                gap["repaired"] = self._repair_stop_coverage(
+                    symbol, held - covered, is_short=is_short,
+                )
                 gaps.append(gap)
         if (longs_checked or shorts_checked) and not gaps:
             logger.info(
@@ -3174,14 +3163,17 @@ class TradingPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.error("no-stop owner alert failed: %s", exc)
 
-    def _repair_stop_coverage(self, symbol: str, uncovered_qty: float) -> bool:
-        """Best-effort: re-place protective stop coverage on an uncovered long
-        using the stop level recorded on its last BUY. Returns True when the
-        gap was actually closed.
+    def _repair_stop_coverage(
+        self, symbol: str, uncovered_qty: float, *, is_short: bool = False,
+    ) -> bool:
+        """Best-effort: re-place protective stop coverage on an uncovered
+        position using the stop level recorded on its last opening row
+        (BUY for a long, SHORT for a short). Returns True when the gap
+        was actually closed.
 
         THE BODY MOVED to `src.execution.stop_repair.repair_stop_coverage`
         and this is now a delegate — see that module for the whole design,
-        including why the recorded BUY level is not a policy invention and
+        including why the recorded opening level is not a policy invention and
         why the fractional split needs no special case here. It moved
         because `src/coverage_watchdog.py` needs the SAME re-placement when
         it finds an uncovered sub-share remainder while the trading timers
@@ -3192,17 +3184,19 @@ class TradingPipeline:
         """
         from src.execution.stop_repair import repair_stop_coverage
 
+        opening = "SHORT" if is_short else "BUY"
         return repair_stop_coverage(
             broker=self.broker,
-            # include_in_flight: a same-session BUY still at fill_status=
+            # include_in_flight: a same-session open still at fill_status=
             # 'submitted' is the row whose stop we want — under the strict
             # executed predicate the repair either no-op'd or read a months-
-            # old prior BUY's stop level (audit round 2).
-            last_buy=lambda sym: self.db.get_symbol_last_buy(
-                sym, include_in_flight=True,
+            # old prior row's stop level (audit round 2).
+            last_buy=lambda sym, action=opening: self.db.get_symbol_last_buy(
+                sym, include_in_flight=True, action=action,
             ),
             symbol=symbol,
             uncovered_qty=uncovered_qty,
+            is_short=is_short,
         )
 
     def _submit_protected_sell(
