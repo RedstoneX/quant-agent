@@ -9,6 +9,7 @@ stream for exactly this. This suite proves the new dispatch logic without
 any real network I/O, using a fake `TradingStream` double.
 """
 import asyncio
+import threading
 import time
 from unittest.mock import patch, MagicMock
 
@@ -369,3 +370,157 @@ def test_the_terminal_wait_still_ignores_a_mere_new_event():
         status = b.wait_for_order_terminal("ord-1", timeout_seconds=0.2)
     assert status == "new"
     assert b.client.get_order_by_id.call_count == 1
+
+
+# ---------- HTTP 429 reconnect storm (alpaca-py #740) ----------
+#
+# Older TradingStream._run_forever retries a failed handshake every 10ms.
+# Alpaca allows one trade_updates connection per account, so a 429 then
+# logs thousands of times during a fill wait. The guard backs off; the
+# lock keeps a second wait from opening another socket.
+
+class _Fake429(Exception):
+    def __init__(self, retry_after=None):
+        super().__init__("HTTP 429 Too Many Requests")
+        self.status_code = 429
+        if retry_after is not None:
+            self.headers = {"retry-after": str(retry_after)}
+
+
+def test_reconnect_delay_honors_server_retry_after():
+    from src.execution.broker import _trading_stream_reconnect_delay
+    exc = _Fake429(retry_after=12)
+    assert _trading_stream_reconnect_delay(1, exc) == 12.0
+    assert _trading_stream_reconnect_delay(9, exc) == 12.0
+
+
+def test_reconnect_delay_grows_then_caps_without_retry_after():
+    from src.execution.broker import _equal_jitter_backoff
+    d1 = _equal_jitter_backoff(1, 1.0, 30.0)
+    d2 = _equal_jitter_backoff(2, 1.0, 30.0)
+    d_hi = _equal_jitter_backoff(8, 1.0, 30.0)
+    assert 0.5 <= d1 <= 1.0
+    assert 1.0 <= d2 <= 2.0
+    assert 15.0 <= d_hi <= 30.0
+
+
+def test_stream_http_status_reads_429_from_exc_and_message():
+    from src.execution.broker import _stream_http_status
+    typed = _Fake429()
+    assert _stream_http_status(typed) == 429
+    assert _stream_http_status(Exception("HTTP 429 Too Many Requests")) == 429
+    assert _stream_http_status(ConnectionError("timed out")) is None
+
+
+def test_guarded_handshake_does_not_tight_loop_on_429():
+    """Old SDK shape: except + 10ms sleep. With Retry-After 0.2s the
+    guarded `_start_ws` itself waits, so a 0.5s window cannot issue
+    dozens of handshakes."""
+    from src.execution.broker import _install_trading_stream_reconnect_guard
+
+    attempts = {"n": 0}
+
+    class Stream:
+        _should_run = True
+
+        async def _start_ws(self):
+            attempts["n"] += 1
+            raise _Fake429(retry_after=0.2)
+
+        async def stop_ws(self):
+            self._should_run = False
+
+    stream = Stream()
+    _install_trading_stream_reconnect_guard(stream)
+
+    async def _old_sdk_loop(duration: float) -> None:
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline and stream._should_run:
+            try:
+                await stream._start_ws()
+                return
+            except _Fake429:
+                await asyncio.sleep(0.01)
+
+    asyncio.run(_old_sdk_loop(0.5))
+    # Unguarded: ~50 attempts. Guarded: one handshake, ~0.2s wait, another.
+    assert 1 <= attempts["n"] <= 4
+
+
+def test_guard_stop_interrupts_backoff_wait():
+    from src.execution.broker import _install_trading_stream_reconnect_guard
+
+    class Stream:
+        _should_run = True
+
+        async def _start_ws(self):
+            raise _Fake429(retry_after=30)
+
+        async def stop_ws(self):
+            self._should_run = False
+
+    stream = Stream()
+    _install_trading_stream_reconnect_guard(stream)
+
+    async def _fail_then_stop():
+        task = asyncio.create_task(stream._start_ws())
+        await asyncio.sleep(0.05)
+        await stream.stop_ws()
+        with pytest.raises(_Fake429):
+            await task
+
+    start = time.monotonic()
+    asyncio.run(_fail_then_stop())
+    assert time.monotonic() - start < 2.0, "stop() must not wait out Retry-After"
+
+
+@patch("src.execution.broker.TradingStream")
+def test_fill_still_arrives_when_reconnect_guard_wraps_start_ws(mock_stream_cls):
+    """Installing the guard on a stream that actually has `_start_ws` must
+    not swallow a matching fill."""
+
+    class StreamWithStart(_FakeTradingStream):
+        async def _start_ws(self):
+            return
+
+    mock_stream_cls.side_effect = lambda *a, **k: StreamWithStart(
+        *a, updates=[_FakeUpdate("order-1", "filled")], **k,
+    )
+    status = _broker().wait_for_order_terminal("order-1", timeout_seconds=10.0)
+    assert status == "filled"
+
+
+@patch("src.execution.broker.TradingStream")
+def test_concurrent_wait_does_not_open_a_second_stream(mock_stream_cls):
+    """A second fill-wait while the first stream is live must REST-poll
+    rather than handshake another trade_updates socket."""
+    started = threading.Event()
+
+    class HangStream(_FakeTradingStream):
+        def run(self):
+            started.set()
+            super().run()
+
+    mock_stream_cls.side_effect = lambda *a, **k: HangStream(
+        *a, hang=True, **k,
+    )
+    broker = _broker()
+    broker.client.get_order_by_id.return_value = MagicMock(status="new")
+
+    first = threading.Thread(
+        target=lambda: broker.wait_for_order_terminal(
+            "order-a", timeout_seconds=1.0,
+        ),
+        daemon=True,
+    )
+    first.start()
+    assert started.wait(timeout=2.0), "first stream never started"
+    status = broker.wait_for_order_terminal(
+        "order-b", timeout_seconds=2.0, poll_interval=0.0,
+    )
+    first.join(timeout=3.0)
+
+    assert mock_stream_cls.call_count == 1
+    assert status == "new"
+    assert broker.client.get_order_by_id.called
+

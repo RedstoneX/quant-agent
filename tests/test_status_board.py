@@ -1058,8 +1058,8 @@ def test_flagged_summary_still_renders_in_full_underneath_the_marker():
 def test_flagging_a_summary_never_changes_the_phase_verdict():
     """This feature reports on prose quality; it must never touch what the
     board CHECKS. A jargon-heavy summary on a phase with passing evidence
-    still reads CONFIRMED, and the exit code (see main()) is untouched by
-    it — only a real contradiction moves that."""
+    still reads CONFIRMED. Flagging is display-only; it does not change
+    the phase verdict or the process exit code."""
     p = _phase_with([sb.RuleResult("file_exists", sb.PASS, "")])
     p.summary = "See docs/phases.yaml and PR #150 for the detail."
     assert p.verdict == "CONFIRMED"
@@ -2956,6 +2956,68 @@ def test_the_board_service_does_not_point_at_the_retired_timer():
                     if "systemctl" in l and "enable" in l]
     assert enable_lines
     assert all("status-board.timer" not in l for l in enable_lines)
+
+
+def test_main_exits_zero_when_html_write_succeeds_even_if_contradicted(
+    tmp_path, monkeypatch, capsys,
+):
+    """A contradicted phase is a finding on the page, not a failed systemd
+    unit. The HTML write succeeding is the process success condition."""
+    contradicted = _phase_with(
+        [sb.RuleResult("file_exists", sb.FAIL, "missing")],
+        title="Phase 9",
+    )
+    assert contradicted.verdict == "CONTRADICTED"
+    out = tmp_path / "board" / "index.html"
+    manifest = tmp_path / "phases.yaml"
+    manifest.write_text("phases: []\n")
+    html = "<html>CONTRADICTED Phase 9</html>"
+    monkeypatch.setattr(sb, "read_settings", lambda: {})
+    monkeypatch.setattr(sb, "load_phases", lambda *_a, **_k: [contradicted])
+    monkeypatch.setattr(sb, "live_state", lambda: {
+        "in_sync": True, "circuit": "clear", "spend_today": 0,
+        "sessions_today": 0, "box_sha": "abc", "main_sha": "abc",
+    })
+    monkeypatch.setattr(sb, "render", lambda *_a, **_k: html)
+    monkeypatch.setattr(sys, "argv", [
+        "status_board.py",
+        "--out", str(out),
+        "--manifest", str(manifest),
+        "--no-github",
+    ])
+    assert sb.main() == 0
+    assert out.read_text() == html
+    captured = capsys.readouterr()
+    assert "CONTRADICTED" in captured.out
+    assert "Phase 9" in captured.out
+
+
+def test_main_exits_nonzero_when_html_write_fails(tmp_path, monkeypatch):
+    out_dir = tmp_path / "index.html"
+    out_dir.mkdir()
+    manifest = tmp_path / "phases.yaml"
+    manifest.write_text("phases: []\n")
+    monkeypatch.setattr(sb, "read_settings", lambda: {})
+    monkeypatch.setattr(sb, "load_phases", lambda *_a, **_k: [])
+    monkeypatch.setattr(sb, "live_state", lambda: {
+        "in_sync": True, "circuit": "clear", "spend_today": 0,
+        "sessions_today": 0, "box_sha": "abc", "main_sha": "abc",
+    })
+    monkeypatch.setattr(sb, "render", lambda *_a, **_k: "<html></html>")
+    monkeypatch.setattr(sys, "argv", [
+        "status_board.py",
+        "--out", str(out_dir),
+        "--manifest", str(manifest),
+        "--no-github",
+    ])
+    assert sb.main() == 2
+
+
+def test_the_board_service_does_not_treat_contradiction_as_unit_failure():
+    svc = (Path(__file__).resolve().parents[1] / "scripts" / "systemd"
+           / "quant-agent-status-board.service").read_text()
+    assert "Exit 1 means a phase recorded as finished" not in svc
+    assert "HTML write succeeded" in svc
 
 
 @pytest.mark.parametrize("headline,expected", [

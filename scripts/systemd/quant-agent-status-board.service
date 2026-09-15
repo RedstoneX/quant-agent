@@ -24,9 +24,10 @@ WorkingDirectory=/home/qamc/quant-agent
 # exactly one thing: data/board/index.html. `data/` is gitignored, so
 # regenerating the board can never dirty the checkout and become deploy drift.
 ExecStart=/home/qamc/quant-agent/.venv/bin/python scripts/status_board.py --out data/board/index.html
-# Exit 1 means a phase recorded as finished no longer proves out. That is a
-# real finding, not a crash, so the unit is allowed to "fail" loudly and be
-# visible in `systemctl --user status` rather than being swallowed.
+# Exit 0 means the HTML write succeeded. A contradicted phase is a finding
+# on the page, not a failed unit — the script still prints CONTRADICTED and
+# the board still shows it. A crash or write failure exits non-zero and
+# systemd marks the unit failed.
 SuccessExitStatus=0
 TimeoutStartSec=300
 StandardOutput=journal

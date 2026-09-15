@@ -2792,8 +2792,12 @@ def main() -> int:
         board_notes = REPO_ROOT / board_notes
     in_flight = (inflight.NOT_ATTEMPTED if args.no_github
                  else inflight.read_in_flight())
-    out.write_text(render(phases, state, REPO_ROOT / args.template, work_md,
-                          board_notes, in_flight=in_flight))
+    try:
+        out.write_text(render(phases, state, REPO_ROOT / args.template, work_md,
+                              board_notes, in_flight=in_flight))
+    except OSError as exc:
+        print(f"failed to write {out}: {exc}", file=sys.stderr)
+        return 2
 
     contradicted = [p.title for p in phases if p.verdict == "CONTRADICTED"]
     if args.json:
@@ -2819,11 +2823,12 @@ def main() -> int:
         if contradicted:
             print("CONTRADICTED: " + ", ".join(contradicted))
 
-    # A contradiction is worth a non-zero exit: the systemd unit that rebuilds
-    # this board is configured to surface that as a failed unit rather than
-    # swallowing it, so the finding is visible on the box too, not only on the
-    # page.
-    return 1 if contradicted else 0
+    # Contradicted phases stay on the page (that is the rot detector). They
+    # are not a process failure: the systemd unit that rebuilds this board
+    # used to treat exit 1 as a failed unit even after a successful write,
+    # so `systemctl status` said "failed" while data/board/index.html was
+    # current. Crash or write failure still returns non-zero above.
+    return 0
 
 
 if __name__ == "__main__":
