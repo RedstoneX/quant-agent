@@ -29,32 +29,13 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 
-def _read_recorded_entry(
-    last_buy: Callable[..., dict | None],
-    symbol: str,
-    *,
-    action: str,
-) -> dict:
-    """Call `last_buy` with the opening action when the callable accepts it.
-
-    Repair callers bind BUY vs SHORT themselves; older 1-arg test doubles
-    still work. A TypeError from an unexpected `action` kwarg falls back to
-    the 1-arg form rather than inventing a level.
-    """
-    try:
-        row = last_buy(symbol, action=action)
-    except TypeError:
-        row = last_buy(symbol)
-    return row or {}
-
-
 def repair_stop_coverage(
     *,
     broker: Any,
     last_buy: Callable[..., dict | None],
     symbol: str,
     uncovered_qty: float,
-    is_short: bool = False,
+    is_short: bool,
 ) -> bool:
     """Best-effort: re-place protective stop coverage on an uncovered
     position using the stop level recorded on its last opening row (BUY for
@@ -102,7 +83,7 @@ def repair_stop_coverage(
     opening = "SHORT" if is_short else "BUY"
     protective_side = "buy" if is_short else "sell"
     try:
-        entry = _read_recorded_entry(last_buy, symbol, action=opening)
+        entry = last_buy(symbol, action=opening) or {}
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "coverage repair: last-%s lookup failed for %s: %s",

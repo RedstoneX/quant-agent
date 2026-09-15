@@ -15,7 +15,9 @@ A test that only checks "the gap is flagged" is not enough: a BUY-only lookup
 or a sell-only place path can still leave a short naked while the long tests
 stay green. The short cases below require the SHORT row's stop and side="buy".
 """
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
@@ -132,6 +134,29 @@ def test_covered_long_needs_no_repair():
     p = _pipeline(covered=31.0)
     assert p._reconcile_stop_coverage() == []
     p.broker._submit_protective_stop_retrying.assert_not_called()
+
+
+def test_fractional_remainder_on_a_short_is_repaired_with_a_buy_stop():
+    """The session sweep has two repair call sites: whole-gap and the
+    fractional remainder. Naked-short tests only hit the first. Dropping
+    ``is_short`` on the fractional caller would read the BUY row, place a
+    SELL stop against a short, and stamp repaired=True (silent). This is
+    that branch: GTC buy-stop intact, sub-share remainder missing, market
+    open."""
+    p = _pipeline(
+        held_qty=-40.4, covered=40.0, price=200.0, symbol="TSLA",
+        last_buy=_opening_lookup(BUY=180.0, SHORT=220.0),
+    )
+    p.broker._submit_protective_stop_retrying.return_value = {"id": "buy-stop-frac"}
+    with patch("src.pipeline._market_is_open_now", return_value=True):
+        gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is True
+    assert gaps[0]["coverage"] == "fractional_replaced"
+    kwargs = p.broker._submit_protective_stop_retrying.call_args.kwargs
+    assert kwargs["side"] == "buy"
+    assert kwargs["stop_price"] == 220.0
+    assert abs(kwargs["qty"] - 0.4) < 1e-9
+    assert p.db.get_symbol_last_buy.call_args.kwargs.get("action") == "SHORT"
 
 
 def test_naked_short_is_repaired_from_the_recorded_short_stop():
@@ -296,3 +321,41 @@ def test_naked_short_repair_through_a_real_short_row(tmp_path):
     assert kwargs["side"] == "buy"
     assert kwargs["stop_price"] == 220.0
     assert kwargs["qty"] == 40.0
+
+
+def test_one_arg_last_buy_cannot_repair_a_short_from_a_stale_long_stop():
+    """A last_buy that does not accept action= must fail closed, not fall
+    back to a long's stop and place it as a buy-stop on a short. A $270
+    long stop against a $200 short would pass the short-side price guard
+    (it sits above the tape) and stamp the gap repaired."""
+    from src.execution.stop_repair import repair_stop_coverage
+
+    broker = MagicMock()
+    broker.get_latest_price.return_value = 200.0
+    broker.STOP_LIMIT_BUFFER_PCT = 0.03
+
+    def _one_arg(_symbol):
+        return {"stop_loss": 270.0}
+
+    out = repair_stop_coverage(
+        broker=broker, last_buy=_one_arg, symbol="TSLA",
+        uncovered_qty=40.0, is_short=True,
+    )
+    assert out is False
+    broker._submit_protective_stop_retrying.assert_not_called()
+
+
+def test_repair_stop_coverage_refuses_to_guess_direction():
+    """Direction is not a default. Omitting is_short must fail closed
+    rather than silently take the long path."""
+    from src.execution.stop_repair import repair_stop_coverage
+
+    broker = MagicMock()
+    with pytest.raises(TypeError):
+        repair_stop_coverage(
+            broker=broker,
+            last_buy=lambda s, action="BUY": {"stop_loss": 140.0},
+            symbol="NVDA",
+            uncovered_qty=10.0,
+        )
+    broker._submit_protective_stop_retrying.assert_not_called()

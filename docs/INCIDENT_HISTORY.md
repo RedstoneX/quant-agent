@@ -22,9 +22,55 @@ what would catch it next time.
 
 ---
 
+### 2026-09-15 — a short that lost its protective stop was never given one back (WORK.md item 73, CLOSED)
+
+**In plain words:** if the desk bets against a stock and the protective order
+on that bet goes missing, nothing put it back. The same gap on a stock the
+desk owns was already repaired automatically. Both repair checks noticed the
+short's gap, wrote it down, and walked away.
+
+**Cause.** Four long-only leftovers from when shorts could not be opened, all
+still live after SHORT became a real opening action. The lookup that finds
+"where should this stop sit" only read purchase rows. The repair itself always
+placed a sell-stop and refused if that stop was at or above the live price —
+correct for a long, the wrong side and the wrong guard for a short. The
+session sweep and the half-hourly coverage check both skipped shorts on the
+false claim that there was no recorded level to restore. There was: the short
+entry row already stores the stop the same way a purchase does.
+
+**Fix.** The lookup can now read a short entry without changing what
+purchase-memory callers see. Repair places a buy-stop at that recorded level,
+refuses if the stop would fire immediately (at or below the live price), and
+uses the same stop-limit buffer the entry path already uses, on the ask side
+of a buy-stop. Both repair callers invoke it. Direction is a required
+argument, not a long default. A lookup that cannot say "this is a short row"
+fails closed rather than silently using a purchase's stop. No new percentage
+was invented, and nothing here re-pegs an entry.
+
+**What this does not close.** When a stop is later trailed, the desk's own
+record of it is still not updated (item 71). Repair restores the *entry* stop,
+the same as it already did for longs. A winning long whose live stop had been
+tightened can therefore be re-protected wider than it actually was; a short
+does not currently trail in-code at all (the trail path still asks only for a
+purchase row), so the same widened-restore case on a short can arise only from
+an out-of-band change. That is item 71, and a separate long-bias in trailing,
+not a reason to leave shorts naked. Adding to an existing short is still not
+the long scale-in path: that sequence cancels a sell-stop, buys, and rearms;
+a short add would have to cancel and rearm a buy-stop, which was not built
+there.
+
+**What would catch it next time.** A test that removes a short's stop and
+asserts a buy-stop comes back at the short row's own level, a test that a
+purchase-only lookup cannot repair a short, and a test that a sub-share
+remainder on a short (whole-share buy-stop intact) still places a buy-stop
+from the short row. Those fail if any one of the repair sites is left
+long-biased.
+
+---
+
 ### 2026-09-15 — adding to a winner is allowed by taking its protective sell off first, confirming it is gone, buying, then putting one sell back over the whole holding
 
-**In plain words:** the broker will not let the desk buy more of a stock that already has a sell-stop resting on it. The old answer was to refuse the add. The owner ruled that is the wrong answer. The desk now takes the stop off, waits until the broker says it is actually gone, buys, and then places one new stop over however many shares it really holds — including a partial fill of the add. If putting that stop back fails, you are told. It does not add to a stock it is already short until the separate short-repair fault is fixed.
+**In plain words:** the broker will not let the desk buy more of a stock that already has a sell-stop resting on it. The old answer was to refuse the add. The owner ruled that is the wrong answer. The desk now takes the stop off, waits until the broker says it is actually gone, buys, and then places one new stop over however many shares it really holds — including a partial fill of the add. If putting that stop back fails, you are told. It does not add to a stock it is already short: scale-in is the long path.
 
 **Why refuse-the-add was wrong.** A resting protective sell and a new buy cannot both be working on the same name. Silent refusal looked like safety and was actually a hidden cap on adding to winners. Path B is the sequence, not a new kind of order and not a profit target.
 
@@ -34,7 +80,7 @@ what would catch it next time.
 
 **What is still unprotected, stated rather than hidden.** Between confirmed cancel and successful rearm the position has no stop. A crash in that window is recovered from the write-ahead row, not prevented. That is the cost of adding at this broker. A failed rearm pages the owner rather than going quiet.
 
-**Shorts are out of this change.** A missing buy-stop on a short is not repaired today (board item 73). Adding to an existing short would have to cancel that buy-stop, and putting it back is the thing item 73 has not fixed. New shorts on a name the desk does not already hold are unchanged.
+**Shorts are out of this change.** Scale-in is the long path (cancel a sell-stop, buy, rearm). A short add would cancel a buy-stop and rearm it; that sequence was not built here. Missing short stops are repaired separately (item 73, closed). New shorts on a name the desk does not already hold are unchanged.
 
 ---
 

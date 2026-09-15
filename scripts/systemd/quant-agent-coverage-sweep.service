@@ -13,7 +13,8 @@ WorkingDirectory=/home/qamc/quant-agent
 # exchange calendar says the session is OPEN, it re-places the protective
 # stop over any shares the broker is not watching — the same
 # src.execution.stop_repair.repair_stop_coverage a normal session calls, at
-# the level recorded on the position's own BUY. It never sells, resizes,
+# the level recorded on the position's own last opening row (BUY for a
+# long, SHORT for a short). It never sells, resizes,
 # closes or cancels anything, and it makes no LLM call.
 #
 # It exists because a fractional remainder can only carry a DAY stop (the

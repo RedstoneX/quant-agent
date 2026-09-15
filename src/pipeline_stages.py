@@ -5896,15 +5896,14 @@ class ExecutionStage:
                     if short_add_is_blocked(positions, decision.symbol):
                         logger.warning(
                             "SHORT %s skipped: adding to an existing short is "
-                            "blocked until short stop-repair (item 73) lands",
+                            "not built — scale-in is the long path",
                             decision.symbol,
                         )
                         _record_execution_skip(
                             pipeline, ctx, decision.symbol,
-                            "short_add_blocked_until_stop_repair",
-                            "adding to a short is blocked until short "
-                            "stop-repair lands — a missing BUY stop on a "
-                            "short is not repaired today",
+                            "short_add_blocked",
+                            "adding to a short is not built — scale-in "
+                            "cancels and rearms a sell-stop, not a buy-stop",
                         )
                         continue
 
@@ -6457,7 +6456,7 @@ class ExecutionStage:
                 # cancel that sell, confirm the cancel via trade_updates,
                 # then submit. WAL is written first so a crash cannot leave
                 # the position naked without a recovery row. Short adds are
-                # blocked above until item 73.
+                # blocked above: scale-in is the long path.
                 if not is_short:
                     from src.execution.scale_in import prepare_long_add
                     add_prep = prepare_long_add(

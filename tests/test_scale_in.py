@@ -7,7 +7,8 @@ refuse-adds and that killed the daily-breaker's cancel-restore window:
     not assumed from cancel_order_by_id returning;
   * a partial fill of the add rearms at the broker's FULL position qty;
   * rearm failure pages the owner and does not go quiet;
-  * short adds are blocked until item 73;
+  * short adds are blocked (scale-in is the long path; item 73 closed
+    the missing-buy-stop repair, not short adds);
   * execution.repeg_enabled stays false.
 """
 from __future__ import annotations
@@ -353,7 +354,7 @@ def test_short_add_is_recorded_as_blocked_until_item_73():
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
     assert orders == []
     pipeline.broker.submit_order.assert_not_called()
-    assert ctx.execution_skips[0]["reason"] == "short_add_blocked_until_stop_repair"
+    assert ctx.execution_skips[0]["reason"] == "short_add_blocked"
 
 
 # --------------------------------------------------------------------------
