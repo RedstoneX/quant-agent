@@ -40,6 +40,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from src.api.diary_pages import ensure_diary_dir
 from src.api.routes_evidence import router as evidence_router
 from src.api.routes_history import router as history_router
 from src.api.routes_journal import router as journal_router
@@ -61,6 +62,11 @@ _COCKPIT_DIR = Path(__file__).parent / "static_cockpit"
 # is gitignored precisely so machine-written files cannot become deploy drift.
 _BOARD_DIR = Path(__file__).resolve().parents[2] / "data" / "board"
 _BOARD_FILE = _BOARD_DIR / "index.html"
+
+# Desk diary — same gitignored `data/` posture as `/board`. Dated HTML
+# pages are written on the live box; this process only serves them.
+# `/diary` is a StaticFiles mount (html=True) so `/diary` and `/diary/`
+# both resolve to index.html. GET-only middleware still covers it.
 
 # Same production checkout `scripts/status_board.py` reads its own "box_sha"
 # from (see PROD_CHECKOUT there). Duplicated as a plain constant rather than
@@ -262,6 +268,17 @@ def create_app() -> FastAPI:
     if _COCKPIT_DIR.is_dir():
         # Stage 6 cockpit — same static-assets-only posture as /ui above.
         app.mount("/cockpit", StaticFiles(directory=str(_COCKPIT_DIR), html=True), name="cockpit")
+
+    # Desk diary — gitignored `data/diary/`, same StaticFiles+html posture
+    # as /ui and /cockpit. ensure_diary_dir() creates the folder and a
+    # placeholder index when nothing has been written yet, so the mount
+    # never 500s on a fresh box. Listing rebuild:
+    # `python scripts/rebuild_desk_diary_index.py`.
+    app.mount(
+        "/diary",
+        StaticFiles(directory=str(ensure_diary_dir()), html=True),
+        name="diary",
+    )
 
     # The human status board (`scripts/status_board.py`, rebuilt by the
     # quant-agent-status-board.path unit whenever docs/WORK.md, docs/phases.yaml

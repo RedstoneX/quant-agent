@@ -352,3 +352,92 @@ def test_cockpit_static_mount_is_get_only_and_has_no_path_traversal():
 
     traversal_resp = client.get("/cockpit/../server.py")
     assert traversal_resp.status_code in (403, 404)
+
+
+def test_diary_static_mount_is_get_only_and_serves_without_entries():
+    """``/diary`` is a read-only StaticFiles mount over gitignored
+    ``data/diary/``. An empty or missing folder must still 200 (placeholder
+    index), and GET-only middleware must cover it the same way as /ui.
+    CI must not require a real diary page to exist.
+    """
+    from fastapi.testclient import TestClient
+
+    from src.api.server import app
+
+    client = TestClient(app)
+
+    assert client.post("/diary/").status_code == 405
+    assert client.put("/diary/index.html").status_code == 405
+    assert client.delete("/diary/index.html").status_code == 405
+
+    get_slash = client.get("/diary/")
+    assert get_slash.status_code == 200
+    assert "text/html" in get_slash.headers.get("content-type", "")
+
+    get_bare = client.get("/diary")
+    assert get_bare.status_code == 200
+
+    traversal_resp = client.get("/diary/../server.py")
+    assert traversal_resp.status_code in (403, 404)
+
+
+def test_diary_mount_survives_missing_directory(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from src.api import server as api_server
+
+    missing = tmp_path / "no-such-diary"
+    assert not missing.exists()
+    monkeypatch.setattr("src.api.diary_pages.DIARY_DIR", missing)
+
+    app = api_server.create_app()
+    client = TestClient(app)
+    resp = client.get("/diary/")
+    assert resp.status_code == 200
+    assert "No diary entries yet" in resp.text
+    assert client.get("/board").status_code == 200
+    assert client.get("/cockpit/index.html").status_code == 200
+    assert client.get("/ui/index.html").status_code == 200
+    assert client.get("/").json()["service"] == "qamc-mission-control-api"
+
+
+def test_rebuild_desk_diary_index_lists_newest_first(tmp_path):
+    from src.api.diary_pages import rebuild_diary_index
+
+    diary = tmp_path / "diary"
+    diary.mkdir()
+    (diary / "2026-09-01.html").write_text("<h1>older</h1>", encoding="utf-8")
+    (diary / "2026-09-15.html").write_text("<h1>newer</h1>", encoding="utf-8")
+    (diary / "notes.html").write_text("ignore me", encoding="utf-8")
+    (diary / "not-a-date.html").write_text("ignore me too", encoding="utf-8")
+
+    index = rebuild_diary_index(diary)
+    text = index.read_text(encoding="utf-8")
+    assert "2026-09-15.html" in text
+    assert "2026-09-01.html" in text
+    assert text.index("2026-09-15") < text.index("2026-09-01")
+    assert "notes.html" not in text
+    assert "not-a-date.html" not in text
+
+
+def test_rebuild_desk_diary_index_empty_folder_is_placeholder(tmp_path):
+    from src.api.diary_pages import rebuild_diary_index
+
+    diary = tmp_path / "diary"
+    index = rebuild_diary_index(diary)
+    assert "No diary entries yet" in index.read_text(encoding="utf-8")
+
+
+def test_cockpit_homepage_links_to_desk_diary():
+    """The committed /cockpit bundle must expose Desk diary → /diary/
+    so the owner does not have to type the URL. Catches a forgotten
+    frontend rebuild after editing TopStrip.
+    """
+    cockpit = REPO_ROOT / "src" / "api" / "static_cockpit"
+    blob = []
+    for path in cockpit.rglob("*"):
+        if path.suffix in {".js", ".html", ".css"}:
+            blob.append(path.read_text(encoding="utf-8", errors="ignore"))
+    text = "\n".join(blob)
+    assert "Desk diary" in text
+    assert "/diary/" in text
