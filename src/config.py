@@ -394,10 +394,12 @@ class ExecutionConfig(BaseModel):
     """
 
     max_entry_slippage_bps: float = Field(default=40.0, gt=0, le=500)
-    """Max basis points above the verified reference price an entry limit may
-    sit. When the displayed offer is already beyond this, the BUY is skipped
-    with reason `slippage_gated` rather than submitted as an unfillable
-    order."""
+    """Max basis points of adverse excursion from the verified reference
+    price an entry limit may sit. A BUY limit is capped this far above the
+    reference; a SHORT limit is floored this far below it — the same bound,
+    opposite side (fillability parity, not a second risk budget). When the
+    displayed quote is already beyond this, the entry is skipped with
+    reason `slippage_gated` rather than submitted as an unfillable order."""
 
     repeg_enabled: bool = False
     """Master switch for the single-shot entry reprice. OFF by default so

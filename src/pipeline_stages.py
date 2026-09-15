@@ -90,14 +90,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Ceiling on how far above the verified reference price an entry limit may
-#: be placed, in basis points. Raised from a hardcoded 25 to a configurable 40
-#: on 2026-08-27 after VLO proved 25bp is tighter than a normal market open:
-#: the ask was 28bp above the reference within seconds of 09:30, so the cap
-#: produced an unfillable limit and no trade. 40bp still refuses to pay
-#: through a genuinely abnormal book — a gap, a halt reopen, a fat spread —
-#: while tolerating ordinary opening drift. Override in `settings.yaml` under
-#: `execution.max_entry_slippage_bps`.
+#: Adverse-excursion bound on an entry limit, in basis points from the
+#: verified reference. A BUY ceiling sits this far *above* the reference; a
+#: SHORT floor sits this far *below* it — the same number, opposite side.
+#: This is fillability parity, not a second risk budget. Raised from a
+#: hardcoded 25 to a configurable 40 on 2026-08-27 after VLO proved 25bp is
+#: tighter than a normal market open: the ask was 28bp above the reference
+#: within seconds of 09:30, so the cap produced an unfillable limit and no
+#: trade. 40bp still refuses to pay through a genuinely abnormal book — a
+#: gap, a halt reopen, a fat spread — while tolerating ordinary opening
+#: drift. Override in `settings.yaml` under `execution.max_entry_slippage_bps`.
 MAX_ENTRY_SLIPPAGE_BPS = 40.0
 
 #: Share of resolved tech analyses (or of the fetch universe, for the bars
@@ -623,12 +625,32 @@ def _alert_rotation_buy_leg_missing(*, rotation: dict, detail: str) -> None:
         logger.error("rotation buy-leg owner alert failed: %s", exc)
 
 
+def _entry_slippage_bps(pipeline) -> float:
+    """Configured entry-limit bound in basis points, or the 40bp default.
+
+    One helper, two sides: BUY uses this as a ceiling above the reference,
+    SHORT as a floor below it. MagicMock configs (common in tests) must not
+    read as a real bps value — same isinstance convention as `_repeg_settings`.
+    """
+    raw = getattr(
+        getattr(pipeline.config, "execution", None),
+        "max_entry_slippage_bps", None,
+    )
+    if (
+        isinstance(raw, (int, float))
+        and not isinstance(raw, bool)
+        and raw > 0
+    ):
+        return float(raw)
+    return MAX_ENTRY_SLIPPAGE_BPS
+
+
 def _repeg_settings(pipeline) -> tuple[float, float] | None:
     """(poll_seconds, slippage_bps), or None when re-peg is off.
 
     Returns None — feature disabled — for anything other than an explicit
     `repeg_enabled is True`. The isinstance guards are the same convention as
-    the slippage-cap read above: ~58 tests build the pipeline with a MagicMock
+    `_entry_slippage_bps`: ~58 tests build the pipeline with a MagicMock
     config whose auto-attributes are truthy, and a MagicMock must never read
     as "yes, replace live orders".
     """
@@ -643,14 +665,7 @@ def _repeg_settings(pipeline) -> tuple[float, float] | None:
         and 0 < raw_poll <= 30
         else 5.0
     )
-    raw_bps = getattr(execution_cfg, "max_entry_slippage_bps", None)
-    bps = (
-        float(raw_bps)
-        if isinstance(raw_bps, (int, float)) and not isinstance(raw_bps, bool)
-        and raw_bps > 0
-        else MAX_ENTRY_SLIPPAGE_BPS
-    )
-    return poll, bps
+    return poll, _entry_slippage_bps(pipeline)
 
 
 #: Plain-language endings for the single-shot reprice, keyed by the
@@ -5941,30 +5956,34 @@ class ExecutionStage:
                     )
                     continue
 
-                # Liquid-equity execution policy: cross the displayed offer
-                # with a limit (never a market order), padded by 5 bps for a
-                # moving quote but hard-capped 25 bps above the verified
-                # reference. A wider spread therefore remains price-protected
-                # and may expire after the bounded entry window instead of
-                # paying through an abnormal book. If quote data is degraded,
-                # retain the validated last/PM limit and the same bounded wait.
+                # Liquid-equity execution policy: cross the displayed quote
+                # with a limit (never a market order). A wider spread remains
+                # price-protected and may expire after the bounded entry
+                # window instead of paying through an abnormal book. If quote
+                # data is degraded, retain the validated last/PM limit and
+                # the same bounded wait.
                 #
-                # Stage 3: this whole NBBO/ask marketable-limit refinement is
-                # BUY-only (`not is_short` below) — it is written
-                # asymmetrically for a BUY crossing the displayed OFFER with
-                # a bounded ceiling, and mirroring it precisely for a SHORT
-                # (crossing the BID, flooring instead of capping) is a
-                # self-contained execution-quality task, not one of this
-                # stage's architecture decisions. A SHORT still gets the
-                # same >5% stale-entry protection and the same direction-
-                # aware raise/lower-to-market adjustment just above — it
-                # only forgoes the tighter NBBO-aware ceiling a BUY gets.
+                # Fillability parity, not a new risk budget: BUY crosses the
+                # displayed OFFER with a ceiling `reference * (1 + bps/1e4)`;
+                # SHORT crosses the displayed BID with the same
+                # `max_entry_slippage_bps` as a floor
+                # `reference * (1 - bps/1e4)`. A SHORT still keeps the >5%
+                # stale-entry skip and the direction-aware lower-to-market
+                # adjustment just above; this block only adds the NBBO-aware
+                # floor a BUY already had as a ceiling. Repeg stays off —
+                # walking a short toward the buy-side ceiling would worsen
+                # it, not fix an unmarketable birth price.
                 try:
                     quote = pipeline.broker.get_latest_quote(decision.symbol)
                 except Exception as e:  # noqa: BLE001
-                    logger.warning("BUY %s quote lookup failed: %s", decision.symbol, e)
+                    logger.warning(
+                        "%s %s quote lookup failed: %s",
+                        decision.action, decision.symbol, e,
+                    )
                     quote = None
                 ask = quote.get("ask_price") if isinstance(quote, dict) else None
+                bid = quote.get("bid_price") if isinstance(quote, dict) else None
+                slippage_bps = _entry_slippage_bps(pipeline)
                 if not is_short and isinstance(ask, (int, float)) and ask > 0:
                     # The protection cap and the offer are two different
                     # numbers, and when they disagree the ORDER CANNOT FILL.
@@ -5983,18 +6002,6 @@ class ExecutionStage:
                     # an abnormal book at the open is how you pay 3% for a
                     # 0.3% idea. What changes is that an unfillable order is
                     # now a DECISION with a reason, not a doomed submission.
-                    # isinstance-guarded: ~58 tests build the pipeline with a
-                    # MagicMock config, whose auto-attributes are truthy and
-                    # would blow up float(). Same convention as `_sweeper`.
-                    _cfg = getattr(
-                        getattr(pipeline.config, "execution", None),
-                        "max_entry_slippage_bps", None,
-                    )
-                    slippage_bps = (
-                        float(_cfg)
-                        if isinstance(_cfg, (int, float)) and _cfg > 0
-                        else MAX_ENTRY_SLIPPAGE_BPS
-                    )
                     # A LIMIT IS A CEILING, NOT A PRICE.
                     #
                     # This is the correction that matters. Alpaca fills a buy
@@ -6062,6 +6069,56 @@ class ExecutionStage:
                         )
                     limit_price = offer_limit
                     sizing_price = max(sizing_price or 0, offer_limit)
+                elif is_short and isinstance(bid, (int, float)) and bid > 0:
+                    # Mirror of the BUY ceiling: a sell-short limit is a
+                    # FLOOR, not a price. Alpaca fills a short at the NBBO
+                    # or better — submitting $49.95 when the bid is $50.00
+                    # sells at $50.00, not at $49.95. Shaving the limit up
+                    # toward the bid costs fills the same way VLO's shaved
+                    # buy limit did. Set the limit AT the existing
+                    # slippage floor and let the match happen underneath.
+                    floor = market_price * (1 - slippage_bps / 10_000.0)
+                    bid_limit = round(floor, 2 if floor >= 1 else 4)
+                    bid_discount_bps = (
+                        (market_price - bid) / market_price * 10_000.0
+                    )
+
+                    # Same IEX-noise tolerance as the BUY `cap * 1.02`
+                    # skip: invert the multiple so a far-through bid
+                    # (genuinely run, or a stale venue print) refuses
+                    # rather than submitting an unfillable or unbound
+                    # short. Not a new percentage.
+                    if bid < floor / 1.02:
+                        logger.warning(
+                            "SHORT %s NOT SUBMITTED — the displayed bid has "
+                            "run beyond the slippage floor. Bid $%.4f is "
+                            "%.1fbp below the $%.4f reference; the %.0fbp "
+                            "floor is $%.4f. (Quote is IEX, not NBBO, so it "
+                            "may also simply be a stale venue print — either "
+                            "way, not a book to cross blind.)",
+                            decision.symbol, bid, bid_discount_bps,
+                            market_price, slippage_bps, floor,
+                        )
+                        _record_execution_skip(
+                            pipeline, ctx, decision.symbol, "slippage_gated",
+                            f"IEX bid ${bid:.4f} is {bid_discount_bps:.1f}bp "
+                            f"below reference ${market_price:.4f}, beyond the "
+                            f"{slippage_bps:.0f}bp floor ${floor:.4f}",
+                        )
+                        continue
+
+                    if limit_price is None or abs(limit_price - bid_limit) > 0.000001:
+                        logger.info(
+                            "SHORT %s marketable-limit: prior $%s → floor "
+                            "$%.4f (%.0fbp below reference $%.4f). Fills at "
+                            "NBBO or better; IEX bid reads $%.4f (%.1fbp).",
+                            decision.symbol,
+                            f"{limit_price:.4f}" if limit_price is not None else "none",
+                            bid_limit, slippage_bps, market_price,
+                            bid, bid_discount_bps,
+                        )
+                    limit_price = bid_limit
+                    sizing_price = bid_limit
 
                 # RC1: code-enforced ATR stop-distance floor at entry. The
                 # P1 prompt rule ("fresh-entry stops never tighter than

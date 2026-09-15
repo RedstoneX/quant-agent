@@ -1622,9 +1622,10 @@ class AlpacaBroker:
     def get_latest_quote(self, symbol: str) -> dict[str, float | None]:
         """Return the current bid/ask without inventing a side of the book.
 
-        Execution uses the ask to construct a bounded marketable BUY limit.
-        Missing or failed quote data returns explicit ``None`` fields so the
-        caller can retain its existing last-trade behavior without guessing.
+        Execution uses the ask to construct a bounded marketable BUY limit
+        and the bid to construct the mirrored SHORT floor. Missing or failed
+        quote data returns explicit ``None`` fields so the caller can retain
+        its existing last-trade behavior without guessing.
         """
         out = {"bid_price": None, "ask_price": None}
         try:
