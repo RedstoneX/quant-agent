@@ -3164,7 +3164,7 @@ class TradingPipeline:
             logger.error("no-stop owner alert failed: %s", exc)
 
     def _repair_stop_coverage(
-        self, symbol: str, uncovered_qty: float, *, is_short: bool = False,
+        self, symbol: str, uncovered_qty: float, *, is_short: bool,
     ) -> bool:
         """Best-effort: re-place protective stop coverage on an uncovered
         position using the stop level recorded on its last opening row

@@ -34,8 +34,9 @@ This file records what is accepted and true **now**. Git history preserves imple
   own stop). Crash recovery is a write-ahead row that rearms at current
   broker quantity; trail, in-session coverage repair and the coverage watchdog
   skip a name mid-sequence. If rearm fails, the owner is paged — the position
-  is not left naked quietly. Short adds stay blocked until item 73 (short
-  stop-repair). No take-profit / bracket; post-fill GTC protective stops stay
+  is not left naked quietly. Short adds stay blocked: scale-in is the long
+  path. Missing short stops are repaired separately (item 73, closed).
+  No take-profit / bracket; post-fill GTC protective stops stay
   the protect model. `execution.repeg_enabled` is unchanged (false).
 - Mission Control/API/journal/search/UI remain private, read-only and non-critical to trading.
 - OneCLI remains the accepted credential-delivery layer. No public listener is authorized.

@@ -7,7 +7,8 @@ refuse-adds and that killed the daily-breaker's cancel-restore window:
     not assumed from cancel_order_by_id returning;
   * a partial fill of the add rearms at the broker's FULL position qty;
   * rearm failure pages the owner and does not go quiet;
-  * short adds are blocked until item 73;
+  * short adds are blocked (scale-in is the long path; item 73 closed
+    the missing-buy-stop repair, not short adds);
   * execution.repeg_enabled stays false.
 """
 from __future__ import annotations
@@ -333,7 +334,7 @@ def test_execution_stage_does_not_submit_when_cancel_unconfirmed():
     assert ctx.execution_skips[0]["reason"] == "scale_in_cancel_unconfirmed"
 
 
-def test_short_add_is_recorded_as_blocked_until_item_73():
+def test_short_add_is_recorded_as_blocked():
     held = [Position(
         symbol="TSLA", qty=-10.0, avg_entry=260.0, current_price=250.0,
         market_value=2500.0, unrealized_pnl=100.0, sector="Consumer",
@@ -353,7 +354,7 @@ def test_short_add_is_recorded_as_blocked_until_item_73():
     orders = ExecutionStage(pipeline=pipeline).run(ctx)
     assert orders == []
     pipeline.broker.submit_order.assert_not_called()
-    assert ctx.execution_skips[0]["reason"] == "short_add_blocked_until_stop_repair"
+    assert ctx.execution_skips[0]["reason"] == "short_add_blocked"
 
 
 # --------------------------------------------------------------------------

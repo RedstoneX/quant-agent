@@ -33,9 +33,11 @@ This path is the same cancel-to-free-shares shape, but:
 
 SHORT ADDS
 ----------
-Blocked until item 73 (short stop-repair) lands. A SHORT that opens a
-flat name is unchanged. Adding to an existing short is recorded as
-`short_add_blocked_until_stop_repair` and never cancels a BUY stop.
+Not built. This sequence cancels a *sell*-stop, buys, and rearms a sell-stop.
+A short add would have to cancel a *buy*-stop and rearm it, which is a
+different path. A SHORT that opens a flat name is unchanged. Adding to an
+existing short is recorded as `short_add_blocked` and never cancels a BUY
+stop. Missing short stops are repaired separately (item 73, closed).
 
 No new magic percentages. The stop trigger is the live protective level
 already at the broker (or the add's reviewed stop if that is tighter).

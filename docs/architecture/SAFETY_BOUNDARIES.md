@@ -56,7 +56,8 @@
   mid-sequence; a failed rearm pages the owner. This is the same cancel-to-
   free-shares shape that made the old whole-book daily breaker dangerous, but
   one symbol at a time with confirmed cancel and full-qty restore. Short adds
-  are blocked until item 73. Verified by `tests/test_scale_in.py`.
+  stay blocked: scale-in is the long path. Missing short stops are repaired
+  separately (item 73, closed). Verified by `tests/test_scale_in.py`.
 - `scripts/desk_reset.py` is the only operator tool that issues broker
   liquidations (`DELETE /v2/positions?cancel_orders=true`). It is outside the
   trading pipeline and outside the risk engine, so it carries its own
