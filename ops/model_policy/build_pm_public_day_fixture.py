@@ -273,7 +273,10 @@ def build() -> dict:
           f"({len(earnings_reports)} real filings) ...")
     earnings_agent = _agent("src.agents.earnings_analyst:EarningsAnalystAgent", "earnings_analyst", cost_circuit)
     results = earnings_agent.analyze_reports(earnings_reports)
-    earnings_analyses = [r["analysis"] for r in results if r.get("analysis") is not None]
+    # Keep the wrapper exactly as analyze_reports emits it (symbol, form_type,
+    # filing_date, is_new, analysis) — the shape src/pipeline.py hands the PM.
+    # Stripping it to r["analysis"] made the PM skip every filing (2026-09-15).
+    earnings_analyses = [r for r in results if r.get("analysis") is not None]
     if not earnings_analyses:
         raise RuntimeError("earnings_analyst returned no usable analyses — stopping, not substituting")
     ts = _now()
