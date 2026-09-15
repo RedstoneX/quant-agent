@@ -336,7 +336,10 @@ def _parse_iso(stamp: str) -> datetime | None:
 # broker truth — read only
 # ---------------------------------------------------------------------------
 
-def uncovered_positions(broker: Any, *, sweep_symbol: str | None = None) -> tuple[list[CoverageGap], str | None]:
+def uncovered_positions(
+    broker: Any, *, sweep_symbol: str | None = None,
+    skip_symbols: set[str] | None = None,
+) -> tuple[list[CoverageGap], str | None]:
     """Every held position whose open protective stops cover less than the
     held quantity. Longs are checked against SELL stops, shorts against BUY
     stops, exactly as `TradingPipeline._reconcile_stop_coverage` does. The
@@ -359,6 +362,8 @@ def uncovered_positions(broker: Any, *, sweep_symbol: str | None = None) -> tupl
         except (TypeError, ValueError):
             continue
         if not symbol or qty == 0 or (sweep_symbol and symbol == sweep_symbol):
+            continue
+        if skip_symbols and str(symbol) in skip_symbols:
             continue
         is_short = qty < 0
         try:
@@ -567,6 +572,36 @@ def save_state(state: dict[str, Any], path: Path | None = None) -> bool:
     return True
 
 
+def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
+    """Symbols mid scale-in that this watchdog must not report or repair.
+
+    A live cancel-confirm-buy window looks uncovered on purpose. Adding a
+    stop here would re-create the wash-trade block the sequence just
+    cleared. Crash recovery belongs to the session drain; this only
+    stays out of the way while a session lock is held or a DAY add is
+    still working.
+    """
+    try:
+        from src.execution.scale_in import (
+            list_open_entry_ids, pending_scale_in_symbols_from_path,
+            trading_session_lock_held,
+        )
+        symbols = pending_scale_in_symbols_from_path(
+            db_path if db_path is not None else DB_PATH,
+        )
+    except Exception:  # noqa: BLE001
+        return set()
+    if not symbols:
+        return set()
+    if trading_session_lock_held():
+        return set(symbols)
+    skip: set[str] = set()
+    for symbol in symbols:
+        if list_open_entry_ids(broker, symbol):
+            skip.add(symbol)
+    return skip
+
+
 # ---------------------------------------------------------------------------
 # the check
 # ---------------------------------------------------------------------------
@@ -593,7 +628,9 @@ def check_coverage(
     moment = now or _utc_now()
     state = load_state(state_path)
 
-    gaps, broker_error = uncovered_positions(broker, sweep_symbol=sweep_symbol)
+    gaps, broker_error = uncovered_positions(
+        broker, sweep_symbol=sweep_symbol, skip_symbols=_scale_in_skip(broker, db_path),
+    )
     day = most_recent_trading_day(moment, broker)
     ran, db_error = session_ran_during(day, db_path)
 
@@ -611,6 +648,7 @@ def check_coverage(
         if any(r.placed for r in repairs):
             refreshed, refresh_error = uncovered_positions(
                 broker, sweep_symbol=sweep_symbol,
+                skip_symbols=_scale_in_skip(broker, db_path),
             )
             if refresh_error is None:
                 gaps = refreshed

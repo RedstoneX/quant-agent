@@ -128,12 +128,6 @@ this line, one heading per item.
 **Example —** A range trade is approved at 1.3 to 1. The price moves before the order is built and the final order works out at 1.1 to 1. It is refused because sending it would make the approved trade worse, not because it misses a fixed bar.
 
 
-## item 8
-
-**Plain language —** A couple of ideas were rejected because the protective stop ended up on the wrong side of the entry price. Confirmed this isn't a bug: the stop is calculated correctly when the idea is created, but the market can move before the order is actually built, making the original stop look wrong by the time it's used.
-**Example —** An idea forms when a stock is at $100 with a stop at $98; moments later, by the time the order is assembled, the price has already dropped to $97 — the same stop now sits above the price, and the trade is correctly refused.
-
-
 ## item 17
 
 **Plain language —** If the desk's own record-keeping breaks, a safety switch can shut down all further AI-based decisions completely, and it stays off until a person manually clears it — working as intended. The real problem, observed live, was that the alert meant to warn someone about it also failed to send, so the desk could sit switched off for a full day or a weekend with nobody aware, looking exactly like an ordinary quiet market.
@@ -305,7 +299,7 @@ coverage should never stop a decision at all.
 **Plain language —** If the desk bets against a stock and the protective order on that bet goes missing, nothing puts it back. When the same thing happens on a stock the desk bought, it is repaired automatically every half hour. For bets against a stock, both repair checks notice the gap, write it down, and walk away. The reason given in the code — that the desk cannot place such bets yet, and has no record of where the protection should sit — is wrong on both counts: it can, and the level is on record.
 **Example —** The desk bets against a stock and the protective order expires overnight. The morning check spots it and reports it. The position then carries no protection at all until someone notices, while an identical gap on a stock the desk owns would already have been closed.
 **The decision —** None for you. It is a fault, and it is the most important one of the three found on 11 September because it is the only one that can leave a live position unprotected.
-**Recommendation —** Fix it before the desk trades again. The level is already recorded, so this needs no judgement call — only the repair made to work in both directions, with a test that removes the protection and checks it comes back.
+**Recommendation —** Fix it before the desk trades again. The level is already recorded, so this needs no judgement call — only the repair made to work in both directions, with a test that removes the protection and checks it comes back. Until this is fixed, the desk will not add to a stock it is already betting against. Opening a new bet against a name it does not already hold is unchanged. Adding to a stock it already owns is a different path, and is now allowed: take the existing protection off, confirm it is gone, buy more, then put one protective sell back over the whole holding. If putting that protection back fails, you are told — it is not left quietly uncovered.
 
 ## item 74
 

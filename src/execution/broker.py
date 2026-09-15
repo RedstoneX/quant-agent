@@ -1998,6 +1998,45 @@ class AlpacaBroker:
             logger.warning("Failed to cancel open entry orders: %s", exc)
             return 0
 
+    def list_open_entry_order_ids(self, symbol: str) -> list[str]:
+        """Ids of working non-stop BUY/SELL orders for `symbol`.
+
+        The discriminator matches `cancel_open_entry_orders`: any *stop*
+        order is a protective leg and is omitted; every other working
+        BUY or SELL is an entry. Named so scale-in crash recovery can
+        confirm leftover DAY adds are gone before it rearms a protective
+        sell (a working BUY plus a new SELL stop is the wash-trade block
+        the scale-in sequence exists to walk around).
+        """
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+
+            orders = self.client.get_orders(
+                filter=GetOrdersRequest(
+                    status=QueryOrderStatus.OPEN,
+                    symbols=[_alpaca_symbol(symbol)],
+                    nested=True,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "list_open_entry_order_ids failed for %s: %s", symbol, exc,
+            )
+            return []
+        ids: list[str] = []
+        for order in orders or []:
+            order_id = getattr(order, "id", None)
+            order_side = str(getattr(getattr(order, "side", None), "value",
+                                    getattr(order, "side", ""))).lower()
+            order_type = str(getattr(getattr(order, "order_type", None), "value",
+                                    getattr(order, "order_type", ""))).lower()
+            if order_side not in ("buy", "sell") or not order_id:
+                continue
+            if "stop" in order_type:
+                continue
+            ids.append(str(order_id))
+        return ids
+
     def open_buy_notional(self) -> float | None:
         """Dollar notional of all OPEN BUY orders, or None when the query fails.
 
@@ -2969,6 +3008,8 @@ class AlpacaBroker:
         *, requested_qty: float | None = None, side: str = "buy",
         superseded_filled_qty: float = 0.0,
         on_unfilled_cancel=None,
+        cover_full_position: bool = False,
+        held_qty_before: float = 0.0,
     ) -> dict | None:
         """Wait for an entry order to reach terminal, then place a GTC
         protective stop-limit for the ACTUAL filled qty.
@@ -3030,6 +3071,14 @@ class AlpacaBroker:
         keeps the invariant "every filled share is under a stop" true across a
         re-peg. Default 0.0: for every caller that never re-pegs, this method
         behaves exactly as it did before.
+
+        `cover_full_position` (long scale-in path B, 2026-09-15): after a
+        positive fill, size the protective sell to the broker's FULL
+        position quantity, not this order's fill. A partial add on a name
+        that already held shares would otherwise rearm a stop over the
+        add alone and leave the original lot naked. `held_qty_before` is
+        the fallback if the broker position cannot be read: fill + what
+        was held, the two quantities already measured, not a third number.
 
         Returns the stop order dict, or None when nothing was placed (entry
         filled 0 / stop submit failed). Never raises — a failure here must not
@@ -3124,6 +3173,21 @@ class AlpacaBroker:
                 symbol, carried, filled_qty, carried,
             )
             filled_qty += carried
+        if filled_qty > 0 and cover_full_position:
+            from src.execution.scale_in import cover_qty_for_rearm
+            full_qty = cover_qty_for_rearm(
+                self, symbol=symbol, filled_qty=filled_qty,
+                held_qty_before=held_qty_before,
+            )
+            if full_qty > filled_qty + 1e-9:
+                logger.info(
+                    "entry protection: %s scale-in fill %.4f — stop sized to "
+                    "broker full position %.4f, not the add alone",
+                    symbol, filled_qty, full_qty,
+                )
+            if full_qty > 0:
+                filled_qty = full_qty
+
         if filled_qty <= 0:
             logger.warning(
                 "entry protection: %s entry %s filled 0 (status=%s) — no stop "
@@ -3142,7 +3206,10 @@ class AlpacaBroker:
                         "raised: %s", symbol, exc,
                     )
             return None
-        if requested_qty and filled_qty < requested_qty:
+        if (
+            requested_qty and filled_qty < requested_qty
+            and not cover_full_position
+        ):
             logger.warning(
                 "entry protection: %s partially filled %.4f/%.4f — stop sized to "
                 "the ACTUAL fill", symbol, filled_qty, requested_qty,

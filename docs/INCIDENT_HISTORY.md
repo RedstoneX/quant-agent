@@ -22,6 +22,22 @@ what would catch it next time.
 
 ---
 
+### 2026-09-15 — adding to a winner is allowed by taking its protective sell off first, confirming it is gone, buying, then putting one sell back over the whole holding
+
+**In plain words:** the broker will not let the desk buy more of a stock that already has a sell-stop resting on it. The old answer was to refuse the add. The owner ruled that is the wrong answer. The desk now takes the stop off, waits until the broker says it is actually gone, buys, and then places one new stop over however many shares it really holds — including a partial fill of the add. If putting that stop back fails, you are told. It does not add to a stock it is already short until the separate short-repair fault is fixed.
+
+**Why refuse-the-add was wrong.** A resting protective sell and a new buy cannot both be working on the same name. Silent refusal looked like safety and was actually a hidden cap on adding to winners. Path B is the sequence, not a new kind of order and not a profit target.
+
+**Why this is the daily-breaker's lesson, not a repeat of it.** On 2026-09-14 the whole-book daily-loss dump was removed because its sequence was: cancel every protective stop, try to sell, and on any leg that did not fill, put the original stop back. On a gap that dump would have cancelled every stop, sold nothing, and restored — an unprotected window on the exact day it existed for. Scale-in is the same *shape* (cancel a stop to free the shares), and that is why the objections were: the crash window, a partial fill restoring the wrong size, a race with the trail and the coverage repair, timers pretending a cancel had landed, and a bracket/take-profit that would fight the desk's rule that protection is a GTC stop after the fill, not a preset profit target.
+
+**What those objections changed in the design.** The recovery row is written *before* the cancel, so a crash cannot leave the position naked without a record of what to put back. The cancel is confirmed from the broker's live order stream, not from the cancel call returning. The new stop is sized to the broker's full position, not to the add's fill and not to the cancelled stop's old size. If the buy submit fails in a way that leaves it unknown whether the order landed, the old stop is *not* put back at the old size — that would under-cover a fill that may already have happened; the recovery row stays and the next session rearms at whatever the broker currently holds. The trail, the in-session coverage repair and the half-hourly coverage check skip a name that has that recovery row so they cannot re-place the stop that was just cancelled (which would recreate the original block) and cannot resize it while the add is in flight. There is no take-profit leg and no bracket. Automatic repricing of the entry stays off.
+
+**What is still unprotected, stated rather than hidden.** Between confirmed cancel and successful rearm the position has no stop. A crash in that window is recovered from the write-ahead row, not prevented. That is the cost of adding at this broker. A failed rearm pages the owner rather than going quiet.
+
+**Shorts are out of this change.** A missing buy-stop on a short is not repaired today (board item 73). Adding to an existing short would have to cancel that buy-stop, and putting it back is the thing item 73 has not fixed. New shorts on a name the desk does not already hold are unchanged.
+
+---
+
 ### 2026-09-14 — reasoning models were let think themselves out of an answer, and every model was graded under its own hidden settings instead of one shared one
 
 **In plain words:** when the benchmark tested candidate models through

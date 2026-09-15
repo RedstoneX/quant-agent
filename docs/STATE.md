@@ -26,6 +26,17 @@ This file records what is accepted and true **now**. Git history preserves imple
   ATR noise band) run first and are the real protection. Every fail-open path
   logs at ERROR.
 - Deterministic Python and broker protections remain final safety authority; uncertainty fails closed.
+- **Long scale-in path B (owner 2026-09-15):** a BUY add on a name that already
+  has a resting protective sell is allowed only by cancelling that sell,
+  confirming the cancel at the broker (not assuming it), submitting the add,
+  then placing ONE protective sell covering the broker's full position at the
+  existing protection level (the tighter of the cancelled stop and the add's
+  own stop). Crash recovery is a write-ahead row that rearms at current
+  broker quantity; trail, in-session coverage repair and the coverage watchdog
+  skip a name mid-sequence. If rearm fails, the owner is paged — the position
+  is not left naked quietly. Short adds stay blocked until item 73 (short
+  stop-repair). No take-profit / bracket; post-fill GTC protective stops stay
+  the protect model. `execution.repeg_enabled` is unchanged (false).
 - Mission Control/API/journal/search/UI remain private, read-only and non-critical to trading.
 - OneCLI remains the accepted credential-delivery layer. No public listener is authorized.
 - Private operator access uses Tailscale. Canonical VPS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.

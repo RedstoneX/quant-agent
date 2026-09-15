@@ -2475,9 +2475,12 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
         assert by_rank[rank].in_hand_state == "decided, not yet built", rank
     for rank in (1, 20, 39):
         assert by_rank[rank].bucket == "in_hand", rank
-    # Checked and by design.
-    for rank in (3, 4, 8):
+    # Checked and by design. Funnel item 8 (stop on the wrong side of
+    # entry) joined the retired list on 2026-09-15: written up
+    # 2026-09-02/03 as not a defect, then deleted from the queue.
+    for rank in (3, 4):
         assert by_rank[rank].bucket == "no_action", rank
+    assert 8 not in by_rank
     # Items 48 and 50 used to be pinned here as the "RESOLVED but never
     # struck through" case. Both have since been written up in
     # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md under the

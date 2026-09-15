@@ -73,10 +73,6 @@ Price protection behaving correctly, but a real cost: the slot is consumed and t
 
 It asks whether EXECUTION degraded the geometry the Risk Manager approved. Since 2026-09-11 it applies no bar to a breakout and `min(1.2, approved ratio)` to a range order, so it cannot reinstate the retired floor (`_execution_rr_floor`, `src/pipeline_stages.py`). `EXECUTION_REWARD_RISK_BELT = 1.2` itself is unsourced; resolve it with item 1's remaining 1.5, not separately.
 
-**8. Stop placed on the wrong side of entry — 2 of 68 (3%). CHECKED, NOT A DEFECT.**
-
-Stop is sided correctly at ingestion; the quote moves before construction and the refusal stands. `docs/INCIDENT_HISTORY.md`, 2026-09-02/03, "funnel item 8".
-
 **17. Backup alert channel — OWNER DECISION, deferred, no due date.** The only open point: there is no notification channel beyond Telegram, so an alert that cannot reach Telegram reaches nobody. Deferred by the owner 2026-09-03 ("bigger problems first"), revisit at his discretion. Recommendation: `docs/BOARD_NOTES.md` ("item 17"). Everything else on this item shipped 2026-09-03 and was verified on the box 2026-09-13 (`docs/INCIDENT_HISTORY.md`, "item 17(a)/(b)" and 2026-09-13).
 
 **18. 70% of the PM's prompt was earnings-filing prose, not a conclusion — MEASURED 2026-09-02, PARTIALLY FIXED, core cause MERGED 2026-09-04 (PR #252), real follow-ons below.**
@@ -147,6 +143,8 @@ Only Technical states a lean (`magnitude`); news, macro, smart_money and earning
 
 Four defects, all must be fixed: (1) the lookup reads only `action = 'BUY'` rows (`src/storage/db.py`); (2) `src/execution/stop_repair.py` hard-codes `side="sell"` and refuses when `stop_price >= price`; (3) `Pipeline._reconcile_stop_coverage` flags a short's gap and returns; (4) `src/coverage_watchdog.py` skips shorts. Both justifications in the code are false: SHORT is a live opening action (`_POSITION_OPEN_ACTIONS`), and the SHORT entry row stores `stop_loss` (`src/pipeline_stages.py`). Not established: whether a short is held now, or whether any rule blocks a short fill. Settles with: a short-side repair reading the SHORT row and placing a BUY stop with the side/price guard mirrored, called from both paths, plus a test that loses a short's stop and asserts it returns. Ranks high: it can leave a live position unprotected while the long-side repair gives false comfort.
 
+Long scale-in path B (owner 2026-09-15) does not close this: short adds stay blocked until it lands. A SHORT that opens a flat name is unchanged.
+
 **74. One piece of news can cut the same holding twice in a day, and whether that is a fault is a design question — OPEN, filed 2026-09-14 from the 2026-09-11 audit, re-scoped the same day.**
 
 A midday REDUCE on a hard trigger (e.g. bearish earnings) can repeat at the close on the same trigger; `src/pipeline.py` discloses it as a RESIDUAL GAP (~line 9622) and only warns. The position-reviewer prompt's rule 4 explicitly allows a second cut on a cited hard trigger. Nothing deduplicates by event; the exit claim check tests regime and state-change claims, never earnings. A later session may legitimately read the filing as worse; the 2026-05-04 AMZN double cut is the harm on the other side; frequency is unmeasured. Settles with: a decision on whether a hard trigger is spent once acted on for a symbol that day, and if not, what distinguishes a worse reading from a repeat.
@@ -169,7 +167,7 @@ The volume/shape redesign is done (`docs/INCIDENT_HISTORY.md`, 2026-09-13 "item 
 
 Results, faults fixed and the decision: `docs/architecture/MODEL_ROUTING_POLICY.md` ("2026-09-14 analyst seat re-test"). Next: fresh PM practice day from analyst output, then PM model test, then risk_manager/position_reviewer, then restart the paused desk.
 
-**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 61, 62, 66, 68, 69, 72 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Gate item 7 was moved, not closed: it is item 76. Item 72 (benchmark fixture) was filed and closed 2026-09-14. The two schemes are separate — 1, 3, 4 and 8 are live in this queue while retired in the gate, and 20 is live here; 67, 90, 101 and 200 never existed. Item 38's follow-up survives as item 52, whose residue is item 63. Item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file. Next free number is 78.
+**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 61, 62, 66, 68, 69, 72 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Gate item 7 was moved, not closed: it is item 76. Item 72 (benchmark fixture) was filed and closed 2026-09-14. The two schemes are separate — 1, 3 and 4 are live in this queue while retired in the gate, and 20 is live here; 67, 90, 101 and 200 never existed. Item 38's follow-up survives as item 52, whose residue is item 63. Item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file. Next free number is 78.
 
 ## Evidence-only follow-ups — do not interrupt natural validation unless evidence shows material harm
 

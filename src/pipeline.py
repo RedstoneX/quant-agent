@@ -4177,6 +4177,29 @@ class TradingPipeline:
             symbol = row["symbol"]
             order_id = row["sell_order_id"]
 
+            from src.execution.scale_in import WAL_SCALE_IN_SENTINEL, drain_scale_in_row
+            if order_id == WAL_SCALE_IN_SENTINEL:
+                try:
+                    ok = drain_scale_in_row(self.broker, self.db, row)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "drain: scale-in WAL restore raised for %s row %d: %s "
+                        "— leaving for next session",
+                        symbol, row_id, exc,
+                    )
+                    continue
+                if ok:
+                    try:
+                        self.db.delete_pending_protection_restore(row_id)
+                    except Exception:
+                        pass
+                    drained += 1
+                    logger.info(
+                        "drain: scale-in recovery rebuilt coverage for %s "
+                        "(row %d cleared)", symbol, row_id,
+                    )
+                continue
+
             # audit F1: a write-ahead row whose SELL was never confirmed
             # submitted (crash in the cancel→submit→record window). There
             # is no SELL order to query — restore coverage from the
@@ -9019,8 +9042,21 @@ class TradingPipeline:
         from src.risk.trailing import compute_trailing_stop
 
         orders: list[dict] = []
+        try:
+            from src.execution.scale_in import pending_protection_symbols
+            pending_syms = pending_protection_symbols(self.db)
+        except Exception:  # noqa: BLE001
+            pending_syms = set()
         for position in positions:
             symbol = position.symbol
+            if symbol in pending_syms:
+                logger.info(
+                    "trail: skipping %s — a protection-restore WAL row is "
+                    "in flight (scale-in or sell); replacing the stop now "
+                    "would race the cancel/rearm sequence",
+                    symbol,
+                )
+                continue
             try:
                 buy = self.db.get_symbol_last_buy(symbol)
             except Exception as e:  # noqa: BLE001
@@ -9759,6 +9795,17 @@ class TradingPipeline:
                 continue
             try:
                 if act == "TRAIL_STOP":
+                    try:
+                        from src.execution.scale_in import pending_protection_symbols
+                        if symbol in pending_protection_symbols(self.db):
+                            logger.info(
+                                "Midday: TRAIL_STOP %s skipped — a "
+                                "protection-restore WAL row is in flight",
+                                symbol,
+                            )
+                            continue
+                    except Exception:  # noqa: BLE001
+                        pass
                     try:
                         new_stop = float(action_item.get("new_stop_price") or 0)
                     except (TypeError, ValueError):
