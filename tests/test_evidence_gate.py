@@ -36,6 +36,24 @@ def test_every_lost_status_refuses(status):
     assert evidence_gate.evaluate({"earnings": status}).skip is True
 
 
+def test_remembered_and_chose_not_to_refetch_do_not_refuse():
+    """Kind+event remember is an answer, not a lost seat. Same-session
+    reuse stays carried_from_morning (#430); cross-day GOOD is remembered;
+    a quiet filing day is chose_not_to_refetch."""
+    assert evidence_gate.evaluate({"macro": "remembered"}).skip is False
+    assert evidence_gate.evaluate({"earnings": "chose_not_to_refetch"}).skip is False
+    assert evidence_gate.counts_as_degraded("remembered") is False
+    assert evidence_gate.counts_as_degraded("chose_not_to_refetch") is False
+
+
+def test_expired_kind_without_replacement_refuses():
+    """A superseded kind that this tick did not replace is lost. Deciding
+    on yesterday's wire after a newer one landed would be fabricating."""
+    v = evidence_gate.evaluate({"news": "expired"})
+    assert v.skip is True
+    assert v.lost == ["news"]
+
+
 @pytest.mark.parametrize("status", ["empty", "release_overdue", "not_run_intraday"])
 def test_a_seat_with_nothing_to_report_does_not_refuse(status):
     """The whole reason this gate needs no threshold: "no Form 4 filings

@@ -239,6 +239,17 @@ class RunContext:
     # session as a deliberate no-trade (2026-08-19: three approved BUYs
     # skipped as unfunded; evening concluded "generate more ideas").
     execution_skips: list[dict] = field(default_factory=list)
+    # One paid research-heal retry per seat per session (owner 2026-09-16).
+    heal_paid_retries: dict[str, int] = field(default_factory=dict)
+    # Fills path: desk-caused stall after Risk (WS handshake retries).
+    # One catch-up revise inside the already-approved ceiling is allowed
+    # only when this is True. Repeg stays off.
+    desk_latency_stall: bool = False
+    catch_up_used: dict[str, bool] = field(default_factory=dict)
+    # BUY/SHORT slippage ceilings pinned at ExecutionStage start (post-Risk,
+    # pre-WS). A later last-trade must not raise this cap — that would be a
+    # chase.
+    approved_entry_ceiling: dict[str, float] = field(default_factory=dict)
 
     # === Structured facts for PM — Phase 4 #4 ===
     # Populated at the top of the DecisionStage so PM sees numbers, not

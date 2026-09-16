@@ -101,6 +101,13 @@ STATUS_CATEGORY: dict[str, str] = {
     "degraded": CATEGORY_REPORTED,
     "figures_contradicted": CATEGORY_REPORTED,
     "carried_from_morning": CATEGORY_REPORTED,
+    # Cross-day remember of a GOOD payload whose kind has not expired
+    # (macro regime, earnings write-up, Form 4). Same-session reuse stays
+    # `carried_from_morning` (PR #430). Holding-discipline must not treat
+    # `remembered` as proof about *today* — that checker has its own allow
+    # list. The evidence gate's question is "do we have an answer?", and
+    # we do.
+    "remembered": CATEGORY_REPORTED,
     # --- a real answer that is legitimately empty ---
     # `empty`: smart money found no material Form 4 activity, or tech was
     #   handed no symbols. A quiet day is a fact, not a gap.
@@ -113,6 +120,9 @@ STATUS_CATEGORY: dict[str, str] = {
     "empty": CATEGORY_NOTHING_TO_REPORT,
     "release_overdue": CATEGORY_NOTHING_TO_REPORT,
     "not_run_intraday": CATEGORY_NOTHING_TO_REPORT,
+    # We have a GOOD remembered answer and chose not to pay again because
+    # the kind has not expired. Honesty label, not a lost seat, not stale.
+    "chose_not_to_refetch": CATEGORY_NOTHING_TO_REPORT,
     # --- the answer was lost ---
     "failed": CATEGORY_LOST,
     "parse_error": CATEGORY_LOST,
@@ -125,6 +135,10 @@ STATUS_CATEGORY: dict[str, str] = {
     # deciding on it would be fabricating the missing seat.
     "carry_forward_empty": CATEGORY_LOST,
     "carry_forward_failed": CATEGORY_LOST,
+    # Kind expired (newer wire, new filing, regime/print change) and this
+    # tick did not replace it. Deciding on the expired object would be
+    # treating a known-superseded answer as current.
+    "expired": CATEGORY_LOST,
 }
 
 #: Statuses that are NOT an upstream integrity problem for Risk's 2+
@@ -145,6 +159,8 @@ INTEGRITY_CLEAN_STATUSES: frozenset[str] = frozenset({
     "empty",
     "carried_from_morning",
     "not_run_intraday",
+    "remembered",
+    "chose_not_to_refetch",
 })
 
 

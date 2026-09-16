@@ -112,6 +112,12 @@ def _pipeline(macro=None, news=None):
     obj = _Pipeline(macro, news)
     obj._carry_forward_macro = TradingPipeline._carry_forward_macro.__get__(obj)
     obj._carry_forward_news = TradingPipeline._carry_forward_news.__get__(obj)
+    obj._macro_regime_or_print_changed = (
+        TradingPipeline._macro_regime_or_print_changed.__get__(obj)
+    )
+    obj._news_has_newer_material_wire = (
+        TradingPipeline._news_has_newer_material_wire.__get__(obj)
+    )
     return obj
 
 
@@ -124,17 +130,23 @@ def test_todays_macro_is_carried_forward():
     assert carried.payload["regime"] == "risk-on"
 
 
-def test_yesterdays_macro_is_not_carried_forward():
-    """`load_last_state` is not date-scoped. Carrying a previous day's regime
-    into today's tick is exactly the "stale evidence presented as current"
-    failure the blindfold existed to prevent — the fix must not reintroduce
-    it in a subtler form."""
+def test_yesterdays_macro_is_remembered_not_treated_as_lost():
+    """Macro regime is reusable across days until a real regime/print change.
+
+    A prior-day GOOD snapshot used to be `carry_forward_empty` (lost), which
+    froze the desk when morning had already called the regime. Same-session
+    reuse stays `carried_from_morning` (PR #430). Cross-day is `remembered`
+    and `.same_session` is False so holding-discipline cannot use it to
+    falsify today's exit claim.
+    """
     from src.trading_calendar import et_today
 
     stale = dict(MACRO, date=str(et_today() - timedelta(days=1)))
     carried = _pipeline(macro=stale)._carry_forward_macro()
-    assert carried.payload is None
-    assert carried.status == "carry_forward_empty"
+    assert carried.payload is not None
+    assert carried.payload["regime"] == "risk-on"
+    assert carried.status == "remembered"
+    assert carried.same_session is False
 
 
 def test_absent_macro_leaves_the_tick_exactly_as_blind_as_before():

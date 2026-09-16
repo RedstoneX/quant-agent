@@ -7,6 +7,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import date
+from dataclasses import dataclass
 from pathlib import Path
 
 import yfinance as yf
@@ -38,6 +39,21 @@ _TRADE_UPDATES_STREAM_LOCK = threading.Lock()
 # on versions that shipped `reconnect_delay`), not a desk-invented constant.
 _ALPACA_STREAM_RECONNECT_MIN_S = 1.0
 _ALPACA_STREAM_RECONNECT_MAX_S = 30.0
+
+# Handshake ceiling for trade_updates auth. Reuses alpaca-py's own reconnect
+# max so we do not invent a second clock. Auth must not consume a fill /
+# funding timeout (measured 2026-09-16: ~4 min of `_auth` retries after
+# Risk approved, before the first BUY hit the tape).
+_ALPACA_STREAM_AUTH_DEADLINE_S = _ALPACA_STREAM_RECONNECT_MAX_S
+
+
+@dataclass(frozen=True)
+class TradeStreamWarmup:
+    """Result of warming the trade_updates socket before the first fill wait."""
+
+    ready: bool
+    handshake_failed: bool
+    retried: bool
 
 
 def _stream_http_status(exc: BaseException) -> int | None:
@@ -176,6 +192,12 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
         try:
             await original_start()
             failures = 0
+            authed = getattr(stream, "_qamc_authed", None)
+            if authed is not None:
+                try:
+                    authed.set()
+                except Exception:
+                    pass
         except Exception as exc:
             failures += 1
             delay = _trading_stream_reconnect_delay(failures, exc, stream)
@@ -627,6 +649,7 @@ class AlpacaBroker:
         # `_shortable_cache`: `fractionable` is an asset-directory fact that
         # does not change intra-session.
         self._fractionable_cache: dict[str, dict] = {}
+        self._last_stream_warmup: TradeStreamWarmup | None = None
 
     def _kill_switch_active(self) -> bool:
         """Guard 1: True once ops has halted the desk by `touch`-ing the
@@ -2323,6 +2346,25 @@ class AlpacaBroker:
     #: filled order (see `_repeg_entry_order`'s partial-fill guard).
     _ORDER_REPLACEABLE_STATES = frozenset({"new"})
 
+    def ensure_trade_updates(self) -> TradeStreamWarmup:
+        """Do not open a throwaway socket. Auth is bounded on the real fill wait.
+
+        A probe-then-teardown handshake was adding a second 30s wait before
+        funding, then the fill wait opened another stream and authenticated
+        again. The stall cut is the fill-wait deadline (alpaca-py reconnect
+        max), not a second clock. ExecutionStage pins ceilings first, then
+        adopts `_last_stream_warmup` after the funding wait if that wait
+        had to REST-fallback because auth never completed.
+        """
+        if getattr(self, "_last_stream_warmup", None) is None:
+            warmup = TradeStreamWarmup(
+                ready=TradingStream is not None,
+                handshake_failed=False, retried=False,
+            )
+            self._last_stream_warmup = warmup
+            return warmup
+        return self._last_stream_warmup
+
     def wait_for_order_at_exchange(
         self,
         order_id: str,
@@ -2511,6 +2553,7 @@ class AlpacaBroker:
         connected = threading.Event()
         run_error: list[Exception] = []
         stream = TradingStream(self.api_key, self.secret_key, paper=self._paper)
+        stream._qamc_authed = threading.Event()
         _install_trading_stream_reconnect_guard(stream)
 
         async def _handler(update) -> None:
@@ -2546,8 +2589,35 @@ class AlpacaBroker:
         thread = threading.Thread(
             target=_run, name=f"order-fill-stream-{order_id}", daemon=True,
         )
+        started = time.monotonic()
         thread.start()
-        matched.wait(timeout=timeout_seconds)
+        handshake_hook = callable(getattr(stream, "_start_ws", None))
+        if handshake_hook:
+            auth_deadline = min(_ALPACA_STREAM_AUTH_DEADLINE_S, max(0.1, float(timeout_seconds)))
+            authed = False
+            try:
+                authed = bool(stream._qamc_authed.wait(timeout=auth_deadline))
+            except Exception:
+                authed = False
+            if not authed and not connected.is_set():
+                logger.warning(
+                    "trade_updates websocket did not authenticate within %.1fs — "
+                    "falling back to REST for %s",
+                    auth_deadline, order_id,
+                )
+                self._last_stream_warmup = TradeStreamWarmup(
+                    ready=False, handshake_failed=True, retried=True,
+                )
+                try:
+                    stream.stop()
+                except Exception:
+                    pass
+                thread.join(timeout=2.0)
+                return None, False
+            remaining = max(0.1, float(timeout_seconds) - (time.monotonic() - started))
+        else:
+            remaining = float(timeout_seconds)
+        matched.wait(timeout=remaining)
         try:
             stream.stop()
         except Exception:

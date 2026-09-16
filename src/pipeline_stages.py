@@ -646,6 +646,88 @@ def _entry_slippage_bps(pipeline) -> float:
     return MAX_ENTRY_SLIPPAGE_BPS
 
 
+def _pin_approved_entry_ceilings(pipeline, ctx, buy_decisions) -> None:
+    """Freeze the already-approved slippage cap before a desk stall can move it.
+
+    BUY ceiling / SHORT floor from a live quote (or the approved entry) at
+    ExecutionStage start — post-Risk, pre-websocket. Recomputing the cap
+    from a later last-trade would raise the ceiling, which is a chase.
+    Repeg stays off. Never uses a daily bar close.
+    """
+    slippage_bps = _entry_slippage_bps(pipeline)
+    pinned = dict(getattr(ctx, "approved_entry_ceiling", None) or {})
+    for decision in buy_decisions:
+        symbol = getattr(decision, "symbol", None)
+        if not symbol:
+            continue
+        live = None
+        getter = getattr(getattr(pipeline, "broker", None), "get_latest_price", None)
+        if callable(getter):
+            try:
+                live = getter(symbol)
+            except Exception:  # noqa: BLE001
+                live = None
+        ref = live if isinstance(live, (int, float)) and live > 0 else None
+        if ref is None:
+            entry = getattr(decision, "entry_price", None)
+            if isinstance(entry, (int, float)) and entry > 0:
+                ref = float(entry)
+        if ref is None:
+            continue
+        is_short = getattr(decision, "action", "") == "SHORT"
+        if is_short:
+            pinned[symbol] = ref * (1 - slippage_bps / 10_000.0)
+        else:
+            pinned[symbol] = ref * (1 + slippage_bps / 10_000.0)
+    ctx.approved_entry_ceiling = pinned
+
+
+def _adopt_stream_stall(pipeline, ctx) -> None:
+    """If the fill wait REST-fell-back because auth never completed, name it."""
+    warmup = getattr(getattr(pipeline, "broker", None), "_last_stream_warmup", None)
+    try:
+        from src.execution.broker import TradeStreamWarmup
+    except Exception:  # noqa: BLE001
+        return
+    if isinstance(warmup, TradeStreamWarmup) and (
+        warmup.handshake_failed or warmup.retried
+    ):
+        ctx.desk_latency_stall = True
+
+
+def _warm_trade_updates(pipeline, ctx) -> None:
+    """Record a caller-supplied stall probe. Does not open a throwaway socket."""
+    ensure = getattr(getattr(pipeline, "broker", None), "ensure_trade_updates", None)
+    if not callable(ensure):
+        return
+    try:
+        warmup = ensure()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("trade_updates warmup failed: %s", exc)
+        ctx.desk_latency_stall = True
+        return
+    try:
+        from src.execution.broker import TradeStreamWarmup
+    except Exception:  # noqa: BLE001
+        return
+    if isinstance(warmup, TradeStreamWarmup):
+        ctx.desk_latency_stall = bool(warmup.handshake_failed or warmup.retried)
+
+
+def _live_fill_price(pipeline, symbol) -> float | None:
+    """Live last for a fill. Never a daily bar close (owner 2026-09-16)."""
+    getter = getattr(getattr(pipeline, "broker", None), "get_latest_price", None)
+    if not callable(getter):
+        return None
+    try:
+        live = getter(symbol)
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(live, (int, float)) and live > 0:
+        return float(live)
+    return None
+
+
 def _repeg_settings(pipeline) -> tuple[float, float] | None:
     """(poll_seconds, slippage_bps), or None when re-peg is off.
 
@@ -5642,23 +5724,13 @@ class ExecutionStage:
         fundable_notional: dict[str, float] = {}
         preflight_survivors = []
         for decision in buy_decisions:
-            market_price = price_map.get(decision.symbol)
-            if not isinstance(market_price, (int, float)) or market_price <= 0:
-                live_price = pipeline.broker.get_latest_price(decision.symbol)
-                if isinstance(live_price, (int, float)) and live_price > 0:
-                    market_price = live_price
-                    price_map[decision.symbol] = live_price
-            if not isinstance(market_price, (int, float)) or market_price <= 0:
-                bars = ctx.symbols_bars.get(decision.symbol) or []
-                if bars:
-                    last_close = float(bars[-1].close)
-                    if last_close > 0:
-                        market_price = last_close
-                        price_map[decision.symbol] = last_close
+            market_price = _live_fill_price(pipeline, decision.symbol)
+            if market_price is not None:
+                price_map[decision.symbol] = market_price
             if not isinstance(market_price, (int, float)) or market_price <= 0:
                 _record_execution_skip(
                     pipeline, ctx, decision.symbol, "no_price",
-                    "no verifiable price reference (broker + bars unavailable)",
+                    "no verifiable live price (daily bar close is not a fill reference)",
                 )
                 continue
             if decision.entry_price > 0:
@@ -5775,6 +5847,8 @@ class ExecutionStage:
         # isinstance guard: stage tests stub `pipeline` with MagicMock.
         if buy_decisions:
             from src.execution.cash_sweep import CashSweeper
+            _pin_approved_entry_ceilings(pipeline, ctx, buy_decisions)
+            _warm_trade_updates(pipeline, ctx)
             sweeper = getattr(pipeline, "_sweeper", None)
             sweeper = sweeper() if callable(sweeper) else None
             if not isinstance(sweeper, CashSweeper):
@@ -5839,6 +5913,7 @@ class ExecutionStage:
                         pipeline, ctx, d.symbol, "funding", "not_required",
                         "cash_sweep_disabled", raw_cash=cash,
                     )
+            _adopt_stream_stall(pipeline, ctx)
 
         # Spec §11.2 — how much NEW exposure this session may still add, and
         # the pool every entry below draws from. Ladder-derived (see
@@ -5919,23 +5994,13 @@ class ExecutionStage:
                         )
                         continue
 
-                market_price = price_map.get(decision.symbol)
-                if not market_price or market_price <= 0:
-                    live_price = pipeline.broker.get_latest_price(decision.symbol)
-                    if live_price and live_price > 0:
-                        market_price = live_price
-                        price_map[decision.symbol] = live_price
-                if not market_price or market_price <= 0:
-                    bars = ctx.symbols_bars.get(decision.symbol) or []
-                    if bars:
-                        last_close = float(bars[-1].close)
-                        if last_close > 0:
-                            logger.info(
-                                "Using last-bar close $%.2f as price reference for %s "
-                                "(broker pricing unavailable)",
-                                last_close, decision.symbol,
-                            )
-                            market_price = last_close
+                live_price = _live_fill_price(pipeline, decision.symbol)
+                if live_price is not None:
+                    market_price = live_price
+                    price_map[decision.symbol] = live_price
+                else:
+                    market_price = None
+                # MUST NOT freeze a morning/last-bar close into a live fill.
 
                 limit_price = None
                 sizing_price = None
@@ -6079,7 +6144,13 @@ class ExecutionStage:
                     # Price protection is unchanged — `slippage_bps` still
                     # bounds the worst possible fill — it just stops being
                     # self-defeating.
-                    cap = market_price * (1 + slippage_bps / 10_000.0)
+                    pinned_cap = (getattr(ctx, "approved_entry_ceiling", None) or {}).get(
+                        decision.symbol,
+                    )
+                    if isinstance(pinned_cap, (int, float)) and pinned_cap > 0:
+                        cap = float(pinned_cap)
+                    else:
+                        cap = market_price * (1 + slippage_bps / 10_000.0)
                     offer_limit = round(cap, 2 if cap >= 1 else 4)
                     ask_premium_bps = (ask - market_price) / market_price * 10_000.0
 
@@ -6089,21 +6160,33 @@ class ExecutionStage:
                     # nonsense. Either way this is not a book to cross blind.
                     # The multiple is deliberately loose because the input is.
                     if ask > cap * 1.02:
+                        skip_reason = (
+                            "latency_window"
+                            if getattr(ctx, "desk_latency_stall", False)
+                            else "slippage_gated"
+                        )
                         logger.warning(
                             "BUY %s NOT SUBMITTED — the displayed offer has run "
-                            "beyond the slippage ceiling. Ask $%.4f is %.1fbp "
+                            "beyond the slippage ceiling%s. Ask $%.4f is %.1fbp "
                             "above the $%.4f reference; the %.0fbp ceiling is "
                             "$%.4f. (Quote is IEX, not NBBO, so it may also "
                             "simply be a stale venue print — either way, not a "
                             "book to cross blind.)",
-                            decision.symbol, ask, ask_premium_bps,
+                            decision.symbol,
+                            " after a desk-caused stall; latency blew the window"
+                            if skip_reason == "latency_window" else "",
+                            ask, ask_premium_bps,
                             market_price, slippage_bps, cap,
                         )
                         _record_execution_skip(
-                            pipeline, ctx, decision.symbol, "slippage_gated",
+                            pipeline, ctx, decision.symbol, skip_reason,
                             f"IEX ask ${ask:.4f} is {ask_premium_bps:.1f}bp "
                             f"above reference ${market_price:.4f}, beyond the "
-                            f"{slippage_bps:.0f}bp ceiling ${cap:.4f}",
+                            f"{slippage_bps:.0f}bp ceiling ${cap:.4f}"
+                            + (
+                                " — latency blew the window"
+                                if skip_reason == "latency_window" else ""
+                            ),
                         )
                         continue
 
@@ -6119,6 +6202,11 @@ class ExecutionStage:
                         )
                     limit_price = offer_limit
                     sizing_price = max(sizing_price or 0, offer_limit)
+                    if getattr(ctx, "desk_latency_stall", False):
+                        used = dict(getattr(ctx, "catch_up_used", None) or {})
+                        if not used.get(decision.symbol):
+                            used[decision.symbol] = True
+                            ctx.catch_up_used = used
                 elif is_short and isinstance(bid, (int, float)) and bid > 0:
                     # Mirror of the BUY ceiling: a sell-short limit is a
                     # FLOOR, not a price. Alpaca fills a short at the NBBO
@@ -6127,7 +6215,13 @@ class ExecutionStage:
                     # toward the bid costs fills the same way VLO's shaved
                     # buy limit did. Set the limit AT the existing
                     # slippage floor and let the match happen underneath.
-                    floor = market_price * (1 - slippage_bps / 10_000.0)
+                    pinned_floor = (getattr(ctx, "approved_entry_ceiling", None) or {}).get(
+                        decision.symbol,
+                    )
+                    if isinstance(pinned_floor, (int, float)) and pinned_floor > 0:
+                        floor = float(pinned_floor)
+                    else:
+                        floor = market_price * (1 - slippage_bps / 10_000.0)
                     bid_limit = round(floor, 2 if floor >= 1 else 4)
                     bid_discount_bps = (
                         (market_price - bid) / market_price * 10_000.0
@@ -6139,21 +6233,33 @@ class ExecutionStage:
                     # rather than submitting an unfillable or unbound
                     # short. Not a new percentage.
                     if bid < floor / 1.02:
+                        skip_reason = (
+                            "latency_window"
+                            if getattr(ctx, "desk_latency_stall", False)
+                            else "slippage_gated"
+                        )
                         logger.warning(
                             "SHORT %s NOT SUBMITTED — the displayed bid has "
-                            "run beyond the slippage floor. Bid $%.4f is "
+                            "run beyond the slippage floor%s. Bid $%.4f is "
                             "%.1fbp below the $%.4f reference; the %.0fbp "
                             "floor is $%.4f. (Quote is IEX, not NBBO, so it "
                             "may also simply be a stale venue print — either "
                             "way, not a book to cross blind.)",
-                            decision.symbol, bid, bid_discount_bps,
+                            decision.symbol,
+                            " after a desk-caused stall; latency blew the window"
+                            if skip_reason == "latency_window" else "",
+                            bid, bid_discount_bps,
                             market_price, slippage_bps, floor,
                         )
                         _record_execution_skip(
-                            pipeline, ctx, decision.symbol, "slippage_gated",
+                            pipeline, ctx, decision.symbol, skip_reason,
                             f"IEX bid ${bid:.4f} is {bid_discount_bps:.1f}bp "
                             f"below reference ${market_price:.4f}, beyond the "
-                            f"{slippage_bps:.0f}bp floor ${floor:.4f}",
+                            f"{slippage_bps:.0f}bp floor ${floor:.4f}"
+                            + (
+                                " — latency blew the window"
+                                if skip_reason == "latency_window" else ""
+                            ),
                         )
                         continue
 

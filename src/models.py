@@ -425,6 +425,7 @@ class LLMOutputModel(BaseModel):
                 hits.append(field_name)
         if not hits:
             return values
+        original = dict(values)
         values = dict(values)
         for field_name in sorted(hits):
             # 2026-09-11: deleting the key is what makes the declared default
@@ -460,6 +461,16 @@ class LLMOutputModel(BaseModel):
             "said nothing where the prompt asked for something",
             cls.__name__, ", ".join(sorted(hits)),
         )
+        # Mechanical heal (owner 2026-09-16): if a stated non-empty
+        # thesis_invalid_if / catalyst survived on the original dict and a
+        # later drop blanked the canonical field, put the stated string
+        # back. Never invents "don't know". Lazy import: seat_heal imports
+        # sector maps from this module.
+        try:
+            from src.seat_heal import restore_stated_soft_exits
+            values, _restored = restore_stated_soft_exits(values, original)
+        except Exception:
+            pass
         return values
 
     @model_validator(mode="before")
@@ -2573,6 +2584,32 @@ class MacroAnalysis(LLMOutputModel):
         if not isinstance(values, dict):
             return values
         sg = values.get("sector_guidance")
+        # MacroStore persists {sector: bullish|neutral|bearish}. Live LLM
+        # output is a list of {sector, stance, reason}. A dict used to be
+        # left untouched, then MacroAnalysis.model_validate raised
+        # (measured 2026-09-16, two intra ticks). Coerce the dict to the
+        # list shape here — mechanical, no invented reasons — so a stored
+        # snapshot and a live dict-shaped answer both parse. Missing
+        # reasoning_chain is still a ValidationError: we do not invent it.
+        if isinstance(sg, dict):
+            converted: list[dict] = []
+            reverse = {
+                "bullish": "overweight",
+                "bearish": "underweight",
+                "neutral": "neutral",
+            }
+            for sector, direction in sg.items():
+                stance = reverse.get(str(direction or "").strip().lower())
+                if stance is None:
+                    stance = str(direction or "").strip().lower()
+                converted.append({
+                    "sector": sector,
+                    "stance": stance,
+                    "reason": "",
+                })
+            values = dict(values)
+            values["sector_guidance"] = converted
+            sg = converted
         if not isinstance(sg, list):
             return values
         cleaned: list[dict] = []

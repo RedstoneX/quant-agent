@@ -1576,7 +1576,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
 
         if macro_analysis:
             try:
-                macro = MacroAnalysis.model_validate(macro_analysis)
+                payload = (
+                    macro_analysis if isinstance(macro_analysis, dict)
+                    else macro_analysis.model_dump()
+                )
+                from src.seat_heal import coerce_macro_shape
+                payload, _fixes = coerce_macro_shape(payload)
+                macro = MacroAnalysis.model_validate(payload)
             except Exception:
                 macro = None
                 logger.warning("Phase 13: macro_analysis failed to parse", exc_info=True)

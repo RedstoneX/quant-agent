@@ -269,11 +269,36 @@ Walk through the 6-step reasoning chain, then emit the full JSON schema (includi
         # (PR #74). sector_guidance is already protected by the existing
         # _sanitize_sector_guidance @model_validator on MacroAnalysis.
         parsed = self._drop_invalid_key_observations(parsed)
+        from src.seat_heal import coerce_macro_shape
+        parsed, _fixes = coerce_macro_shape(parsed)
         try:
             analysis = MacroAnalysis(**parsed)
         except ValidationError as e:
-            logger.error("Macro analysis failed validation: %s", e)
-            return None, result
+            if getattr(self, "_heal_retry_used", False):
+                logger.error("Macro analysis failed validation after one heal retry: %s", e)
+                return None, result
+            # Mechanical coerce already ran. One paid retry, then durable
+            # failure — never a loop, never invented reasoning_chain text.
+            self._heal_retry_used = True
+            logger.warning(
+                "Macro analysis failed validation (%s); one paid heal retry", e,
+            )
+            try:
+                return self.analyze(
+                    macro_summary,
+                    universe=universe,
+                    last_state=last_state,
+                    news_narrative=news_narrative,
+                    macro_coverage=macro_coverage,
+                    macro_events=macro_events,
+                    event_coverage=event_coverage,
+                    event_horizon_days=event_horizon_days,
+                    fomc_meetings=fomc_meetings,
+                    fomc_coverage=fomc_coverage,
+                )
+            except Exception:
+                logger.error("Macro heal retry raised; not resetting the one-retry flag")
+                return None, result
         analysis = self._apply_sanity_checks(analysis, macro_summary)
         return analysis, result
 
