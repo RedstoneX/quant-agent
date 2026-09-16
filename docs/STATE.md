@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-09-15
+Updated: 2026-09-16
 
 This file records what is accepted and true **now**. Git history preserves implementation detail; do not turn this file into a changelog.
 
@@ -38,6 +38,20 @@ This file records what is accepted and true **now**. Git history preserves imple
   path. Missing short stops are repaired separately (item 73, closed).
   No take-profit / bracket; post-fill GTC protective stops stay
   the protect model. `execution.repeg_enabled` is unchanged (false).
+- **Stop-level archive (2026-09-16, item 71 closed):** `trades.stop_loss` on
+  the opening BUY/SHORT row is written back whenever an in-code path changes
+  the live stop (replace/trail, coverage repair, scale-in rearm, ex-div shift,
+  residual reprotect), and only when the broker accepted an order id — a
+  kill-switch dict is not archived. The entry bet is frozen as
+  `initial_stop_loss` so R-multiple is not rewritten by a trail. Repair
+  restores that live recorded level, not the frozen entry stop; a stop that
+  would fire immediately is still refused (restoring the entry stop would be
+  a widen). A session and watchdog reconcile reports, and does not copy, when
+  that number still disagrees with the broker (an out-of-band move leaves no
+  write-back row). Do not treat a "traded through its stop" reading from the
+  archive as real while they disagree. Items 35 and 69 stay archive illusions,
+  not re-filed as fixed. The halt still asks the broker whether a stop
+  *exists*.
 - Mission Control/API/journal/search/UI remain private, read-only and non-critical to trading.
 - OneCLI remains the accepted credential-delivery layer. No public listener is authorized.
 - Private operator access uses Tailscale. Canonical VPS FQDN: `ovh-vps.wallaby-bowfin.ts.net`.

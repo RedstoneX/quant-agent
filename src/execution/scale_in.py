@@ -181,12 +181,15 @@ def broker_position_qty(broker: Any, symbol: str) -> float | None:
 
 def rearm_full_position_stop(
     broker: Any, *, symbol: str, qty: float, stop_price: float,
+    db: Any = None,
 ) -> dict | None:
     """Place ONE protective SELL covering `qty` at `stop_price`.
 
     Routes through `_submit_protective_stop_retrying` so hybrid GTC+DAY
     fractional legs and the §11.1 retry burst are the same as every other
     protective-stop path. No take-profit, no bracket, no invented buffer.
+    On accept, writes `stop_price` back onto the opening row when `db` is
+    given — the rearmed level can be tighter than the add's own stop.
     """
     if qty <= 0 or stop_price <= 0:
         return None
@@ -195,10 +198,14 @@ def rearm_full_position_stop(
         buffer = float(buffer)
     except (TypeError, ValueError):
         buffer = 0.03
-    return broker._submit_protective_stop_retrying(
+    result = broker._submit_protective_stop_retrying(
         symbol=symbol, qty=qty, stop_price=stop_price,
         limit_price=stop_price * (1 - buffer), side="sell",
     )
+    from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
+    if accepted_stop_order(result) and db is not None:
+        write_back_stop_loss(db, symbol, stop_price, is_short=False)
+    return result
 
 
 def restore_cancelled_stops(
@@ -511,7 +518,7 @@ def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
         return True
 
     placed = rearm_full_position_stop(
-        broker, symbol=symbol, qty=held, stop_price=stop_price,
+        broker, symbol=symbol, qty=held, stop_price=stop_price, db=db,
     )
     if placed is None:
         logger.error(

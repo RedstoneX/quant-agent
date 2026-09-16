@@ -1414,22 +1414,20 @@ class TradingPipeline:
         **This is the precondition of the halt, not a report attached to
         it.** Halting instead of liquidating is only safe if the
         per-position stops are genuinely live at the broker, and the desk's
-        own records cannot be trusted to answer that question. The
-        `trades.stop_loss` column is written once at entry and nothing writes
-        it back when a stop is cancelled and replaced, so the archive can
-        show a position sitting below "its" stop while the live stop is ten
-        dollars lower and perfectly intact — which is exactly what the
-        2026-09-14 broker audit found for the Visa and Disney cases (WORK.md
-        items 35 and 69, both closed). The lesson from that audit is the
-        premise of this method: the stored record is not evidence about stop
-        coverage in either direction, so the halt asks the BROKER rather than
-        believing anything the desk wrote down. Two live reasons the answer
-        can genuinely be "no" remain: a stop can be moved by a maintenance
-        action outside this code, leaving no trade row behind (three were
-        moved that way on 2026-08-31 to lift grandfathered stops to the
-        minimum distance), and a
-        sub-share remainder provably cannot hold an overnight stop at this
-        broker.
+        own records cannot answer *whether a stop exists*. Coverage qty is
+        read from the broker. The archive's `trades.stop_loss` is written
+        back on every in-code replace/trail/repair/rearm/ex-div, and a
+        session reconcile reports when that number still disagrees with the
+        broker (an out-of-band move leaves no write-back row). That is the
+        LEVEL. This method still asks the BROKER for coverage, because a
+        stop that was cancelled and not replaced is a missing order, not a
+        stale price — which is exactly what the 2026-09-14 broker audit
+        found for the Visa and Disney *illusion* of an unfired stop (WORK.md
+        items 35 and 69, both closed as archive-stale; the write-back that
+        would have prevented those filings is item 71). Two live reasons
+        the answer can genuinely be "no" remain: a stop can be moved by a
+        maintenance action outside this code, and a sub-share remainder
+        provably cannot hold an overnight stop at this broker.
 
         Three outcomes per holding, and the third is the one that exists
         because of that archive:
@@ -3137,6 +3135,22 @@ class TradingPipeline:
         ]
         if naked:
             self._alert_owner_no_stop(naked)
+        try:
+            from src.execution.stop_records import (
+                reconcile_recorded_stop_levels, report_stop_level_mismatches,
+            )
+            mismatches = reconcile_recorded_stop_levels(
+                broker=self.broker,
+                last_buy=lambda sym, action="BUY": self.db.get_symbol_last_buy(
+                    sym, include_in_flight=True, action=action,
+                ),
+                positions=positions,
+                sweep_symbol=sweep_symbol,
+                skip_symbols=pending_syms,
+            )
+            report_stop_level_mismatches(mismatches)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("stop-level reconcile failed: %s", exc)
         return gaps
 
     @staticmethod
@@ -3197,6 +3211,7 @@ class TradingPipeline:
             symbol=symbol,
             uncovered_qty=uncovered_qty,
             is_short=is_short,
+            db=self.db,
         )
 
     def _submit_protected_sell(
@@ -4429,6 +4444,11 @@ class TradingPipeline:
                     "exists at the broker (idempotent re-run)",
                     symbol, best_stop,
                 )
+                from src.execution.stop_records import write_back_stop_loss
+                write_back_stop_loss(
+                    getattr(self, "db", None), symbol, best_stop,
+                    is_short=(side == "buy"),
+                )
                 return True
 
         side_kwargs = {} if side == "sell" else {"side": side}
@@ -4444,16 +4464,16 @@ class TradingPipeline:
             legs.append(frac)
         if not legs:
             legs = [residual_qty]
+        last_order = None
         try:
             for leg_qty in legs:
-                self.broker._submit_stop_limit_order(
+                last_order = self.broker._submit_stop_limit_order(
                     symbol=symbol, qty=leg_qty, stop_price=best_stop, **side_kwargs,
                 )
             logger.info(
                 "Re-protected %s residual qty=%s @ stop $%.2f after partial exit",
                 symbol, self._format_qty(residual_qty), best_stop,
             )
-            return True
         except Exception as exc:
             logger.warning(
                 "Re-protect failed for %s residual=%s @ $%.2f: %s — position "
@@ -4461,6 +4481,19 @@ class TradingPipeline:
                 symbol, self._format_qty(residual_qty), best_stop, exc,
             )
             return False
+        from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
+        if isinstance(last_order, dict) and not accepted_stop_order(last_order):
+            logger.warning(
+                "Re-protect for %s @ $%.2f returned no accepted order id — "
+                "not recording a live stop the broker does not hold",
+                symbol, best_stop,
+            )
+            return False
+        write_back_stop_loss(
+            getattr(self, "db", None), symbol, best_stop,
+            is_short=(side == "buy"),
+        )
+        return True
 
     @staticmethod
     def _order_accepted(order: dict, symbol: str, side: str) -> bool:
@@ -5321,8 +5354,15 @@ class TradingPipeline:
             except Exception as e:
                 logger.error("ex-div: stop shift failed for %s: %s", p.symbol, e)
                 continue
-            if not order:
+            from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
+            if not order or (
+                isinstance(order, dict) and not accepted_stop_order(order)
+            ):
                 continue
+            try:
+                write_back_stop_loss(self.db, p.symbol, new_stop, is_short=False)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("ex-div: stop write-back failed for %s: %s", p.symbol, e)
             try:
                 self.db.insert_trade(
                     symbol=p.symbol, action="TRAIL_STOP", qty=p.qty,
@@ -7624,12 +7664,18 @@ class TradingPipeline:
                 live = None
             if isinstance(live, (int, float)) and live > 0:
                 live_stops[sym] = float(live)
+            from src.execution.stop_records import recorded_initial_stop
             try:
-                buy = self.db.get_symbol_last_buy(sym)
+                qty = float(getattr(p, "qty", 0) or 0)
+            except (TypeError, ValueError):
+                qty = 0.0
+            try:
+                opening = "SHORT" if qty < 0 else "BUY"
+                buy = self.db.get_symbol_last_buy(sym, action=opening)
             except Exception as e:  # noqa: BLE001
                 logger.warning("stop map: last-buy lookup failed for %s: %s", sym, e)
                 buy = None
-            initial = float((buy or {}).get("stop_loss") or 0)
+            initial = recorded_initial_stop(buy)
             if initial > 0:
                 initial_stops[sym] = initial
         return live_stops, initial_stops
@@ -9039,6 +9085,9 @@ class TradingPipeline:
         only, a minimum move worth an order, and never inside one ordinary
         day's range. Returns the broker orders placed.
         """
+        from src.execution.stop_records import (
+            recorded_initial_stop, replace_stop_and_record,
+        )
         from src.risk.trailing import compute_trailing_stop
 
         orders: list[dict] = []
@@ -9101,25 +9150,28 @@ class TradingPipeline:
                 # behaviour change on today's long-only book.
                 qty=position.qty,
                 # Fix #3 (2026-09-04 audit): the ENTRY stop, never the live
-                # one -- buy.stop_loss is written once at BUY and never
-                # mutated by a later TRAIL_STOP (that writes a separate
-                # trade row), so it stays the true initial risk for the
-                # life of the position. Powers the Type A +1R breakeven
-                # ratchet.
-                initial_stop=(buy or {}).get("stop_loss"),
+                # one. `initial_stop_loss` is frozen at insert / first
+                # write-back; `stop_loss` itself is the live recorded level
+                # after a trail. Powers the Type A +1R breakeven ratchet.
+                initial_stop=recorded_initial_stop(buy),
             )
             if proposal is None:
                 continue
             logger.info("Deterministic trail: %s", proposal.reason)
             try:
-                order = self.broker.replace_stop_loss(symbol, proposal.new_stop)
+                from src.execution.stop_records import accepted_stop_order
+                order = replace_stop_and_record(
+                    self.broker, self.db, symbol, proposal.new_stop,
+                )
             except Exception as e:  # noqa: BLE001
                 logger.error(
                     "trail: replace_stop_loss failed for %s (%s) — the OLD "
                     "stop remains in force", symbol, e,
                 )
                 continue
-            if not order:
+            if not order or (
+                isinstance(order, dict) and not accepted_stop_order(order)
+            ):
                 continue
             if isinstance(order, dict):
                 order.setdefault("action", "TRAIL_STOP")
@@ -9129,6 +9181,7 @@ class TradingPipeline:
                     symbol=symbol, action="TRAIL_STOP", qty=position.qty,
                     price=proposal.new_stop, reasoning=proposal.reason,
                     run_id=run_id,
+                    stop_loss=proposal.new_stop,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("trail: trade row write failed for %s: %s", symbol, e)
@@ -9863,8 +9916,15 @@ class TradingPipeline:
                                     symbol, new_stop, noise_floor, atr,
                                 )
                                 continue
-                    order = self.broker.replace_stop_loss(symbol, new_stop)
-                    if order:
+                    from src.execution.stop_records import (
+                        accepted_stop_order, replace_stop_and_record,
+                    )
+                    order = replace_stop_and_record(
+                        self.broker, self.db, symbol, new_stop,
+                    )
+                    if order and not (
+                        isinstance(order, dict) and not accepted_stop_order(order)
+                    ):
                         if isinstance(order, dict):
                             order.setdefault("action", "TRAIL_STOP")  # audit F5
                         orders.append(order)
@@ -11139,21 +11199,31 @@ class TradingPipeline:
             entry = p.avg_entry
             cur = p.current_price
 
-            # Find the last executed BUY in the DB for this symbol to derive
-            # target/stop/days_held. Falls back to the morning row if present.
-            buy = buy_rows.get(sym)
-            if not buy:
+            # Find the last executed opening row for this symbol to derive
+            # target/stop/days_held. A short must read the SHORT row, not a
+            # leftover BUY on the same ticker. Falls back to the morning
+            # BUY row only for longs.
+            if p.qty < 0:
                 try:
-                    buy = self.db.get_symbol_last_buy(sym)
+                    buy = self.db.get_symbol_last_buy(sym, action="SHORT")
                 except Exception:
                     buy = None
+            else:
+                buy = buy_rows.get(sym)
+                if not buy:
+                    try:
+                        buy = self.db.get_symbol_last_buy(sym)
+                    except Exception:
+                        buy = None
 
             stop_loss = float((buy or {}).get("stop_loss") or 0)
             take_profit = float((buy or {}).get("take_profit") or 0)
-            # Keep the ENTRY stop before the live-stop override below. It is
-            # the R-multiple's denominator: the bet that was actually made,
-            # not the level a trail later ratcheted it to (audit §1.4).
-            initial_stop = stop_loss
+            # The ENTRY stop, frozen as `initial_stop_loss` on first
+            # write-back. R-multiple's denominator is the bet that was
+            # actually made, not the level a trail later ratcheted it to
+            # (audit §1.4).
+            from src.execution.stop_records import recorded_initial_stop
+            initial_stop = recorded_initial_stop(buy)
 
             # RC1: after any TRAIL_STOP the BUY row's stop is stale-WIDE —
             # the reviewer would see a fat distance_to_stop and keep

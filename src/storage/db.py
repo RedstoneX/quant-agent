@@ -792,6 +792,12 @@ class Database:
         # instead of the close-to-8pm-AH broker diff. NULL for legacy rows.
         _ensure_column("daily_pnl", "equity_close", "equity_close REAL")
         _ensure_column("trades", "stop_loss", "stop_loss REAL DEFAULT 0")
+        # Frozen copy of the entry stop. `stop_loss` is written back when
+        # the live protective level moves (trail / replace / repair / rearm
+        # / ex-div); R-multiple and the Type A breakeven ratchet still need
+        # the original bet. NULL on legacy rows that have never been
+        # written back — those still have entry == stop_loss.
+        _ensure_column("trades", "initial_stop_loss", "initial_stop_loss REAL")
         _ensure_column("trades", "take_profit", "take_profit REAL DEFAULT 0")
         # Phase 3.1 — the thesis horizon and setup type PINNED AT ENTRY.
         # `pace` used to be measured against `avg_hold_days` from the system's
@@ -1205,22 +1211,105 @@ class Database:
             )
             exit_category = _categorize_exit_reason(action, reasoning, fill_status, None)
             decision_link_status = _resolve_decision_id_status(action, decision_id)
+            try:
+                stop_at_insert = float(stop_loss or 0)
+            except (TypeError, ValueError):
+                stop_at_insert = 0.0
+            initial_stop_loss = stop_at_insert if stop_at_insert > 0 else None
             cur = self.conn.execute(
                 "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, "
                 "stop_loss, take_profit, broker_order_id, fill_status, decision_id, "
                 "expected_horizon_sessions, setup_type, position_id, exit_reason_category, "
                 "conviction, requested_risk_pct, allocated_risk_pct, decision_model, "
-                "decision_id_status, thesis_invalid_if) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "decision_id_status, thesis_invalid_if, initial_stop_loss) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (symbol, action, qty, price, reasoning, run_id,
                  stop_loss, take_profit, broker_order_id, fill_status, decision_id,
                  expected_horizon_sessions, setup_type, position_id, exit_category,
                  conviction, requested_risk_pct, allocated_risk_pct, decision_model,
-                 decision_link_status, thesis_invalid_if),
+                 decision_link_status, thesis_invalid_if, initial_stop_loss),
             )
             self.conn.commit()
             return cur.lastrowid
         return self._locked_write(_do, label="insert_trade")
+
+    def update_open_stop_loss(
+        self, symbol: str, new_stop_price: float, *, action: str | None = None,
+    ) -> bool:
+        """Write the live stop onto the latest opening row.
+
+        `action` is 'BUY' or 'SHORT' when the caller knows the side
+        (repair, a short trail). Omitting it takes the most recent of
+        either — only safe when a symbol cannot be both. Refuses an
+        unknown action rather than defaulting to long.
+        """
+        try:
+            price = float(new_stop_price)
+        except (TypeError, ValueError):
+            return False
+        if price != price or price <= 0:
+            return False
+        symbol_key = (symbol or "").strip()
+        if not symbol_key:
+            return False
+        opening = (action or "").upper() or None
+        if opening is not None and opening not in ("BUY", "SHORT"):
+            logger.warning(
+                "update_open_stop_loss: refusing unknown opening action %r "
+                "for %s", action, symbol_key,
+            )
+            return False
+
+        def _do():
+            predicate = (
+                f"({self._executed_trade_predicate()} "
+                "OR fill_status IN ('submitted', 'pending_submit'))"
+            )
+            if opening:
+                row = self.conn.execute(
+                    "SELECT id, stop_loss, initial_stop_loss FROM trades "
+                    "WHERE symbol = ? AND action = ? "
+                    f"AND {predicate} "
+                    "ORDER BY timestamp DESC, id DESC LIMIT 1",
+                    (symbol_key, opening),
+                ).fetchone()
+            else:
+                row = self.conn.execute(
+                    "SELECT id, stop_loss, initial_stop_loss FROM trades "
+                    "WHERE symbol = ? AND action IN ('BUY', 'SHORT') "
+                    f"AND {predicate} "
+                    "ORDER BY timestamp DESC, id DESC LIMIT 1",
+                    (symbol_key,),
+                ).fetchone()
+            if row is None:
+                logger.warning(
+                    "update_open_stop_loss: no opening row for %s — live "
+                    "stop $%.4f was NOT recorded", symbol_key, price,
+                )
+                return False
+            try:
+                current = float(row["stop_loss"] or 0)
+            except (TypeError, ValueError):
+                current = 0.0
+            try:
+                initial = float(row["initial_stop_loss"] or 0)
+            except (TypeError, ValueError):
+                initial = 0.0
+            frozen = initial if initial > 0 else (current if current > 0 else None)
+            if frozen is None:
+                self.conn.execute(
+                    "UPDATE trades SET stop_loss = ? WHERE id = ?",
+                    (price, row["id"]),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE trades SET stop_loss = ?, initial_stop_loss = ? "
+                    "WHERE id = ?",
+                    (price, frozen, row["id"]),
+                )
+            self.conn.commit()
+            return True
+        return bool(self._locked_write(_do, label="update_open_stop_loss"))
 
     def _resolve_new_row_position_id(
         self, symbol: str, action: str, *, qty: float,
