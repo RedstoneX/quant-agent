@@ -36,6 +36,16 @@ what would catch it next time.
 
 ---
 
+### 2026-09-16 — the thirty-minute scan no longer treats "chose not to re-read" and "this morning's research never arrived" as the same thing (item 20, intraday half)
+
+**In plain words:** the later-in-the-day scan used one label for two opposite facts — we deliberately did not re-buy a research seat, and this morning's seat failed so there was nothing to reuse. The first is an honest skip. The second is a missing answer. Because they looked the same, the scan could still pick trades after a morning whose research never arrived. They are now different labels, and the second refuses the decision the same way the morning session already does. Earnings stays an honest skip: that scan does not re-read filings.
+
+**What this does not close.** How many usable reads is "enough" is still the owner's, and was not invented. Item 20 stays open on that counting half.
+
+**What would catch it next time.** A test that an empty or failed morning lookup refuses the scan before the expensive decision seat, and a test that the intentional skip still does not.
+
+---
+
 ### 2026-09-16 — when a stop moved, the desk kept writing the old number in its own records (WORK.md item 71, CLOSED)
 
 **In plain words:** every time the protective stop on a holding was moved — trailed up, shifted for a dividend, put back after a repair, rearmed after adding to a winner — the broker had the new price and our own trade record still had the price from the day we opened. Anyone reading that record, including two earlier board items that looked like "the stock traded through its own stop", was looking at a number that had been retired days before.

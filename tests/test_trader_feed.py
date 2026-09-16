@@ -306,6 +306,28 @@ def test_intraday_no_new_activity_statuses_remain_silent(tmp_path, monkeypatch):
         assert msg is None, f"{status} must stay silent on the trader feed"
 
 
+def test_intraday_evidence_gate_skip_is_not_silent(tmp_path, monkeypatch):
+    """A refused decision is the opposite of a quiet 'nothing to scan'
+    tick. The feed must name the skip, not swallow it with the everyday
+    no-new-activity statuses."""
+    _make_db(tmp_path, monkeypatch)
+    outer = {
+        "status": "ok", "run_id": "intra_check-skip", "daily_pnl": 10.0,
+        "intraday_scan": {
+            "status": "evidence_gate_skip",
+            "run_id": "intra_check-skip",
+            "lost_seats": ["news"],
+            "reason": "decision skipped: 1 seat(s) were asked and their "
+                      "answer never arrived — news=carry_forward_empty.",
+            "candidates": ["AAPL"],
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 4.0)
+    assert msg is not None
+    assert "DECISION SKIPPED" in msg
+    assert "news" in msg
+
+
 def test_normal_intraday_ok_tick_remains_silent(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
     msg = trader_feed.format_session_result(

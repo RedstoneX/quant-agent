@@ -738,6 +738,16 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
         )
         if nested.get("error"):
             lines.append(f"Error: {_clip(nested.get('error'), 900)}")
+    elif status == "evidence_gate_skip":
+        lost = nested.get("lost_seats") or []
+        seats = ", ".join(str(s) for s in lost) or "a research seat"
+        lines.append(
+            f"🟡 DECISION SKIPPED: {seats} never returned an answer, so this "
+            "tick declined to decide rather than guess. Nothing was traded "
+            "and the Portfolio Manager was not paid for."
+        )
+        if nested.get("reason"):
+            lines.append(_clip(nested.get("reason"), 900))
     elif status == "intraday_scan_crashed":
         # Operator-honesty fix: this used to be indistinguishable from a
         # healthy tick that ran and found nothing — the scan raised, the

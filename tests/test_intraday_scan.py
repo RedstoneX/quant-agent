@@ -31,9 +31,10 @@ import pytest
 
 from src.config import IntradayScanConfig
 from src.cost_circuit import PaidAnalysisSuspended
-from src.models import TechAnalysisResult, TechReasoningChain
+from src.models import MacroNarrative, NewsIntelligenceReport, TechAnalysisResult, TechReasoningChain
 from src.pipeline import TradingPipeline
 from src.pipeline_context import RunContext
+from src.trading_calendar import et_today
 
 
 def _ta_result(symbol, rating="buy"):
@@ -48,6 +49,27 @@ def _ta_result(symbol, rating="buy"):
         ),
         reasoning="test",
     )
+
+
+def _todays_macro_state():
+    return {
+        "date": str(et_today()),
+        "regime": "risk-on",
+        "equity_outlook": "bullish",
+        "sector_guidance": {},
+    }
+
+
+def _todays_news_dump():
+    return NewsIntelligenceReport(
+        macro_narrative=MacroNarrative(
+            last_updated=str(et_today()), era_themes=["test"],
+            current_regime="risk-on, test",
+        ),
+        state_changes=[], stock_news={},
+        pm_briefing="test", market_sentiment="bullish",
+        confidence="medium",
+    ).model_dump()
 
 
 def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
@@ -73,7 +95,9 @@ def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
     pipeline.market = MagicMock()
     pipeline.market.get_ohlcv.return_value = [MagicMock()]  # non-empty; compute_indicators is patched
     pipeline.macro_store = MagicMock()
-    pipeline.macro_store.load_last_state.return_value = {}
+    pipeline.macro_store.load_last_state.return_value = _todays_macro_state()
+    pipeline.news_store = MagicMock()
+    pipeline.news_store.load_daily_report.return_value = _todays_news_dump()
     pipeline.tech_store = MagicMock()
     pipeline.tech_store.load.return_value = {}
     pipeline.tech_store.compute_ages.return_value = {}
@@ -149,6 +173,12 @@ def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     p.risk_stage.run.assert_called_once_with(ctx)
     p.execution_stage.run.assert_called_once_with(ctx)
     assert ctx.analyses == [analysis]
+    # Intentional skip (earnings not re-fetched) is not a lost answer —
+    # the gate must still let the PM run. Empty/failed carry-forward is
+    # a different word and is tested separately.
+    assert ctx.data_status["earnings"] == "not_run_intraday"
+    assert ctx.data_status["macro"] == "carried_from_morning"
+    assert ctx.data_status["news"] == "carried_from_morning"
 
 
 @patch("src.pipeline.compute_indicators")
@@ -848,3 +878,101 @@ def test_a_recovered_symbol_resets_its_miss_streak():
     ).fetchone()
     assert row["consecutive_misses"] == 0
     real_db.close()
+
+
+# ---------- item 20: empty/failed carry-forward refuses; intentional skip does not
+
+def _qualifying_move_pipeline():
+    """A scan that has found a usable tech analysis and would otherwise
+    pay for the Portfolio Manager — the moment the evidence gate must
+    run, before that call."""
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    analysis = _ta_result("AAPL", rating="buy")
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": analysis},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+    p.decision_stage.run.side_effect = lambda ctx: setattr(
+        ctx, "portfolio_decision",
+        SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
+    )
+    p.risk_stage.run.return_value = None
+    p.execution_stage.run.return_value = [{"id": "o1", "action": "BUY", "symbol": "AAPL"}]
+    return p
+
+
+@patch("src.pipeline.compute_indicators")
+@patch("src.notifier.send_owner_alert", return_value=True)
+def test_empty_morning_carry_forward_skips_the_intraday_pm(
+    mock_alert, mock_compute_indicators,
+):
+    """This morning's macro/news never arrived. Labelling that
+    `not_run_intraday` used to let the PM decide on fabricated evidence.
+    The split status is a lost answer, so the scan refuses before the PM."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _qualifying_move_pipeline()
+    p.macro_store.load_last_state.return_value = None
+    p.news_store.load_daily_report.return_value = None
+
+    ctx = RunContext.start("intra_check")
+    with patch("src.decision_checkpoint.write_status") as write_status:
+        result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "evidence_gate_skip"
+    assert set(result["lost_seats"]) == {"macro", "news"}
+    assert ctx.data_status["macro"] == "carry_forward_empty"
+    assert ctx.data_status["news"] == "carry_forward_empty"
+    assert ctx.data_status["earnings"] == "not_run_intraday"
+    p.decision_stage.run.assert_not_called()
+    p.risk_stage.run.assert_not_called()
+    p.execution_stage.run.assert_not_called()
+    write_status.assert_not_called()
+    mock_alert.assert_called_once()
+    assert "DECISION SKIPPED" in mock_alert.call_args[0][0]
+
+
+@patch("src.pipeline.compute_indicators")
+@patch("src.notifier.send_owner_alert", return_value=True)
+def test_failed_morning_carry_forward_skips_the_intraday_pm(
+    mock_alert, mock_compute_indicators,
+):
+    """The lookup itself raised. That is `carry_forward_failed`, not the
+    intentional skip, and it refuses the same way a morning `failed` does."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _qualifying_move_pipeline()
+    p.macro_store.load_last_state.side_effect = RuntimeError("disk gone")
+    p.news_store.load_daily_report.side_effect = RuntimeError("disk gone")
+
+    ctx = RunContext.start("intra_check")
+    result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "evidence_gate_skip"
+    assert set(result["lost_seats"]) == {"macro", "news"}
+    assert ctx.data_status["macro"] == "carry_forward_failed"
+    assert ctx.data_status["news"] == "carry_forward_failed"
+    p.decision_stage.run.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+@patch("src.notifier.send_owner_alert", return_value=True)
+def test_one_empty_carry_forward_seat_is_enough_to_refuse(
+    mock_alert, mock_compute_indicators,
+):
+    """Same categorical rule as morning: any one lost seat refuses.
+    Macro arrived; news did not."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _qualifying_move_pipeline()
+    p.news_store.load_daily_report.return_value = None
+
+    ctx = RunContext.start("intra_check")
+    result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "evidence_gate_skip"
+    assert result["lost_seats"] == ["news"]
+    assert ctx.data_status["macro"] == "carried_from_morning"
+    assert ctx.data_status["news"] == "carry_forward_empty"
+    p.decision_stage.run.assert_not_called()

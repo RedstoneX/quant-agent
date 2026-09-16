@@ -57,7 +57,7 @@ from unittest.mock import MagicMock, patch
 from src import trader_feed
 from src.config import IntradayScanConfig
 from src.pipeline import TradingPipeline
-from tests.test_intraday_scan import _ta_result
+from tests.test_intraday_scan import _ta_result, _todays_macro_state, _todays_news_dump
 from tests.test_trader_feed import _make_db
 
 
@@ -93,9 +93,9 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
     p.market = MagicMock()
     p.market.get_ohlcv.return_value = [MagicMock()]
     p.macro_store = MagicMock()
-    p.macro_store.load_last_state.return_value = {}
+    p.macro_store.load_last_state.return_value = _todays_macro_state()
     p.news_store = MagicMock()
-    p.news_store.load_daily_report.return_value = None
+    p.news_store.load_daily_report.return_value = _todays_news_dump()
     p.tech_store = MagicMock()
     p.tech_store.load.return_value = {}
     p.tech_store.compute_ages.return_value = {}

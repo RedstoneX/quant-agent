@@ -39,10 +39,32 @@ def test_every_lost_status_refuses(status):
 @pytest.mark.parametrize("status", ["empty", "release_overdue", "not_run_intraday"])
 def test_a_seat_with_nothing_to_report_does_not_refuse(status):
     """The whole reason this gate needs no threshold: "no Form 4 filings
-    today" is an answer, not a gap."""
+    today" is an answer, not a gap. `not_run_intraday` is the intentional
+    skip — this tick chose not to re-fetch the seat — not a lost answer."""
     v = evidence_gate.evaluate({"smart_money": status})
     assert v.skip is False
     assert v.nothing_to_report == ["smart_money"]
+
+
+@pytest.mark.parametrize("status", ["carry_forward_empty", "carry_forward_failed"])
+def test_empty_or_failed_carry_forward_refuses(status):
+    """The other meaning that used to hide under `not_run_intraday`:
+    this morning's seat never produced a usable today-dated answer, or
+    the lookup itself failed. That is a lost answer. Deciding on it is
+    fabricating the missing seat."""
+    v = evidence_gate.evaluate({"macro": status, "earnings": "not_run_intraday"})
+    assert v.skip is True
+    assert v.lost == ["macro"]
+    assert v.nothing_to_report == ["earnings"]
+
+
+def test_intraday_status_split_distinguishes_skip_from_miss():
+    """The two meanings that used to share one word."""
+    cat = evidence_gate.STATUS_CATEGORY
+    assert cat["not_run_intraday"] == evidence_gate.CATEGORY_NOTHING_TO_REPORT
+    assert cat["carry_forward_empty"] == evidence_gate.CATEGORY_LOST
+    assert cat["carry_forward_failed"] == evidence_gate.CATEGORY_LOST
+    assert cat["carried_from_morning"] == evidence_gate.CATEGORY_REPORTED
 
 
 @pytest.mark.parametrize("status", ["ok", "partial", "low_confidence",
@@ -104,7 +126,10 @@ def test_every_status_the_codebase_writes_is_classified():
     # Two writers do not use subscript assignment and are scanned directly:
     # the intraday dict is a literal, and the earnings status is whatever
     # `_classify_earnings_status` returns.
-    written.update({"carried_from_morning", "not_run_intraday"})
+    written.update({
+        "carried_from_morning", "not_run_intraday",
+        "carry_forward_empty", "carry_forward_failed",
+    })
     import ast
     stages = ast.parse((REPO / "src" / "pipeline_stages.py").read_text())
     for node in ast.walk(stages):
