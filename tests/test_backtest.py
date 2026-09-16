@@ -38,12 +38,15 @@ from src.backtest.engine import (
     BacktestParams,
     Trade,
     _OpenPosition,
+    _budget_binds,
     _check_exit,
     _close_trade,
     _fill_price,
     run_backtest,
 )
-from src.backtest.metrics import compute_metrics, format_ab_table
+from src.backtest.metrics import (
+    compute_metrics, format_ab_table, format_caveats, format_metrics_report,
+)
 from src.config import RiskConfig
 from src.models import OHLCV
 
@@ -204,6 +207,9 @@ def test_hand_computed_long_trade():
     # Insufficient-history accounting: exactly the 209 days below the
     # MIN_BARS_FOR_SIGNAL threshold were skipped, not silently dropped.
     assert result.skipped_symbol_days == 209
+    # One symbol, one fully-granted request: the budget did not bind.
+    assert result.entry_days >= 1
+    assert result.binding_budget_days == 0
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +399,8 @@ def test_determinism_same_inputs_same_output():
     assert result_1.trades == result_2.trades
     assert result_1.final_equity == result_2.final_equity
     assert result_1.skipped_symbol_days == result_2.skipped_symbol_days
+    assert result_1.binding_budget_days == result_2.binding_budget_days
+    assert result_1.entry_days == result_2.entry_days
 
 
 # ---------------------------------------------------------------------------
@@ -419,12 +427,20 @@ def test_ab_two_configs_one_parameter_produce_different_labelled_results():
     assert metrics_a.expectancy_dollars == 10000.0
     assert metrics_b.expectancy_dollars == 5000.0
 
-    table = format_ab_table("A (risk 5.0)", metrics_a, "B (risk 2.5)", metrics_b)
+    table = format_ab_table(
+        "A (risk 5.0)", metrics_a, "B (risk 2.5)", metrics_b,
+        binding_budget_days_a=result_a.binding_budget_days,
+        binding_budget_days_b=result_b.binding_budget_days,
+        entry_days_a=result_a.entry_days,
+        entry_days_b=result_b.entry_days,
+    )
     assert "A (risk 5.0)" in table
     assert "B (risk 2.5)" in table
     assert "$10,000.00" in table
     assert "$5,000.00" in table
     assert "$-5,000.00" in table  # the delta column
+    assert "Binding-budget days" in table
+    assert "ticker spelling" in table
 
 
 # ---------------------------------------------------------------------------
@@ -440,3 +456,115 @@ def test_fill_price_slippage_direction():
     assert _fill_price(100.0, "short", "open", 100.0) == pytest.approx(99.0)
     # Zero slippage is a no-op.
     assert _fill_price(100.0, "long", "open", 0.0) == 100.0
+
+
+# ---------------------------------------------------------------------------
+# Binding-budget day reporting (item 64) — report-only, not a ranking
+# ---------------------------------------------------------------------------
+
+def test_budget_binds_when_any_positive_request_is_limited():
+    from src.risk.budget import BudgetAllocation, RiskGrant
+
+    full = RiskGrant("AAA", 5.0, 5.0)
+    cut = RiskGrant("ZZZ", 5.0, 0.0, limited_by="total_ceiling")
+    bound = BudgetAllocation(
+        grants={"AAA": full, "ZZZ": cut},
+        committed_pct=5.0, ceiling_pct=5.0, cluster_pct={},
+    )
+    assert _budget_binds(bound)
+    free = BudgetAllocation(
+        grants={"AAA": full},
+        committed_pct=5.0, ceiling_pct=25.0, cluster_pct={},
+    )
+    assert not _budget_binds(free)
+
+
+def test_binding_day_is_counted_and_served_alphabetically():
+    """Two equal-size asks, 5% ceiling, 5% per name: only one fits.
+    This engine still has no ranking, so AAA is funded and ZZZ is not
+    because A comes before Z. That is the existing behaviour, labeled
+    and counted — not a ranking fix.
+    """
+    bars_a = _build_long_win_series()
+    bars_z = _build_long_win_series()
+    params = BacktestParams(
+        start=bars_a[0].date, end=bars_a[-1].date, max_hold_days=20,
+        initial_equity=100_000.0, slippage_bps=0.0,
+    )
+    config = _risk_config(
+        max_portfolio_risk_pct=5.0,
+        max_position_risk_pct=5.0,
+        max_cluster_risk_share_pct=100.0,
+    )
+    result = run_backtest(
+        config=config,
+        bars_by_symbol={"AAA": bars_a, "ZZZ": bars_z},
+        params=params,
+    )
+    traded = {t.symbol for t in result.trades}
+    assert "AAA" in traded
+    assert "ZZZ" not in traded
+    assert result.binding_budget_days >= 1
+    assert result.entry_days >= result.binding_budget_days
+
+
+def test_every_backtest_result_reports_binding_days_and_labels_the_tie_break():
+    """Count on every result, including zero. Alphabetical labeled as what
+    it is. The old 'these numbers measure the portfolio risk budget' claim
+    must not survive — that was the lie item 64 exists to stop.
+    """
+    caveats = format_caveats(
+        slippage_bps=5.0, slippage_source="test", skipped=0, min_bars=210,
+        symbols_with_no_data=[], binding_budget_days=0, entry_days=10,
+    )
+    assert "0 of 10" in caveats
+    assert "alphabetical" in caveats.lower()
+    assert "ticker spelling" in caveats.lower()
+    assert "cannot evaluate live rationing" in caveats
+    assert "the portfolio risk budget, cluster caps" not in caveats
+
+    caveats_bound = format_caveats(
+        slippage_bps=5.0, slippage_source="test", skipped=0, min_bars=210,
+        symbols_with_no_data=[], binding_budget_days=3, entry_days=40,
+    )
+    assert "3 of 40" in caveats_bound
+
+    metrics = compute_metrics([], 100_000.0)
+    report = format_metrics_report(
+        "A", metrics,
+        dict(start="2025-01-01", end="2025-12-31", n_symbols=2,
+             data_source="test", initial_equity=100_000.0),
+        binding_budget_days=0, entry_days=10,
+    )
+    assert "0 of 10" in report
+    assert "ticker spelling" in report
+    assert "not a ranking" in report
+
+    table = format_ab_table(
+        "A", metrics, "B", metrics,
+        binding_budget_days_a=1, binding_budget_days_b=3,
+        entry_days_a=10, entry_days_b=10,
+    )
+    assert "Binding-budget days" in table
+    assert "1 of 10" in table
+    assert "3 of 10" in table
+    assert "alphabetical" in table.lower()
+
+
+def test_backtest_still_sends_uniform_unranked_requests():
+    """The caveat's premise: every candidate asks the same risk, and this
+    engine does not pass a ranking into the allocator. Production still
+    spends down verdict order; that path is not this one.
+    """
+    import inspect
+
+    from src.backtest import engine
+    from src.portfolio_constructor import PortfolioConstructor
+
+    src = inspect.getsource(engine.run_backtest)
+    assert 'RiskRequest(c["symbol"], config.risk.max_position_risk_pct)' in src
+    assert "priority=" not in src
+    assert "rank_verdicts" not in src
+
+    production = inspect.getsource(PortfolioConstructor._plan_risk_targets)
+    assert "priority=ranking" in production

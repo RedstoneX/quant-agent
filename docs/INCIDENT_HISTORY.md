@@ -22,7 +22,18 @@ what would catch it next time.
 
 ---
 
-### 2026-09-15 — a short that lost its protective stop was never given one back (WORK.md item 73, CLOSED)
+### 2026-09-16 — practice runs against history still fund trades by ticker spelling when the risk ceiling runs out; they now say so on every result (WORK.md item 64, reporting shipped — ranking is not fixed)
+
+**In plain words:** when a practice run has more trade ideas than the risk ceiling allows, it still funds them in alphabetical order. That is ticker spelling, not a judgement of which idea is better. Until now the printed result did not say that, so a reader could take the numbers as evidence about how the live desk picks among trades. Every result now prints how many of its days the ceiling ran out, and says the tie-break is alphabetical. The live desk still spends its budget on the best-ranked ideas first. The practice run still has no ranking, and this change does not give it one.
+
+**What this does not close.** Ranking is not fixed. Item 64 stays open. A made-up score, copying live analyst ratings into the practice run, or ranking by the practice run's own reward-to-risk number (which the live desk uses only as a tie-break under the real ranking, never as the rank itself) were all ruled out: any of those would change who gets capital while still looking like a ranking fix. What would settle the rest: a score read off something the practice run already computes that is actually the live ranking rule — which needs the analyst ratings it cannot replay — or a decision that practice runs cannot evaluate rationing at all.
+
+**What was wrong with the old printout.** It claimed the numbers measured the portfolio risk budget. They ran that budget, but on a binding day they measured ticker order. The count of binding days is also not a discount you can apply to the other numbers: who got funded changes later account size, later position size, and later outcomes.
+
+**What would catch it next time.** A test that a two-name day where only one idea fits funds the earlier ticker and reports a binding day; a test that a result with zero binding days still prints the count and the alphabetical label; a test that the side-by-side comparison table carries the count; a test that the practice run still sends the same risk for every name and does not pass a ranking, while the live path still does.
+
+---
+
 
 **In plain words:** if the desk bets against a stock and the protective order
 on that bet goes missing, nothing put it back. The same gap on a stock the
