@@ -67,6 +67,51 @@ def test_intraday_status_split_distinguishes_skip_from_miss():
     assert cat["carried_from_morning"] == evidence_gate.CATEGORY_REPORTED
 
 
+def test_integrity_clean_statuses_are_classified_and_not_lost():
+    """A word cannot be both 'usable for Risk' and 'lost for the gate'.
+    Adding one without the other is how #428's split failed to reach RM."""
+    for status in evidence_gate.INTEGRITY_CLEAN_STATUSES:
+        assert status in evidence_gate.STATUS_CATEGORY, status
+        assert evidence_gate.STATUS_CATEGORY[status] != evidence_gate.CATEGORY_LOST
+
+
+@pytest.mark.parametrize("status", sorted(evidence_gate.INTEGRITY_CLEAN_STATUSES))
+def test_reuse_and_intentional_skip_are_not_degraded(status):
+    """Same-session reuse and an intentional skip are usable, not an
+    integrity failure. This is the 2026-09-16 intra veto: Risk treated
+    carried_from_morning / not_run_intraday as data_degraded."""
+    assert evidence_gate.counts_as_degraded(status) is False
+
+
+@pytest.mark.parametrize("status", [
+    "failed", "parse_error", "provider_error", "truncated", "content_missing",
+    "carry_forward_empty", "carry_forward_failed",
+    "partial", "low_confidence", "degraded", "symbol_dropped",
+    "figures_contradicted",
+])
+def test_real_failures_and_thin_reads_still_count_as_degraded(status):
+    """The 2+ advisory must still fire on actual upstream problems.
+    Thin-but-present reads (partial / low_confidence / …) stay degraded;
+    only reuse and the intentional skip were taken off the list."""
+    assert evidence_gate.counts_as_degraded(status) is True
+
+
+def test_intra_reuse_package_is_not_two_plus_degraded():
+    """The exact intra tick that reached Risk on 2026-09-16: tech re-run
+    ok, news/macro reused, earnings an intentional skip. That is ZERO
+    degraded seats, not three. The old ok/empty allow-list counted all
+    three reuse words and the advisory always fired."""
+    status = {
+        "tech": "ok",
+        "macro": "carried_from_morning",
+        "news": "carried_from_morning",
+        "earnings": "not_run_intraday",
+    }
+    degraded = [k for k, v in status.items() if evidence_gate.counts_as_degraded(v)]
+    assert degraded == []
+    assert evidence_gate.evaluate(status).skip is False
+
+
 @pytest.mark.parametrize("status", ["ok", "partial", "low_confidence",
                                     "symbol_dropped", "degraded",
                                     "figures_contradicted",

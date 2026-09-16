@@ -1669,13 +1669,16 @@ def test_evening_report_rejects_invalid_risk_rating():
 
 def test_data_degraded_violation_fires_at_two_failures():
     """When 2+ upstream sources fail, morning emits a non-blocking data_degraded violation."""
-    # Directly verify the threshold logic without spinning the full pipeline.
+    from src import evidence_gate
+    # Production helper, not a copy of the allow-list — the 2026-09-16
+    # intra veto existed because this test asserted a local `not in
+    # ("ok", "empty")` that had drifted from what Risk actually needed.
     status = {"macro": "failed", "news": "failed", "tech": "ok", "earnings": "ok"}
-    degraded = [k for k, v in status.items() if v not in ("ok", "empty")]
+    degraded = [k for k, v in status.items() if evidence_gate.counts_as_degraded(v)]
     assert len(degraded) == 2  # threshold met
 
     status2 = {"macro": "failed", "news": "ok", "tech": "ok", "earnings": "ok"}
-    degraded2 = [k for k, v in status2.items() if v not in ("ok", "empty")]
+    degraded2 = [k for k, v in status2.items() if evidence_gate.counts_as_degraded(v)]
     assert len(degraded2) == 1  # under threshold, no advisory
 
 

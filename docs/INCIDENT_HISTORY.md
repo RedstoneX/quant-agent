@@ -22,6 +22,20 @@ what would catch it next time.
 
 ---
 
+### 2026-09-16 — the later scan treated this morning's own research as broken data and refused a whole plan (item 20, Risk half of the skip/lost split)
+
+**In plain words:** about forty minutes after a successful morning, the desk proposed one more trade and the risk reviewer refused the entire plan because the news, economics and earnings seats had not been paid for again. They had already run that morning. Reusing them was a spend choice, not a missing file. Calling that "stale" or "degraded" was sloppy: the same session is not stale. The reviewer is not supposed to need a person in the loop, and the desk is not supposed to spend another round of model calls at ten o'clock to re-buy research it already has.
+
+**Cause.** The earlier split already told the cheap coverage check the difference: "we chose not to re-read" versus "this morning's answer never arrived". The second still stops the expensive decision step before it runs. The risk reviewer was not using that split. Any seat status other than "ok" or "empty" counted as degraded, and two such seats produced a warning that the plan was built on incomplete input. On a later-in-the-day tick the reused morning seats and the intentional earnings skip are always those other words, so the warning always fired, and the reviewer treated it as a data-integrity failure of the whole book.
+
+**Fix.** Same-session reuse and the intentional skip are now treated as usable for that warning, the same way the coverage check already treated them as not-lost. If the morning answer really never arrived, the scan still refuses before the expensive decision step — prefer that refusal over paying to refresh. The warning, when it still fires for a real failure, names only the seats that actually failed, so reuse words cannot sneak back into the reviewer's prompt on a mixed tick. Earnings is still not re-read on the later scan (a filing that arrived after the morning has not been read). How many usable reads is "enough" was not invented. Reward-to-risk and slippage gates were not loosened. Chase/repeg was not enabled. No default "what would kill this trade" or "catalyst" wording was invented.
+
+**What this does not close.** Item 20's counting half is still the owner's. Two other things the same refusal also named — calendars not fetched on that tick, and empty "what would kill this" / "catalyst" fields — were not this defect and were not redesigned here. Age of a morning read by the afternoon is not a new rule; the later scan's design is to reuse the morning, not to re-buy it.
+
+**What would catch it next time.** A test that a later-scan status of reused morning news/economics plus an intentional earnings skip does not send the risk reviewer a data-degraded warning; a test that two real seat failures still do, without naming the reuse words; a test that an empty or failed morning lookup still refuses before the expensive decision step; a test that the intentional skip and a lost morning lookup remain different labels.
+
+---
+
 ### 2026-09-16 — the two things that could refuse a sale were failing safe in opposite directions (WORK.md item 60, CLOSED)
 
 **In plain words:** when the desk wanted to sell, two separate checks could say no, and they treated "I cannot tell" as opposite answers. If the second-opinion reviewer was silent or unreadable, the sale went ahead — you approved that on 27 August, because blocking a sale just because a language model is down would trap the desk in a position whose story had already broken. But if the sale's written reason simply did not contain one of a short list of recognised phrases, the sale was blocked. The desk was treating a quiet reviewer as more trustworthy than a reviewer that was working and wording things unexpectedly. The only behaviour actually measured on this path was over-refusal: eight proposed sales, the reviewer approved all eight, the automatic rules blocked all eight (seven as "too small a move", one as "no recognised phrase").

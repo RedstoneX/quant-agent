@@ -618,11 +618,14 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
 
 # === Data-quality alert (own message, not bundled) ===
 #
-# Before this existed, a bad analyst seat (`data_status` anything but "ok"
-# or "empty" — degraded, truncated, parse_error, failed, partial) only ever
-# showed up as one line INSIDE the routine session-result message (see
-# `_append_trade_session_body`'s "degraded:" line below). That is exactly
-# what the owner's alert-design rule forbids: "alerts get their OWN
+# Before this existed, a bad analyst seat (`data_status` anything that
+# `evidence_gate.counts_as_degraded` — failed, truncated, parse_error,
+# partial, …) only ever showed up as one line INSIDE the routine
+# session-result message (see `_append_trade_session_body`'s "degraded:"
+# line below). Same-session reuse (`carried_from_morning`) and an
+# intentional skip (`not_run_intraday`) are not in that set: they are
+# usable, not a lost seat. That is exactly what the owner's alert-design
+# rule forbids: "alerts get their OWN
 # Telegram message, never bundled into a run summary." A bundled line is
 # easy to miss inside a normal-looking "session OK" message, and this
 # desk's whole thesis depends on the analysts' data being trustworthy — see
@@ -694,9 +697,10 @@ def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
     data_status = result.get("data_status") or {}
     if not isinstance(data_status, dict):
         return False
+    from src import evidence_gate
     bad = {
         k: v for k, v in data_status.items()
-        if v not in ("ok", "empty")
+        if evidence_gate.counts_as_degraded(v)
         and v not in _ALERT_EXEMPT_PER_SEAT.get(k, ())
     }
     if not bad:
@@ -1215,8 +1219,12 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
     else:
         lines.append("orders: 0")
 
+    from src import evidence_gate
     data_status = result.get("data_status") or {}
-    degraded = [k for k, v in data_status.items() if v not in ("ok", "empty")]
+    degraded = [
+        k for k, v in data_status.items()
+        if evidence_gate.counts_as_degraded(v)
+    ]
     if degraded:
         lines.append(f"⚠️ degraded: {', '.join(sorted(degraded))}")
 

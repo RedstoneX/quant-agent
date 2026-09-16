@@ -127,6 +127,37 @@ STATUS_CATEGORY: dict[str, str] = {
     "carry_forward_failed": CATEGORY_LOST,
 }
 
+#: Statuses that are NOT an upstream integrity problem for Risk's 2+
+#: `data_degraded` advisory, or for the operator "degraded" banners that
+#: share the same allow-list.
+#:
+#: `ok` / `empty` were the original pair. `carried_from_morning` is this
+#: morning's already-paid answer reused on an intra tick — same session,
+#: same objects, by design, not a lost seat. `not_run_intraday` is the
+#: intentional skip (earnings on the scan): this tick chose not to re-pay
+#: the seat. Measured 2026-09-16: treating those two as degraded made
+#: Risk veto a whole intra plan ~40 minutes after a successful morning,
+#: because the advisory always saw 2+ "failures" on a clean reuse tick.
+#: Age-as-staleness is not the defect; empty/failed carry-forward still
+#: refuses BEFORE the Portfolio Manager, via CATEGORY_LOST above.
+INTEGRITY_CLEAN_STATUSES: frozenset[str] = frozenset({
+    "ok",
+    "empty",
+    "carried_from_morning",
+    "not_run_intraday",
+})
+
+
+def counts_as_degraded(status: str) -> bool:
+    """True when this seat-status should feed the 2+ data_degraded advisory.
+
+    Never raises. An unknown word counts as degraded so a new failure
+    mode cannot silently drop out of the advisory; classify it in
+    STATUS_CATEGORY *and* decide whether it belongs in
+    INTEGRITY_CLEAN_STATUSES in the same diff.
+    """
+    return str(status) not in INTEGRITY_CLEAN_STATUSES
+
 
 @dataclass(frozen=True)
 class EvidenceGateVerdict:

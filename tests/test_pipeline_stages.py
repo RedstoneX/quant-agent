@@ -916,6 +916,107 @@ def test_risk_stage_reads_macro_target_pct_from_carried_forward_dict():
     assert fh_kwargs["macro_target_invested_pct"] == 62.5
 
 
+def test_risk_stage_does_not_flag_same_session_reuse_as_data_degraded():
+    """2026-09-16 intra_check-f0f27e08: morning news/macro ran, intra
+    reused them by design, earnings was an intentional skip, tech re-ran
+    clean. RiskStage's 2+ advisory used to treat all three reuse words
+    as degraded and dump the status dict into RM, which then vetoed the
+    whole plan as a data-integrity failure. Reuse is usable; the
+    advisory must not fire, and must not mention those words if it
+    fires for some other reason."""
+    from src.models import PortfolioDecision, RiskVerdict
+
+    decisions = [_buy("MRVL", 5)]
+    pipeline = _risk_stage_pipeline(decisions)
+    pipeline._filter_hard_risk_decisions = MagicMock(
+        side_effect=lambda d, *a, **kw: (list(d), [], []),
+    )
+    pipeline._apply_risk_modifications = MagicMock(return_value=(decisions, []))
+    pipeline._ensure_correlation_matrix = MagicMock(return_value={})
+    verdict = RiskVerdict(
+        approved=True, reasoning_chain=_risk_rc(), reasoning="clean reuse",
+    )
+    rm_result = MagicMock()
+    rm_result.used_fallback = False
+    pipeline.risk_manager = MagicMock()
+    pipeline.risk_manager.review.return_value = (verdict, rm_result)
+
+    ctx = RunContext.start("intra_check")
+    ctx.decision_id = f"{ctx.run_id}-dec-000016"
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.data_status = {
+        "tech": "ok",
+        "macro": "carried_from_morning",
+        "news": "carried_from_morning",
+        "earnings": "not_run_intraday",
+    }
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+    )
+
+    result = RiskStage(pipeline=pipeline).run(ctx)
+
+    assert result is None
+    pipeline.risk_manager.review.assert_called_once()
+    violations = pipeline.risk_manager.review.call_args.kwargs["rule_violations"]
+    degraded = [v for v in violations if v.rule == "data_degraded"]
+    assert degraded == [], (
+        "same-session reused morning intel must not be a Risk data-integrity "
+        f"advisory; got {degraded!r}"
+    )
+
+
+def test_risk_stage_data_degraded_message_omits_reuse_statuses():
+    """If two REAL failures still trip the advisory, the message must
+    name those seats only — not smuggle carried_from_morning /
+    not_run_intraday back into RM via the full-dict dump."""
+    from src.models import PortfolioDecision, RiskVerdict
+
+    decisions = [_buy("MRVL", 5)]
+    pipeline = _risk_stage_pipeline(decisions)
+    pipeline._filter_hard_risk_decisions = MagicMock(
+        side_effect=lambda d, *a, **kw: (list(d), [], []),
+    )
+    pipeline._apply_risk_modifications = MagicMock(return_value=(decisions, []))
+    pipeline._ensure_correlation_matrix = MagicMock(return_value={})
+    verdict = RiskVerdict(
+        approved=True, reasoning_chain=_risk_rc(), reasoning="two real failures",
+    )
+    rm_result = MagicMock()
+    rm_result.used_fallback = False
+    pipeline.risk_manager = MagicMock()
+    pipeline.risk_manager.review.return_value = (verdict, rm_result)
+
+    ctx = RunContext.start("intra_check")
+    ctx.decision_id = f"{ctx.run_id}-dec-000017"
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.data_status = {
+        "tech": "partial",
+        "macro": "failed",
+        "news": "carried_from_morning",
+        "earnings": "not_run_intraday",
+    }
+    ctx.portfolio_decision = PortfolioDecision(
+        reasoning_chain=_pm_rc(), decisions=decisions, portfolio_view="test",
+    )
+
+    RiskStage(pipeline=pipeline).run(ctx)
+
+    violations = pipeline.risk_manager.review.call_args.kwargs["rule_violations"]
+    degraded = [v for v in violations if v.rule == "data_degraded"]
+    assert len(degraded) == 1
+    message = degraded[0].message
+    assert "macro" in message and "tech" in message
+    assert "carried_from_morning" not in message
+    assert "not_run_intraday" not in message
+    assert "news" not in message
+    assert "earnings" not in message
+
+
 def test_risk_stage_macro_target_pct_degrades_to_none_when_guidance_missing():
     """A carried-forward snapshot may legitimately lack position_guidance
     (e.g. very old / partially-written state). Must degrade to None — the
