@@ -2,9 +2,12 @@
 """Deterministic-layer backtester — CLI entry point.
 
 Measures structural stop placement, noise-band stop widening, risk-based
-position sizing, the portfolio risk budget / cluster caps, and the
-trailing-stop rules against real history. It does NOT replay the LLM
-agents — see `src/backtest/engine.py` for the full scope statement and the
+position sizing, and the trailing-stop rules against real history. The
+portfolio risk budget and cluster caps run, but this engine asks the same
+risk for every candidate and supplies no ranking, so a binding day is
+served alphabetically (ticker spelling) — every result prints how many
+such days occurred. It does NOT replay the LLM agents — see
+`src/backtest/engine.py` for the full scope statement and the
 declared simplifications. Read the caveats block this tool prints before
 trusting a number out of it.
 
@@ -158,12 +161,18 @@ def _report(label: str, config_path: str, result: BacktestRunResult, metrics: Me
                      "fallback wired, no local snapshot used)",
         initial_equity=args.initial_equity,
     )
-    print(format_metrics_report(f"{label}: {config_path}", metrics, meta))
+    print(format_metrics_report(
+        f"{label}: {config_path}", metrics, meta,
+        binding_budget_days=result.binding_budget_days,
+        entry_days=result.entry_days,
+    ))
     print()
     print(format_caveats(
         slippage_bps=slippage_bps, slippage_source=slippage_source,
         skipped=result.skipped_symbol_days, min_bars=result.params.min_bars_for_signal,
         symbols_with_no_data=result.symbols_with_no_data,
+        binding_budget_days=result.binding_budget_days,
+        entry_days=result.entry_days,
     ))
 
 
@@ -204,6 +213,10 @@ def main(argv: list[str] | None = None) -> int:
         print(format_ab_table(
             f"A ({Path(args.config).name})", metrics_a,
             f"B ({Path(args.config_b).name})", metrics_b,
+            binding_budget_days_a=result_a.binding_budget_days,
+            binding_budget_days_b=result_b.binding_budget_days,
+            entry_days_a=result_a.entry_days,
+            entry_days_b=result_b.entry_days,
         ))
 
     return 0

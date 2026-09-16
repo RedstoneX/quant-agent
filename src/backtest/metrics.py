@@ -119,8 +119,18 @@ WHAT THIS MEASURES — read before trusting the numbers above
     levels (src/data/levels.py) — never from the LLM agents. The agents are
     NOT replayed; their outputs are not reproducible and cannot be honestly
     backtested (docs/QAMC_REMEDIATION_SPEC.md Sec 7.1). These numbers measure
-    stop placement, noise-band widening, risk-based sizing, the portfolio
-    risk budget, cluster caps, and the trailing-stop rules -- nothing else.
+    stop placement, noise-band widening, risk-based sizing, and the
+    trailing-stop rules -- nothing else. They do NOT measure how the live
+    desk rations a binding risk budget. This engine asks the same risk for
+    every candidate and supplies no ranking, so when the budget binds,
+    equal-size requests are served by the allocator's alphabetical ticker
+    tie-break -- ticker spelling, not a quality ranking. Production spends
+    down analyst-verdict order; this engine has no verdicts and does not
+    invent a score. Binding-budget days this run: {binding} of {entry}
+    entry day(s) (days that had at least one new candidate). That share is
+    not a discount you can apply to the numbers above: who got funded
+    changes later equity, later size, and later outcomes. These numbers
+    therefore cannot evaluate live rationing.
     They are NOT a forecast of live P&L, which also depends on the
     LLM-driven entry/exit judgment this tool does not model.
   - SURVIVORSHIP BIAS. The universe is a fixed, present-day symbol list. Any
@@ -141,7 +151,8 @@ WHAT THIS MEASURES — read before trusting the numbers above
 
 
 def format_caveats(*, slippage_bps: float, slippage_source: str, skipped: int,
-                    min_bars: int, symbols_with_no_data: list[str]) -> str:
+                    min_bars: int, symbols_with_no_data: list[str],
+                    binding_budget_days: int, entry_days: int) -> str:
     missing_line = ""
     if symbols_with_no_data:
         missing_line = (
@@ -151,10 +162,14 @@ def format_caveats(*, slippage_bps: float, slippage_source: str, skipped: int,
     return CAVEAT_TEMPLATE.format(
         slippage_bps=slippage_bps, slippage_source=slippage_source,
         skipped=skipped, min_bars=min_bars, missing_line=missing_line,
+        binding=binding_budget_days, entry=entry_days,
     )
 
 
-def format_metrics_report(label: str, metrics: Metrics, meta: dict) -> str:
+def format_metrics_report(
+    label: str, metrics: Metrics, meta: dict, *,
+    binding_budget_days: int, entry_days: int,
+) -> str:
     ratio = (
         f"{metrics.avg_win_loss_ratio:.3f}"
         if metrics.avg_win_loss_ratio is not None else "n/a"
@@ -164,6 +179,8 @@ def format_metrics_report(label: str, metrics: Metrics, meta: dict) -> str:
         f"  Period: {meta['start']} .. {meta['end']}  |  "
         f"Universe: {meta['n_symbols']} symbol(s)  |  Data source: {meta['data_source']}",
         f"  Trades: {metrics.trade_count}",
+        f"  Binding-budget days: {binding_budget_days} of {entry_days} entry day(s)"
+        f"  (equal asks served alphabetically — ticker spelling, not a ranking)",
         f"  Win rate: {metrics.win_rate_pct:.2f}%",
         f"  Avg win: ${metrics.avg_win:,.2f}   Avg loss: ${metrics.avg_loss:,.2f}   "
         f"Win/loss ratio: {ratio}",
@@ -211,7 +228,11 @@ def _fmt(value, kind: str, signed: bool = False) -> str:
     return f"{value:{sign}.2f}"
 
 
-def format_ab_table(label_a: str, metrics_a: Metrics, label_b: str, metrics_b: Metrics) -> str:
+def format_ab_table(
+    label_a: str, metrics_a: Metrics, label_b: str, metrics_b: Metrics, *,
+    binding_budget_days_a: int, binding_budget_days_b: int,
+    entry_days_a: int, entry_days_b: int,
+) -> str:
     """Side-by-side comparison with a delta column (B - A). This is the
     tool's real purpose: "did this parameter change help?" """
     col_a, col_b = label_a[:20], label_b[:20]
@@ -225,4 +246,18 @@ def format_ab_table(label_a: str, metrics_a: Metrics, label_b: str, metrics_b: M
             f"{name:<22} {_fmt(a, kind):>20} {_fmt(b, kind):>20} "
             f"{_fmt(delta, kind, signed=True):>16}"
         )
+    # Binding-day count is on the run, not on trade-list Metrics. It still
+    # belongs on the comparison: this table is where a reader treats a
+    # parameter change as evidence about how the desk picks among trades.
+    bind_a = f"{binding_budget_days_a} of {entry_days_a}"
+    bind_b = f"{binding_budget_days_b} of {entry_days_b}"
+    bind_delta = binding_budget_days_b - binding_budget_days_a
+    lines.append(
+        f"{'Binding-budget days':<22} {bind_a:>20} {bind_b:>20} "
+        f"{_fmt(bind_delta, 'int', signed=True):>16}"
+    )
+    lines.append(
+        "On binding days this engine serves equal-size requests "
+        "alphabetically (ticker spelling), not a ranking."
+    )
     return "\n".join(lines)
