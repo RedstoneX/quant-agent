@@ -273,11 +273,11 @@ coverage should never stop a decision at all.
 
 ## item 64
 
-**Plain language —** The desk's practice runs against historical data ask for the same risk on every trade they consider. When the risk ceiling runs out on a busy day, the tie between all those identical requests is broken by ticker spelling — so the practice run funds trades in alphabetical order. Your best-first decision was built into the live desk, and deliberately not into the practice runs: those work off price signals and never produce the analyst ratings the ranking is made of, so there is no ranking to work down, and making up a score to stand in for one is exactly the kind of invented number that keeps causing problems here.
+**Plain language —** The desk's practice runs against historical data still ask for the same risk on every trade they consider. When the risk ceiling runs out on a busy day, the tie is still broken by ticker spelling. That has not been fixed. What changed is the printout: every practice-run result now says how many of its days the ceiling ran out, and that the tie-break is alphabetical, so nobody reads those numbers as evidence about how the live desk picks among trades. The live desk still spends its budget on the best-ranked ideas first. The practice run still has no ranking, and making up a score to stand in for one is still refused.
 
-**Example —** A practice-run day where the candidates together want more risk than the ceiling allows: Apple gets funded, Nvidia does not, purely because A comes before N. Nothing about either chart is consulted.
+**Example —** A practice-run day where the candidates together want more risk than the ceiling allows: Apple gets funded, Nvidia does not, purely because A comes before N. The result now prints that this happened. Nothing about either chart is consulted, and nothing about the live ranking is either.
 
-**The decision —** None for you. Either the practice runs learn to score their own candidates off something real, or every practice-run result gets reported alongside how many of its days had the budget running out, so nobody reads a result as evidence about how the desk picks between trades when it isn't.
+**The decision —** None for you yet. The reporting half is done. The remaining question is whether practice runs should score their own candidates off something that is actually how the live desk ranks — or whether they simply cannot evaluate rationing. Do not read this item as the ranking having been fixed.
 
 ## item 65
 

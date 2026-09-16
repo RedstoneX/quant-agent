@@ -21,6 +21,10 @@ touched, is the DETERMINISTIC layer underneath them:
                             (shares = equity x risk_pct/100 / |entry - stop|)
   * the portfolio risk budget and cluster caps
                           — `src/risk/budget.py::allocate_risk_budget`
+                            (the function runs; on a binding day this
+                            engine's equal-size unranked asks are served
+                            alphabetically, not production's ranking —
+                            see OTHER DECLARED SIMPLIFICATIONS)
   * trailing stops        — `src/risk/trailing.py::compute_trailing_stop`
 
 Every one of those is reused from the live modules, not reimplemented, so a
@@ -81,6 +85,15 @@ OTHER DECLARED SIMPLIFICATIONS
   sequence, and assuming the worse outcome is the conservative choice.
 * A position still open when the data window ends is force-closed at the
   last available close (`exit_reason="end_of_data"`), not silently dropped.
+* Every new candidate requests the same `max_position_risk_pct` and this
+  engine supplies no ranking (`priority` is omitted). When the budget
+  binds, equal-size requests are served by the allocator's alphabetical
+  ticker tie-break — ticker spelling, not a quality ranking. Production
+  spends down `rank_verdicts` order; this engine has no verdicts and does
+  not invent a score. Every run reports how many entry days bound; those
+  days cannot evaluate live rationing. The share is not a discount you
+  can apply to the other numbers: who got funded changes later equity,
+  later size, and later outcomes.
 """
 
 from __future__ import annotations
@@ -98,7 +111,7 @@ from src.data.technical import compute_indicators
 from src.models import OHLCV
 from src.pipeline import TradingPipeline
 from src.portfolio_constructor import ConstructorConfig, PortfolioConstructor
-from src.risk.budget import RiskRequest, allocate_risk_budget
+from src.risk.budget import BudgetAllocation, RiskRequest, allocate_risk_budget
 from src.risk.rules import _gross_multiplier
 from src.risk.trailing import compute_trailing_stop
 
@@ -179,6 +192,15 @@ class BacktestRunResult:
     params: BacktestParams
     initial_equity: float
     final_equity: float
+    #: Days `allocate_risk_budget` ran (the engine had at least one new
+    #: candidate). Denominator for `binding_budget_days`.
+    entry_days: int
+    #: Days at least one new candidate was not granted its full request.
+    #: This engine asks the same risk for every name and supplies no
+    #: ranking, so among equal-size requests the allocator's alphabetical
+    #: ticker tie-break is the order they are served. That is not a
+    #: ranking, and it is not production's `rank_verdicts` spend-down.
+    binding_budget_days: int
 
 
 def _fill_price(raw_price: float, direction: str, side: str, slippage_bps: float) -> float:
@@ -401,6 +423,22 @@ def _close_trade(pos: _OpenPosition, exit_idx: int, exit_date_: date, raw_exit: 
     )
 
 
+def _budget_binds(allocation: BudgetAllocation) -> bool:
+    """True when at least one new request was not granted in full.
+
+    That is a day the total ceiling or a cluster cap bound. A bind can
+    be two equal asks competing (alphabetical among them) or a lone
+    candidate cut by held risk — the count is the bind, not a claim
+    that ticker spelling decided every one. The report labels the
+    tie-break as alphabetical because this engine never passes
+    `priority` and every ask is the same size.
+    """
+    return any(
+        grant.requested_pct > 0.0 and grant.limited_by is not None
+        for grant in allocation.grants.values()
+    )
+
+
 def run_backtest(
     *, config: AppConfig, bars_by_symbol: dict[str, list[OHLCV]], params: BacktestParams,
 ) -> BacktestRunResult:
@@ -461,6 +499,8 @@ def run_backtest(
     open_positions: dict[str, _OpenPosition] = {}
     realized_pnl = 0.0
     skipped_symbol_days = 0
+    entry_days = 0
+    binding_budget_days = 0
 
     for i, day in enumerate(calendar):
         # ---- 1. Exits, then trailing-stop updates, for open positions ----
@@ -578,6 +618,9 @@ def run_backtest(
             cluster_share_pct=config.risk.max_cluster_risk_share_pct,
             floor_pct=config.risk.min_position_risk_pct,
         )
+        entry_days += 1
+        if _budget_binds(allocation):
+            binding_budget_days += 1
 
         for c in candidates:
             granted = allocation.granted(c["symbol"])
@@ -621,4 +664,6 @@ def run_backtest(
         params=params,
         initial_equity=params.initial_equity,
         final_equity=round(params.initial_equity + realized_pnl, 2),
+        entry_days=entry_days,
+        binding_budget_days=binding_budget_days,
     )
