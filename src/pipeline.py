@@ -13031,7 +13031,6 @@ class TradingPipeline:
             ctx, ctx.run_id, session=ctx.session,
         )
         if gate_skip is not None:
-            gate_skip = dict(gate_skip)
             gate_skip["candidates"] = symbols
             return gate_skip
 
