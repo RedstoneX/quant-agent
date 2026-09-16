@@ -119,7 +119,9 @@ def test_todays_macro_is_carried_forward():
     from src.trading_calendar import et_today
 
     state = dict(MACRO, date=str(et_today()))
-    assert _pipeline(macro=state)._carry_forward_macro()["regime"] == "risk-on"
+    carried = _pipeline(macro=state)._carry_forward_macro()
+    assert carried.status == "carried_from_morning"
+    assert carried.payload["regime"] == "risk-on"
 
 
 def test_yesterdays_macro_is_not_carried_forward():
@@ -130,12 +132,16 @@ def test_yesterdays_macro_is_not_carried_forward():
     from src.trading_calendar import et_today
 
     stale = dict(MACRO, date=str(et_today() - timedelta(days=1)))
-    assert _pipeline(macro=stale)._carry_forward_macro() is None
+    carried = _pipeline(macro=stale)._carry_forward_macro()
+    assert carried.payload is None
+    assert carried.status == "carry_forward_empty"
 
 
 def test_absent_macro_leaves_the_tick_exactly_as_blind_as_before():
-    assert _pipeline(macro=None)._carry_forward_macro() is None
-    assert _pipeline(macro={})._carry_forward_macro() is None
+    for state in (None, {}):
+        carried = _pipeline(macro=state)._carry_forward_macro()
+        assert carried.payload is None
+        assert carried.status == "carry_forward_empty"
 
 
 def test_a_macro_store_failure_never_fails_the_tick():
@@ -147,12 +153,22 @@ def test_a_macro_store_failure_never_fails_the_tick():
 
     obj = _pipeline()
     obj.macro_store = _Broken()
-    assert obj._carry_forward_macro() is None
+    carried = obj._carry_forward_macro()
+    assert carried.payload is None
+    assert carried.status == "carry_forward_failed"
 
 
 def test_a_malformed_news_cache_degrades_to_no_news():
     obj = _pipeline(news={"not": "a valid report"})
-    assert obj._carry_forward_news() is None
+    carried = obj._carry_forward_news()
+    assert carried.payload is None
+    assert carried.status == "carry_forward_failed"
+
+
+def test_absent_news_is_empty_not_failed():
+    carried = _pipeline(news=None)._carry_forward_news()
+    assert carried.payload is None
+    assert carried.status == "carry_forward_empty"
 
 
 def test_news_round_trips_from_its_stored_dump():
@@ -170,14 +186,17 @@ def test_news_round_trips_from_its_stored_dump():
         confidence="medium",
     ).model_dump()
     carried = _pipeline(news=stored)._carry_forward_news()
-    assert carried is not None
-    assert carried.market_sentiment == "bullish"
+    assert carried.status == "carried_from_morning"
+    assert carried.payload is not None
+    assert carried.payload.market_sentiment == "bullish"
 
 
 def test_undated_macro_is_carried_rather_than_discarded():
     """A stored state with no date field predates the date stamping. Refusing
     it would silently re-blindfold every tick until the next morning write."""
-    assert _pipeline(macro=dict(MACRO))._carry_forward_macro()["regime"] == "risk-on"
+    carried = _pipeline(macro=dict(MACRO))._carry_forward_macro()
+    assert carried.status == "carried_from_morning"
+    assert carried.payload["regime"] == "risk-on"
 
 
 # --------------------------------------------------------------------------

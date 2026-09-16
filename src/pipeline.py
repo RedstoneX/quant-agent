@@ -4,6 +4,7 @@ import logging
 import math
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from src.trading_calendar import et_now, et_today, session_date_key
@@ -88,6 +89,30 @@ from src.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CarryForward:
+    """Morning evidence reused on an intraday tick, with an honest status.
+
+    `payload` is the stored object when today's lookup succeeded; otherwise
+    None. `status` is the data_status word the caller must write — never
+    inferred from payload truthiness, because an empty morning store and
+    an intentional skip used to share one word (`not_run_intraday`).
+    """
+
+    payload: object | None
+    status: str
+
+    def __bool__(self) -> bool:
+        """True only when today's payload is present.
+
+        Status must still be read from `.status` — truthiness is only a
+        safety net so a leftover `if carried` cannot treat an empty or
+        failed lookup as a successful carry.
+        """
+        return self.payload is not None
+
 
 # audit F1: a pending_protection_restores row written BEFORE the SELL is
 # submitted carries this as sell_order_id — it means "protective stops
@@ -8873,7 +8898,7 @@ class TradingPipeline:
             MORNING's stored read and is itself date-scoped — it refuses
             anything not dated today — which is exactly the condition
             `TRUSTED_MACRO_STATUSES` already recognises as
-            `"carried_from_morning"`. When it returns nothing (no macro ran
+            `"carried_from_morning"`. When payload is None (no macro ran
             today, or the stored state is stale), `macro_status` is passed
             as None and the checker's own UNVERIFIABLE branch handles it.
             Nothing is defaulted, substituted or invented to fill the gap:
@@ -9014,8 +9039,11 @@ class TradingPipeline:
         # elsewhere in this class (see the intraday-scan data_status block),
         # so the label is reused rather than a second one invented.
         carried_macro = self._carry_forward_macro()
-        macro_regime_today = _macro_regime(carried_macro)
-        macro_status = "carried_from_morning" if carried_macro else None
+        macro_regime_today = _macro_regime(carried_macro.payload)
+        # Unverifiable, not a trusted read and not a gate status: an absent
+        # macro must never call an exit claim false. The entry-side
+        # evidence gate uses carried_macro.status; this checker does not.
+        macro_status = "carried_from_morning" if carried_macro.payload else None
 
         try:
             active_state_changes = self._build_active_state_changes()
@@ -10668,7 +10696,9 @@ class TradingPipeline:
         payload.update(extra)
         return payload
 
-    def _evidence_gate_skip(self, ctx, run_id: str) -> dict | None:
+    def _evidence_gate_skip(
+        self, ctx, run_id: str, *, session: str = "morning",
+    ) -> dict | None:
         """docs/WORK.md item 20 — refuse to DECIDE on evidence that never
         arrived. Returns a terminal result dict when the run must skip, or
         None to proceed.
@@ -10744,7 +10774,11 @@ class TradingPipeline:
         # a morning that was killed mid-run.
         from src import decision_checkpoint as _dc
 
-        _dc.write_status("morning", "evidence_gate_skip")
+        # Morning only: the evening dead-man probe keys off this
+        # checkpoint. An intra_check skip must not overwrite a completed
+        # morning's status with a later refusal.
+        if session == "morning":
+            _dc.write_status("morning", "evidence_gate_skip")
         try:
             from src.notifier import send_owner_alert
 
@@ -12662,23 +12696,30 @@ class TradingPipeline:
                 return {"status": "intraday_scan_lock_contended", "run_id": ctx.run_id}
             return self._intraday_opportunity_scan_body(ctx)
 
-    def _carry_forward_macro(self) -> dict | None:
+    def _carry_forward_macro(self) -> CarryForward:
         """This morning's macro regime, for an intraday tick to reason inside.
 
         Read from the store rather than re-derived: the macro analyst already
-        ran today and its call is on disk. Returns None when nothing is
-        stored, which leaves the tick exactly as blind as it used to be
-        rather than substituting a stale regime from a previous day —
-        `load_last_state` is not date-scoped, so the freshness check is this
-        method's job.
+        ran today and its call is on disk. Distinguishes three outcomes so
+        the categorical evidence gate (docs/WORK.md item 20) can see a real
+        miss versus an intentional skip:
+
+          - `carried_from_morning` — today's state is on disk
+          - `carry_forward_empty` — nothing stored for today (morning seat
+            failed or never wrote, or the stored state is stale)
+          - `carry_forward_failed` — the lookup itself raised
+
+        The caller, not this method, writes `not_run_intraday` for seats
+        this tick chose not to look up (earnings). `load_last_state` is not
+        date-scoped, so the freshness check is this method's job.
         """
         try:
             state = self.macro_store.load_last_state() or None
         except Exception as e:  # noqa: BLE001 — never fail a tick on carry-forward
             logger.warning("Intraday scan: macro carry-forward failed: %s", e)
-            return None
+            return CarryForward(None, "carry_forward_failed")
         if not state:
-            return None
+            return CarryForward(None, "carry_forward_empty")
         # Only today's regime may be carried into today's session. Yesterday's
         # is exactly the "citing stale evidence as if it ran this tick"
         # failure the blindfold was protecting against.
@@ -12688,26 +12729,30 @@ class TradingPipeline:
                 "Intraday scan: stored macro is from %s, not today — not carried",
                 stored_date,
             )
-            return None
-        return dict(state)
+            return CarryForward(None, "carry_forward_empty")
+        return CarryForward(dict(state), "carried_from_morning")
 
-    def _carry_forward_news(self):
+    def _carry_forward_news(self) -> CarryForward:
         """This morning's news intelligence, re-validated from its stored dump.
 
         `load_daily_report` is already date-scoped to today, so no freshness
-        check is needed here. A schema failure degrades to None rather than
-        raising: a malformed cache must cost the tick its news context, never
-        the deterministic loss protection that already ran.
+        check is needed here. Same three-way split as `_carry_forward_macro`:
+        a schema failure or store exception is `carry_forward_failed`; an
+        empty today-scoped store is `carry_forward_empty`. A malformed cache
+        must cost the tick its news context, never the deterministic loss
+        protection that already ran.
         """
         try:
             report = self.news_store.load_daily_report()
             if not report:
-                return None
+                return CarryForward(None, "carry_forward_empty")
             from src.models import NewsIntelligenceReport
-            return NewsIntelligenceReport(**report)
+            return CarryForward(
+                NewsIntelligenceReport(**report), "carried_from_morning",
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: news carry-forward failed: %s", e)
-            return None
+            return CarryForward(None, "carry_forward_failed")
 
     def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict:
         """Bounded intraday opportunity discovery (2026-08-19 fix).
@@ -12965,18 +13010,30 @@ class TradingPipeline:
         carried_news = self._carry_forward_news()
         ctx.data_status = {
             "tech": "partial" if failed_count else "ok",
+            # Status comes from the carry-forward helpers, not from payload
+            # truthiness: an empty/failed morning lookup is a lost answer,
+            # not the intentional skip `not_run_intraday` (earnings only).
             # `carried_from_morning` rather than `ok`: RiskStage's existing
             # degraded-sources advisory must still fire, because a regime call
-            # from 09:30 IS weaker evidence at 14:00 than a fresh one. It is
-            # not, however, no evidence, which is what `not_run_intraday`
-            # asserted.
-            "macro": "carried_from_morning" if carried_macro else "not_run_intraday",
-            "news": "carried_from_morning" if carried_news else "not_run_intraday",
+            # from 09:30 IS weaker evidence at 14:00 than a fresh one.
+            "macro": carried_macro.status,
+            "news": carried_news.status,
             "earnings": "not_run_intraday",
         }
-        ctx.macro_analysis = carried_macro
-        ctx.news_intel = carried_news
+        ctx.macro_analysis = carried_macro.payload
+        ctx.news_intel = carried_news.payload
         ctx.earnings_results = []
+
+        # Same owner rule as morning: a decision on incomplete evidence is
+        # fabricated. Applied here now that empty/failed carry-forward is
+        # distinguishable from the intentional earnings skip.
+        gate_skip = self._evidence_gate_skip(
+            ctx, ctx.run_id, session=ctx.session,
+        )
+        if gate_skip is not None:
+            gate_skip = dict(gate_skip)
+            gate_skip["candidates"] = symbols
+            return gate_skip
 
         self.decision_stage.run(ctx)
         if not ctx.portfolio_decision:
