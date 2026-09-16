@@ -521,6 +521,7 @@ def summarize_closed_position(rows: list[dict]) -> ClosedPosition | None:
     denominator, and the distinction is worth preserving for the caller's
     own reporting.
     """
+    from src.execution.stop_records import recorded_initial_stop
     opens: list[dict] = []
     exits: list[dict] = []
     direction: str | None = None
@@ -562,10 +563,7 @@ def summarize_closed_position(rows: list[dict]) -> ClosedPosition | None:
 
     initial_stop: float | None = None
     for row in opens:
-        try:
-            stop = float(row.get("stop_loss") or 0)
-        except (TypeError, ValueError):
-            stop = 0.0
+        stop = recorded_initial_stop(row)
         if stop > 0:
             initial_stop = stop
             break

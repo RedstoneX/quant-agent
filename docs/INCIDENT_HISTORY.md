@@ -22,6 +22,20 @@ what would catch it next time.
 
 ---
 
+### 2026-09-16 — when a stop moved, the desk kept writing the old number in its own records (WORK.md item 71, CLOSED)
+
+**In plain words:** every time the protective stop on a holding was moved — trailed up, shifted for a dividend, put back after a repair, rearmed after adding to a winner — the broker had the new price and our own trade record still had the price from the day we opened. Anyone reading that record, including two earlier board items that looked like "the stock traded through its own stop", was looking at a number that had been retired days before.
+
+**Cause.** `trades.stop_loss` was written once, on the opening purchase or short row, and nothing wrote it back. Trails cancelled and replaced the broker order. Coverage repair placed whatever the opening row still said. Scale-in rearm could tighten the live stop without touching the add's recorded stop. An out-of-band broker edit left no row at all. The running desk was never confused: the reviewer already asked the broker for distance-to-stop. Only the archive was stale, silently, so any stop-distance or R-at-exit figure drawn from `trades` could be days old.
+
+**Fix.** Every path that changes a stop now writes the accepted level back onto that opening row. Replacements go through one funnel (`replace_stop_loss` plus the write-back) so a trail cannot land at the broker and miss the archive. Repair, scale-in rearm, an ex-dividend shift, and re-protecting a leftover after a partial sale do the same. A kill-switch or missing-id payload is not written back. The original entry stop is kept separately so R-multiple still measures the bet that was actually made, not the level a trail later moved it to. Repair restores that live recorded level; refusing a stop that would fire immediately is still a refuse — putting the entry stop back would be a widen. A reconciliation then compares the recorded number to the broker's live stop and reports a mismatch; it does not copy the broker price into the archive, because that would silently bless a move nobody in this code made. Shorts use the short row and a buy-stop; longs use the purchase row and a sell-stop. No new percentage was invented.
+
+**What this does not close.** Items 35 and 69 (Visa and Disney "traded through their stop") stay closed as archive illusions; they are not re-filed as fixed. The halt still asks the broker whether a stop *exists* — a cancelled-and-not-replaced order is a missing order, not a stale price. Repair still refuses to invent a level when the opening row has none.
+
+**What would catch it next time.** A test that trails, repairs, or rearms and then asserts the opening row's stop equals the new level, with the entry stop still frozen; and a test that plants a deliberate mismatch against the broker and asserts the reconcile reports it without writing. Those fail if any one replace path is left writing only to the broker.
+
+---
+
 ### 2026-09-16 — practice runs against history still fund trades by ticker spelling when the risk ceiling runs out; they now say so on every result (WORK.md item 64, reporting shipped — ranking is not fixed)
 
 **In plain words:** when a practice run has more trade ideas than the risk ceiling allows, it still funds them in alphabetical order. That is ticker spelling, not a judgement of which idea is better. Until now the printed result did not say that, so a reader could take the numbers as evidence about how the live desk picks among trades. Every result now prints how many of its days the ceiling ran out, and says the tie-break is alphabetical. The live desk still spends its budget on the best-ranked ideas first. The practice run still has no ranking, and this change does not give it one.
@@ -34,6 +48,7 @@ what would catch it next time.
 
 ---
 
+### 2026-09-15 — a short that lost its protective stop was never given one back (WORK.md item 73, CLOSED)
 
 **In plain words:** if the desk bets against a stock and the protective order
 on that bet goes missing, nothing put it back. The same gap on a stock the

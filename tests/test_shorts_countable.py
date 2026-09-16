@@ -564,8 +564,9 @@ def _today_ts() -> str:
 def _facts_for(position):
     pipeline = _mk_pipeline()
     pipeline.db.get_symbol_last_buy = MagicMock(return_value=None)
+    opening = "SHORT" if position.qty < 0 else "BUY"
     morning = [{
-        "symbol": position.symbol, "action": "BUY",
+        "symbol": position.symbol, "action": opening,
         "stop_loss": None, "take_profit": None,
         "timestamp": _today_ts(),
     }]
@@ -621,7 +622,7 @@ def test_position_facts_mixed_book_long_facts_identical():
     morning = [
         {"symbol": "AAA", "action": "BUY", "stop_loss": None,
          "take_profit": None, "timestamp": _today_ts()},
-        {"symbol": "SSS", "action": "BUY", "stop_loss": None,
+        {"symbol": "SSS", "action": "SHORT", "stop_loss": None,
          "take_profit": None, "timestamp": _today_ts()},
     ]
     alone = pipeline._build_position_facts(

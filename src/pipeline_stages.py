@@ -6789,6 +6789,16 @@ class ExecutionStage:
                                 pipeline.db, spec.get("wal_row_id"),
                             )
                     elif protection is not None and uncovered <= 0:
+                        from src.execution.stop_records import (
+                            accepted_stop_order, write_back_stop_loss,
+                        )
+                        if accepted_stop_order(protection) or not isinstance(
+                            protection, dict,
+                        ):
+                            write_back_stop_loss(
+                                pipeline.db, spec["symbol"], spec["stop_price"],
+                                is_short=False,
+                            )
                         discharge_scale_in_wal(
                             pipeline.db, spec.get("wal_row_id"),
                         )

@@ -362,16 +362,16 @@ def _cash_sweep_symbol() -> str:
         return str(CashSweepConfig().symbol)
 
 
-def _last_buy_reader():
-    """`symbol, action='BUY'|'SHORT' -> that position's own last opening row`,
-    or None when the trading database cannot be opened.
+def _coverage_db_and_last_buy():
+    """`(Database, last_buy callable)` or `(None, None)` if the trading DB
+    cannot be opened.
 
-    This is the ONLY thing the re-placement needs beyond the broker: the stop
-    level the PM/RM agreed, recorded on the BUY or SHORT entry. `Database`
-    is used rather than a private read-only query so the executed-trade
-    predicate has one home — a hand-rolled copy of that SQL here is how the
-    repair would start reading a different row from the one the in-session
-    sweep reads.
+    The callable is `symbol, action='BUY'|'SHORT' -> that position's own
+    last opening row`. `Database` is used rather than a private read-only
+    query so the executed-trade predicate has one home — a hand-rolled copy
+    of that SQL here is how the repair would start reading a different row
+    from the one the in-session sweep reads. The same handle is handed to
+    repair so a successful replace writes the level back.
 
     Returning None (rather than raising, or guessing a level) means the
     coverage check stays a pure reader for this run and says so.
@@ -388,10 +388,11 @@ def _last_buy_reader():
             "reporting only, placing nothing",
             file=sys.stderr,
         )
-        return None
-    return lambda symbol, action="BUY": db.get_symbol_last_buy(
+        return None, None
+    last_buy = lambda symbol, action="BUY": db.get_symbol_last_buy(
         symbol, include_in_flight=True, action=action,
     )
+    return db, last_buy
 
 
 def run_coverage_check(now: datetime | None = None) -> str:
@@ -416,9 +417,10 @@ def run_coverage_check(now: datetime | None = None) -> str:
         alert_text, check_coverage, repair_failure_text, status_line,
     )
 
+    db, last_buy = _coverage_db_and_last_buy()
     status = check_coverage(
         _build_broker(), now=now, sweep_symbol=_cash_sweep_symbol(),
-        last_buy=_last_buy_reader(),
+        last_buy=last_buy, db=db,
     )
     line = status_line(status)
     sent: list[str] = []

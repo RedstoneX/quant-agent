@@ -58,6 +58,16 @@
   one symbol at a time with confirmed cancel and full-qty restore. Short adds
   stay blocked: scale-in is the long path. Missing short stops are repaired
   separately (item 73, closed). Verified by `tests/test_scale_in.py`.
+- **Stop-level archive (2026-09-16):** `trades.stop_loss` on the opening
+  BUY/SHORT row is written back when an in-code path changes the live stop
+  (replace/trail funnel, coverage repair, scale-in rearm, ex-div shift,
+  residual reprotect) and the broker accepted an order id. The entry bet is
+  frozen as `initial_stop_loss`. Repair restores the live recorded (trailed)
+  level, not the entry stop; a would-fire refuse is still a refuse, not a
+  widen. A session/watchdog reconcile reports mismatches and does not copy
+  the broker price into the archive. Do not treat a "traded through its stop"
+  reading from `trades` as real while they disagree. Items 35 and 69 stay
+  closed as archive illusions. Verified by `tests/test_stop_writeback.py`.
 - `scripts/desk_reset.py` is the only operator tool that issues broker
   liquidations (`DELETE /v2/positions?cancel_orders=true`). It is outside the
   trading pipeline and outside the risk engine, so it carries its own

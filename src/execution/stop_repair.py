@@ -36,6 +36,7 @@ def repair_stop_coverage(
     symbol: str,
     uncovered_qty: float,
     is_short: bool,
+    db: Any = None,
 ) -> bool:
     """Best-effort: re-place protective stop coverage on an uncovered
     position using the stop level recorded on its last opening row (BUY for
@@ -69,6 +70,11 @@ def repair_stop_coverage(
     at/above the live price, a short's buy-stop at/below it — that would
     turn a repair into a market-order exit, a decision for the reviewer, not
     for a janitor), and never invent a level when the opening row has none.
+    After a trail, `stop_loss` on that row is the LIVE recorded level, not
+    the frozen entry stop. `would_fire` therefore uses the trailed price.
+    Restoring the entry stop instead would be a widen; this janitor does
+    not widen. A stop cancelled after a trail, with the tape already through
+    the trailed level, stays flagged for the reviewer.
     The stop-limit buffer is the broker's existing `STOP_LIMIT_BUFFER_PCT`,
     mirrored the same way `place_entry_protection` already does: below a
     sell-stop, above a buy-stop. No new constant.
@@ -77,6 +83,15 @@ def repair_stop_coverage(
     resizes, closes, zeroes a position, or re-pegs an entry: the only broker
     call it makes is `_submit_protective_stop_retrying`, and the stop level
     comes from a recorded row, never from a target.
+
+    When the broker accepts an order id it writes that same recorded level
+    back onto the opening row (`db.update_open_stop_loss` when `db` is
+    supplied), including a partial cover whose id landed. For a first-time
+    restore this is a no-op on the number; after a trail it is what keeps
+    a later repair from re-placing a stale entry stop. A kill-switch or
+    missing-id payload is not written back — the broker does not hold it.
+    Partial cover still returns False so the pass stays loud until the
+    gap is gone.
     """
     if uncovered_qty <= 0:
         return False
@@ -138,18 +153,21 @@ def repair_stop_coverage(
         limit_price=stop_price * buffer_mult,
         side=protective_side,
     )
-    if result is None:
+    from src.execution.stop_records import accepted_stop_order, write_back_stop_loss
+    if result is None or not accepted_stop_order(result):
         logger.error(
             "coverage repair FAILED for %s (%.4f uncovered, stop $%.2f) — "
-            "retries exhausted", symbol, uncovered_qty, stop_price,
+            "retries exhausted or broker did not accept an order id",
+            symbol, uncovered_qty, stop_price,
         )
         return False
     residual = 0.0
-    if isinstance(result, dict):
-        try:
-            residual = float(result.get("uncovered_qty") or 0)
-        except (TypeError, ValueError):
-            residual = 0.0
+    try:
+        residual = float(result.get("uncovered_qty") or 0)
+    except (TypeError, ValueError):
+        residual = 0.0
+    if db is not None:
+        write_back_stop_loss(db, symbol, stop_price, is_short=is_short)
     if residual > 0:
         # A whole-share floor stop landed but a sub-share sliver is still
         # gapped. Reported as NOT repaired — not because nothing happened,

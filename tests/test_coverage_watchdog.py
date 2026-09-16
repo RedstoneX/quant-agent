@@ -583,7 +583,7 @@ def test_heartbeat_last_buy_reader_forwards_short_action(tmp_path, monkeypatch):
         fill_status="filled",
     )
     monkeypatch.setattr("src.api.deps.get_db_path", lambda: str(db_path))
-    reader = hb._last_buy_reader()
+    _db, reader = hb._coverage_db_and_last_buy()
     assert reader is not None
     row = reader("TSLA", action="SHORT")
     assert row is not None and row["stop_loss"] == 220.0

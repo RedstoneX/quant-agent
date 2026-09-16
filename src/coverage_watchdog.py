@@ -451,6 +451,7 @@ def replace_missing_stops(
     *,
     last_buy: Any,
     sweep_symbol: str | None = None,
+    db: Any = None,
 ) -> list[RepairOutcome]:
     """Put back the protective stop for each uncovered gap. ADD-ONLY.
 
@@ -513,7 +514,7 @@ def replace_missing_stops(
             placed = repair_stop_coverage(
                 broker=broker, last_buy=last_buy,
                 symbol=gap.symbol, uncovered_qty=shortfall,
-                is_short=gap.is_short,
+                is_short=gap.is_short, db=db,
             )
         except Exception as exc:  # noqa: BLE001
             outcomes.append(RepairOutcome(
@@ -614,6 +615,7 @@ def check_coverage(
     db_path: str | Path | None = None,
     state_path: Path | None = None,
     last_buy: Any = None,
+    db: Any = None,
 ) -> CoverageStatus:
     """Read broker coverage and session evidence, put back what is missing if
     the market is open, decide, persist the once-per-day markers. Never
@@ -644,6 +646,7 @@ def check_coverage(
     if gaps and market_open and last_buy is not None:
         repairs = replace_missing_stops(
             broker, gaps, last_buy=last_buy, sweep_symbol=sweep_symbol,
+            db=db,
         )
         if any(r.placed for r in repairs):
             refreshed, refresh_error = uncovered_positions(
@@ -659,6 +662,34 @@ def check_coverage(
             f"{market_reason}, but no recorded-stop lookup was supplied, so "
             "nothing was placed"
         )
+
+    if last_buy is not None:
+        try:
+            from src.execution.stop_records import (
+                reconcile_recorded_stop_levels,
+            )
+            try:
+                positions = broker.get_positions()
+            except Exception:
+                positions = []
+            if not isinstance(positions, list):
+                positions = []
+            mismatches = reconcile_recorded_stop_levels(
+                broker=broker, last_buy=last_buy, positions=positions,
+                sweep_symbol=sweep_symbol,
+                skip_symbols=_scale_in_skip(broker, db_path),
+            )
+            # Log every pass; do not page from this 30-minute unit. An
+            # out-of-band mismatch is never write-back-cleared, so paging
+            # here would fire ~48 times a day with no acknowledgement.
+            # The session coverage sweep pages.
+            for item in mismatches:
+                logger.error(
+                    "STOP RECORD MISMATCH: %s — %s (short=%s)",
+                    item.symbol, item.reason, item.is_short,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("coverage watchdog stop-level reconcile failed: %s", exc)
 
     status = CoverageStatus(
         trading_day=day.isoformat(),
