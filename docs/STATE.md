@@ -21,10 +21,20 @@ This file records what is accepted and true **now**. Git history preserves imple
   Manager is unparseable, but the exit path fails OPEN. Failing closed on an
   entry means not buying, which costs nothing; failing closed on an exit means
   a thesis-invalidated position cannot be closed because a language model is
-  unavailable, with the loss then bounded only by the broker stop. The
-  deterministic gates (named-trigger requirement, metric-contradiction veto,
-  ATR noise band) run first and are the real protection. Every fail-open path
-  logs at ERROR.
+  unavailable, with the loss then bounded only by the broker stop.
+  **Reconciled 2026-09-16 (item 60).** Deterministic Python owns refusal on
+  this pair. A completed "no named trigger" is that owner's drop, not
+  uncertainty, and those exits are not sent to the Risk Manager — so a dead
+  model cannot fail-OPEN a sale the phrase gate already refused. Uncertainty
+  (Risk Manager unavailable/unparseable/verdict-less, or the hard-trigger
+  recogniser itself unable to run) fails OPEN on both layers: that is the
+  2026-08-27 ratification, now applied to the pair rather than to one layer
+  only. AI Risk remains a challenge seat: a parseable reject still drops; an
+  approval cannot override a deterministic drop. Every drop, and every
+  uncertainty fail-open, writes an append-only per-symbol reason. The fact
+  gates (metric-contradiction veto, ATR noise band, proven-false holding-
+  discipline) still run before the broker; their 1.0 multiples are item 70,
+  not this. Every fail-open path logs at ERROR.
 - Deterministic Python and broker protections remain final safety authority; uncertainty fails closed.
 - **Long scale-in path B (owner 2026-09-15):** a BUY add on a name that already
   has a resting protective sell is allowed only by cancelling that sell,
@@ -170,7 +180,12 @@ This file records what is accepted and true **now**. Git history preserves imple
   cover macro regime shift, sector shock, adverse/material news, earnings
   miss and guidance cut); a non-matching reason is dropped and logged as
   `exit_blocked_no_named_trigger`, and the position is held, protected by its
-  broker-resident stop.
+  broker-resident stop. **Since 2026-09-16 (item 60)** that drop is the
+  deterministic owner's completed content judgment, not an uncertainty fail:
+  unnamed-trigger exits are not sent to the Risk Manager, and the reason is
+  also written append-only per symbol so a later cooldown-ledger upsert
+  cannot erase it. A recogniser that cannot run (non-string reason, or the
+  matcher itself raises) fails OPEN, matching a dead Risk Manager.
   **Extended 2026-09-11 — the named trigger is now FACT-CHECKED at midday and
   close, not just named.** `_reason_cites_hard_trigger` is a substring match
   and nothing more; the deterministic verifier built for exactly this problem

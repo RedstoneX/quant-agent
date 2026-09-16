@@ -22,6 +22,20 @@ what would catch it next time.
 
 ---
 
+### 2026-09-16 — the two things that could refuse a sale were failing safe in opposite directions (WORK.md item 60, CLOSED)
+
+**In plain words:** when the desk wanted to sell, two separate checks could say no, and they treated "I cannot tell" as opposite answers. If the second-opinion reviewer was silent or unreadable, the sale went ahead — you approved that on 27 August, because blocking a sale just because a language model is down would trap the desk in a position whose story had already broken. But if the sale's written reason simply did not contain one of a short list of recognised phrases, the sale was blocked. The desk was treating a quiet reviewer as more trustworthy than a reviewer that was working and wording things unexpectedly. The only behaviour actually measured on this path was over-refusal: eight proposed sales, the reviewer approved all eight, the automatic rules blocked all eight (seven as "too small a move", one as "no recognised phrase").
+
+**Cause.** The two checks were written as if "could not tell" meant the same event. It does not. A silent or unreadable reviewer is uncertainty. A filled-in reason that names no recognised trigger is a finished answer: the automatic rules looked, and the answer is no. Treating those as one fail-direction made the pair look incoherent, and because the phrase check ran *after* the reviewer, a silent reviewer could in principle wave through a sale the phrase check would have refused if it had gone first.
+
+**Fix.** Automatic rules own refusal. A reason that names no recognised trigger is still blocked — that is not a change in how readily the desk sells — and those sales are no longer even shown to the reviewer, so a silent reviewer cannot contradict them. Uncertainty (silent reviewer, or the phrase check itself unable to run) fails open on both sides, which is the 27 August rule applied to the pair rather than to one half. The reviewer can still add a refusal when it actually speaks; it cannot override an automatic block. Every blocked sale, and every "could not tell, so it went through", is now written down against that stock in a record that a later note on the same stock the same session cannot erase. How far a move has to go before it counts as real, and how tight a stop may be — both still the unsourced figure 1.0 — were not touched. That is a different item, still open.
+
+**What this does not close.** How readily the desk should block a sale at all remains yours (appetite) and was not this item's plumbing question. The unsourced 1.0 doing two jobs — including the noise-band job that blocked seven of the eight recorded sales — remains open as item 70, which now carries that measured over-refusal. Profit-taking was not redesigned. Shorts were not added. Repeating a sale was not changed. Extending fail-open from a silent reviewer to a phrase-matcher that itself raises is an engineering application of the 27 August posture, not a new owner ruling.
+
+**What would catch it next time.** A test that a silent reviewer does not block a sale whose reason names a real trigger; a test that a sale whose reason names no trigger is never sent to the reviewer and is still blocked; a test that two different block-reasons for the same stock in the same session both survive in the record. Those fail if the two layers are again allowed to disagree silently about "could not tell".
+
+---
+
 ### 2026-09-16 — when a stop moved, the desk kept writing the old number in its own records (WORK.md item 71, CLOSED)
 
 **In plain words:** every time the protective stop on a holding was moved — trailed up, shifted for a dividend, put back after a repair, rearmed after adding to a winner — the broker had the new price and our own trade record still had the price from the day we opened. Anyone reading that record, including two earlier board items that looked like "the stock traded through its own stop", was looking at a number that had been retired days before.
