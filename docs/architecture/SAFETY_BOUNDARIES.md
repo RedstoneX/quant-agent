@@ -14,6 +14,19 @@
 
 ## Verified caveats that matter
 
+- **Exit-path uncertainty (2026-09-16, item 60):** on SELL/REDUCE/COVER,
+  uncertainty fails OPEN, not closed — owner-ratified 2026-08-27 for a dead
+  or unparseable Risk Manager, and now the same direction for a hard-trigger
+  recogniser that cannot run. Deterministic Python owns refusal: a completed
+  "reason names no recognised trigger" still drops, and those exits are not
+  sent to AI Risk, so a silent model cannot wave through a sale the owner
+  already refused. AI Risk may add a refusal when it returns a parseable
+  reject; its approval cannot override a deterministic drop. A dropped exit
+  writes an append-only per-symbol reason on the named-trigger, AI-reject,
+  noise-band, metric-contradiction, and proven-false holding-discipline
+  gates. This is the documented exception to item 4 on this path only, not
+  permission to fail-open entries or to retune the noise-band / stop-floor
+  1.0s (item 70). Verified by `tests/test_exit_refusal_coherence.py`.
 - **Kill switch** (2026-09-02): `risk.kill_switch_path` (default
   `data/KILL_SWITCH`) halts order flow via `path.exists()` in
   `AlpacaBroker` — no parsing, so it cannot fail open on a malformed file.

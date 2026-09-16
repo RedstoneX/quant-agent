@@ -325,6 +325,12 @@ def _reason_cites_hard_trigger(reason: str) -> bool:
     ("it looks tired"). A claim is auditable, gradeable by the evening review,
     and cross-checkable against the reviewer's own metrics by
     `src/risk/exit_guard.py`. A feeling is none of those things.
+
+    A False return on a string is a completed content judgment, not
+    uncertainty: the deterministic owner refuses (see
+    `src/risk/exit_refusal.py`). Callers that need to distinguish "the
+    matcher could not run" from "the matcher ran and found nothing" must
+    use `classify_trigger_reason`, not this boolean.
     """
     if not reason:
         return False
@@ -9273,6 +9279,17 @@ class TradingPipeline:
                 earnings=None, events=None, coverage=None, horizon_days=0,
             )
 
+    def _record_exit_refusal(
+        self, *, symbol: str, run_id: str, action: str, code: str,
+        dropped: bool, detail: str, layer: str,
+    ) -> None:
+        """Append-only per-symbol refusal/uncertainty record. Never raises."""
+        from src.risk.exit_refusal import record_exit_refusal
+        record_exit_refusal(
+            self.db, symbol=symbol, run_id=run_id, action=action,
+            code=code, dropped=dropped, detail=detail, layer=layer,
+        )
+
     def _risk_review_exits(
         self, review, positions, *, run_id: str, total_value: float,
         macro_summary: dict | None = None, position_facts: dict | None = None,
@@ -9291,36 +9308,46 @@ class TradingPipeline:
         Returns `(vetoed_symbols, verdict_or_None)`. Symbols in the returned
         set are dropped by the caller.
 
-        **Failure posture: FAIL OPEN.** An unparseable or errored Risk Manager
-        lets the exits through, logged loudly. This deliberately differs from
-        the entry path, which fails closed with zero orders (`RiskStage`).
-        The asymmetry is intentional and owner-ratified (2026-08-27):
+        **Failure posture: FAIL OPEN on uncertainty.** An unparseable or
+        errored Risk Manager lets the exits through, logged loudly. This
+        deliberately differs from the entry path, which fails closed with
+        zero orders (`RiskStage`). The asymmetry is intentional and
+        owner-ratified (2026-08-27):
         - failing closed on an ENTRY means not buying, which costs nothing;
         - failing closed on an EXIT means a thesis-invalidated position cannot
           be closed because a language model is unavailable, and the loss is
           then bounded only by the broker stop.
-        The deterministic gates — the named-trigger requirement, the noise
-        band, the metric-contradiction veto and `holding_discipline_claim_check`
-        — are the LAST LINE, not full coverage. Each abstains somewhere: the
-        trigger gate checks the words, not the truth of the claim; the noise
-        band is bypassed by any reason citing external information (which the
-        trigger gate all but requires); the metric veto needs recorded prior
-        metrics for that symbol or it does not run; and the claim check looks
-        only at a regime-flip or HIGH-conviction-bearish claim, only on a still-
-        protected position, passing every unverifiable claim by design. A
-        plausibly-worded, deterministically-clean, wrong exit passes all four.
-        That gap is what this seat is for.
 
-        **Ordering correction (2026-09-13).** This docstring previously said
-        those gates "have already run by this point". They have not: all four
-        live in `_midday_execute_llm_actions`, which the caller invokes AFTER
-        this method (see `run_position_review`). They still run on every exit
-        in the same session before any order can reach the broker, so the
-        substantive claim — that they, not this seat, are the last line —
-        holds; only the word "already" was wrong. That ordering is also
-        precisely why the seat's holding-discipline checklist item is NOT
-        stood down on this path: it exists because the deterministic answer
-        arrives after the seat has spoken.
+        **Item 60 (2026-09-16) — one owner, one uncertainty direction.**
+        Deterministic Python owns refusal. A completed "no named trigger"
+        is that owner's drop, not an uncertainty fail; those exits are
+        not sent to this seat (the executor still enforces). Uncertainty
+        — this seat unavailable/unparseable/verdict-less, or the
+        hard-trigger recogniser itself unable to run — fails OPEN on
+        both layers, which is the 2026-08-27 ratification applied to the
+        pair. AI Risk remains a challenge seat: a parseable reject still
+        drops, and an approval cannot override a deterministic drop.
+        Every drop and every uncertainty fail-open writes an append-only
+        per-symbol reason (`src/risk/exit_refusal.py`).
+
+        The fact gates — the noise band, the metric-contradiction veto and
+        `holding_discipline_claim_check` — remain the LAST LINE on data,
+        not on word-recognition. Each abstains somewhere: the trigger
+        gate checks the words, not the truth of the claim; the noise
+        band is bypassed by any reason citing external information (which
+        the trigger gate all but requires); the metric veto needs recorded
+        prior metrics for that symbol or it does not run; and the claim
+        check looks only at a regime-flip or HIGH-conviction-bearish
+        claim, only on a still-protected position, passing every
+        unverifiable claim by design. A plausibly-worded, deterministically-
+        clean, wrong exit passes those. That gap is what this seat is for.
+
+        **Ordering.** Named-trigger filtering now happens in this method
+        before the model is called, so a dead Risk Manager cannot
+        fail-open an exit the owner already refused. The other fact gates
+        still live in `_midday_execute_llm_actions`, which the caller
+        invokes AFTER this method; they still run on every surviving exit
+        before any order can reach the broker.
 
         **The verdict's only live effect here is `rejected_symbols`.**
         `modifications` and `scale_all_buys` are applied by
@@ -9352,6 +9379,13 @@ class TradingPipeline:
         from src.models import (
             ExitReviewChain, PortfolioDecision, TradeDecision,
         )
+        from src.risk.exit_refusal import (
+            CODE_AI_RISK_REJECT,
+            CODE_AI_RISK_UNAVAILABLE,
+            CODE_HARD_TRIGGER_UNCERTAIN,
+            CODE_UNRECOGNIZED_TRIGGER,
+            classify_trigger_reason,
+        )
 
         # COVER is the short-side twin of SELL/REDUCE (Stage 3 shorts gap
         # fix): a short's exit must reach the AI Risk Manager exactly like a
@@ -9365,10 +9399,47 @@ class TradingPipeline:
 
         held = {p.symbol.upper(): p for p in positions}
         decisions: list[TradeDecision] = []
+        original_action_by_symbol: dict[str, str] = {}
         for action in exits:
             symbol = action.symbol.upper()
             if symbol not in held:
                 continue
+            # Item 60: unnamed-trigger exits are the deterministic owner's
+            # completed refusal. Do not spend a Risk Manager call on them,
+            # and do not let a dead/unparseable model fail-OPEN a sale the
+            # owner already refused. Record here so the skip is durable if
+            # execute is not reached; the executor still drops.
+            judgment = classify_trigger_reason(
+                action.reason, cites=_reason_cites_hard_trigger,
+            )
+            if judgment == "unnamed":
+                logger.info(
+                    "AI Risk exit review: not sending %s %s — reason names "
+                    "no recognised trigger; deterministic owner refuses "
+                    "before the challenge seat.",
+                    action.action, symbol,
+                )
+                self._record_exit_refusal(
+                    symbol=symbol, run_id=run_id, action=action.action,
+                    code=CODE_UNRECOGNIZED_TRIGGER, dropped=True,
+                    detail=str(action.reason or "")[:400],
+                    layer="hard_trigger",
+                )
+                continue
+            if judgment == "uncertain":
+                logger.error(
+                    "AI Risk exit review: hard-trigger recogniser raised "
+                    "on %s %s — failing OPEN on that gate, sending the "
+                    "exit to the challenge seat. Reason was: %r",
+                    action.action, symbol, str(action.reason)[:200],
+                )
+                self._record_exit_refusal(
+                    symbol=symbol, run_id=run_id, action=action.action,
+                    code=CODE_HARD_TRIGGER_UNCERTAIN, dropped=False,
+                    detail=str(action.reason or "")[:400],
+                    layer="hard_trigger",
+                )
+            original_action_by_symbol[symbol] = action.action
             # A COVER must be presented to the RM as a COVER, not relabeled
             # SELL — TradeDecision has a real "COVER" literal (the PM/
             # ExecutionStage decision path already uses it), and mislabeling
@@ -9383,7 +9454,7 @@ class TradingPipeline:
                 # exit is sound, not to re-size it.
                 allocation_pct=100.0 if action.action in ("SELL", "COVER") else 50.0,
                 entry_price=0.0, stop_loss=0.0, take_profit=0.0,
-                reasoning=action.reason[:500],
+                reasoning=str(action.reason or "")[:500],
             ))
         if not decisions:
             return set(), None
@@ -9470,10 +9541,18 @@ class TradingPipeline:
         except Exception as e:  # noqa: BLE001
             logger.error(
                 "AI Risk exit review RAISED (%s) — failing OPEN: %d exit(s) "
-                "proceed unreviewed. The named-trigger gate and the "
-                "metric-contradiction veto already passed.",
+                "proceed unreviewed. Named-trigger exits already passed the "
+                "deterministic owner; unnamed exits were not sent here.",
                 e, len(decisions),
             )
+            for d in decisions:
+                self._record_exit_refusal(
+                    symbol=d.symbol, run_id=run_id,
+                    action=original_action_by_symbol.get(d.symbol, d.action),
+                    code=CODE_AI_RISK_UNAVAILABLE, dropped=False,
+                    detail=f"risk manager raised: {e}"[:400],
+                    layer="ai_risk",
+                )
             return set(), None
 
         try:
@@ -9498,6 +9577,14 @@ class TradingPipeline:
                 "AI Risk exit review returned no verdict — failing OPEN: "
                 "%d exit(s) proceed unreviewed.", len(decisions),
             )
+            for d in decisions:
+                self._record_exit_refusal(
+                    symbol=d.symbol, run_id=run_id,
+                    action=original_action_by_symbol.get(d.symbol, d.action),
+                    code=CODE_AI_RISK_UNAVAILABLE, dropped=False,
+                    detail="risk manager returned no verdict",
+                    layer="ai_risk",
+                )
             return set(), None
 
         # Phase 10.1 — the same granularity split as the morning plan, on the
@@ -9536,6 +9623,13 @@ class TradingPipeline:
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("AI Risk exit review: audit write failed: %s", e)
+            self._record_exit_refusal(
+                symbol=symbol, run_id=run_id,
+                action=original_action_by_symbol.get(symbol, "SELL"),
+                code=CODE_AI_RISK_REJECT, dropped=True,
+                detail=(veto_reasons[symbol] or "")[:400],
+                layer="ai_risk",
+            )
         return vetoed, verdict
 
     def _midday_execute_llm_actions(
@@ -9643,6 +9737,12 @@ class TradingPipeline:
                             )
                         except Exception as e:  # noqa: BLE001
                             logger.warning("exit guard: audit write failed: %s", e)
+                        from src.risk.exit_refusal import CODE_CONTRADICTS_METRICS
+                        self._record_exit_refusal(
+                            symbol=symbol, run_id=run_id, action=act,
+                            code=CODE_CONTRADICTS_METRICS, dropped=True,
+                            detail=veto[:400], layer="metric_contradiction",
+                        )
                         continue
 
             # Phase 3.3 — EVERY exit must name a trigger, not just the second
@@ -9740,28 +9840,67 @@ class TradingPipeline:
                             )
                         except Exception as e:  # noqa: BLE001
                             logger.warning("noise band: audit write failed: %s", e)
+                        from src.risk.exit_refusal import CODE_NOISE_BAND
+                        self._record_exit_refusal(
+                            symbol=symbol, run_id=run_id, action=act,
+                            code=CODE_NOISE_BAND, dropped=True,
+                            detail=f"{act}: {reason_for_band[:400]}",
+                            layer="noise_band",
+                        )
                         continue
 
             reason_text = action_item.get("reason", "")
-            if act in ("SELL", "REDUCE", "COVER") and not _reason_cites_hard_trigger(reason_text):
-                logger.warning(
-                    "Position reviewer: blocking %s %s — the reason names no "
-                    "recognised trigger. Exits require NEW INFORMATION "
-                    "(thesis invalidation, adverse news, earnings, regime "
-                    "shift, sector shock, stop hit); "
-                    "price action and soft flags are not triggers. Reason "
-                    "was: %r",
-                    act, symbol, reason_text[:200],
+            if act in ("SELL", "REDUCE", "COVER"):
+                from src.risk.exit_refusal import (
+                    CODE_HARD_TRIGGER_UNCERTAIN,
+                    CODE_UNRECOGNIZED_TRIGGER,
+                    classify_trigger_reason,
                 )
-                try:
-                    self.db.record_intraday_evaluation(
-                        symbol=symbol, run_id=run_id,
-                        status="exit_blocked_no_named_trigger",
-                        detail=f"{act}: {reason_text[:400]}",
+                trigger_judgment = classify_trigger_reason(
+                    reason_text, cites=_reason_cites_hard_trigger,
+                )
+                if trigger_judgment == "unnamed":
+                    logger.warning(
+                        "Position reviewer: blocking %s %s — the reason names no "
+                        "recognised trigger. Exits require NEW INFORMATION "
+                        "(thesis invalidation, adverse news, earnings, regime "
+                        "shift, sector shock, stop hit); "
+                        "price action and soft flags are not triggers. Reason "
+                        "was: %r",
+                        act, symbol, str(reason_text)[:200],
                     )
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("exit gate: audit write failed: %s", e)
-                continue
+                    try:
+                        self.db.record_intraday_evaluation(
+                            symbol=symbol, run_id=run_id,
+                            status="exit_blocked_no_named_trigger",
+                            detail=f"{act}: {str(reason_text)[:400]}",
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("exit gate: audit write failed: %s", e)
+                    self._record_exit_refusal(
+                        symbol=symbol, run_id=run_id, action=act,
+                        code=CODE_UNRECOGNIZED_TRIGGER, dropped=True,
+                        detail=f"{act}: {str(reason_text)[:400]}",
+                        layer="hard_trigger",
+                    )
+                    continue
+                if trigger_judgment == "uncertain":
+                    logger.error(
+                        "Position reviewer: hard-trigger recogniser raised "
+                        "on %s %s — failing OPEN on that gate (agent "
+                        "application of the 2026-08-27 dead-model posture, "
+                        "not a new owner ratification). Reason was: %r",
+                        act, symbol, str(reason_text)[:200],
+                    )
+                    self._record_exit_refusal(
+                        symbol=symbol, run_id=run_id, action=act,
+                        code=CODE_HARD_TRIGGER_UNCERTAIN, dropped=False,
+                        detail=f"{act}: {str(reason_text)[:400]}",
+                        layer="hard_trigger",
+                    )
+                reason_text = (
+                    reason_text if isinstance(reason_text, str) else str(reason_text or "")
+                )
 
             # 2026-09-11 — and now: is the named trigger actually TRUE?
             #
@@ -9825,6 +9964,13 @@ class TradingPipeline:
                         logger.warning(
                             "holding discipline: audit write failed: %s", e,
                         )
+                    from src.risk.exit_refusal import CODE_HOLDING_DISCIPLINE_FALSE
+                    self._record_exit_refusal(
+                        symbol=symbol, run_id=run_id, action=act,
+                        code=CODE_HOLDING_DISCIPLINE_FALSE, dropped=True,
+                        detail=(hd_check.finding or "")[:400],
+                        layer="holding_discipline",
+                    )
                     continue
                 if hd_check is not None and hd_check.verdict == "unverifiable":
                     # Audit trail only. NOT a block — see above.
@@ -9842,9 +9988,11 @@ class TradingPipeline:
 
             # The same-day-trim gate that used to sit here is GONE, not
             # relaxed: it read `symbol in already_trimmed and not
-            # _reason_cites_hard_trigger(...)`, and the unconditional gate
-            # above now `continue`s on every untriggered SELL/REDUCE before
-            # control ever reaches it. Leaving it in place would have been
+            # _reason_cites_hard_trigger(...)`, and a completed unnamed-
+            # trigger judgment above now `continue`s on every untriggered
+            # SELL/REDUCE before control ever reaches it. (A recogniser that
+            # cannot run fails OPEN instead — that is uncertainty, not a
+            # completed "no".) Leaving the old gate in place would have been
             # dead code wearing the costume of a safety check, which is worse
             # than no check at all.
             #
