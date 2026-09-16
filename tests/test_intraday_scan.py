@@ -179,6 +179,11 @@ def test_material_bullish_move_reaches_decision_chain(mock_compute_indicators):
     assert ctx.data_status["earnings"] == "not_run_intraday"
     assert ctx.data_status["macro"] == "carried_from_morning"
     assert ctx.data_status["news"] == "carried_from_morning"
+    from src import evidence_gate
+    assert [
+        k for k, v in ctx.data_status.items()
+        if evidence_gate.counts_as_degraded(v)
+    ] == []
 
 
 @patch("src.pipeline.compute_indicators")

@@ -13161,9 +13161,11 @@ class TradingPipeline:
             # Status comes from the carry-forward helpers, not from payload
             # truthiness: an empty/failed morning lookup is a lost answer,
             # not the intentional skip `not_run_intraday` (earnings only).
-            # `carried_from_morning` rather than `ok`: RiskStage's existing
-            # degraded-sources advisory must still fire, because a regime call
-            # from 09:30 IS weaker evidence at 14:00 than a fresh one.
+            # `carried_from_morning` is usable same-session reuse, not a
+            # data-integrity failure: Risk must not veto a plan solely
+            # because these seats were not paid for again this tick
+            # (measured 2026-09-16, intra_check-f0f27e08). Empty/failed
+            # carry still refuses BEFORE the Portfolio Manager.
             "macro": carried_macro.status,
             "news": carried_news.status,
             "earnings": "not_run_intraday",

@@ -290,7 +290,10 @@ This file records what is accepted and true **now**. Git history preserves imple
   carried forward, date-scoped and re-validated, and labelled
   `carried_from_morning` in `data_status` rather than `not_run_intraday`.
   Earnings stay excluded — an intraday filing genuinely has not been read
-  this tick. Nothing is re-fetched.
+  this tick. Nothing is re-fetched. Same-session reuse is usable evidence,
+  not a data-integrity failure: Risk does not veto a plan solely because
+  those seats were not paid for again this tick. Empty or failed morning
+  carry-forward still refuses before the Portfolio Manager.
 - **`AgentLogItem` now surfaces `input_message` / `full_response`**
   (`6b7af86`, same branch), a frontend-only fix — the backend has populated
   and served both fields all along; only the TypeScript interface omitted

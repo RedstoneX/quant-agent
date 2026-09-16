@@ -625,7 +625,11 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
 
     data_status = result.get("data_status") or {}
     if isinstance(data_status, dict):
-        degraded = [name for name, value in data_status.items() if value not in ("ok", "empty")]
+        from src import evidence_gate
+        degraded = [
+            name for name, value in data_status.items()
+            if evidence_gate.counts_as_degraded(value)
+        ]
         if degraded:
             lines.append(f"⚠️ Data degraded: {', '.join(sorted(degraded))}")
 

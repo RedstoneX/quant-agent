@@ -41,6 +41,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from typing import TYPE_CHECKING
 
+from src import evidence_gate
 from src.agents.base import agent_log_kwargs
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.cost_circuit import PaidAnalysisSuspended
@@ -3675,7 +3676,10 @@ class MorningResearchStage:
         # listing all degraded inputs side-by-side. The 2+ failure
         # advisory in RiskStage handles the runtime defensive response;
         # this log handles the postmortem readability.
-        degraded = [k for k, v in data_status.items() if v not in ("ok", "empty")]
+        degraded = [
+            k for k, v in data_status.items()
+            if evidence_gate.counts_as_degraded(v)
+        ]
         if degraded:
             logger.error(
                 "Morning research degraded: %s | full status=%s",
@@ -4722,14 +4726,22 @@ class RiskStage:
                 len(portfolio_decision.decisions),
             )
 
-        degraded = [k for k, v in data_status.items() if v not in ("ok", "empty")]
+        # Same-session reuse (`carried_from_morning`) and an intentional
+        # skip (`not_run_intraday`) are usable, not integrity failures —
+        # see evidence_gate.INTEGRITY_CLEAN_STATUSES. Interpolate ONLY the
+        # degraded seats: dumping the full dict re-smuggled reuse words
+        # into RM's prompt on a mixed tick (measured 2026-09-16).
+        degraded = {
+            k: v for k, v in data_status.items()
+            if evidence_gate.counts_as_degraded(v)
+        }
         if len(degraded) >= 2:
             from src.risk.rules import RiskViolation as _RV
             rule_violations.append(_RV(
                 rule="data_degraded",
                 message=(
                     f"Upstream data sources degraded: {', '.join(sorted(degraded))} "
-                    f"(status: {data_status}). Decisions may be built on incomplete input — "
+                    f"(status: {degraded}). Decisions may be built on incomplete input — "
                     f"RM should consider scale_all_buys < 1.0."
                 ),
                 value=float(len(degraded)),

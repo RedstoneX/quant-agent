@@ -191,6 +191,14 @@ carries on. A morning seat that failed and left nothing to reuse is a
 refusal, same rule as the morning session — a made-up decision is worse
 than none.
 
+**Today (2026-09-16) —** the risk reviewer was still treating "we reused
+this morning's research, we did not pay for it again" as a data problem,
+and on that basis refused a whole plan about forty minutes after a
+successful morning. That is now stopped. Same-session reuse is usable. A
+morning seat that actually never arrived still stops the scan before the
+expensive decision step. This is not a ruling on how many usable reads is
+enough; that question is still yours.
+
 **The decision —** Still yours, and now the only thing left in this item:
 whether *partial* evidence should also stop a decision, and if so, where the
 line sits. Not "did the seat answer" — that is settled and built, morning

@@ -1894,12 +1894,34 @@ def test_bad_data_status_fires_a_standalone_alert():
     assert "morning" in body
 
 
+def test_same_session_reuse_does_not_fire_data_quality_alert():
+    """Intra reuse words are usable, not a paging event. Intra results
+    currently omit data_status except on evidence_gate_skip, but the
+    helper must not page if that dict later carries the reuse labels."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {
+        "run_id": "intra_check-f0f27e08",
+        "data_status": {
+            "tech": "ok",
+            "macro": "carried_from_morning",
+            "news": "carried_from_morning",
+            "earnings": "not_run_intraday",
+        },
+    }
+    with patch("src.notifier.send_owner_alert") as alert:
+        fired = maybe_alert_data_quality(result, mode="intra_check")
+
+    assert fired is False
+    alert.assert_not_called()
+
+
 def test_news_low_confidence_status_fires_a_standalone_alert():
     """`low_confidence` (news's self-reported-confidence override, see
     pipeline_stages.py) is a status value like any other non-ok/empty
     value — this alert is value-agnostic by design, so a new status
     should reach it with no changes here. Asserted explicitly so a
-    future refactor of the `not in ("ok", "empty")` check can't silently
+    future refactor of `evidence_gate.counts_as_degraded` can't silently
     special-case it back out."""
     from src.notifier import maybe_alert_data_quality
 

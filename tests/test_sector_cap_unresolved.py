@@ -137,8 +137,9 @@ def test_unresolved_sector_raises_an_advisory_violation():
 def test_unresolved_sector_alert_promotes_to_data_status():
     """`_apply_sector_unresolved_alert` is what makes the advisory actually
     reach the session output / Telegram alert — the same generic
-    `data_status[...] not in ("ok", "empty")` -> "degraded" line every
+    `evidence_gate.counts_as_degraded` -> "degraded" line every
     other upstream source (news, macro, smart_money) already uses."""
+    from src import evidence_gate
     from src.pipeline_stages import _apply_sector_unresolved_alert
     from src.risk.rules import RiskViolation
 
@@ -153,7 +154,7 @@ def test_unresolved_sector_alert_promotes_to_data_status():
     _apply_sector_unresolved_alert(data_status, violations)
     assert data_status["sector"] == "degraded"
 
-    degraded = [k for k, v in data_status.items() if v not in ("ok", "empty")]
+    degraded = [k for k, v in data_status.items() if evidence_gate.counts_as_degraded(v)]
     assert "sector" in degraded, "must land in the same degraded-sources list notifier.py renders"
 
 
