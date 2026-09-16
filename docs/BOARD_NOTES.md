@@ -181,21 +181,23 @@ fault is real and recent (it happened again on 4 September). So expect this
 to fire, and expect the news seat to be the reason until that is fixed
 separately.
 
-**One correction to your own note —** it assumed a skipped round costs half
-an hour because the desk re-checks every thirty minutes. The thirty-minute
-check does not redo the research or the decision; the only thing that can
-decide again is a narrow scan that only looks at stocks which have moved 3%
-or more that day, at most five of them. On a calm day a refused morning is
-closer to a lost day than a lost half-hour. That does not change the rule —
-a made-up decision is worse than none — but the price of refusing is higher
-than the note assumed.
+**The thirty-minute scan —** it still does not redo the morning research,
+and on a calm day a refused morning is still closer to a lost day than a
+lost half-hour. What changed: that scan used to treat "we chose not to
+re-read the filings" and "this morning's research never arrived" as the
+same thing, so it could decide on a move with a missing morning read. Those
+are now different. Not re-reading earnings is an honest skip and the scan
+carries on. A morning seat that failed and left nothing to reuse is a
+refusal, same rule as the morning session — a made-up decision is worse
+than none.
 
 **The decision —** Still yours, and now the only thing left in this item:
 whether *partial* evidence should also stop a decision, and if so, where the
-line sits. Not "did the seat answer" — that is settled and built — but "the
-seat answered about 40 of 65 companies, is that enough?". Nothing published
-answers that, so it either gets a number from you or a ruling that partial
-coverage should never stop a decision at all.
+line sits. Not "did the seat answer" — that is settled and built, morning
+and the later scan alike — but "the seat answered about 40 of 65 companies,
+is that enough?". Nothing published answers that, so it either gets a
+number from you or a ruling that partial coverage should never stop a
+decision at all.
 
 
 ## item 32

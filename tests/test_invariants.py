@@ -512,7 +512,24 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
     p.market = MagicMock()
     p.market.get_ohlcv.return_value = [MagicMock()]
     p.macro_store = MagicMock()
-    p.macro_store.load_last_state.return_value = {}
+    from src.trading_calendar import et_today
+    p.macro_store.load_last_state.return_value = {
+        "date": str(et_today()),
+        "regime": "risk-on",
+        "equity_outlook": "bullish",
+        "sector_guidance": {},
+    }
+    p.news_store = MagicMock()
+    from src.models import MacroNarrative, NewsIntelligenceReport
+    p.news_store.load_daily_report.return_value = NewsIntelligenceReport(
+        macro_narrative=MacroNarrative(
+            last_updated=str(et_today()), era_themes=["test"],
+            current_regime="risk-on, test",
+        ),
+        state_changes=[], stock_news={},
+        pm_briefing="test", market_sentiment="bullish",
+        confidence="medium",
+    ).model_dump()
     p.tech_store = MagicMock()
     p.tech_store.load.return_value = {}
     p.tech_store.compute_ages.return_value = {}

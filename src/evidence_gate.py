@@ -40,7 +40,10 @@ fitted.
 The counting half of the owner's design — "how many earnings reports are
 usable, how many technical reads survived validation" — is NOT built here,
 because it cannot be built without the number he reserved to himself. Item
-20 stays open naming only that remaining question.
+20 stays open naming only that remaining question. The intraday status
+split is built: `not_run_intraday` is the intentional skip, and empty or
+failed morning carry-forward is `carry_forward_empty` /
+`carry_forward_failed`, which this gate treats as lost.
 
 WHAT IT DOES NOT DO
 --------------------
@@ -104,8 +107,9 @@ STATUS_CATEGORY: dict[str, str] = {
     # `release_overdue`: every FRED series answered; a statistical agency
     #   has not published the next print. The world has nothing newer to
     #   give — that is the answer.
-    # `not_run_intraday`: the intraday scan deliberately does not re-buy
-    #   macro/news/earnings. Not asked is not lost. See CAVEAT below.
+    # `not_run_intraday`: this tick chose not to re-fetch a seat (earnings
+    #   on the intraday scan). Not asked is not lost. Empty or failed
+    #   morning carry-forward is a different word, below.
     "empty": CATEGORY_NOTHING_TO_REPORT,
     "release_overdue": CATEGORY_NOTHING_TO_REPORT,
     "not_run_intraday": CATEGORY_NOTHING_TO_REPORT,
@@ -115,16 +119,13 @@ STATUS_CATEGORY: dict[str, str] = {
     "provider_error": CATEGORY_LOST,
     "truncated": CATEGORY_LOST,
     "content_missing": CATEGORY_LOST,
+    # Intraday carry-forward of this morning's macro/news: the lookup
+    # came back empty (morning never wrote a today-dated answer) or the
+    # lookup itself failed. Same owner rule as a morning `failed` —
+    # deciding on it would be fabricating the missing seat.
+    "carry_forward_empty": CATEGORY_LOST,
+    "carry_forward_failed": CATEGORY_LOST,
 }
-
-# CAVEAT, recorded rather than silently worked around (item 20 keeps it):
-# `not_run_intraday` is written by `_run_intraday_scan` both when the desk
-# chose not to re-fetch a seat AND when this morning's carry-forward lookup
-# came back empty because the morning seat itself failed. Those are "not
-# asked" and "asked and lost" wearing one word, so this gate is NOT applied
-# to the intraday scan — it would be classifying a state the data cannot
-# distinguish. Splitting that value is a separate change to
-# `TradingPipeline._carry_forward_macro` / `_carry_forward_news`.
 
 
 @dataclass(frozen=True)
