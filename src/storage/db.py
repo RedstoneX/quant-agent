@@ -798,6 +798,21 @@ class Database:
         # the original bet. NULL on legacy rows that have never been
         # written back — those still have entry == stop_loss.
         _ensure_column("trades", "initial_stop_loss", "initial_stop_loss REAL")
+        # Pin the entry stop on legacy opening rows that still have one.
+        # Safe because this desk never wrote stop_loss back before this
+        # column existed — the value still on the row IS the entry. Rows
+        # that opened with no stop stay NULL so a later write-back cannot
+        # mint an R-multiple denominator.
+        try:
+            self.conn.execute(
+                "UPDATE trades SET initial_stop_loss = stop_loss "
+                "WHERE initial_stop_loss IS NULL "
+                "AND COALESCE(stop_loss, 0) > 0 "
+                "AND UPPER(action) IN ('BUY', 'SHORT')"
+            )
+            self.conn.commit()
+        except Exception as e:  # noqa: BLE001
+            _log.error("Schema migration backfill for trades.initial_stop_loss failed: %s", e)
         _ensure_column("trades", "take_profit", "take_profit REAL DEFAULT 0")
         # Phase 3.1 — the thesis horizon and setup type PINNED AT ENTRY.
         # `pace` used to be measured against `avg_hold_days` from the system's
@@ -1236,12 +1251,18 @@ class Database:
     def update_open_stop_loss(
         self, symbol: str, new_stop_price: float, *, action: str | None = None,
     ) -> bool:
-        """Write the live stop onto the latest opening row.
+        """Write the live stop onto every opening row of this position.
 
         `action` is 'BUY' or 'SHORT' when the caller knows the side
         (repair, a short trail). Omitting it takes the most recent of
         either — only safe when a symbol cannot be both. Refuses an
         unknown action rather than defaulting to long.
+
+        A scale-in leaves more than one opening row on the same
+        `position_id`; the broker holds one consolidated stop, so every
+        still-open row of that position is updated. Each row freezes its
+        own `initial_stop_loss` if it had an entry stop; a row that opened
+        with none does not mint one from the live level.
         """
         try:
             price = float(new_stop_price)
@@ -1267,7 +1288,8 @@ class Database:
             )
             if opening:
                 row = self.conn.execute(
-                    "SELECT id, stop_loss, initial_stop_loss FROM trades "
+                    "SELECT id, stop_loss, initial_stop_loss, position_id, action "
+                    "FROM trades "
                     "WHERE symbol = ? AND action = ? "
                     f"AND {predicate} "
                     "ORDER BY timestamp DESC, id DESC LIMIT 1",
@@ -1275,7 +1297,8 @@ class Database:
                 ).fetchone()
             else:
                 row = self.conn.execute(
-                    "SELECT id, stop_loss, initial_stop_loss FROM trades "
+                    "SELECT id, stop_loss, initial_stop_loss, position_id, action "
+                    "FROM trades "
                     "WHERE symbol = ? AND action IN ('BUY', 'SHORT') "
                     f"AND {predicate} "
                     "ORDER BY timestamp DESC, id DESC LIMIT 1",
@@ -1287,26 +1310,41 @@ class Database:
                     "stop $%.4f was NOT recorded", symbol_key, price,
                 )
                 return False
-            try:
-                current = float(row["stop_loss"] or 0)
-            except (TypeError, ValueError):
-                current = 0.0
-            try:
-                initial = float(row["initial_stop_loss"] or 0)
-            except (TypeError, ValueError):
-                initial = 0.0
-            frozen = initial if initial > 0 else (current if current > 0 else None)
-            if frozen is None:
+            side = opening or (row["action"] if row["action"] in ("BUY", "SHORT") else None)
+            position_id = row["position_id"]
+            if position_id and side:
                 self.conn.execute(
-                    "UPDATE trades SET stop_loss = ? WHERE id = ?",
-                    (price, row["id"]),
+                    "UPDATE trades SET "
+                    "stop_loss = ?, "
+                    "initial_stop_loss = CASE "
+                    "WHEN initial_stop_loss IS NOT NULL AND initial_stop_loss > 0 "
+                    "THEN initial_stop_loss "
+                    "WHEN stop_loss IS NOT NULL AND stop_loss > 0 THEN stop_loss "
+                    "ELSE initial_stop_loss END "
+                    f"WHERE position_id = ? AND action = ? AND {predicate}",
+                    (price, position_id, side),
                 )
             else:
-                self.conn.execute(
-                    "UPDATE trades SET stop_loss = ?, initial_stop_loss = ? "
-                    "WHERE id = ?",
-                    (price, frozen, row["id"]),
-                )
+                try:
+                    current = float(row["stop_loss"] or 0)
+                except (TypeError, ValueError):
+                    current = 0.0
+                try:
+                    initial = float(row["initial_stop_loss"] or 0)
+                except (TypeError, ValueError):
+                    initial = 0.0
+                frozen = initial if initial > 0 else (current if current > 0 else None)
+                if frozen is None:
+                    self.conn.execute(
+                        "UPDATE trades SET stop_loss = ? WHERE id = ?",
+                        (price, row["id"]),
+                    )
+                else:
+                    self.conn.execute(
+                        "UPDATE trades SET stop_loss = ?, initial_stop_loss = ? "
+                        "WHERE id = ?",
+                        (price, frozen, row["id"]),
+                    )
             self.conn.commit()
             return True
         return bool(self._locked_write(_do, label="update_open_stop_loss"))

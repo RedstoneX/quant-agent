@@ -467,3 +467,65 @@ def test_repair_partial_with_an_accepted_id_still_writes_back(db):
     row = db.get_symbol_last_buy("VST")
     assert row["stop_loss"] == pytest.approx(162.40)
     assert row["initial_stop_loss"] == pytest.approx(158.75)
+
+
+def test_zero_entry_stop_write_back_does_not_mint_an_entry_bet(db):
+    db.insert_trade(
+        symbol="NAKED", action="BUY", qty=5, price=100.0,
+        reasoning="entry", run_id="r1", stop_loss=0, fill_status="filled",
+    )
+    assert recorded_initial_stop(db.get_symbol_last_buy("NAKED")) == 0.0
+    assert write_back_stop_loss(db, "NAKED", 97.0) is True
+    row = db.get_symbol_last_buy("NAKED")
+    assert row["stop_loss"] == pytest.approx(97.0)
+    assert recorded_initial_stop(row) == 0.0
+
+
+def test_write_back_updates_every_open_row_of_the_same_position(db):
+    _open_long(db, symbol="ORCL", stop=95.0)
+    db.insert_trade(
+        symbol="ORCL", action="BUY", qty=2, price=110.0,
+        reasoning="scale-in", run_id="r1", stop_loss=98.0, fill_status="filled",
+    )
+    assert write_back_stop_loss(db, "ORCL", 101.5, is_short=False) is True
+    rows = db.conn.execute(
+        "SELECT stop_loss, initial_stop_loss, qty FROM trades "
+        "WHERE symbol = 'ORCL' AND action = 'BUY' ORDER BY id",
+    ).fetchall()
+    assert len(rows) == 2
+    assert rows[0]["stop_loss"] == pytest.approx(101.5)
+    assert rows[0]["initial_stop_loss"] == pytest.approx(95.0)
+    assert rows[1]["stop_loss"] == pytest.approx(101.5)
+    assert rows[1]["initial_stop_loss"] == pytest.approx(98.0)
+
+
+def test_reconcile_reports_a_full_tick_difference(db):
+    _open_long(db, symbol="AAPL", stop=148.25)
+    broker = MagicMock()
+    broker.get_current_stop_price.return_value = 148.26
+    mismatches = reconcile_recorded_stop_levels(
+        broker=broker,
+        last_buy=lambda s, action="BUY": db.get_symbol_last_buy(
+            s, include_in_flight=True, action=action,
+        ),
+        positions=[SimpleNamespace(symbol="AAPL", qty=10.0)],
+    )
+    assert len(mismatches) == 1
+
+
+def test_position_history_reads_the_frozen_entry_stop_not_the_live_one(db):
+    from src.models import Position
+    from src.pipeline import TradingPipeline
+
+    _open_long(db, symbol="V", stop=374.27)
+    write_back_stop_loss(db, "V", 362.58)
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+    pipeline.tech_store = MagicMock()
+    pipeline.tech_store.get_history.return_value = []
+    pos = Position(
+        symbol="V", qty=1, avg_entry=380.0, current_price=370.0,
+        market_value=370.0, unrealized_pnl=-10.0, sector="Cyclical",
+    )
+    hist = pipeline._build_position_history([pos])
+    assert hist["V"]["stop_loss"] == pytest.approx(374.27)

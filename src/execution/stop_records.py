@@ -52,13 +52,20 @@ def _finite_price(value: Any) -> float:
 
 
 def _prices_match(recorded: float, live: float) -> bool:
-    """True when the two prints are the same stop at Alpaca's tick."""
+    """True when the two prints are the same stop at Alpaca's round-trip.
+
+    Tick size is Alpaca's published split (`_quantize_price`): $0.01 at or
+    above $1, $0.0001 below. The allowed delta is half a tick — this
+    repo's own stated float<->Decimal round-trip (the reprotect path's
+    half-penny), not a trading threshold. A full-tick difference is a
+    different stop.
+    """
     tick = (
         _ALPACA_TICK_AT_OR_ABOVE_DOLLAR
         if min(recorded, live) >= 1.0
         else _ALPACA_TICK_BELOW_DOLLAR
     )
-    return abs(recorded - live) <= tick
+    return abs(recorded - live) <= (tick / 2.0)
 
 
 def accepted_stop_order(order: Any) -> bool:
@@ -99,16 +106,17 @@ def _holding_is_short(broker: Any, symbol: str) -> bool | None:
 def recorded_initial_stop(row: dict | None) -> float:
     """The stop AT ENTRY, even after later write-backs of the live level.
 
-    Prefers `initial_stop_loss` (frozen on first write-back / set at
-    insert). Falls back to `stop_loss` for legacy rows that have never
-    been written back — on those rows the two numbers are still the same.
-    Returns 0 when neither is a usable price. Never invents one.
+    Prefers `initial_stop_loss` when that column is present on the row.
+    A present-but-empty value is 0 — it must not fall back to `stop_loss`,
+    because after a write-back that column is the live level, and a row
+    that opened with no stop must not mint an entry bet from a later
+    repair. Test doubles that omit the key entirely still fall back to
+    `stop_loss` (legacy shape, entry == live). Never invents a price.
     """
     if not row:
         return 0.0
-    initial = _finite_price(row.get("initial_stop_loss"))
-    if initial > 0:
-        return initial
+    if "initial_stop_loss" in row:
+        return _finite_price(row.get("initial_stop_loss"))
     return _finite_price(row.get("stop_loss"))
 
 

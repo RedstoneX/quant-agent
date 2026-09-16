@@ -666,7 +666,7 @@ def check_coverage(
     if last_buy is not None:
         try:
             from src.execution.stop_records import (
-                reconcile_recorded_stop_levels, report_stop_level_mismatches,
+                reconcile_recorded_stop_levels,
             )
             try:
                 positions = broker.get_positions()
@@ -679,7 +679,15 @@ def check_coverage(
                 sweep_symbol=sweep_symbol,
                 skip_symbols=_scale_in_skip(broker, db_path),
             )
-            report_stop_level_mismatches(mismatches)
+            # Log every pass; do not page from this 30-minute unit. An
+            # out-of-band mismatch is never write-back-cleared, so paging
+            # here would fire ~48 times a day with no acknowledgement.
+            # The session coverage sweep pages.
+            for item in mismatches:
+                logger.error(
+                    "STOP RECORD MISMATCH: %s — %s (short=%s)",
+                    item.symbol, item.reason, item.is_short,
+                )
         except Exception as exc:  # noqa: BLE001
             logger.error("coverage watchdog stop-level reconcile failed: %s", exc)
 

@@ -5118,13 +5118,19 @@ class TradingPipeline:
         setup has been maturing vs stuck vs invalidated.
         """
         from datetime import date as _date
+        from src.execution.stop_records import recorded_initial_stop
         out: dict[str, dict] = {}
         today = et_today()
         for p in positions:
             sym = p.symbol
             entry = None
             try:
-                entry = self.db.get_symbol_last_buy(sym)
+                try:
+                    qty = float(getattr(p, "qty", 0) or 0)
+                except (TypeError, ValueError):
+                    qty = 0.0
+                opening = "SHORT" if qty < 0 else "BUY"
+                entry = self.db.get_symbol_last_buy(sym, action=opening)
             except Exception as e:
                 logger.warning("position_history: last_buy lookup failed for %s: %s", sym, e)
 
@@ -5163,11 +5169,14 @@ class TradingPipeline:
                 "tech_history": tech_history,
                 # The stop recorded at entry — RiskStage's structural
                 # holding-discipline check (spec item 25) reads this to find
-                # the level backing it. Deliberately the entry-time stop,
-                # not the live broker stop a trail may have since widened:
-                # same "the bet that was actually made" reasoning
-                # `_build_position_facts.initial_stop` documents above.
-                "stop_loss": entry.get("stop_loss") if entry else None,
+                # the level backing it. Deliberately the frozen entry-time
+                # stop (`initial_stop_loss`), not the live `stop_loss` a
+                # trail may have since written back, and not the live
+                # broker stop: same "the bet that was actually made"
+                # reasoning `_build_position_facts.initial_stop` documents.
+                "stop_loss": (
+                    recorded_initial_stop(entry) or None
+                ) if entry else None,
             }
         return out
 
