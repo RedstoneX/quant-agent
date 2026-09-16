@@ -36,6 +36,7 @@ import logging
 import math
 import re
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
@@ -646,6 +647,86 @@ def _entry_slippage_bps(pipeline) -> float:
     return MAX_ENTRY_SLIPPAGE_BPS
 
 
+def _trade_updates_already_started(pipeline) -> bool:
+    started = getattr(getattr(pipeline, "broker", None), "trade_updates_started", None)
+    if not callable(started):
+        return False
+    try:
+        return started() is True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
+    """Programmed waits still ahead of submit. Not a fitted clock.
+
+    Auth is omitted when the kept socket already started during Risk — that
+    budget began at hub open. Funding timeouts are the cash-sweep step's
+    own ceiling; they must not be added as leftover slack on the submit
+    path after fund_buys has already returned. Call this AFTER funding
+    with will_fund=False.
+    """
+    budget = 0.0
+    if not _trade_updates_already_started(pipeline):
+        from src.execution.broker import _ALPACA_STREAM_AUTH_DEADLINE_S
+        budget += float(_ALPACA_STREAM_AUTH_DEADLINE_S)
+    if will_fund:
+        from src.execution.cash_sweep import (
+            _FUND_CASH_SETTLE_TIMEOUT_S,
+            _FUND_TERMINAL_TIMEOUT_S,
+        )
+        budget += float(_FUND_TERMINAL_TIMEOUT_S) + float(_FUND_CASH_SETTLE_TIMEOUT_S)
+    return budget
+
+
+def _encode_entry_submit_window(pipeline, ctx, *, will_fund: bool) -> None:
+    """Pin the submit deadline from known step durations, not an invented timer."""
+    budget = _known_entry_submit_budget_s(pipeline, will_fund=will_fund)
+    ctx.entry_submit_budget_s = budget
+    started = time.monotonic()
+    ctx.entry_submit_started_mono = started
+    ctx.entry_submit_deadline_mono = started + budget if budget > 0 else None
+
+
+def _submit_window_overrun(ctx) -> bool:
+    """True when submitting now would fire a ticket after the encoded window."""
+    deadline = getattr(ctx, "entry_submit_deadline_mono", None)
+    if not isinstance(deadline, (int, float)):
+        return False
+    return time.monotonic() > float(deadline)
+
+
+def _start_trade_updates_early(pipeline, ctx) -> None:
+    """Start trade_updates without waiting — overlap handshake with Risk review."""
+    start = getattr(getattr(pipeline, "broker", None), "start_trade_updates", None)
+    if not callable(start):
+        return
+    try:
+        warmup = start()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("trade_updates start-during-Risk failed: %s", exc)
+        ctx.desk_latency_stall = True
+        return
+    try:
+        from src.execution.broker import TradeStreamWarmup
+    except Exception:  # noqa: BLE001
+        return
+    if isinstance(warmup, TradeStreamWarmup) and (
+        warmup.handshake_failed or warmup.retried
+    ):
+        ctx.desk_latency_stall = True
+
+
+def _stop_trade_updates(pipeline) -> None:
+    stop = getattr(getattr(pipeline, "broker", None), "stop_trade_updates", None)
+    if not callable(stop):
+        return
+    try:
+        stop()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("trade_updates stop failed: %s", exc)
+
+
 def _pin_approved_entry_ceilings(pipeline, ctx, buy_decisions) -> None:
     """Freeze the already-approved slippage cap before a desk stall can move it.
 
@@ -696,7 +777,7 @@ def _adopt_stream_stall(pipeline, ctx) -> None:
 
 
 def _warm_trade_updates(pipeline, ctx) -> None:
-    """Record a caller-supplied stall probe. Does not open a throwaway socket."""
+    """Start the kept trade_updates socket if Risk did not. Does not wait for auth."""
     ensure = getattr(getattr(pipeline, "broker", None), "ensure_trade_updates", None)
     if not callable(ensure):
         return
@@ -710,8 +791,10 @@ def _warm_trade_updates(pipeline, ctx) -> None:
         from src.execution.broker import TradeStreamWarmup
     except Exception:  # noqa: BLE001
         return
-    if isinstance(warmup, TradeStreamWarmup):
-        ctx.desk_latency_stall = bool(warmup.handshake_failed or warmup.retried)
+    if isinstance(warmup, TradeStreamWarmup) and (
+        warmup.handshake_failed or warmup.retried
+    ):
+        ctx.desk_latency_stall = True
 
 
 def _live_fill_price(pipeline, symbol) -> float | None:
@@ -4643,6 +4726,16 @@ class RiskStage:
             )
 
     def run(self, ctx: RunContext) -> dict | None:
+        try:
+            out = self._run_review(ctx)
+        except Exception:
+            _stop_trade_updates(self._pipeline)
+            raise
+        if out is not None:
+            _stop_trade_updates(self._pipeline)
+        return out
+
+    def _run_review(self, ctx: RunContext) -> dict | None:
         pipeline = self._pipeline
         run_id = ctx.run_id
         portfolio_decision = ctx.portfolio_decision
@@ -4991,6 +5084,9 @@ class RiskStage:
         portfolio_decision.constructor_dropped = _dropped_since_proposal(
             portfolio_decision
         )
+
+        # Handshake overlaps the review so auth is not serial after Risk.
+        _start_trade_updates_early(pipeline, ctx)
 
         verdict, rm_result = pipeline.risk_manager.review(
             portfolio_decision=portfolio_decision,
@@ -5358,6 +5454,12 @@ class ExecutionStage:
         self._pipeline = pipeline
 
     def run(self, ctx: RunContext) -> list[dict]:
+        try:
+            return self._run_session(ctx)
+        finally:
+            _stop_trade_updates(self._pipeline)
+
+    def _run_session(self, ctx: RunContext) -> list[dict]:
         pipeline = self._pipeline
         run_id = ctx.run_id
         # Stage 1 (QAMC correlation plumbing): links every trades row this
@@ -5914,6 +6016,10 @@ class ExecutionStage:
                         "cash_sweep_disabled", raw_cash=cash,
                     )
             _adopt_stream_stall(pipeline, ctx)
+            # Encode AFTER funding so the fund step's own 180s/30s ceiling
+            # cannot sit as leftover slack on a fast no-op. Remaining
+            # programmed wait is auth only when the hub did not start.
+            _encode_entry_submit_window(pipeline, ctx, will_fund=False)
 
         # Spec §11.2 — how much NEW exposure this session may still add, and
         # the pool every entry below draws from. Ladder-derived (see
@@ -6098,6 +6204,19 @@ class ExecutionStage:
                     quote = None
                 ask = quote.get("ask_price") if isinstance(quote, dict) else None
                 bid = quote.get("bid_price") if isinstance(quote, dict) else None
+                if _submit_window_overrun(ctx):
+                    ctx.desk_latency_stall = True
+                    logger.warning(
+                        "%s %s NOT SUBMITTED — latency blew the window "
+                        "(encoded post-Risk budget %.1fs).",
+                        decision.action, decision.symbol,
+                        float(getattr(ctx, "entry_submit_budget_s", 0.0) or 0.0),
+                    )
+                    _record_execution_skip(
+                        pipeline, ctx, decision.symbol, "latency_window",
+                        "latency blew the window",
+                    )
+                    continue
                 slippage_bps = _entry_slippage_bps(pipeline)
                 if not is_short and isinstance(ask, (int, float)) and ask > 0:
                     # The protection cap and the offer are two different
@@ -6202,11 +6321,26 @@ class ExecutionStage:
                         )
                     limit_price = offer_limit
                     sizing_price = max(sizing_price or 0, offer_limit)
-                    if getattr(ctx, "desk_latency_stall", False):
+                    # Safety net only: stall left the original entry unfillable
+                    # but the live offer is still inside the pinned ceiling.
+                    # Not the product — do not stamp this on a healthy path.
+                    original_entry = getattr(decision, "entry_price", None)
+                    if (
+                        getattr(ctx, "desk_latency_stall", False)
+                        and isinstance(original_entry, (int, float))
+                        and ask > float(original_entry)
+                        and ask <= cap
+                    ):
                         used = dict(getattr(ctx, "catch_up_used", None) or {})
                         if not used.get(decision.symbol):
                             used[decision.symbol] = True
                             ctx.catch_up_used = used
+                            _record_pipeline_event(
+                                pipeline, ctx, decision.symbol, "execution",
+                                "safety_net", "catch_up_inside_ceiling",
+                                detail="stall left the original entry unfillable; "
+                                "limit stays at the already-approved ceiling",
+                            )
                 elif is_short and isinstance(bid, (int, float)) and bid > 0:
                     # Mirror of the BUY ceiling: a sell-short limit is a
                     # FLOOR, not a price. Alpaca fills a short at the NBBO
@@ -6275,6 +6409,23 @@ class ExecutionStage:
                         )
                     limit_price = bid_limit
                     sizing_price = bid_limit
+                    original_entry = getattr(decision, "entry_price", None)
+                    if (
+                        getattr(ctx, "desk_latency_stall", False)
+                        and isinstance(original_entry, (int, float))
+                        and bid < float(original_entry)
+                        and bid >= floor
+                    ):
+                        used = dict(getattr(ctx, "catch_up_used", None) or {})
+                        if not used.get(decision.symbol):
+                            used[decision.symbol] = True
+                            ctx.catch_up_used = used
+                            _record_pipeline_event(
+                                pipeline, ctx, decision.symbol, "execution",
+                                "safety_net", "catch_up_inside_ceiling",
+                                detail="stall left the original entry unfillable; "
+                                "limit stays at the already-approved floor",
+                            )
 
                 # RC1: code-enforced ATR stop-distance floor at entry. The
                 # P1 prompt rule ("fresh-entry stops never tighter than

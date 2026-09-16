@@ -49,11 +49,179 @@ _ALPACA_STREAM_AUTH_DEADLINE_S = _ALPACA_STREAM_RECONNECT_MAX_S
 
 @dataclass(frozen=True)
 class TradeStreamWarmup:
-    """Result of warming the trade_updates socket before the first fill wait."""
+    """Result of starting the kept trade_updates socket (handshake may still be in flight)."""
 
     ready: bool
     handshake_failed: bool
     retried: bool
+
+
+class _HubWaiter:
+    """One fill/status wait attached to the kept trade_updates hub."""
+
+    def __init__(self, stop_states: frozenset):
+        self.stop_states = stop_states
+        self.event = threading.Event()
+        self.status: str | None = None
+
+
+class _TradeUpdatesHub:
+    """One trade_updates websocket kept across Risk → funding → fills.
+
+    Alpaca allows one trade_updates socket per account. Opening it only
+    inside `wait_for_order_*` made handshake serial after Risk and burned
+    the fill/funding timeout (measured 2026-09-16). Start during Risk so
+    auth overlaps the review; fill waits attach here instead of opening
+    a second socket. Auth budget starts at `started_mono` and uses
+    alpaca-py's reconnect max — not a second fitted clock.
+    """
+
+    def __init__(self, broker: "AlpacaBroker"):
+        self._broker = broker
+        self._stream = None
+        self._thread: threading.Thread | None = None
+        self._connected = threading.Event()
+        self._authed = threading.Event()
+        self._waiters_lock = threading.Lock()
+        self._waiters: dict[str, list[_HubWaiter]] = {}
+        self._last_status: dict[str, str] = {}
+        self.started_mono = time.monotonic()
+        self.handshake_hook = False
+        self._run_error: list[Exception] = []
+        self._stopped = False
+
+    def start(self) -> None:
+        stream = TradingStream(
+            self._broker.api_key, self._broker.secret_key,
+            paper=self._broker._paper,
+        )
+        stream._qamc_authed = self._authed
+        _install_trading_stream_reconnect_guard(stream)
+        self.handshake_hook = callable(getattr(stream, "_start_ws", None))
+        self._stream = stream
+
+        async def _handler(update) -> None:
+            try:
+                self._connected.set()
+                order = getattr(update, "order", None)
+                oid = str(getattr(order, "id", "") or "")
+                if not oid:
+                    return
+                status = str(getattr(getattr(order, "status", None), "value",
+                                     getattr(order, "status", ""))).lower()
+                to_signal: list[_HubWaiter] = []
+                with self._waiters_lock:
+                    self._last_status[oid] = status
+                    for waiter in self._waiters.get(oid, []):
+                        if status in waiter.stop_states:
+                            to_signal.append(waiter)
+                for waiter in to_signal:
+                    waiter.status = status
+                    waiter.event.set()
+            except Exception:
+                logger.warning(
+                    "trade_updates hub handler error",
+                    exc_info=True,
+                )
+
+        stream.subscribe_trade_updates(_handler)
+
+        def _run() -> None:
+            try:
+                stream.run()
+            except Exception as exc:
+                self._run_error.append(exc)
+
+        self._thread = threading.Thread(
+            target=_run, name="trade-updates-hub", daemon=True,
+        )
+        self._thread.start()
+
+    def is_alive(self) -> bool:
+        thread = self._thread
+        return (
+            not self._stopped
+            and thread is not None
+            and thread.is_alive()
+        )
+
+    def authed(self) -> bool:
+        return self._authed.is_set() or self._connected.is_set()
+
+    def auth_remaining_s(self) -> float:
+        if not self.handshake_hook:
+            return float("inf")
+        left = _ALPACA_STREAM_AUTH_DEADLINE_S - (
+            time.monotonic() - self.started_mono
+        )
+        return max(0.0, float(left))
+
+    def wait(
+        self, order_id: str, timeout_seconds: float, *,
+        stop_states: frozenset,
+    ) -> tuple[str | None, bool]:
+        oid = str(order_id)
+        if self.handshake_hook and not self.authed():
+            remaining_auth = self.auth_remaining_s()
+            if remaining_auth <= 0:
+                logger.warning(
+                    "trade_updates websocket did not authenticate within the "
+                    "encoded %.1fs budget (started at hub open) — REST for %s",
+                    _ALPACA_STREAM_AUTH_DEADLINE_S, oid,
+                )
+                self._broker._last_stream_warmup = TradeStreamWarmup(
+                    ready=False, handshake_failed=True, retried=True,
+                )
+                return None, False
+            try:
+                self._authed.wait(timeout=remaining_auth)
+            except Exception:
+                pass
+            if not self.authed():
+                logger.warning(
+                    "trade_updates websocket did not authenticate within "
+                    "remaining %.1fs — REST for %s",
+                    remaining_auth, oid,
+                )
+                self._broker._last_stream_warmup = TradeStreamWarmup(
+                    ready=False, handshake_failed=True, retried=True,
+                )
+                return None, False
+
+        waiter = _HubWaiter(stop_states)
+        with self._waiters_lock:
+            last = self._last_status.get(oid)
+            if last in stop_states:
+                return last, True
+            self._waiters.setdefault(oid, []).append(waiter)
+        try:
+            waiter.event.wait(timeout=max(0.0, float(timeout_seconds)))
+        finally:
+            with self._waiters_lock:
+                bucket = self._waiters.get(oid, [])
+                if waiter in bucket:
+                    bucket.remove(waiter)
+        if waiter.status is not None:
+            return waiter.status, True
+        if not self.is_alive():
+            # Thread died mid-wait: do not report the stream as fine.
+            # Callers REST-poll for the rest of the window.
+            return None, False
+        if self._run_error and not self._connected.is_set() and not self.authed():
+            return None, False
+        return None, True if (self._connected.is_set() or self.authed()) else False
+
+    def stop(self) -> None:
+        self._stopped = True
+        stream = self._stream
+        if stream is not None:
+            try:
+                stream.stop()
+            except Exception:
+                pass
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=5.0)
 
 
 def _stream_http_status(exc: BaseException) -> int | None:
@@ -650,6 +818,8 @@ class AlpacaBroker:
         # does not change intra-session.
         self._fractionable_cache: dict[str, dict] = {}
         self._last_stream_warmup: TradeStreamWarmup | None = None
+        self._trade_hub: _TradeUpdatesHub | None = None
+        self._trade_hub_lock = threading.Lock()
 
     def _kill_switch_active(self) -> bool:
         """Guard 1: True once ops has halted the desk by `touch`-ing the
@@ -2347,23 +2517,112 @@ class AlpacaBroker:
     _ORDER_REPLACEABLE_STATES = frozenset({"new"})
 
     def ensure_trade_updates(self) -> TradeStreamWarmup:
-        """Do not open a throwaway socket. Auth is bounded on the real fill wait.
+        """Start (or reuse) the kept trade_updates socket. Does not wait for auth.
 
-        A probe-then-teardown handshake was adding a second 30s wait before
-        funding, then the fill wait opened another stream and authenticated
-        again. The stall cut is the fill-wait deadline (alpaca-py reconnect
-        max), not a second clock. ExecutionStage pins ceilings first, then
-        adopts `_last_stream_warmup` after the funding wait if that wait
-        had to REST-fallback because auth never completed.
+        A probe-then-teardown handshake duplicated auth. This starts the
+        real socket and leaves it up for fill waits. Call from Risk so the
+        handshake overlaps the review; Execution calling again is a no-op.
         """
-        if getattr(self, "_last_stream_warmup", None) is None:
+        return self.start_trade_updates()
+
+    def trade_updates_started(self) -> bool:
+        hub = getattr(self, "_trade_hub", None)
+        return hub is not None and hub.is_alive()
+
+    def trade_updates_authed(self) -> bool:
+        hub = getattr(self, "_trade_hub", None)
+        return bool(hub is not None and hub.authed())
+
+    def trade_updates_auth_remaining_s(self) -> float | None:
+        """Seconds left on the encoded auth budget, or None when it does not apply.
+
+        None: no hub, or a test double with no handshake hook (no auth wait).
+        0: the reconnect-max budget started at hub open is gone and we must
+        not sit in `_auth` after Risk.
+        """
+        hub = getattr(self, "_trade_hub", None)
+        if hub is None or not hub.is_alive():
+            return None
+        if not hub.handshake_hook:
+            return None
+        return hub.auth_remaining_s()
+
+    def _hub_warmup(self, hub: _TradeUpdatesHub) -> TradeStreamWarmup:
+        failed = (
+            hub.handshake_hook
+            and hub.auth_remaining_s() <= 0
+            and not hub.authed()
+        )
+        return TradeStreamWarmup(
+            ready=hub.is_alive() and not failed,
+            handshake_failed=failed,
+            retried=failed,
+        )
+
+    def start_trade_updates(self) -> TradeStreamWarmup:
+        """Open the kept trade_updates socket without blocking on handshake."""
+        if TradingStream is None:
             warmup = TradeStreamWarmup(
-                ready=TradingStream is not None,
-                handshake_failed=False, retried=False,
+                ready=False, handshake_failed=True, retried=False,
             )
             self._last_stream_warmup = warmup
             return warmup
-        return self._last_stream_warmup
+        with self._trade_hub_lock:
+            hub = self._trade_hub
+            if hub is not None and hub.is_alive():
+                warmup = self._hub_warmup(hub)
+                self._last_stream_warmup = warmup
+                return warmup
+            if hub is not None:
+                try:
+                    hub.stop()
+                except Exception:
+                    pass
+                self._trade_hub = None
+                try:
+                    _TRADE_UPDATES_STREAM_LOCK.release()
+                except RuntimeError:
+                    pass
+            if not _TRADE_UPDATES_STREAM_LOCK.acquire(blocking=False):
+                warmup = TradeStreamWarmup(
+                    ready=False, handshake_failed=False, retried=False,
+                )
+                self._last_stream_warmup = warmup
+                return warmup
+            try:
+                hub = _TradeUpdatesHub(self)
+                hub.start()
+                self._trade_hub = hub
+            except Exception as exc:
+                logger.warning("trade_updates hub failed to start: %s", exc)
+                try:
+                    _TRADE_UPDATES_STREAM_LOCK.release()
+                except RuntimeError:
+                    pass
+                warmup = TradeStreamWarmup(
+                    ready=False, handshake_failed=True, retried=False,
+                )
+                self._last_stream_warmup = warmup
+                return warmup
+            warmup = self._hub_warmup(hub)
+            self._last_stream_warmup = warmup
+            return warmup
+
+    def stop_trade_updates(self) -> None:
+        """Tear down the kept trade_updates socket. Idempotent."""
+        with self._trade_hub_lock:
+            hub = self._trade_hub
+            self._trade_hub = None
+            if hub is None:
+                return
+            try:
+                hub.stop()
+            except Exception:
+                pass
+            try:
+                _TRADE_UPDATES_STREAM_LOCK.release()
+            except RuntimeError:
+                pass
 
     def wait_for_order_at_exchange(
         self,
@@ -2526,6 +2785,12 @@ class AlpacaBroker:
         """
         if TradingStream is None:
             return None, False
+
+        hub = getattr(self, "_trade_hub", None)
+        if hub is not None and hub.is_alive():
+            return hub.wait(
+                order_id, timeout_seconds, stop_states=stop_states,
+            )
 
         # Non-blocking: fill monitoring continues on REST for the waiter
         # that lost the race, instead of stacking a second websocket onto

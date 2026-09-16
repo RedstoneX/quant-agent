@@ -241,14 +241,18 @@ class RunContext:
     execution_skips: list[dict] = field(default_factory=list)
     # One paid research-heal retry per seat per session (owner 2026-09-16).
     heal_paid_retries: dict[str, int] = field(default_factory=dict)
-    # Fills path: desk-caused stall after Risk (WS handshake retries).
-    # One catch-up revise inside the already-approved ceiling is allowed
-    # only when this is True. Repeg stays off.
+    # Fills path: desk-caused stall after Risk (WS handshake). Catch-up
+    # inside the already-approved ceiling is a safety net only, not the
+    # product. Repeg stays off. Submit deadline is the sum of programmed
+    # waits (auth reconnect-max if the socket was not started during Risk,
+    # plus the ratified funding timeouts when fund_buys runs).
     desk_latency_stall: bool = False
     catch_up_used: dict[str, bool] = field(default_factory=dict)
-    # BUY/SHORT slippage ceilings pinned at ExecutionStage start (post-Risk,
-    # pre-WS). A later last-trade must not raise this cap — that would be a
-    # chase.
+    entry_submit_budget_s: float = 0.0
+    entry_submit_started_mono: float | None = None
+    entry_submit_deadline_mono: float | None = None
+    # BUY/SHORT slippage ceilings pinned at ExecutionStage start (post-Risk).
+    # A later last-trade must not raise this cap — that would be a chase.
     approved_entry_ceiling: dict[str, float] = field(default_factory=dict)
 
     # === Structured facts for PM — Phase 4 #4 ===

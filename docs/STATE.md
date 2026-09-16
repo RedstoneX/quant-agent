@@ -302,9 +302,11 @@ This file records what is accepted and true **now**. Git history preserves imple
   (mechanical first, then at most one paid retry inside cost caps); heal
   failure and a spend-cap block page the owner. Empty or failed morning
   carry-forward still refuses before the Portfolio Manager. Desk-caused
-  stall after Risk that blows the already-approved ceiling is named
-  `latency_window`, not ordinary slippage; at most one catch-up revise
-  stays inside that pinned ceiling; `execution.repeg_enabled` stays false.
+  stall after Risk is a defect, not "a little late." Handshake starts
+  during Risk so auth is not serial after approval. Submit uses the
+  already-coded fund/auth budgets; overrun is `latency_window` even if
+  the tape is still inside the pinned ceiling. One in-ceiling catch-up
+  is a safety net only. `execution.repeg_enabled` stays false.
 - **`AgentLogItem` now surfaces `input_message` / `full_response`**
   (`6b7af86`, same branch), a frontend-only fix — the backend has populated
   and served both fields all along; only the TypeScript interface omitted

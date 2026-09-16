@@ -67,7 +67,7 @@ What would settle it: a cited or instrument-read basis for the sub-floor size ca
 
 **3. Accepted by the broker, never filled, cancelled — 6 of 68 (9%). WORKING AS INTENDED.**
 
-Tape walking away from a still-open limit, repeg off, is this class. Desk-caused stall after Risk killing a still-sound order is not: that skip is `latency_window`, handshake bounded by the stream reconnect max, at most one catch-up inside the already-approved ceiling. Slippage and R/R were not raised. Repeg stays off.
+Tape walking away from a still-open limit, repeg off, is this class. Desk lateness after Risk is broken, not "a little late": handshake starts during Risk, submit is not licensed leftover fund-max slack, overrun is `latency_window`. One in-ceiling catch-up is a safety net only. Slippage and R/R were not raised. Repeg stays off.
 
 **4. A SECOND reward:risk floor at execution time, set to 1.2 — 4 of 68 (6%). WORKING AS INTENDED, BUT.**
 

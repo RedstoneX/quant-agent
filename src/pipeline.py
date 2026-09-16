@@ -11278,6 +11278,14 @@ class TradingPipeline:
             if early_exit is not None:
                 early_exit["run_id"] = run_id
                 early_exit["data_status"] = dict(ctx.data_status)
+                stop_updates = getattr(
+                    getattr(self, "broker", None), "stop_trade_updates", None,
+                )
+                if callable(stop_updates):
+                    try:
+                        stop_updates()
+                    except Exception:
+                        pass
                 return early_exit
 
             # Phase 4 #1: execution stage — HOLDs logged, SELLs then BUYs submitted.
@@ -13492,6 +13500,14 @@ class TradingPipeline:
         early_exit = self.risk_stage.run(ctx)
         if early_exit is not None:
             early_exit["candidates"] = symbols
+            stop_updates = getattr(
+                getattr(self, "broker", None), "stop_trade_updates", None,
+            )
+            if callable(stop_updates):
+                try:
+                    stop_updates()
+                except Exception:
+                    pass
             return early_exit
 
         orders = self.execution_stage.run(ctx)
