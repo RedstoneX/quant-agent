@@ -123,7 +123,7 @@ Measured 2026-09-14 on the archived DB: three exit-path risk reviews (rows 296, 
 
 One scalar in `[0,1]` is both the ranking key and the dollar multiplier, with no direction. Scott & Xu (FAJ 2004): an insider sale under 10% of the holding earns +0.68% adjusted quarterly excess return (significant at 1%) yet gets weight 1.0, identical to dumping 80% (−0.81%). Not a number to pick; ratio and band are already reported so the seat can read the sign. Question: should the deterministic ranking know it too? Ruled out: Scott & Xu (band returns, no weighting scheme); Cohen/Malloy/Pomorski (binary, no magnitude or direction); own history (too few insider-sourced fills). Settles with: a published signed scoring scheme, or enough own outcome data to read a separation. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-13.
 
-**64. Practice-run results now count days the risk ceiling ran out and label the alphabetical tie-break; ranking is not fixed — OPEN, reporting 2026-09-16.**
+**64. Practice-run results now count days the risk ceiling ran out and label the alphabetical tie-break; ranking is still alphabetical — OPEN, reporting 2026-09-16.**
 
 Every result prints binding-budget days over entry days, and says equal asks are served by ticker spelling. Live still spends down `rank_verdicts`; this engine still has none. Ruled out: a fitted score; injecting live verdicts; ranking by the engine's own reward:risk (live uses that only as a within-tier tie-break — using it as the rank would silently change who gets capital). Remaining: a non-fitted score that is the live rule (needs verdicts this engine cannot replay), or an owner decision that practice runs cannot evaluate rationing. Do not close as a ranking fix. Detail: `docs/INCIDENT_HISTORY.md`, 2026-09-16.
 
