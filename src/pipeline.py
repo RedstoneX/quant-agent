@@ -95,17 +95,19 @@ logger = logging.getLogger(__name__)
 class CarryForward:
     """Morning evidence reused on an intraday tick, with an honest status.
 
-    `payload` is the stored object when today's lookup succeeded; otherwise
+    `payload` is the stored object when a reusable answer exists; otherwise
     None. `status` is the data_status word the caller must write — never
-    inferred from payload truthiness, because an empty morning store and
-    an intentional skip used to share one word (`not_run_intraday`).
+    inferred from payload truthiness. `same_session` is True only when the
+    stored answer is from today's session — holding-discipline uses that
+    to refuse treating a cross-day remembered regime as proof about today.
     """
 
     payload: object | None
     status: str
+    same_session: bool = True
 
     def __bool__(self) -> bool:
-        """True only when today's payload is present.
+        """True only when a payload is present.
 
         Status must still be read from `.status` — truthiness is only a
         safety net so a leftover `if carried` cannot treat an empty or
@@ -8900,15 +8902,16 @@ class TradingPipeline:
             very same method.
           - `macro_regime_today` / `macro_status`: PARTIALLY, and honestly
             so. No macro analyst runs at midday or close, so there is no
-            fresh read to pass. `_carry_forward_macro` returns this
-            MORNING's stored read and is itself date-scoped — it refuses
-            anything not dated today — which is exactly the condition
-            `TRUSTED_MACRO_STATUSES` already recognises as
-            `"carried_from_morning"`. When payload is None (no macro ran
-            today, or the stored state is stale), `macro_status` is passed
-            as None and the checker's own UNVERIFIABLE branch handles it.
-            Nothing is defaulted, substituted or invented to fill the gap:
-            an absent macro read makes a regime claim unverifiable, never
+            fresh read to pass. `_carry_forward_macro` may return this
+            MORNING's stored read (`carried_from_morning`, same session)
+            or a GOOD prior-day regime (`remembered` until a real
+            regime/print change). Only a same-session payload may falsify
+            an exit claim — holding-discipline reads `.same_session`, not
+            payload truthiness. When payload is None or not same-session,
+            `macro_status` is passed as None and the checker's own
+            UNVERIFIABLE branch handles it. Nothing is defaulted,
+            substituted or invented to fill the gap: an absent or
+            cross-day macro read makes a regime claim unverifiable, never
             false.
 
         Returns the `HoldingDisciplineClaimCheck`, or None when there is
@@ -9044,12 +9047,20 @@ class TradingPipeline:
         # already the producer of the `carried_from_morning` status
         # elsewhere in this class (see the intraday-scan data_status block),
         # so the label is reused rather than a second one invented.
+        # Cross-day remembered regime is usable for the PM but is NOT
+        # proof about today — only a same-session payload may falsify an
+        # exit claim.
         carried_macro = self._carry_forward_macro()
-        macro_regime_today = _macro_regime(carried_macro.payload)
-        # Unverifiable, not a trusted read and not a gate status: an absent
-        # macro must never call an exit claim false. The entry-side
-        # evidence gate uses carried_macro.status; this checker does not.
-        macro_status = "carried_from_morning" if carried_macro.payload else None
+        if carried_macro.same_session and carried_macro.payload is not None:
+            macro_regime_today = _macro_regime(carried_macro.payload)
+            macro_status = (
+                carried_macro.status
+                if carried_macro.status == "carried_from_morning"
+                else "carried_from_morning"
+            )
+        else:
+            macro_regime_today = None
+            macro_status = None
 
         try:
             active_state_changes = self._build_active_state_changes()
@@ -11183,6 +11194,7 @@ class TradingPipeline:
                 # never become a refusal to PROTECT), and before the Portfolio
                 # Manager call, which is the expensive one this exists to not
                 # spend on absent evidence.
+                self._heal_lost_research_seats(ctx)
                 gate_skip = self._evidence_gate_skip(ctx, run_id)
                 if gate_skip is not None:
                     return gate_skip
@@ -11266,6 +11278,14 @@ class TradingPipeline:
             if early_exit is not None:
                 early_exit["run_id"] = run_id
                 early_exit["data_status"] = dict(ctx.data_status)
+                stop_updates = getattr(
+                    getattr(self, "broker", None), "stop_trade_updates", None,
+                )
+                if callable(stop_updates):
+                    try:
+                        stop_updates()
+                    except Exception:
+                        pass
                 return early_exit
 
             # Phase 4 #1: execution stage — HOLDs logged, SELLs then BUYs submitted.
@@ -12844,63 +12864,334 @@ class TradingPipeline:
                 return {"status": "intraday_scan_lock_contended", "run_id": ctx.run_id}
             return self._intraday_opportunity_scan_body(ctx)
 
-    def _carry_forward_macro(self) -> CarryForward:
-        """This morning's macro regime, for an intraday tick to reason inside.
+    def _macro_regime_or_print_changed(self, state: dict) -> bool:
+        """True only when a later snapshot actually changed the regime.
 
-        Read from the store rather than re-derived: the macro analyst already
-        ran today and its call is on disk. Distinguishes three outcomes so
-        the categorical evidence gate (docs/WORK.md item 20) can see a real
-        miss versus an intentional skip:
-
-          - `carried_from_morning` — today's state is on disk
-          - `carry_forward_empty` — nothing stored for today (morning seat
-            failed or never wrote, or the stored state is stale)
-          - `carry_forward_failed` — the lookup itself raised
-
-        The caller, not this method, writes `not_run_intraday` for seats
-        this tick chose not to look up (earnings). `load_last_state` is not
-        date-scoped, so the freshness check is this method's job.
+        Calendar age is not expiry — macro is reusable across days until a
+        real regime/print change. A failed detector is not a change.
         """
+        if not isinstance(state, dict):
+            return False
+        stored_regime = str(state.get("regime") or "").strip()
+        if not stored_regime:
+            return False
+        try:
+            history = self.macro_store.load_history(days=2) or []
+        except Exception:  # noqa: BLE001
+            return False
+        if not history:
+            return False
+        latest = history[-1] if isinstance(history[-1], dict) else None
+        if not latest:
+            return False
+        latest_regime = str(latest.get("regime") or "").strip()
+        latest_date = str(latest.get("date") or "").strip()[:10]
+        stored_date = str(state.get("date") or state.get("as_of") or "").strip()[:10]
+        if latest_date and stored_date and latest_date > stored_date and latest_regime and latest_regime != stored_regime:
+            return True
+        return False
+
+    def _news_has_newer_material_wire(self, report) -> bool:
+        """Best-effort mechanical headline compare. Failed fetch ≠ supersede."""
+        from src.evidence_kind import covered_news_headlines, newer_material_wire
+        covered = covered_news_headlines(report)
+        peek = getattr(self, "_peek_news_headlines", None)
+        if not callable(peek):
+            return False
+        try:
+            fetched = peek(report) or []
+        except Exception:  # noqa: BLE001
+            return False
+        return newer_material_wire(covered, fetched)
+
+    def _carry_forward_macro(self) -> CarryForward:
+        """Remembered macro regime, keyed by kind+expiry event.
+
+        GOOD same-session reuse stays `carried_from_morning` (PR #430).
+        A GOOD prior-day regime is `remembered` until a real regime/print
+        change — not `carry_forward_empty`. A blank or unreadable snapshot
+        is lost, never reused as research. Holding-discipline must read
+        `.same_session`, not payload truthiness, so a cross-day remember
+        cannot falsify today's exit claim.
+        """
+        from src.evidence_kind import macro_reuse
+        from src.seat_heal import mechanical_heal_macro
         try:
             state = self.macro_store.load_last_state() or None
         except Exception as e:  # noqa: BLE001 — never fail a tick on carry-forward
             logger.warning("Intraday scan: macro carry-forward failed: %s", e)
-            return CarryForward(None, "carry_forward_failed")
+            return CarryForward(None, "carry_forward_failed", same_session=False)
         if not state:
-            return CarryForward(None, "carry_forward_empty")
-        # Only today's regime may be carried into today's session. Yesterday's
-        # is exactly the "citing stale evidence as if it ran this tick"
-        # failure the blindfold was protecting against.
+            return CarryForward(None, "carry_forward_empty", same_session=False)
         stored_date = str(state.get("date") or state.get("as_of") or "").strip()[:10]
-        if stored_date and stored_date != str(et_today()):
-            logger.info(
-                "Intraday scan: stored macro is from %s, not today — not carried",
-                stored_date,
-            )
-            return CarryForward(None, "carry_forward_empty")
-        return CarryForward(dict(state), "carried_from_morning")
+        same_session = (not stored_date) or stored_date == str(et_today())
+        heal = mechanical_heal_macro(dict(state))
+        if not heal.usable:
+            return CarryForward(None, "carry_forward_failed", same_session=same_session)
+        verdict = macro_reuse(
+            heal.payload,
+            same_session=same_session,
+            regime_or_print_changed=self._macro_regime_or_print_changed(heal.payload),
+        )
+        if not verdict.usable:
+            return CarryForward(None, verdict.status, same_session=same_session)
+        return CarryForward(heal.payload, verdict.status, same_session=same_session)
 
     def _carry_forward_news(self) -> CarryForward:
-        """This morning's news intelligence, re-validated from its stored dump.
+        """This session's news intelligence, re-validated from its stored dump.
 
-        `load_daily_report` is already date-scoped to today, so no freshness
-        check is needed here. Same three-way split as `_carry_forward_macro`:
-        a schema failure or store exception is `carry_forward_failed`; an
-        empty today-scoped store is `carry_forward_empty`. A malformed cache
-        must cost the tick its news context, never the deterministic loss
-        protection that already ran.
+        Same-session GOOD reuse is #430. A newer material wire expires it.
+        Parse failure is lost, never reused as research.
         """
+        from src.evidence_kind import news_reuse
         try:
             report = self.news_store.load_daily_report()
             if not report:
-                return CarryForward(None, "carry_forward_empty")
+                return CarryForward(None, "carry_forward_empty", same_session=True)
             from src.models import NewsIntelligenceReport
-            return CarryForward(
-                NewsIntelligenceReport(**report), "carried_from_morning",
-            )
+            payload = NewsIntelligenceReport(**report)
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: news carry-forward failed: %s", e)
-            return CarryForward(None, "carry_forward_failed")
+            return CarryForward(None, "carry_forward_failed", same_session=True)
+        verdict = news_reuse(
+            payload,
+            same_session=True,
+            newer_material_wire=self._news_has_newer_material_wire(payload),
+        )
+        if not verdict.usable:
+            return CarryForward(None, verdict.status, same_session=True)
+        return CarryForward(payload, verdict.status, same_session=True)
+
+    def _carry_forward_earnings(self, ctx: RunContext) -> CarryForward:
+        """Remembered earnings write-ups until the next report / 8-K.
+
+        Loads the cached analyses (no LLM). A `queued=True` placeholder is
+        the expiry event — a new filing the preprocess has not written up.
+        """
+        from src.evidence_kind import earnings_reuse
+        provider = getattr(self, "earnings_provider", None)
+        load = getattr(self, "_load_earnings_analyses", None)
+        if provider is None or not callable(load):
+            return CarryForward([], "not_run_intraday", same_session=True)
+        try:
+            _, results = self._load_earnings_analyses(
+                ctx.run_id, session=ctx.session, ctx=ctx,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday scan: earnings remember failed: %s", e)
+            return CarryForward(None, "carry_forward_failed", same_session=True)
+        results = list(results or [])
+        new_report = any(
+            isinstance(item, dict) and item.get("queued")
+            for item in results
+        )
+        analyzed = [
+            item for item in results
+            if isinstance(item, dict) and isinstance(item.get("analysis"), dict)
+        ]
+        payload = analyzed if analyzed else results
+        verdict = earnings_reuse(
+            payload if payload else [],
+            same_session=True,
+            new_report_or_8k=new_report,
+        )
+        # Placeholders for new filings are still handed to PM (it sizes
+        # down); the status is `expired` only when we have nothing usable
+        # AND a new filing. When we have cached write-ups plus a queued
+        # name, keep the write-ups and label the seat partial via the
+        # existing earnings classifier — do not drop remembered work.
+        if analyzed and new_report:
+            return CarryForward(results, "chose_not_to_refetch", same_session=True)
+        if not verdict.usable and not results:
+            return CarryForward(None, verdict.status, same_session=True)
+        status = verdict.status
+        if verdict.decision == "refetch" and not analyzed:
+            status = "expired"
+            return CarryForward(results, status, same_session=True)
+        return CarryForward(results, status, same_session=True)
+
+    def _carry_forward_insider(self, ctx: RunContext) -> CarryForward:
+        """Remembered Form 4 findings; refresh only when a NEW filing appears."""
+        from src.evidence_kind import insider_reuse
+        findings: list = []
+        accessions: set[str] = set()
+        try:
+            loader = getattr(self, "_load_remembered_insider_findings", None)
+            if callable(loader):
+                findings, accessions = loader(ctx)
+            else:
+                findings = list(getattr(ctx, "smart_money_findings", None) or [])
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday scan: insider remember failed: %s", e)
+            return CarryForward(None, "carry_forward_failed", same_session=True)
+        new_form4 = False
+        peek = getattr(self, "_peek_new_form4_accessions", None)
+        if callable(peek):
+            try:
+                incoming = set(peek() or [])
+                new_form4 = bool(incoming - set(accessions))
+            except Exception:  # noqa: BLE001
+                new_form4 = False
+        verdict = insider_reuse(
+            findings if findings else [],
+            same_session=True,
+            new_form4=new_form4,
+        )
+        if verdict.decision == "refetch":
+            return CarryForward(findings, "expired", same_session=True)
+        return CarryForward(findings, verdict.status, same_session=True)
+
+    def _record_heal(self, ctx: RunContext, result, *, alert: bool) -> None:
+        """Durable heal log. Pages only on attempted-and-failed / cap-block."""
+        import json as _json
+        try:
+            _persist_evidence(
+                self.db, run_id=ctx.run_id, agent_name="seat_heal",
+                kind="seat_heal", scope="run",
+                evidence_json=_json.dumps(result.to_evidence(), sort_keys=True),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("seat heal: evidence write failed: %s", e)
+        if not alert:
+            return
+        try:
+            from src.notifier import send_owner_alert
+            from src.seat_heal import HEAL_CAP_BLOCKED, heal_failure_alert_text
+            send_owner_alert(
+                heal_failure_alert_text(
+                    result, cap_blocked=result.outcome == HEAL_CAP_BLOCKED,
+                ),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error("seat heal: owner alert failed: %s", e)
+
+    def _try_one_paid_research_retry(self, ctx: RunContext, seat: str) -> bool:
+        """One paid retry for a LOST seat. False if we cannot honestly retry.
+
+        Intra often has no FRED/news stack. A retry without inputs would
+        invent the seat — refuse that, and do not burn the retry slot.
+        Cost-cap blocks alert the owner. Success is a durable log, not a page.
+        """
+        from src.cost_circuit import PaidAnalysisSuspended
+        from src.seat_heal import (
+            HealResult, HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_PAID_RETRY,
+            can_paid_retry, record_paid_retry,
+        )
+        retries = dict(getattr(ctx, "heal_paid_retries", None) or {})
+        if not can_paid_retry(retries, seat):
+            return False
+        require = getattr(self, "_require_paid_analysis", None)
+        agent_name = {
+            "macro": "macro_analyst",
+            "news": "news_analyst",
+            "tech": "tech_analyst",
+        }.get(seat)
+        if agent_name is None or not callable(require):
+            return False
+        agent = getattr(self, agent_name, None)
+        analyze = (
+            getattr(agent, "analyze", None) if seat != "tech"
+            else getattr(agent, "analyze_batch", None)
+        )
+        if not callable(analyze):
+            return False
+        # The analyst already spent the one paid retry on its own parse.
+        if getattr(agent, "_heal_retry_used", False) is True:
+            return False
+        # No inputs → would invent the seat. Do not consume the retry.
+        if seat == "macro" and not (ctx.macro_summary or {}):
+            return False
+        if seat == "news":
+            # Fresh wire text is required. Morning parse-site retry lives
+            # on the analyst; intra has no honest news_text unless a hook
+            # supplied one.
+            news_text = getattr(ctx, "heal_news_text", None)
+            if not (isinstance(news_text, str) and news_text.strip()):
+                return False
+        if seat == "tech":
+            return False
+        try:
+            require(agent_name)
+        except PaidAnalysisSuspended as exc:
+            blocked = HealResult(
+                seat=seat, outcome=HEAL_CAP_BLOCKED,
+                reason=f"spend cap blocked the one paid retry: {exc}",
+                paid_retry=False,
+            )
+            self._record_heal(ctx, blocked, alert=True)
+            return False
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("seat heal: cost-circuit preflight failed for %s: %s", seat, exc)
+            return False
+        ctx.heal_paid_retries = record_paid_retry(retries, seat)
+        try:
+            if seat == "macro":
+                analysis, _raw = analyze(ctx.macro_summary)
+            else:
+                analysis, _raw = analyze(getattr(ctx, "heal_news_text", ""))
+        except Exception as exc:  # noqa: BLE001
+            failed = HealResult(
+                seat=seat, outcome=HEAL_FAILED,
+                reason=f"paid heal retry raised: {exc}",
+                paid_retry=True,
+            )
+            self._record_heal(ctx, failed, alert=True)
+            return False
+        if analysis is None:
+            failed = HealResult(
+                seat=seat, outcome=HEAL_FAILED,
+                reason="paid heal retry returned no usable output",
+                paid_retry=True,
+            )
+            self._record_heal(ctx, failed, alert=True)
+            return False
+        payload = (
+            analysis.model_dump() if hasattr(analysis, "model_dump") else analysis
+        )
+        if seat == "macro":
+            ctx.macro_analysis = payload
+        elif seat == "news":
+            ctx.news_intel = analysis
+        status = dict(ctx.data_status or {})
+        status[seat] = "ok"
+        ctx.data_status = status
+        self._record_heal(
+            ctx,
+            HealResult(
+                seat=seat, outcome=HEAL_PAID_RETRY,
+                reason="one paid retry replaced a lost seat",
+                payload=payload, paid_retry=True, usable=True,
+            ),
+            alert=False,
+        )
+        return True
+
+    def _heal_lost_research_seats(self, ctx: RunContext) -> None:
+        """After carry-forward: log lost seats. Don't page empty-store gaps
+        (the evidence gate already pages those). Attempt a paid retry only
+        when the seat's inputs actually exist on this run."""
+        from src import evidence_gate
+        from src.seat_heal import HealResult, HEAL_FAILED
+        data_status = ctx.data_status or {}
+        for seat, status in list(data_status.items()):
+            if evidence_gate.STATUS_CATEGORY.get(status) != evidence_gate.CATEGORY_LOST:
+                continue
+            # Empty store: nothing to heal. Gate skip is the owner page.
+            if status == "carry_forward_empty":
+                continue
+            attempted = self._try_one_paid_research_retry(ctx, seat)
+            still = (ctx.data_status or {}).get(seat)
+            if evidence_gate.STATUS_CATEGORY.get(still) == evidence_gate.CATEGORY_LOST:
+                result = HealResult(
+                    seat=seat, outcome=HEAL_FAILED,
+                    reason=f"seat still {still} after mechanical heal",
+                    details={"status": still, "paid_retry_attempted": attempted},
+                )
+                # Page only when we actually paid a retry and it failed.
+                # Kind-expiry / empty-store without inputs is the evidence
+                # gate's skip, not a second owner page.
+                alert = bool(attempted)
+                self._record_heal(ctx, result, alert=alert)
 
     def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict:
         """Bounded intraday opportunity discovery (2026-08-19 fix).
@@ -13156,23 +13447,25 @@ class TradingPipeline:
         ctx.analyses = analyses
         carried_macro = self._carry_forward_macro()
         carried_news = self._carry_forward_news()
+        carried_earnings = self._carry_forward_earnings(ctx)
+        carried_insider = self._carry_forward_insider(ctx)
         ctx.data_status = {
             "tech": "partial" if failed_count else "ok",
-            # Status comes from the carry-forward helpers, not from payload
-            # truthiness: an empty/failed morning lookup is a lost answer,
-            # not the intentional skip `not_run_intraday` (earnings only).
-            # `carried_from_morning` is usable same-session reuse, not a
-            # data-integrity failure: Risk must not veto a plan solely
-            # because these seats were not paid for again this tick
-            # (measured 2026-09-16, intra_check-f0f27e08). Empty/failed
-            # carry still refuses BEFORE the Portfolio Manager.
+            # Status comes from the kind+event helpers, not from payload
+            # truthiness. Same-session GOOD reuse is `carried_from_morning`
+            # (PR #430). Cross-day GOOD macro is `remembered`. Empty/failed
+            # carry still refuses BEFORE the Portfolio Manager. Earnings
+            # without a provider on this object stays the intentional skip.
             "macro": carried_macro.status,
             "news": carried_news.status,
-            "earnings": "not_run_intraday",
+            "earnings": carried_earnings.status,
+            "smart_money": carried_insider.status,
         }
         ctx.macro_analysis = carried_macro.payload
         ctx.news_intel = carried_news.payload
-        ctx.earnings_results = []
+        ctx.earnings_results = list(carried_earnings.payload or [])
+        ctx.smart_money_findings = list(carried_insider.payload or [])
+        self._heal_lost_research_seats(ctx)
 
         # Same owner rule as morning: a decision on incomplete evidence is
         # fabricated. Applied here now that empty/failed carry-forward is
@@ -13207,6 +13500,14 @@ class TradingPipeline:
         early_exit = self.risk_stage.run(ctx)
         if early_exit is not None:
             early_exit["candidates"] = symbols
+            stop_updates = getattr(
+                getattr(self, "broker", None), "stop_trade_updates", None,
+            )
+            if callable(stop_updates):
+                try:
+                    stop_updates()
+                except Exception:
+                    pass
             return early_exit
 
         orders = self.execution_stage.run(ctx)

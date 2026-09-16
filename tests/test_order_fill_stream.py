@@ -524,3 +524,105 @@ def test_concurrent_wait_does_not_open_a_second_stream(mock_stream_cls):
     assert status == "new"
     assert broker.client.get_order_by_id.called
 
+
+@patch("src.execution.broker.TradingStream")
+def test_start_trade_updates_returns_without_waiting_for_auth(mock_stream_cls):
+    started = threading.Event()
+
+    class HangAuth(_FakeTradingStream):
+        async def _start_ws(self):
+            await asyncio.sleep(60)
+
+        def run(self):
+            started.set()
+            super().run()
+
+    mock_stream_cls.side_effect = lambda *a, **k: HangAuth(
+        *a, hang=True, **k,
+    )
+    broker = _broker()
+    t0 = time.monotonic()
+    try:
+        warmup = broker.start_trade_updates()
+        elapsed = time.monotonic() - t0
+        assert elapsed < 2.0, "start_trade_updates must not block on handshake"
+        assert started.wait(timeout=2.0), "hub thread never started"
+        assert warmup.handshake_failed is False
+        assert broker.trade_updates_started() is True
+        assert mock_stream_cls.call_count == 1
+    finally:
+        broker.stop_trade_updates()
+
+
+@patch("src.execution.broker.TradingStream")
+def test_fill_wait_reuses_prestarted_hub(mock_stream_cls):
+    mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+        *a, updates=[_FakeUpdate("order-1", "filled")], hang=True, **k,
+    )
+    broker = _broker()
+    try:
+        broker.start_trade_updates()
+        t0 = time.monotonic()
+        status = broker.wait_for_order_terminal("order-1", timeout_seconds=5.0)
+        assert status == "filled"
+        assert time.monotonic() - t0 < 2.0
+        assert mock_stream_cls.call_count == 1
+    finally:
+        broker.stop_trade_updates()
+
+
+@patch("src.execution.broker.TradingStream")
+def test_exhausted_auth_budget_falls_to_rest_without_waiting_again(mock_stream_cls):
+    class NeverAuth(_FakeTradingStream):
+        async def _start_ws(self):
+            await asyncio.sleep(60)
+
+    mock_stream_cls.side_effect = lambda *a, **k: NeverAuth(
+        *a, hang=True, **k,
+    )
+    broker = _broker()
+    broker.client.get_order_by_id.return_value = MagicMock(status="filled")
+    try:
+        broker.start_trade_updates()
+        assert broker._trade_hub is not None
+        broker._trade_hub.started_mono = time.monotonic() - 31.0
+        t0 = time.monotonic()
+        status = broker.wait_for_order_terminal(
+            "order-1", timeout_seconds=10.0, poll_interval=0.0,
+        )
+        assert time.monotonic() - t0 < 2.0
+        assert status == "filled"
+        assert broker._last_stream_warmup is not None
+        assert broker._last_stream_warmup.handshake_failed is True
+        assert mock_stream_cls.call_count == 1
+    finally:
+        broker.stop_trade_updates()
+
+
+@patch("src.execution.broker.TradingStream")
+def test_dead_hub_falls_to_rest_polling_not_one_snapshot(mock_stream_cls):
+    """If the kept socket dies, fill waits REST-poll the window. They must
+    not report the stream as still fine (one snapshot) and must not open a
+    second handshake while the process lock is held."""
+    mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+        *a, hang=True, **k,
+    )
+    broker = _broker()
+    broker.client.get_order_by_id.return_value = MagicMock(status="filled")
+    try:
+        broker.start_trade_updates()
+        hub = broker._trade_hub
+        assert hub is not None
+        hub.stop()
+        assert hub.is_alive() is False
+        t0 = time.monotonic()
+        status = broker.wait_for_order_terminal(
+            "order-1", timeout_seconds=2.0, poll_interval=0.0,
+        )
+        assert time.monotonic() - t0 < 2.0
+        assert status == "filled"
+        assert mock_stream_cls.call_count == 1
+        assert broker.client.get_order_by_id.called
+    finally:
+        broker.stop_trade_updates()
+

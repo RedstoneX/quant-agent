@@ -22,6 +22,20 @@ what would catch it next time.
 
 ---
 
+### 2026-09-16 — pay again only when that kind of fact expired or was never good; missing research self-heals; desk delay is not "working as designed"
+
+**In plain words:** the desk was treating every later-in-the-day look as if it had to re-buy the morning, or else freeze. The owner rule is simpler: remember a fact until the event that would make it false. Filings and the economic regime usually last across days. Price and a breaking wire do not. An empty or unreadable answer is not a fact, and the desk must repair it rather than sit frozen. Separately, a still-sound trade killed by the desk's own delay after the reviewer said yes is not the same thing as the market walking away from a limit.
+
+**Cause.** Reuse was labelled by session type and "does today's file exist", not by what kind of evidence it was. A yesterday economics call that had not changed was treated as missing. A websocket handshake after approval could burn the fill wait, and the skip that followed looked like ordinary slippage. Soft-exit notes the model had actually written could be blanked; a stored economics snapshot used a different shape than the live answer, so the parse failed.
+
+**Fix.** Each kind has an expiry event, not a seat-count and not a new clock: news when a newer wire lands or the session ends; price always re-read live at the order; regime until a real regime or print change; earnings until the next report or a material amendment; insider filings until a new filing. Same-session reuse of a good morning answer stays usable. A blank or failed parse is never reused as research. Repair order is mechanical first, then at most one paid retry inside the existing spend caps; a failed repair or a cap block pages the owner; a successful repair is written down, not paged. Desk lateness after the reviewer said yes is broken, not "a little late": the broker connection starts during the review so handshake is not added afterwards; steps that need time use the budgets already in the code; a ticket past that budget is refused as the window closing even if the price still looks fine. One catch-up inside the already-approved price is a safety net only. Chase stays off. Reward-to-risk was not loosened.
+
+**What this does not close.** How many usable reads is "enough" is still the owner's (item 20 counting half). Item 3's ordinary unfilled-limit cost — the market walked away, chase off — remains working as designed. Earnings preprocess order was not changed.
+
+**What would catch it next time.** Tests that a good same-session answer is reused, that a blank or lost answer is not, that mechanical repair runs before a paid retry and that retry happens at most once, that handshake starts during review and is not waited out after approval, that a ticket past the coded budget is refused as the window closing even inside the price ceiling, that catch-up is not the healthy path, that a catch-up cannot raise the approved ceiling, and that chase stays off.
+
+---
+
 ### 2026-09-16 — the later scan treated this morning's own research as broken data and refused a whole plan (item 20, Risk half of the skip/lost split)
 
 **In plain words:** about forty minutes after a successful morning, the desk proposed one more trade and the risk reviewer refused the entire plan because the news, economics and earnings seats had not been paid for again. They had already run that morning. Reusing them was a spend choice, not a missing file. Calling that "stale" or "degraded" was sloppy: the same session is not stale. The reviewer is not supposed to need a person in the loop, and the desk is not supposed to spend another round of model calls at ten o'clock to re-buy research it already has.

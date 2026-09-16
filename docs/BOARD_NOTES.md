@@ -118,8 +118,8 @@ this line, one heading per item.
 
 ## item 3
 
-**Plain language —** Sometimes an order sits with the broker but the price moves away before it fills, so the desk cancels it rather than chase a worse price. This is working as designed, but it's a real cost — the idea is lost even though nothing malfunctioned.
-**Example —** About one in eleven trade ideas end this way: the limit order waits, the stock drifts off the target price, and the order is cancelled unfilled, with the opportunity gone.
+**Plain language —** Sometimes an order sits with the broker but the price moves away before it fills, so the desk cancels it rather than chase a worse price. That is working as designed when the market itself walked away. It is not working as designed when the desk was simply late after the trade was already approved. Lateness is a defect, not "a little late." The connection to the broker now opens while the reviewer is still working, so that wait is not stacked on after approval. Steps that genuinely need time (confirming a funding sale) have that time written in as a known budget. If that budget is gone, the desk refuses the ticket honestly as the window closing rather than sending a stale limit, even if the price still looks acceptable. One catch-up inside the already-approved price exists only as a safety net, not as the way the desk is supposed to work. Chasing a worse price stays off.
+**Example —** About one in eleven trade ideas end this way: the limit order waits, the stock drifts off the target price, and the order is cancelled unfilled, with the opportunity gone. A different failure, seen the same morning the later scan reused the morning research: after the reviewer said yes, the broker connection spent minutes authenticating, and names that were still inside the approved price were lost to that stall. That connection now starts during the review. If the known budget is gone, the skip is named as the window closing, not as the market being too expensive.
 
 
 ## item 4
@@ -198,6 +198,18 @@ successful morning. That is now stopped. Same-session reuse is usable. A
 morning seat that actually never arrived still stops the scan before the
 expensive decision step. This is not a ruling on how many usable reads is
 enough; that question is still yours.
+
+**Today, later (2026-09-16) —** paying twice for the same unbroken fact is
+now the thing being refused, not reuse itself. News is paid for again when
+a newer wire actually landed, or when the session ended. Price is always
+read live at the moment of the order, never remembered from the morning
+tape. The economics call and the filings can be remembered across days
+until the regime really changes, or until the next earnings report or a
+new insider filing. An empty or unreadable answer is still not research,
+and the desk will try a mechanical repair first, then at most one paid
+retry, rather than freeze forever on a missing seat. If that retry is
+blocked by the spend cap, or still fails, you get a message naming the
+seat. A successful repair is written down, not paged.
 
 **The decision —** Still yours, and now the only thing left in this item:
 whether *partial* evidence should also stop a decision, and if so, where the

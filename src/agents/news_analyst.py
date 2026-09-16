@@ -421,12 +421,21 @@ Analyze all the above and produce your intelligence report as JSON."""
         try:
             report = NewsIntelligenceReport(**parsed)
         except Exception as e:
-            logger.error("Failed to parse news intelligence report: %s", e)
-            _persist_parse_failure(
-                agent_name=self.name, session=session, raw_text=result.raw_text,
-                parsed=parsed, error=str(e),
+            if getattr(self, "_heal_retry_used", False):
+                logger.error("News analysis failed parse after one heal retry: %s", e)
+                _persist_parse_failure(
+                    agent_name=self.name, session=session, raw_text=result.raw_text,
+                    parsed=parsed, error=str(e),
+                )
+                return None, result
+            self._heal_retry_used = True
+            logger.warning("News analysis failed parse (%s); one paid heal retry", e)
+            return self.analyze(
+                news_text, universe=universe, stock_mentions=stock_mentions,
+                previous_narrative=previous_narrative, session=session,
+                prior_session_report=prior_session_report,
+                news_coverage=news_coverage,
             )
-            return None, result
         report = self._filter_hallucinated_state_changes(
             report, news_text, prior_session_report=prior_session_report,
         )

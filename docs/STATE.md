@@ -289,11 +289,24 @@ This file records what is accepted and true **now**. Git history preserves imple
   though the morning's macro and news were already on disk; both are now
   carried forward, date-scoped and re-validated, and labelled
   `carried_from_morning` in `data_status` rather than `not_run_intraday`.
-  Earnings stay excluded — an intraday filing genuinely has not been read
-  this tick. Nothing is re-fetched. Same-session reuse is usable evidence,
-  not a data-integrity failure: Risk does not veto a plan solely because
-  those seats were not paid for again this tick. Empty or failed morning
-  carry-forward still refuses before the Portfolio Manager.
+  Same-session reuse is usable evidence, not a data-integrity failure: Risk
+  does not veto a plan solely because those seats were not paid for again
+  this tick (PR #430). **Kind+event reuse (2026-09-16):** pay again only
+  when that kind expired or was never good. News expires on a newer
+  material wire or when the session ends — no second fitted clock. Chart
+  always re-reads live price at submit; a daily bar close is not a fill
+  reference. Macro regime is reusable across days until a real
+  regime/print change; a failed parse is not a regime. Earnings write-ups
+  and Form 4 filings are remembered until the next report/8-K or a new
+  filing. Blank/LOST is never research. Missing seats self-heal
+  (mechanical first, then at most one paid retry inside cost caps); heal
+  failure and a spend-cap block page the owner. Empty or failed morning
+  carry-forward still refuses before the Portfolio Manager. Desk-caused
+  stall after Risk is a defect, not "a little late." Handshake starts
+  during Risk so auth is not serial after approval. Submit uses the
+  already-coded fund/auth budgets; overrun is `latency_window` even if
+  the tape is still inside the pinned ceiling. One in-ceiling catch-up
+  is a safety net only. `execution.repeg_enabled` stays false.
 - **`AgentLogItem` now surfaces `input_message` / `full_response`**
   (`6b7af86`, same branch), a frontend-only fix — the backend has populated
   and served both fields all along; only the TypeScript interface omitted
