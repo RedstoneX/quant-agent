@@ -11193,14 +11193,19 @@ class TradingPipeline:
         winner flags) so the LLM sees clean numbers and just interprets
         them. Prevents hallucination of percentages.
         """
-        # Morning BUY lookup by symbol for stop/target/days_held.
+        # Morning opening-row lookup by symbol for stop/target/days_held.
+        # BUY and SHORT are separate: a leftover purchase on the same
+        # ticker is not the short's entry.
         buy_rows: dict[str, dict] = {}
+        short_rows: dict[str, dict] = {}
         for t in morning_trades or []:
             sym = t.get("symbol")
-            if not sym or t.get("action") != "BUY":
+            act = (t.get("action") or "").upper()
+            if not sym or act not in ("BUY", "SHORT"):
                 continue
-            if sym not in buy_rows:
-                buy_rows[sym] = t
+            bucket = short_rows if act == "SHORT" else buy_rows
+            if sym not in bucket:
+                bucket[sym] = t
 
         facts: dict[str, dict] = {}
         for p in positions:
@@ -11211,12 +11216,14 @@ class TradingPipeline:
             # Find the last executed opening row for this symbol to derive
             # target/stop/days_held. A short must read the SHORT row, not a
             # leftover BUY on the same ticker. Falls back to the morning
-            # BUY row only for longs.
+            # row of the same side, then the matching last-open lookup.
             if p.qty < 0:
-                try:
-                    buy = self.db.get_symbol_last_buy(sym, action="SHORT")
-                except Exception:
-                    buy = None
+                buy = short_rows.get(sym)
+                if not buy:
+                    try:
+                        buy = self.db.get_symbol_last_buy(sym, action="SHORT")
+                    except Exception:
+                        buy = None
             else:
                 buy = buy_rows.get(sym)
                 if not buy:
