@@ -10866,3 +10866,14 @@ buys NET and drops the AAPL trim for lack of a current-run analysis; that
 drop is recorded and paged as a "data fault", which misdescribes a working
 feed. How a trim of an unanalysed holding should be sized is an open design
 question, not fixed here.
+
+**Second follow-up, same day — the trim now happens.** A trim of a held name
+the session did not analyse is now sized from the position's own live broker
+stop: shares kept = equity × target risk ÷ (price − live stop), the rest sold.
+On the recorded plan that sells about 4.10 of AAPL's 9.763 shares (live stop
+$315.85, price $332.96, equity $9,694.25) alongside the NET buy. Such a trim
+can only reduce a position, never grow it. With no usable live stop the
+position is still left unchanged, but it is now recorded as "trim could not be
+sized — no usable live stop", not as a market-data fault, so the owner is no
+longer paged to check a feed that was working, and the log no longer calls
+the trim a BUY.
