@@ -57,11 +57,11 @@ def _mock_stage_seam(pipeline, *, specs=(), ok=True, wal_row_id=None):
 
 
 def _carried_forward_macro_dict(target_invested_pct=55.0):
-    """The exact shape `macro_store.load_last_state()` hands back to
-    `Pipeline._carry_forward_macro` — see `MacroStore.save_last_state`
-    (src/data/macro_store.py:69-97): a plain dict, NOT a MacroAnalysis
-    model, with sector_guidance already normalized to {sector: direction}
-    and no reasoning_chain at all."""
+    """Old MacroStore trim: dict sector_guidance, no reasoning_chain.
+
+    That shape must not be smuggled into PM. Tests that mean today's
+    persisted live snapshot use `_valid_carried_macro_dict`.
+    """
     return {
         "date": "2026-08-26",
         "regime": "risk-on",
@@ -73,6 +73,30 @@ def _carried_forward_macro_dict(target_invested_pct=55.0):
             "cash_recommendation_pct": 100.0 - target_invested_pct,
             "reasoning": "x",
         },
+        "sector_guidance": {"Technology": "bullish"},
+    }
+
+
+def _valid_carried_macro_dict(target_invested_pct=55.0):
+    """Same-day MacroStore snapshot that still validates as MacroAnalysis."""
+    from src.models import MacroAnalysis, MacroPositionGuidance, MacroReasoningChain
+    return {
+        "date": "2026-08-26",
+        **MacroAnalysis(
+            regime="risk-on", confidence="high", equity_outlook="bullish",
+            summary="carried forward from yesterday",
+            position_guidance=MacroPositionGuidance(
+                target_invested_pct=target_invested_pct,
+                cash_recommendation_pct=100.0 - target_invested_pct,
+                reasoning="x",
+            ),
+            sector_guidance=[],
+            reasoning_chain=MacroReasoningChain(
+                volatility_analysis="x", yield_curve_analysis="x",
+                monetary_policy_analysis="x", inflation_labor_credit="x",
+                cross_signal_synthesis="x", sector_implications="x",
+            ),
+        ).model_dump(),
         "sector_guidance": {"Technology": "bullish"},
     }
 
@@ -1098,13 +1122,13 @@ def test_decision_stage_delegation_returns_none():
     pipeline.decision_stage.run.assert_called_once_with(ctx)
 
 
-def test_decision_stage_passes_carried_forward_macro_dict_to_pm_unchanged():
-    """Regression for the AttributeError bug: when Pipeline._carry_forward_macro
-    finds today's macro state already on disk, ctx.macro_analysis is a plain
-    dict (see _carried_forward_macro_dict), not a MacroAnalysis model.
-    DecisionStage.run() must pass it straight through to
-    portfolio_manager.decide() — calling .model_dump() on a dict raises
-    AttributeError and previously killed the whole intraday scan silently."""
+def test_decision_stage_passes_valid_carried_macro_dict_after_coerce():
+    """A same-day snapshot is a plain dict, not a MacroAnalysis model.
+    Calling .model_dump() on that dict used to AttributeError and kill
+    the scan. Coerce dict sector_guidance, re-validate, pass the dump —
+    do not smuggle an unvalidated trim, do not crash.
+    """
+    from src.models import MacroAnalysis
     from src.pipeline import TradingPipeline
 
     p = TradingPipeline.__new__(TradingPipeline)
@@ -1130,15 +1154,13 @@ def test_decision_stage_passes_carried_forward_macro_dict_to_pm_unchanged():
     p.config.trading.universe = []
     p._last_symbol_sectors = {}
     p.portfolio_manager = MagicMock()
-    # Early-return path: DecisionStage bails right after `decide()` when
-    # portfolio_decision is falsy, so no need to mock the constructor tail.
     p.portfolio_manager.decide.return_value = (
         None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
                         input_tokens=1, output_tokens=1, cost_usd=0.0,
                         model="test-model"),
     )
 
-    macro_dict = _carried_forward_macro_dict()
+    macro_dict = _valid_carried_macro_dict()
     ctx = RunContext.start("intra_check")
     ctx.positions = []
     ctx.analyses = []
@@ -1149,15 +1171,65 @@ def test_decision_stage_passes_carried_forward_macro_dict_to_pm_unchanged():
     ctx.deployable_cash = 50_000.0
     ctx.admitted_symbols = set()
 
-    # The bug: macro_analysis.model_dump() on a dict raises AttributeError.
-    # No exception is the primary assertion here.
     DecisionStage(pipeline=p).run(ctx)
 
     kwargs = p.portfolio_manager.decide.call_args.kwargs
-    assert kwargs["macro_analysis"] == macro_dict, (
-        "carried-forward macro dict must reach the PM call unmodified, "
-        "not silently dropped as None"
+    passed = kwargs["macro_analysis"]
+    assert passed is not None
+    assert passed["regime"] == "risk-on"
+    MacroAnalysis.model_validate(passed)
+
+
+def test_decision_stage_does_not_pass_chainless_trim_into_pm():
+    """Silent broken macro into PM is the Phase 13 afternoon failure."""
+    from src.pipeline import TradingPipeline
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    PortfolioManagerAgent._macro_parse_failures = []
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = MagicMock()
+    p.db.get_latest_insights.return_value = None
+    p._sweeper = MagicMock(return_value=None)
+    p._compute_recent_performance = MagicMock(return_value={})
+    p._build_position_history = MagicMock(return_value={})
+    p._build_weekly_narrative = MagicMock(return_value="")
+    p._build_macro_trajectory = MagicMock(return_value="")
+    p._build_active_state_changes = MagicMock(return_value="")
+    p._build_rm_recent_verdicts = MagicMock(return_value="")
+    p._build_pm_recent_decisions = MagicMock(return_value="")
+    p._build_projected_portfolio = MagicMock(return_value="")
+    p._build_calibration_note = MagicMock(return_value="")
+    p._build_macro_tech_alignment = MagicMock(return_value="")
+    p._build_recent_missed_lessons = MagicMock(return_value="")
+    p._build_recent_loss_pits = MagicMock(return_value="")
+    p._build_pm_facts = MagicMock(return_value=MagicMock())
+    p._ensure_correlation_matrix = MagicMock(return_value={})
+    p.config = MagicMock()
+    p.config.risk.allow_margin = False
+    p.config.trading.universe = []
+    p._last_symbol_sectors = {}
+    p.portfolio_manager = MagicMock()
+    p.portfolio_manager.decide.return_value = (
+        None, MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                        input_tokens=1, output_tokens=1, cost_usd=0.0,
+                        model="test-model"),
     )
+
+    ctx = RunContext.start("intra_check")
+    ctx.positions = []
+    ctx.analyses = []
+    ctx.macro_analysis = _carried_forward_macro_dict()
+    ctx.total_value = 100_000.0
+    ctx.last_equity = 100_000.0
+    ctx.cash = 50_000.0
+    ctx.deployable_cash = 50_000.0
+    ctx.admitted_symbols = set()
+
+    DecisionStage(pipeline=p).run(ctx)
+
+    kwargs = p.portfolio_manager.decide.call_args.kwargs
+    assert kwargs["macro_analysis"] is None
+    PortfolioManagerAgent._macro_parse_failures = []
 
 
 def test_decision_stage_still_model_dumps_a_fresh_macro_model():
