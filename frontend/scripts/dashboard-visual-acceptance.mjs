@@ -316,15 +316,17 @@ const hierarchyDir = resolve(process.env.QAMC_HIERARCHY_OUTPUT || "../docs/visua
 const hierarchySteps = [
   ["a-chart-dominant-desktop", { width: 1600, height: 1000 }, "populated", async (page) => {
     await page.getByText("Apple Inc.").waitFor();
-    await page.getByText("position 12", { exact: false }).waitFor();
-    await page.locator(".tv-lightweight-charts").first().waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+    await page.getByText("Live $", { exact: false }).waitFor();
   }],
   ["b-holdings-wrap-four", { width: 1600, height: 1000 }, "populated", async (page) => {
     await page.getByRole("button", { name: /Holdings/ }).click();
     await page.getByRole("button", { name: "Chart AAPL" }).waitFor();
     await page.getByRole("button", { name: "Chart SGOV" }).waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
   }],
   ["c-orders-stop-target", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByText("ENTRY", { exact: false }).waitFor();
     await page.getByRole("tab", { name: "Orders" }).click();
     await page.getByText("Stop", { exact: true }).waitFor();
     await page.getByText("Target", { exact: true }).waitFor();
