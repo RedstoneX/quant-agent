@@ -110,22 +110,10 @@ this line, one heading per item.
 **Recommendation —** Nothing to approve. Clear the gate first. A recommendation to spend roughly $5 and settle it was put to you on 2026-09-13 and withdrawn the same day for this reason.
 
 
-## item 1
-
-**Plain language —** The desk used to refuse any trade whose likely gain was under one and a half times its risk. That was the biggest single reason trades did not happen, and on 11 September you changed it: a breakout is no longer judged on that ratio at all, and a range trade with a thin payoff is kept but bought at the smallest size instead of refused. What is left is small: the 1.5 figure still decides which trades get the smallest size, and nobody has a source for it.
-**Example —** A range trade risking $2 to make $2.60 used to be refused outright. Now it goes through at the smallest starter size. The line between normal size and smallest size is still drawn at 1.5, a number nobody derived.
-
-
 ## item 3
 
 **Plain language —** Sometimes an order sits with the broker but the price moves away before it fills, so the desk cancels it rather than chase a worse price. That is working as designed when the market itself walked away. It is not working as designed when the desk was simply late after the trade was already approved. Lateness is a defect, not "a little late." The connection to the broker now opens while the reviewer is still working, so that wait is not stacked on after approval. Steps that genuinely need time (confirming a funding sale) have that time written in as a known budget. If that budget is gone, the desk refuses the ticket honestly as the window closing rather than sending a stale limit, even if the price still looks acceptable. One catch-up inside the already-approved price exists only as a safety net, not as the way the desk is supposed to work. Chasing a worse price stays off.
 **Example —** About one in eleven trade ideas end this way: the limit order waits, the stock drifts off the target price, and the order is cancelled unfilled, with the opportunity gone. A different failure, seen the same morning the later scan reused the morning research: after the reviewer said yes, the broker connection spent minutes authenticating, and names that were still inside the approved price were lost to that stall. That connection now starts during the review. If the known budget is gone, the skip is named as the window closing, not as the market being too expensive.
-
-
-## item 4
-
-**Plain language —** Just before an order is sent, the desk re-checks that the trade has not got worse since the risk reviewer approved it. That is working as designed. Since 11 September it can no longer bring the old payoff rule back by the back door: it only asks whether the final order is worse than the one approved. Its 1.2 figure still has no source, and belongs with item 1.
-**Example —** A range trade is approved at 1.3 to 1. The price moves before the order is built and the final order works out at 1.1 to 1. It is refused because sending it would make the approved trade worse, not because it misses a fixed bar.
 
 
 ## item 17

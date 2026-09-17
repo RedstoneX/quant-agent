@@ -785,19 +785,15 @@ risk:
   # the pre-reset production database shipped under this floor, and one filled
   # at 0.81. The number did not change; where it is applied did.
   #
-  # **2026-09-11 — THIS IS NO LONGER A GATE ANYWHERE** (docs/WORK.md item 1
-  # part (d), owner decision). It refuses nothing:
-  #   * a BREAKOUT / trend setup is not measured against it at all — there is
-  #     no overhead level to measure a reward against, and the position is
-  #     managed by a trailing stop with no fixed target;
-  #   * a RANGE setup's real ratio is still computed from its own real support
-  #     and resistance, and now feeds src/verdicts.py::rank_verdicts as an
-  #     ordering signal instead of a pass/fail cutoff.
-  # What the number still does: it is the threshold below which the PM's
-  # post-decision gate caps a range target at the smallest starter size. That
-  # cap is the last place one fixed ratio is applied identically to every
-  # range trade — flagged deliberately, since it is the pattern
-  # docs/OUTCOME.md's "no arbitrary numbers, ever" principle warns about.
+  # **2026-09-17 — THIS KEY IS INERT.** Owner: residual invented R/R is a
+  # defect. It refuses nothing and caps nothing:
+  #   * a BREAKOUT / trend setup is not measured against reward:risk at all;
+  #   * a RANGE setup's real ratio is still computed and still feeds ranking;
+  #   * a computed ratio, however thin, is neither refused nor size-capped;
+  #   * only an UNMEASURABLE range payoff (cannot compute the ratio at all)
+  #     is refused — honesty about unknown geometry, not this number.
+  # The 1.5 default is kept so a silent rename cannot drop a deployed key.
+  # Do not re-arm it as a gate. Do not invent a replacement floor.
   min_reward_risk_after_widening: 1.5
   # --- Level-backed stops (spec §12.1, 2026-09-01) --------------------------
   # The floor above used to OVERWRITE the structural stop whenever the level

@@ -419,8 +419,8 @@ def test_short_widened_stop_below_the_reward_risk_floor_is_no_longer_rejected():
     9.00 / risk 11.25 = R:R 0.80.
 
     That 0.80 used to reject the trade. It does not any more: for a range
-    setup the real ratio is a ranking signal and a starter-size cap, never a
-    refusal, and it is mirrored for a short exactly as it is for a long. The
+    setup the real ratio is a ranking signal, never a refusal or a
+    size-cap, and it is mirrored for a short exactly as it is for a long. The
     STOP the function returns is the assertion now."""
     constructor = PortfolioConstructor()
     widened = constructor._widen_stop_past_noise(

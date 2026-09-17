@@ -1391,8 +1391,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
               than admitting or refusing them. See
               `src.risk.constants.reward_risk_floor_applies`. `rr_floor` is
               still accepted and still threaded through to
-              `_apply_subfloor_catalyst_rule`, where it decides the
-              starter-size CAP (never a refusal).
+              `_apply_subfloor_catalyst_rule` so callers do not silently
+              re-default a retired number; it must not decide size or
+              admission on a measurable payoff (owner 2026-09-17).
           R5  net independent source score ≥ 1 for the proposed direction
               (`signed_source_score`; §9.4 refuses net ≤ 0 outright —
               `agreement_refuses_trade`, a refusal gate with no schedule
@@ -2816,93 +2817,50 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         asof: date | None = None,
         real_reward_risk_by_symbol: dict[str, float | None] | None = None,
     ) -> PortfolioDecision:
-        """Cap every Type A / range target whose real reward:risk is below
-        `rr_floor`, and drop the ones whose payoff cannot be measured at all.
+        """Keep measurable range targets at the size the PM asked for.
+        Drop a range target whose payoff cannot be measured at all, unless
+        a dated catalyst resolves; then keep it at starter size.
 
-        **Rewritten 2026-09-11, docs/WORK.md item 1(d) — owner decision.**
-        Read this table, not the older prose below it:
+        **Rewritten 2026-09-17 — owner: residual invented R/R is a defect.**
+        Read this table:
 
           Type B / breakout          -> exempt entirely. No drop, no cap, no
                                         catalyst. There is no overhead level
-                                        to measure a reward against and the
-                                        position is managed by a trailing
-                                        stop with no fixed target
-                                        (`src/risk/trailing.py`), so nothing
-                                        here may key off a reward:risk
-                                        figure. See
-                                        `src.risk.constants.reward_risk_
-                                        floor_applies`.
-          Type A, ratio >= floor     -> untouched, as before.
-          Type A, ratio below floor  -> **KEPT** (this used to be a DROP
-                                        unless a catalyst resolved), risk
-                                        capped at `starter_risk_pct`. The
-                                        real ratio is real information about
-                                        this specific trade and does its
-                                        work in the ORDER — see
-                                        `rank_candidates` — instead of
-                                        behind one universal cutoff.
-          Type A, ratio unmeasurable -> unchanged: DROPPED unless the
-                                        catalyst resolves to a real dated
-                                        row, then kept and capped. Fails
-                                        closed, because an unknown payoff is
-                                        not a poor one.
+                                        to measure a reward against.
+          Type A, ratio measurable   -> untouched. Any computed ratio, however
+                                        thin, is ranking information. Python
+                                        does not refuse it and does not shrink
+                                        it. The retired 1.5 starter-size cap
+                                        was an invented floor leftover.
+          Type A, ratio unmeasurable -> DROPPED unless the catalyst resolves
+                                        to a real dated row, then kept and
+                                        capped at starter size. Fails closed:
+                                        an unknown payoff is not a poor one,
+                                        and this is not a numeric floor.
 
-        **The catalyst machinery is therefore now redundant for the
-        measurable sub-floor case** — the case it was actually built for
-        (item 1 parts (b)+(c), 2026-09-11). It still binds the unmeasurable
-        case. It is flagged, not removed: retiring it is an owner call.
+        The starter-size assignment on the catalyst-rescued unknown-payoff
+        path is the desk's smallest expressible position
+        (`STARTER_POSITION_RISK_PCT` / `min_position_risk_pct`), not a
+        comparison against 1.5.
 
-        The starter-size CAP is the last place a single fixed reward:risk
-        number is still applied identically to every range trade. It is kept
-        deliberately — removing a risk-reducing cap is a loosening nobody
-        asked for — but it is exactly the pattern `docs/OUTCOME.md`'s "no
-        arbitrary numbers, ever" principle warns about, and whoever revisits
-        this should know that.
-
-        Deliberately a per-target prune plus a size adjustment, NOT an entry
-        in `validate_grounding`'s error list — `decide()` treats any non-empty
-        error list as total session failure, which is the right penalty for
-        fabricated evidence and the wrong one for one decorative catalyst.
-        Same reasoning, and the same shape, as `_drop_unadjudicated_conflicts`
-        directly above.
+        Deliberately a per-target prune plus (on the unmeasurable+catalyst
+        path only) a size assignment, NOT an entry in `validate_grounding`'s
+        error list — `decide()` treats any non-empty error list as total
+        session failure.
 
         SCOPE, deliberately asymmetric, mirroring §3.4 and §9.3: only targets
         `_target_intent` classifies as "buy"/"short" — opening or increasing
-        — are gated. Exits and reductions are exempt; this desk must never
-        find it harder to cut risk than to add it.
+        — are gated. Exits and reductions are exempt.
 
-        WHICH RATIO. As of 2026-09-04, `real_reward_risk_by_symbol` (when
-        supplied) — `PortfolioConstructor.real_reward_risk_preview`'s
-        output, the same derived-target, noise-floor-widened reward:risk
-        `construct_orders` gates on. Before this fix it was
-        `TechAnalysisResult.risk_reward`: real Python arithmetic, but over
-        the analyst's own GUESSED target, never checked against structure —
-        a 2026-09-04 audit found this gate and the constructor's real one
-        passing disjoint sets on a real day because of exactly that gap. A
-        symbol absent from the map is `None` (fail closed, same as an
-        unmeasurable ratio always has been here). If the map is not
-        supplied at all (`None`, not merely missing an entry),
-        `TechAnalysisResult.risk_reward` is used as a last-resort fallback
-        for callers with no `PortfolioConstructor` to preview from —
-        production always supplies it. It is `TechAnalysisResult.
-        risk_reward` that is still rendered into the prompt as `R/R
-        x.xx:1` (that number is the analyst's own stated geometry, shown
-        as context — see `_fmt_tech` — not the number this gate now uses),
-        so the PM sees both: what the analyst claimed and, in the ranking
-        section, which names the desk's real gate actually admits. `None`
-        (neutral rating, unmeasurable geometry, or a target this desk's own
-        structure derivation refuses) counts as sub-floor: a target with no
-        computable REAL payoff is precisely the case a checkable catalyst
-        has to justify.
+        WHICH RATIO. `real_reward_risk_by_symbol` (when supplied) is
+        `PortfolioConstructor.real_reward_risk_preview`'s output. A symbol
+        absent from the map is `None` (fail closed). If the map is not
+        supplied at all, `TechAnalysisResult.risk_reward` is the fallback.
 
-        WHY THE CAP EXISTS EVEN WHEN THE CATALYST IS REAL. A verified
-        catalyst makes the trade permissible, not good — the payoff geometry
-        is unchanged and still breaks even only at a hit rate this desk has
-        never measured. The starter size is the smallest position the risk
-        budget will actually grant (`allocate_risk_budget` denies anything
-        under its floor), so this preserves the capability at the least the
-        desk can express rather than removing it.
+        `rr_floor` is accepted and ignored. It is the retired 1.5 threshold
+        and must not decide size or admission on a measurable payoff.
         """
+        _ = rr_floor  # retired 2026-09-17; must not decide size or refuse
         by_date = cls._state_change_symbols_by_date(active_state_changes, asof)
         if real_reward_risk_by_symbol is not None:
             rr_by_symbol = {
@@ -2931,96 +2889,49 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 kept.append(target)
                 continue
             reward_risk = rr_by_symbol.get(symbol)
-            if reward_risk is not None and reward_risk >= rr_floor:
+            if reward_risk is not None:
+                # MEASURABLE Type A / range. Any computed ratio is ranking
+                # information. Do not drop it and do not shrink it — the
+                # retired 1.5 starter-size cap was an invented floor.
                 kept.append(target)
                 continue
 
-            # Phase 13 catalyst-gate fix: the exception requires a row
-            # whose recorded direction actually supports THIS trade — a
-            # long needs a bullish row, a short needs a bearish one. A row
-            # that merely names the symbol (no direction, or a neutral /
-            # opposite one) no longer qualifies.
             required_direction = "bullish" if intent == "buy" else "bearish"
-            if reward_risk is not None:
-                # MEASURABLE BUT WEAK, Type A / range. **No longer dropped**
-                # (docs/WORK.md item 1(d), owner decision 2026-09-11). The
-                # ratio is real — this trade's own support against its own
-                # resistance — and a real per-trade signal belongs in the
-                # weighted score, not behind one universal cutoff. It is
-                # ranked on that real number by `rank_candidates`, and it
-                # falls through to the starter-size cap below.
-                #
-                # The catalyst check no longer decides anything on this
-                # path, so it is not run: a weak range payoff is kept with
-                # or without a citation. That makes the machinery built for
-                # item 1 parts (b)+(c) redundant for the measurable case —
-                # flagged for the owner, not removed here. What survives of
-                # it is the CAP, which is a risk-reducing protection nobody
-                # asked to loosen.
-                pass
-            elif not cls._catalyst_cites_state_change(
+            if not cls._catalyst_cites_state_change(
                 target.catalyst, symbol, required_direction, by_date,
             ):
-                # UNMEASURABLE, Type A / range — still dropped without a
-                # verified catalyst, unchanged. This is the fail-closed case
-                # the rest of this codebase treats as strictly worse than a
-                # poor ratio: there is no payoff arithmetic at all, so there
-                # is nothing for the ranking to consume either.
+                # UNMEASURABLE, Type A / range — dropped without a verified
+                # catalyst. Honesty: there is no payoff arithmetic at all.
+                # Not a comparison against 1.5 or any other invented floor.
                 logger.warning(
-                    "%s: dropping %s (%s) — R/R %s is under the %.2f floor and "
-                    "its catalyst resolves to no Active News State Change row "
-                    "naming %s with a recorded %s direction. A sub-floor pick "
-                    "may only claim the catalyst exception by citing the ISO "
-                    "date of a row that covers the symbol AND is recorded "
-                    "%s for it; an asserted-in-prose catalyst, a row with no "
-                    "recorded direction, or a row recorded neutral/opposite "
-                    "is not checkable-and-supportive and does not qualify. "
+                    "%s: dropping %s (%s) — payoff geometry cannot be "
+                    "computed, and its catalyst resolves to no Active News "
+                    "State Change row naming %s with a recorded %s "
+                    "direction. An unknown payoff is not a permitted one. "
+                    "A catalyst exception requires the ISO date of a row "
+                    "that covers the symbol AND is recorded %s for it. "
                     "The rest of this session's decision is unaffected. "
                     "catalyst was: %r",
                     SUBFLOOR_CATALYST_UNVERIFIED_STATUS, target.symbol, intent,
-                    "n/a" if reward_risk is None else f"{reward_risk:.2f}",
-                    rr_floor, symbol, required_direction, required_direction,
+                    symbol, required_direction, required_direction,
                     (target.catalyst or "")[:200],
                 )
                 continue
 
-            # Cap the size, never raise it. A legacy notional-only
-            # target (`risk_allocation_pct is None`) is converted onto the
-            # risk path rather than left uncapped: the constructor prefers
-            # risk over weight whenever both are present (see
-            # `TargetPosition`), so setting it here is what actually binds,
-            # and leaving the weight alone would be a way around this rule.
-            # Record that the exception was GRANTED, not merely claimed, so
-            # the constructor can tell this target apart from an ordinary
-            # sub-floor one. Set before the cap so the two facts — "checked"
-            # and "capped" — can never diverge; see
-            # `TargetPosition.subfloor_catalyst_verified` for why only Python
-            # may write it and why the constructor needs to be told at all.
-            #
-            # 2026-09-11: the flag is set ONLY where a catalyst was actually
-            # verified — i.e. the unmeasurable-geometry path above. A
-            # measurable-but-weak range target reaches the cap without any
-            # citation now, and marking it verified would record a check
-            # that never ran (exactly the failure
-            # `_subfloor_catalyst_verified` is a private attribute to
-            # prevent).
-            if reward_risk is None:
-                target.mark_subfloor_catalyst_verified()
+            # Catalyst-rescued unknown payoff: keep at starter size, the
+            # smallest expressible position — not an R/R comparison.
+            target.mark_subfloor_catalyst_verified()
             previous = target.risk_allocation_pct
             if previous is None or previous > starter_risk_pct:
                 target.risk_allocation_pct = starter_risk_pct
                 logger.info(
-                    "%s: %s capped to %.2f%% risk (was %s) — R/R %s is under "
-                    "the %.2f reference for a range setup%s. Deterministic, "
-                    "not PM inconsistency. The cap is the ONLY thing that "
-                    "number still does: item 1(d) removed the refusal.",
+                    "%s: %s capped to %.2f%% risk (was %s) — payoff "
+                    "geometry cannot be computed; a dated state-change "
+                    "catalyst admits the name at the smallest expressible "
+                    "size, not at a numeric reward:risk floor.",
                     SUBFLOOR_SIZE_CAPPED_STATUS, target.symbol,
                     starter_risk_pct,
                     "unsized by risk" if previous is None else f"{previous:.2f}%",
-                    "n/a" if reward_risk is None else f"{reward_risk:.2f}",
-                    rr_floor,
-                    " with a state change dated in its catalyst"
-                    if reward_risk is None else "",
                 )
             kept.append(target)
         decision.targets = kept

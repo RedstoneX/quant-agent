@@ -264,14 +264,15 @@ This file records what is accepted and true **now**. Git history preserves imple
   regime) when no real level backs the stop. As first shipped it then
   rejected the trade if the widened stop dropped reward:risk below
   `risk.min_reward_risk_after_widening` (1.5); **that rejection no longer
-  exists** (owner decision 2026-09-11, docs/WORK.md item 1(d); this
-  paragraph corrected 2026-09-12). Today the constructor runs no
-  reward:risk comparison at all on a `breakout`, and on a `range` trade the
-  ratio — both sides measured since 2026-09-01, the target computed from
-  structure rather than read from the analyst (see the Phase 1 entry above
-  and spec Phase 10.4) — is logged and passed to the ranking as a real
-  per-trade signal; a sub-floor range pick is capped at starter size, and
-  only a ratio that cannot be measured at all is refused. Measured, the book's stops
+  exists** (owner decision 2026-09-11, docs/WORK.md item 1(d); leftover
+  invented size-cap and execution belt removed 2026-09-17). Today the
+  constructor runs no reward:risk comparison at all on a `breakout`, and on
+  a `range` trade the ratio — both sides measured since 2026-09-01, the
+  target computed from structure rather than read from the analyst (see the
+  Phase 1 entry above and spec Phase 10.4) — is a ranking signal only. A
+  computed ratio does not refuse a ticket and does not shrink it. Only a
+  ratio that cannot be measured at all is refused: honesty about unknown
+  geometry, not a floor number. Measured, the book's stops
   were sitting a median 1.7 ATRs from entry, which both fired exits inside
   noise and forced the 20% clamp above to bind at nearly every conviction
   level. `config/prompts/portfolio_manager.md`'s conviction bands and

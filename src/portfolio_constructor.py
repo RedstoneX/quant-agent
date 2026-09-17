@@ -2046,9 +2046,8 @@ class PortfolioConstructor:
         D5 (Stage 3): direction-aware. A long's stop is pushed DOWN, away
         from entry; a short's stop is pushed UP, away from entry, by the
         same number of ATRs — mirrored, not reflected through a different
-        rule. `min_reward_risk_after_widening` applies identically to a
-        short: a widened short stop that drops reward:risk below the floor
-        rejects the trade exactly as it would for a long.
+        rule. A computed reward:risk on a widened short is ranking
+        information, not a refusal, exactly as for a long.
 
         **2026-09-11, docs/WORK.md item 1 part (d) — this function no longer
         REFUSES anything on reward:risk.** Owner decision, by setup type:
@@ -2068,11 +2067,10 @@ class PortfolioConstructor:
             shared definition rather than two that can drift.
           * **Type A / range** — the ratio is still computed from this
             trade's own real support (the shipping stop) and real resistance
-            (`_derive_target`), and it is still logged, but a sub-floor
-            result is no longer a refusal. It reaches the ranking as a real
-            ordering signal instead (`real_reward_risk_preview` ->
-            `src/verdicts.py::rank_verdicts`), and a sub-floor range target
-            has already been capped at starter size by the PM gate.
+            (`_derive_target`). A computed result is never a refusal and is
+            never a size-cap (owner 2026-09-17). It reaches ranking as a
+            real ordering signal (`real_reward_risk_preview` ->
+            `src/verdicts.py::rank_verdicts`).
 
         What still refuses, unchanged: every RISK-side check above — a
         wrong-side stop, a non-finite stop or entry — and, for Type A only,
@@ -2498,38 +2496,27 @@ class PortfolioConstructor:
         if not reward_risk_floor_applies(
             setup_type, structural_ceiling=structural_ceiling,
         ):
-            # TYPE B / BREAKOUT — no reward:risk comparison runs here at all
-            # (docs/WORK.md item 1(d), owner decision 2026-09-11). Nothing
-            # overhead is expected to stop this stock, the position is
-            # managed by a trailing stop with no fixed target
-            # (`src/risk/trailing.py`), and the only "target" available to
-            # divide by is a measured-move reference invented to make the
-            # ratio computable. Refusing on it — or on its being
-            # unmeasurable — judged the trade against a price its own exit
-            # management never intended to reach. The RISK side is
-            # unchanged and has already run above: wrong-side stop, NaN
-            # stop, the noise band, the level-honouring rule and the
-            # absolute ATR floor all still decided `honoured`.
+            # TYPE B / BREAKOUT — no reward-side refusal here at all
+            # (owner 2026-09-11, restated 2026-09-17). Nothing overhead is
+            # expected to stop this stock. The RISK side is unchanged and
+            # has already run above.
             logger.info(
                 "Constructor: %s %s stop $%.2f [%s] shipped with NO "
                 "reward:risk check — breakout setup. There is no overhead "
                 "level to measure a reward against and the position is "
                 "managed by trailing, so approval rests on the risk side "
-                "alone (item 1(d)).",
+                "alone.",
                 side_label, symbol, honoured, rule,
             )
             return honoured
-        floor = self.cfg.min_reward_risk_after_widening
         reward_risk = self._reward_risk_at(
             entry_price, honoured, target_price, is_short,
         )
         if reward_risk is None:
             # FAIL CLOSED. A target was supplied and the ratio still could
             # not be measured — a non-finite price, or one pointing the
-            # wrong way. Permitting here is how a NaN would clear a floor
-            # it cannot satisfy: every `nan < floor` comparison is False.
-            # No target at all remains "no opinion" (the legacy backtest
-            # shim), which is a different thing from a broken one.
+            # wrong way. Honesty: cannot compute payoff at all. Not a
+            # comparison against 1.5 or any other invented floor.
             if had_target:
                 self._note_refusal(
                     symbol, direction, STOP_REFUSAL_GEOMETRY_UNMEASURABLE,
@@ -2537,39 +2524,9 @@ class PortfolioConstructor:
                     f"reward:risk against the shipping stop ${honoured:,.2f} "
                     f"[{rule}] at the ${entry_price:,.2f} entry cannot be "
                     f"measured. Refused rather than treating an unmeasurable "
-                    f"ratio as passing.",
+                    f"ratio as a permitted payoff.",
                 )
                 return None
-        elif reward_risk < floor:
-            # TYPE A / RANGE, sub-floor. **No longer a refusal**
-            # (docs/WORK.md item 1(d), owner decision 2026-09-11). Both
-            # numbers are real — this trade's own support sets the risk and
-            # its own resistance sets the reward — and a real per-trade
-            # signal is exactly what a weighted score should consume, not
-            # what a single universal cutoff should veto. The ratio reaches
-            # `src/verdicts.py::rank_verdicts` as a real ordering input via
-            # `real_reward_risk_preview`, and a sub-floor range target is
-            # still capped at starter size by
-            # `PortfolioManagerAgent._apply_subfloor_catalyst_rule` before
-            # it ever gets here. Logged, never refused.
-            #
-            # `subfloor_catalyst_exception` no longer changes the outcome on
-            # this path — see that parameter's note in the docstring. It is
-            # still reported because the flag remains the record of a
-            # verified, capped, deliberately-permitted sub-floor pick.
-            logger.info(
-                "Constructor: %s %s shipped at reward:risk %.2f, under the "
-                "%.2f reference (range setup) — stop $%.2f placed by %s%s, "
-                "target $%.2f. NOT a refusal: item 1(d) replaced the fixed "
-                "floor with the real ratio as a ranking input%s.",
-                side_label, symbol, reward_risk, floor, honoured, rule,
-                f" at the computed level ${level:.2f}" if level is not None else "",
-                target_price,
-                "; this order also carries a verified sub-floor catalyst "
-                "exception and was capped at starter size"
-                if subfloor_catalyst_exception else "",
-            )
-            return honoured
         return honoured
 
     def shipped_stop_rule(

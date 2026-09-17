@@ -95,9 +95,9 @@ def reward_risk_floor_applies(
 
     True for a Type A / range trade, whose reward:risk IS real — measured
     from that specific trade's own support (risk) and resistance (reward).
-    What changed for Type A is not whether the number is computed but what
-    is done with it: it is no longer compared against one fixed floor
-    applied identically to every range trade. See `REWARD_RISK_FLOOR`.
+    What is done with that number: ranking, not a cutoff, and not a size
+    cap (owner 2026-09-17). An unmeasurable range payoff still fails closed
+    because there is no arithmetic at all, which is not this comparison.
 
     Fails to the conservative side: an unknown or missing setup type, with
     no measured ceiling fact supplied, keeps the reward:risk machinery on.
@@ -113,49 +113,32 @@ def reward_risk_floor_applies(
 
 
 REWARD_RISK_FLOOR = 1.5
-"""Reward:risk below which a Type A / range target is sized down to
-`STARTER_POSITION_RISK_PCT`. **No longer a pass/fail gate anywhere, and
-never applied to a Type B / breakout trade at all.**
+"""Retired numeric reward:risk threshold. **Not a pass/fail gate and not a
+size cap anywhere** (owner 2026-09-17: invented R/R leftovers are a
+defect; 2026-09-11 item 1(d) had already stopped using it as a refusal).
 
-2026-09-11, docs/WORK.md item 1 part (d) — owner decision. Two changes, and
-they are different for the two setup types this desk already distinguishes
-(`reward_risk_floor_applies` above):
+Kept only as the default of the historical `RiskConfig.min_reward_risk_
+after_widening` settings key so a silent rename cannot drop a deployed
+threshold, and as a name tests/docs still import. Nothing in the live
+entry path compares a ticket against this number to refuse or shrink it.
 
-  * **Type B / breakout — no reward:risk comparison at all.** Not a gate,
-    not a size adjustment, not a ranking input. See
-    `reward_risk_floor_applies`.
-  * **Type A / range — the real, per-trade ratio is computed as before and
-    is now an ORDERING signal, not a cutoff.** It reaches
-    `src/verdicts.py::rank_verdicts` as that module's real reward:risk key
-    (the already-ratified weighted composite mechanism, see
-    `docs/QAMC_REMEDIATION_SPEC.md` §13.3), replacing the analyst's guessed
-    figure with the structural one the constructor derives. A range trade
-    is no longer REFUSED for coming in under this number — by the PM gate,
-    by the constructor, or by the execution belt. It is ranked below better
-    payoffs and, when sub-floor, still capped at starter size.
+A Type B / breakout trade is not measured on reward:risk at all
+(`reward_risk_floor_applies`). A Type A / range trade's real per-trade
+ratio is still computed and still reaches `src/verdicts.py::rank_verdicts`
+as an ordering signal. An UNMEASURABLE range payoff (cannot compute the
+ratio at all) is still refused — that is honesty about unknown geometry,
+not this number.
 
-Why the number itself is still here, and what it still does. It remains the
-threshold for the STARTER-SIZE CAP only (`PortfolioManagerAgent._apply_
-subfloor_catalyst_rule`), which is a risk-reducing deterministic protection
-shipped 2026-09-11 under item 1 part (c). Removing a cap is a loosening
-nobody has asked for; removing a REJECTION is what item 1(d) asked for.
-Anyone revisiting this should know the cap is the last place a single fixed
-ratio is still applied identically to every range trade — which is the
-pattern `docs/OUTCOME.md`'s "no arbitrary numbers, ever" principle warns
-about — and it is flagged rather than quietly kept.
-
-The arithmetic behind the number, unchanged and still the reason it is 1.5
-rather than something else: R/R X breaks even at a hit rate of 1/(1+X), so
-1.5 needs to be right 40% of the time and this desk has no measured
-per-setup hit rate to spend.
+The arithmetic that once justified 1.5 — R/R X breaks even at 1/(1+X) —
+is still true and still unused: this desk has no measured per-setup hit
+rate to spend.
 
 Consumers (must stay aligned — if you edit one, verify the others):
-  - `RiskConfig.min_reward_risk_after_widening`   (the constructor's gate,
-                                                   now Type A only, and no
-                                                   longer a refusal)
-  - `PortfolioManagerAgent.decide`                (the PM-side default)
-  - `config/prompts/portfolio_manager.md`         ("Adjust by Risk/Reward")
-  - `config/prompts/risk_manager.md`              (`rr_fail` verdict)
+  - `RiskConfig.min_reward_risk_after_widening`   (inert historical key;
+                                                   default only)
+  - `config/prompts/portfolio_manager.md`         (ranking signal, not
+                                                   a Python cap)
+  - `config/prompts/risk_manager.md`              (must not refuse on it)
 """
 
 STARTER_POSITION_RISK_PCT = 0.5

@@ -22,6 +22,20 @@ what would catch it next time.
 
 ---
 
+### 2026-09-17 — leftover reward-to-risk numbers were still killing and shrinking tickets after the floor itself had been retired (items 1 and 4, CLOSED)
+
+**In plain words:** You had already said the desk must not refuse a trade just because a made-up payoff ratio was under one and a half. That refusal was gone. What was still armed was two leftovers of the same invention: just before sending, a range order could be skipped if execution moved the price and the new ratio fell under 1.2 (or under the already-approved thinner ratio), and the portfolio manager still cut a range ticket to the smallest size when the measurable ratio was under 1.5. Yesterday that first leftover killed RSG after the reviewer had approved it. You called residual reward-to-risk on live main a defect and said the numbers were just made up.
+
+**Cause.** Removing the entry refusal in September left the execution belt and the starter-size cap in place on purpose at the time — one as "did execution make the approved trade worse?", one as a risk-reducing cap nobody had asked to loosen. Both still compared every range ticket to a flat unsourced number. The 1.2 belt did not care that the constructor had already shipped RSG under 1.5: when the limit was raised, executed geometry of 0.45 against an approved 0.81 was a skip. The 1.5 cap had already shrunk the same name to 0.50% risk. Neither number has a source.
+
+**Fix.** A computed reward-to-risk ratio cannot skip an order and cannot shrink one. The 1.2 execution belt and the geometry-ratio skip are gone. The 1.5 starter-size cap on a measurable range payoff is gone. Chase/repeg stays off. No new numeric floor was invented. What remains on purpose is honesty: if a range trade's prices cannot compute a payoff at all (stop or target on the wrong side of entry, or a non-number), that name is still refused, with a durable reason and no floor figure. A breakout is still not judged on reward-to-risk at all. A dated catalyst can still admit an otherwise-unmeasurable range name at the smallest expressible size — that is unknown geometry, not a comparison to 1.5. The real per-trade ratio still ranks candidates against each other.
+
+**What this does not close.** The original census share (17 of 68 for the floor, 4 of 68 for the execution belt) was counted on the old refusal, not re-run against the same 68 after this leftover removal. Item 3 — tape walking away from an open limit, repeg off — is unchanged. Whether the dated-catalyst door for unknown range geometry should be retired is still not an owner call. Analyst conviction bands that mention 1.5–2.0 in prose are ranking language, not Python gates.
+
+**What would catch it next time.** A test that the old geometry-ratio skip is not written as an execution skip; a test that an RSG-like executed ratio under the old 1.2 belt does not skip; a test that a measurable range ratio under 1.5 keeps the size the portfolio manager asked for; a test that an unmeasurable range payoff is still dropped without a catalyst.
+
+---
+
 ### 2026-09-16 — a bookkeeping latch, not the spend cap, switched paid analysis off after lunch; several other gates slept through the same day
 
 **In plain words:** the afternoon and the close never looked at new trades because the desk thought it could not bound the day's model bill. Real spend was well under the cap. Separately, a stored economics snapshot could not be re-read, soft-exit notes were wiped to blank at industrial scale, two hot insider names never got a pre-market filing check, stop-mismatch pages repeated the same COP/EQNR pair all day, a BRK-B fractional remainder stayed uncovered, and the 09:30 and 1:00 scans skipped paid discovery because morning and midday were still (or had just been) running.

@@ -964,10 +964,8 @@ def test_the_rr_floor_no_longer_decides_eligibility_at_any_value():
     """**Inverted 2026-09-11, docs/WORK.md item 1(d).** This used to prove
     the threaded floor was the one that decided eligibility, by moving it
     from 1.5 to 2.0 and watching a 1.6 candidate disappear. Nothing about
-    the ratio's SIZE decides eligibility any more, at any threaded value —
-    `rr_floor` survives only as the starter-size cap's threshold in
-    `_apply_subfloor_catalyst_rule`, which runs after the PM decides, not
-    here."""
+    the ratio's SIZE decides eligibility any more, at any threaded value.
+    Invented reward:risk floors do not refuse or shrink tickets."""
     analyses = [_tech("AAA", "buy", "high", target=108)]  # R/R 1.6
     kwargs = dict(
         analyses=analyses, evidence_registry=_registry(analyses),
