@@ -58,7 +58,9 @@ This file records what is accepted and true **now**. Git history preserves imple
   would fire immediately is still refused (restoring the entry stop would be
   a widen). A session and watchdog reconcile reports, and does not copy, when
   that number still disagrees with the broker (an out-of-band move leaves no
-  write-back row). Do not treat a "traded through its stop" reading from the
+  write-back row). The same archive-vs-broker fingerprint pages the owner
+  once per ET day; logging stays loud and the broker price is never copied
+  into the archive. Do not treat a "traded through its stop" reading from the
   archive as real while they disagree. Items 35 and 69 stay archive illusions,
   not re-filed as fixed. The halt still asks the broker whether a stop
   *exists*.
@@ -598,10 +600,17 @@ still exists in the schema/rearm logic purely to recognize pre-2026-09-02
 historical rows; nothing in the current code can create a new one — see
 the same 2026-09-03 entry in `docs/INCIDENT_HISTORY.md`.) Trip and
 successful rearm each send
-one deduplicated Telegram alert. Missing/corrupt or inexact accounting, unknown
-pricing/cost, unresolved attempted requests, provider-attempt exhaustion and any
-unrecognized trigger remain a hard global latch requiring an auditable operator
-reset. Reset never erases settled spend and cannot bypass a quota hold.
+one deduplicated Telegram alert. Missing/corrupt accounting, a row whose own cost is unknown (no telemetry,
+or a fully-failed ambiguous attempt), unknown pricing, unresolved attempted
+requests, provider-attempt exhaustion and any unrecognized trigger remain a
+hard global latch requiring an auditable operator reset. A completed call
+that reports a real cost after an earlier ambiguous attempt on the same
+logical call marks the day inexact (`costs_exact=0` — the booked total is a
+known minimum) but does **not** increment `unknown_cost_rows` and does **not**
+hard-latch: the 2026-09-16 midday wipe (event id=27) was that false latch
+while known spend was ~$0.65 of $2.75. Caps still bind on the known minimum.
+Reset never erases settled spend and cannot bypass a quota hold. Caps are
+not raised to hide a latch.
 
 Broker-resident stops, deterministic loss protection, order/fill reconciliation,
 close/P&L jobs and the read-only API remain active under every hold/latch.

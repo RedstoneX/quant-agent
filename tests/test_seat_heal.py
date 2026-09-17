@@ -1,4 +1,5 @@
 """Mechanical heal first, then at most one paid retry. Never invent text."""
+import pytest
 from src.seat_heal import (
     HEAL_CAP_BLOCKED,
     HEAL_FAILED,
@@ -8,6 +9,7 @@ from src.seat_heal import (
     can_paid_retry,
     coerce_macro_shape,
     coerce_sector_guidance,
+    describe_macro_parse_failure,
     heal_failure_alert_text,
     mechanical_heal_macro,
     record_paid_retry,
@@ -45,6 +47,37 @@ def test_omitted_soft_exit_is_not_filled_with_placeholder_text():
     assert restored == []
     out2, restored2 = restore_stated_soft_exits(values, {"thesis_invalid_if": "  "})
     assert restored2 == []
+
+
+def test_restore_overwrites_unknown_with_the_stated_string_not_an_invention():
+    values = {"thesis_invalid_if": "unknown", "catalyst": "unknown"}
+    raw = {"thesis_invalid_if": "daily close below 191.5", "catalyst": "8-K"}
+    out, restored = restore_stated_soft_exits(values, raw)
+    assert out["thesis_invalid_if"] == "daily close below 191.5"
+    assert out["catalyst"] == "8-K"
+    assert set(restored) == {"catalyst", "thesis_invalid_if"}
+
+
+def test_macro_parse_failure_names_missing_chain_and_does_not_invent_one():
+    payload = {
+        "regime": "risk-on",
+        "confidence": "medium",
+        "equity_outlook": "bullish",
+        "summary": "stay long",
+        "position_guidance": {
+            "target_invested_pct": 70, "cash_recommendation_pct": 30,
+            "reasoning": "stay invested",
+        },
+        "sector_guidance": {"Technology": "bullish"},
+    }
+    coerced, _fixes = coerce_macro_shape(payload)
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError) as exc:
+        MacroAnalysis.model_validate(coerced)
+    reason = describe_macro_parse_failure(coerced, exc.value)
+    assert "reasoning_chain" in reason
+    assert "macro_parse_failed" in reason
+    assert "stay long" not in reason or "reasoning_chain" in reason
 
 
 def test_sector_guidance_dict_coerces_to_list_without_invented_reasons():

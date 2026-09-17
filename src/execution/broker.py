@@ -496,6 +496,16 @@ _STOP_PLACEMENT_BACKOFF_S = (0.5, 1.5)
 _FRACTIONAL_QTY_EPSILON = 1e-9
 
 
+def _is_held_for_orders_error(exc: BaseException) -> bool:
+    """True when the broker refused because shares are reserved by an open order.
+
+    Alpaca surfaces this as `held_for_orders` and/or `insufficient qty
+    available` (2026-04-25 AMZN, 2026-09-16 BRK-B DAY sliver).
+    """
+    text = str(exc).lower()
+    return "held_for_orders" in text or "insufficient qty" in text
+
+
 def _split_protective_qty(qty) -> tuple[float, float]:
     """Split a protective-stop quantity into (whole_shares, sub_share_remainder).
 
@@ -3577,6 +3587,39 @@ class AlpacaBroker:
             return None
         return stop_order
 
+    def _existing_stop_covering_qty(
+        self, symbol: str, *, qty: float, side: str, stop_price: float,
+    ) -> dict | None:
+        """Return a live stop dict if the broker already covers this sliver.
+
+        Qty match uses the same fractional epsilon as the hybrid split —
+        not a trading threshold. Price match is Alpaca's published tick
+        (half-tick, same as stop_records._prices_match).
+        """
+        try:
+            orders = self._list_open_protective_stop_orders(symbol, side=side)
+        except Exception:  # noqa: BLE001
+            return None
+        tick = 0.01 if stop_price >= 1.0 else 0.0001
+        for order in orders or []:
+            snap = self._snapshot_stop_order(order)
+            if snap is None:
+                continue
+            if abs(float(snap.get("qty") or 0) - qty) > _FRACTIONAL_QTY_EPSILON:
+                continue
+            live_px = float(snap.get("stop_price") or 0)
+            if live_px <= 0:
+                continue
+            if abs(live_px - stop_price) > (tick / 2.0):
+                continue
+            return {
+                "id": snap["id"],
+                "qty": snap["qty"],
+                "stop_price": snap["stop_price"],
+                "already_live": True,
+            }
+        return None
+
     def _submit_stop_leg_retrying(
         self, *, symbol: str, qty: float, stop_price: float,
         limit_price: float | None, side: str, leg: str,
@@ -3594,6 +3637,7 @@ class AlpacaBroker:
         failed. Never raises.
         """
         attempts = max(1, int(_STOP_PLACEMENT_MAX_ATTEMPTS))
+        last_exc: BaseException | None = None
         for attempt in range(1, attempts + 1):
             try:
                 order = self._submit_stop_limit_order(
@@ -3601,6 +3645,7 @@ class AlpacaBroker:
                     limit_price=limit_price, side=side,
                 )
             except Exception as exc:  # noqa: BLE001
+                last_exc = exc
                 logger.error(
                     "protective stop [%s] attempt %d/%d FAILED for %s "
                     "(qty=%.4f, stop $%.2f): %s", leg, attempt, attempts,
@@ -3624,6 +3669,22 @@ class AlpacaBroker:
                     "qty=%.4f @ stop $%.2f", leg, side, symbol, qty, stop_price,
                 )
             return order
+        # Concurrent morning + intra_check both repair the same DAY sliver:
+        # the second hits held_for_orders because the first already placed
+        # it. Treat an existing stop covering this qty as success — do not
+        # leave the remainder flagged uncovered when the broker already
+        # holds the order.
+        if last_exc is not None and _is_held_for_orders_error(last_exc):
+            existing = self._existing_stop_covering_qty(
+                symbol, qty=qty, side=side, stop_price=stop_price,
+            )
+            if existing is not None:
+                logger.info(
+                    "protective stop [%s] for %s qty=%.4f already live at "
+                    "the broker (held_for_orders on submit) — treating as "
+                    "covered", leg, symbol, qty,
+                )
+                return existing
         return None
 
     def _submit_protective_stop_retrying(
@@ -3683,11 +3744,24 @@ class AlpacaBroker:
             )
 
         logger.info(
-            "protective stop for %s is HYBRID: GTC over %.0f whole share(s) + "
-            "DAY over %s sub-share remainder, both @ stop $%.2f. The DAY leg "
-            "lapses at the close by design and is re-placed at the next "
-            "session's open.", symbol, whole, frac, stop_price,
+            "protective stop for %s is HYBRID: DAY over %s sub-share remainder "
+            "+ GTC over %.0f whole share(s), both @ stop $%.2f. DAY is placed "
+            "first so the GTC hold cannot starve the sliver (held_for_orders). "
+            "The DAY leg lapses at the close by design and is re-placed at "
+            "the next session's open.", symbol, frac, whole, stop_price,
         )
+        day_order = self._submit_stop_leg_retrying(
+            symbol=symbol, qty=frac, stop_price=stop_price,
+            limit_price=limit_price, side=side, leg="DAY fractional",
+        )
+        if day_order is None:
+            logger.error(
+                "protective stop: the DAY fractional leg FAILED for %s (%s "
+                "share(s), stop $%.2f) after %d attempt(s) — the sub-share "
+                "remainder is uncovered NOW, during the session, which is not "
+                "the expected overnight lapse.",
+                symbol, frac, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
+            )
         gtc_order = None
         if whole >= 1:
             gtc_order = self._submit_stop_leg_retrying(
@@ -3702,18 +3776,6 @@ class AlpacaBroker:
                     "alerts the owner.",
                     symbol, whole, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
                 )
-        day_order = self._submit_stop_leg_retrying(
-            symbol=symbol, qty=frac, stop_price=stop_price,
-            limit_price=limit_price, side=side, leg="DAY fractional",
-        )
-        if day_order is None:
-            logger.error(
-                "protective stop: the DAY fractional leg FAILED for %s (%s "
-                "share(s), stop $%.2f) after %d attempt(s) — the sub-share "
-                "remainder is uncovered NOW, during the session, which is not "
-                "the expected overnight lapse.",
-                symbol, frac, stop_price, _STOP_PLACEMENT_MAX_ATTEMPTS,
-            )
 
         gtc_qty = whole if gtc_order is not None else 0.0
         day_qty = frac if day_order is not None else 0.0
@@ -3953,9 +4015,16 @@ class AlpacaBroker:
         rollback as nothing at all.
         """
         whole, frac = _split_protective_qty(qty)
-        legs = [whole] if whole >= 1 else []
+        # DAY remainder FIRST. Measured 2026-09-16: placing the GTC
+        # whole-share leg first made Alpaca report held_for_orders /
+        # insufficient qty on the 0.4393 BRK-B DAY sliver (the GTC hold
+        # reserved the position). The remainder is the smaller qty; placing
+        # it first leaves the whole shares free for the durable GTC.
+        legs: list[float] = []
         if frac > 0:
             legs.append(frac)
+        if whole >= 1:
+            legs.append(whole)
         if not legs:
             legs = [qty]
         placed: list[dict] = []

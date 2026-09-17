@@ -38,6 +38,7 @@ from src.models import (
     LLMOutputModel,
     MissedOpportunity,
     RiskVerdict,
+    SOFT_EXIT_UNKNOWN,
     SellGrade,
     TargetPosition,
     TechAnalysisResult,
@@ -82,7 +83,8 @@ def _risk_rc() -> dict:
 def test_null_thesis_invalid_if_keeps_the_whole_analysis():
     """The exact production payload shape from 2026-09-01 13:33 UTC."""
     r = TechAnalysisResult(**_tech(thesis_invalid_if=None))
-    assert r.thesis_invalid_if == ""
+    # Actionable buy + explicit null records "don't know", not silent empty.
+    assert r.thesis_invalid_if == SOFT_EXIT_UNKNOWN
     # Everything else on the analysis survived — this is the point.
     assert r.rating == "buy"
     assert r.entry_price == 500.0
@@ -92,7 +94,7 @@ def test_null_thesis_invalid_if_keeps_the_whole_analysis():
 
 
 @pytest.mark.parametrize("field_name, expected", [
-    ("thesis_invalid_if", ""),
+    ("thesis_invalid_if", SOFT_EXIT_UNKNOWN),
     ("conviction", "medium"),
     ("support_levels", []),          # rejected later by the after-validator
     ("computed_levels", []),
@@ -123,13 +125,64 @@ def test_null_on_defaulted_missed_opportunity_field(field_name, expected):
     assert getattr(mo, field_name) == expected
 
 
-def test_null_equals_omitted_for_every_defaulted_field():
-    """The rule's whole claim: null and absent must produce the same object."""
+def test_actionable_null_soft_exit_is_unknown_not_omitted_empty():
+    """Null is 'don't know'; omitted stays the schema default empty.
+
+    2026-09-16: treating them as identical wiped stated soft-exits to
+    silent empty and fed Risk a false integrity reject. Must not invent
+    a falsifier string — `unknown` is the recordable don't-know token.
+    """
     omitted = TechAnalysisResult(**{
         k: v for k, v in _tech().items() if k != "thesis_invalid_if"
     })
     nulled = TechAnalysisResult(**_tech(thesis_invalid_if=None))
-    assert omitted.model_dump() == nulled.model_dump()
+    assert omitted.thesis_invalid_if == ""
+    assert nulled.thesis_invalid_if == SOFT_EXIT_UNKNOWN
+    assert omitted.model_dump() != nulled.model_dump()
+
+
+def test_stated_soft_exit_survives_and_is_not_replaced_with_unknown():
+    r = TechAnalysisResult(**_tech(thesis_invalid_if="daily close below 191.5"))
+    assert r.thesis_invalid_if == "daily close below 191.5"
+
+
+def test_empty_default_soft_exit_is_not_tallied_as_a_drop():
+    """Neutral-style empty on a buy is the schema default, not a null wipe."""
+    r = TechAnalysisResult(**_tech(thesis_invalid_if=""))
+    assert r.thesis_invalid_if == ""
+    assert parse_telemetry.total_null_coercions() == 0
+
+
+def test_target_null_catalyst_is_unknown_omitted_stays_empty():
+    stated = TargetPosition(
+        symbol="AAPL", target_weight_pct=3.0, conviction="medium",
+        thesis="hold the add", catalyst="8-K tonight",
+        thesis_invalid_if="closes below 191.5",
+    )
+    assert stated.catalyst == "8-K tonight"
+    omitted = TargetPosition(
+        symbol="AAPL", target_weight_pct=3.0, conviction="medium",
+        thesis="hold the add",
+    )
+    assert omitted.catalyst == ""
+    assert omitted.thesis_invalid_if == ""
+    nulled = TargetPosition(
+        symbol="AAPL", target_weight_pct=3.0, conviction="medium",
+        thesis="hold the add", catalyst=None, thesis_invalid_if=None,
+    )
+    assert nulled.catalyst == SOFT_EXIT_UNKNOWN
+    assert nulled.thesis_invalid_if == SOFT_EXIT_UNKNOWN
+
+
+def test_assignment_does_not_wipe_a_stated_soft_exit():
+    t = TargetPosition(
+        symbol="AAPL", target_weight_pct=3.0, conviction="medium",
+        thesis="hold the add", catalyst="8-K tonight",
+        thesis_invalid_if="closes below 191.5",
+    )
+    t.risk_allocation_pct = 1.0
+    assert t.thesis_invalid_if == "closes below 191.5"
+    assert t.catalyst == "8-K tonight"
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +386,7 @@ def test_dropped_item_is_counted_separately_from_a_coercion():
 def test_suspended_blocks_the_tally_but_not_the_coercion():
     with parse_telemetry.suspended():
         r = TechAnalysisResult(**_tech(thesis_invalid_if=None))
-    assert r.thesis_invalid_if == ""          # still recovered
+    assert r.thesis_invalid_if == SOFT_EXIT_UNKNOWN  # still recovered
     assert parse_telemetry.snapshot() == {}   # but not counted
     # and the suspension is not sticky
     TechAnalysisResult(**_tech(thesis_invalid_if=None))

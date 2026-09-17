@@ -8569,6 +8569,52 @@ class TradingPipeline:
             logger.error("[%s] Earnings load failed: %s", session, e)
             raise
 
+    def _earnings_preprocess_symbols(self) -> list[str]:
+        """Configured universe plus Form-4 admission-eligible names.
+
+        2026-09-16: preprocess returned `nothing_new` against the configured
+        universe while FTK/RSG were already Form-4 hot. Morning then saw
+        those filings as placeholders. The hot list is whatever the
+        already-refreshed provider marks `admission_eligible` — not an
+        invented "preprocess N names" cap. Morning's broker-quality gate
+        and `max_external_candidates` still decide who actually trades.
+        """
+        configured = [
+            str(symbol).strip().upper()
+            for symbol in (self.config.trading.universe or [])
+            if str(symbol).strip()
+        ]
+        hot: list[str] = []
+        try:
+            if not getattr(self.config.smart_money, "enabled", False):
+                return configured
+            provider = getattr(self, "smart_money_provider", None)
+            if provider is None or not hasattr(provider, "fetch"):
+                return configured
+            observations, _err = provider.fetch(configured)
+            seen = set(configured)
+            for item in observations or []:
+                if not bool(getattr(item, "admission_eligible", False)):
+                    continue
+                symbol = str(getattr(item, "symbol", "") or "").strip().upper()
+                if not symbol or symbol in seen:
+                    continue
+                seen.add(symbol)
+                hot.append(symbol)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Earnings preprocess: hot-admit symbol union failed (%s) — "
+                "falling back to the configured universe", exc,
+            )
+            return configured
+        if hot:
+            logger.info(
+                "Earnings preprocess: adding %d Form-4 admission-eligible "
+                "symbol(s) to the filing check: %s",
+                len(hot), ", ".join(hot),
+            )
+        return configured + hot
+
     # ---------------------------------------------------------------
     # Morning stages (extracted from the legacy monolithic run_morning).
     # Phase 4 #1 final wire-up: each stage is a method taking ctx; the
@@ -12307,7 +12353,7 @@ class TradingPipeline:
 
         try:
             reports = self.earnings_provider.check_and_fetch(
-                self.config.trading.universe,
+                self._earnings_preprocess_symbols(),
             )
         except Exception as e:
             logger.error("Earnings preprocess: fetch failed: %s", e)
@@ -12628,99 +12674,102 @@ class TradingPipeline:
                 continue
         return False
 
-    def _another_session_recently_active(self, run_id: str,
-                                         within_minutes: float = 15.0) -> bool:
-        """True when a DIFFERENT session wrote a trade row in the last
-        `within_minutes` — i.e. a morning/midday/close run is probably
-        mid-flight right now.
+    def _blocking_owner_session(self) -> str | None:
+        """Live wrapper owner mode that must not overlap paid discovery.
 
-        Why this exists (2026-08-19, found while verifying the scheduling
-        assumptions rather than assuming them): `scripts/run_if_et_window.sh`
-        deliberately exempts `intra_check` from the cross-mode session lock
-        so the flash-crash circuit breaker fires on every 30-min tick "
-        regardless of what else is running" — and it justifies that
-        exemption explicitly on the grounds that all of intra_check's
-        actions (force_delever / emergency_liquidate / P&L read) are
-        IDEMPOTENT.
-
-        Opening a NEW position is not idempotent. Without this guard the
-        intraday scan could run concurrently with a morning run that is
-        still executing: both snapshot the same positions and the same
-        deployable cash, both size against caps computed from that stale
-        pre-fill state, and the combined result can breach
-        `max_position_pct` / `cash_only` even though each process's own
-        deterministic gate passed. Loss protection keeps its exemption (it
-        runs before this, and must never be gated); only the new
-        opportunity-discovery path backs off — it simply waits for the next
-        30-minute tick, which costs at most one tick of latency on a
-        deliberately non-high-frequency feature.
-
-        Fails CLOSED: a query failure returns True (skip the scan).
+        Returns the other session's mode when it is alive, ``"unreadable"``
+        when the owner file exists but cannot be trusted (fail closed), or
+        None when paid discovery may run. ``intra_check`` never blocks
+        itself. A dead pid or a vanished file is None — morning that
+        already finished must not sleep the 09:30 scan until 10:00.
         """
-        from datetime import datetime as _dt, timedelta, timezone
         import os
         import time as _time
 
-        # The wrapper writes this owner record before Python starts, so it is
-        # visible during the long research window before any trade row exists.
-        # That closes the 09:30 race where morning and intra both used the same
-        # stale cash/position snapshot and could independently authorize BUYs.
         owner_path = Path.home() / ".cache" / "quant-agent" / "active-session.lock" / "owner"
-        if owner_path.exists():
-            try:
-                parts = owner_path.read_text().strip().split()
-                owner_mode = parts[0]
-                owner_ts = int(parts[2])
-                owner_pid = int(parts[3])
-                age = _time.time() - owner_ts
-                alive = True
-                try:
-                    os.kill(owner_pid, 0)
-                except OSError:
-                    alive = False
-                if owner_mode != "intra_check" and alive and 0 <= age <= 1800:
-                    logger.info(
-                        "Intraday scan: wrapper reports active %s session (pid=%d, age=%.0fs); "
-                        "skipping paid opportunity discovery",
-                        owner_mode, owner_pid, age,
-                    )
-                    return True
-            except (OSError, ValueError, IndexError) as exc:
-                logger.warning(
-                    "Intraday scan: could not validate active-session owner (%s) — "
-                    "skipping paid discovery fail-closed", exc,
-                )
-                return True
+        if not owner_path.exists():
+            return None
         try:
-            rows = self.db.get_trades(today_only=True, limit=50)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Intraday scan: concurrent-session query failed (%s) — "
-                "skipping the scan this tick (fail-closed)", e,
-            )
-            return True
-        cutoff = _dt.now(timezone.utc) - timedelta(minutes=within_minutes)
-        for row in rows:
-            other = row.get("run_id") or ""
-            if not other or other == run_id:
-                continue
-            ts = row.get("timestamp") or ""
+            parts = owner_path.read_text().strip().split()
+            owner_mode = parts[0]
+            owner_ts = int(parts[2])
+            owner_pid = int(parts[3])
+            age = _time.time() - owner_ts
+            alive = True
             try:
-                dt = _dt.fromisoformat(ts.replace("Z", "+00:00")) if "T" in ts \
-                    else _dt.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            except (TypeError, ValueError):
-                continue
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            if dt >= cutoff:
-                logger.info(
-                    "Intraday scan: session %s wrote a trade row within the "
-                    "last %.0f min — another session is likely mid-flight; "
-                    "skipping this tick to avoid concurrent position sizing",
-                    other, within_minutes,
+                os.kill(owner_pid, 0)
+            except OSError:
+                alive = False
+            if owner_mode == "intra_check":
+                return None
+            if alive and 0 <= age <= 1800:
+                return owner_mode
+            return None
+        except (OSError, ValueError, IndexError):
+            return "unreadable"
+
+    def _intra_window_remaining_s(self) -> float:
+        """Seconds left in the intra_check ET window. Calendar-bound, not invented."""
+        from src.trading_calendar import SESSION_WINDOWS, _minute_of_day, et_now
+        _start, end = SESSION_WINDOWS["intra_check"]
+        now = et_now()
+        remaining_min = end - _minute_of_day(now)
+        return max(0.0, remaining_min * 60.0)
+
+    def _await_paid_scan_slot(self, run_id: str) -> bool:
+        """Wait for morning/midday/close to finish rather than skip the tick.
+
+        Returns True when paid discovery must still be skipped (lock still
+        held at window end, or owner file unreadable). Returns False when
+        the slot is free.
+        """
+        import time as _time
+
+        first = True
+        while True:
+            blocking = self._blocking_owner_session()
+            if blocking is None:
+                if not first:
+                    logger.info(
+                        "Intraday scan: other session released the owner lock; "
+                        "running paid discovery on this tick instead of "
+                        "waiting for the next 30-minute fire",
+                    )
+                return False
+            if blocking == "unreadable":
+                logger.warning(
+                    "Intraday scan: could not validate active-session owner — "
+                    "skipping paid discovery fail-closed",
                 )
                 return True
-        return False
+            remaining = self._intra_window_remaining_s()
+            if remaining <= 0:
+                logger.info(
+                    "Intraday scan: %s still holds the owner lock at window "
+                    "end; paid discovery cannot run this tick", blocking,
+                )
+                return True
+            if first:
+                logger.info(
+                    "Intraday scan: wrapper reports active %s session; waiting "
+                    "for it to finish instead of skipping this tick", blocking,
+                )
+                first = False
+            _time.sleep(min(1.0, remaining))
+
+    def _another_session_recently_active(self, run_id: str,
+                                         within_minutes: float = 15.0) -> bool:
+        """True when a DIFFERENT session currently owns the trading process.
+
+        The 15-minute trade-row heuristic slept the 09:30 and 13:00 scans
+        after morning/midday had already written fills — the owner lock is
+        the in-flight signal. `within_minutes` is kept for callers but no
+        longer gates a finished session.
+        """
+        blocking = self._blocking_owner_session()
+        if blocking == "unreadable":
+            return True
+        return blocking is not None
 
     @contextlib.contextmanager
     def _intraday_scan_process_lock(self):
@@ -12728,13 +12777,12 @@ class TradingPipeline:
 
         Yields True when this process holds the lock, False otherwise.
 
-        Why (independent review finding, 2026-08-19): the DB-row-based
-        `_another_session_recently_active` guard can only see a concurrent
-        session AFTER that session has written a trade row. Two
-        `intra_check` processes launched at nearly the same instant would
-        both pass it during the window before either writes — and could
-        then size BUYs against the same pre-fill snapshot, breaching
-        `max_position_pct`.
+        Why (independent review finding, 2026-08-19): the owner-lock
+        `_another_session_recently_active` guard sees a concurrent
+        morning/midday/close only while that wrapper still owns the
+        process. Two `intra_check` processes launched at nearly the same
+        instant would both pass it — and could then size BUYs against the
+        same pre-fill snapshot, breaching `max_position_pct`.
 
         In practice `scripts/run_if_et_window.sh` makes that impossible:
         ticks are 1800s apart and the wrapper hard-kills a run at
@@ -12845,9 +12893,9 @@ class TradingPipeline:
           - "intraday_scan_disabled": the feature is off in config.
           - "intraday_scan_lock_contended": another scan already owns this
             window — either this process's own advisory flock (see
-            `_intraday_scan_process_lock`) or a morning/midday/close/
-            intra_check session detected by
-            `_another_session_recently_active` inside the body.
+            `_intraday_scan_process_lock`) or a morning/midday/close
+            wrapper that still holds the owner lock at the end of this
+            tick's wait (`_await_paid_scan_slot`).
           - "intraday_scan_no_opportunity": the scan ran and found nothing
             worth escalating (see `_intraday_opportunity_scan_body`'s
             early-return points).
@@ -13212,9 +13260,10 @@ class TradingPipeline:
 
         Returns a status dict at every early-exit point — never a bare
         None (2026-08-31 visibility fix; see `_run_intraday_opportunity_scan`
-        for the full rationale). "intraday_scan_lock_contended" when
-        `_another_session_recently_active` detects a concurrent session;
-        "intraday_scan_no_opportunity" for every other early return (no
+        for the full rationale).         "intraday_scan_lock_contended" when
+        `_await_paid_scan_slot` cannot free the owner lock before this
+        tick's calendar window ends; "intraday_scan_no_opportunity" for
+        every other early return (no
         snapshots, no qualifying moves, no ledgerable symbols, no usable
         bars, no usable tech analysis). Past that point, a real result dict
         mirroring the shape callers of run_morning already expect
@@ -13235,7 +13284,10 @@ class TradingPipeline:
         # different process and so takes a different lock. intra_check is
         # deliberately exempt from the wrapper script's cross-mode session
         # lock (for the circuit breaker), so this path must check itself.
-        if self._another_session_recently_active(ctx.run_id):
+        # Wait for the other session to finish rather than sleeping the
+        # 09:30 / 13:00 tick until the next 30-minute fire. Finished-session
+        # trade rows are not an in-flight signal.
+        if self._await_paid_scan_slot(ctx.run_id):
             return {"status": "intraday_scan_lock_contended", "run_id": ctx.run_id}
 
         universe = list(self.config.trading.universe)

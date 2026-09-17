@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, date
 from typing import Any, Literal, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, computed_field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, TypeAdapter, ValidationInfo, computed_field, field_validator, model_validator
 
 from src.quantities import collapse_stances
 
@@ -292,6 +292,16 @@ class AnalysisParseTelemetry:
 
 parse_telemetry = AnalysisParseTelemetry()
 
+# Recordable "don't know" for a soft-exit field (`thesis_invalid_if` /
+# `catalyst`) when the model sent JSON null on an actionable call. Not a
+# falsifier and not a catalyst — `check_thesis_invalid_if` treats it as
+# UNPARSEABLE, the same as empty. Empty remains the correct value on a
+# neutral Tech read (the prompt says leave it empty). Distinct from silent
+# schema-default "" so Risk can see "the seat said it does not know"
+# instead of "the field was wiped".
+SOFT_EXIT_UNKNOWN = "unknown"
+_SOFT_EXIT_FIELDS = frozenset({"thesis_invalid_if", "catalyst"})
+
 
 # Defaulted fields where an explicit null must STILL reject the object.
 #
@@ -427,6 +437,8 @@ class LLMOutputModel(BaseModel):
             return values
         original = dict(values)
         values = dict(values)
+        tallied: list[str] = []
+        rating = str(values.get("rating") or original.get("rating") or "").strip().lower()
         for field_name in sorted(hits):
             # 2026-09-11: deleting the key is what makes the declared default
             # apply — but ONLY on the construction path. Every model here
@@ -446,25 +458,59 @@ class LLMOutputModel(BaseModel):
             # So: when the value ALREADY EQUALS the declared default,
             # deleting it changes nothing on construction (this validator's
             # own docstring above says exactly that) and breaks the instance
-            # on assignment. Leave it in place. Still tallied and still
-            # logged — "the model said nothing where the prompt asked for
-            # something" is real signal and is not being suppressed.
+            # on assignment. Leave it in place.
             default = cls.model_fields[field_name].get_default(
                 call_default_factory=True,
             )
+            incoming = original.get(field_name, ...)
+            # A stated non-empty soft-exit must survive a later null wipe.
+            # Never invent a falsifier/catalyst string — only keep what
+            # the model already wrote.
+            if (
+                field_name in _SOFT_EXIT_FIELDS
+                and isinstance(incoming, str)
+                and incoming.strip()
+                and incoming.strip().lower() != SOFT_EXIT_UNKNOWN
+            ):
+                values[field_name] = incoming
+                continue
+            # Empty string that already equals the declared default is the
+            # schema working (neutral Tech leaves thesis_invalid_if empty),
+            # not a drop. Tallying it produced ~200k journal lines on
+            # 2026-09-16 and fed Risk a false "fields were nulled" integrity
+            # reject. Do not count it.
+            if incoming == "" and incoming == default:
+                continue
+            # Explicit null on an actionable soft-exit: record "unknown"
+            # so "don't know" is distinct from omitted empty. Neutral Tech
+            # still lands on empty — the prompt says leave it empty.
+            if field_name in _SOFT_EXIT_FIELDS and incoming is None:
+                actionable = cls.__name__ == "TargetPosition" or (
+                    rating not in ("", "neutral")
+                )
+                if actionable:
+                    values[field_name] = SOFT_EXIT_UNKNOWN
+                    parse_telemetry.record_null_coercion(cls.__name__, field_name)
+                    tallied.append(field_name)
+                    continue
+                if values.get(field_name) != default:
+                    del values[field_name]
+                continue
             if values[field_name] != default:
                 del values[field_name]
             parse_telemetry.record_null_coercion(cls.__name__, field_name)
-        logger.warning(
-            "%s: dropped explicit null/empty on defaulted field(s) %s — the "
-            "object is kept and the declared default applies, but the model "
-            "said nothing where the prompt asked for something",
-            cls.__name__, ", ".join(sorted(hits)),
-        )
+            tallied.append(field_name)
+        if tallied:
+            logger.warning(
+                "%s: dropped explicit null/empty on defaulted field(s) %s — the "
+                "object is kept and the declared default applies, but the model "
+                "said nothing where the prompt asked for something",
+                cls.__name__, ", ".join(sorted(set(tallied))),
+            )
         # Mechanical heal (owner 2026-09-16): if a stated non-empty
         # thesis_invalid_if / catalyst survived on the original dict and a
         # later drop blanked the canonical field, put the stated string
-        # back. Never invents "don't know". Lazy import: seat_heal imports
+        # back. Never invents a falsifier. Lazy import: seat_heal imports
         # sector maps from this module.
         try:
             from src.seat_heal import restore_stated_soft_exits
@@ -920,16 +966,19 @@ class TechAnalysisResult(LLMOutputModel):
 
     @field_validator("thesis_invalid_if", mode="before")
     @classmethod
-    def _null_thesis_invalid_if_is_blank(cls, v):
+    def _null_thesis_invalid_if_is_blank(cls, v, info: ValidationInfo):
         """An absent soft-exit signal is blank, never a reason to bin the read.
 
-        Retained after `LLMOutputModel._explicit_null_means_absent` generalised
-        this: the model-level rule only sees the initial parse dict, so it does
-        not cover post-construction assignment. Redundant on the parse path (by
-        the time this runs the null key is already gone, and the ledger has
-        already counted it), load-bearing on the assignment path.
+        A stated non-empty string is never replaced. Explicit null on an
+        actionable rating records `unknown` (not a falsifier). Neutral
+        stays empty, matching the prompt.
         """
-        return "" if v is None else v
+        if isinstance(v, str) and v.strip():
+            return v
+        rating = str((info.data or {}).get("rating") or "").strip().lower()
+        if v is None and rating not in ("", "neutral"):
+            return SOFT_EXIT_UNKNOWN
+        return "" if v is None or v == "" else v
 
     # Days since this rating was first issued (unchanged). Python-computed from
     # TechStore after TechAnalystAgent returns; None on first run or when the
@@ -1807,13 +1856,17 @@ class TargetPosition(LLMOutputModel):
     # models, so the exposure is real even though it has not fired yet.)
     thesis_invalid_if: str = ""
 
-    @field_validator("thesis_invalid_if", mode="before")
+    @field_validator("thesis_invalid_if", "catalyst", mode="before")
     @classmethod
-    def _null_thesis_invalid_if_is_blank(cls, v):
-        """See TechAnalysisResult's copy. Kept for the `validate_assignment`
-        path, which this model enables and which model-level before-validators
-        do not run on."""
-        return "" if v is None else v
+    def _null_soft_exit_is_unknown_not_a_wipe(cls, v, info: ValidationInfo):
+        """A target is always an actionable intent, so an explicit null
+        records `unknown` rather than wiping a stated soft-exit to silent
+        empty. Never invents a falsifier or catalyst string."""
+        if isinstance(v, str) and v.strip():
+            return v
+        if v is None:
+            return SOFT_EXIT_UNKNOWN
+        return v
 
     # Optional override hints the constructor MAY use. Non-binding — if
     # absent, the constructor falls back to TA's ATR-based stop (2*ATR) and

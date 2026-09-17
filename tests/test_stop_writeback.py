@@ -283,20 +283,43 @@ def test_scale_in_rearm_writes_back_the_rearmed_level(db):
 
 
 @patch("src.notifier.send_owner_alert", return_value=True)
-def test_report_mismatch_pages_the_owner_and_does_not_write(_alert, db):
+def test_report_mismatch_pages_the_owner_and_does_not_write(_alert, db, tmp_path):
     from src.execution.stop_records import (
         StopLevelMismatch, report_stop_level_mismatches,
     )
 
     _open_long(db, symbol="DIS", stop=105.80)
-    report_stop_level_mismatches([
-        StopLevelMismatch(
-            symbol="DIS", recorded=105.80, live=101.44,
-            is_short=False, reason="recorded BUY stop_loss $105.8000 != broker stop $101.4400",
-        ),
-    ])
+    with patch("src.execution.stop_records._MISMATCH_PAGE_PATH", tmp_path / "pages.json"):
+        report_stop_level_mismatches([
+            StopLevelMismatch(
+                symbol="DIS", recorded=105.80, live=101.44,
+                is_short=False, reason="recorded BUY stop_loss $105.8000 != broker stop $101.4400",
+            ),
+        ])
     _alert.assert_called_once()
     assert db.get_symbol_last_buy("DIS")["stop_loss"] == pytest.approx(105.80)
+
+
+@patch("src.notifier.send_owner_alert", return_value=True)
+def test_identical_mismatch_fingerprint_pages_once_per_et_day(_alert, db, tmp_path):
+    """2026-09-16: COP/EQNR paged 11 times with the same archive-vs-broker
+    numbers. Log every time; page once per fingerprint set per ET day.
+    Never copy the broker price into the archive."""
+    from src.execution.stop_records import (
+        StopLevelMismatch, report_stop_level_mismatches,
+    )
+
+    _open_long(db, symbol="COP", stop=125.21)
+    mismatch = StopLevelMismatch(
+        symbol="COP", recorded=125.21, live=131.76,
+        is_short=False, reason="recorded BUY stop_loss $125.2100 != broker stop $131.7600",
+    )
+    page_path = tmp_path / "pages.json"
+    with patch("src.execution.stop_records._MISMATCH_PAGE_PATH", page_path):
+        report_stop_level_mismatches([mismatch])
+        report_stop_level_mismatches([mismatch])
+    assert _alert.call_count == 1
+    assert db.get_symbol_last_buy("COP")["stop_loss"] == pytest.approx(125.21)
 
 
 def test_accepted_stop_order_rejects_kill_switch_and_missing_id():

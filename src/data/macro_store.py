@@ -67,12 +67,20 @@ class MacroStore:
             return None
 
     def save_last_state(self, analysis: dict) -> None:
-        """Persist the shift-relevant subset of the analysis for next run's comparison.
+        """Persist the shift-relevant subset PLUS the live fields needed
+        to re-validate as MacroAnalysis on a later tick.
 
-        Keeps the file small and stable — full reasoning chains go to agent_logs.
+        2026-09-16: dropping `reasoning_chain` made every intraday Phase 13
+        re-parse a ValidationError (`Field required`) even when morning's
+        call was valid. Compact dict `sector_guidance` stays for existing
+        readers (thesis-health, missed-ops). The live list (with reasons)
+        is stored as `sector_guidance_rows` so we do not invent reasons
+        when rehydrating. We do not invent a chain if the caller never
+        had one.
         """
         if not isinstance(analysis, dict):
             return
+        sg_raw = analysis.get("sector_guidance")
         snapshot = {
             "date": str(et_today()),
             "regime": analysis.get("regime"),
@@ -80,20 +88,36 @@ class MacroStore:
             "equity_outlook": analysis.get("equity_outlook"),
             "summary": analysis.get("summary"),
             "position_guidance": analysis.get("position_guidance"),
-            # 2026-07-16 audit: this key was never persisted, so EVERY
-            # downstream macro_sector_stance / macro_sector_tailwind was
-            # permanently "unknown" — the evening thesis-health step and every
-            # missed-opportunity snapshot rendered "Macro sector stance:
-            # unknown" for every position, every night, while macro was in fact
-            # emitting OW/UW calls. Stored pre-normalized (see
-            # _normalize_sector_guidance): the readers want {sector: direction}
-            # and the model carries a list of {sector, stance, reason}. The
-            # bulky `reason` strings stay out — this file's contract is "keep
-            # it small"; reasons live in agent_logs.
-            "sector_guidance": _normalize_sector_guidance(
-                analysis.get("sector_guidance")
-            ),
+            "sector_guidance": _normalize_sector_guidance(sg_raw),
+            "regime_shift": analysis.get("regime_shift"),
+            "shift_reason": analysis.get("shift_reason") or "",
+            "key_observations": analysis.get("key_observations") or [],
+            "risk_factors": analysis.get("risk_factors") or [],
+            "bull_triggers": analysis.get("bull_triggers") or [],
+            "bear_triggers": analysis.get("bear_triggers") or [],
+            "alignment_with_news": analysis.get("alignment_with_news") or "",
         }
+        chain = analysis.get("reasoning_chain")
+        if isinstance(chain, dict) and chain:
+            snapshot["reasoning_chain"] = chain
+        if isinstance(sg_raw, list):
+            snapshot["sector_guidance_rows"] = sg_raw
+        elif isinstance(sg_raw, dict):
+            # Already compact; rows can be rebuilt mechanically without
+            # invented reasons (empty reason).
+            snapshot["sector_guidance_rows"] = [
+                {
+                    "sector": sector,
+                    "stance": (
+                        "overweight" if direction == "bullish"
+                        else "underweight" if direction == "bearish"
+                        else "neutral"
+                    ),
+                    "reason": "",
+                }
+                for sector, direction in sg_raw.items()
+                if isinstance(direction, str)
+            ]
         _atomic_write(self.last_state_path, json.dumps(snapshot, indent=2, ensure_ascii=False))
         logger.info("Saved macro last state → %s (regime=%s)",
                     self.last_state_path, snapshot.get("regime"))

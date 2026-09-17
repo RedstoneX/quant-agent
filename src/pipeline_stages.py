@@ -2800,22 +2800,19 @@ def _collect_seat_nominations(
 
 
 def _macro_analysis_as_dict(macro_analysis) -> dict | None:
-    """Dual-shape read: macro_analysis may be a Pydantic MacroAnalysis (a
-    fresh macro run this tick) OR a plain dict carried forward from
-    macro_store.load_last_state() (Pipeline._carry_forward_macro — no macro
-    run today, yesterday's persisted snapshot is reused). The persisted
-    snapshot is a deliberately-trimmed subset (see macro_store.save_last_state)
-    and must never be coerced back into a MacroAnalysis model — it lacks
-    reasoning_chain and stores sector_guidance pre-normalized as a dict, not
-    the model's list[MacroSectorGuidance].
+    """Dual-shape read: a live MacroAnalysis or a MacroStore snapshot.
 
-    portfolio_manager.decide() already accepts a plain dict for
-    macro_analysis, so both shapes resolve to "pass a dict straight through".
+    MacroStore now persists `reasoning_chain` and `sector_guidance_rows`
+    so a same-day snapshot can re-validate. Older trims without a chain
+    still pass through as a dict; Phase 13 records a durable fail reason
+    rather than inventing the chain.
     """
     if macro_analysis is None:
         return None
     if isinstance(macro_analysis, dict):
-        return macro_analysis
+        from src.seat_heal import coerce_macro_shape
+        payload, _fixes = coerce_macro_shape(macro_analysis)
+        return payload
     return macro_analysis.model_dump()
 
 
@@ -4351,6 +4348,16 @@ class DecisionStage:
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             constructor_refusals_by_symbol=constructor_refusals_by_symbol,
         )
+        for reason in list(
+            getattr(pipeline.portfolio_manager, "_macro_parse_failures", None) or []
+        ):
+            _record_pipeline_event(
+                pipeline, ctx, None, "macro_parse", "failed", reason=reason,
+            )
+        try:
+            pipeline.portfolio_manager._macro_parse_failures = []
+        except Exception:
+            pass
 
         if portfolio_decision and portfolio_decision.reasoning_chain:
             rc = portfolio_decision.reasoning_chain

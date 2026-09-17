@@ -35,6 +35,7 @@ still alert. Section 7 pins all three from both sides — including the case
 that must alert, so the suppression cannot degrade into "never alert about
 fractional".
 """
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -448,7 +449,7 @@ def test_a_fractional_fill_is_protected_by_a_hybrid_gtc_plus_day_pair():
     position open and unprotected."""
     broker = _protection_broker(
         filled_qty=12.3456,
-        stop_results=[{"id": "stop-whole"}, {"id": "stop-frac"}],
+        stop_results=[{"id": "stop-frac"}, {"id": "stop-whole"}],
     )
 
     with patch("src.execution.broker.time.sleep"):
@@ -457,8 +458,8 @@ def test_a_fractional_fill_is_protected_by_a_hybrid_gtc_plus_day_pair():
     # No attempt is wasted on the exact fractional qty any more.
     assert broker._submit_stop_limit_order.call_count == 2
     qtys = [c.kwargs["qty"] for c in broker._submit_stop_limit_order.call_args_list]
-    assert qtys[0] == 12.0, "the durable GTC leg covers the whole shares"
-    assert qtys[1] == pytest.approx(0.3456), "the DAY leg covers the remainder"
+    assert qtys[0] == pytest.approx(0.3456), "DAY remainder first so GTC cannot starve it"
+    assert qtys[1] == 12.0, "the durable GTC leg covers the whole shares"
 
     assert out["id"] == "stop-whole", "the durable leg is the id carried forward"
     assert out["hybrid"] is True
@@ -512,11 +513,11 @@ def test_the_fractional_leg_is_day_and_the_whole_leg_is_gtc_at_the_broker():
     reqs = [c.args[0] for c in client.submit_order.call_args_list]
     assert len(reqs) == 2
     assert all(isinstance(r, StopLimitOrderRequest) for r in reqs)
-    whole, frac = reqs
-    assert float(whole.qty) == 12.0
-    assert whole.time_in_force == TimeInForce.GTC   # durable, survives 16:00 ET
+    frac, whole = reqs
     assert float(frac.qty) == pytest.approx(0.3456)
     assert frac.time_in_force == TimeInForce.DAY    # the only tif the broker takes
+    assert float(whole.qty) == 12.0
+    assert whole.time_in_force == TimeInForce.GTC   # durable, survives 16:00 ET
     # Both legs sit at the SAME trigger — a remainder stopped somewhere else
     # would be a second, unreviewed risk decision.
     assert float(whole.stop_price) == float(frac.stop_price) == 95.0
@@ -528,8 +529,8 @@ def test_a_failed_day_leg_still_leaves_the_whole_shares_durably_covered():
     sub-share remainder is REPORTED, never swallowed."""
     broker = _protection_broker(
         filled_qty=12.3456,
-        stop_results=[{"id": "stop-whole"}]
-        + [RuntimeError("day leg refused")] * 3,
+        stop_results=[RuntimeError("day leg refused")] * 3
+        + [{"id": "stop-whole"}],
     )
 
     with patch("src.execution.broker.time.sleep"):
@@ -1219,10 +1220,10 @@ def test_a_trailing_stop_ratchet_re_places_the_hybrid_pair_not_one_day_order():
 
     reqs = [c.args[0] for c in client.submit_order.call_args_list]
     assert len(reqs) == 2, "the hybrid pair, not one collapsed order"
-    assert float(reqs[0].qty) == 12.0
-    assert reqs[0].time_in_force == TimeInForce.GTC
-    assert float(reqs[1].qty) == pytest.approx(0.3456)
-    assert reqs[1].time_in_force == TimeInForce.DAY
+    assert float(reqs[0].qty) == pytest.approx(0.3456)
+    assert reqs[0].time_in_force == TimeInForce.DAY
+    assert float(reqs[1].qty) == 12.0
+    assert reqs[1].time_in_force == TimeInForce.GTC
 
 
 def test_a_whole_share_trailing_ratchet_is_still_one_gtc_order():
@@ -1275,16 +1276,38 @@ def test_a_partial_sell_reprotects_a_fractional_residual_as_a_hybrid_pair():
 def test_a_hybrid_pair_is_all_or_nothing_when_a_leg_is_rejected():
     """A half-placed pair is the worst outcome available: the caller's
     rollback believes nothing landed, while the coverage sweep sees a
-    mis-sized stop. If the DAY leg is rejected, the GTC leg that already
+    mis-sized stop. If the second leg is rejected, the first that already
     landed is cancelled and the failure propagates."""
     with patch("src.execution.broker.TradingClient"):
         broker = AlpacaBroker("k", "s", paper=True)
     broker.client = MagicMock()
     broker._submit_stop_limit_order = MagicMock(
-        side_effect=[{"id": "leg-gtc"}, RuntimeError("day leg rejected")],
+        side_effect=[{"id": "leg-day"}, RuntimeError("gtc leg rejected")],
     )
 
     with pytest.raises(RuntimeError):
         broker._submit_stop_legs(symbol="NVDA", qty=12.3456, stop_price=90.0)
 
-    broker.client.cancel_order_by_id.assert_called_once_with("leg-gtc")
+    broker.client.cancel_order_by_id.assert_called_once_with("leg-day")
+
+
+def test_held_for_orders_on_day_sliver_is_covered_when_broker_already_holds_it():
+    """2026-09-16 BRK-B: morning + intra_check both repaired the 0.4393 DAY
+    remainder. The second hit held_for_orders / insufficient qty because
+    the first already reserved the shares. Treat the live covering stop as
+    success — do not leave the remainder flagged uncovered."""
+    with patch("src.execution.broker.TradingClient"):
+        broker = AlpacaBroker("k", "s", paper=True)
+    live = SimpleNamespace(id="day-live", qty=0.4393, stop_price=485.0, limit_price=470.0)
+    broker._submit_stop_limit_order = MagicMock(
+        side_effect=RuntimeError("insufficient qty available for order (requested: 0.4393, available: 0) held_for_orders"),
+    )
+    broker._list_open_protective_stop_orders = MagicMock(return_value=[live])
+    with patch("src.execution.broker.time.sleep"):
+        out = broker._submit_stop_leg_retrying(
+            symbol="BRK-B", qty=0.4393, stop_price=485.0,
+            limit_price=470.0, side="sell", leg="DAY fractional",
+        )
+    assert out is not None
+    assert out["id"] == "day-live"
+    assert out["already_live"] is True

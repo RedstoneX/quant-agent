@@ -92,8 +92,17 @@ def restore_stated_soft_exits(values: dict, raw: dict | None) -> tuple[dict, lis
         raw_val = raw.get(field_name)
         if not isinstance(raw_val, str) or not raw_val.strip():
             continue
+        if raw_val.strip().lower() == "unknown":
+            continue
         current = out.get(field_name)
-        if current is None or current == "":
+        if (
+            current is None
+            or current == ""
+            or (
+                isinstance(current, str)
+                and current.strip().lower() == "unknown"
+            )
+        ):
             out[field_name] = raw_val
             restored.append(field_name)
     return out, restored
@@ -156,13 +165,20 @@ def coerce_macro_shape(payload: dict) -> tuple[dict, list[str]]:
 
     Does NOT invent reasoning_chain, summary, regime, or any other prose.
     Returns (possibly-copied dict, list of mechanical fixes applied).
+    Prefers `sector_guidance_rows` (live list persisted by MacroStore)
+    over the compact dict snapshot.
     """
     if not isinstance(payload, dict):
         return payload, []
     fixes: list[str] = []
     out = dict(payload)
+    rows = out.get("sector_guidance_rows")
     sg = out.get("sector_guidance")
-    if isinstance(sg, dict):
+    if isinstance(rows, list) and rows:
+        coerced = coerce_sector_guidance(rows)
+        out["sector_guidance"] = coerced
+        fixes.append("sector_guidance_rows_to_list")
+    elif isinstance(sg, dict):
         out["sector_guidance"] = coerce_sector_guidance(sg)
         fixes.append("sector_guidance_dict_to_list")
     elif isinstance(sg, list):
@@ -171,6 +187,36 @@ def coerce_macro_shape(payload: dict) -> tuple[dict, list[str]]:
             out["sector_guidance"] = coerced
             fixes.append("sector_guidance_sanitized")
     return out, fixes
+
+
+def describe_macro_parse_failure(payload, error: BaseException) -> str:
+    """Durable, machine-readable reason a MacroAnalysis re-parse failed.
+
+    Never a generic 'failed to parse'. Names the missing/wrong field.
+    Does not invent a chain to make garbage validate.
+    """
+    missing: list[str] = []
+    if not isinstance(payload, dict):
+        return f"macro_parse_failed: payload_not_dict ({type(payload).__name__})"
+    if not isinstance(payload.get("reasoning_chain"), dict):
+        missing.append("reasoning_chain")
+    sg = payload.get("sector_guidance")
+    if sg is not None and not isinstance(sg, (list, dict)):
+        missing.append("sector_guidance_not_list_or_dict")
+    pg = payload.get("position_guidance")
+    if isinstance(pg, dict):
+        for key in ("target_invested_pct", "cash_recommendation_pct", "reasoning"):
+            if key not in pg:
+                missing.append(f"position_guidance.{key}")
+    elif pg is None:
+        missing.append("position_guidance")
+    for key in ("regime", "confidence", "equity_outlook", "summary"):
+        if not str(payload.get(key) or "").strip():
+            missing.append(key)
+    err = str(error).split("\n", 1)[0].strip()
+    if missing:
+        return "macro_parse_failed: missing " + ", ".join(missing) + f" ({err})"
+    return f"macro_parse_failed: {err}"
 
 
 def mechanical_heal_macro(payload) -> HealResult:

@@ -560,16 +560,15 @@ def test_success_after_provably_free_attempt_is_charged_only_the_real_cost(
 
 
 def test_success_after_ambiguous_attempt_marks_inexact_instead_of_a_phantom_charge(tmp_path):
-    """Renamed from `test_success_after_ambiguous_attempt_still_carries_the_
-    failed_reserve`, which pinned the OLD behaviour: a 500 might have billed
-    for a stream that started and died, so its conservative reserve was
-    added on top of the real settled cost. That assertion is now WRONG on
-    its own terms -- item 14 (2026-09-02) deleted the reservation there was
-    ever anything to add. The fail-closed intent survives in a different
-    place: the day/session is marked inexact (so `_enforce_settled_limits_
-    locked` latches on it), while the ledger itself only ever holds the
-    ACTUAL cost of the response that came back -- no invented figure for
-    what an ambiguous failed attempt might have cost."""
+    """A 500 might have billed for a stream that started and died.
+
+    Item 14 deleted the reservation there was ever anything to add, so the
+    ledger only ever holds the winner's real cost. Honesty is the inexact
+    flag (`costs_exact=0`): the booked total is a known minimum, not a
+    proven ceiling. That flag does NOT increment `unknown_cost_rows` and
+    does NOT hard-latch `legacy_unknown_cost`. A fully-failed ambiguous
+    call (`fail_call`) and a completed call with no telemetry still latch.
+    """
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
     ambiguous = _StatusCodeError(500, "upstream exploded mid-stream")
@@ -582,13 +581,27 @@ def test_success_after_ambiguous_attempt_marks_inexact_instead_of_a_phantom_char
     # Only the real, settled cost is ever booked -- never a guess.
     assert _settled(path, reservation) == pytest.approx(0.0014)
     with sqlite3.connect(path) as conn:
+        day_row = conn.execute(
+            "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days",
+        ).fetchone()
         assert conn.execute(
             "SELECT costs_exact FROM llm_budget_sessions WHERE run_id=?",
             ("run-retry-500",),
         ).fetchone()[0] == 0
-    # Fail-closed is not lost: an inexact day hard-latches on the very next
-    # authorization boundary, same posture as the deleted phantom charge.
-    assert circuit.status()["trigger_code"] == "legacy_unknown_cost"
+        # Honesty without a false latch: the day is inexact (a failed
+        # attempt might have billed) but the winner's cost is known, so
+        # unknown_cost_rows stays 0. Incrementing it here was the
+        # 2026-09-16 midday wipe (event id=27) at ~$0.65 of $2.75.
+        assert day_row[0] == 0
+        assert day_row[1] == 0
+    state = circuit.status()
+    assert state["suspended"] is False
+    assert state.get("trigger_code") != "legacy_unknown_cost"
+    # Caps still bind on the known minimum — the next call is authorized.
+    circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
 
 
 def test_one_ambiguous_attempt_among_free_ones_still_marks_inexact(tmp_path):
@@ -612,6 +625,10 @@ def test_one_ambiguous_attempt_among_free_ones_still_marks_inexact(tmp_path):
             "SELECT costs_exact FROM llm_budget_sessions WHERE run_id=?",
             ("run-retry-mixed",),
         ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT unknown_cost_rows FROM llm_budget_days",
+        ).fetchone()[0] == 0
+    assert circuit.status()["suspended"] is False
 
 
 def test_caller_that_names_no_attempts_is_treated_as_exact(tmp_path):

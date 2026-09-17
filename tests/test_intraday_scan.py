@@ -245,16 +245,9 @@ def test_cooldown_suppresses_repeat_scan_of_same_symbol(mock_compute_indicators)
     from datetime import datetime, timedelta, timezone
 
     mock_compute_indicators.return_value = MagicMock()
-    # Aged 30 min (not "now"): the fixture's `db.get_trades` mock backs BOTH
-    # `_another_session_recently_active`'s 15-min concurrency guard and
-    # `_recently_intraday_evaluated`'s legacy-fallback cooldown lookup — a
-    # "just now" timestamp would trip the concurrency guard FIRST and return
-    # "intraday_scan_lock_contended" without ever reaching the cooldown logic
-    # this test claims to isolate (2026-08-31 finding, surfaced only once the
-    # two outcomes got distinct statuses — same isolation pattern already
-    # used below by test_non_intra_check_trades_do_not_count_toward_cooldown).
-    # 30 min clears the 15-min concurrency window while staying well inside
-    # the 3h cooldown window under test.
+    # Aged 30 min (not "now"): `_recently_intraday_evaluated`'s
+    # legacy-fallback cooldown lookup reads `db.get_trades`. 30 min stays
+    # well inside the 3h cooldown window under test.
     aged_ts = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
     p = _intraday_pipeline(
         universe=["AAPL"], cooldown_hours=3.0,
@@ -463,23 +456,13 @@ def test_run_intra_check_scan_crash_does_not_fail_the_tick():
 # ---------- concurrency guard (intra_check is session-lock exempt) ----------
 
 @patch("src.pipeline.compute_indicators")
-def test_scan_skips_when_another_session_is_mid_flight(mock_compute_indicators):
-    """`scripts/run_if_et_window.sh` deliberately exempts intra_check from
-    the cross-mode session lock so the circuit breaker always fires — an
-    exemption it justifies on the grounds that intra_check's actions are
-    all IDEMPOTENT. Opening a new position is not. So the scan (not the
-    loss check) must back off when another session wrote a trade row
-    recently, or a concurrent morning run and this scan could both size
-    against the same pre-fill snapshot and breach position/cash caps."""
-    from datetime import datetime, timezone
-
+def test_scan_skips_when_owner_lock_still_held_at_window_end(mock_compute_indicators):
+    """Wait, don't skip on a live morning — but if the calendar window is
+    already over, paid discovery cannot run this tick."""
     mock_compute_indicators.return_value = MagicMock()
-    recent_ts = datetime.now(timezone.utc).isoformat()
     p = _intraday_pipeline(universe=["AAPL"])
-    p.db.get_trades.return_value = [{
-        "symbol": "MSFT", "action": "BUY", "run_id": "run-morning1",
-        "timestamp": recent_ts, "reasoning": "morning run mid-flight",
-    }]
+    p._blocking_owner_session = MagicMock(return_value="morning")
+    p._intra_window_remaining_s = MagicMock(return_value=0.0)
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
     }
@@ -490,6 +473,52 @@ def test_scan_skips_when_another_session_is_mid_flight(mock_compute_indicators):
     assert result == {"status": "intraday_scan_lock_contended", "run_id": ctx.run_id}
     p.broker.get_intraday_snapshots.assert_not_called()
     p.tech_analyst.analyze_batch.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_scan_waits_then_runs_when_owner_lock_releases(mock_compute_indicators):
+    """The 09:30/13:00 ticks skipped paid discovery because morning/midday
+    held the owner lock. Wait for that process to finish instead of
+    sleeping until the next 30-minute fire."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._blocking_owner_session = MagicMock(side_effect=["morning", "morning", None])
+    p._intra_window_remaining_s = MagicMock(return_value=60.0)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.tech_analyst.analyze_batch.return_value = ({}, None)
+
+    ctx = RunContext.start("intra_check")
+    with patch("time.sleep"):
+        p._run_intraday_opportunity_scan(ctx)
+
+    p.tech_analyst.analyze_batch.assert_called_once()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_finished_session_trade_rows_do_not_skip_the_scan(mock_compute_indicators):
+    """A morning fill sitting in trades is not an in-flight session. The
+    15-minute trade-row heuristic was what slept the 09:30 and 13:00
+    scans after morning/midday had already finished writing."""
+    from datetime import datetime, timezone
+
+    mock_compute_indicators.return_value = MagicMock()
+    recent_ts = datetime.now(timezone.utc).isoformat()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.db.get_trades.return_value = [{
+        "symbol": "MSFT", "action": "BUY", "run_id": "run-morning1",
+        "timestamp": recent_ts, "reasoning": "morning already filled",
+    }]
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.tech_analyst.analyze_batch.return_value = ({}, None)
+
+    ctx = RunContext.start("intra_check")
+    p._run_intraday_opportunity_scan(ctx)
+
+    p.tech_analyst.analyze_batch.assert_called_once()
 
 
 @patch("src.pipeline.compute_indicators")
@@ -517,15 +546,29 @@ def test_scan_proceeds_when_other_session_activity_is_old(mock_compute_indicator
     p.tech_analyst.analyze_batch.assert_called_once()
 
 
-def test_concurrency_guard_fails_closed_on_query_error():
-    """An unknowable concurrency state must skip the scan, never proceed."""
+def test_unreadable_owner_lock_fails_closed():
+    """An unknowable owner file must skip paid discovery, never proceed."""
     p = _intraday_pipeline(universe=["AAPL"])
-    p.db.get_trades.side_effect = RuntimeError("db locked")
+    p._blocking_owner_session = MagicMock(return_value="unreadable")
 
     ctx = RunContext.start("intra_check")
     assert p._another_session_recently_active(ctx.run_id) is True
+    assert p._await_paid_scan_slot(ctx.run_id) is True
     assert p._run_intraday_opportunity_scan(ctx) == {
         "status": "intraday_scan_lock_contended", "run_id": ctx.run_id,
+    }
+
+
+def test_get_trades_error_does_not_skip_paid_discovery():
+    """Trade-row query failure is not an in-flight owner lock."""
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.db.get_trades.side_effect = RuntimeError("db locked")
+    p.broker.get_intraday_snapshots.return_value = {}
+
+    ctx = RunContext.start("intra_check")
+    assert p._another_session_recently_active(ctx.run_id) is False
+    assert p._run_intraday_opportunity_scan(ctx) == {
+        "status": "intraday_scan_no_opportunity", "run_id": ctx.run_id,
     }
 
 
@@ -625,7 +668,7 @@ def test_prelatched_real_intraday_scan_reports_suspension_before_agent_call(
     p._drain_pending_protection_restores = MagicMock()
     p._reconcile_stop_coverage = MagicMock(return_value=[])
     p._reconcile_orphan_pending_submits = MagicMock()
-    p._another_session_recently_active = MagicMock(return_value=False)
+    p._await_paid_scan_slot = MagicMock(return_value=False)
     p.risk_engine = MagicMock()
     p.risk_engine.check_daily_loss.return_value = None
     p.broker.get_account.return_value = {

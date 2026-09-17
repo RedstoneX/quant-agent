@@ -1,5 +1,6 @@
 """run_earnings_preprocess — Phase 4 #6 pre-market earnings mode."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from src.agents.base import AgentResult
@@ -68,6 +69,31 @@ def test_preprocess_returns_nothing_new_when_no_filings(tmp_path):
     assert result["status"] == "nothing_new"
     assert result["count"] == 0
     earnings_analyst.analyze_reports.assert_not_called()
+
+
+def test_preprocess_unions_form4_hot_names_without_an_invented_cap(tmp_path):
+    """2026-09-16: 08:00 preprocess returned nothing_new against the
+    configured universe while FTK/RSG were already Form-4 hot. Morning
+    then saw those filings as placeholders. Union the provider's own
+    admission_eligible names — no new 'preprocess N names' constant."""
+    earnings_provider = MagicMock()
+    earnings_provider.check_and_fetch.return_value = []
+    pipeline = _mk_pipeline(tmp_path, earnings_provider, MagicMock())
+    pipeline.config.smart_money.enabled = True
+    pipeline.smart_money_provider = MagicMock()
+    pipeline.smart_money_provider.fetch.return_value = ([
+        SimpleNamespace(admission_eligible=True, symbol="FTK"),
+        SimpleNamespace(admission_eligible=True, symbol="RSG"),
+        SimpleNamespace(admission_eligible=False, symbol="ZZZ"),
+        SimpleNamespace(admission_eligible=True, symbol="nvda"),
+    ], None)
+    pipeline.smart_money_provider.refresh.return_value = {"status": "ok"}
+    symbols = pipeline._earnings_preprocess_symbols()
+    assert symbols == ["NVDA", "AAPL", "FTK", "RSG"]
+    result = pipeline.run_earnings_preprocess()
+    assert result["status"] == "nothing_new"
+    called = earnings_provider.check_and_fetch.call_args[0][0]
+    assert called == ["NVDA", "AAPL", "FTK", "RSG"]
 
 
 def test_prelatched_preprocess_fetches_filing_but_never_marks_it_failed(tmp_path):
