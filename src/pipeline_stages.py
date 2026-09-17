@@ -7025,6 +7025,14 @@ class ExecutionStage:
                         limit_price=limit_price,
                         stop_loss_price=stop_price if stop_price > 0 else None,
                         reference_price=market_price,
+                        # WORDING ONLY (see `submit_order`'s docstring): the
+                        # same measured ATR(14) the constructor sized this
+                        # trade against, so a fat-finger refusal can name
+                        # the stock's own daily range instead of a bare
+                        # percentage. None on the resume/sweep lanes that
+                        # carry no analysis — the message then omits the
+                        # range rather than inventing one.
+                        atr=getattr(entry_analysis, "atr_14", None),
                     )
                 except Exception as e:
                     # Submit raised — broker may or may not have the
@@ -7079,6 +7087,17 @@ class ExecutionStage:
                         # `_SKIP_WHO_LABELS`), not repeated here.
                         skip_reason = "fat_finger_guard"
                         skip_detail = order_detail or "price is too far from the market price"
+                    elif order_status == "rejected_bad_stop":
+                        # The stop-side sanity checks (non-finite, non-
+                        # positive, wrong side of entry) — desk-side, like
+                        # the fat-finger guard, not the broker. Kept a
+                        # SEPARATE reason from `fat_finger_guard` because
+                        # they are a different fact about a different
+                        # price, and collapsing them would tell the owner a
+                        # price was "too far from the market" when what
+                        # actually happened is the stop could never work.
+                        skip_reason = "unusable_stop"
+                        skip_detail = order_detail or "the stop price is not usable"
                     elif order_status == "kill_switch_halted":
                         skip_reason = "kill_switch_halted"
                         skip_detail = order_detail or (

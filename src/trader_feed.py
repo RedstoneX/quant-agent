@@ -210,6 +210,7 @@ def _all_symbols(*groups: Any) -> list[str]:
 # come through `execution_skips` — see `_blocked_rows`).
 _SKIP_WHO_LABELS: dict[str, str] = {
     "fat_finger_guard": "Blocked by desk safety check (not the broker)",
+    "unusable_stop": "Blocked by desk safety check — unusable stop (not the broker)",
     "kill_switch_halted": "Blocked by desk safety check — kill switch (not the broker)",
     "broker_rejected": "Blocked by the broker",
     "daily_loss_recheck": "Blocked by desk safety check — daily-loss breaker",
