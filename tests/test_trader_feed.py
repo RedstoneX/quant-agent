@@ -668,6 +668,47 @@ def test_close_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     assert "SELL CCJ (Cameco Corporation)" in msg
 
 
+def test_position_review_now_shows_todays_and_total_pnl(tmp_path, monkeypatch):
+    """Owner request 2026-09-17: replace the unlabelled 'Session P&L' line
+    with today's P&L and a dated total P&L, in the same spot — and, unlike
+    the old line, `run_position_review` (midday/close) must actually show
+    it. Before this change `run_position_review`'s own returned dict never
+    set `daily_pnl` at all, so this line silently never rendered on a
+    midday/close message — the operator was never shown a number here,
+    whatever "session" was assumed to mean."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-review-pnl"
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 1,
+        "orders": [], "review": None,
+        "daily_pnl": 12.34, "daily_return_pct": 0.13,
+        "total_pnl": 44.70, "total_return_pct": 0.46,
+        "total_pnl_since": "2026-09-02",
+    }
+    msg = trader_feed.format_session_result("midday", result, 5.0)
+    assert msg is not None
+    assert "Session P&L" not in msg
+    assert "📈 Today's P&L: +$12.34 (+0.13%)" in msg
+    assert "📊 Total P&L since 2026-09-02: +$44.70 (+0.46%)" in msg
+
+
+def test_position_review_missing_pnl_says_not_available_never_zero(tmp_path, monkeypatch):
+    """A midday/close run with no P&L figures at all (e.g. an early
+    halt-path result) must say so honestly — never a fabricated $0.00,
+    which would read as 'flat today' rather than 'unknown'."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-review-no-pnl"
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 0,
+        "orders": [], "review": None,
+    }
+    msg = trader_feed.format_session_result("midday", result, 5.0)
+    assert msg is not None
+    assert "📈 Today's P&L: not available" in msg
+    assert "📊 Total P&L: not available" in msg
+    assert "$0.00" not in msg
+
+
 def test_intraday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-identity-intra"
@@ -1019,6 +1060,7 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     _agent_log(db, run, "portfolio_manager", "no trades", cost=0.10)
     outer = {
         "status": "ok", "run_id": run, "daily_pnl": 0.13, "daily_return_pct": 0.001,
+        "total_pnl": 44.70, "total_return_pct": 0.46, "total_pnl_since": "2026-09-02",
         "intraday_scan": {
             "status": "intraday_no_trades", "run_id": run,
             "candidates": ["VST", "AVGO"], "orders": [],
@@ -1041,6 +1083,11 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
 
     # --- signed money, sign before '$', true minus for negatives ---
     assert "+$0.13" in msg
+
+    # --- "Session P&L" is gone; today's + dated total P&L replace it ---
+    assert "Session P&L" not in msg
+    assert "📈 Today's P&L: +$0.13 (+0.00%)" in msg
+    assert "📊 Total P&L since 2026-09-02: +$44.70 (+0.46%)" in msg
 
     # --- scan-first sections: VST blocked (desk-side, insufficient cash),
     # AVGO looked at and passed (neutral) ---
@@ -1068,9 +1115,9 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     lines = msg.split("\n")
     assert lines[0].strip() != "" and lines[-1].strip() != ""
     assert "\n\n\n" not in msg
-    # A blank line separates the header from the P&L line, and the
+    # A blank line separates the header from the P&L lines, and the
     # scan-first sections from the footer.
-    pnl_idx = next(i for i, l in enumerate(lines) if l.startswith("📈 Session P&L"))
+    pnl_idx = next(i for i, l in enumerate(lines) if l.startswith("📈 Today's P&L"))
     assert lines[pnl_idx - 1] == ""
     footer_idx = next(i for i, l in enumerate(lines) if l.startswith("🧾"))
     assert lines[footer_idx - 1] == ""
@@ -1240,6 +1287,7 @@ def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
     outer = {
         "status": "ok", "run_id": top_of_hour_run,
         "daily_pnl": 5.5, "daily_return_pct": 0.02,
+        "total_pnl": 44.70, "total_return_pct": 0.46, "total_pnl_since": "2026-09-02",
         # No `intraday_scan` key at all — this tick's own scan did not run
         # (e.g. nothing moved enough to qualify).
     }
@@ -1249,7 +1297,9 @@ def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
     assert "🕐 DESK CHECK" in msg
     assert "No action this hour" in msg
     assert "CEG" in msg  # the earlier :30 tick's signal, different run_id
-    assert "+$5.50" in msg
+    assert "Session P&L" not in msg
+    assert "📈 Today's P&L: +$5.50 (+0.02%)" in msg
+    assert "📊 Total P&L since 2026-09-02: +$44.70 (+0.46%)" in msg
     assert "who:" in msg or "CEG" in msg
     # No leading/trailing/double blank line in the synthetic summary either.
     assert not msg.startswith("\n") and not msg.endswith("\n")
