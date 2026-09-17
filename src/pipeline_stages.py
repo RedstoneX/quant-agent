@@ -4509,6 +4509,25 @@ class DecisionStage:
             ) or {}).items()
         }
 
+        # Margin capacity for the PM prompt — WORDING ONLY. Reuses the
+        # EXACT §11.2 computation the execution submit loop uses to size
+        # entries (`_entry_deployment_budget`, which itself resolves the
+        # ladder via `_session_gross_ceiling`), so the prompt cannot state a
+        # different number than execution sizes against. Book state here
+        # (positions/equity/held-gross) has not changed since ctx was built
+        # above, so this is the same headroom execution will see for this
+        # session's opening entries — never a new formula.
+        margin_headroom_usd, margin_ladder_backed, _margin_headroom_note = (
+            _entry_deployment_budget(pipeline, ctx, positions, total_value, cash)
+        )
+        _margin_ceiling = _session_gross_ceiling(pipeline, ctx)
+        margin_ladder_multiple = (
+            _margin_ceiling.ceiling_x if _margin_ceiling is not None else None
+        )
+        margin_ladder_rung = (
+            _margin_ceiling.rung if _margin_ceiling is not None else None
+        )
+
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             analyses=analyses,
             positions=positions,
@@ -4535,6 +4554,10 @@ class DecisionStage:
             blocked_proposals=blocked_proposals,
             facts=pm_facts,
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
+            margin_headroom_usd=margin_headroom_usd,
+            margin_ladder_backed=margin_ladder_backed,
+            margin_ladder_multiple=margin_ladder_multiple,
+            margin_ladder_rung=margin_ladder_rung,
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
             session_type=ctx.session,
             allowed_buy_symbols={

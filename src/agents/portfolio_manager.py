@@ -989,7 +989,52 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
                 "BUYs this session. Margin is disabled."
             )
         else:
-            margin_section = ""
+            # Margin is enabled. Do NOT tell the model cash is the limit —
+            # the account may run to the §11.2 de-levering ladder's ceiling,
+            # not just to settled cash (2026-09-17 CRM incident: the prompt
+            # said "no margin is deployable" while $11.4k of real ladder
+            # headroom existed and execution had already spent margin three
+            # hours earlier that same session).
+            #
+            # `margin_headroom_usd` / `margin_ladder_multiple` /
+            # `margin_ladder_rung` are threaded in from the SAME §11.2
+            # computation execution's submit loop uses
+            # (`_entry_deployment_budget` / `_session_gross_ceiling` in
+            # `src/pipeline_stages.py`) — this section never derives its own
+            # number. `margin_ladder_backed=False` means that computation
+            # could not resolve this session (e.g. equity/ceiling unreadable
+            # at prompt-build time), and the section says so rather than
+            # guessing a figure.
+            headroom_usd = kwargs.get("margin_headroom_usd")
+            ladder_multiple = kwargs.get("margin_ladder_multiple")
+            ladder_rung = kwargs.get("margin_ladder_rung")
+            ladder_backed = bool(kwargs.get("margin_ladder_backed", False))
+            if (
+                ladder_backed
+                and isinstance(headroom_usd, (int, float))
+                and isinstance(ladder_multiple, (int, float))
+            ):
+                margin_section = (
+                    "## Margin Capacity (margin is ENABLED)\n"
+                    f"- This account may run gross exposure up to "
+                    f"{ladder_multiple:.2f}x equity (the §11.2 de-levering "
+                    f"ladder's current ceiling, rung {ladder_rung}) — NOT just "
+                    f"up to available cash.\n"
+                    f"- Ladder headroom remaining this session: "
+                    f"${headroom_usd:,.2f}. A BUY or SHORT may still draw on "
+                    f"this even when Cash Balance above is negative.\n"
+                    f"- This is the same figure execution sizes new entries "
+                    f"against — not a separate estimate."
+                )
+            else:
+                margin_section = (
+                    "## Margin Policy\n"
+                    "- Margin is ENABLED for this account, but this session's "
+                    "ladder headroom could not be resolved for this prompt. "
+                    "Do NOT read the raw Cash Balance above as your spending "
+                    "limit — a BUY may still be able to draw margin. Treat "
+                    "the ladder as unknown, not as zero."
+                )
 
         # Recent system performance (drawdown awareness).
         recent_perf = kwargs.get("recent_performance") or {}
@@ -1254,9 +1299,18 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             f"do not add it again)"
             if reserve_balance > 0 else ""
         )
+        # 2026-09-17 fix: this used to hardcode "no margin" regardless of
+        # `allow_margin`. When margin is enabled, cash is still raw cash —
+        # real, and can go negative — but it is NOT the spending limit, so
+        # the label must not claim the account has none. See the Margin
+        # Capacity / Margin Policy section below for what may still be spent.
+        cash_status = (
+            "deployable this session, no margin" if not allow_margin
+            else "raw cash — see Margin Capacity below for what may still be spent"
+        )
         return f"""## Account Status
 - Total Value: ${total_value:,.2f}
-- Cash Balance: ${cash_balance:,.2f} (deployable this session, no margin){reserve_line}
+- Cash Balance: ${cash_balance:,.2f} ({cash_status}){reserve_line}
 - Invested: ${invested:,.2f} ({invested_pct:.1f}% of equity — capital at work, unsigned and un-leveraged; a short counts its notional, not a credit)
 - Net direction: {net_exposure_pct:+.1f}% of equity (leverage-aware and signed; negative = net short). This is NOT the number macro's target is set against — `Invested` is.
 
@@ -1977,6 +2031,17 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                blocked_proposals: str = "",
                facts=None,
                allow_margin: bool = True,
+               # §11.2 ladder headroom, threaded from the SAME computation
+               # execution's submit loop uses (`_entry_deployment_budget` /
+               # `_session_gross_ceiling` in `src/pipeline_stages.py`) so the
+               # Margin Capacity section never derives its own number.
+               # `margin_ladder_backed=False` means that computation could
+               # not resolve this session — the section says so rather than
+               # showing a stale or invented figure.
+               margin_headroom_usd: float | None = None,
+               margin_ladder_backed: bool = False,
+               margin_ladder_multiple: float | None = None,
+               margin_ladder_rung: str | None = None,
                symbol_sectors: dict[str, str] | None = None,
                session_type: str = "morning",
                allowed_buy_symbols: set[str] | None = None,
@@ -2046,6 +2111,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             blocked_proposals=blocked_proposals,
             facts=facts,
             allow_margin=allow_margin,
+            margin_headroom_usd=margin_headroom_usd,
+            margin_ladder_backed=margin_ladder_backed,
+            margin_ladder_multiple=margin_ladder_multiple,
+            margin_ladder_rung=margin_ladder_rung,
             symbol_sectors=symbol_sectors or {},
             session_type=session_type,
             allowed_buy_symbols=allowed_buy_symbols or set(),
