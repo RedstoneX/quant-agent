@@ -41,9 +41,7 @@ from src.models import (
     PortfolioDecision, TargetPosition, TechAnalysisResult, TechReasoningChain,
     TradeDecision,
 )
-from src.pipeline_stages import (
-    GEOMETRY_UNMEASURABLE_SKIP, _execution_payoff_skip_reason,
-)
+from src.pipeline_stages import _execution_payoff_skip_reason
 from src.portfolio_constructor import PortfolioConstructor
 from src.risk.constants import STARTER_POSITION_RISK_PCT
 
@@ -231,7 +229,7 @@ def test_execution_does_not_skip_a_thin_but_measurable_range_ratio():
     ) is None
 
 
-def test_execution_skips_a_range_order_only_when_payoff_cannot_be_computed():
+def test_execution_does_not_skip_when_range_payoff_cannot_be_computed():
     range_order = TradeDecision(
         action="BUY", symbol="AAA", allocation_pct=5.0, entry_price=ENTRY,
         stop_loss=STOP, take_profit=FAT_LEVEL, reasoning="t",
@@ -240,19 +238,19 @@ def test_execution_skips_a_range_order_only_when_payoff_cannot_be_computed():
     assert _execution_payoff_skip_reason(
         range_order, sizing_price=ENTRY, stop_price=ENTRY,
         geometry_changed=True, is_short=False,
-    ) == GEOMETRY_UNMEASURABLE_SKIP
+    ) is None
 
 
 def test_a_breakout_with_no_measurable_reward_is_still_not_blocked_on_it():
-    """"Unmeasurable" is still a reward-side refusal, and the owner decision
-    is that no reward-side computation blocks a trend trade. A range trade
-    still fails closed here — that contrast is the assertion."""
+    """Unmeasurable payoff is ranking information, not a refuse — for both
+    setup types. The owner decision is that no reward-side computation
+    blocks a ticket."""
     constructor = PortfolioConstructor()
-    for setup, expected in (("breakout", STOP), ("range", None)):
+    for setup in ("breakout", "range"):
         assert constructor._widen_stop_past_noise(
             "AAA", _analysis("AAA", setup_type=setup), ENTRY, STOP,
             direction="long", target_price=float("nan"),
-        ) == expected, setup
+        ) == STOP, setup
 
 
 # ==========================================================================

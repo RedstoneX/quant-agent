@@ -101,8 +101,7 @@ _HARD_ANCHORS = (
     ),
     (
         "portfolio_manager.md", "`thesis_invalid_if` is mandatory on every non-zero target",
-        "soft-exit is required on every open/add; catalyst stays optional "
-        "except the dated unmeasurable-range exception",
+        "soft-exit is required on every open/add; catalyst stays optional",
     ),
     (
         "portfolio_manager.md", "TargetPosition",

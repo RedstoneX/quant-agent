@@ -96,8 +96,8 @@ def reward_risk_floor_applies(
     True for a Type A / range trade, whose reward:risk IS real — measured
     from that specific trade's own support (risk) and resistance (reward).
     What is done with that number: ranking, not a cutoff, and not a size
-    cap (owner 2026-09-17). An unmeasurable range payoff still fails closed
-    because there is no arithmetic at all, which is not this comparison.
+    cap (owner 2026-09-17). An unmeasurable range payoff is a recorded
+    fact / ranking hint — not a refuse and not a size-cap.
 
     Fails to the conservative side: an unknown or missing setup type, with
     no measured ceiling fact supplied, keeps the reward:risk machinery on.
@@ -126,7 +126,7 @@ A Type B / breakout trade is not measured on reward:risk at all
 (`reward_risk_floor_applies`). A Type A / range trade's real per-trade
 ratio is still computed and still reaches `src/verdicts.py::rank_verdicts`
 as an ordering signal. An UNMEASURABLE range payoff (cannot compute the
-ratio at all) is still refused — that is honesty about unknown geometry,
+ratio at all) is recorded, not refused — honesty about unknown geometry,
 not this number.
 
 The arithmetic that once justified 1.5 — R/R X breaks even at 1/(1+X) —

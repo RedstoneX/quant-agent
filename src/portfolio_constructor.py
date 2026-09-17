@@ -2073,32 +2073,11 @@ class PortfolioConstructor:
             `src/verdicts.py::rank_verdicts`).
 
         What still refuses, unchanged: every RISK-side check above — a
-        wrong-side stop, a non-finite stop or entry — and, for Type A only,
-        an UNMEASURABLE ratio when a target was supplied. Unmeasurable is
-        not "poor payoff", it is "no payoff arithmetic at all", and this
-        codebase fails closed on unknown geometry everywhere else.
-
-        `subfloor_catalyst_exception` (2026-09-11, docs/WORK.md item 1 parts
-        (b)+(c)) **is now inert on this path** and is kept only as a record
-        that the PM gate verified and capped the target — there is no
-        below-floor refusal left for it to exempt anything from. Whether the
-        whole catalyst mechanism should be retired is an owner call, so it is
-        flagged here rather than removed. Its original meaning: True means
-        `PortfolioManagerAgent._apply_subfloor_catalyst_rule` already
-        verified this target's catalyst against a real dated
-        `active_state_changes` row naming this symbol in this direction, and
-        already capped it at the starter risk size. Without this the
-        exception was inert: the PM granted it and this method refused the
-        order anyway on the same floor one stage later, so a verified
-        catalyst could never produce a trade (measured 2026-09-11 — a
-        level-backed stop with a real structural target at reward:risk 1.2
-        was kept and capped by the PM and then returned `(None, None)`
-        here). Everything else still applies unchanged: the stop is widened
-        by the same rules, an UNMEASURABLE ratio still fails closed (an
-        exception is permission to take a poor payoff, never permission to
-        take an unknown one), and the geometry checks in
-        `_resolve_entry_and_stop` still run. The flag is not model-settable
-        — see `TargetPosition.subfloor_catalyst_verified`.
+        wrong-side stop, a non-finite stop or entry. An UNMEASURABLE ratio
+        is recorded, not refused (owner 2026-09-17 overnight bind: honesty
+        about a payoff without a number is a ranking hint, not a gate).
+        `subfloor_catalyst_exception` is inert theater around a dead floor
+        and does not admit, refuse, or resize anything.
 
         `target_price` (2026-09-01) is the DERIVED target — computed from
         structure by `_derive_target`. It has to be passed in rather than
@@ -2512,21 +2491,17 @@ class PortfolioConstructor:
         reward_risk = self._reward_risk_at(
             entry_price, honoured, target_price, is_short,
         )
-        if reward_risk is None:
-            # FAIL CLOSED. A target was supplied and the ratio still could
-            # not be measured — a non-finite price, or one pointing the
-            # wrong way. Honesty: cannot compute payoff at all. Not a
-            # comparison against 1.5 or any other invented floor.
-            if had_target:
-                self._note_refusal(
-                    symbol, direction, STOP_REFUSAL_GEOMETRY_UNMEASURABLE,
-                    f"a target was supplied ({target_price!r}) but "
-                    f"reward:risk against the shipping stop ${honoured:,.2f} "
-                    f"[{rule}] at the ${entry_price:,.2f} entry cannot be "
-                    f"measured. Refused rather than treating an unmeasurable "
-                    f"ratio as a permitted payoff.",
-                )
-                return None
+        if reward_risk is None and had_target:
+            # Recorded fact, not a refuse. Owner 2026-09-17: unmeasurable
+            # payoff honesty may stay as ranking hint with zero refuse,
+            # zero size floor, zero sub-floor branch.
+            logger.info(
+                "Constructor: %s %s stop $%.2f [%s] shipped with "
+                "unmeasurable reward:risk — a target was supplied "
+                "(%r) but payoff against this stop at $%.2f cannot be "
+                "computed. Honesty about unknown geometry, not a floor.",
+                side_label, symbol, honoured, rule, target_price, entry_price,
+            )
         return honoured
 
     def shipped_stop_rule(

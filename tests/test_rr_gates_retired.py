@@ -6,9 +6,10 @@ main, and killed RSG on 2026-09-16, was:
   * execution skip ``geometry_rr`` against ``EXECUTION_REWARD_RISK_BELT = 1.2``
   * PM starter-size cap when a measurable range R/R was under 1.5
 
-Both are defects. A computed ratio cannot skip or shrink a ticket. An
-UNMEASURABLE range payoff (cannot compute the ratio at all) is still
-refused — honesty, not a floor number.
+Overnight bind: unmeasurable payoff honesty may stay as a recorded fact /
+ranking hint with ZERO refuse, ZERO size floor, ZERO sub-floor branch.
+A computed ratio cannot skip or shrink a ticket. An unmeasurable one
+cannot either.
 """
 
 from __future__ import annotations
@@ -17,10 +18,7 @@ from pathlib import Path
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import PortfolioDecision, TechAnalysisResult, TechReasoningChain, TradeDecision
-from src.pipeline_stages import (
-    GEOMETRY_UNMEASURABLE_SKIP,
-    _execution_payoff_skip_reason,
-)
+from src.pipeline_stages import _execution_payoff_skip_reason
 from src.risk.constants import STARTER_POSITION_RISK_PCT
 
 REPO = Path(__file__).resolve().parents[1]
@@ -80,11 +78,18 @@ def test_geometry_rr_is_not_written_as_an_execution_skip_reason():
     assert "'geometry_rr'" not in STAGES
 
 
+def test_geometry_unmeasurable_is_not_written_as_an_execution_skip_reason():
+    """Renaming the belt is also a defect."""
+    assert '"geometry_unmeasurable"' not in STAGES
+    assert "'geometry_unmeasurable'" not in STAGES
+
+
 def test_the_retired_1_2_belt_is_not_importable():
     import src.pipeline_stages as stages
 
     assert not hasattr(stages, "EXECUTION_REWARD_RISK_BELT")
     assert not hasattr(stages, "_execution_rr_floor")
+    assert not hasattr(stages, "GEOMETRY_UNMEASURABLE_SKIP")
 
 
 def test_rsg_like_executed_ratio_below_the_retired_belt_does_not_skip():
@@ -110,7 +115,7 @@ def test_rsg_like_executed_ratio_below_the_retired_belt_does_not_skip():
     assert reason is None
 
 
-def test_a_range_buy_still_skips_when_executed_payoff_cannot_be_computed():
+def test_a_range_buy_does_not_skip_when_executed_payoff_cannot_be_computed():
     order = TradeDecision(
         action="BUY", symbol="AAA", allocation_pct=5.0,
         entry_price=ENTRY, stop_loss=STOP, take_profit=110.0,
@@ -123,8 +128,7 @@ def test_a_range_buy_still_skips_when_executed_payoff_cannot_be_computed():
         geometry_changed=True,
         is_short=False,
     )
-    assert reason == GEOMETRY_UNMEASURABLE_SKIP
-    assert reason != "geometry_rr"
+    assert reason is None
 
 
 def test_a_breakout_is_not_skipped_even_when_executed_payoff_is_unmeasurable():
@@ -157,7 +161,7 @@ def test_measurable_range_under_1_5_keeps_the_pm_asked_size():
     assert result.targets[0].risk_allocation_pct != STARTER_POSITION_RISK_PCT
 
 
-def test_an_unmeasurable_range_without_catalyst_is_still_dropped():
+def test_an_unmeasurable_range_without_catalyst_keeps_the_asked_size():
     result = PortfolioManagerAgent._apply_subfloor_catalyst_rule(
         _decision("RSG", risk=2.5),
         analyses=[_analysis("RSG")],
@@ -165,7 +169,9 @@ def test_an_unmeasurable_range_without_catalyst_is_still_dropped():
         rr_floor=99.0, starter_risk_pct=STARTER_POSITION_RISK_PCT,
         real_reward_risk_by_symbol={"RSG": None},
     )
-    assert result.targets == []
+    assert [t.symbol for t in result.targets] == ["RSG"]
+    assert result.targets[0].risk_allocation_pct == 2.5
+    assert result.targets[0].subfloor_catalyst_verified is False
 
 
 def test_rr_floor_argument_cannot_reinstate_the_size_cap():

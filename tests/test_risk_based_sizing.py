@@ -1723,17 +1723,18 @@ def test_a_non_finite_entry_price_is_refused():
     ) is None
 
 
-def test_a_non_finite_target_refuses_rather_than_clearing_the_floor():
-    """The permissive direction is the dangerous one. `nan < 1.5` is False,
-    so an unguarded NaN target would have PASSED the floor rather than
-    failed it. A target that was supplied but cannot be measured is a
-    refusal."""
+def test_a_non_finite_target_does_not_refuse_the_stop():
+    """A NaN target used to look like it cleared the 1.5 floor (`nan < 1.5`
+    is False). Invented floors are gone: unmeasurable payoff is recorded,
+    not refused, and the risk-side stop still ships."""
     constructor = PortfolioConstructor()
-    assert constructor._widen_stop_past_noise(
+    stop = constructor._widen_stop_past_noise(
         "MSFT",
         _vol_analysis("MSFT", _ENTRY, 96.0, _UPPER_LEVEL, atr=_ATR),
         entry_price=_ENTRY, stop_loss=96.0, target_price=float("nan"),
-    ) is None
+    )
+    assert stop is not None
+    assert stop < _ENTRY
 
 
 def test_reward_to_risk_returns_none_for_every_malformed_geometry():

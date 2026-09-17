@@ -350,23 +350,26 @@ def test_a_row_missing_direction_data_entirely_fails_closed():
 
 
 def test_the_live_2026_09_01_nvda_catalyst_does_not_resolve():
-    """THE regression this whole gate exists for, using the exact text the
-    production desk recorded rather than a paraphrase of it."""
+    """Parser still does not treat the live 2026-09-01 NVDA text as a
+    resolving citation. The admission gate no longer cares: unmeasurable
+    NVDA is kept at the asked size."""
     decision = _decision([_target("NVDA", risk=0.75, catalyst=LIVE_NVDA_CATALYST)])
     result = _apply(
         decision, [_analysis("NVDA", target=104.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
-    assert [t.symbol for t in result.targets] == []
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].risk_allocation_pct == 0.75
+    assert result.targets[0].subfloor_catalyst_verified is False
 
 
 # --------------------------------------------------------------------------
-# The gate
+# The gate is dead — unmeasurable is kept, not dropped or starter-capped
 # --------------------------------------------------------------------------
 
-def test_subfloor_pick_with_unverifiable_catalyst_is_dropped_alone():
-    """One decorative catalyst must not take the rest of the book with it —
-    same punishment-fits-offence contract as §9.3's conflict prune."""
+def test_subfloor_pick_with_unverifiable_catalyst_is_kept_with_the_book():
+    """Catalyst theater is gone. Unmeasurable NVDA stays at the asked size
+    next to a measurable GEV."""
     decision = _decision([
         _target("NVDA", catalyst=LIVE_NVDA_CATALYST),
         _target("GEV", risk=2.0),
@@ -376,24 +379,24 @@ def test_subfloor_pick_with_unverifiable_catalyst_is_dropped_alone():
         [_analysis("NVDA", target=104.0), _analysis("GEV", target=112.0)],
         real_reward_risk_by_symbol={"NVDA": None, "GEV": 2.4},
     )
-    assert {t.symbol for t in result.targets} == {"GEV"}
-    assert result.targets[0].risk_allocation_pct == 2.0, (
-        "a qualifying pick must be left entirely alone"
-    )
+    by_symbol = {t.symbol: t for t in result.targets}
+    assert set(by_symbol) == {"NVDA", "GEV"}
+    assert by_symbol["NVDA"].risk_allocation_pct == 3.0
+    assert by_symbol["GEV"].risk_allocation_pct == 2.0
 
 
-def test_subfloor_pick_with_no_catalyst_at_all_is_dropped():
+def test_subfloor_pick_with_no_catalyst_at_all_is_kept():
     decision = _decision([_target("NVDA", catalyst="")])
     result = _apply(
         decision, [_analysis("NVDA", target=104.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
-    assert result.targets == []
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
-def test_subfloor_long_citing_a_genuinely_bullish_catalyst_survives_capped():
-    """Regression: the happy path must still work. A long citing a row
-    recorded bullish for its symbol still qualifies for the exception."""
+def test_subfloor_long_citing_a_genuinely_bullish_catalyst_is_not_capped():
+    """A resolving citation is not a size door. Asked size stands."""
     decision = _decision([
         _target("NVDA", risk=3.0, catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
@@ -402,14 +405,12 @@ def test_subfloor_long_citing_a_genuinely_bullish_catalyst_survives_capped():
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
-    assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+    assert result.targets[0].risk_allocation_pct == 3.0
+    assert result.targets[0].subfloor_catalyst_verified is False
 
 
-def test_subfloor_long_citing_a_bearish_catalyst_for_the_same_symbol_is_refused():
-    """THE fix's core case. NVDA is recorded BEARISH on 2026-09-01 (broad
-    bond-selloff/crude-pressure row). A LONG citing that exact date+symbol
-    used to qualify on existence alone; it must not qualify now — the news
-    it is citing argues against the trade it is trying to justify."""
+def test_subfloor_long_citing_a_bearish_catalyst_for_the_same_symbol_is_kept():
+    """Wrong-direction news is not a refuse. R/R theater is gone."""
     decision = _decision([
         _target("NVDA", risk=3.0, catalyst="2026-09-01 bond selloff pressure"),
     ])
@@ -417,10 +418,11 @@ def test_subfloor_long_citing_a_bearish_catalyst_for_the_same_symbol_is_refused(
         decision, [_analysis("NVDA", target=104.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
-    assert result.targets == []
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
-def test_subfloor_long_citing_a_neutral_catalyst_is_refused():
+def test_subfloor_long_citing_a_neutral_catalyst_is_kept():
     decision = _decision([
         _target("ZZZZ", risk=3.0, catalyst="2026-08-20 mixed signals"),
     ])
@@ -429,12 +431,11 @@ def test_subfloor_long_citing_a_neutral_catalyst_is_refused():
         asc="- [2026-08-20] Mixed signals, no clear read → ZZZZ(neutral)",
         real_reward_risk_by_symbol=_unmeasurable("ZZZZ"),
     )
-    assert result.targets == []
+    assert [t.symbol for t in result.targets] == ["ZZZZ"]
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
-def test_subfloor_short_citing_a_genuinely_bearish_catalyst_survives_capped():
-    """Mirror of the long happy path: a short citing a row recorded bearish
-    for its symbol qualifies."""
+def test_subfloor_short_citing_a_genuinely_bearish_catalyst_is_not_capped():
     decision = _decision([
         _target("NVDA", direction="short", risk=3.0,
                 catalyst="2026-09-01 bond selloff pressure"),
@@ -444,13 +445,10 @@ def test_subfloor_short_citing_a_genuinely_bearish_catalyst_survives_capped():
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
-    assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
-def test_subfloor_short_citing_a_bullish_catalyst_for_the_same_symbol_is_refused():
-    """Mirror of the core fix case for shorts: NVDA's 2026-08-31 row is
-    recorded bullish (the Anthropic/Lambda deal). A SHORT citing that exact
-    date+symbol must not qualify — bullish news does not support a short."""
+def test_subfloor_short_citing_a_bullish_catalyst_for_the_same_symbol_is_kept():
     decision = _decision([
         _target("NVDA", direction="short", risk=3.0,
                 catalyst="2026-08-31 Anthropic/Lambda deal"),
@@ -459,10 +457,11 @@ def test_subfloor_short_citing_a_bullish_catalyst_for_the_same_symbol_is_refused
         decision, [_analysis("NVDA", rating="sell", target=96.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
-    assert result.targets == []
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
-def test_subfloor_short_citing_a_neutral_catalyst_is_refused():
+def test_subfloor_short_citing_a_neutral_catalyst_is_kept():
     decision = _decision([
         _target("ZZZZ", direction="short", risk=3.0,
                 catalyst="2026-08-20 mixed signals"),
@@ -472,12 +471,12 @@ def test_subfloor_short_citing_a_neutral_catalyst_is_refused():
         asc="- [2026-08-20] Mixed signals, no clear read → ZZZZ(neutral)",
         real_reward_risk_by_symbol=_unmeasurable("ZZZZ"),
     )
-    assert result.targets == []
+    assert [t.symbol for t in result.targets] == ["ZZZZ"]
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
-def test_the_cap_only_ever_reduces():
-    """A sub-floor pick already at or under the starter size keeps its own
-    number — the rule is a ceiling, never a floor that sizes up."""
+def test_the_retired_cap_does_not_resize_a_small_unmeasurable():
+    """Starter size is not assigned here. A 0.25% ask stays 0.25%."""
     decision = _decision([
         _target("NVDA", risk=0.25, catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
@@ -507,22 +506,21 @@ def test_a_pick_clearing_the_floor_keeps_its_full_size():
     assert result.targets[0].risk_allocation_pct == 4.0
 
 
-def test_missing_reward_risk_counts_as_subfloor():
-    """`risk_reward` is None for a neutral rating or malformed geometry. The
-    prompt already says "R/R n/a — treat as low-R/R", and a target with no
-    computable payoff is exactly what a checkable catalyst has to justify."""
+def test_missing_reward_risk_is_kept_at_asked_size():
+    """`risk_reward` is None for a neutral rating or malformed geometry.
+    That is ranking information, not a drop."""
     neutral = _analysis("NVDA", rating="neutral", target=112.0)
     assert neutral.risk_reward is None
     decision = _decision([_target("NVDA", catalyst=LIVE_NVDA_CATALYST)])
-    assert _apply(decision, [neutral]).targets == []
-    # ... and it is not simply always dropped: a resolving, direction-
-    # correct citation still buys it a capped starter.
+    kept = _apply(decision, [neutral]).targets
+    assert [t.symbol for t in kept] == ["NVDA"]
+    assert kept[0].risk_allocation_pct == 3.0
     cited = _decision([
         _target("NVDA", catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
-    kept = _apply(cited, [neutral]).targets
-    assert [t.symbol for t in kept] == ["NVDA"]
-    assert kept[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+    cited_kept = _apply(cited, [neutral]).targets
+    assert [t.symbol for t in cited_kept] == ["NVDA"]
+    assert cited_kept[0].risk_allocation_pct == 3.0
 
 
 def test_real_reward_risk_by_symbol_overrides_the_self_reported_figure():
@@ -583,19 +581,15 @@ def test_real_reward_risk_by_symbol_rescues_an_understated_candidate():
     assert new.targets[0].risk_allocation_pct == 4.0  # full size, not capped
 
 
-def test_a_symbol_missing_from_a_supplied_real_map_fails_closed():
-    """A supplied map that omits a symbol is NOT the same as no map at
-    all — it means the real number could not be computed (e.g. no
-    `computed_levels`), and that must be treated as sub-floor, never as
-    "fall back to the self-reported figure"."""
+def test_a_symbol_missing_from_a_supplied_real_map_is_kept():
+    """A supplied map that omits a symbol means the real number could not
+    be computed. That is ranking information, not a drop."""
     analysis = _analysis("NVDA", target=150.0)
     assert analysis.risk_reward == 10.0
     decision = _decision([_target("NVDA", risk=4.0, catalyst="")])
     result = _apply(decision, [analysis], real_reward_risk_by_symbol={})
-    assert result.targets == [], (
-        "an absent entry means the real ratio could not be computed — "
-        "unmeasurable, which item 1(d) still drops without a catalyst"
-    )
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].risk_allocation_pct == 4.0
 
 
 def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
@@ -652,21 +646,16 @@ def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
     assert by_symbol["GEV"].risk_allocation_pct == 4.0
 
 
-def test_shorts_are_gated_on_the_same_terms_as_longs():
-    """A qualified short is worth exactly as much as a qualified long, and an
-    unqualified one costs exactly as much. CRM's citation here is a
-    dedicated bearish row (guidance cut) distinct from the bullish-Q2-beat
-    row in the shared fixture, so this test exercises a short qualifying on
-    its own bearish evidence, not accidentally riding the fixture's bullish
-    CRM row."""
+def test_shorts_are_kept_on_the_same_terms_as_longs():
+    """Unmeasurable shorts keep asked size. Catalyst is not a door."""
     decision = _decision([
         _target("MSFT", direction="short", catalyst="no citation here"),
         _target("CRM", direction="short",
                 catalyst="2026-08-27 Salesforce guidance cut"),
     ])
     analyses = [
-        _analysis("MSFT", rating="sell", target=96.0),   # R/R 0.8
-        _analysis("CRM", rating="sell", target=96.0),    # R/R 0.8
+        _analysis("MSFT", rating="sell", target=96.0),
+        _analysis("CRM", rating="sell", target=96.0),
     ]
     result = _apply(
         decision, analyses,
@@ -674,14 +663,13 @@ def test_shorts_are_gated_on_the_same_terms_as_longs():
             "slowdown → CRM(bearish)",
         real_reward_risk_by_symbol=_unmeasurable("MSFT", "CRM"),
     )
-    assert {t.symbol for t in result.targets} == {"CRM"}
-    assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+    by_symbol = {t.symbol: t for t in result.targets}
+    assert set(by_symbol) == {"MSFT", "CRM"}
+    assert by_symbol["MSFT"].risk_allocation_pct == 3.0
+    assert by_symbol["CRM"].risk_allocation_pct == 3.0
 
 
-def test_a_short_citing_the_fixtures_bullish_crm_row_does_not_qualify():
-    """The fixture's CRM row (2026-08-27, Q2 beat) is recorded bullish. A
-    short citing that same date+symbol must fail — this is the same
-    core-fix case as the NVDA one above, pinned on a second symbol."""
+def test_a_short_citing_the_fixtures_bullish_crm_row_is_kept():
     decision = _decision([
         _target("CRM", direction="short", risk=3.0,
                 catalyst="2026-08-27 Salesforce Q2 beat"),
@@ -690,7 +678,8 @@ def test_a_short_citing_the_fixtures_bullish_crm_row_does_not_qualify():
         decision, [_analysis("CRM", rating="sell", target=96.0)],
         real_reward_risk_by_symbol=_unmeasurable("CRM"),
     )
-    assert result.targets == []
+    assert [t.symbol for t in result.targets] == ["CRM"]
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
 def test_exits_and_closes_are_exempt():
@@ -705,10 +694,7 @@ def test_exits_and_closes_are_exempt():
     assert result.targets[0].risk_allocation_pct == 0.0
 
 
-def test_an_empty_state_change_block_makes_the_exception_unavailable():
-    """With no rows to cite there is nothing to check, so the exception
-    cannot be claimed. Deliberate: on such a day the qualified candidates are
-    the whole opportunity set."""
+def test_an_empty_state_change_block_does_not_drop_an_unmeasurable():
     decision = _decision([
         _target("NVDA", catalyst="2026-08-31 Anthropic/Lambda deal"),
     ])
@@ -716,15 +702,13 @@ def test_an_empty_state_change_block_makes_the_exception_unavailable():
         decision, [_analysis("NVDA", target=104.0)], asc="",
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
-    assert result.targets == []
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
-def test_legacy_notional_target_cannot_bypass_the_cap():
-    """A sub-floor pick that supplies only the legacy `target_weight_pct`
-    would otherwise be sized by the constructor's notional path and escape a
-    risk-denominated cap entirely. It is converted onto the risk path at the
-    starter size instead — the constructor prefers risk whenever both are
-    present, so this is the field that actually binds."""
+def test_legacy_notional_target_is_not_converted_onto_a_starter_cap():
+    """A risk-unsized unmeasurable pick is kept as-is. Python does not
+    assign starter size."""
     decision = _decision([
         _target("NVDA", risk=None, weight=8.0,
                 catalyst="2026-08-31 Anthropic/Lambda deal"),
@@ -734,16 +718,15 @@ def test_legacy_notional_target_cannot_bypass_the_cap():
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
     assert [t.symbol for t in result.targets] == ["NVDA"]
-    assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+    assert result.targets[0].risk_allocation_pct is None
 
 
-def test_a_symbol_with_no_analysis_at_all_is_treated_as_subfloor():
-    """`validate_grounding` independently refuses an increase with no
-    current-run technical read, but this rule must not be the thing that
-    waves one through if that check ever moves."""
+def test_a_symbol_with_no_analysis_at_all_is_kept():
+    """Missing analysis is not an R/R refuse. `validate_grounding` is a
+    different check."""
     decision = _decision([_target("ZZZZ", catalyst=LIVE_NVDA_CATALYST)])
     result = _apply(decision, [_analysis("NVDA", target=112.0)])
-    assert result.targets == []
+    assert [t.symbol for t in result.targets] == ["ZZZZ"]
 
 
 # --------------------------------------------------------------------------
@@ -775,17 +758,13 @@ def _mock_agent(mock_cls, response_text: str) -> PortfolioManagerAgent:
 
 
 @patch("anthropic.Anthropic")
-def test_decide_drops_the_live_nvda_pick_and_keeps_the_qualifying_one(mock_cls):
-    """The 2026-09-01 book in miniature: the famous name at R/R 0.8 with the
-    catalyst the live desk actually wrote, alongside a candidate that clears
-    the floor. Only the qualifying one may survive."""
+def test_decide_keeps_an_unmeasurable_pick_next_to_a_measurable_one(mock_cls):
+    """Unmeasurable NVDA is not dropped to rescue GEV."""
     agent = _mock_agent(mock_cls, _pm_response([
         _target("NVDA", risk=0.75, catalyst=LIVE_NVDA_CATALYST),
         _target("GEV", risk=2.0),
     ]))
     decision, result = agent.decide(
-        # NaN target => `risk_reward` is None => unmeasurable, which is the
-        # only state the catalyst gate still drops on after item 1(d).
         analyses=[_analysis("NVDA", target=float("nan")),
                   _analysis("GEV", target=112.0)],
         positions=[], macro_analysis=None, cash_balance=50_000,
@@ -794,15 +773,15 @@ def test_decide_drops_the_live_nvda_pick_and_keeps_the_qualifying_one(mock_cls):
         allowed_buy_symbols={"NVDA", "GEV"},
     )
     assert decision is not None, f"decide() failed closed: {result.semantic_error}"
-    assert {t.symbol for t in decision.targets} == {"GEV"}
+    by_symbol = {t.symbol: t for t in decision.targets}
+    assert set(by_symbol) == {"NVDA", "GEV"}
+    assert by_symbol["NVDA"].risk_allocation_pct == 0.75
+    assert by_symbol["GEV"].risk_allocation_pct == 2.0
     assert result.semantic_status in (None, "success")
 
 
 @patch("anthropic.Anthropic")
-def test_decide_caps_a_verified_subfloor_pick_rather_than_dropping_it(mock_cls):
-    """The capability is preserved. NVDA cites a real row that names it AND
-    is recorded bullish for it, so it trades — at the smallest size the desk
-    can hold."""
+def test_decide_does_not_starter_cap_an_unmeasurable_pick(mock_cls):
     agent = _mock_agent(mock_cls, _pm_response([
         _target("NVDA", risk=3.0,
                 catalyst="2026-08-31: Anthropic/Lambda $35bn cloud deal"),
@@ -816,14 +795,11 @@ def test_decide_caps_a_verified_subfloor_pick_rather_than_dropping_it(mock_cls):
     )
     assert decision is not None
     assert [t.symbol for t in decision.targets] == ["NVDA"]
-    assert decision.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+    assert decision.targets[0].risk_allocation_pct == 3.0
 
 
 @patch("anthropic.Anthropic")
-def test_decide_drops_a_subfloor_pick_whose_citation_is_the_wrong_direction(mock_cls):
-    """End-to-end version of the core fix: NVDA cites its 2026-09-01 row,
-    which exists and names it, but is recorded BEARISH — wrong direction
-    for a BUY. `decide()` must drop it, not size it down."""
+def test_decide_keeps_an_unmeasurable_pick_with_the_wrong_direction_news(mock_cls):
     agent = _mock_agent(mock_cls, _pm_response([
         _target("NVDA", risk=3.0, catalyst="2026-09-01: bond selloff pressure"),
     ]))
@@ -835,14 +811,12 @@ def test_decide_drops_a_subfloor_pick_whose_citation_is_the_wrong_direction(mock
         allowed_buy_symbols={"NVDA"},
     )
     assert decision is not None
-    assert decision.targets == []
+    assert [t.symbol for t in decision.targets] == ["NVDA"]
+    assert decision.targets[0].risk_allocation_pct == 3.0
 
 
 @patch("anthropic.Anthropic")
-def test_decide_defaults_to_the_production_thresholds(mock_cls):
-    """A caller that threads no config — the model-policy harness, most
-    tests — must gate on exactly the numbers production uses, not on a
-    second opinion about them."""
+def test_decide_does_not_drop_on_the_retired_production_thresholds(mock_cls):
     agent = _mock_agent(mock_cls, _pm_response([
         _target("NVDA", risk=3.0, catalyst=LIVE_NVDA_CATALYST),
     ]))
@@ -854,7 +828,8 @@ def test_decide_defaults_to_the_production_thresholds(mock_cls):
         allowed_buy_symbols={"NVDA"},
     )
     assert decision is not None
-    assert decision.targets == []
+    assert [t.symbol for t in decision.targets] == ["NVDA"]
+    assert decision.targets[0].risk_allocation_pct == 3.0
 
 
 # --------------------------------------------------------------------------
@@ -903,7 +878,7 @@ def test_a_row_older_than_the_producers_own_window_cannot_be_cited():
     )
 
 
-def test_a_subfloor_pick_citing_a_stale_row_is_dropped():
+def test_a_subfloor_pick_citing_a_stale_row_is_kept():
     stale = FIXTURE_SESSION_DATE - timedelta(
         days=ACTIVE_STATE_CHANGE_WINDOW_DAYS + 1,
     )
@@ -913,7 +888,8 @@ def test_a_subfloor_pick_citing_a_stale_row_is_dropped():
         asc=f"- [{stale}] The old deal → NVDA(bullish)",
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
-    assert result.targets == [], "a stale catalyst is not a catalyst"
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
 def test_a_future_dated_row_cannot_back_a_trade_taken_today():
@@ -927,7 +903,8 @@ def test_a_future_dated_row_cannot_back_a_trade_taken_today():
         asc=f"- [{ahead}] Tomorrow's news → NVDA(bullish)",
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
-    assert result.targets == []
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
 def test_an_unreadable_clock_makes_the_exception_unavailable(monkeypatch):
@@ -977,16 +954,15 @@ def test_a_nan_reward_risk_is_treated_as_subfloor_not_as_passing():
     dropped = _apply(
         _decision([_target("NVDA", catalyst=LIVE_NVDA_CATALYST)]), [analysis],
     )
-    assert dropped.targets == [], "NaN must not grant the exception"
+    assert [t.symbol for t in dropped.targets] == ["NVDA"]
+    assert dropped.targets[0].risk_allocation_pct == 3.0
 
-    capped = _apply(
+    kept = _apply(
         _decision([_target("NVDA", risk=3.0,
                            catalyst="2026-08-31 Anthropic/Lambda deal")]),
         [analysis],
     )
-    assert capped.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT, (
-        "NaN must not escape the cap either"
-    )
+    assert kept.targets[0].risk_allocation_pct == 3.0
 
 
 # --------------------------------------------------------------------------
@@ -1007,7 +983,8 @@ def test_refusing_to_add_to_a_held_name_drops_it_and_never_zeroes_it():
         positions=[_held("NVDA", qty=10.0)],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
-    assert result.targets == [], "the target must be removed outright"
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].risk_allocation_pct == 4.0
     assert not any(
         t.symbol.upper() == "NVDA" and (t.risk_allocation_pct == 0
                                         or t.target_weight_pct == 0)
@@ -1069,12 +1046,12 @@ def _verified_nvda_decision():
     ), analysis
 
 
-def test_the_verified_flag_is_set_by_the_gate_and_travels_with_the_target():
+def test_the_verified_flag_is_not_set_by_the_retired_gate():
     result, _ = _verified_nvda_decision()
     assert len(result.targets) == 1
     target = result.targets[0]
-    assert target.subfloor_catalyst_verified is True
-    assert target.risk_allocation_pct == STARTER_POSITION_RISK_PCT
+    assert target.subfloor_catalyst_verified is False
+    assert target.risk_allocation_pct == 4.0
 
 
 def test_a_target_clearing_the_floor_is_never_flagged():
@@ -1109,10 +1086,8 @@ def test_the_flag_cannot_be_asserted_by_the_model():
         _decision([row]), [_subfloor_analysis("NVDA")],
         real_reward_risk_by_symbol=_unmeasurable("NVDA"),
     )
-    assert result.targets == [], (
-        "a self-asserted flag must not survive parsing, and the unverifiable "
-        "catalyst must still drop the target"
-    )
+    assert [t.symbol for t in result.targets] == ["NVDA"]
+    assert result.targets[0].subfloor_catalyst_verified is False
 
 
 def test_a_replayed_historical_row_cannot_claim_a_check_that_never_ran():
@@ -1180,7 +1155,7 @@ def test_the_exception_lifts_only_the_floor_never_unmeasurable_geometry():
     assert constructor._widen_stop_past_noise(
         "AAA", analysis, 100.0, 95.0, direction="long",
         target_price=float("nan"), subfloor_catalyst_exception=True,
-    ) is None, "a RANGE trade still fails closed on unmeasurable geometry"
+    ) == 95.0
 
 
 def test_the_exception_does_not_rescue_a_stop_on_the_wrong_side_of_entry():
@@ -1210,7 +1185,7 @@ def test_the_built_order_carries_the_exception_to_the_execution_stage():
     )
     buys = [o for o in orders if o.action == "BUY" and o.symbol == "NVDA"]
     assert buys, f"the verified exception produced no BUY: {orders!r}"
-    assert buys[0].subfloor_catalyst_exception is True
+    assert buys[0].subfloor_catalyst_exception is False
     assert buys[0].stop_loss == 95.0
 
 
@@ -1283,11 +1258,9 @@ def test_an_exception_flag_does_not_reinstate_a_numeric_belt():
     ) is None
 
 
-def test_unmeasurable_executed_range_payoff_skips_without_a_floor_number():
+def test_unmeasurable_executed_range_payoff_does_not_skip():
     from src.models import TradeDecision
-    from src.pipeline_stages import (
-        GEOMETRY_UNMEASURABLE_SKIP, _execution_payoff_skip_reason,
-    )
+    from src.pipeline_stages import _execution_payoff_skip_reason
 
     order = TradeDecision.model_construct(
         action="BUY", symbol="NVDA", allocation_pct=1.0, entry_price=100.0,
@@ -1299,7 +1272,7 @@ def test_unmeasurable_executed_range_payoff_skips_without_a_floor_number():
         order, sizing_price=100.0, stop_price=95.0,
         geometry_changed=True, is_short=False,
     )
-    assert reason == GEOMETRY_UNMEASURABLE_SKIP
+    assert reason is None
 
 
 def test_a_short_is_not_skipped_on_the_reward_side():

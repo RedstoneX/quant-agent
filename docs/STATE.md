@@ -270,9 +270,9 @@ This file records what is accepted and true **now**. Git history preserves imple
   a `range` trade the ratio — both sides measured since 2026-09-01, the
   target computed from structure rather than read from the analyst (see the
   Phase 1 entry above and spec Phase 10.4) — is a ranking signal only. A
-  computed ratio does not refuse a ticket and does not shrink it. Only a
-  ratio that cannot be measured at all is refused: honesty about unknown
-  geometry, not a floor number. Measured, the book's stops
+  computed ratio does not refuse a ticket and does not shrink it. An
+  unmeasurable ratio is recorded as unknown ranking information; it does
+  not refuse, size-cap, or open a catalyst-exception door. Measured, the book's stops
   were sitting a median 1.7 ATRs from entry, which both fired exits inside
   noise and forced the 20% clamp above to bind at nearly every conviction
   level. `config/prompts/portfolio_manager.md`'s conviction bands and

@@ -55,7 +55,7 @@ from src.data.technical import compute_indicators
 from src.models import (
     NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
     missing_stated_falsifier, open_target_missing_falsifier,
-    parse_telemetry, reward_to_risk, SOFT_EXIT_MISSING_AFTER_RETRY,
+    parse_telemetry, SOFT_EXIT_MISSING_AFTER_RETRY,
 )
 from src.nominations import select_nominations
 from src.portfolio_constructor import (
@@ -66,7 +66,6 @@ from src.pipeline_context import RunContext
 from src.risk.constants import (
     REWARD_RISK_FLOOR,
     STARTER_POSITION_RISK_PCT,
-    reward_risk_floor_applies,
 )
 
 if TYPE_CHECKING:
@@ -2269,15 +2268,6 @@ def _min_order_usd(pipeline) -> float:
     return value
 
 
-#: Execution skip when a RANGE order's executed prices cannot compute a
-#: payoff at all (stop/target on the wrong side of entry, or a non-finite
-#: price). Honesty about unknown geometry — not a numeric reward:risk floor.
-#: Owner 2026-09-17: invented R/R gates are a defect. Historical runs wrote
-#: `geometry_rr` for both this case and the retired 1.2 belt; that token is
-#: no longer emitted.
-GEOMETRY_UNMEASURABLE_SKIP = "geometry_unmeasurable"
-
-
 def _execution_payoff_skip_reason(
     decision,
     *,
@@ -2286,28 +2276,16 @@ def _execution_payoff_skip_reason(
     geometry_changed: bool,
     is_short: bool,
 ) -> str | None:
-    """Skip an entry only when RANGE executed payoff cannot be computed.
+    """Never skip on reward:risk — computed, thin, or unmeasurable.
 
-    A computed ratio — including one below the retired 1.2 belt or the
-    retired 1.5 floor — is never a skip. Breakouts are never skipped on
-    the reward side. Shorts are unchanged: this check is long-only, as
-    the submit-loop caller has always been.
-
-    Returns `GEOMETRY_UNMEASURABLE_SKIP` or None. Never returns
-    `geometry_rr`.
+    Owner 2026-09-17: invented R/R gates are a defect. Overnight bind:
+    honesty about a payoff without a number is a recorded fact / ranking
+    hint, not a refuse. Historical runs wrote `geometry_rr` (1.2 belt)
+    and this helper briefly wrote `geometry_unmeasurable`; neither token
+    is emitted. Arguments are accepted so callers and tests keep the
+    same signature; none of them decide admission.
     """
-    if is_short or not geometry_changed:
-        return None
-    take_profit = getattr(decision, "take_profit", 0) or 0
-    if take_profit <= 0:
-        return None
-    if not reward_risk_floor_applies(getattr(decision, "setup_type", None)):
-        return None
-    executed_rr = reward_to_risk(
-        sizing_price, stop_price, take_profit, is_short=False,
-    )
-    if executed_rr is None:
-        return GEOMETRY_UNMEASURABLE_SKIP
+    _ = (decision, sizing_price, stop_price, geometry_changed, is_short)
     return None
 
 
@@ -6655,22 +6633,14 @@ class ExecutionStage:
                                        decision.symbol, e)
 
                 # Geometry may have moved since the Risk Manager audited
-                # (ATR-widened stop, or limit raised to market). A computed
-                # executed ratio is never a skip — invented R/R floors are
-                # a defect (owner 2026-09-17). Only a RANGE order whose
-                # executed prices cannot compute a payoff at all is refused.
+                # (ATR-widened stop, or limit raised to market). Reward:risk
+                # — computed, thin, or unmeasurable — is never a skip
+                # (owner 2026-09-17). The retired 1.2 belt killed RSG on
+                # 2026-09-16; renaming that skip is also a defect.
                 geometry_changed = (
                     stop_price != decision.stop_loss
                     or (decision.entry_price > 0 and sizing_price > decision.entry_price)
                 )
-                # Owner 2026-09-17: invented reward:risk floors are a defect.
-                # A computed executed ratio — however thin, including the
-                # retired 1.2 belt that killed RSG on 2026-09-16 — is not a
-                # skip. Breakouts stay exempt from any reward-side skip.
-                # What remains is honesty: a RANGE order whose executed
-                # prices cannot compute a payoff at all (wrong-side stop or
-                # target, non-finite price) is refused, with a durable
-                # reason and no invented floor number.
                 payoff_skip = _execution_payoff_skip_reason(
                     decision,
                     sizing_price=sizing_price,
@@ -6678,39 +6648,22 @@ class ExecutionStage:
                     geometry_changed=geometry_changed,
                     is_short=is_short,
                 )
+                if payoff_skip is not None:
+                    raise RuntimeError(
+                        "reward:risk execution skip is retired; "
+                        f"got {payoff_skip!r} for {decision.symbol}"
+                    )
                 if (
                     not is_short and geometry_changed
                     and decision.take_profit > 0
-                    and not reward_risk_floor_applies(
-                        getattr(decision, "setup_type", None),
-                    )
                 ):
                     logger.info(
                         "BUY %s: execution moved the geometry (entry $%.2f -> "
-                        "$%.2f, stop $%.2f -> $%.2f) but NO reward-side skip "
-                        "applies — breakout setup, managed by trailing with "
-                        "no fixed target.",
+                        "$%.2f, stop $%.2f -> $%.2f) — no reward-side skip "
+                        "applies (invented R/R gates retired).",
                         decision.symbol, decision.entry_price, sizing_price,
                         decision.stop_loss, stop_price,
                     )
-                if payoff_skip is not None:
-                    logger.warning(
-                        "BUY %s skipped: executed geometry cannot compute a "
-                        "payoff at all — RM approved entry $%.2f / stop "
-                        "$%.2f, execution moved it to $%.2f / $%.2f. Not an "
-                        "R/R floor: the arithmetic is impossible.",
-                        decision.symbol,
-                        decision.entry_price, decision.stop_loss,
-                        sizing_price, stop_price,
-                    )
-                    _record_execution_skip(
-                        pipeline, ctx, decision.symbol, payoff_skip,
-                        "executed geometry cannot compute a payoff "
-                        f"(RM approved ${decision.entry_price:.2f}/"
-                        f"${decision.stop_loss:.2f}, execution moved to "
-                        f"${sizing_price:.2f}/${stop_price:.2f})",
-                    )
-                    continue
 
                 # Spec §11.1. Exact sizing when the flag is on AND the broker
                 # confirms the symbol is fractionable; whole shares otherwise.
