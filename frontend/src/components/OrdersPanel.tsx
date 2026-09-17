@@ -41,6 +41,8 @@ export function OrdersPanel({
     () => [
       columnHelper.accessor("symbol", {
         header: "Symbol",
+        size: 72,
+        minSize: 56,
         cell: (info) =>
           onSelectSymbol ? (
             <button
@@ -57,21 +59,25 @@ export function OrdersPanel({
             <span className="font-bold text-accent">{info.getValue()}</span>
           ),
       }),
-      columnHelper.accessor("side", { header: "Side", cell: (info) => (info.getValue() || "—").toUpperCase() }),
-      columnHelper.accessor("order_type", { header: "Type", cell: (info) => (info.getValue() || "—").replace(/_/g, " ") }),
-      columnHelper.accessor("qty", { header: "Requested", cell: (info) => fmtNum(info.getValue()) }),
+      columnHelper.accessor("side", { header: "Side", size: 56, minSize: 44, cell: (info) => (info.getValue() || "—").toUpperCase() }),
+      columnHelper.accessor("order_type", { header: "Type", size: 88, minSize: 64, cell: (info) => (info.getValue() || "—").replace(/_/g, " ") }),
+      columnHelper.accessor("qty", { header: "Requested", size: 72, minSize: 56, cell: (info) => fmtNum(info.getValue()) }),
+      columnHelper.accessor("stop_price", { header: "Stop", size: 72, minSize: 56, cell: (info) => fmtMoney(info.getValue()) }),
+      columnHelper.accessor("limit_price", { header: "Limit", size: 72, minSize: 56, cell: (info) => fmtMoney(info.getValue()) }),
       columnHelper.accessor("status", {
         header: "Status",
+        size: 80,
+        minSize: 64,
         cell: (info) => <Badge color={String(info.getValue()).includes("fill") ? "emerald" : String(info.getValue()).includes("reject") ? "rose" : "slate"} size="xs">{info.getValue() || "unknown"}</Badge>,
       }),
       columnHelper.accessor("filled_qty", {
         header: "Fill",
+        size: 110,
+        minSize: 72,
         cell: (info) => `${fmtNum(info.getValue())} @ ${fmtMoney(info.row.original.filled_avg_price)}`,
       }),
-      columnHelper.accessor("limit_price", { header: "Limit", cell: (info) => fmtMoney(info.getValue()) }),
-      columnHelper.accessor("stop_price", { header: "Stop", cell: (info) => fmtMoney(info.getValue()) }),
-      columnHelper.accessor("submitted_at", { header: "Submitted", cell: (info) => fmtTime(info.getValue()) }),
-      columnHelper.accessor("filled_at", { header: "Filled", cell: (info) => fmtTime(info.getValue()) }),
+      columnHelper.accessor("submitted_at", { header: "Submitted", size: 88, minSize: 72, cell: (info) => fmtTime(info.getValue()) }),
+      columnHelper.accessor("filled_at", { header: "Filled", size: 88, minSize: 72, cell: (info) => fmtTime(info.getValue()) }),
     ] as LegacyColumnDef<OrderItem, unknown>[],
     [onSelectSymbol]
   );
@@ -108,7 +114,7 @@ export function OrdersPanel({
             onRowClick={onInspect}
             resizable
             reorderable
-            storageKey="orders-columns"
+            storageKey="orders-columns-v2"
           />
         </div>
       )}

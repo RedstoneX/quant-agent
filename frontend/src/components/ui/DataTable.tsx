@@ -9,19 +9,12 @@ import { flexRender, type ColumnOrderState, type ColumnSizingState, type Sorting
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@tremor/react";
 import { readPersistedColumnState, writePersistedColumnState } from "./dataTablePersistence";
 
-// Header/cell padding below is deliberately tighter than Tremor's default
-// (p-4 / px-4 py-3.5) - owner override 2026-09-10: Positions' "Day P&L"
-// and Orders' "Stop" columns were being pushed off the right edge into
-// horizontal scroll by that default padding on wide tables (9-10 columns).
-// tremorTwMerge dedupes conflicting Tailwind classes by keeping the one
-// passed in last, so this override wins over Tremor's own p-4 without
-// touching the Tremor package itself.
-// Follow-up same day: px-2.5 (10px/side) still left the row a few px
-// wider than the ~580-590px dockview panel, clipping the last column's
-// final 1-2 characters and forcing a hairline overflow-x scrollbar. Cut
-// to px-2 (8px/side): 2px/side less x2 sides x9-10 columns removes
-// ~36-40px from total row width - enough headroom to also survive the
-// panel being dragged a bit narrower than today's measured width.
+// Resizable tables fill the panel (`w-full table-fixed`) so Stop/Limit and
+// Day P&L stay on-screen at typical blotter widths instead of forcing a
+// pixel-sum wider than the dock. Column `size` values then act as share
+// weights; an operator who drags a column still changes the split, not
+// the table's overall width. Header/cell padding is tighter than Tremor's
+// default (p-4) for the same reason — owner override 2026-09-10.
 export function DataTable<T extends object>({
   data,
   columns,
@@ -243,7 +236,7 @@ export function DataTable<T extends object>({
 
   return (
     <div className="max-w-full overflow-x-auto rounded-lg ring-1 ring-border">
-      <Table className={compact ? "text-xs" : "text-sm"} style={resizable ? { width: table.getTotalSize() } : undefined}>
+      <Table className={`${compact ? "text-xs" : "text-sm"}${resizable ? " w-full table-fixed" : ""}`} style={resizable ? { width: "100%" } : undefined}>
         <TableHead>
           {table.getHeaderGroups().map((group) => (
             <TableRow key={group.id}>
@@ -251,7 +244,7 @@ export function DataTable<T extends object>({
                 <TableHeaderCell
                   key={header.id}
                   data-column-id={header.column.id}
-                  className={`relative whitespace-nowrap px-2 py-2 ${reorderable ? "cursor-grab select-none" : ""}`}
+                  className={`relative whitespace-nowrap px-2 py-2 overflow-hidden text-ellipsis ${reorderable ? "cursor-grab select-none" : ""}`}
                   style={resizable ? { width: header.getSize() } : undefined}
                   // Drag-anywhere reorder (2026-09-11): pointerdown on ANY
                   // part of the header cell starts click-vs-drag tracking,
@@ -346,7 +339,7 @@ export function DataTable<T extends object>({
               {row.getVisibleCells().map((cell) => (
                 <TableCell
                   key={cell.id}
-                  className="whitespace-nowrap font-mono tabular-nums px-2 py-2"
+                  className="whitespace-nowrap font-mono tabular-nums px-2 py-2 overflow-hidden text-ellipsis"
                   style={resizable ? { width: cell.column.getSize() } : undefined}
                 >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}

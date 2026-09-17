@@ -77,6 +77,28 @@ describe("OrdersPanel symbol click vs row inspect", () => {
     expect(onSelectSymbol).not.toHaveBeenCalled();
   });
 
+  it("puts Stop and Limit before Status so they stay on screen at typical blotter widths", () => {
+    render(
+      <OrdersPanel
+        orders={[order({ stop_price: 315.85, limit_price: 315.0, order_type: "stop_limit" })]}
+        error={null}
+        loading={false}
+        status="open"
+        onStatusChange={vi.fn()}
+      />
+    );
+
+    const headers = screen.getAllByRole("columnheader").map((el) => el.textContent || "");
+    const stop = headers.findIndex((text) => text.includes("Stop"));
+    const limit = headers.findIndex((text) => text.includes("Limit"));
+    const status = headers.findIndex((text) => text.includes("Status"));
+    expect(stop).toBeGreaterThan(-1);
+    expect(limit).toBeGreaterThan(-1);
+    expect(status).toBeGreaterThan(-1);
+    expect(stop).toBeLessThan(status);
+    expect(limit).toBeLessThan(status);
+  });
+
   it("renders the symbol as plain text, not a dead button, when onSelectSymbol is absent", () => {
     render(
       <OrdersPanel
