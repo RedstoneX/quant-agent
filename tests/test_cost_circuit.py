@@ -559,15 +559,16 @@ def test_success_after_provably_free_attempt_is_charged_only_the_real_cost(
         ).fetchone()[0] == 1
 
 
-def test_success_after_ambiguous_attempt_marks_inexact_instead_of_a_phantom_charge(tmp_path):
+def test_success_after_ambiguous_attempt_keeps_spend_exact_and_does_not_latch(tmp_path):
     """A 500 might have billed for a stream that started and died.
 
     Item 14 deleted the reservation there was ever anything to add, so the
-    ledger only ever holds the winner's real cost. Honesty is the inexact
-    flag (`costs_exact=0`): the booked total is a known minimum, not a
-    proven ceiling. That flag does NOT increment `unknown_cost_rows` and
-    does NOT hard-latch `legacy_unknown_cost`. A fully-failed ambiguous
-    call (`fail_call`) and a completed call with no telemetry still latch.
+    ledger only ever holds the winner's real cost. That winner with a
+    real cost_usd keeps the day exact — marking inexact was a second lie
+    about spend. unknown_cost_rows stays 0 and legacy_unknown_cost does
+    not latch. A fully-failed ambiguous call (`fail_call`) and a completed
+    call with no telemetry still latch. Caps are not raised; settled
+    spend is not erased.
     """
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
@@ -587,28 +588,28 @@ def test_success_after_ambiguous_attempt_marks_inexact_instead_of_a_phantom_char
         assert conn.execute(
             "SELECT costs_exact FROM llm_budget_sessions WHERE run_id=?",
             ("run-retry-500",),
-        ).fetchone()[0] == 0
-        # Honesty without a false latch: the day is inexact (a failed
-        # attempt might have billed) but the winner's cost is known, so
-        # unknown_cost_rows stays 0. Incrementing it here was the
-        # 2026-09-16 midday wipe (event id=27) at ~$0.65 of $2.75.
+        ).fetchone()[0] == 1
+        # Incrementing unknown_cost_rows here was the 2026-09-16 midday
+        # wipe (event id=27) at ~$0.65 of $2.75. The winner's cost is
+        # known, so the day stays exact.
         assert day_row[0] == 0
-        assert day_row[1] == 0
+        assert day_row[1] == 1
     state = circuit.status()
     assert state["suspended"] is False
     assert state.get("trigger_code") != "legacy_unknown_cost"
-    # Caps still bind on the known minimum — the next call is authorized.
+    # Caps still bind on the booked total — the next call is authorized.
     circuit.begin_call(
         agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
         system_prompt="s", user_message="u", max_output_tokens=100,
     )
 
 
-def test_one_ambiguous_attempt_among_free_ones_still_marks_inexact(tmp_path):
-    """Renamed from `..._keeps_the_whole_reserve`: ambiguity is still
-    contagious (see `_all_attempts_provably_free`) -- one attempt that
-    might have been billed still makes the whole call's exactness suspect
-    -- but there is no reservation left to inflate a dollar charge with."""
+def test_one_ambiguous_attempt_among_free_ones_stays_exact(tmp_path):
+    """A mixed retry still books only the winner's real cost.
+
+    Ambiguity on a prior attempt is not a reason to mark the day inexact
+    once the provider returned a number for the seat that succeeded.
+    """
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
     free = _StatusCodeError(429, "rate limited")
@@ -624,7 +625,7 @@ def test_one_ambiguous_attempt_among_free_ones_still_marks_inexact(tmp_path):
         assert conn.execute(
             "SELECT costs_exact FROM llm_budget_sessions WHERE run_id=?",
             ("run-retry-mixed",),
-        ).fetchone()[0] == 0
+        ).fetchone()[0] == 1
         assert conn.execute(
             "SELECT unknown_cost_rows FROM llm_budget_days",
         ).fetchone()[0] == 0

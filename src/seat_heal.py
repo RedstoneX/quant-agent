@@ -222,11 +222,11 @@ def describe_macro_parse_failure(payload, error: BaseException) -> str:
 def mechanical_heal_macro(payload) -> HealResult:
     """Try to make a macro payload usable without a paid call.
 
-    A stored MacroStore trim (no reasoning_chain, dict sector_guidance) is
-    still a regime snapshot — usable as remembered macro for PM's dict
-    readers, NOT as a freshly parsed MacroAnalysis. We coerce the shape so
-    Phase 13 does not ValidationError on our own trim. We do not fill
-    reasoning_chain from summary (that would invent macro text).
+    Coerce dict ``sector_guidance`` / stored rows toward MacroAnalysis's
+    list shape. Do not fill reasoning_chain from summary (that would
+    invent macro text). After coerce, the payload must still validate as
+    MacroAnalysis — otherwise this is a durable fail, not a remembered
+    regime passed silently into PM.
     """
     if payload is None:
         return HealResult(
@@ -247,6 +247,26 @@ def mechanical_heal_macro(payload) -> HealResult:
             payload=payload,
         )
     coerced, fixes = coerce_macro_shape(payload)
+    from src.models import MacroAnalysis
+    try:
+        MacroAnalysis.model_validate(coerced)
+    except Exception as exc:
+        # Coerce is not a loosen: a trim still missing reasoning_chain is
+        # a durable fail, not a remembered regime smuggled into PM.
+        return HealResult(
+            seat="macro",
+            outcome=HEAL_FAILED,
+            reason=describe_macro_parse_failure(coerced, exc),
+            payload=coerced,
+            mechanical=bool(fixes),
+            usable=False,
+            details={
+                "fixes": fixes,
+                "has_reasoning_chain": isinstance(
+                    coerced.get("reasoning_chain"), dict,
+                ),
+            },
+        )
     return HealResult(
         seat="macro",
         outcome=HEAL_MECHANICAL if fixes else HEAL_SKIPPED_GOOD,

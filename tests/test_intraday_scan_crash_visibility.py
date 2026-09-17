@@ -304,10 +304,11 @@ def test_scan_never_ran_because_another_session_active_stays_healthy_and_silent(
     # Same status as literal process-lock contention above — both are
     # "something else already owns this window" from the caller's
     # perspective, one via the advisory flock, one via the owner lock
-    # still held at the end of this tick's wait.
-    assert result["intraday_scan"] == {
-        "status": "intraday_scan_lock_contended", "run_id": result["run_id"],
-    }
+    # still held at the end of this tick's wait. The owner-lock skip
+    # additionally names movers so they do not vanish silently.
+    nested = result["intraday_scan"]
+    assert nested["status"] == "intraday_scan_lock_contended"
+    assert nested["run_id"] == result["run_id"]
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
 
 

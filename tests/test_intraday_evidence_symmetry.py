@@ -38,9 +38,24 @@ def _analysis(symbol="NVDA", rating="buy") -> TechAnalysisResult:
 
 
 MACRO = {
+    "reasoning_chain": {
+        "volatility_analysis": "vix ok",
+        "yield_curve_analysis": "curve ok",
+        "monetary_policy_analysis": "fed ok",
+        "inflation_labor_credit": "cpi ok",
+        "cross_signal_synthesis": "together ok",
+        "sector_implications": "tech ow",
+    },
     "regime": "risk-on",
+    "confidence": "medium",
     "equity_outlook": "bullish",
-    "sector_guidance": [{"sector": "technology", "stance": "bullish"}],
+    "position_guidance": {
+        "target_invested_pct": 70,
+        "cash_recommendation_pct": 30,
+        "reasoning": "stay invested",
+    },
+    "summary": "risk on",
+    "sector_guidance": [{"sector": "Technology", "stance": "overweight", "reason": ""}],
 }
 
 

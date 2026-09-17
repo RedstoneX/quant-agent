@@ -14,7 +14,9 @@ from src.execution.stop_records import (
     reconcile_recorded_stop_levels,
     recorded_initial_stop,
     replace_stop_and_record,
+    write_back_live_protective_stops,
     write_back_stop_loss,
+    StopLevelMismatch,
 )
 from src.execution.stop_repair import repair_stop_coverage
 from src.storage.db import Database
@@ -283,43 +285,60 @@ def test_scale_in_rearm_writes_back_the_rearmed_level(db):
 
 
 @patch("src.notifier.send_owner_alert", return_value=True)
-def test_report_mismatch_pages_the_owner_and_does_not_write(_alert, db, tmp_path):
-    from src.execution.stop_records import (
-        StopLevelMismatch, report_stop_level_mismatches,
-    )
+def test_report_mismatch_pages_the_owner_and_does_not_write(_alert, db):
+    from src.execution.stop_records import report_stop_level_mismatches
 
     _open_long(db, symbol="DIS", stop=105.80)
-    with patch("src.execution.stop_records._MISMATCH_PAGE_PATH", tmp_path / "pages.json"):
-        report_stop_level_mismatches([
-            StopLevelMismatch(
-                symbol="DIS", recorded=105.80, live=101.44,
-                is_short=False, reason="recorded BUY stop_loss $105.8000 != broker stop $101.4400",
-            ),
-        ])
+    report_stop_level_mismatches([
+        StopLevelMismatch(
+            symbol="DIS", recorded=105.80, live=101.44,
+            is_short=False, reason="recorded BUY stop_loss $105.8000 != broker stop $101.4400",
+        ),
+    ])
     _alert.assert_called_once()
     assert db.get_symbol_last_buy("DIS")["stop_loss"] == pytest.approx(105.80)
 
 
 @patch("src.notifier.send_owner_alert", return_value=True)
-def test_identical_mismatch_fingerprint_pages_once_per_et_day(_alert, db, tmp_path):
-    """2026-09-16: COP/EQNR paged 11 times with the same archive-vs-broker
-    numbers. Log every time; page once per fingerprint set per ET day.
-    Never copy the broker price into the archive."""
-    from src.execution.stop_records import (
-        StopLevelMismatch, report_stop_level_mismatches,
-    )
+def test_unfixed_mismatch_keeps_paging(_alert, db):
+    """Mute-without-fix was the 2026-09-16 COP/EQNR defect. Remaining
+    mismatches page every time until the record is written back."""
+    from src.execution.stop_records import report_stop_level_mismatches
 
-    _open_long(db, symbol="COP", stop=125.21)
     mismatch = StopLevelMismatch(
         symbol="COP", recorded=125.21, live=131.76,
         is_short=False, reason="recorded BUY stop_loss $125.2100 != broker stop $131.7600",
     )
-    page_path = tmp_path / "pages.json"
-    with patch("src.execution.stop_records._MISMATCH_PAGE_PATH", page_path):
-        report_stop_level_mismatches([mismatch])
-        report_stop_level_mismatches([mismatch])
-    assert _alert.call_count == 1
-    assert db.get_symbol_last_buy("COP")["stop_loss"] == pytest.approx(125.21)
+    report_stop_level_mismatches([mismatch])
+    report_stop_level_mismatches([mismatch])
+    assert _alert.call_count == 2
+
+
+def test_live_protective_stop_write_back_fixes_cop_without_inventing(db):
+    """Reconcile found COP's archive behind the desk's own live stop.
+    Write that live price back. Do not invent a third number."""
+    _open_long(db, symbol="COP", stop=125.21)
+    remaining = write_back_live_protective_stops(db, [
+        StopLevelMismatch(
+            symbol="COP", recorded=125.21, live=131.76,
+            is_short=False, reason="recorded BUY stop_loss $125.2100 != broker stop $131.7600",
+        ),
+    ])
+    assert remaining == []
+    assert db.get_symbol_last_buy("COP")["stop_loss"] == pytest.approx(131.76)
+    assert db.get_symbol_last_buy("COP")["initial_stop_loss"] == pytest.approx(125.21)
+
+
+def test_write_back_does_not_invent_a_level_when_live_is_missing(db):
+    _open_long(db, symbol="EQNR", stop=70.10)
+    remaining = write_back_live_protective_stops(db, [
+        StopLevelMismatch(
+            symbol="EQNR", recorded=70.10, live=None,
+            is_short=False, reason="no live stop",
+        ),
+    ])
+    assert remaining and remaining[0].symbol == "EQNR"
+    assert db.get_symbol_last_buy("EQNR")["stop_loss"] == pytest.approx(70.10)
 
 
 def test_accepted_stop_order_rejects_kill_switch_and_missing_id():

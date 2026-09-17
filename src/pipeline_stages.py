@@ -54,7 +54,7 @@ from src.data.event_calendar import (
 from src.data.technical import compute_indicators
 from src.models import (
     NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
-    parse_telemetry, reward_to_risk,
+    parse_telemetry, reward_to_risk, soft_exit_unknown_after_heal,
 )
 from src.nominations import select_nominations
 from src.portfolio_constructor import (
@@ -2658,6 +2658,65 @@ def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
     )
 
 
+def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[str]:
+    """Refuse BUY/SHORT names still carrying don't-know after heal.
+
+    Null must not delete a stated falsifier; heal already restored one when
+    the raw output had it. A name that is still `unknown` is refused HERE,
+    before Risk, so one empty field cannot veto the rest of the plan.
+    Does not invent a thesis_invalid_if or catalyst string. Omitted empty
+    (neutral Tech, legacy constructors) is a different state and is not
+    this filter.
+    """
+    if portfolio_decision is None:
+        return []
+    unknown_symbols = {
+        str(target.symbol).upper()
+        for target in list(getattr(portfolio_decision, "targets", None) or [])
+        if soft_exit_unknown_after_heal(getattr(target, "thesis_invalid_if", None))
+    }
+    isolated: list[str] = []
+    kept = []
+    for decision in list(getattr(portfolio_decision, "decisions", None) or []):
+        symbol = str(decision.symbol).upper()
+        unknown_here = (
+            symbol in unknown_symbols
+            or soft_exit_unknown_after_heal(getattr(decision, "thesis_invalid_if", None))
+        )
+        if decision.action in ("BUY", "SHORT") and unknown_here:
+            isolated.append(symbol)
+            _record_pipeline_event(
+                pipeline, ctx, decision.symbol, "deterministic_gate",
+                "blocked", "empty_soft_exit",
+                detail=(
+                    "thesis_invalid_if empty after heal; isolating this name "
+                    "before Risk so one empty falsifier cannot veto the plan"
+                ),
+                action=decision.action,
+            )
+            continue
+        kept.append(decision)
+    if not isolated:
+        return []
+    unique = list(dict.fromkeys(isolated))
+    logger.warning(
+        "Isolating %d BUY/SHORT name(s) with no stated falsifier before Risk: %s",
+        len(unique), unique,
+    )
+    portfolio_decision.decisions = kept
+    drop = set(unique)
+    portfolio_decision.targets = [
+        target for target in list(getattr(portfolio_decision, "targets", None) or [])
+        if str(target.symbol).upper() not in drop
+    ]
+    existing = list(getattr(portfolio_decision, "constructor_dropped", None) or [])
+    for symbol in unique:
+        if symbol not in existing:
+            existing.append(symbol)
+    portfolio_decision.constructor_dropped = existing
+    return unique
+
+
 def _link_nominations_to_decision(pipeline, ctx) -> None:
     """Spec §9.5 — close the nomination→decision join. NEVER raises.
 
@@ -2803,17 +2862,44 @@ def _macro_analysis_as_dict(macro_analysis) -> dict | None:
     """Dual-shape read: a live MacroAnalysis or a MacroStore snapshot.
 
     MacroStore now persists `reasoning_chain` and `sector_guidance_rows`
-    so a same-day snapshot can re-validate. Older trims without a chain
-    still pass through as a dict; Phase 13 records a durable fail reason
-    rather than inventing the chain.
+    so a same-day snapshot can re-validate. Coerce then validate; a trim
+    that still cannot parse is None plus a durable fail reason — never a
+    broken dict smuggled into PM.
     """
     if macro_analysis is None:
         return None
+    from src.models import MacroAnalysis
+    from src.seat_heal import coerce_macro_shape, describe_macro_parse_failure
+    if isinstance(macro_analysis, MacroAnalysis):
+        return macro_analysis.model_dump()
     if isinstance(macro_analysis, dict):
-        from src.seat_heal import coerce_macro_shape
         payload, _fixes = coerce_macro_shape(macro_analysis)
-        return payload
-    return macro_analysis.model_dump()
+    else:
+        dump = getattr(macro_analysis, "model_dump", None)
+        payload = dump() if callable(dump) else None
+        if not isinstance(payload, dict):
+            return None
+        payload, _fixes = coerce_macro_shape(payload)
+    try:
+        return MacroAnalysis.model_validate(payload).model_dump()
+    except Exception as exc:
+        reason = describe_macro_parse_failure(payload, exc)
+        logger.error(
+            "macro_analysis failed to parse after coerce: %s", reason, exc_info=True,
+        )
+        _stash_macro_parse_failure(reason)
+        return None
+
+
+def _stash_macro_parse_failure(reason: str) -> None:
+    """One durable reason, de-duplicated, drained by DecisionStage."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+    failures = getattr(PortfolioManagerAgent, "_macro_parse_failures", None)
+    if not isinstance(failures, list):
+        PortfolioManagerAgent._macro_parse_failures = []
+        failures = PortfolioManagerAgent._macro_parse_failures
+    if reason not in failures:
+        failures.append(reason)
 
 
 def _macro_target_invested_pct(macro_analysis) -> float | None:
@@ -4348,12 +4434,22 @@ class DecisionStage:
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             constructor_refusals_by_symbol=constructor_refusals_by_symbol,
         )
-        for reason in list(
-            getattr(pipeline.portfolio_manager, "_macro_parse_failures", None) or []
-        ):
+        from src.agents.portfolio_manager import PortfolioManagerAgent
+        macro_failures = list(
+            getattr(PortfolioManagerAgent, "_macro_parse_failures", None) or []
+        )
+        instance_failures = getattr(
+            pipeline.portfolio_manager, "_macro_parse_failures", None,
+        )
+        if instance_failures and instance_failures is not macro_failures:
+            for reason in list(instance_failures):
+                if reason not in macro_failures:
+                    macro_failures.append(reason)
+        for reason in macro_failures:
             _record_pipeline_event(
                 pipeline, ctx, None, "macro_parse", "failed", reason=reason,
             )
+        PortfolioManagerAgent._macro_parse_failures = []
         try:
             pipeline.portfolio_manager._macro_parse_failures = []
         except Exception:
@@ -4754,6 +4850,14 @@ class RiskStage:
         analyses = ctx.analyses
         news_intel = ctx.news_intel
         data_status = ctx.data_status
+
+        isolated = _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision)
+        if isolated and not getattr(portfolio_decision, "decisions", None):
+            logger.warning(
+                "RiskStage: every BUY/SHORT was isolated for an empty "
+                "soft-exit; skipping Risk rather than vetoing an empty plan"
+            )
+            return None
 
         # Cash-sweep view — same contract as DecisionStage: the RiskManager
         # must never see parked T-bills as an 84%-of-book "position" (review

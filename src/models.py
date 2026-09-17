@@ -317,6 +317,17 @@ def stated_soft_exit(value: str | None) -> str:
     return text
 
 
+def soft_exit_unknown_after_heal(value: str | None) -> bool:
+    """True when heal left the recordable don't-know token, not a falsifier.
+
+    Distinct from omitted empty (neutral Tech, legacy constructors). A
+    BUY/SHORT still carrying this token is refused by name before Risk —
+    never filled with invented thesis/catalyst text, never used to veto
+    the rest of the plan.
+    """
+    return (value or "").strip().lower() == SOFT_EXIT_UNKNOWN
+
+
 # Defaulted fields where an explicit null must STILL reject the object.
 #
 # The general rule above is safe because a default of "", [], "unknown" or

@@ -1591,10 +1591,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     exc,
                 )
                 logger.error("Phase 13: macro_analysis failed to parse: %s", reason, exc_info=True)
-                failures = getattr(cls, "_macro_parse_failures", None)
+                failures = getattr(PortfolioManagerAgent, "_macro_parse_failures", None)
                 if not isinstance(failures, list):
-                    cls._macro_parse_failures = []
-                    failures = cls._macro_parse_failures
+                    PortfolioManagerAgent._macro_parse_failures = []
+                    failures = PortfolioManagerAgent._macro_parse_failures
                 failures.append(reason)
             if macro is not None:
                 sectors = {

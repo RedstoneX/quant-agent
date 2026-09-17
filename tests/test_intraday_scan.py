@@ -52,11 +52,34 @@ def _ta_result(symbol, rating="buy"):
 
 
 def _todays_macro_state():
+    """A same-day snapshot that still validates as MacroAnalysis.
+
+    A chain-less trim is no longer usable remembered macro (silent broken
+    into PM). Tests that mean 'today's good carry' must look like the
+    persisted live shape.
+    """
+    from src.models import MacroAnalysis, MacroPositionGuidance, MacroReasoningChain
     return {
         "date": str(et_today()),
-        "regime": "risk-on",
-        "equity_outlook": "bullish",
-        "sector_guidance": {},
+        **MacroAnalysis(
+            reasoning_chain=MacroReasoningChain(
+                volatility_analysis="vix ok",
+                yield_curve_analysis="curve ok",
+                monetary_policy_analysis="fed ok",
+                inflation_labor_credit="cpi ok",
+                cross_signal_synthesis="together ok",
+                sector_implications="tech ow",
+            ),
+            regime="risk-on",
+            confidence="medium",
+            equity_outlook="bullish",
+            position_guidance=MacroPositionGuidance(
+                target_invested_pct=70, cash_recommendation_pct=30,
+                reasoning="stay invested",
+            ),
+            summary="risk on",
+            sector_guidance=[],
+        ).model_dump(),
     }
 
 
@@ -463,7 +486,8 @@ def test_run_intra_check_scan_crash_does_not_fail_the_tick():
 @patch("src.pipeline.compute_indicators")
 def test_scan_skips_when_owner_lock_still_held_at_window_end(mock_compute_indicators):
     """Wait, don't skip on a live morning — but if the calendar window is
-    already over, paid discovery cannot run this tick."""
+    already over, paid discovery cannot run this tick. Movers are named
+    on the skip so they do not vanish silently."""
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["AAPL"])
     p._blocking_owner_session = MagicMock(return_value="morning")
@@ -475,8 +499,11 @@ def test_scan_skips_when_owner_lock_still_held_at_window_end(mock_compute_indica
     ctx = RunContext.start("intra_check")
     result = p._run_intraday_opportunity_scan(ctx)
 
-    assert result == {"status": "intraday_scan_lock_contended", "run_id": ctx.run_id}
-    p.broker.get_intraday_snapshots.assert_not_called()
+    assert result["status"] == "intraday_scan_lock_contended"
+    assert result["run_id"] == ctx.run_id
+    assert result["movers"] == ["AAPL"]
+    assert "AAPL" in result["reason"]
+    p.broker.get_intraday_snapshots.assert_called()
     p.tech_analyst.analyze_batch.assert_not_called()
 
 
@@ -555,16 +582,21 @@ def test_scan_proceeds_when_other_session_activity_is_old(mock_compute_indicator
 
 
 def test_unreadable_owner_lock_fails_closed():
-    """An unknowable owner file must skip paid discovery, never proceed."""
+    """An unknowable owner file must skip paid discovery, never proceed.
+    Movers still get named on the skip."""
     p = _intraday_pipeline(universe=["AAPL"])
     p._blocking_owner_session = MagicMock(return_value="unreadable")
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
 
     ctx = RunContext.start("intra_check")
     assert p._another_session_recently_active(ctx.run_id) is True
     assert p._await_paid_scan_slot(ctx.run_id) is True
-    assert p._run_intraday_opportunity_scan(ctx) == {
-        "status": "intraday_scan_lock_contended", "run_id": ctx.run_id,
-    }
+    result = p._run_intraday_opportunity_scan(ctx)
+    assert result["status"] == "intraday_scan_lock_contended"
+    assert result["movers"] == ["AAPL"]
+    p.tech_analyst.analyze_batch.assert_not_called()
 
 
 def test_get_trades_error_does_not_skip_paid_discovery():

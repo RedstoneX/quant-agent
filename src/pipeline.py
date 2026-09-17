@@ -3171,6 +3171,7 @@ class TradingPipeline:
         try:
             from src.execution.stop_records import (
                 reconcile_recorded_stop_levels, report_stop_level_mismatches,
+                write_back_live_protective_stops,
             )
             mismatches = reconcile_recorded_stop_levels(
                 broker=self.broker,
@@ -3181,6 +3182,7 @@ class TradingPipeline:
                 sweep_symbol=sweep_symbol,
                 skip_symbols=pending_syms,
             )
+            mismatches = write_back_live_protective_stops(self.db, mismatches)
             report_stop_level_mismatches(mismatches)
         except Exception as exc:  # noqa: BLE001
             logger.error("stop-level reconcile failed: %s", exc)
@@ -13243,6 +13245,66 @@ class TradingPipeline:
                 alert = bool(attempted)
                 self._record_heal(ctx, result, alert=alert)
 
+    def _intraday_scan_mover_candidates(
+        self, ctx: RunContext,
+    ) -> tuple[list[tuple[str, float]], dict]:
+        """Cheap snapshot of who moved. No paid calls.
+
+        Runs before the owner-lock wait so a contended morning/midday
+        cannot vanish the mover list. A skip after wait names these
+        symbols in a durable reason instead of dropping them silently.
+        """
+        cfg = self.config.intraday_scan
+        universe = list(self.config.trading.universe)
+        snapshots = self.broker.get_intraday_snapshots(universe) or {}
+        if not snapshots:
+            return [], {}
+        candidates: list[tuple[str, float]] = []
+        for symbol in universe:
+            snap = snapshots.get(symbol) or {}
+            last = snap.get("last_price")
+            prev = snap.get("prev_close")
+            if not (isinstance(last, (int, float)) and isinstance(prev, (int, float))):
+                self._track_intraday_snapshot_miss(symbol)
+                continue
+            self._track_intraday_snapshot_ok(symbol)
+            if prev <= 0:
+                continue
+            move_pct = abs(last - prev) / prev * 100.0
+            if move_pct < cfg.move_threshold_pct:
+                continue
+            if self._recently_intraday_evaluated(symbol, cfg.cooldown_hours):
+                continue
+            candidates.append((symbol, move_pct))
+        candidates.sort(key=lambda t: -t[1])
+        return candidates, snapshots
+
+    def _intraday_paid_scan_skip(self, ctx: RunContext, movers: list[str]) -> dict:
+        """Durable skip: lock still held, movers named, no silent drop."""
+        blocking = self._blocking_owner_session() or "owner_lock"
+        named = ",".join(movers) if movers else "none"
+        reason = (
+            f"paid discovery skipped: {blocking} still held; movers={named}"
+        )
+        logger.warning("Intraday scan: %s", reason)
+        for symbol in movers:
+            try:
+                _record_pipeline_event(
+                    self, ctx, symbol, "opportunity", "skipped",
+                    "intraday_scan_lock_contended", detail=reason,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Intraday scan: could not persist skip reason for %s",
+                    symbol, exc_info=True,
+                )
+        return {
+            "status": "intraday_scan_lock_contended",
+            "run_id": ctx.run_id,
+            "reason": reason,
+            "movers": list(movers),
+        }
+
     def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict:
         """Bounded intraday opportunity discovery (2026-08-19 fix).
 
@@ -13280,17 +13342,14 @@ class TradingPipeline:
         """
         cfg = self.config.intraday_scan
 
-        # Second concurrency layer, complementing the process lock held by
-        # the wrapper: the lock stops two *intra_check* processes, this
-        # stops racing a morning/midday/close session, which runs as a
-        # different process and so takes a different lock. intra_check is
-        # deliberately exempt from the wrapper script's cross-mode session
-        # lock (for the circuit breaker), so this path must check itself.
-        # Wait for the other session to finish rather than sleeping the
-        # 09:30 / 13:00 tick until the next 30-minute fire. Finished-session
-        # trade rows are not an in-flight signal.
+        # Identify movers first (cheap snapshot) so a morning/midday owner
+        # lock cannot vanish paid discovery. Then wait. If the lock is
+        # still held at window end, skip with a durable reason that names
+        # the movers — never sleep the scan away, never drop them silently.
+        candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
+        mover_names = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
         if self._await_paid_scan_slot(ctx.run_id):
-            return {"status": "intraday_scan_lock_contended", "run_id": ctx.run_id}
+            return self._intraday_paid_scan_skip(ctx, mover_names)
         # The 09:30/13:00 wait must not size against the pre-fill snapshot
         # taken before morning finished. Refresh after the lock releases.
         if getattr(self, "_paid_scan_waited", False):
@@ -13311,35 +13370,10 @@ class TradingPipeline:
                     "pre-fill snapshot", exc,
                 )
                 return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
+            candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
 
-        universe = list(self.config.trading.universe)
-        snapshots = self.broker.get_intraday_snapshots(universe)
         if not snapshots:
             return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
-
-        candidates: list[tuple[str, float]] = []
-        for symbol in universe:
-            snap = snapshots.get(symbol) or {}
-            last = snap.get("last_price")
-            prev = snap.get("prev_close")
-            if not (isinstance(last, (int, float)) and isinstance(prev, (int, float))):
-                # Indistinguishable, at this point, from "the broker could
-                # not return snapshot data for this symbol" vs "it simply
-                # didn't move" — see `get_intraday_snapshots`'s docstring.
-                # Track it so a persistently broken symbol cannot silently
-                # vanish from every scan with no owner visibility (the
-                # residual gap the BRK-B fix, on its own, did not close).
-                self._track_intraday_snapshot_miss(symbol)
-                continue
-            self._track_intraday_snapshot_ok(symbol)
-            if prev <= 0:
-                continue
-            move_pct = abs(last - prev) / prev * 100.0
-            if move_pct < cfg.move_threshold_pct:
-                continue
-            if self._recently_intraday_evaluated(symbol, cfg.cooldown_hours):
-                continue
-            candidates.append((symbol, move_pct))
 
         if not candidates:
             return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
@@ -13347,7 +13381,6 @@ class TradingPipeline:
         # Largest moves first, capped — bounded per-tick cost regardless of
         # how many symbols move on a broad market day; not a scan of
         # everything, a check of the few things that moved most.
-        candidates.sort(key=lambda t: -t[1])
         symbols = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
         logger.info(
             "Intraday scan: %d symbol(s) moved >= %.1f%% since last close "

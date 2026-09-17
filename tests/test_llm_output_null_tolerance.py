@@ -575,3 +575,50 @@ def test_every_session_starts_with_zeroed_parse_counters():
         assert parse_telemetry.total_dropped() == 0
         assert parse_telemetry.total_null_coercions() == 0
         parse_telemetry.record_dropped_item("TechAnalysisResult", "NVDA")
+
+
+def test_unknown_soft_exit_isolates_that_name_and_keeps_the_rest_of_the_plan():
+    """MRVL retry: Risk vetoed the whole plan over one nulled falsifier.
+    Isolate the empty name before Risk. Do not invent a string. Do not
+    drop a sibling with a stated falsifier."""
+    from types import SimpleNamespace
+    from src.pipeline_context import RunContext
+    from src.pipeline_stages import _isolate_empty_soft_exit_entries
+
+    mrvl = TradeDecision(
+        action="BUY", symbol="MRVL", allocation_pct=3.0,
+        entry_price=80.0, stop_loss=75.0, take_profit=90.0,
+        reasoning="retry", thesis_invalid_if=SOFT_EXIT_UNKNOWN,
+    )
+    aapl = TradeDecision(
+        action="BUY", symbol="AAPL", allocation_pct=3.0,
+        entry_price=190.0, stop_loss=185.0, take_profit=205.0,
+        reasoning="stated", thesis_invalid_if="closes below 185",
+    )
+    hold = TradeDecision(
+        action="HOLD", symbol="MSFT", allocation_pct=0.0,
+        entry_price=400.0, stop_loss=390.0, take_profit=420.0,
+        reasoning="keep",
+    )
+    plan = SimpleNamespace(
+        decisions=[mrvl, aapl, hold],
+        targets=[
+            TargetPosition(
+                symbol="MRVL", target_weight_pct=3.0, conviction="medium",
+                thesis="retry", thesis_invalid_if=None,
+            ),
+            TargetPosition(
+                symbol="AAPL", target_weight_pct=3.0, conviction="medium",
+                thesis="add", thesis_invalid_if="closes below 185",
+            ),
+        ],
+        constructor_dropped=[],
+    )
+    pipeline = SimpleNamespace(db=MagicMock())
+    ctx = RunContext.start("morning")
+    isolated = _isolate_empty_soft_exit_entries(pipeline, ctx, plan)
+    assert isolated == ["MRVL"]
+    assert [d.symbol for d in plan.decisions] == ["AAPL", "MSFT"]
+    assert [t.symbol for t in plan.targets] == ["AAPL"]
+    assert "MRVL" in plan.constructor_dropped
+    assert not any(d.symbol == "MRVL" for d in plan.decisions)

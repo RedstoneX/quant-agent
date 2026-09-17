@@ -16,10 +16,11 @@ Two jobs, both fail-closed on missing data, neither invents a price:
    (ex-div shift, scale-in rearm, residual reprotect) call
    `write_back_stop_loss` after the broker accepts.
 
-2. Reconcile that recorded level against the broker's live stop and
-   REPORT mismatches. An out-of-band change leaves no write-back row to
-   catch; this is the catch. It never copies the broker price into the
-   archive — that would silently bless a move nobody in this code made.
+2. Reconcile that recorded level against the broker's live stop. When
+   the live protective order exists, write THAT price back onto the
+   opening row (COP/EQNR: archive lagged the desk's own stop). That is
+   not an invented level. Remaining mismatches still page — never mute
+   an alert without fixing the record.
 
 `initial_stop_loss` on the same opening row is the entry bet, frozen on
 the first write-back (and set at insert). R-multiple and the Type A
@@ -27,10 +28,8 @@ breakeven ratchet still read THAT number, never the live one.
 """
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -304,14 +303,43 @@ def reconcile_recorded_stop_levels(
     return mismatches
 
 
-def report_stop_level_mismatches(mismatches: list[StopLevelMismatch]) -> None:
-    """Log every mismatch; page the owner once per unique set per ET day.
+def write_back_live_protective_stops(
+    db: Any, mismatches: list[StopLevelMismatch],
+) -> list[StopLevelMismatch]:
+    """Copy the desk's live protective order onto the opening row.
 
-    2026-09-16: the same COP/EQNR pair paged 11 times in one session because
-    every tick re-reported the identical archive-vs-broker numbers. Logging
-    stays loud (the defect is still open). The Telegram page fires when the
-    fingerprint is new today — a changed pair still pages immediately.
-    Never copies the broker price into the archive.
+    `live` came from `broker.get_current_stop_price` — an order we already
+    hold, not a number we invented. Returns mismatches that could not be
+    written (those still page). Successful write-back is the fix; it is
+    not a mute.
+    """
+    remaining: list[StopLevelMismatch] = []
+    for item in mismatches or []:
+        live = _finite_price(item.live)
+        if live <= 0:
+            remaining.append(item)
+            continue
+        recorded = write_back_stop_loss(
+            db, item.symbol, live, is_short=item.is_short,
+        )
+        if not recorded:
+            remaining.append(item)
+            continue
+        logger.info(
+            "stop-level reconcile: wrote live protective stop $%.4f back "
+            "onto %s archive (was %s)",
+            live, item.symbol, item.recorded,
+        )
+    return remaining
+
+
+def report_stop_level_mismatches(mismatches: list[StopLevelMismatch]) -> None:
+    """Log and page every remaining mismatch. Do not mute; do not invent.
+
+    Write-back of the live protective order happens first (see
+    `write_back_live_protective_stops`). Anything still listed here is an
+    unfixed record. 2026-09-16 once-per-day paging cleared the COP/EQNR
+    alerts without fixing the archive; that mute is gone.
     """
     if not mismatches:
         return
@@ -320,17 +348,6 @@ def report_stop_level_mismatches(mismatches: list[StopLevelMismatch]) -> None:
             "STOP RECORD MISMATCH: %s — %s (short=%s)",
             item.symbol, item.reason, item.is_short,
         )
-    fingerprints = [
-        f"{item.symbol}|{item.recorded}|{item.live}|{int(item.is_short)}"
-        for item in mismatches
-    ]
-    if _mismatch_batch_already_paged(fingerprints):
-        logger.error(
-            "STOP RECORD MISMATCH: identical %d-symbol set already paged "
-            "today — not re-paging; the archive was NOT copied from the "
-            "broker.", len(mismatches),
-        )
-        return
     lines = "\n".join(
         f"  {item.symbol}: {item.reason}" for item in mismatches
     )
@@ -340,52 +357,16 @@ def report_stop_level_mismatches(mismatches: list[StopLevelMismatch]) -> None:
         "stop. Analysis drawn from the archive would be stale. The broker "
         "stop was NOT changed by this check.\n"
         f"{lines}\n"
-        "Write-back covers in-code replace/trail/repair/rearm/ex-div. "
-        "A mismatch after that is an out-of-band move, or a write-back "
-        "that failed. Do not treat a 'traded through its stop' reading "
-        "from the archive as real until these match."
+        "Write-back covers in-code replace/trail/repair/rearm/ex-div and "
+        "a live protective order found at reconcile. A mismatch after "
+        "that is an out-of-band move, or a write-back that failed. Do not "
+        "treat a 'traded through its stop' reading from the archive as "
+        "real until these match."
     )
     try:
         from src import notifier as _notifier
         _notifier.send_owner_alert(
             body, symbols=[item.symbol for item in mismatches],
         )
-        _record_mismatch_page(fingerprints)
     except Exception as exc:  # noqa: BLE001
         logger.error("stop-record mismatch owner alert failed: %s", exc)
-
-
-_MISMATCH_PAGE_PATH = Path("data") / "stop_mismatch_pages.json"
-
-
-def _mismatch_page_state() -> dict:
-    try:
-        if not _MISMATCH_PAGE_PATH.exists():
-            return {}
-        raw = json.loads(_MISMATCH_PAGE_PATH.read_text())
-        return raw if isinstance(raw, dict) else {}
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return {}
-
-
-def _mismatch_batch_already_paged(fingerprints: list[str]) -> bool:
-    from src.util.time import et_today
-    day = str(et_today())
-    seen = set((_mismatch_page_state().get(day) or []))
-    return bool(fingerprints) and set(fingerprints) <= seen
-
-
-def _record_mismatch_page(fingerprints: list[str]) -> None:
-    from src.util.time import et_today
-    day = str(et_today())
-    state = _mismatch_page_state()
-    # Keep only today — yesterday's COP/EQNR pair must page again if it
-    # is still open on a new ET day.
-    state = {day: list(state.get(day) or [])}
-    merged = sorted(set(state[day]) | set(fingerprints))
-    state[day] = merged
-    try:
-        _MISMATCH_PAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _MISMATCH_PAGE_PATH.write_text(json.dumps(state, indent=2))
-    except OSError as exc:
-        logger.warning("stop-mismatch page state write failed: %s", exc)

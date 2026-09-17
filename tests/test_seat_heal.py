@@ -108,9 +108,10 @@ def test_macro_dict_shape_coerces_then_validates_when_chain_present():
     assert analysis.sector_guidance[0].sector == "Technology"
 
 
-def test_macro_trim_without_reasoning_chain_is_usable_regime_not_invented_chain():
+def test_macro_trim_without_reasoning_chain_fails_closed_not_invented_chain():
     """The on-disk MacroStore trim drops reasoning_chain. Coerce the shape;
-    do not fill the chain from summary (that would invent macro text)."""
+    do not fill the chain from summary (that would invent macro text);
+    do not treat the broken trim as usable macro for PM."""
     trim = {
         "date": "2026-09-16",
         "regime": "risk-on",
@@ -121,15 +122,10 @@ def test_macro_trim_without_reasoning_chain_is_usable_regime_not_invented_chain(
         "sector_guidance": {"Technology": "bullish"},
     }
     heal = mechanical_heal_macro(trim)
-    assert heal.usable
-    assert heal.outcome in (HEAL_MECHANICAL, HEAL_SKIPPED_GOOD)
+    assert heal.usable is False
+    assert heal.outcome == HEAL_FAILED
+    assert "reasoning_chain" in heal.reason
     assert heal.payload["regime"] == "risk-on"
-    assert "reasoning_chain" not in (heal.payload or {}) or not isinstance(
-        (heal.payload or {}).get("reasoning_chain"), str
-    )
-    # Still must not parse as a full MacroAnalysis — missing chain is a
-    # ValidationError, not a loosened schema.
-    import pytest
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         MacroAnalysis.model_validate(heal.payload)
@@ -171,9 +167,10 @@ def test_unknown_sector_stance_is_dropped_not_invented_neutral():
         "equity_outlook": "bullish",
         "sector_guidance": {"Technology": "bullish"},
     })
-    assert heal.usable
+    assert heal.usable is False
+    assert heal.outcome == HEAL_FAILED
     assert heal.paid_retry is False
-    assert heal.mechanical is True
+    assert "reasoning_chain" in heal.reason
 
 
 def test_pipeline_does_not_repay_remembered_good_or_empty_store():
@@ -242,9 +239,45 @@ def test_pipeline_paid_retry_is_one_shot_and_requires_inputs():
 
 
 def test_remembered_good_is_not_a_heal_target():
-    heal = mechanical_heal_macro({
-        "regime": "risk-on", "equity_outlook": "bullish",
-        "sector_guidance": [],
-    })
+    """A validating snapshot is usable without a paid call. A chain-less
+    trim is not 'remembered good' — that is the fail-closed test above."""
+    payload = {
+        "reasoning_chain": _chain().model_dump(),
+        "regime": "risk-on",
+        "confidence": "medium",
+        "equity_outlook": "bullish",
+        "position_guidance": {
+            "target_invested_pct": 70, "cash_recommendation_pct": 30,
+            "reasoning": "stay invested",
+        },
+        "summary": "risk on",
+        "sector_guidance": {"Technology": "bullish"},
+    }
+    heal = mechanical_heal_macro(payload)
     assert heal.usable
     assert heal.paid_retry is False
+    assert heal.outcome in (HEAL_MECHANICAL, HEAL_SKIPPED_GOOD)
+
+
+def test_broken_macro_dict_is_not_passed_to_pm():
+    """Silent broken macro into PM is the Phase 13 afternoon failure.
+    Coerce, then fail closed — do not return the garbage dict."""
+    from src.pipeline_stages import _macro_analysis_as_dict
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    PortfolioManagerAgent._macro_parse_failures = []
+    trim = {
+        "regime": "risk-on",
+        "confidence": "medium",
+        "equity_outlook": "bullish",
+        "summary": "stay long",
+        "position_guidance": {
+            "target_invested_pct": 70, "cash_recommendation_pct": 30,
+            "reasoning": "stay invested",
+        },
+        "sector_guidance": {"Technology": "bullish"},
+    }
+    assert _macro_analysis_as_dict(trim) is None
+    assert PortfolioManagerAgent._macro_parse_failures
+    assert "reasoning_chain" in PortfolioManagerAgent._macro_parse_failures[0]
+    PortfolioManagerAgent._macro_parse_failures = []
