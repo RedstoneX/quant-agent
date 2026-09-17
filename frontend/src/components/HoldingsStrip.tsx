@@ -39,11 +39,11 @@ function HoldingChip({ position, onSelect }: { position: PositionItem; onSelect?
       type="button"
       onClick={() => onSelect?.(position.symbol)}
       aria-label={`Chart ${position.symbol}`}
-      className={`flex min-w-0 items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-accent/60 ${
+      className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-accent/60 ${
         cash ? "border-border bg-panel-inset opacity-80" : "border-border bg-panel-alt hover:border-accent"
       }`}
     >
-        <span className="flex flex-col">
+      <span className="flex flex-col">
         <span className={`font-bold leading-tight ${cash ? "text-dim" : "text-accent"}`}>{position.symbol}</span>
         <span className="font-mono text-[length:var(--fs-micro)] leading-tight text-dim">
           {fmtNum(position.qty)} @ {fmtMoney(position.avg_entry)}
@@ -87,7 +87,7 @@ export function HoldingsStrip({
        sections below for the same trim) that feeds a few extra px back
        into the live-measured --chrome-h budget without cramming
        anything. */
-    <section className="mx-3 mt-2" aria-label="Holdings">
+    <section className="mx-3 mt-2 min-w-0 overflow-x-hidden" aria-label="Holdings">
       <div className="flex items-center gap-2 pb-1.5">
         <Text className="uppercase tracking-wide">Holdings</Text>
         <Badge color="slate" size="xs">
@@ -109,7 +109,7 @@ export function HoldingsStrip({
           {error && !everLoaded ? `Positions read failed: ${error}` : "No open positions."}
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(1,max-content)] gap-2 overflow-x-hidden sm:grid-cols-[repeat(2,max-content)] lg:grid-cols-[repeat(3,max-content)] xl:grid-cols-[repeat(4,max-content)]">
+        <div className="grid w-full min-w-0 grid-cols-1 justify-items-start gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {holdingsOrder(positions).map((position) => (
             <HoldingChip key={position.symbol} position={position} onSelect={onSelectSymbol} />
           ))}

@@ -45,8 +45,8 @@ describe("HoldingsStrip", () => {
     );
     render(<HoldingsStrip positions={positions} error={null} updatedAt={new Date("2026-08-25T18:30:00Z")} />);
     const grid = screen.getByLabelText("Holdings").querySelector(".grid");
-    expect(grid?.className).toContain("xl:grid-cols-[repeat(4,max-content)]");
+    expect(grid?.className).toContain("xl:grid-cols-4");
     expect(grid?.className).not.toContain("overflow-x-auto");
-    expect(grid?.className).toContain("overflow-x-hidden");
+    expect(screen.getByLabelText("Holdings").className).toContain("overflow-x-hidden");
   });
 });
