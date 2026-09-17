@@ -2627,30 +2627,13 @@ class TradingPipeline:
         mod,
         symbols_bars: dict | None,
     ) -> str | None:
-        """Return a refusal reason if `modified` breaches a floor a freshly
-        constructed decision would have to clear, else None.
+        """Return a refusal reason if `modified` breaches a constructor
+        risk-side floor, else None.
 
-        Reuses `TradeDecision.reward_risk` (== `models.reward_to_risk`, the
-        one ratio definition this codebase shares end to end). Does not
-        re-derive the ratio or the number.
-
-        **2026-09-17.** This guard's premise is "the constructor would have
-        refused this trade at these prices". The constructor refuses only an
-        UNMEASURABLE ratio, so neither does this refuse a computed one.
-        An RM edit that makes the arithmetic impossible is not an edit
-        anyone reviewed.
+        **2026-09-17.** Invented reward:risk floors are retired. A computed
+        or missing ratio does not refuse an RM edit. What still refuses the
+        *edit* (not the ticket) is a stop pulled inside the ATR noise band.
         """
-        new_rr = modified.reward_risk
-        if new_rr is None:
-            return (
-                f"modified geometry (entry ${modified.entry_price:.2f}, stop "
-                f"${modified.stop_loss:.2f}, target ${modified.take_profit:.2f}) "
-                f"makes reward:risk unmeasurable — a stop or target on the "
-                f"wrong side of entry, or a non-finite price. Fails closed: "
-                f"an unknown payoff is not a permitted one. "
-                f"RM reason given: {mod.reason!r}"
-            )
-
         if mod.field != "stop_loss" or not symbols_bars:
             return None
 

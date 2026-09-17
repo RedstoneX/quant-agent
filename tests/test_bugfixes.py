@@ -854,11 +854,7 @@ def test_risk_mod_stop_widening_below_rr_floor_is_now_allowed():
 
     The edit is applied. What still guards this path is unchanged and
     tested below: an edit that pulls the stop inside the ATR noise band is
-    refused. (The guard's other surviving half — refusing an edit that makes
-    the ratio UNMEASURABLE — has no test because it cannot be reached
-    through this path: `TradeDecision`'s own validators already refuse a
-    stop above entry or a target below it, one step earlier. It is kept as
-    defence in depth against a non-finite value.)"""
+    refused. An unmeasurable ratio is not an edit refusal."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     buy = TradeDecision(
         action="BUY", symbol="SPY", allocation_pct=10,
