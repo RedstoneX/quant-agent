@@ -303,6 +303,20 @@ SOFT_EXIT_UNKNOWN = "unknown"
 _SOFT_EXIT_FIELDS = frozenset({"thesis_invalid_if", "catalyst"})
 
 
+def stated_soft_exit(value: str | None) -> str:
+    """A checkable falsifier/catalyst, or empty.
+
+    `unknown` is the recordable don't-know token, not a condition. Callers
+    that need a checkable string (hard-stop substitution, constructor
+    parenthetical) treat it as absent. The raw field stays `unknown` so
+    Risk can see the seat said it does not know.
+    """
+    text = (value or "").strip()
+    if not text or text.lower() == SOFT_EXIT_UNKNOWN:
+        return ""
+    return text
+
+
 # Defaulted fields where an explicit null must STILL reject the object.
 #
 # The general rule above is safe because a default of "", [], "unknown" or
@@ -1066,7 +1080,7 @@ class TechAnalysisResult(LLMOutputModel):
             if text.strip():
                 evidence.append(VerdictEvidence(label=label, text=text.strip()))
 
-        invalidation = (self.thesis_invalid_if or "").strip()
+        invalidation = stated_soft_exit(self.thesis_invalid_if)
         if not invalidation and direction != "neutral" and self.stop_loss is not None:
             side = "below" if direction == "bullish" else "above"
             invalidation = (

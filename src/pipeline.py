@@ -12726,10 +12726,12 @@ class TradingPipeline:
         import time as _time
 
         first = True
+        self._paid_scan_waited = False
         while True:
             blocking = self._blocking_owner_session()
             if blocking is None:
                 if not first:
+                    self._paid_scan_waited = True
                     logger.info(
                         "Intraday scan: other session released the owner lock; "
                         "running paid discovery on this tick instead of "
@@ -13289,6 +13291,26 @@ class TradingPipeline:
         # trade rows are not an in-flight signal.
         if self._await_paid_scan_slot(ctx.run_id):
             return {"status": "intraday_scan_lock_contended", "run_id": ctx.run_id}
+        # The 09:30/13:00 wait must not size against the pre-fill snapshot
+        # taken before morning finished. Refresh after the lock releases.
+        if getattr(self, "_paid_scan_waited", False):
+            try:
+                account, positions, _ = self._refresh_account_state()
+                ctx.account = account
+                ctx.positions = positions
+                ctx.cash = account["cash"]
+                ctx.deployable_cash = self._compute_deployable_cash(
+                    ctx.cash, positions,
+                )
+                ctx.total_value = account.get("portfolio_value", ctx.total_value)
+                self._sync_positions_from_broker(positions)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Intraday scan: post-wait broker refresh failed (%s) — "
+                    "skipping paid discovery rather than sizing on a "
+                    "pre-fill snapshot", exc,
+                )
+                return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
 
         universe = list(self.config.trading.universe)
         snapshots = self.broker.get_intraday_snapshots(universe)

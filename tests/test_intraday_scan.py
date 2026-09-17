@@ -90,6 +90,11 @@ def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
         ),
     )
     pipeline.broker = MagicMock()
+    pipeline.broker.get_account.return_value = {
+        "cash": 10_000.0, "portfolio_value": 10_100.0, "last_equity": 10_000.0,
+        "non_marginable_buying_power": 10_000.0,
+    }
+    pipeline.broker.get_positions.return_value = []
     pipeline.db = MagicMock()
     pipeline.db.get_trades.return_value = cooldown_rows or []
     pipeline.market = MagicMock()
@@ -494,6 +499,9 @@ def test_scan_waits_then_runs_when_owner_lock_releases(mock_compute_indicators):
         p._run_intraday_opportunity_scan(ctx)
 
     p.tech_analyst.analyze_batch.assert_called_once()
+    # Post-wait refresh so we do not size against the pre-fill snapshot.
+    p.broker.get_account.assert_called()
+    p.broker.get_positions.assert_called()
 
 
 @patch("src.pipeline.compute_indicators")

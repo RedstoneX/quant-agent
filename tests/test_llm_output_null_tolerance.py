@@ -146,6 +146,15 @@ def test_stated_soft_exit_survives_and_is_not_replaced_with_unknown():
     assert r.thesis_invalid_if == "daily close below 191.5"
 
 
+def test_unknown_soft_exit_does_not_replace_the_hard_stop_in_the_verdict():
+    """Don't-know is recordable on the field, but is not a stated falsifier."""
+    r = TechAnalysisResult(**_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN))
+    assert r.thesis_invalid_if == SOFT_EXIT_UNKNOWN
+    verdict = r.to_verdict()
+    assert "hard stop" in verdict.invalidation
+    assert SOFT_EXIT_UNKNOWN not in verdict.invalidation
+
+
 def test_empty_default_soft_exit_is_not_tallied_as_a_drop():
     """Neutral-style empty on a buy is the schema default, not a null wipe."""
     r = TechAnalysisResult(**_tech(thesis_invalid_if=""))
@@ -247,11 +256,9 @@ def test_empty_string_matching_the_fields_own_default_is_not_double_processed():
     add/watch-requires-a-reason validator does not misfire on the coercion
     path).
 
-    The comment's "no behavior change" is about the resulting VALUE, not
-    about telemetry — this field is coerced by the exact same code path as
-    `theme_durability` above, so the coercion is still tallied. A test
-    that expected silence here would be pinning a stronger claim than the
-    fix actually makes.
+    The comment's "no behavior change" is about the resulting VALUE.
+    Empty that already equals the declared default is the schema working,
+    not a drop — tallying it produced the 2026-09-16 journal flood.
     """
     parse_telemetry.reset()
     mo = MissedOpportunity(
@@ -260,9 +267,7 @@ def test_empty_string_matching_the_fields_own_default_is_not_double_processed():
     )
     assert mo.universe_addition_reason == ""
     assert mo.universe_addition_recommendation == "no"
-    assert parse_telemetry.snapshot() == {
-        ("MissedOpportunity", "universe_addition_reason"): 1
-    }
+    assert parse_telemetry.snapshot() == {}
 
 
 # ---------------------------------------------------------------------------

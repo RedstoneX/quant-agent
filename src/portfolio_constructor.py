@@ -41,7 +41,8 @@ from src.data.levels import (
 )
 from src.data.technical import LONGEST_INDICATOR_WINDOW
 from src.models import (
-    Position, TargetPosition, TechAnalysisResult, TradeDecision, reward_to_risk,
+    Position, TargetPosition, TechAnalysisResult, TradeDecision,
+    reward_to_risk, stated_soft_exit,
 )
 from src.risk.constants import reward_risk_floor_applies
 
@@ -2900,8 +2901,9 @@ class PortfolioConstructor:
             fraction = (current_pct - target_pct) / current_pct
             alloc = max(1.0, min(99.0, round(fraction * 100, 1)))
         reasoning = target.thesis
-        if target.thesis_invalid_if:
-            reasoning += f" (thesis_invalid_if: {target.thesis_invalid_if})"
+        falsifier = stated_soft_exit(target.thesis_invalid_if)
+        if falsifier:
+            reasoning += f" (thesis_invalid_if: {falsifier})"
         # SELLs don't need live entry/stop/target — execution uses market price
         return TradeDecision(
             action="SELL",
@@ -2913,7 +2915,7 @@ class PortfolioConstructor:
             reasoning=reasoning[:500],
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
-            thesis_invalid_if=target.thesis_invalid_if or None,
+            thesis_invalid_if=falsifier or None,
         )
 
     @staticmethod
@@ -2950,8 +2952,9 @@ class PortfolioConstructor:
             fraction = (current_pct - target_pct) / current_pct
             alloc = max(1.0, min(99.0, round(fraction * 100, 1)))
         reasoning = target.thesis
-        if target.thesis_invalid_if:
-            reasoning += f" (thesis_invalid_if: {target.thesis_invalid_if})"
+        falsifier = stated_soft_exit(target.thesis_invalid_if)
+        if falsifier:
+            reasoning += f" (thesis_invalid_if: {falsifier})"
         # COVERs don't need live entry/stop/target — execution uses market price
         return TradeDecision(
             action="COVER",
@@ -2963,7 +2966,7 @@ class PortfolioConstructor:
             reasoning=reasoning[:500],
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
-            thesis_invalid_if=target.thesis_invalid_if or None,
+            thesis_invalid_if=falsifier or None,
         )
 
     def _build_buy(
@@ -3153,10 +3156,12 @@ class PortfolioConstructor:
             return None
 
         reasoning = target.thesis
-        if target.thesis_invalid_if:
-            reasoning += f" (invalid if: {target.thesis_invalid_if})"
-        if target.catalyst:
-            reasoning += f" (catalyst: {target.catalyst})"
+        falsifier = stated_soft_exit(target.thesis_invalid_if)
+        catalyst = stated_soft_exit(target.catalyst)
+        if falsifier:
+            reasoning += f" (invalid if: {falsifier})"
+        if catalyst:
+            reasoning += f" (catalyst: {catalyst})"
 
         return TradeDecision(
             action="BUY",
@@ -3198,7 +3203,7 @@ class PortfolioConstructor:
             setup_type=getattr(analysis, "setup_type", None),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
-            thesis_invalid_if=target.thesis_invalid_if or None,
+            thesis_invalid_if=stated_soft_exit(target.thesis_invalid_if) or None,
         )
 
     def _build_short(
@@ -3361,10 +3366,12 @@ class PortfolioConstructor:
             return None
 
         reasoning = target.thesis
-        if target.thesis_invalid_if:
-            reasoning += f" (invalid if: {target.thesis_invalid_if})"
-        if target.catalyst:
-            reasoning += f" (catalyst: {target.catalyst})"
+        falsifier = stated_soft_exit(target.thesis_invalid_if)
+        catalyst = stated_soft_exit(target.catalyst)
+        if falsifier:
+            reasoning += f" (invalid if: {falsifier})"
+        if catalyst:
+            reasoning += f" (catalyst: {catalyst})"
 
         return TradeDecision(
             action="SHORT",
@@ -3399,7 +3406,7 @@ class PortfolioConstructor:
             setup_type=getattr(analysis, "setup_type", None),
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
-            thesis_invalid_if=target.thesis_invalid_if or None,
+            thesis_invalid_if=stated_soft_exit(target.thesis_invalid_if) or None,
         )
 
     def _resolve_stop(
