@@ -15,6 +15,31 @@ from src.models import (
 
 
 
+def _wire_today_open_prints(mock_broker, last: float = 507.0):
+    """Happy-path morning fixtures must produce a today print.
+
+    After the 2026-09-17 open-print work, a fully parsed technical batch
+    with no today live price is a lost seat, not low-confidence. Tests
+    that expect the book to trade have to give the producing step a
+    real open print — not invent a substitute, not skip the gate.
+    """
+    from src.trading_calendar import et_now
+
+    def _snaps(symbols, *args, **kwargs):
+        now = et_now()
+        return {
+            s: {
+                "last_price": last,
+                "prev_close": last,
+                "last_trade_at": now,
+                "session_open": last,
+            }
+            for s in (symbols or [])
+        }
+
+    mock_broker.get_intraday_snapshots.side_effect = _snaps
+
+
 def _news_stub():
     """A minimal, VALID NewsIntelligenceReport for pipeline fixtures.
 
@@ -294,6 +319,7 @@ def test_pipeline_morning_run_buy(
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
+    _wire_today_open_prints(mock_broker)
     mock_broker_cls.return_value = mock_broker
 
     # Macro analyst
@@ -425,6 +451,7 @@ def test_pipeline_morning_run_persists_specialist_evidence(
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
+    _wire_today_open_prints(mock_broker)
     mock_broker_cls.return_value = mock_broker
 
     mock_maa = MagicMock()
@@ -598,6 +625,7 @@ def test_pipeline_market_order_sizes_from_live_market_price(
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
+    _wire_today_open_prints(mock_broker, last=100.0)
     mock_broker_cls.return_value = mock_broker
 
     mock_maa = MagicMock()
@@ -723,6 +751,7 @@ def test_pipeline_risk_rejected(
     mock_broker.get_latest_price.return_value = 507.0
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
+    _wire_today_open_prints(mock_broker)
     mock_broker_cls.return_value = mock_broker
 
     # Macro analyst
@@ -2964,6 +2993,7 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
         {"id": "buy-1", "status": "accepted", "symbol": "QQQ"},
     ]
     _mock_stop_seam(mock_broker)
+    _wire_today_open_prints(mock_broker, last=100.0)
     mock_broker_cls.return_value = mock_broker
 
     mock_maa = MagicMock()

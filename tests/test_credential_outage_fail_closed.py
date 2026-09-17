@@ -39,6 +39,7 @@ from src.pipeline import TradingPipeline
 # already track the real pydantic shapes, and a second copy would drift.
 from tests.test_pipeline import (  # noqa: E402
     _macro_stub, _mock_agent_result, _news_stub, _pm_rc, _risk_rc, _trc,
+    _wire_today_open_prints,
 )
 
 
@@ -153,6 +154,7 @@ def _wire_happy_path(mocks, tmp_path, cfg):
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted",
                                              "symbol": "SPY"}
+    _wire_today_open_prints(mock_broker)
     mock_broker_cls.return_value = mock_broker
 
     mock_maa = MagicMock()

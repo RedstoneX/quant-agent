@@ -52,6 +52,7 @@ from src.models import (
 )
 from src.pipeline import TradingPipeline
 from src.storage.db import Database
+from tests.test_pipeline import _wire_today_open_prints
 
 # A stand-in "actually answered" model — always distinct from the
 # "configured" model set on each test's mock_config so a passing assertion
@@ -241,6 +242,7 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
+    _wire_today_open_prints(mock_broker)
     mock_broker_cls.return_value = mock_broker
 
     mock_maa = MagicMock()
@@ -384,6 +386,7 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
     mock_broker.get_account.return_value = {"cash": 10000.0, "portfolio_value": 10000.0}
     mock_broker.get_positions.return_value = []
     mock_broker.submit_order.return_value = {"id": "order-1", "status": "accepted", "symbol": "SPY"}
+    _wire_today_open_prints(mock_broker)
     mock_broker_cls.return_value = mock_broker
 
     mock_maa = MagicMock()
