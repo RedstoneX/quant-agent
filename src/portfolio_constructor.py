@@ -55,10 +55,6 @@ logger = logging.getLogger(__name__)
 # could emit it with nothing behind it (correlation-breach lesson,
 # 2026-09-13). Descriptive categorisation in storage is separate.
 MECHANICAL_SIZE_DOWN_TRIGGER = "mechanical size-down vs live book"
-_PYTHON_WARRANT_EXIT_PREFIXES = (
-    MECHANICAL_SIZE_DOWN_TRIGGER,
-    "ROTATION (deterministic",
-)
 
 
 def format_mechanical_size_down_reason(
@@ -91,14 +87,13 @@ def is_soft_exit_reduction(decision) -> bool:
     """True when a SELL/COVER's named trigger is thesis/falsifier free text.
 
     A funding-trim whose reasoning starts with the Python mechanical
-    size-down warrant — or a rotation close whose reason is the
-    deterministic ROTATION warrant — is not a soft-exit.
+    size-down warrant is not a soft-exit.
     """
     action = getattr(decision, "action", None)
     if action not in ("SELL", "COVER"):
         return False
     reason = getattr(decision, "reasoning", None) or ""
-    return not reason.startswith(_PYTHON_WARRANT_EXIT_PREFIXES)
+    return not reason.startswith(MECHANICAL_SIZE_DOWN_TRIGGER)
 
 
 def _size_down_checkable(
@@ -140,10 +135,11 @@ def _named_reduction_trigger(
     """(reasoning, falsifier) for a SELL/COVER, or None if no desk warrant.
 
     A stated thesis_invalid_if is a checkable soft-exit warrant; reasoning
-    then keeps the existing thesis + parenthetical so a rotation close
-    still starts with ROTATION. With a blank falsifier, PM thesis cannot
-    create the sell: only a live-book size-down (weight, and risk when
-    known) is stamped as the named trigger. Never invents a falsifier.
+    then keeps the existing thesis + parenthetical so a Python-authored
+    close reason already on the target is preserved. With a blank
+    falsifier, PM thesis cannot create the sell: only a live-book
+    size-down (weight, and risk when known) is stamped as the named
+    trigger. Never invents a falsifier.
     """
     falsifier = stated_soft_exit(target.thesis_invalid_if)
     thesis = (target.thesis or "").strip()
