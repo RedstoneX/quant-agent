@@ -806,9 +806,10 @@ Bull triggers (would turn more constructive):
 Bear triggers (would turn defensive):
 {bear_text}"""
 
-            target_inv = pos_guidance.get('target_invested_pct', 'N/A')
-            cash_rec = pos_guidance.get('cash_recommendation_pct', 'N/A')
-
+            # No invested / cash numbers: owner mandate 2026-09-17, the book
+            # is fully invested and macro informs direction only. Older
+            # snapshots still carry `target_invested_pct` /
+            # `cash_recommendation_pct`; they are deliberately not rendered.
             macro_section = f"""## Macro Analysis
 - Regime: {macro_analysis.get('regime', 'N/A')} | Outlook: {macro_analysis.get('equity_outlook', 'N/A')} | Confidence: {macro_analysis.get('confidence', 'N/A')}{shift_line}{alignment_line}
 - Summary: {macro_analysis.get('summary', 'N/A')}{reasoning_section}
@@ -822,9 +823,7 @@ Bear triggers (would turn defensive):
 ### Risk Factors
 {risk_factors_text}{triggers_section}
 
-### Position Guidance
-- Target invested: {target_inv}%
-- Cash recommendation: {cash_rec}%
+### Directional Lean (the book stays fully invested — this is which way, not how much)
 - Reasoning: {pos_guidance.get('reasoning', 'N/A')}"""
         else:
             macro_section = "## Macro Analysis\nNo macro data available."
@@ -949,7 +948,7 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             earnings_section = "## Earnings Analysis\nNo recent earnings filings available."
 
         # Account Status "Invested" reads the SAME `book_exposure` the
-        # PMFacts Book State block and the pre-trade `macro_exposure_deviation`
+        # PMFacts Book State block and the pre-trade `deployment_gap`
         # advisory read. It used to be `total_value - cash_balance`, a third
         # definition of the same quantity inside this one prompt.
         #

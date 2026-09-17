@@ -58,7 +58,10 @@ def test_macro_analyze_parses_valid_response(mock_cls):
     assert analysis is not None
     # Phase 4 #7: analyze() returns a Pydantic MacroAnalysis object.
     assert analysis.regime == "risk-on"
-    assert analysis.position_guidance.target_invested_pct == 75.0
+    # Legacy keys in the response are ignored (fully-invested mandate,
+    # 2026-09-17): macro's invested number is no longer on the model.
+    assert not hasattr(analysis.position_guidance, "target_invested_pct")
+    assert analysis.position_guidance.reasoning == "Hold buffer."
     assert analysis.bull_triggers == ["Core CPI MoM < 0.2% for 2m"]
     assert analysis.reasoning_chain.cross_signal_synthesis.startswith("Aligned")
 

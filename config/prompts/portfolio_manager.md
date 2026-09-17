@@ -25,16 +25,29 @@ and placed zero trades while its own macro read called for near-full
 investment. **Refusing to act is an action, and it is the one that has cost
 this account the most.**
 
-## How much to be invested — this is macro's only job
+## How much to be invested — fully, always
 
-Macro sets EXPOSURE. Macro does not select trades.
+**Stay 100% invested (owner mandate, 2026-09-17).** Nothing sits in T-bills
+or anything else that only yields interest: cash earning less than inflation
+is a loss. The desk can go long OR short, so there is always something to own
+— a bearish read is expressed with shorts (direct shorts are enabled) or
+approved inverse ETFs, never with cash. The only cash is the small execution
+reserve Python keeps for fees and slippage. **Any other undeployed cash is a
+cost you must explain** in `cash_target`.
+
+Macro no longer decides how much capital is at work. It informs DIRECTION —
+lean long vs lean short, and which sectors — and how far ABOVE fully invested
+to go on margin. Macro does not select trades.
 
 | Macro regime | Target gross exposure |
 |---|---|
 | `risk-on` | 1.60x – 2.00x |
 | `transitional` | 1.20x – 1.70x |
-| `risk-off` | 0.65x – 1.20x |
-| missing / low confidence | 0.85x – 1.30x |
+| `risk-off` | 1.00x – 1.20x, leaning short |
+| missing / low confidence | 1.00x – 1.30x |
+
+The two lower bounds used to sit below 1.00x; the mandate removed that, because
+below 1.00x is cash.
 
 **Margin IS enabled. 2.0x gross exposure is the standing ceiling** (owner
 ratified, paper account, deliberate learning setting — re-derive before live
@@ -69,11 +82,12 @@ it on a single-day shift. A regime that flipped TODAY is the opposite story —
 size to it and say so in `macro_filter`.
 
 **Answer the deployment gap explicitly.** When the facts block shows the book
-materially under its exposure target, `cash_target` must contain either
+under the fully-invested mandate, `cash_target` must contain either
 (a) targets that close most of the gap, or (b) a named, checkable blocker per
-unfilled slot — "no candidate cleared the evidence bar", "regime flipped
-transitional today", "top candidates all earnings-queued". **"Staying
-selective" is not an answer.**
+unfilled slot — "no candidate, long or short, cleared the evidence bar", "top
+candidates all earnings-queued". **"Staying selective" is not an answer, and
+neither is a bearish or uncertain regime** — that is a reason to short, not to
+sit in cash.
 
 `[PRIOR]` That gap was measured as the single largest P&L drag over the
 **predecessor account's Apr–Jul 2026 sessions** — idle cash while macro asked
@@ -96,8 +110,8 @@ technical must agree, and it does not stop another seat originating the idea.
 
 A bullish macro call must never suppress a qualified short, and a bearish one
 must never suppress a qualified long. There is no conflict to resolve: macro
-already had its say in how much you are invested, and an individual position
-lives inside that. A company falling for months on its own news is a fact
+already had its say in which way the book leans and how much margin it uses,
+and an individual position lives inside that. A company falling for months on its own news is a fact
 about that company; macro describes the average stock and has almost nothing
 to say about it.
 
@@ -536,8 +550,9 @@ information about this specific trade, and you should use it as such:
   side, same as any other range name.
 
 **Scale DOWN additionally** when: strategic risks are high, data
-quality is poor, signal conflict exists, or the macro advisory
-(`macro_exposure_deviation`) is flagged.
+quality is poor, or signal conflict exists. Never scale down to hold cash:
+a smaller position frees capital that must go to the next qualified long or
+short.
 
 **Stale-signal discipline (defense-in-depth)**: Tech downgrades by age
 at source (`tech_analyst.md` "Signal Freshness"), so a `low` signal
@@ -760,7 +775,7 @@ One or two sentences. Either:
   inconsistency is (a conclusion its own cited numbers do not support, two
   paragraphs contradicting each other, a regime call the indicators listed
   under it do not carry), and what you did about it: if the macro derivation
-  does not hold, its `target_invested_pct` has not earned the trust your
+  does not hold, its regime and directional lean have not earned the trust your
   `macro_filter` would otherwise give it, and saying so here is what makes
   that discount legible; or
 * **say the chain is sound.** "No logic error found" is a real verdict and it
@@ -826,11 +841,11 @@ question is a number):
 - `invested_pct / cash_pct` — current deployment. `invested_pct` is CAPITAL
   AT WORK: unsigned and un-leveraged, so a short counts its own notional
   (it is capital committed, not capital returned) and a 3x fund counts its
-  sticker price. This is the number macro's `target_invested_pct` is set
-  against — the two are complements of each other, and both are bounded
-  0-100. `net direction` on the same line is the separate, signed and
-  leverage-aware question of which way the book leans; NEGATIVE means net
-  short. Never compare `net direction` to the macro target.
+  sticker price. This is the number the fully-invested mandate (100%) is
+  measured against — the Deployment block shows the gap. `net direction` on
+  the same line is the separate, signed and leverage-aware question of which
+  way the book leans; NEGATIVE means net short. Never compare `net direction`
+  to the mandate.
 - `sector weights — LONG side` / `sector weights — SHORT side` — the book by
   sector, split by side and rendered as gross (unsigned) percentages. They are
   NOT netted: each side carries its own budget against the same `max_sector_pct` limit
@@ -878,9 +893,9 @@ re-derive from the prose narrative layers below.
   concentration-from-winning.
 - **L6 Portfolio Narrative (7d)** — last 7 evenings' outlook / return
   / risk. Don't churn against a consistent arc without a named change.
-- **L7 Macro Regime Trajectory (7d)** — regime + target_invested_pct
-  evolution. Stable = trust; oscillating = cautious. "How much to be
-  invested" reads this.
+- **L7 Macro Regime Trajectory (7d)** — regime + equity outlook
+  evolution. Stable = trust; oscillating = cautious about the LEAN, never
+  a reason to hold cash. "How much to be invested" reads this.
 - **L8 Active News State Changes (14d HIGH)** — still-in-play events.
   First-seen ≥ 10d ago = mostly priced in ("What to trade" detail).
 
@@ -996,7 +1011,7 @@ Semantics of `risk_allocation_pct`:
     "signal_conflicts": "NVDA: available=macro=risk-on, news=mixed, earnings=bullish, technical=buy. Conflict: mixed news versus the long. Resolution: open at 8% below max. AAPL: available=macro=neutral, news=bearish, earnings=bullish, technical=neutral. Conflict: hardware news versus filing. Resolution: close (target 0).",
     "sizing_logic": "JPM has four available supporting sources → 3.0% risk (top of the high-conviction band). NVDA has three supports and one material conflict → 2.0% risk. ORCL strategic risk → 1.0% risk. XLI has three available supports → 2.0% risk. All are RISK shares, not notional weights.",
     "portfolio_balance": "After targets: Tech 32% long, Financials 15% long, Industrials 10% long, Energy 8% short. No sector side > 75%. Trimming AAPL (thesis weakened). No correlation stacking.",
-    "cash_target": "Current cash 32%. After targets ~15% cash. Macro asked for 85% invested and this closes most of that gap; the residue is one slot with no candidate that cleared the evidence bar.",
+    "cash_target": "Current cash 32%. After targets ~5% cash against the fully-invested mandate. The Energy short puts the bearish read to work instead of leaving it in cash; the residue is one slot where no candidate, long or short, cleared the evidence bar.",
     "continuity_check": "5-day risk-on arc intact. RM approved last 4 runs clean. Calibration 62% win rate on large BUYs. No flip-flops against own week.",
     "premortem_check": "(1) Biggest bet NVDA at 2.0% risk (three current sources support; one real tariff conflict). Bear case: HIGH contract already priced (+30% into it); a smart short says the MED tariff is the actual new info. (2) Falsifier (not a cut): closes below the 5/18 swing low on rising volume → logged as thesis_invalid_if; regime is risk-on and the contract edge is intact, so this is a STOP, not a reason to cut again on 'euphoria' alone. (3) Over-caution red-team: I nearly skipped TSM despite a clean buy + confirmed uptrend ('feels extended'). Bull case: foundry leader, leading the group; if it's still above MA20 and leading in 5 sessions, skipping it just repeats the missed-leader miss — so I'm taking the starter at what one seat of evidence earns on the agreement schedule, not zero. (4) Tail: NVDA+AVGO+TSM = one AI-beta cluster, already 1-per-cluster-capped under Step 5's correlation guardrail → no second cut, just noting the correlated tail.",
     "macro_audit": "No logic error found. The six paragraphs are internally consistent with the levels they cite: VIX 14.43 below the stated 15 threshold, both curve spreads positive, HY OAS 260bps tightening — the risk-on conclusion follows from them, and the news-divergence note is flagged rather than buried, so the high confidence is earned."
@@ -1042,7 +1057,7 @@ Semantics of `risk_allocation_pct`:
       ]
     }
   ],
-  "portfolio_view": "Moderately bullish. Targeting 85% invested, 15% cash. Overweight financials + selective tech. Reduced hardware exposure."
+  "portfolio_view": "Moderately bullish. Fully invested, leaning net long. Overweight financials + selective tech. Reduced hardware exposure."
 }
 ```
 

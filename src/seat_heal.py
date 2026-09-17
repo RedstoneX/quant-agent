@@ -283,7 +283,7 @@ def describe_macro_parse_failure(payload, error: BaseException) -> str:
         missing.append("sector_guidance_not_list_or_dict")
     pg = payload.get("position_guidance")
     if isinstance(pg, dict):
-        for key in ("target_invested_pct", "cash_recommendation_pct", "reasoning"):
+        for key in ("reasoning",):
             if key not in pg:
                 missing.append(f"position_guidance.{key}")
     elif pg is None:

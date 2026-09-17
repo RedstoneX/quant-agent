@@ -895,14 +895,12 @@ def test_risk_stage_persists_hard_risk_block_when_post_rm_modifications_block_ev
     assert "exceed max 20%" in gate_kwargs["full_response"]
 
 
-def test_risk_stage_reads_macro_target_pct_from_carried_forward_dict():
-    """Regression for the AttributeError bug on the RiskStage side:
-    `macro_analysis.position_guidance.target_invested_pct` blows up when
-    ctx.macro_analysis is the plain dict Pipeline._carry_forward_macro
-    installs. RiskStage.run() must read it via the dual-shape helper and
-    set ctx.macro_target_pct from the carried-forward snapshot instead of
-    crashing (which previously killed the whole scan non-fatally, silently
-    producing nothing)."""
+def test_risk_stage_invested_target_is_the_mandate_not_a_carried_macro_number():
+    """Owner mandate 2026-09-17: the invested target is fixed at 100%. A
+    carried-forward macro snapshot that still carries an old
+    `target_invested_pct` (62.5 here) must neither crash RiskStage (the
+    original AttributeError regression this test guarded) nor lower the
+    target the pre-trade gate measures against."""
     from src.models import PortfolioDecision
 
     decisions = [_buy("AAPL", 25)]
@@ -932,12 +930,13 @@ def test_risk_stage_reads_macro_target_pct_from_carried_forward_dict():
         "status": "hard_risk_block", "orders": [],
         "reason": "AAPL position would be 25.0% and exceed max 20%",
     }
-    assert ctx.macro_target_pct == 62.5
-    # The hard-risk filter itself must have been invoked WITH that figure —
-    # a carried-forward macro snapshot degrading to None here would silently
-    # disable the macro-target check for the rest of the run.
+    assert ctx.invested_target_pct == 100.0
+    # The hard-risk filter itself must have been invoked WITH the mandate —
+    # never with macro's old 62.5, and never with None (which would silently
+    # disable the deployment-gap advisory for the rest of the run).
     fh_kwargs = pipeline._filter_hard_risk_decisions.call_args.kwargs
-    assert fh_kwargs["macro_target_invested_pct"] == 62.5
+    assert fh_kwargs["invested_target_pct"] == 100.0
+    assert "macro_target_invested_pct" not in fh_kwargs
 
 
 def test_risk_stage_does_not_flag_same_session_reuse_as_data_degraded():
@@ -1041,10 +1040,10 @@ def test_risk_stage_data_degraded_message_omits_reuse_statuses():
     assert "earnings" not in message
 
 
-def test_risk_stage_macro_target_pct_degrades_to_none_when_guidance_missing():
+def test_risk_stage_invested_target_holds_when_guidance_missing():
     """A carried-forward snapshot may legitimately lack position_guidance
-    (e.g. very old / partially-written state). Must degrade to None — the
-    existing "not provided" path — never raise."""
+    (e.g. very old / partially-written state). Must never raise, and the
+    fully-invested mandate does not depend on macro at all."""
     from src.models import PortfolioDecision
 
     decisions = [_buy("AAPL", 5)]
@@ -1065,7 +1064,7 @@ def test_risk_stage_macro_target_pct_degrades_to_none_when_guidance_missing():
 
     RiskStage(pipeline=pipeline).run(ctx)
 
-    assert ctx.macro_target_pct is None
+    assert ctx.invested_target_pct == 100.0
 
 
 def test_risk_parse_failure_is_agent_failure_not_rejection():

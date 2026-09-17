@@ -2915,22 +2915,6 @@ def _stash_macro_parse_failure(reason: str) -> None:
         failures.append(reason)
 
 
-def _macro_target_invested_pct(macro_analysis) -> float | None:
-    """Dual-shape read of position_guidance.target_invested_pct.
-
-    Same carried-forward-dict vs. fresh-model split as
-    `_macro_analysis_as_dict` (see there for why the dict shape exists).
-    Degrades to None — the existing "not provided" path — when the key or
-    attribute is missing, since a carried snapshot may legitimately lack it.
-    """
-    if not macro_analysis:
-        return None
-    if hasattr(macro_analysis, "position_guidance"):
-        guidance = macro_analysis.position_guidance
-        return getattr(guidance, "target_invested_pct", None) if guidance else None
-    guidance = macro_analysis.get("position_guidance")
-    return guidance.get("target_invested_pct") if isinstance(guidance, dict) else None
-
 
 def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
     """Apply RiskVerdict.scale_all_buys to BUY (and Stage-3 SHORT) decisions.
@@ -3591,9 +3575,9 @@ class MorningResearchStage:
             ctx.macro_analysis = macro_analysis
             if macro_analysis:
                 logger.info(
-                    "Macro analysis: regime=%s, outlook=%s, target_invested=%s%%",
+                    "Macro analysis: regime=%s, outlook=%s, confidence=%s",
                     macro_analysis.regime, macro_analysis.equity_outlook,
-                    macro_analysis.position_guidance.target_invested_pct,
+                    macro_analysis.confidence,
                 )
                 _persist_evidence(
                     self.db, run_id=ctx.run_id, agent_name="macro_analyst",
@@ -4773,7 +4757,7 @@ class RiskStage:
             ctx.fomc_meetings, ctx.fomc_coverage
 
     Writes: ctx.portfolio_decision.decisions (filtered/capped/scaled),
-            ctx.correlation_matrix, ctx.daily_pnl, ctx.macro_target_pct
+            ctx.correlation_matrix, ctx.daily_pnl, ctx.invested_target_pct
 
     Returns an early-exit dict (symbol_block / hard_risk_block / rejected)
     or None when the pipeline should proceed to execution.
@@ -4945,8 +4929,11 @@ class RiskStage:
 
         daily_pnl = total_value - last_equity
         ctx.daily_pnl = daily_pnl
-        macro_target_pct = _macro_target_invested_pct(macro_analysis)
-        ctx.macro_target_pct = macro_target_pct
+        # Owner mandate 2026-09-17: fully invested, always. The advisory's
+        # target is the fixed mandate; macro no longer sets or lowers it.
+        from src.risk.rules import DESK_INVESTED_TARGET_PCT
+        invested_target_pct = DESK_INVESTED_TARGET_PCT
+        ctx.invested_target_pct = invested_target_pct
 
         # Holding ages + system-drawdown state (2026-08-13 agent audit).
         # Normally DecisionStage already published both. On the RC2 resume lane
@@ -5018,7 +5005,7 @@ class RiskStage:
                 portfolio_decision.decisions,
                 positions, total_value, daily_pnl,
                 baseline=last_equity,
-                macro_target_invested_pct=macro_target_pct,
+                invested_target_pct=invested_target_pct,
                 correlation_matrix=correlation_matrix,
                 cash=ctx.deployable_cash,
                 in_drawdown=in_drawdown,
@@ -5556,7 +5543,7 @@ class RiskStage:
                     portfolio_decision.decisions,
                     positions, total_value, daily_pnl,
                     baseline=last_equity,
-                    macro_target_invested_pct=macro_target_pct,
+                    invested_target_pct=invested_target_pct,
                     correlation_matrix=correlation_matrix,
                     cash=ctx.deployable_cash,
                     in_drawdown=in_drawdown,

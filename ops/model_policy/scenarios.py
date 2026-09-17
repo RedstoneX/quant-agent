@@ -241,12 +241,13 @@ def _macro_grade(analysis) -> list[Check]:
     # VIX at the 88th percentile, credit spreads widening 63bps, sentiment
     # falling, unemployment rising. "risk_on with 95% invested" is not a
     # defensible reading of that input — grade the direction, not a number.
-    pos = getattr(analysis, "position_guidance", None)
-    invested = getattr(pos, "target_invested_pct", None)
+    # (Macro no longer emits an invested %: owner fully-invested mandate,
+    # 2026-09-17. Defensive now means the outlook, not a cash share.)
+    outlook = getattr(analysis, "equity_outlook", None)
     checks.append(Check(
         "defensive_positioning", 0.35,
-        invested is not None and invested <= 80.0,
-        f"target_invested_pct={invested} (stress input; expected <= 80)",
+        outlook in ("bearish", "neutral"),
+        f"equity_outlook={outlook} (stress input; expected not bullish)",
     ))
 
     guidance = getattr(analysis, "sector_guidance", None) or []
@@ -333,8 +334,6 @@ _PM_MACRO = {
     "regime": "risk_off",
     "equity_outlook": "bearish",
     "position_guidance": {
-        "target_invested_pct": 55.0,
-        "cash_recommendation_pct": 45.0,
         "reasoning": "VIX 88th percentile, credit spreads widening.",
     },
     "sector_guidance": [
@@ -538,9 +537,7 @@ _PM_PRODUCTION_MACRO = {
     "confidence": "medium",
     "equity_outlook": "bullish",
     "position_guidance": {
-        "target_invested_pct": 70.0,
-        "cash_recommendation_pct": 30.0,
-        "reasoning": "Constructive regime; keep dry powder for pullbacks.",
+        "reasoning": "Constructive regime; lean net long.",
     },
     "summary": "Risk-on regime with supportive credit and easing volatility.",
 }
@@ -1960,12 +1957,15 @@ def _public_macro_grade(analysis) -> list[Check]:
     if analysis is None:
         return checks
 
+    # Was `target_invested_pct_in_range`; macro no longer emits an invested
+    # % (owner fully-invested mandate, 2026-09-17). The directional lean is
+    # what position_guidance carries now.
     pos = getattr(analysis, "position_guidance", None)
-    invested = getattr(pos, "target_invested_pct", None)
+    lean = str(getattr(pos, "reasoning", "") or "").strip()
     checks.append(Check(
-        "target_invested_pct_in_range", 0.20,
-        invested is not None and 0.0 <= float(invested) <= 100.0,
-        f"target_invested_pct={invested}",
+        "position_guidance_lean_present", 0.20,
+        bool(lean),
+        "position_guidance.reasoning populated" if lean else "missing",
     ))
 
     guidance = getattr(analysis, "sector_guidance", None) or []

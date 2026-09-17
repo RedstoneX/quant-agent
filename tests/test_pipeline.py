@@ -3396,7 +3396,7 @@ def test_filter_hard_risk_decisions_skips_nan_market_value_in_sell_presum(tmp_pa
         daily_pnl=0.0,
         baseline=10000.0,
         cash=500.0,
-        macro_target_invested_pct=None,
+        invested_target_pct=None,
         correlation_matrix={},
     )
     # SELL with NaN market_value is dropped from the pre-sum, so

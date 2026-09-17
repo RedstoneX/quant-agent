@@ -1489,13 +1489,14 @@ def gross_exposure(positions, *, cash_park_symbol: str | None = None) -> float:
 # Same book, same target, opposite sign, and each seat acted on its own
 # number. `book_exposure` is now the only place either question is answered.
 #
-# WHY `deployed_pct` IS THE ONE COMPARED TO `target_invested_pct`, and not
+# WHY `deployed_pct` IS THE ONE COMPARED TO THE INVESTED TARGET, and not
 # the signed leverage-aware number:
 #
-#  1. The target is DEFINED as the complement of cash by the seat that emits
-#     it. `MacroPositionGuidance` bounds `target_invested_pct` and
-#     `cash_recommendation_pct` to 0-100 each, and the macro prompt requires
-#     them to "sum to ~100". It is a capital-deployment target.
+#  1. The target is DEFINED as the complement of cash. It used to be macro's
+#     `target_invested_pct` (0-100, "sums to ~100" with its cash number);
+#     since the owner mandate of 2026-09-17 it is the fixed
+#     `DESK_INVESTED_TARGET_PCT` below. Either way it is a capital-deployment
+#     target.
 #  2. The consequence the gap exists to fix is idle cash — PMFacts renders it
 #     as "the single largest P&L drag (idle cash in a rising market)" and
 #     routes it to the `cash_target` step. Leverage does not make a dollar
@@ -1524,13 +1525,24 @@ def gross_exposure(positions, *, cash_park_symbol: str | None = None) -> float:
 # `gross_exposure`, `_force_delever` and every LLM-facing position view.
 
 
+# Owner mandate, 2026-09-17: "I want 100% invested. I don't want anything
+# sitting in T-bills or any other positions that just yield interest." Cash
+# earning less than inflation is a loss, and the desk can always go long OR
+# short, so there is always something to own. This is a mandate, not a tuned
+# number: it is the whole of equity. Macro no longer sets or lowers it — macro
+# informs DIRECTION only. Compared against `BookExposure.deployed_pct` by the
+# PM facts block and the pre-trade `deployment_gap` advisory, which reports
+# UNDER-deployment only and never asks for a book to be scaled down.
+DESK_INVESTED_TARGET_PCT = 100.0
+
+
 @dataclass(frozen=True)
 class BookExposure:
     """One book, measured three ways that can no longer drift apart.
 
     `deployed` — capital committed, unsigned, NO leverage multiple. The
-        cash-complement measure, and the ONLY one comparable to macro's
-        `target_invested_pct`.
+        cash-complement measure, and the ONLY one comparable to the
+        invested target (`DESK_INVESTED_TARGET_PCT`).
     `net` — signed and leverage-aware. Direction of the book. Negative means
         net short. Hedges cancel, which is the point of this one.
     `gross` — unsigned and leverage-aware. What the §11.2 ceiling caps.

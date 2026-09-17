@@ -74,7 +74,7 @@ This is a hypothesis until the measured win rate, average win/loss ratio and exp
 
 **Horizon:** swing — days to weeks.
 
-**Capital is to be deployed.** Idle cash is a cost, not a safety measure. Parking equity in T-bills is correct only when the desk genuinely finds nothing worth owning, and that condition must be stated and defensible rather than arrived at by default. Capital preservation is achieved by **bounding the size of each loss**, never by declining to participate.
+**Capital is to be deployed.** Idle cash is a cost, not a safety measure. **The desk stays 100% invested (owner mandate, 2026-09-17): nothing sits in T-bills or anything else that only yields interest, because cash earning less than inflation is a loss and the desk can always go long or short.** Macro informs direction, never how much capital sits idle; the only cash is the small execution reserve, and any other undeployed cash must be explained. Capital preservation is achieved by **bounding the size of each loss**, never by declining to participate.
 
 **Risk envelope (owner-ratified 2026-08-27):**
 

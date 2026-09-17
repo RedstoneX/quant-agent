@@ -1300,9 +1300,7 @@ def _valid_macro_payload(**overrides) -> dict:
             {"sector": "Technology", "stance": "overweight", "reason": "AI capex"},
         ],
         "position_guidance": {
-            "target_invested_pct": 75.0,
-            "cash_recommendation_pct": 25.0,
-            "reasoning": "Hold buffer.",
+            "reasoning": "Lean net long.",
         },
         "summary": "Moderately supportive.",
     }
@@ -1349,17 +1347,23 @@ def test_macro_analysis_drops_unknown_sector_but_preserves_analysis():
     assert [s.sector for s in ma.sector_guidance] == ["Technology"]
 
 
-def test_macro_analysis_position_guidance_pct_bounds():
+def test_macro_position_guidance_no_longer_carries_an_invested_number():
+    """Owner mandate 2026-09-17: macro does not set how invested the desk is.
+    A legacy snapshot still carrying the two old keys parses (they are
+    ignored) and the numbers are not reachable from the model."""
     payload = _valid_macro_payload()
-    payload["position_guidance"]["target_invested_pct"] = 150  # > 100
-    with pytest.raises(ValidationError):
-        MacroAnalysis(**payload)
+    payload["position_guidance"]["target_invested_pct"] = 150
+    payload["position_guidance"]["cash_recommendation_pct"] = 40
+    ma = MacroAnalysis(**payload)
+    assert not hasattr(ma.position_guidance, "target_invested_pct")
+    assert not hasattr(ma.position_guidance, "cash_recommendation_pct")
+    assert ma.position_guidance.reasoning == "Lean net long."
 
 
 # === Agent-coordination refactor (2026-04-17 follow-up) ===
 
-def test_macro_exposure_deviation_emits_advisory_violation():
-    """When projected net exposure deviates > 15pp from macro target, a non-blocking violation is emitted."""
+def test_deployment_gap_emits_advisory_violation():
+    """When projected invested is > 15pp UNDER the fully-invested mandate, a non-blocking violation is emitted."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40, max_total_position_pct=90,
@@ -1374,32 +1378,32 @@ def test_macro_exposure_deviation_emits_advisory_violation():
     ):
         allowed, violations, blocked = pipeline._filter_hard_risk_decisions(
             decisions, positions=[], total_value=100000, daily_pnl=0,
-            macro_target_invested_pct=20,  # Macro says "stay light at 20%", PM is at 40%
+            invested_target_pct=100,  # mandate 100%, PM projects 40%
         )
 
     assert [d.symbol for d in allowed] == ["SPY"]  # advisory — not blocked
     deviation_rules = [v.rule for v in violations]
-    assert "macro_exposure_deviation" in deviation_rules
+    assert "deployment_gap" in deviation_rules
 
 
-def test_macro_exposure_deviation_skipped_when_within_tolerance():
+def test_deployment_gap_skipped_when_within_tolerance():
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40, max_total_position_pct=90,
         max_daily_loss_pct=3, max_sector_pct=90, require_stop_loss=True,
     ))
-    decisions = [
-        TradeDecision(action="BUY", symbol="SPY", allocation_pct=25,
-                      entry_price=500, stop_loss=480, take_profit=530, reasoning="on target"),
-    ]
+    from src.models import Position
+    held = [Position(symbol="SPY", qty=180, avg_entry=500, current_price=500,
+                     market_value=90_000, unrealized_pnl=0.0,
+                     unrealized_intraday_pnl=0.0, sector="Broad")]
     with patch("src.pipeline._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         _, violations, _ = pipeline._filter_hard_risk_decisions(
-            decisions, positions=[], total_value=100000, daily_pnl=0,
-            macro_target_invested_pct=20,  # 25% vs 20% = 5pp deviation, under 15pp tolerance
+            [], positions=held, total_value=100000, daily_pnl=0,
+            invested_target_pct=100,  # 90% vs 100% = -10pp, under 15pp tolerance
         )
-    assert not any(v.rule == "macro_exposure_deviation" for v in violations)
+    assert not any(v.rule == "deployment_gap" for v in violations)
 
 
 # === TechAnalysisResult v2 (reasoning_chain + cross-field validator + conviction) ===

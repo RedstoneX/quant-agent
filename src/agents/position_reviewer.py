@@ -330,11 +330,10 @@ class PositionReviewerAgent(BaseAgent):
             regime = macro_analysis.get("regime", "N/A")
             outlook = macro_analysis.get("equity_outlook", "N/A")
             confidence = macro_analysis.get("confidence", "N/A")
-            guidance = macro_analysis.get("position_guidance") or {}
-            target_invested = guidance.get("target_invested_pct", "N/A")
+            # No macro invested target: owner mandate 2026-09-17, the desk
+            # stays fully invested and macro informs direction only.
             macro_regime_line = (
-                f"Regime: **{regime}** | Outlook: **{outlook}** ({confidence}) | "
-                f"Target invested: {target_invested}%"
+                f"Regime: **{regime}** | Outlook: **{outlook}** ({confidence})"
             )
         else:
             macro_regime_line = "Regime: (no macro analysis this session)"
