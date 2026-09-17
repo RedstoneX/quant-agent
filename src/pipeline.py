@@ -12121,6 +12121,31 @@ class TradingPipeline:
             yesterday_insights = self.db.get_latest_insights(before_date=session_date_key())
             recent_performance = self._compute_recent_performance(last_equity)
 
+            # Margin capacity for the reviewer prompt — WORDING ONLY, mirrors
+            # the same fix threaded into the PM prompt (`DecisionStage.run`
+            # in `src/pipeline_stages.py`). Reuses the EXACT §11.2
+            # computation execution's submit loop sizes entries against
+            # (`_entry_deployment_budget`, which itself resolves the ladder
+            # via `_session_gross_ceiling`) — never a second formula. Book
+            # state here (positions/equity/held-gross) has not changed since
+            # ctx was built above, so this is the same headroom execution
+            # will see for this session's entries.
+            from src.pipeline_stages import (
+                _entry_deployment_budget, _session_gross_ceiling,
+            )
+            margin_headroom_usd, margin_ladder_backed, _margin_headroom_note = (
+                _entry_deployment_budget(
+                    self, ctx, review_positions, total_value, review_cash,
+                )
+            )
+            _margin_ceiling = _session_gross_ceiling(self, ctx)
+            margin_ladder_multiple = (
+                _margin_ceiling.ceiling_x if _margin_ceiling is not None else None
+            )
+            margin_ladder_rung = (
+                _margin_ceiling.rung if _margin_ceiling is not None else None
+            )
+
             try:
                 review, md_result = self.position_reviewer.review(
                     positions=review_positions,
@@ -12145,6 +12170,10 @@ class TradingPipeline:
                     recent_performance=recent_performance,
                     already_trimmed_today=already_trimmed_today,
                     allow_margin=bool(getattr(self.config.risk, "allow_margin", False)),
+                    margin_headroom_usd=margin_headroom_usd,
+                    margin_ladder_backed=margin_ladder_backed,
+                    margin_ladder_multiple=margin_ladder_multiple,
+                    margin_ladder_rung=margin_ladder_rung,
                 )
             except PaidAnalysisSuspended as exc:
                 self._reconcile_fills()

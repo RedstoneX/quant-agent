@@ -692,3 +692,97 @@ def test_pm_prompt_margin_headroom_wired_from_entry_deployment_budget():
     assert "margin_headroom_usd=margin_headroom_usd" in src
     assert "margin_ladder_backed=margin_ladder_backed" in src
 
+
+
+def test_reviewer_prompt_never_says_no_margin_when_margin_enabled():
+    """Same 2026-09-17 defect, same fix, mirrored for the seat that decides
+    whether to hold or cut existing positions twice a day (midday/close)."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=-915.83, total_value=9_736.0,
+            allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+        )
+
+    assert "no margin" not in msg.lower()
+    assert "$-915.83" in msg
+    assert "raw cash" in msg.lower()
+
+
+def test_reviewer_prompt_margin_section_discloses_ladder_headroom():
+    """Margin Capacity section must be non-empty and show the SAME headroom
+    figure execution's `_entry_deployment_budget` computes."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=-915.83, total_value=9_736.0,
+            allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+        )
+
+    assert "Margin Capacity" in msg
+    assert "$11,434.37" in msg
+    assert "2.00x" in msg
+
+
+def test_reviewer_prompt_margin_section_honest_when_ladder_unresolved():
+    """Margin enabled but the ladder could not be resolved this session —
+    the section must say so, not go blank and not fabricate a number."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=500.0, total_value=9_736.0,
+            allow_margin=True,
+            # margin_ladder_backed defaults False — ladder unresolved.
+        )
+
+    assert "Margin Policy" in msg
+    assert "could not be resolved" in msg
+    assert "$" not in msg.split("### Margin Policy")[1].split("###")[0]
+
+
+def test_reviewer_prompt_never_leaks_prohibited_buying_power_fields():
+    """The prohibited margin-buying-power fields must never appear anywhere
+    in the reviewer prompt either."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=-915.83, total_value=9_736.0,
+            allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+        )
+
+    for forbidden in ("buying_power", "regt_buying_power"):
+        assert forbidden not in msg
+
+
+def test_reviewer_prompt_margin_headroom_wired_from_entry_deployment_budget():
+    """Source-level pin: `run_position_review` must call
+    `_entry_deployment_budget` (the exact function execution's submit loop
+    uses to size real orders) and thread its return values straight through
+    to `PositionReviewerAgent.review` — never re-derive the headroom."""
+    import inspect
+
+    from src.pipeline import TradingPipeline
+
+    src = inspect.getsource(TradingPipeline.run_position_review)
+    assert "_entry_deployment_budget(" in src
+    assert "self, ctx, review_positions, total_value, review_cash," in src
+    assert "margin_headroom_usd=margin_headroom_usd" in src
+    assert "margin_ladder_backed=margin_ladder_backed" in src
