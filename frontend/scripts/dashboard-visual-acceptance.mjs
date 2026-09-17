@@ -229,7 +229,7 @@ async function shot(name, viewport, scenario = "populated", interact, destDir) {
     await page.goto(baseUrl, { waitUntil: "networkidle" });
     await page.getByText("QAMC Mission Control", { exact: false }).first().waitFor();
     if (interact) await interact(page);
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(800);
     const overflow = await page.evaluate(() => {
       if (document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1) return null;
       const offenders = [...document.querySelectorAll("body *")]
@@ -438,6 +438,19 @@ const lockSteps = [
   }],
 ];
 
+async function waitForChartStage(page) {
+  await page.getByText("Apple Inc.").waitFor();
+  await page.waitForFunction(() => {
+    const canvases = [...document.querySelectorAll("canvas")];
+    return canvases.some((canvas) => {
+      const box = canvas.getBoundingClientRect();
+      return box.width > 120 && box.height > 80;
+    });
+  });
+  await page.getByText("ENTRY", { exact: false }).waitFor();
+  await page.getByText("Live $", { exact: false }).waitFor();
+}
+
 const fullPanelSteps = [
   ["a-full-cockpit-panels", { width: 1600, height: 1000 }, "populated", async (page) => {
     await page.getByRole("tab", { name: "Holdings" }).waitFor();
@@ -447,18 +460,16 @@ const fullPanelSteps = [
     await page.getByRole("tab", { name: "Positions" }).waitFor();
     await page.getByRole("tab", { name: "Orders" }).waitFor();
     await page.getByText("Net liquidation value").waitFor();
-    await page.getByText("Apple Inc.").waitFor();
-    await page.getByText("ENTRY", { exact: false }).waitFor();
-    await page.getByText("Live $", { exact: false }).waitFor();
+    await waitForChartStage(page);
   }],
   ["b-resize-h-and-v", { width: 1600, height: 1000 }, "populated", async (page) => {
-    await page.getByText("Live $", { exact: false }).waitFor();
+    await waitForChartStage(page);
     await dragVerticalSash(page, 0, 70);
     await dragHorizontalSash(page, 0, 120);
-    await page.getByText("Live $", { exact: false }).waitFor();
+    await waitForChartStage(page);
   }],
   ["c-no-horizontal-slider", { width: 1600, height: 1000 }, "populated", async (page) => {
-    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await waitForChartStage(page);
     await page.getByRole("tab", { name: "Orders" }).click();
     await page.getByText("Stop", { exact: true }).waitFor();
     await page.getByText("Target", { exact: true }).waitFor();
@@ -468,8 +479,7 @@ const fullPanelSteps = [
     await page.getByRole("tab", { name: "Holdings" }).waitFor();
     await page.getByRole("tab", { name: "Account" }).waitFor();
     await page.getByRole("tab", { name: "Sessions" }).waitFor();
-    await page.getByText("Apple Inc.").waitFor();
-    await page.getByText("ENTRY", { exact: false }).waitFor();
+    await waitForChartStage(page);
   }],
 ];
 
