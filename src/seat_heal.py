@@ -225,8 +225,9 @@ def mechanical_heal_macro(payload) -> HealResult:
     Coerce dict ``sector_guidance`` / stored rows toward MacroAnalysis's
     list shape. Do not fill reasoning_chain from summary (that would
     invent macro text). After coerce, the payload must still validate as
-    MacroAnalysis — otherwise this is a durable fail, not a remembered
-    regime passed silently into PM.
+    MacroAnalysis to be ``usable`` for PM. A same-day regime snapshot
+    without a chain is still a regime for holding-discipline carry
+    (`_carry_forward_macro`); it is not silently passed into PM.
     """
     if payload is None:
         return HealResult(

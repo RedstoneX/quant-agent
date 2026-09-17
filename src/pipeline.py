@@ -12961,13 +12961,16 @@ class TradingPipeline:
 
         GOOD same-session reuse stays `carried_from_morning` (PR #430).
         A GOOD prior-day regime is `remembered` until a real regime/print
-        change — not `carry_forward_empty`. A blank or unreadable snapshot
-        is lost, never reused as research. Holding-discipline must read
-        `.same_session`, not payload truthiness, so a cross-day remember
-        cannot falsify today's exit claim.
+        change — not `carry_forward_empty`. A blank snapshot with no
+        regime is lost. A same-day `{date, regime}` trim is a regime
+        snapshot for holding-discipline; it is not a full MacroAnalysis.
+        PM still refuses a chain-less dict via `_macro_analysis_as_dict`.
+        Holding-discipline must read `.same_session`, not payload
+        truthiness, so a cross-day remember cannot falsify today's exit
+        claim.
         """
         from src.evidence_kind import macro_reuse
-        from src.seat_heal import mechanical_heal_macro
+        from src.seat_heal import coerce_macro_shape
         try:
             state = self.macro_store.load_last_state() or None
         except Exception as e:  # noqa: BLE001 — never fail a tick on carry-forward
@@ -12977,17 +12980,22 @@ class TradingPipeline:
             return CarryForward(None, "carry_forward_empty", same_session=False)
         stored_date = str(state.get("date") or state.get("as_of") or "").strip()[:10]
         same_session = (not stored_date) or stored_date == str(et_today())
-        heal = mechanical_heal_macro(dict(state))
-        if not heal.usable:
+        # A regime snapshot is reusable research for holding-discipline and
+        # kind-reuse. Full MacroAnalysis validation is the PM path
+        # (`_macro_analysis_as_dict`) — requiring a chain here turned a
+        # same-day {date, regime} read into carry_forward_failed and made
+        # a provably-false exit claim look unverifiable.
+        if not isinstance(state, dict) or not str(state.get("regime") or "").strip():
             return CarryForward(None, "carry_forward_failed", same_session=same_session)
+        payload, _fixes = coerce_macro_shape(dict(state))
         verdict = macro_reuse(
-            heal.payload,
+            payload,
             same_session=same_session,
-            regime_or_print_changed=self._macro_regime_or_print_changed(heal.payload),
+            regime_or_print_changed=self._macro_regime_or_print_changed(payload),
         )
         if not verdict.usable:
             return CarryForward(None, verdict.status, same_session=same_session)
-        return CarryForward(heal.payload, verdict.status, same_session=same_session)
+        return CarryForward(payload, verdict.status, same_session=same_session)
 
     def _carry_forward_news(self) -> CarryForward:
         """This session's news intelligence, re-validated from its stored dump.
