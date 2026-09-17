@@ -149,6 +149,9 @@ class RunContext:
     # and an empty list from unusable history is a DATA fault
     # (`FAULT_NO_STRUCTURE`), not a refusal — see src/data/levels.py.
     tech_bars_coverage: dict = field(default_factory=dict)
+    # Symbols whose in-session snapshot had no today print (last trade not
+    # today, and no today open/quote either). Tech must not report 'ok'.
+    tech_live_unavailable_symbols: list[str] = field(default_factory=list)
     data_status: dict[str, str] = field(default_factory=dict)
     # What this session's LLM-response parsing lost or papered over
     # (src.models.parse_telemetry). Same relationship to `data_status` as

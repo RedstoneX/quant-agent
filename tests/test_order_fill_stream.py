@@ -626,3 +626,129 @@ def test_dead_hub_falls_to_rest_polling_not_one_snapshot(mock_stream_cls):
     finally:
         broker.stop_trade_updates()
 
+
+def test_auth_hook_drains_non_auth_frames_then_authorizes():
+    """alpaca-py's `_auth` treats the first websocket frame as the
+    handshake. A hello/listening frame before `authorized` used to raise
+    `failed to authenticate` and retry through the Risk window."""
+    import json
+
+    from src.execution.broker import _install_trading_stream_reconnect_guard
+
+    class WS:
+        def __init__(self):
+            self.sent = []
+            self._frames = [
+                json.dumps({"stream": "listening", "data": {"streams": ["trade_updates"]}}),
+                json.dumps({"stream": "authorization", "data": {"status": "authorized"}}),
+            ]
+
+        async def send(self, payload):
+            self.sent.append(payload)
+
+        async def recv(self):
+            return self._frames.pop(0)
+
+    class Stream:
+        async def _start_ws(self):
+            await self._auth()
+
+        async def _auth(self):
+            raise AssertionError("original _auth must not run once wrapped")
+
+        async def stop_ws(self):
+            pass
+
+    stream = Stream()
+    stream._ws = WS()
+    stream._api_key = "k"
+    stream._secret_key = "s"
+    stream._endpoint = "wss://paper-api.alpaca.markets/stream"
+    stream._qamc_authed = threading.Event()
+    _install_trading_stream_reconnect_guard(stream)
+    asyncio.run(stream._start_ws())
+    assert stream._qamc_authed.is_set()
+    sent = json.loads(stream._ws.sent[0])
+    assert sent["action"] == "authenticate"
+    assert sent["data"]["key_id"] == "k"
+
+
+def test_auth_hook_drains_list_payload_then_authorizes():
+    """Some Alpaca sockets wrap frames in a JSON list. The first-frame
+    handshake still has to find `authorized` inside that list."""
+    import json
+
+    from src.execution.broker import _install_trading_stream_reconnect_guard
+
+    class WS:
+        def __init__(self):
+            self.sent = []
+            self._frames = [
+                json.dumps([{"stream": "listening"}]),
+                json.dumps([{
+                    "stream": "authorization",
+                    "data": {"status": "authorized"},
+                }]),
+            ]
+
+        async def send(self, payload):
+            self.sent.append(payload)
+
+        async def recv(self):
+            return self._frames.pop(0)
+
+    class Stream:
+        async def _start_ws(self):
+            await self._auth()
+
+        async def _auth(self):
+            raise AssertionError("original _auth must not run once wrapped")
+
+        async def stop_ws(self):
+            pass
+
+    stream = Stream()
+    stream._ws = WS()
+    stream._api_key = "k"
+    stream._secret_key = "s"
+    stream._endpoint = "wss://paper-api.alpaca.markets/stream"
+    stream._qamc_authed = threading.Event()
+    _install_trading_stream_reconnect_guard(stream)
+    asyncio.run(stream._start_ws())
+    assert stream._qamc_authed.is_set()
+
+
+def test_auth_hook_raises_named_failure_on_unauthorized():
+    import json
+
+    from src.execution.broker import _install_trading_stream_reconnect_guard
+
+    class WS:
+        async def send(self, payload):
+            return None
+
+        async def recv(self):
+            return json.dumps({
+                "data": {"status": "unauthorized", "message": "already connected"},
+            })
+
+    class Stream:
+        async def _start_ws(self):
+            await self._auth()
+
+        async def _auth(self):
+            raise AssertionError("original _auth must not run once wrapped")
+
+        async def stop_ws(self):
+            pass
+
+    stream = Stream()
+    stream._ws = WS()
+    stream._api_key = "k"
+    stream._secret_key = "s"
+    stream._qamc_authed = threading.Event()
+    _install_trading_stream_reconnect_guard(stream)
+    with pytest.raises(ValueError, match="failed to authenticate: already connected"):
+        asyncio.run(stream._start_ws())
+    assert stream._qamc_authed.is_set() is False
+

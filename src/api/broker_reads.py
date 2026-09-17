@@ -514,7 +514,7 @@ def read_live_quotes(symbols: list[str]) -> dict:
                     "value": last_price,
                     "price_kind": "current_quote",
                     "provider": "alpaca",
-                    "feed": None,  # snapshot request doesn't explicitly select a feed
+                    "feed": "iex",
                     "market_as_of": _iso_or_none(last_trade_at),
                     "retrieved_at": retrieved_at.isoformat(),
                     "freshness": _quote_freshness(last_trade_at, session_open),

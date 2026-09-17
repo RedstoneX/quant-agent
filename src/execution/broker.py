@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import math
 import random
@@ -338,6 +339,7 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
     if not callable(original_start):
         return
     original_stop_ws = getattr(stream, "stop_ws", None)
+    original_auth = getattr(stream, "_auth", None)
     sdk_backs_off = callable(getattr(stream, "_wait_before_reconnect", None))
     failures = 0
     last_log_mono = 0.0
@@ -350,6 +352,82 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
         event.set()
         if callable(original_stop_ws):
             await original_stop_ws()
+
+    async def auth():
+        """Authenticate, draining non-auth frames until authorized.
+
+        alpaca-py's `_auth` treats the first websocket message as the
+        handshake. If that frame is not `authorized` (a hello, an
+        already-connected notice, a listen ack) it raises
+        `ValueError("failed to authenticate")` and `_run_forever` retries.
+        Measured 2026-09-17: 24 of those lines during the Risk window
+        while REST still worked. Drain until authorized or the encoded
+        auth budget elapses. Never log secrets.
+        """
+        ws = getattr(stream, "_ws", None)
+        if ws is None or not callable(getattr(ws, "send", None)):
+            if callable(original_auth):
+                await original_auth()
+            authed = getattr(stream, "_qamc_authed", None)
+            if authed is not None:
+                try:
+                    authed.set()
+                except Exception:
+                    pass
+            return
+        await ws.send(json.dumps({
+            "action": "authenticate",
+            "data": {
+                "key_id": getattr(stream, "_api_key", ""),
+                "secret_key": getattr(stream, "_secret_key", ""),
+            },
+        }))
+        deadline = time.monotonic() + _ALPACA_STREAM_AUTH_DEADLINE_S
+        last_status = None
+        while time.monotonic() < deadline:
+            remaining = max(0.1, deadline - time.monotonic())
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+            except asyncio.TimeoutError:
+                break
+            try:
+                msg = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            frames = msg if isinstance(msg, list) else [msg]
+            for frame in frames:
+                if not isinstance(frame, dict):
+                    continue
+                data = frame.get("data") if isinstance(frame, dict) else None
+                status = data.get("status") if isinstance(data, dict) else None
+                last_status = status
+                if status == "authorized":
+                    authed = getattr(stream, "_qamc_authed", None)
+                    if authed is not None:
+                        try:
+                            authed.set()
+                        except Exception:
+                            pass
+                    logger.info(
+                        "trade_updates websocket authorized at %s",
+                        getattr(stream, "_endpoint", "unknown"),
+                    )
+                    return
+                if status in ("unauthorized", "unauthenticated"):
+                    reason = (
+                        (data.get("message") or data.get("reason") or status)
+                        if isinstance(data, dict) else status
+                    )
+                    logger.warning(
+                        "trade_updates websocket auth rejected (%s) at %s",
+                        reason, getattr(stream, "_endpoint", "unknown"),
+                    )
+                    raise ValueError(f"failed to authenticate: {reason}")
+                # Non-auth frames — keep reading. Do not treat them as failure.
+        raise ValueError(
+            "failed to authenticate: timed out waiting for authorized "
+            f"(last={last_status})"
+        )
 
     async def start_ws():
         nonlocal failures, last_log_mono
@@ -389,6 +467,7 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
             raise
 
     stream._start_ws = start_ws
+    stream._auth = auth
     if callable(original_stop_ws):
         stream.stop_ws = stop_ws
 
@@ -1894,7 +1973,9 @@ class AlpacaBroker:
                 logger.warning("get_intraday_snapshots: data client init failed: %s", exc)
                 return {}
 
+        from alpaca.data.enums import DataFeed
         from alpaca.data.requests import StockSnapshotRequest
+        from src.trading_calendar import live_price_is_today
 
         requested = [(symbol, _alpaca_symbol(symbol)) for symbol in symbols]
         alpaca_symbols = list(dict.fromkeys(mapped for _, mapped in requested))
@@ -1907,7 +1988,9 @@ class AlpacaBroker:
                 return {}
             try:
                 result = self._data_client.get_stock_snapshot(
-                    StockSnapshotRequest(symbol_or_symbols=batch)
+                    StockSnapshotRequest(
+                        symbol_or_symbols=batch, feed=DataFeed.IEX,
+                    )
                 )
                 successful_batches += 1
                 return result if isinstance(result, dict) else {}
@@ -1962,20 +2045,52 @@ class AlpacaBroker:
             # `session_*` namespace so no caller can mistake it for a
             # completed daily bar (2026-08-19 intraday-evidence fix).
             today_bar = getattr(snap, "daily_bar", None) if snap is not None else None
+            quote = getattr(snap, "latest_quote", None) if snap is not None else None
             # Alpaca's Trade model DOES carry its own `timestamp` field
             # (verified against the installed SDK, 2026-09-13) — this is
             # the provider's own market timestamp for the last print, not
             # a guess. Kept as the raw datetime (or None); broker_reads.py
             # serializes it and derives freshness from it.
             last_trade_at = getattr(trade, "timestamp", None) if trade is not None else None
+            last_price = _num(trade, "price")
+            bar_ts = getattr(today_bar, "timestamp", None) if today_bar is not None else None
+            if today_bar is None:
+                session_bar = None
+            elif bar_ts is None or live_price_is_today(bar_ts):
+                # No timestamp: keep the forming bar (tests and older SDK
+                # objects). A dated bar is session data only when it is today.
+                session_bar = today_bar
+            else:
+                session_bar = None
+            # At the open, IEX latest_trade can still be yesterday while
+            # today's forming bar already carries the open print
+            # (measured 2026-09-17: 8/104 STALE including XOM). Use that
+            # today-timestamped bar — a real print. If the bar is not from
+            # today either, a today-timestamped quote is the live quote,
+            # not a last trade; still not an invented price. Session OHLC
+            # is omitted unless the bar itself is from today.
+            if not live_price_is_today(last_trade_at):
+                if live_price_is_today(bar_ts):
+                    last_price = _num(today_bar, "close") or _num(today_bar, "open")
+                    last_trade_at = bar_ts
+                else:
+                    quote_ts = getattr(quote, "timestamp", None) if quote is not None else None
+                    if live_price_is_today(quote_ts):
+                        bid = _num(quote, "bid_price")
+                        ask = _num(quote, "ask_price")
+                        if bid and ask:
+                            last_price = (bid + ask) / 2.0
+                        else:
+                            last_price = ask or bid
+                        last_trade_at = quote_ts
             out[symbol] = {
-                "last_price": _num(trade, "price"),
+                "last_price": last_price,
                 "last_trade_at": last_trade_at,
                 "prev_close": _num(prev_bar, "close"),
-                "session_open": _num(today_bar, "open"),
-                "session_high": _num(today_bar, "high"),
-                "session_low": _num(today_bar, "low"),
-                "session_volume": _num(today_bar, "volume"),
+                "session_open": _num(session_bar, "open") if session_bar else None,
+                "session_high": _num(session_bar, "high") if session_bar else None,
+                "session_low": _num(session_bar, "low") if session_bar else None,
+                "session_volume": _num(session_bar, "volume") if session_bar else None,
             }
         return out
 

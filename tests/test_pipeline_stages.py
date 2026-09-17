@@ -2002,6 +2002,47 @@ def test_morning_research_stage_tech_full_batch_high_conviction_stays_ok(
     assert result_ctx.data_status["tech"] == "ok"
 
 
+@patch("src.pipeline_stages.compute_indicators")
+def test_morning_research_stage_tech_stale_live_price_is_not_high_confidence(
+    mock_compute_indicators,
+):
+    """2026-09-17 open: 8/104 live prices STALE with no open print, and
+    tech still resolved. A fully parsed batch with no today print is not
+    'ok' — the producing step missed the open, so confidence is low."""
+    mock_compute_indicators.return_value = MagicMock()
+
+    from src.models import TechAnalysisResult, TechReasoningChain
+
+    def _mk(symbol, conviction):
+        return TechAnalysisResult(
+            symbol=symbol, rating="buy", conviction=conviction,
+            entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+            support_levels=[95.0], resistance_levels=[110.0],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning_chain=TechReasoningChain(
+                trend="x", momentum="x", volatility="x", volume="x",
+                support_resistance="x",
+            ),
+            reasoning="test",
+        thesis_invalid_if="closes below support",
+    )
+
+    analyses_map = {"AAPL": _mk("AAPL", "high"), "MSFT": _mk("MSFT", "high")}
+    stage = _tech_stage_for_conviction_test(analyses_map)
+    stage._live_session_context = lambda symbols: {
+        "AAPL": {"live_unavailable": "last trade is not from today's session"},
+        "MSFT": {"last_price": 210.0},
+    }
+
+    ctx = RunContext.start("morning")
+    ctx.positions = []
+    result_ctx = stage.run(ctx)
+
+    assert {a.symbol for a in result_ctx.analyses} == {"AAPL", "MSFT"}
+    assert result_ctx.data_status["tech"] == "low_confidence"
+    assert "AAPL" in result_ctx.tech_live_unavailable_symbols
+
+
 def _minimal_news_report(confidence="medium"):
     from src.models import MacroNarrative, NewsIntelligenceReport
     return NewsIntelligenceReport(

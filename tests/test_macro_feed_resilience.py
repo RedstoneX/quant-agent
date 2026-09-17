@@ -199,6 +199,86 @@ def test_deadline_already_expired_skips_remaining_series_without_attempting(mock
     mock.get_series.assert_not_called()
 
 
+def test_configured_observation_jobs_are_the_fifteen_required_series():
+    """The 2026-09-17 miss was the last seven IDs never being attempted.
+    Prefetch must ask for every series get_macro_summary() assembles."""
+    from src.data.macro import _configured_observation_jobs
+
+    ids = [sid for sid, _kw in _configured_observation_jobs()]
+    assert ids == [
+        "VIXCLS", "DGS3MO", "DGS2", "DGS10", "DFF",
+        "CPIAUCSL", "CPILFESL", "PCEPI", "UNRATE", "BAMLH0A0HYM2",
+        "DFII10", "T10YIE", "DTWEXBGS", "BAMLC0A0CM", "ICSA",
+    ]
+    assert len(set(ids)) == 15
+
+
+@patch("src.data.macro.Fred")
+def test_parallel_prefetch_attempts_every_series_inside_a_serial_impossible_deadline(
+    mock_fred_cls,
+):
+    """2026-09-17: eight serial observation+metadata calls ate 90s and the
+    last seven series were skipped without an attempt. Each fetch here
+    sleeps long enough that 15 in a row would miss a 0.8s ceiling; parallel
+    prefetch must still attempt (and land) every configured series."""
+    mock = MagicMock()
+    seen: list[str] = []
+
+    def _side_effect(series_id, **kw):
+        seen.append(series_id)
+        time.sleep(0.12)
+        return _series([1.0, 1.1, 1.2])
+
+    mock.get_series.side_effect = _side_effect
+    mock_fred_cls.return_value = mock
+    provider = MacroDataProvider(
+        api_key="test-key",
+        request_timeout_s=1.0,
+        max_retries=0,
+        total_fetch_deadline_s=0.8,
+    )
+    start = time.monotonic()
+    provider.get_macro_summary()
+    elapsed = time.monotonic() - start
+
+    assert provider.last_coverage.configured == 15
+    assert provider.last_coverage.succeeded == 15
+    assert provider.last_coverage.status == "ok"
+    assert provider.last_coverage.failed == []
+    assert set(seen) == {
+        "VIXCLS", "DGS3MO", "DGS2", "DGS10", "DFF",
+        "CPIAUCSL", "CPILFESL", "PCEPI", "UNRATE", "BAMLH0A0HYM2",
+        "DFII10", "T10YIE", "DTWEXBGS", "BAMLC0A0CM", "ICSA",
+    }
+    # Serial 15 × 0.12s = 1.8s would blow the 0.8s ceiling.
+    assert elapsed < 1.2, (
+        f"get_macro_summary() took {elapsed:.2f}s — prefetch is not parallel"
+    )
+
+
+@patch("fredapi.fred.urlopen")
+def test_fred_fetch_passes_per_request_timeout_to_urlopen(mock_urlopen):
+    """Parallel prefetch cannot share socket.getdefaulttimeout(). Each
+    fredapi urlopen must carry its own timeout so one worker cannot
+    restore another request to blocking-forever."""
+    mock_urlopen.side_effect = TimeoutError("The read operation timed out")
+    provider = MacroDataProvider(
+        api_key="test-key",
+        request_timeout_s=15.0,
+        max_retries=0,
+        total_fetch_deadline_s=90.0,
+    )
+    provider.get_macro_summary()
+    assert mock_urlopen.called
+    timeouts = [
+        call.kwargs.get("timeout")
+        for call in mock_urlopen.call_args_list
+    ]
+    assert timeouts
+    assert all(t is not None and t > 0 for t in timeouts)
+    assert all(t <= 15.0 for t in timeouts)
+
+
 # ===========================================================================
 # The six new series — parsed correctly, reach the summary dict
 # ===========================================================================
@@ -474,11 +554,11 @@ def _macro_coverage_stage(macro_coverage, macro_analysis):
     )
 
 
-def test_morning_research_stage_macro_partial_coverage_marks_status_partial():
-    """One of fifteen configured FRED series down, fourteen survivors were
-    enough for the analyst to produce a valid MacroAnalysis. Before this
-    fix, data_status['macro'] was 'ok' purely because the LLM call parsed
-    — this asserts it is now 'partial'."""
+def test_morning_research_stage_macro_partial_coverage_is_a_named_provider_error():
+    """One of fifteen configured FRED series down. Before 2026-09-17 this
+    was data_status['macro']='partial' and the LLM still produced a regime
+    PM sized off. Missing required series is a producing-step fail: do not
+    call the analyst, and mark the seat lost so the evidence gate refuses."""
     coverage = MacroCoverage(
         configured=15, succeeded=14,
         failed=[SeriesFailure(series_id="ICSA", reason="timed out")],
@@ -490,8 +570,12 @@ def test_morning_research_stage_macro_partial_coverage_marks_status_partial():
     result_ctx = stage.run(ctx)
 
     assert result_ctx.macro_coverage is coverage
-    assert result_ctx.data_status["macro"] == "partial"
+    assert result_ctx.macro_coverage.status == "partial"
+    assert result_ctx.data_status["macro"] == "provider_error"
     assert result_ctx.data_status["macro"] != "ok"
+    assert result_ctx.data_status["macro"] != "partial"
+    assert result_ctx.macro_analysis is None
+    stage.macro_analyst.analyze.assert_not_called()
 
 
 def test_morning_research_stage_macro_total_failure_marks_status_failed_even_when_analysis_parses():

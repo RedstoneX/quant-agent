@@ -459,3 +459,89 @@ def test_intraday_snapshots_empty_symbol_list_short_circuits():
     b._data_client = MagicMock()
     assert b.get_intraday_snapshots([]) == {}
     b._data_client.get_stock_snapshot.assert_not_called()
+
+
+def test_intraday_snapshots_requests_iex_feed():
+    """This account's market-data plan is IEX, not SIP — same reason
+    get_intraday_chart_bars already pins DataFeed.IEX. Leaving feed unset
+    on the snapshot was the open-print miss on 2026-09-17."""
+    from alpaca.data.enums import DataFeed
+
+    b = _broker()
+    b._data_client = _snapshot_client({
+        "NVDA": SimpleNamespace(
+            symbol="NVDA", latest_trade=SimpleNamespace(price=185.0),
+            previous_daily_bar=SimpleNamespace(close=180.0),
+        ),
+    })
+    b.get_intraday_snapshots(["NVDA"])
+    request = b._data_client.get_stock_snapshot.call_args.args[0]
+    assert request.feed == DataFeed.IEX
+
+
+def test_intraday_snapshots_uses_todays_open_print_when_last_trade_is_yesterday(
+    monkeypatch,
+):
+    """2026-09-17 09:30: 8/104 snapshots still had yesterday's last trade
+    while today's forming bar already carried the open. Use the bar — a
+    real today print — never invent a price."""
+    from datetime import datetime, timedelta
+
+    from src.trading_calendar import ET
+
+    now = datetime(2026, 9, 17, 9, 31, tzinfo=ET)
+    monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
+    yesterday = now - timedelta(days=1)
+    open_ts = datetime(2026, 9, 17, 9, 30, tzinfo=ET)
+    b = _broker()
+    b._data_client = _snapshot_client({
+        "XOM": SimpleNamespace(
+            symbol="XOM",
+            latest_trade=SimpleNamespace(price=161.0, timestamp=yesterday),
+            previous_daily_bar=SimpleNamespace(close=160.0),
+            daily_bar=SimpleNamespace(
+                open=162.23, high=162.5, low=161.8, close=162.23,
+                volume=50_000, timestamp=open_ts,
+            ),
+        ),
+    })
+    out = b.get_intraday_snapshots(["XOM"])
+    assert out["XOM"]["last_price"] == 162.23
+    assert out["XOM"]["last_trade_at"] == open_ts
+    assert out["XOM"]["session_open"] == 162.23
+
+
+def test_intraday_snapshots_uses_today_quote_when_trade_and_bar_are_not_today(
+    monkeypatch,
+):
+    """Open print can live on the quote when last_trade and daily_bar are
+    still yesterday. Mid of a today-timestamped bid/ask is a real print,
+    not an invented price."""
+    from datetime import datetime, timedelta
+
+    from src.trading_calendar import ET
+
+    now = datetime(2026, 9, 17, 9, 31, tzinfo=ET)
+    monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
+    yesterday = now - timedelta(days=1)
+    quote_ts = datetime(2026, 9, 17, 9, 30, 1, tzinfo=ET)
+    b = _broker()
+    b._data_client = _snapshot_client({
+        "CHPX": SimpleNamespace(
+            symbol="CHPX",
+            latest_trade=SimpleNamespace(price=40.0, timestamp=yesterday),
+            previous_daily_bar=SimpleNamespace(close=39.5),
+            daily_bar=SimpleNamespace(
+                open=39.8, high=40.1, low=39.6, close=39.8,
+                volume=1_000, timestamp=yesterday,
+            ),
+            latest_quote=SimpleNamespace(
+                bid_price=41.0, ask_price=41.4, timestamp=quote_ts,
+            ),
+        ),
+    })
+    out = b.get_intraday_snapshots(["CHPX"])
+    assert out["CHPX"]["last_price"] == pytest.approx(41.2)
+    assert out["CHPX"]["last_trade_at"] == quote_ts
+    assert out["CHPX"]["session_open"] is None
+    assert out["CHPX"]["session_high"] is None

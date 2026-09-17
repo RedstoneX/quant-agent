@@ -277,6 +277,34 @@ def test_pipeline_paid_retry_is_one_shot_and_requires_inputs():
     p.news_analyst.analyze.assert_not_called()
 
 
+def test_pipeline_does_not_pay_economist_to_invent_regime_on_incomplete_fred():
+    """2026-09-17: morning marks incomplete FRED provider_error and skips
+    the economist. Heal must not then pay for a regime on the same holes
+    and stamp the seat ok."""
+    from unittest.mock import MagicMock
+    from src.data.macro import MacroCoverage, SeriesFailure
+    from src.pipeline import TradingPipeline
+    from src.pipeline_context import RunContext
+
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = MagicMock()
+    p.macro_analyst = MagicMock()
+    p._require_paid_analysis = MagicMock()
+    p._record_heal = MagicMock()
+    ctx = RunContext.start("morning")
+    ctx.data_status = {"macro": "provider_error"}
+    ctx.macro_summary = {"vix": {"current": 18}, "unemployment": {"current": None}}
+    ctx.macro_coverage = MacroCoverage(
+        configured=15, succeeded=8,
+        failed=[SeriesFailure(series_id="ICSA", reason="fetch_deadline_exceeded")],
+    )
+    TradingPipeline._heal_lost_research_seats(p, ctx)
+    p.macro_analyst.analyze.assert_not_called()
+    p._require_paid_analysis.assert_not_called()
+    assert ctx.data_status["macro"] == "provider_error"
+    assert ctx.macro_analysis is None
+
+
 def test_remembered_good_is_not_a_heal_target():
     """A validating snapshot is usable without a paid call. A chain-less
     trim is not 'remembered good' — that is the fail-closed test above."""

@@ -3224,6 +3224,22 @@ class MorningResearchStage:
                 except Exception as e:  # noqa: BLE001
                     logger.warning("FOMC calendar fetch failed: %s", e)
                     fomc_meetings, fomc_coverage = [], None
+            # Missing required FRED series is a defect in this producing
+            # step (owner 2026-09-17). Do not pay for a regime built on
+            # holes, persist it, or let PM/Risk size off it. Coverage
+            # already names the failed series.
+            if macro_coverage is not None and not getattr(
+                macro_coverage, "complete", False,
+            ):
+                logger.error(
+                    "Macro FRED coverage incomplete — not calling the "
+                    "analyst on missing required series: %s",
+                    macro_coverage.describe(),
+                )
+                return (
+                    macro_summary, None, None, macro_coverage,
+                    macro_events, event_coverage, fomc_meetings, fomc_coverage,
+                )
             analysis, result = self.macro_analyst.analyze(
                 macro_summary=macro_summary,
                 universe=effective_symbols,
@@ -3323,6 +3339,10 @@ class MorningResearchStage:
                 "Tech pre-filter: %d/%d symbols have actionable signals",
                 len(symbols_data), len(all_symbols_data),
             )
+            ctx.tech_live_unavailable_symbols = [
+                s["symbol"] for s in all_symbols_data
+                if (live_context.get(s["symbol"]) or {}).get("live_unavailable")
+            ]
             for candidate in symbols_data:
                 _record_pipeline_event(
                     self, ctx, candidate["symbol"], "opportunity",
@@ -3574,22 +3594,23 @@ class MorningResearchStage:
                         "status": macro_coverage.status,
                     }, sort_keys=True),
                 )
-            self.db.insert_agent_log(
-                agent_name="macro_analyst", run_id=ctx.run_id,
-                input_summary=f"VIX={macro_summary.get('vix', {}).get('current')}",
-                input_message=ma_result.user_message,
-                output_summary=(
-                    f"regime={macro_analysis.regime}, outlook={macro_analysis.equity_outlook}"
-                    if macro_analysis else "parse_error"
-                ),
-                full_response=ma_result.raw_text,
-                model=ma_result.model,
-                tokens_used=ma_result.tokens_used,
-                input_tokens=ma_result.input_tokens,
-                output_tokens=ma_result.output_tokens,
-                cost_usd=ma_result.cost_usd,
-                **agent_log_kwargs(ma_result),
-            )
+            if ma_result is not None:
+                self.db.insert_agent_log(
+                    agent_name="macro_analyst", run_id=ctx.run_id,
+                    input_summary=f"VIX={macro_summary.get('vix', {}).get('current')}",
+                    input_message=ma_result.user_message,
+                    output_summary=(
+                        f"regime={macro_analysis.regime}, outlook={macro_analysis.equity_outlook}"
+                        if macro_analysis else "coverage_incomplete"
+                    ),
+                    full_response=ma_result.raw_text,
+                    model=ma_result.model,
+                    tokens_used=ma_result.tokens_used,
+                    input_tokens=ma_result.input_tokens,
+                    output_tokens=ma_result.output_tokens,
+                    cost_usd=ma_result.cost_usd,
+                    **agent_log_kwargs(ma_result),
+                )
             ctx.macro_summary = macro_summary
             ctx.macro_analysis = macro_analysis
             if macro_analysis:
@@ -3616,13 +3637,20 @@ class MorningResearchStage:
                 logger.error(
                     "Macro coverage FAILED this run: %s", macro_coverage.describe(),
                 )
+            elif macro_coverage.status == "partial":
+                # Required series missing after a real fetch. Named fail —
+                # not a thin regime for PM/Risk to size off. Coverage
+                # object still says 'partial' (how many series came back);
+                # the seat status is provider_error so the evidence gate
+                # treats it as lost.
+                data_status["macro"] = "provider_error"
+                logger.error(
+                    "Macro coverage PARTIAL this run — required FRED "
+                    "series missing, refusing a thin regime: %s",
+                    macro_coverage.describe(),
+                )
             elif not macro_analysis:
                 data_status["macro"] = "parse_error"
-            elif macro_coverage.status == "partial":
-                data_status["macro"] = "partial"
-                logger.warning(
-                    "Macro coverage PARTIAL this run: %s", macro_coverage.describe(),
-                )
             elif getattr(macro_coverage, "overdue", None):
                 # Every configured series answered, but at least one of them
                 # is sitting on a reading that should already have been
@@ -3815,6 +3843,19 @@ class MorningResearchStage:
                     )
                 else:
                     data_status["tech"] = "ok"
+                stale_live = [
+                    a.symbol for a in analyses
+                    if a.symbol in (ctx.tech_live_unavailable_symbols or [])
+                ]
+                if data_status["tech"] == "ok" and stale_live:
+                    data_status["tech"] = "low_confidence"
+                    logger.warning(
+                        "Tech batch fully resolved but %d/%d analyzed "
+                        "symbol(s) have no today live price at open "
+                        "(STALE, no open print): %s",
+                        len(stale_live), len(analyses),
+                        ", ".join(stale_live),
+                    )
             elif analyses:
                 data_status["tech"] = "partial"
                 logger.warning(

@@ -1880,9 +1880,10 @@ class MacroConfig(BaseModel):
     run that has already lost this many series in a row reads as a genuine
     outage, not a flake — full retries on every remaining series would
     only multiply the stall. A success anywhere resets the counter.
-    Default 1 (tighter than the old hardcoded 2) because there are now up
-    to fifteen series to get through inside the same shared
-    total_fetch_deadline_s budget, not nine."""
+    Default 1 (tighter than the old hardcoded 2) because a genuine outage
+    should stop retrying quickly. Parallel prefetch of the fifteen series
+    still gives every series its own attempts inside total_fetch_deadline_s
+    so a slow early series cannot skip later ones without a try."""
 
     total_fetch_deadline_s: float = Field(default=90.0, ge=10.0, le=300.0)
     """Hard wall-clock ceiling for one get_macro_summary() call, independent

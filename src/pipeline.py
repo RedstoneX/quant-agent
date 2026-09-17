@@ -13146,6 +13146,14 @@ class TradingPipeline:
         # No inputs → would invent the seat. Do not consume the retry.
         if seat == "macro" and not (ctx.macro_summary or {}):
             return False
+        # Incomplete FRED is a producing-step fail (2026-09-17). A paid
+        # retry here would call the economist on the same holes morning
+        # already refused to invent a regime from, then stamp the seat
+        # 'ok'. Heal cannot fill missing series; do not consume the retry.
+        if seat == "macro":
+            coverage = getattr(ctx, "macro_coverage", None)
+            if coverage is not None and not getattr(coverage, "complete", False):
+                return False
         if seat == "news":
             # Fresh wire text is required. Morning parse-site retry lives
             # on the analyst; intra has no honest news_text unless a hook

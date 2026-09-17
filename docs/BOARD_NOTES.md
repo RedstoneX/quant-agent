@@ -153,6 +153,13 @@ and the desk carries on. A seat that was asked and came back with nothing at
 all, because the call failed or its reply was unreadable, has not answered,
 and the desk refuses to decide, spends nothing, says so, and waits.
 
+**Today (2026-09-17) —** the economics feed came back with holes at the
+open (eight of fifteen numbers) and the desk still produced a regime to
+size off. That is now stopped. Missing required numbers means the
+economics seat did not answer. The desk will not invent the missing
+prints, and it will not decide on a thinner story. This is still not a
+ruling on how many usable reads is enough; that question is still yours.
+
 **Why there is no number in it —** you said the minimum bar is a risk
 judgement and not an agent's to invent, and that stands: nothing published
 says how many of five research seats a desk needs before a decision is
