@@ -578,6 +578,41 @@ def test_risk_trim_of_unanalysed_holding_does_not_reject_the_plan(mock_cls):
     assert {t.symbol for t in decision.targets} == {"AAPL", "NET"}
 
 
+def _single_target_errors(target: dict, analyses: list) -> list[str]:
+    decision = PortfolioDecision.model_validate({
+        "reasoning_chain": {
+            "macro_filter": "m", "news_check": "n", "earnings_check": "e",
+            "signal_conflicts": "s", "sizing_logic": "z",
+            "portfolio_balance": "b", "cash_target": "c",
+        },
+        "targets": [target], "portfolio_view": "polarity",
+    })
+    return PortfolioManagerAgent.validate_grounding(
+        decision, analyses=analyses, positions=[_held_long("AAPL")],
+        news_intel=None, earnings_analyses=[_earnings("AAPL", "bullish"), _earnings("NET", "bearish")],
+        macro_analysis=None, total_value=100_000,
+        existing_risk_pct={"AAPL": 1.91},
+    )
+
+
+def test_bullish_support_still_cannot_justify_a_full_close():
+    target = dict(_real_intra_check_targets()[0], risk_allocation_pct=0.0)
+    target["provenance"] = target["provenance"][:1]
+    errors = _single_target_errors(target, analyses=[])
+    assert any("does not support the proposed sell" in e for e in errors)
+
+
+def test_bearish_support_still_cannot_justify_an_open():
+    target = {
+        "symbol": "NET", "direction": "long", "risk_allocation_pct": 1.75,
+        "conviction": "high", "thesis": "Open NET.",
+        "provenance": [{"source": "earnings", "observed_stance": "bearish",
+                        "relationship": "supports", "evidence": "bearish"}],
+    }
+    errors = _single_target_errors(target, analyses=[_analysis("NET", "strong_buy")])
+    assert any("does not support the proposed buy" in e for e in errors)
+
+
 def _risk_target(symbol: str, risk: float, direction: str = "long"):
     from src.models import TargetPosition
     return TargetPosition(
@@ -643,3 +678,78 @@ def test_genuine_increase_on_unanalysed_holding_still_rejected():
         total_value=100_000, existing_risk_pct={"AAPL": 1.91},
     )
     assert any("lacks a current-run Technical analysis" in e for e in errors)
+
+
+# The REAL plan from intra_check-44594a05, stances as recorded in the PM
+# output: a concentration trim of a bullish holding, tagged bullish
+# "supports", alongside a grounded new entry.
+
+def _earnings(symbol: str, sentiment: str) -> dict:
+    return {
+        "symbol": symbol, "filing_date": date.today().isoformat(),
+        "analysis": {"investment_implications": {"sentiment": sentiment}},
+    }
+
+
+def _real_intra_check_targets() -> list[dict]:
+    return [
+        {
+            "symbol": "AAPL", "direction": "long", "risk_allocation_pct": 1.0,
+            "conviction": "medium",
+            "thesis": "Trim AAPL toward 1.0% risk for concentration; fund NET.",
+            "provenance": [
+                {"source": "earnings", "observed_stance": "bullish",
+                 "relationship": "supports", "evidence": "earnings still bullish"},
+                {"source": "macro", "observed_stance": "bullish",
+                 "relationship": "context", "evidence": "macro backdrop"},
+            ],
+        },
+        {
+            "symbol": "NET", "direction": "long", "risk_allocation_pct": 1.75,
+            "conviction": "high",
+            "thesis": "Open NET on the current-run strong buy.",
+            "provenance": [
+                {"source": "technical", "observed_stance": "strong_buy",
+                 "relationship": "supports", "evidence": "current-run scan"},
+                {"source": "earnings", "observed_stance": "neutral",
+                 "relationship": "context", "evidence": "earnings neutral"},
+                {"source": "macro", "observed_stance": "bullish",
+                 "relationship": "context", "evidence": "macro backdrop"},
+            ],
+        },
+    ]
+
+
+@patch("anthropic.Anthropic")
+def test_real_intra_check_plan_with_bullish_supported_trim_passes(mock_cls):
+    from unittest.mock import MagicMock
+    response_text = json.dumps({
+        "reasoning_chain": {
+            "macro_filter": "checked", "news_check": "checked",
+            "earnings_check": "checked", "signal_conflicts": "none",
+            "sizing_logic": "checked", "portfolio_balance": "checked",
+            "cash_target": "checked",
+        },
+        "targets": _real_intra_check_targets(),
+        "portfolio_view": "Open NET, trim AAPL for concentration.",
+    })
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=response_text)]
+    mock_response.usage.input_tokens = 500
+    mock_response.usage.output_tokens = 200
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6-20250725")
+    decision, result = agent.decide(
+        analyses=[_analysis("NET", "strong_buy")],
+        positions=[_held_long("AAPL")],
+        macro_analysis={"equity_outlook": "bullish"},
+        earnings_analyses=[_earnings("AAPL", "bullish"), _earnings("NET", "neutral")],
+        cash_balance=50_000, total_value=100_000,
+        allowed_buy_symbols={"AAPL", "NET"},
+        existing_risk_pct={"AAPL": 1.91},
+    )
+    assert decision is not None, f"decide() failed closed: {result.semantic_error}"
+    assert {t.symbol for t in decision.targets} == {"AAPL", "NET"}

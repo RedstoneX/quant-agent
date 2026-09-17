@@ -10853,3 +10853,16 @@ The constructor also needs a current-run analysis to size any risk target, so
 an intraday trim of a non-mover is expected to be dropped there as a data
 fault and the holding left as it is — the new entry is no longer blocked, but
 the trim that was meant to fund it may not happen.
+
+**Follow-up, same day — the real plan was still rejected.** Replaying the
+recorded plan showed a second barrier: AAPL's trim cited bullish earnings as
+"supports", and the check demanded bearish evidence for any reduction.
+Trimming a bullish holding for concentration is coherent — the evidence
+supports holding what remains — so a PARTIAL trim may now be supported by
+evidence on the side still held, as well as by evidence for reducing. Full
+closes, opens and increases keep exactly the old polarity rule. With both
+fixes the recorded plan passes grounding. Downstream, the constructor then
+buys NET and drops the AAPL trim for lack of a current-run analysis; that
+drop is recorded and paged as a "data fault", which misdescribes a working
+feed. How a trim of an unanalysed holding should be sized is an open design
+question, not fixed here.
