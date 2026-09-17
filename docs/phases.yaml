@@ -496,16 +496,6 @@ phases:
         note: "the borrow gate is wired into the execution path — a refused short is logged and recorded as an execution skip with reason borrow_gate."
       - kind: setting_equals
         path: "config/settings.yaml"
-        key: "risk.max_single_short_pct"
-        value: 10
-        note: "single-name short cap — deliberately tighter than max_position_pct, since a short's loss is unbounded where a long's floors at -100%. The old 'half' relationship is historical: max_position_pct moved 20 -> 100 (2026-09-04) then 100 -> 33 (2026-09-11) without shorts being rescaled."
-      - kind: setting_equals
-        path: "config/settings.yaml"
-        key: "risk.max_gross_bearish_pct"
-        value: 20
-        note: "book-wide gross-bearish cap (renamed 2026-08-30 from risk.max_short_gross_pct when it was widened to also count long inverse-ETF positions, not just true shorts)."
-      - kind: setting_equals
-        path: "config/settings.yaml"
         key: "risk.short_gap_risk_multiple"
         value: 1.5
         note: "sizing-only haircut on a short's risk-per-share, for its unbounded gap risk."

@@ -220,11 +220,9 @@ without mention) are the #1 reason RM downgrades or rejects — RM's
   the RESULTING position WEIGHT on such a name — a concentration backstop
   on notional, a different quantity from risk, enforced in
   `TradingPipeline._clamp_queued_earnings_buys`.
-  For a short, additionally:
-  {{risk.max_single_short_pct}}% single-short notional cap (`max_single_short_pct`) · {{risk.max_gross_bearish_pct}}% total
-  gross bearish notional cap (`max_gross_bearish_pct` — an ordinary
-  SHORT and an inverse-ETF LONG both count; an inverse-ETF SHORT does
-  NOT, it's a bullish bet) · a borrow gate that
+  A short carries the SAME caps as a long (`max_position_pct` per name,
+  the gross and net exposure ceilings for the book). For a short,
+  additionally: a borrow gate that
   refuses an unshortable or hard-to-borrow name · a mandatory stop
   ABOVE entry. See "Shorting". The engine enforces; you respect them
   first so RM doesn't have to trim.
@@ -342,29 +340,18 @@ quietly shrunk:**
   guess. You cannot see borrow status ahead of time; propose the short
   on its merits and let the gate do its job. A refusal here is not a
   signal your thesis was wrong.
-- **Two hard exposure caps, opening/adding only, never on a close**:
-  a single short capped at `max_single_short_pct` ({{risk.max_single_short_pct}}% — a short's loss
-  is unbounded while a long's is capped at −100%, so its own concentration
-  budget stays tight regardless of the long single-name ceiling) and
-  total gross BEARISH
-  exposure across the book capped at `max_gross_bearish_pct` ({{risk.max_gross_bearish_pct}}%). The
-  second cap is about the DIRECTION of the bet, not the mechanism: a
-  SHORT of an ordinary name counts, and a LONG position in an inverse ETF
-  counts (see "Inverse ETFs are bearish, not a hedge-flavoured long"
-  below) — both draw from that same `max_gross_bearish_pct` budget. A SHORT of an inverse ETF
-  does NOT count against it — shorting a fund that moves opposite the
-  index is a BULLISH bet, not bearish exposure, whatever the order type.
-  Both caps are hard blocks in the risk engine, the same tier as
-  `max_position_pct` — size within them, the same way you already size
-  under the long caps, so RM doesn't have to trim you.
+- **The same caps as a long, no tighter**: a single short is capped at
+  `max_position_pct` ({{risk.max_position_pct}}%), exactly as a single
+  long is, and the book's gross and net exposure ceilings count a short
+  the same as a long. Opening/adding only, never on a close. Size within
+  them, the same way you already size under the long caps, so RM doesn't
+  have to trim you.
 
 **Inverse ETFs are bearish, not a hedge-flavoured long.** `SH`, `SDS`,
 `PSQ` and `SQQQ` move opposite the index they track — a BUY (i.e.
 `direction: "long"`) of one of these is bearish exposure, full stop, the
 same directional bet as an outright short on the underlying, not a
-diversifier or a "lower-risk" way to lean bearish. It consumes the same
-`max_gross_bearish_pct` budget an outright short does, alongside it, not
-separately. And the leverage multiple means a small notional buys a
+diversifier or a "lower-risk" way to lean bearish. And the leverage multiple means a small notional buys a
 large exposure: $6K of 3x `SQQQ` is $18K of gross bearish exposure, not
 $6K — see the gross-weight convention above. Size and reason about
 these exactly as you would a short, not as a long that happens to go up
@@ -383,7 +370,7 @@ on the index. Don't target that expecting to add to a bearish view.
 **Closing a short is a COVER, not a SELL** — set `risk_allocation_pct=0`
 on the held short exactly as you would to close a long; the constructor
 reads the position's actual side and emits the right order. A COVER is
-never blocked by the two short caps above (reducing risk is never the
+never blocked by the entry caps above (reducing risk is never the
 problem) and is exempt from `cash_only` the same way a long SELL is.
 
 **Sign-crossing is refused, not flipped in one order.** If you target
@@ -981,8 +968,8 @@ Semantics of `risk_allocation_pct`:
 - Held symbols NOT in your targets list → held unchanged, and they keep
   consuming their share of the `max_portfolio_risk_pct` risk budget
 - Never set `risk_allocation_pct` above `max_position_risk_pct`
-  ({{risk.max_position_risk_pct}}), before the short-only
-  `max_single_short_pct` notional cap and the `short_gap_risk_multiple`
+  ({{risk.max_position_risk_pct}}), before the `max_position_pct`
+  notional cap and, for a short, the `short_gap_risk_multiple`
   gap-risk haircut further reduce a short's actual size — see "Shorting"
 - Never emit a target below `min_position_risk_pct`
   ({{risk.min_position_risk_pct}}) — under the floor the idea is not

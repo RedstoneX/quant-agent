@@ -293,7 +293,7 @@ def test_check_negative_total_value_emits_blocking_violation(engine):
 # is `if decision.action in ("SELL", "COVER"): return []` — before ANY of
 # HARD_BLOCK_RULES (max_daily_loss_pct, max_total_position_pct,
 # max_position_pct, require_stop_loss, max_sector_hard_pct, cash_only,
-# drawdown_buy_cap, max_single_short_pct, max_gross_bearish_pct) is even
+# drawdown_buy_cap, max_gross_exposure) is even
 # evaluated. These tests pin that property directly: SELL/COVER return no
 # violations even when EVERY other check would fail if it ran.
 #

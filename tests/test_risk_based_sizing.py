@@ -1863,12 +1863,12 @@ def test_single_name_ceiling_rounding_to_zero_leaves_a_durable_reason():
 
 
 def test_single_short_ceiling_rounding_to_zero_leaves_a_durable_reason():
-    """The SHORT mirror of the test above — `_build_short`'s single-short
-    ceiling has the identical silent-zero gap."""
+    """The SHORT mirror of the test above — `_build_short`'s single-name
+    ceiling (the same `max_position_pct`) has the identical silent-zero gap."""
     from src.models import TechAnalysisResult
     from src.portfolio_constructor import STOP_REFUSAL_SIZED_TO_ZERO
 
-    constructor = PortfolioConstructor(ConstructorConfig(max_single_short_pct=5.0))
+    constructor = PortfolioConstructor(ConstructorConfig(max_position_pct=5.0))
     held = _pos("NVDA", qty=-50, avg_entry=100.0, current_price=100.0)  # -5% (5% short)
     target = TargetPosition(
         symbol="NVDA", direction="short", target_weight_pct=6.0,
@@ -1891,7 +1891,7 @@ def test_single_short_ceiling_rounding_to_zero_leaves_a_durable_reason():
     assert [d for d in decisions if d.symbol == "NVDA" and d.action == "SHORT"] == []
     refusals = constructor.drain_refusals()
     assert refusals["NVDA"]["refusal"] == STOP_REFUSAL_SIZED_TO_ZERO
-    assert "single-short ceiling" in refusals["NVDA"]["detail"]
+    assert "single-name ceiling" in refusals["NVDA"]["detail"]
     assert "NVDA" in constructor.last_drop_reasons
 
 
