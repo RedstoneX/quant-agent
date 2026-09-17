@@ -770,3 +770,102 @@ def test_the_unit_drift_wrapper_sources_env_and_is_executable():
     assert wrapper.is_file()
     assert 'source "${PROJECT_ROOT}/.env"' in wrapper.read_text()
     assert wrapper.stat().st_mode & stat.S_IXUSR
+
+
+# ===========================================================================
+# 4. The 2026-09-17 defect — six timers on one tick
+# ===========================================================================
+#
+# All six session timers carried OnCalendar=*:0/30, so every one fired in
+# the same second, every half hour. Measured that day: morning and
+# intra_check raced at 09:30, and a session's own stop-coverage reconcile
+# and intra_check's own stop-coverage reconcile ran ~90ms apart at 17:00:42
+# UTC. intra_check moved to *:15,45 — still a 30-minute cadence, inside the
+# same ET window, just off the shared tick. Nothing else moved.
+
+NON_INTRA_SESSION_MODES = tuple(m for m in SESSION_MODES if m != "intra_check")
+
+
+def _fire_minutes(on_calendar: str) -> set[int]:
+    """Minutes-past-the-hour an OnCalendar value fires on, for the two
+    shapes this repository's session timers use (`*:MM/STEP` and
+    `*:MM,MM`). Not a general OnCalendar parser — just enough to prove two
+    timers never share a tick.
+    """
+    assert on_calendar.startswith("*:"), (
+        f"unrecognised OnCalendar shape for this helper: {on_calendar!r}"
+    )
+    spec = on_calendar[2:]
+    if "/" in spec:
+        start, step = spec.split("/")
+        return set(range(int(start), 60, int(step)))
+    return {int(part) for part in spec.split(",")}
+
+
+def test_fire_minutes_helper_matches_systemd_on_the_two_shapes_in_use():
+    """Pins the test helper itself against the two literal strings the repo
+    uses, so a mistake in `_fire_minutes` fails loudly here rather than by
+    silently passing the disjointness tests below for the wrong reason."""
+    assert _fire_minutes("*:0/30") == {0, 30}
+    assert _fire_minutes("*:15,45") == {15, 45}
+
+
+def test_intra_check_timer_moved_off_the_shared_tick():
+    on_calendar = parse_unit(
+        SYSTEMD_DIR / "quant-agent-intra_check.timer"
+    )["Timer.OnCalendar"]
+    assert on_calendar == ["*:15,45"], (
+        "intra_check must fire at :15/:45 — off the :00/:30 tick every "
+        "other session timer shares"
+    )
+
+
+@pytest.mark.parametrize("mode", NON_INTRA_SESSION_MODES)
+def test_the_other_session_timers_keep_the_shared_half_hour_tick(mode: str):
+    """Only intra_check moves. The rest still fire together and rely on
+    run_if_et_window.sh's cross-mode session lock to serialize, exactly as
+    before."""
+    on_calendar = parse_unit(
+        SYSTEMD_DIR / f"quant-agent-{mode}.timer"
+    )["Timer.OnCalendar"]
+    assert on_calendar == ["*:0/30"]
+
+
+def test_coverage_sweep_timer_also_keeps_the_shared_tick():
+    """This unit is not a session mode and is not a party to
+    run_if_et_window.sh's session lock at all, so moving intra_check off
+    the shared tick does not touch its collision with morning/midday/
+    close/evening/earnings_preprocess — that is fixed instead by
+    `trading_session_lock_held()` in src/coverage_watchdog.py (see
+    tests/test_coverage_watchdog.py), not by a schedule change.
+    """
+    on_calendar = parse_unit(
+        SYSTEMD_DIR / "quant-agent-coverage-sweep.timer"
+    )["Timer.OnCalendar"]
+    assert on_calendar == ["*:0/30"]
+
+
+def test_morning_and_intra_check_can_no_longer_land_on_the_same_tick():
+    """THE 2026-09-17 DEFECT, pinned by name: this exact pair raced at
+    09:30 because both fired on *:0/30."""
+    morning = _fire_minutes(
+        parse_unit(SYSTEMD_DIR / "quant-agent-morning.timer")["Timer.OnCalendar"][0]
+    )
+    intra = _fire_minutes(
+        parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")["Timer.OnCalendar"][0]
+    )
+    assert morning.isdisjoint(intra)
+
+
+@pytest.mark.parametrize("mode", NON_INTRA_SESSION_MODES)
+def test_intra_check_shares_no_tick_with_any_other_session_timer(mode: str):
+    intra = _fire_minutes(
+        parse_unit(SYSTEMD_DIR / "quant-agent-intra_check.timer")["Timer.OnCalendar"][0]
+    )
+    other = _fire_minutes(
+        parse_unit(SYSTEMD_DIR / f"quant-agent-{mode}.timer")["Timer.OnCalendar"][0]
+    )
+    assert intra.isdisjoint(other), (
+        f"intra_check and {mode} still share a tick — the exact "
+        f"2026-09-17 defect"
+    )
