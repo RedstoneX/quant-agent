@@ -294,7 +294,7 @@ const steps = [
   ["17-desktop-system-rearmed", { width: 1600, height: 1000 }, "populated", async (page) => { await openDiagnostics(page); await page.getByText("rearmed · checks passed", { exact: true }).waitFor(); }],
   ["18-ipad-system-hard-stop", { width: 820, height: 1180 }, "error", async (page) => { await openDiagnostics(page); await page.getByText("hard stop · operator reset", { exact: true }).waitFor(); }],
   ["19-desktop-system-circuit-unavailable", { width: 1600, height: 1000 }, "unavailable", async (page) => { await page.getByText("paid-analysis safety circuit unavailable", { exact: true }).waitFor(); await openDiagnostics(page); await page.getByText("unavailable", { exact: true }).last().waitFor(); }],
-  ["20-laptop-cockpit-dockview", { width: 1100, height: 800 }, "populated", async (page) => {
+  ["01-laptop-cockpit-dockview", { width: 1100, height: 800 }, "populated", async (page) => {
     // Regression: a normal (non-maximized) desktop window must mount
     // Dockview so Chart/Positions/Candidates tabs can be rearranged.
     // Previously this width used the iPad pane strip and drag was locked
