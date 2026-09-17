@@ -593,6 +593,7 @@ def test_shorts_can_now_be_opened_and_covered_by_the_constructor():
         computed_levels=[220.0, 262.5], atr_14=12.5 / 3.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=rc,
+        thesis_invalid_if="closes below support",
     )
 
     open_decisions = constructor.construct_orders(

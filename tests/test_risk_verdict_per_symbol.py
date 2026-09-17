@@ -69,6 +69,7 @@ def _xle() -> TradeDecision:
     return TradeDecision(
         action="BUY", symbol="XLE", allocation_pct=5.0, entry_price=87.40,
         stop_loss=85.10, take_profit=90.11, reasoning="energy rotation",
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -77,6 +78,7 @@ def _chpx() -> TradeDecision:
     return TradeDecision(
         action="BUY", symbol="CHPX", allocation_pct=6.0, entry_price=24.00,
         stop_loss=22.50, take_profit=28.55, reasoning="breakout, unrelated thesis",
+        thesis_invalid_if="closes below support",
     )
 
 

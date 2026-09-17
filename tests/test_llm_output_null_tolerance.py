@@ -80,21 +80,23 @@ def _risk_rc() -> dict:
 # Half 1 — a null on a DEFAULTED field must not cost us the object
 # ---------------------------------------------------------------------------
 
-def test_null_thesis_invalid_if_keeps_the_whole_analysis():
-    """The exact production payload shape from 2026-09-01 13:33 UTC."""
-    r = TechAnalysisResult(**_tech(thesis_invalid_if=None))
-    # Actionable buy + explicit null records "don't know", not silent empty.
-    assert r.thesis_invalid_if == SOFT_EXIT_UNKNOWN
-    # Everything else on the analysis survived — this is the point.
-    assert r.rating == "buy"
-    assert r.entry_price == 500.0
-    assert r.stop_loss == 490.0
-    assert r.reference_target == 525.0
-    assert r.risk_reward is not None
+def test_null_thesis_invalid_if_on_neutral_keeps_the_whole_analysis():
+    """The 2026-09-01 production payload: null on a NEUTRAL must not bin the read.
+
+    All 42 measured nulls that week were rated neutral. Actionable null is
+    a missing falsifier and is refused (see load-bearing cases), not kept
+    as a tradeable don't-know.
+    """
+    payload = _tech(rating="neutral", thesis_invalid_if=None,
+                    entry_price=None, stop_loss=None, reference_target=None,
+                    setup_type=None, expected_horizon_sessions=None,
+                    support_levels=[], resistance_levels=[])
+    r = TechAnalysisResult(**payload)
+    assert r.thesis_invalid_if == ""
+    assert r.rating == "neutral"
 
 
 @pytest.mark.parametrize("field_name, expected", [
-    ("thesis_invalid_if", SOFT_EXIT_UNKNOWN),
     ("conviction", "medium"),
     ("support_levels", []),          # rejected later by the after-validator
     ("computed_levels", []),
@@ -125,20 +127,30 @@ def test_null_on_defaulted_missed_opportunity_field(field_name, expected):
     assert getattr(mo, field_name) == expected
 
 
-def test_actionable_null_soft_exit_is_unknown_not_omitted_empty():
-    """Null is 'don't know'; omitted stays the schema default empty.
+def test_actionable_missing_soft_exit_is_refused_not_kept_as_unknown():
+    """Omit / empty / null / unknown on a buy is missing, not a trade.
 
-    2026-09-16: treating them as identical wiped stated soft-exits to
-    silent empty and fed Risk a false integrity reject. Must not invent
-    a falsifier string — `unknown` is the recordable don't-know token.
+    2026-09-16 coerce-to-unknown kept the analysis and fed Risk a blank
+    name. Never-blank: the object does not validate. Neutral may omit.
     """
-    omitted = TechAnalysisResult(**{
-        k: v for k, v in _tech().items() if k != "thesis_invalid_if"
+    with pytest.raises(ValidationError):
+        TechAnalysisResult(**{
+            k: v for k, v in _tech().items() if k != "thesis_invalid_if"
+        })
+    with pytest.raises(ValidationError):
+        TechAnalysisResult(**_tech(thesis_invalid_if=None))
+    with pytest.raises(ValidationError):
+        TechAnalysisResult(**_tech(thesis_invalid_if=""))
+    with pytest.raises(ValidationError):
+        TechAnalysisResult(**_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN))
+    omitted_neutral = TechAnalysisResult(**{
+        k: v for k, v in _tech(rating="neutral", entry_price=None,
+                               stop_loss=None, reference_target=None,
+                               setup_type=None, expected_horizon_sessions=None,
+                               support_levels=[], resistance_levels=[]).items()
+        if k != "thesis_invalid_if"
     })
-    nulled = TechAnalysisResult(**_tech(thesis_invalid_if=None))
-    assert omitted.thesis_invalid_if == ""
-    assert nulled.thesis_invalid_if == SOFT_EXIT_UNKNOWN
-    assert omitted.model_dump() != nulled.model_dump()
+    assert omitted_neutral.thesis_invalid_if == ""
 
 
 def test_stated_soft_exit_survives_and_is_not_replaced_with_unknown():
@@ -147,17 +159,28 @@ def test_stated_soft_exit_survives_and_is_not_replaced_with_unknown():
 
 
 def test_unknown_soft_exit_does_not_replace_the_hard_stop_in_the_verdict():
-    """Don't-know is recordable on the field, but is not a stated falsifier."""
-    r = TechAnalysisResult(**_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN))
+    """Don't-know is not a stated falsifier; to_verdict must not treat it as one.
+
+    Actionable parse refuses unknown. This exercises the restatement path
+    on a constructed-without-validation object (legacy / stored).
+    """
+    r = TechAnalysisResult.model_construct(
+        **_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN)
+    )
     assert r.thesis_invalid_if == SOFT_EXIT_UNKNOWN
     verdict = r.to_verdict()
     assert "hard stop" in verdict.invalidation
     assert SOFT_EXIT_UNKNOWN not in verdict.invalidation
 
 
-def test_empty_default_soft_exit_is_not_tallied_as_a_drop():
-    """Neutral-style empty on a buy is the schema default, not a null wipe."""
-    r = TechAnalysisResult(**_tech(thesis_invalid_if=""))
+def test_empty_default_soft_exit_on_neutral_is_not_tallied_as_a_drop():
+    """Neutral empty is the schema working, not a null wipe."""
+    r = TechAnalysisResult(
+        **_tech(rating="neutral", thesis_invalid_if="",
+                entry_price=None, stop_loss=None, reference_target=None,
+                setup_type=None, expected_horizon_sessions=None,
+                support_levels=[], resistance_levels=[]),
+    )
     assert r.thesis_invalid_if == ""
     assert parse_telemetry.total_null_coercions() == 0
 
@@ -285,8 +308,10 @@ LOAD_BEARING_NULLS = [
     ("tech.setup_type",       lambda: TechAnalysisResult(**_tech(setup_type=None))),
     ("tech.expected_horizon", lambda: TechAnalysisResult(**_tech(expected_horizon_sessions=None))),
     # Nulling BOTH level lists leaves an actionable rating with no structure.
-    ("tech.all_levels",       lambda: TechAnalysisResult(
-        **_tech(support_levels=None, resistance_levels=None))),
+    ("tech.thesis_invalid_if_null", lambda: TechAnalysisResult(**_tech(thesis_invalid_if=None))),
+    ("tech.thesis_invalid_if_empty", lambda: TechAnalysisResult(**_tech(thesis_invalid_if=""))),
+    ("tech.thesis_invalid_if_unknown", lambda: TechAnalysisResult(
+        **_tech(thesis_invalid_if=SOFT_EXIT_UNKNOWN))),
     # Required fields: no default exists, so there is nothing safe to fall back to.
     ("tech.rating",           lambda: TechAnalysisResult(**_tech(rating=None))),
     ("tech.symbol",           lambda: TechAnalysisResult(**_tech(symbol=None))),
@@ -337,8 +362,10 @@ def test_neutral_rating_still_clears_prices_rather_than_inventing_them():
 # ---------------------------------------------------------------------------
 
 def test_null_coercion_is_recorded_in_parse_telemetry():
+    """Actionable null still tallies, then the after-validator refuses the name."""
     assert parse_telemetry.total_null_coercions() == 0
-    TechAnalysisResult(**_tech(thesis_invalid_if=None))
+    with pytest.raises(ValidationError):
+        TechAnalysisResult(**_tech(thesis_invalid_if=None))
     snap = parse_telemetry.snapshot()
     assert snap.get(("TechAnalysisResult", "thesis_invalid_if")) == 1
     assert "TechAnalysisResult.thesis_invalid_if" in parse_telemetry.describe_null_coercions()
@@ -390,11 +417,17 @@ def test_dropped_item_is_counted_separately_from_a_coercion():
 
 def test_suspended_blocks_the_tally_but_not_the_coercion():
     with parse_telemetry.suspended():
-        r = TechAnalysisResult(**_tech(thesis_invalid_if=None))
-    assert r.thesis_invalid_if == SOFT_EXIT_UNKNOWN  # still recovered
+        t = TargetPosition(
+            symbol="AAPL", thesis="t", risk_allocation_pct=1.0,
+            catalyst=None, thesis_invalid_if="closes below 191.5",
+        )
+    assert t.catalyst == SOFT_EXIT_UNKNOWN  # still recovered
     assert parse_telemetry.snapshot() == {}   # but not counted
     # and the suspension is not sticky
-    TechAnalysisResult(**_tech(thesis_invalid_if=None))
+    TargetPosition(
+        symbol="AAPL", thesis="t", risk_allocation_pct=1.0,
+        catalyst=None, thesis_invalid_if="closes below 191.5",
+    )
     assert parse_telemetry.total_null_coercions() == 1
 
 
@@ -582,6 +615,7 @@ def test_unknown_soft_exit_isolates_that_name_and_keeps_the_rest_of_the_plan():
     Isolate the empty name before Risk. Do not invent a string. Do not
     drop a sibling with a stated falsifier."""
     from types import SimpleNamespace
+    from src.models import SOFT_EXIT_MISSING_AFTER_RETRY
     from src.pipeline_context import RunContext
     from src.pipeline_stages import _isolate_empty_soft_exit_entries
 
@@ -619,6 +653,11 @@ def test_unknown_soft_exit_isolates_that_name_and_keeps_the_rest_of_the_plan():
     isolated = _isolate_empty_soft_exit_entries(pipeline, ctx, plan)
     assert isolated == ["MRVL"]
     assert [d.symbol for d in plan.decisions] == ["AAPL", "MSFT"]
-    assert [t.symbol for t in plan.targets] == ["AAPL"]
+    assert [t.symbol for t in plan.targets] == ["MRVL", "AAPL"]
     assert "MRVL" in plan.constructor_dropped
     assert not any(d.symbol == "MRVL" for d in plan.decisions)
+    assert any(
+        SOFT_EXIT_MISSING_AFTER_RETRY in str(c)
+        for c in pipeline.db.insert_specialist_evidence.mock_calls
+    )
+

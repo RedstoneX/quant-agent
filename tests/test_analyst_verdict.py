@@ -204,15 +204,22 @@ def test_a_neutral_read_maps_to_a_neutral_verdict_with_no_lean():
 
 
 def test_a_missing_soft_invalidation_falls_back_to_the_analysts_own_stop():
-    """~2% of actionable reads arrive with `thesis_invalid_if` blank (see
-    the field's own comment). The hard stop is the analyst's own stated
-    falsifier, so the verdict uses it and SAYS so — nothing is invented and
-    the verdict still validates."""
-    long = _tech("AAPL", "buy", invalid_if="").to_verdict()
-    assert "below stop 95" in long.invalidation
-    assert "hard stop" in long.invalidation
-    short = _tech("AAPL", "sell", invalid_if="").to_verdict()
-    assert "above stop 105" in short.invalidation
+    """Live parse refuses an actionable read with a blank falsifier. A
+    historical row (model_construct) still restates the analyst's own
+    stop and SAYS so — nothing is invented and the verdict still
+    validates."""
+    with pytest.raises(ValidationError, match="thesis_invalid_if"):
+        _tech("AAPL", "buy", invalid_if="")
+    historical = TechAnalysisResult.model_construct(
+        **_tech("AAPL", "buy").model_dump() | {"thesis_invalid_if": ""},
+    )
+    v = historical.to_verdict()
+    assert "below stop 95" in v.invalidation
+    assert "hard stop" in v.invalidation
+    short = TechAnalysisResult.model_construct(
+        **_tech("AAPL", "sell").model_dump() | {"thesis_invalid_if": ""},
+    )
+    assert "above stop 105" in short.to_verdict().invalidation
 
 
 def test_the_production_shaped_tech_response_populates_the_verdict():
@@ -697,7 +704,8 @@ def test_the_real_ratio_orders_candidates_instead_of_admitting_them():
             computed_levels=computed_levels, atr_14=(100.0 - 95.0) / 3.5,
             setup_type="range", expected_horizon_sessions=60,
             reasoning="test", reasoning_chain=_chain(),
-        )
+        thesis_invalid_if="closes below support",
+    )
 
     overstated = _structured("NVDA", model_target=150.0, computed_levels=[95.0, 103.0])
     understated = _structured("GEV", model_target=104.0, computed_levels=[95.0, 108.0])

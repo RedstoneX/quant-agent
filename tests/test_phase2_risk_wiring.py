@@ -655,6 +655,7 @@ def test_a_symbol_removed_after_construction_is_still_reported_as_removed():
         targets = [_T("AAA"), _T("BBB"), _T("CCC")]
         decisions = [_T("aaa")]          # BBB dropped by the constructor,
                                           # CCC by a later gate; case-insensitive
+        constructor_dropped = []
 
     assert _dropped_since_proposal(_PD()) == ["BBB", "CCC"]
 
@@ -669,5 +670,6 @@ def test_a_held_name_is_not_reported_as_removed():
     class _PD:
         targets = [_T("AAA")]
         decisions = [_T("AAA")]
+        constructor_dropped = []
 
     assert _dropped_since_proposal(_PD()) == []

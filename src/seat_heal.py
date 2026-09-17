@@ -108,6 +108,84 @@ def restore_stated_soft_exits(values: dict, raw: dict | None) -> tuple[dict, lis
     return out, restored
 
 
+def merge_retry_falsifiers(original_targets: list, retry_targets: list) -> tuple[list, list[str]]:
+    """Copy a stated thesis_invalid_if from a paid retry onto empty opens.
+
+    Never invents text. Never overwrites a string that was already stated.
+    Never copies catalyst — that field stays optional except the dated
+    unmeasurable-range exception already gated in Python. Returns
+    (targets, symbols filled).
+    """
+    from src.models import stated_soft_exit
+
+    if not original_targets:
+        return original_targets, []
+    retry_by_symbol: dict[str, object] = {}
+    for item in retry_targets or []:
+        symbol = _target_symbol(item)
+        if symbol:
+            retry_by_symbol[symbol] = item
+    filled: list[str] = []
+    out = []
+    for target in original_targets:
+        symbol = _target_symbol(target)
+        current = _target_field(target, "thesis_invalid_if")
+        if stated_soft_exit(current) or _target_is_close(target):
+            out.append(target)
+            continue
+        retry_item = retry_by_symbol.get(symbol) if symbol else None
+        retry_val = (
+            _target_field(retry_item, "thesis_invalid_if")
+            if retry_item is not None else None
+        )
+        stated = stated_soft_exit(retry_val)
+        if not stated:
+            out.append(target)
+            continue
+        out.append(_set_target_falsifier(target, stated))
+        filled.append(symbol)
+    return out, filled
+
+
+def _target_symbol(target) -> str:
+    if isinstance(target, dict):
+        return str(target.get("symbol") or "").strip().upper()
+    return str(getattr(target, "symbol", "") or "").strip().upper()
+
+
+def _target_field(target, name: str):
+    if isinstance(target, dict):
+        return target.get(name)
+    return getattr(target, name, None)
+
+
+def _target_is_close(target) -> bool:
+    if hasattr(target, "is_close"):
+        try:
+            return bool(target.is_close)
+        except Exception:
+            return False
+    risk = _target_field(target, "risk_allocation_pct")
+    weight = _target_field(target, "target_weight_pct")
+    try:
+        if risk is not None:
+            return float(risk) == 0.0
+        if weight is not None:
+            return float(weight) == 0.0
+    except (TypeError, ValueError):
+        return False
+    return False
+
+
+def _set_target_falsifier(target, stated: str):
+    if isinstance(target, dict):
+        copied = dict(target)
+        copied["thesis_invalid_if"] = stated
+        return copied
+    target.thesis_invalid_if = stated
+    return target
+
+
 def coerce_sector_guidance(raw) -> list[dict]:
     """Dict or list sector_guidance → list[{sector, stance, reason}].
 

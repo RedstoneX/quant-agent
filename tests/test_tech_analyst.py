@@ -58,6 +58,7 @@ def _valid_response_for(symbol: str) -> str:
         "resistance_levels": [530.0],
         "setup_type": "range",
         "expected_horizon_sessions": 10,
+        "thesis_invalid_if": "Price closes below MA50 on above-average volume",
         "reasoning_chain": {
             "trend": "Above MA20/50/200 stacked bullish.",
             "momentum": "RSI 58 neutral-bullish, MACD hist positive.",
@@ -509,6 +510,38 @@ def test_schema_invalid_row_is_retried_then_marked_failed(
 
     assert results == {"SPY": None}
     assert mock_client.messages.create.call_count == 2
+
+
+@patch("anthropic.Anthropic")
+def test_actionable_row_missing_falsifier_is_retried_then_filled(
+    mock_cls, sample_indicators, sample_bars,
+):
+    """A buy that omits thesis_invalid_if is invalid. One paid retry that
+    states a real falsifier recovers the symbol. Nothing is invented."""
+    missing = json.loads(_valid_response_for("SPY"))[0]
+    missing.pop("thesis_invalid_if")
+    filled = json.loads(_valid_response_for("SPY"))[0]
+    calls = {"n": 0}
+
+    def _respond(**kw):
+        calls["n"] += 1
+        payload = [missing] if calls["n"] == 1 else [filled]
+        resp = MagicMock()
+        resp.content = [MagicMock(text=json.dumps(payload))]
+        resp.usage.input_tokens = 500
+        resp.usage.output_tokens = 200
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = _respond
+    mock_cls.return_value = mock_client
+
+    agent = TechAnalystAgent(api_key="test", model="claude-sonnet-4-6-20250514")
+    results, _ = agent.analyze_batch(_sym_data("SPY", sample_bars, sample_indicators))
+
+    assert results["SPY"] is not None
+    assert results["SPY"].thesis_invalid_if.startswith("Price closes below")
+    assert calls["n"] == 2
 
 
 @patch("anthropic.Anthropic")

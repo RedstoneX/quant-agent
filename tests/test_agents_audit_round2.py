@@ -275,6 +275,7 @@ def _tech_row(symbol):
         "resistance_levels": [530.0],
         "setup_type": "range",
         "expected_horizon_sessions": 10,
+        "thesis_invalid_if": "Price closes below MA50",
         "reasoning_chain": {
             "trend": "up", "momentum": "ok", "volatility": "calm",
             "volume": "confirming", "support_resistance": "MA50",

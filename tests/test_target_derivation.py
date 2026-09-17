@@ -93,6 +93,7 @@ def _analysis(
         computed_levels=levels if computed is None else computed, atr_14=atr,
         setup_type=setup, expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 

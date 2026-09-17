@@ -947,6 +947,7 @@ def _pm_decision():
         targets=[TargetPosition(
             symbol="NVDA", risk_allocation_pct=3.0, conviction="high",
             thesis="breakout with volume", direction="long",
+            thesis_invalid_if="closes below support",
         )],
     )
 
@@ -969,6 +970,7 @@ def _decision_ctx():
             trend="x", momentum="x", volatility="x", volume="x",
             support_resistance="x",
         ),
+        thesis_invalid_if="closes below support",
     )]
     ctx.macro_analysis = None
     ctx.total_value = 100_000.0

@@ -301,6 +301,13 @@ parse_telemetry = AnalysisParseTelemetry()
 # instead of "the field was wiped".
 SOFT_EXIT_UNKNOWN = "unknown"
 _SOFT_EXIT_FIELDS = frozenset({"thesis_invalid_if", "catalyst"})
+# Durable refuse-before-book reason after mechanical heal + one paid retry
+# still left an open name without a real "I'll sell if". Not invented
+# prose and not a catalyst. The #432 isolate-unknown-only gate is the
+# TEMPORARY last-resort that records this reason; delete that isolate
+# when a live session proves no actionable name arrives blank.
+SOFT_EXIT_MISSING_AFTER_RETRY = "soft-exit missing after retry"
+ACTIONABLE_TECH_RATINGS = frozenset({"buy", "strong_buy", "sell", "strong_sell"})
 
 
 def stated_soft_exit(value: str | None) -> str:
@@ -326,6 +333,34 @@ def soft_exit_unknown_after_heal(value: str | None) -> bool:
     the rest of the plan.
     """
     return (value or "").strip().lower() == SOFT_EXIT_UNKNOWN
+
+
+def missing_stated_falsifier(value: str | None) -> bool:
+    """True when there is no checkable 'I'll sell if' string.
+
+    Empty, whitespace, and the recordable don't-know token `unknown` are
+    all missing. Neutral Tech may omit; an actionable rating and a
+    non-zero target may not enter the ticket book in this state.
+    """
+    return not stated_soft_exit(value)
+
+
+def open_target_missing_falsifier(target) -> bool:
+    """Non-zero (open/add) target with no real thesis_invalid_if.
+
+    A close (`risk_allocation_pct` / `target_weight_pct` == 0) may omit
+    the falsifier. Catalyst is not this check — it stays optional except
+    the dated unmeasurable-range exception already gated in Python.
+    """
+    if target is None:
+        return False
+    is_close = getattr(target, "is_close", None)
+    if callable(is_close):
+        if target.is_close:
+            return False
+    elif is_close:
+        return False
+    return missing_stated_falsifier(getattr(target, "thesis_invalid_if", None))
 
 
 # Defaulted fields where an explicit null must STILL reject the object.
@@ -1192,6 +1227,21 @@ class TechAnalysisResult(LLMOutputModel):
                 f"{self.symbol}: rating={self.rating} requires at least one "
                 f"structural level (support_levels and/or resistance_levels)"
             )
+        # Never-blank soft-exit (2026-09-17): an actionable rating without a
+        # real "I'll sell if" is not a tradeable idea. Empty and `unknown`
+        # are missing, not "the analyst had nothing to say". Neutrals may
+        # omit — the prompt says leave it empty. Nothing here invents a
+        # falsifier string; the chunk retry re-asks, then the name is
+        # refused before the book.
+        if (
+            self.rating in ACTIONABLE_TECH_RATINGS
+            and missing_stated_falsifier(self.thesis_invalid_if)
+        ):
+            raise ValueError(
+                f"{self.symbol}: rating={self.rating} requires a real "
+                f"non-empty thesis_invalid_if (I'll sell if); empty or "
+                f"{SOFT_EXIT_UNKNOWN!r} is not a falsifier"
+            )
         return self
 
 
@@ -1991,6 +2041,16 @@ class TargetPosition(LLMOutputModel):
         if self.risk_allocation_pct is not None:
             return self.risk_allocation_pct == 0.0
         return self.target_weight_pct == 0.0
+
+    @property
+    def missing_open_falsifier(self) -> bool:
+        """Open/add intent with no real thesis_invalid_if.
+
+        Enforced at the ticket book (heal + one paid retry, then refuse),
+        not as a ValidationError — stored historical rows with an empty
+        field must still parse. Catalyst stays optional here.
+        """
+        return open_target_missing_falsifier(self)
 
 
 class PortfolioDecision(LLMOutputModel):

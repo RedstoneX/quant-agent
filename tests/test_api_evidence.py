@@ -112,6 +112,7 @@ def seeded_evidence_db(tmp_path, monkeypatch):
             "entry_price": 150.0, "reference_target": 170.0, "stop_loss": 140.0,
             "support_levels": [140.0], "resistance_levels": [170.0],
             "setup_type": "range", "expected_horizon_sessions": 10,
+            "thesis_invalid_if": "closes below 140",
             "reasoning_chain": _tech_reasoning_chain(),
             "reasoning": "Breakout above 200dma with volume confirmation.",
         }),

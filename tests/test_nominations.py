@@ -56,6 +56,7 @@ def _tech_result(symbol: str, rating: str = "buy") -> TechAnalysisResult:
         setup_type="range", expected_horizon_sessions=10,
         reasoning="responder-covered candidate",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
 
 

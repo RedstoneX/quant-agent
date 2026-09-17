@@ -133,7 +133,7 @@ def _buy(symbol, alloc):
     return TradeDecision(
         action="BUY", symbol=symbol, allocation_pct=alloc,
         entry_price=100.0, stop_loss=95.0, take_profit=110.0,
-        reasoning="x",
+        reasoning="x", thesis_invalid_if="closes below support",
     )
 
 
@@ -1825,6 +1825,7 @@ def test_morning_research_stage_tech_partial_batch_marks_status_partial(mock_com
             support_resistance="x",
         ),
         reasoning="test",
+        thesis_invalid_if="closes below support",
     )
     # AAPL resolved, MSFT explicitly failed even after tech_analyst's own
     # retry — the sentinel this whole fix introduces.
@@ -1952,7 +1953,8 @@ def test_morning_research_stage_tech_full_batch_low_conviction_marks_low_confide
                 support_resistance="x",
             ),
             reasoning="test",
-        )
+        thesis_invalid_if="closes below support",
+    )
 
     analyses_map = {"AAPL": _mk("AAPL", "medium"), "MSFT": _mk("MSFT", "low")}
     stage = _tech_stage_for_conviction_test(analyses_map)
@@ -1987,7 +1989,8 @@ def test_morning_research_stage_tech_full_batch_high_conviction_stays_ok(
                 support_resistance="x",
             ),
             reasoning="test",
-        )
+        thesis_invalid_if="closes below support",
+    )
 
     analyses_map = {"AAPL": _mk("AAPL", "high"), "MSFT": _mk("MSFT", "medium")}
     stage = _tech_stage_for_conviction_test(analyses_map)
@@ -2661,7 +2664,8 @@ def test_morning_research_stage_persists_specialist_evidence(mock_compute_indica
             support_levels=[95.0], resistance_levels=[110.0],
             setup_type="range", expected_horizon_sessions=10,
             reasoning="fresh setup", reasoning_chain=_tech_rc(),
-        )},
+        thesis_invalid_if="closes below support",
+    )},
         agent_result,
     )
     tech_store = MagicMock()
@@ -2782,7 +2786,8 @@ def test_morning_research_stage_tech_uses_prior_macro_snapshot(mock_compute_indi
                 support_levels=[95.0], resistance_levels=[110.0],
                 setup_type="range", expected_horizon_sessions=10,
                 reasoning="fresh setup", reasoning_chain=_tech_rc(),
-            )
+        thesis_invalid_if="closes below support",
+    )
         },
         agent_result,
     )
@@ -2881,6 +2886,7 @@ def _levels_analysis(symbol, levels):
         setup_type="range", expected_horizon_sessions=10,
         reasoning_chain=_tech_rc(), reasoning="test",
         computed_levels=levels,
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -3106,8 +3112,9 @@ def test_morning_research_stage_alerts_owner_on_full_universe_levels_blackout(
             support_levels=[], resistance_levels=[],
             setup_type="range", expected_horizon_sessions=10,
             reasoning_chain=_tech_rc(), reasoning="test",
-            computed_levels=[],  # every symbol blind
-        )
+            computed_levels=[],  # every symbol blind,
+        thesis_invalid_if="closes below support",
+    )
         for sym in universe
     }
     tech_agent = MagicMock()
@@ -3191,8 +3198,9 @@ def test_morning_research_stage_no_alert_when_bars_fetch_partly_fails_normally(
             support_levels=[], resistance_levels=[],
             setup_type="range", expected_horizon_sessions=10,
             reasoning_chain=_tech_rc(), reasoning="test",
-            computed_levels=[100.0],  # every RESOLVED symbol has a level
-        )
+            computed_levels=[100.0],  # every RESOLVED symbol has a level,
+        thesis_invalid_if="closes below support",
+    )
         for sym in resolved_symbols
     }
     tech_agent = MagicMock()

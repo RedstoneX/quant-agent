@@ -48,6 +48,7 @@ def _ta_result(symbol, rating="buy"):
             support_resistance="x",
         ),
         reasoning="test",
+        thesis_invalid_if="closes below support",
     )
 
 

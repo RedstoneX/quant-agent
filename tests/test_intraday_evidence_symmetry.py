@@ -34,6 +34,7 @@ def _analysis(symbol="NVDA", rating="buy") -> TechAnalysisResult:
         support_levels=[90.0], resistance_levels=[140.0],
         setup_type="range", expected_horizon_sessions=10,
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 

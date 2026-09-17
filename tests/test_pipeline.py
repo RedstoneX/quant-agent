@@ -243,6 +243,7 @@ def test_pipeline_morning_run_buy(
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     mock_ta.analyze_batch.return_value = ({"SPY": spy_analysis}, _mock_agent_result())
     mock_ta_cls.return_value = mock_ta
@@ -255,7 +256,7 @@ def test_pipeline_morning_run_buy(
         targets=[
             TargetPosition(
                 symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="",
+                thesis="Buy", thesis_invalid_if="closes below support",
             )
         ],
         portfolio_view="Bullish",
@@ -379,6 +380,7 @@ def test_pipeline_morning_run_persists_specialist_evidence(
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     mock_ta.analyze_batch.return_value = ({"SPY": spy_analysis}, _mock_agent_result())
     mock_ta_cls.return_value = mock_ta
@@ -389,7 +391,7 @@ def test_pipeline_morning_run_persists_specialist_evidence(
         targets=[
             TargetPosition(
                 symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="",
+                thesis="Buy", thesis_invalid_if="closes below support",
             )
         ],
         portfolio_view="Bullish",
@@ -551,6 +553,7 @@ def test_pipeline_market_order_sizes_from_live_market_price(
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     mock_ta.analyze_batch.return_value = ({"SPY": spy_analysis}, _mock_agent_result())
     mock_ta_cls.return_value = mock_ta
@@ -561,7 +564,7 @@ def test_pipeline_market_order_sizes_from_live_market_price(
         targets=[
             TargetPosition(
                 symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="",
+                thesis="Buy", thesis_invalid_if="closes below support",
             )
         ],
         portfolio_view="Bullish",
@@ -681,6 +684,7 @@ def test_pipeline_risk_rejected(
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     mock_ta.analyze_batch.return_value = ({"SPY": spy_analysis}, _mock_agent_result())
     mock_ta_cls.return_value = mock_ta
@@ -691,7 +695,7 @@ def test_pipeline_risk_rejected(
         targets=[
             TargetPosition(
                 symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="",
+                thesis="Buy", thesis_invalid_if="closes below support",
             )
         ],
         portfolio_view="Bullish",
@@ -2879,6 +2883,7 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     mock_ta.analyze_batch.return_value = ({"QQQ": qqq_analysis}, _mock_agent_result())
     mock_ta_cls.return_value = mock_ta
@@ -2896,6 +2901,7 @@ def test_pipeline_buys_use_refreshed_cash_after_sell_phase(
             TargetPosition(
                 symbol="QQQ", target_weight_pct=15.0, conviction="high",
                 thesis="Rotate in",
+                thesis_invalid_if="closes below support",
             ),
         ],
         portfolio_view="Rotate from SPY to QQQ",

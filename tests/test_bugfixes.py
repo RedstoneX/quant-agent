@@ -471,7 +471,8 @@ def test_pipeline_symbol_guard_blocks_off_universe_and_unanalyzed_buys():
             expected_horizon_sessions=10,
             reasoning="supported",
             reasoning_chain=_trc(),
-        )
+        thesis_invalid_if="closes below support",
+    )
     ]
 
     allowed, blocked = pipeline._filter_supported_symbols(decisions, analyses, positions=[])
@@ -491,6 +492,7 @@ def test_pipeline_symbol_guard_allows_only_run_admitted_analyzed_buy():
         setup_type="range", expected_horizon_sessions=10,
         reasoning="validated transient candidate",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     decision = TradeDecision(
         action="BUY", symbol="VST", allocation_pct=5,
@@ -1421,6 +1423,7 @@ def test_tech_analysis_neutral_clears_price_fields():
         entry_price=500, reference_target=530, stop_loss=480,
         reasoning="Mixed signals",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     assert r.entry_price is None
     assert r.reference_target is None
@@ -1430,9 +1433,13 @@ def test_tech_analysis_neutral_clears_price_fields():
 def test_tech_analysis_buy_without_prices_rejected():
     """BUY/SELL/strong_* must carry entry + stop — validator blocks orphan actionable ratings."""
     with pytest.raises(ValidationError):
-        TechAnalysisResult(symbol="SPY", rating="buy", reasoning="x")
+        TechAnalysisResult(symbol="SPY", rating="buy", reasoning="x",
+        thesis_invalid_if="closes below support",
+    )
     with pytest.raises(ValidationError):
-        TechAnalysisResult(symbol="SPY", rating="strong_sell", entry_price=500, reasoning="x")
+        TechAnalysisResult(symbol="SPY", rating="strong_sell", entry_price=500, reasoning="x",
+        thesis_invalid_if="closes below support",
+    )
 
 
 def test_tech_analysis_buy_stop_must_be_below_entry():
@@ -1442,7 +1449,8 @@ def test_tech_analysis_buy_stop_must_be_below_entry():
             symbol="SPY", rating="buy",
             entry_price=500, stop_loss=520,  # stop ABOVE entry — wrong
             reasoning="x",
-        )
+        thesis_invalid_if="closes below support",
+    )
     # Reversed direction is correct for SELL
     ok = TechAnalysisResult(
         symbol="SPY", rating="sell",
@@ -1450,6 +1458,7 @@ def test_tech_analysis_buy_stop_must_be_below_entry():
         reference_target=470, support_levels=[], resistance_levels=[520.0],
         setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     assert ok.stop_loss == 520
 
@@ -1461,6 +1470,7 @@ def test_tech_analysis_conviction_defaults_to_medium():
         support_levels=[490.0], resistance_levels=[520.0],
         setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     assert r.conviction == "medium"
 
@@ -1473,6 +1483,7 @@ def test_tech_analysis_rr_computed_for_buy():
         support_levels=[490.0], resistance_levels=[525.0],
         setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     # risk = 10, reward = 25 → 2.5
     assert r.risk_reward == 2.5
@@ -1486,6 +1497,7 @@ def test_tech_analysis_rr_computed_for_sell():
         support_levels=[475.0], resistance_levels=[510.0],
         setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     # risk = 10, reward = 25 → 2.5
     assert r.risk_reward == 2.5
@@ -1505,6 +1517,7 @@ def test_tech_analysis_rr_none_for_neutral_or_missing_target():
         symbol="SPY", rating="neutral",
         entry_price=500, stop_loss=490, reference_target=525,
         reasoning="x", reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     assert neutral.risk_reward is None
     with pytest.raises(ValidationError):
@@ -1514,7 +1527,8 @@ def test_tech_analysis_rr_none_for_neutral_or_missing_target():
             support_levels=[490.0], resistance_levels=[],
             setup_type="range", expected_horizon_sessions=10,
             reasoning="x", reasoning_chain=_trc(),
-        )
+        thesis_invalid_if="closes below support",
+    )
 
 
 def test_tech_analysis_rr_handles_malformed_geometry():
@@ -1533,18 +1547,34 @@ def test_tech_analysis_rr_handles_malformed_geometry():
             support_levels=[490.0], resistance_levels=[],
             setup_type="range", expected_horizon_sessions=10,
             reasoning="x", reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
+    )
+
+
+def test_tech_analysis_thesis_invalid_if_required_on_actionable():
+    """Actionable ratings need a real I'll-sell-if. Neutrals may omit."""
+    with pytest.raises(ValidationError, match="thesis_invalid_if"):
+        TechAnalysisResult(
+            symbol="SPY", rating="buy",
+            entry_price=500, stop_loss=490, reference_target=525,
+            support_levels=[490.0], resistance_levels=[525.0],
+            setup_type="range", expected_horizon_sessions=10,
+            reasoning="x", reasoning_chain=_trc(),
         )
-
-
-def test_tech_analysis_thesis_invalid_if_defaults_empty():
     r = TechAnalysisResult(
         symbol="SPY", rating="buy",
         entry_price=500, stop_loss=490, reference_target=525,
         support_levels=[490.0], resistance_levels=[525.0],
         setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
+        thesis_invalid_if="closes below 490",
     )
-    assert r.thesis_invalid_if == ""
+    assert r.thesis_invalid_if == "closes below 490"
+    neutral = TechAnalysisResult(
+        symbol="SPY", rating="neutral",
+        reasoning="x", reasoning_chain=_trc(),
+    )
+    assert neutral.thesis_invalid_if == ""
 
 
 def test_tech_analysis_rr_exposed_via_model_dump():
@@ -1555,6 +1585,7 @@ def test_tech_analysis_rr_exposed_via_model_dump():
         support_levels=[490.0], resistance_levels=[525.0],
         setup_type="range", expected_horizon_sessions=10,
         reasoning="x", reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     dumped = r.model_dump()
     assert dumped.get("risk_reward") == 2.5

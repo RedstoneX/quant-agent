@@ -29,12 +29,14 @@ def sample_analyses():
             support_levels=[490.0], resistance_levels=[540.0],
             setup_type="range", expected_horizon_sessions=10,
             reasoning="Strong uptrend", reasoning_chain=_tech_rc(),
-        ),
+        thesis_invalid_if="closes below support",
+    ),
         TechAnalysisResult(
             symbol="QQQ", rating="neutral", entry_price=None,
             reference_target=None, stop_loss=None,
             reasoning="Mixed signals", reasoning_chain=_tech_rc(),
-        ),
+        thesis_invalid_if="closes below support",
+    ),
     ]
 
 
@@ -75,6 +77,7 @@ def mock_pm_response():
                 "target_weight_pct": 10.0,
                 "conviction": "high",
                 "thesis": "Technical setup supports a target.",
+                "thesis_invalid_if": "closes below 490",
                 "provenance": [{
                     "source": "technical", "observed_stance": "buy",
                     "relationship": "supports", "evidence": "validated buy rating",

@@ -56,6 +56,7 @@ def _analysis(
         atr_14=(entry - stop) / 3.5 if atr is None else atr,
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -673,6 +674,7 @@ def test_short_thesis_invalid_if_survives_full_length_unlike_embedded_reasoning(
         setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=_tech_rc(),
         atr_14=(262.5 - 250.0) / 3.5,
+        thesis_invalid_if="closes below support",
     )
     decisions = constructor.construct_orders(
         targets=[target], positions=[], analyses=[analysis],
@@ -758,6 +760,7 @@ def _structured_analysis(
         atr_14=abs(entry - stop) / 3.5,
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning="test", reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 

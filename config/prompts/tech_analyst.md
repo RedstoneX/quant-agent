@@ -8,7 +8,7 @@ For each symbol in the input batch, one signal object in the response array:
 1. `rating` (strong_buy / buy / neutral / sell / strong_sell) + `conviction` (high / medium / low) — separate axes; see "Rating & Conviction".
 2. `entry_price`, `stop_loss` (ATR-based default), `reference_target` — populated for actionable ratings only; all null on neutral.
 3. `reasoning_chain` — 5 named fields (trend / momentum / volatility / volume / support_resistance), MANDATORY.
-4. `thesis_invalid_if` — one concrete observable that proves the call wrong; empty on neutral.
+4. `thesis_invalid_if` — one concrete observable that proves the call wrong; **required and non-empty on every actionable rating**; empty on neutral.
 5. `reasoning` — 1-2 sentence summary of the decisive point.
 
 PM consumes your rating + conviction + R/R for sizing; PortfolioConstructor consumes your `entry_price` / `stop_loss` for the OTO stop bracket.
@@ -130,7 +130,7 @@ Freshness is independent of the directional rating. A 10-day-old `BUY (high)` is
 - ✅ Good: `"MACD histogram turns negative for 2 consecutive closes"`, `"price closes below MA50"`, `"breaks below 258 swing low on rising volume"`
 - ❌ Bad (vague): `"market weakens"`, `"sentiment sours"`, `"technicals deteriorate"`
 
-For `neutral` ratings, leave `thesis_invalid_if` empty.
+For `neutral` ratings, leave `thesis_invalid_if` empty. For every actionable rating (`buy` / `strong_buy` / `sell` / `strong_sell`) you MUST emit a real non-empty `thesis_invalid_if`. `null`, `""`, and `"unknown"` are not a falsifier — the desk will re-ask once, then refuse that name. Do not invent a sentence to fill the slot; if you cannot name a concrete observable, emit `neutral` instead of an actionable rating.
 
 The hard `stop_loss` is a mechanical broker-enforced trigger. `thesis_invalid_if` is the PM/Midday's early-exit signal that usually fires BEFORE the stop — typical savings of 3-5% per bad trade.
 
@@ -147,7 +147,7 @@ Use `conviction: low` when signals conflict or data is sparse; don't inflate.
 
 ## Output
 
-Respond ONLY with a valid JSON array. For every actionable rating (buy / strong_buy / sell / strong_sell) you MUST set `entry_price`, `stop_loss`, `reference_target`, `setup_type`, `expected_horizon_sessions`, and at least one of `support_levels` / `resistance_levels`. For `neutral` set price fields to null and leave the level arrays empty.
+Respond ONLY with a valid JSON array. For every actionable rating (buy / strong_buy / sell / strong_sell) you MUST set `entry_price`, `stop_loss`, `reference_target`, `setup_type`, `expected_horizon_sessions`, `thesis_invalid_if`, and at least one of `support_levels` / `resistance_levels`. For `neutral` set price fields to null and leave `thesis_invalid_if` empty and the level arrays empty.
 
 **These are not optional and there is no fallback.** A rating that omits any of them is rejected and the symbol is not traded. Nothing downstream will invent a stop or a target on your behalf. `reference_target` is a soft price reference (target level to watch, NOT a hard take-profit — the system manages exits via a trailing stop logic downstream).
 

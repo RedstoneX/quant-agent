@@ -77,6 +77,7 @@ def _analysis(
         setup_type=setup_type, expected_horizon_sessions=60,
         reasoning="validated production-like trend and momentum evidence",
         reasoning_chain=_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 

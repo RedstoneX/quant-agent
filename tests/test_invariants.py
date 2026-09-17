@@ -542,6 +542,7 @@ def test_invariant_intraday_scan_cannot_bypass_the_deterministic_gate():
             support_resistance="x",
         ),
         reasoning="test",
+        thesis_invalid_if="closes below support",
     )
     p.tech_analyst.analyze_batch.return_value = (
         {"AAPL": analysis},
