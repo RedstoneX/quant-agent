@@ -313,11 +313,13 @@ def covered_news_headlines(report) -> frozenset[str]:
 
 
 def headline_mentions_symbols(title: str, symbols) -> bool:
-    """True when ``title`` contains a watched ticker as a whole word.
+    """True when ``title`` (or title-plus-summary text) contains a watched ticker.
 
-    Same word-boundary rule as ``NewsDataProvider.tag_symbol_mentions``.
-    A general-wire headline that does not name a watched ticker is not a
-    change to remembered stock research.
+    Word-boundary match, same idea as ``NewsDataProvider.tag_symbol_mentions``.
+    Callers that have a summary should pass ``f"{title} {summary}"`` so a
+    ticker named only in the body still counts. A general-wire headline
+    that does not name a watched ticker is not a change to remembered
+    stock research.
     """
     import re
     text = str(title or "").strip()

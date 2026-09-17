@@ -13035,44 +13035,56 @@ class TradingPipeline:
         return sorted(out)
 
     def _peek_news_headlines(self, report) -> list[str]:
-        """Live RSS titles for mechanical wire-expiry. Failed fetch → []."""
+        """Live RSS titles for mechanical wire-expiry. Failed fetch → [].
+
+        General wires only — do not pass the universe as a per-symbol
+        fetch. That cap preserves caller order and morning's order is
+        positions-first; an alphabetical universe peek would query a
+        different 15 names and invent new titles.
+        """
+        from src.evidence_kind import headline_mentions_symbols
         provider = getattr(self, "news_provider", None)
         fetch = getattr(provider, "fetch_news", None)
         if not callable(fetch):
             return []
-        symbols = self._watched_research_symbols(report=report)
+        watched = self._watched_research_symbols(report=report)
+        if not watched:
+            return []
         try:
-            items, _coverage = fetch(symbols=symbols or None)
-        except TypeError:
             try:
+                items, _coverage = fetch(symbols=None)
+            except TypeError:
                 items, _coverage = fetch()
-            except Exception:  # noqa: BLE001
-                return []
         except Exception:  # noqa: BLE001 — failed fetch ≠ supersede
             return []
         titles: list[str] = []
         for item in items or []:
             title = getattr(item, "title", None)
-            if title is None and isinstance(item, dict):
-                title = item.get("title") or item.get("headline")
+            summary = getattr(item, "summary", None)
+            if isinstance(item, dict):
+                if title is None:
+                    title = item.get("title") or item.get("headline")
+                if summary is None:
+                    summary = item.get("summary")
             text = str(title or "").strip()
-            if text:
-                titles.append(text)
+            if not text:
+                continue
+            search = f"{text} {summary or ''}"
+            if not headline_mentions_symbols(search, watched):
+                continue
+            titles.append(text)
         return titles
 
     def _news_has_newer_material_wire(self, report) -> bool:
         """Best-effort mechanical headline compare. Failed fetch ≠ supersede.
 
-        Only a new title that names a watched ticker is a wire change.
-        A sliding 24h RSS window always grows unrelated headlines; treating
-        those as expiry would freeze the midday tick, which cannot re-pay
-        the news seat.
+        Only a new title that names a watched ticker is a wire change
+        (the peek already drops unnamed general-wire titles). A sliding
+        24h RSS window always grows unrelated headlines; treating those
+        as expiry would freeze the midday tick, which cannot re-pay the
+        news seat.
         """
-        from src.evidence_kind import (
-            covered_news_headlines,
-            headline_mentions_symbols,
-            newer_material_wire,
-        )
+        from src.evidence_kind import covered_news_headlines, newer_material_wire
         covered = set(covered_news_headlines(report))
         load_raw = getattr(getattr(self, "news_store", None), "load_raw_headlines", None)
         if callable(load_raw):
@@ -13089,11 +13101,7 @@ class TradingPipeline:
             fetched = self._peek_news_headlines(report) or []
         except Exception:  # noqa: BLE001
             return False
-        watched = self._watched_research_symbols(report=report)
-        if not watched:
-            return False
-        named = [title for title in fetched if headline_mentions_symbols(title, watched)]
-        return newer_material_wire(frozenset(covered), named)
+        return newer_material_wire(frozenset(covered), fetched)
 
     def _peek_new_form4_accessions(self, ctx=None, symbols=None) -> set[str]:
         """Currently visible Form 4 accessions for names we watch."""
@@ -13251,8 +13259,6 @@ class TradingPipeline:
         Parse failure is lost, never reused as research.
         """
         from src.evidence_kind import news_reuse
-        from src.evidence_kind import same_session_from_date
-        from src.util.time import et_today
         try:
             report = self.news_store.load_daily_report()
             if not report:
@@ -13262,17 +13268,17 @@ class TradingPipeline:
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: news carry-forward failed: %s", e)
             return CarryForward(None, "carry_forward_failed", same_session=False)
-        # load_daily_report only reads today's dated directory. That path
-        # is the trustworthy timestamp; an undated narrative field is not.
-        same_session = same_session_from_date(str(et_today()))
+        # load_daily_report only opens today's dated directory. A successful
+        # load is therefore same-session; there is no undated news snapshot
+        # on this path. Empty/failed above cannot claim it.
         verdict = news_reuse(
             payload,
-            same_session=same_session,
+            same_session=True,
             newer_material_wire=self._news_has_newer_material_wire(payload),
         )
         if not verdict.usable:
-            return CarryForward(None, verdict.status, same_session=same_session)
-        return CarryForward(payload, verdict.status, same_session=same_session)
+            return CarryForward(None, verdict.status, same_session=True)
+        return CarryForward(payload, verdict.status, same_session=True)
 
     def _carry_forward_earnings(self, ctx: RunContext) -> CarryForward:
         """Remembered earnings write-ups until the next report / 8-K.
@@ -13322,11 +13328,36 @@ class TradingPipeline:
             return CarryForward(results, status, same_session=True)
         return CarryForward(results, status, same_session=True)
 
-    def _insider_same_session(self, findings) -> bool:
-        """True only when a finding carries a trustworthy date equal to today.
+    def _specialist_insider_as_of(self) -> str:
+        """Timestamp of the latest smart-money specialist_evidence row, or ''."""
+        db = getattr(self, "db", None)
+        execute = getattr(db, "execute", None)
+        if not callable(execute):
+            return ""
+        try:
+            row = execute(
+                "SELECT timestamp FROM specialist_evidence "
+                "WHERE agent_name = ? AND kind IN ('finding', 'scan_summary') "
+                "ORDER BY id DESC LIMIT 1",
+                ("smart_money_analyst",),
+            ).fetchone()
+        except Exception:  # noqa: BLE001
+            return ""
+        if not row:
+            return ""
+        try:
+            raw = row["timestamp"] if hasattr(row, "keys") else row[0]
+        except Exception:  # noqa: BLE001
+            return ""
+        return str(raw or "").strip()
 
-        An undated filing read cannot claim same-session reuse. Cross-day
-        remember still applies — Form 4 is reusable until a new accession.
+    def _insider_same_session(self, findings) -> bool:
+        """True only with a trustworthy date equal to today.
+
+        Production ``SmartMoneyFinding`` has no as_of field. The producing
+        step's date is the specialist_evidence timestamp. An undated
+        finding cannot claim same-session; Form 4 is still remembered
+        until a new accession.
         """
         from src.evidence_kind import same_session_from_date
         for finding in findings or []:
@@ -13337,7 +13368,7 @@ class TradingPipeline:
                     value = raw.get(key)
                 if same_session_from_date(value):
                     return True
-        return False
+        return same_session_from_date(self._specialist_insider_as_of())
 
     def _carry_forward_insider(self, ctx: RunContext) -> CarryForward:
         """Remembered Form 4 findings; refresh only when a NEW filing appears."""

@@ -91,6 +91,9 @@ def _bind_reuse(obj):
         TradingPipeline._peek_new_form4_accessions.__get__(obj)
     )
     obj._insider_same_session = TradingPipeline._insider_same_session.__get__(obj)
+    obj._specialist_insider_as_of = (
+        TradingPipeline._specialist_insider_as_of.__get__(obj)
+    )
     obj._load_remembered_insider_findings = (
         TradingPipeline._load_remembered_insider_findings.__get__(obj)
     )
@@ -238,7 +241,13 @@ def test_news_peek_expires_on_a_new_headline_and_reuses_when_unchanged():
             self.titles = titles
 
         def fetch_news(self, symbols=None):
-            return [SimpleNamespace(title=t) for t in self.titles], None
+            items = []
+            for item in self.titles:
+                if isinstance(item, SimpleNamespace):
+                    items.append(item)
+                else:
+                    items.append(SimpleNamespace(title=item, summary=""))
+            return items, None
 
     obj = SimpleNamespace(
         macro_store=_MacroStore(None),
@@ -259,6 +268,12 @@ def test_news_peek_expires_on_a_new_headline_and_reuses_when_unchanged():
     ignored = obj._carry_forward_news()
     assert ignored.status == STATUS_CARRIED_FROM_MORNING
     assert ignored.payload is not None
+
+    obj.news_provider = _Provider([
+        SimpleNamespace(title="Guidance cut after close", summary="AAPL cuts FY outlook"),
+    ])
+    from_summary = obj._carry_forward_news()
+    assert from_summary.status == "expired"
 
 
 def test_insider_peek_expires_on_a_new_form4_accession():
@@ -402,3 +417,38 @@ def test_dated_insider_finding_is_same_session_and_undated_is_not():
     ]))
     assert dated.same_session is True
     assert dated.status == STATUS_CARRIED_FROM_MORNING
+
+
+def test_specialist_evidence_timestamp_is_the_insider_same_session_date():
+    """Production findings have no as_of; the producing row's timestamp is the date."""
+    class _Form4:
+        def known_accessions(self):
+            return {"0001-26-000001"}
+
+        def peek_accessions(self, symbols=None):
+            return {"0001-26-000001"}
+
+    class _DB:
+        def execute(self, sql, params=None):
+            class _Row(dict):
+                pass
+            if "timestamp" in sql:
+                row = _Row(timestamp=f"{et_today()} 14:05:00")
+                return SimpleNamespace(fetchone=lambda: row)
+            return SimpleNamespace(fetchone=lambda: None, fetchall=lambda: [])
+
+    obj = SimpleNamespace(
+        macro_store=_MacroStore(None),
+        news_store=_NewsStore(),
+        smart_money_provider=SimpleNamespace(
+            providers=[_Form4()],
+            peek_form4_accessions=lambda symbols=None: {"0001-26-000001"},
+        ),
+        db=_DB(),
+    )
+    _bind_reuse(obj)
+    carried = obj._carry_forward_insider(SimpleNamespace(smart_money_findings=[
+        {"symbol": "FTK", "observations": [{"accession_number": "0001-26-000001"}]},
+    ]))
+    assert carried.same_session is True
+    assert carried.status == STATUS_CARRIED_FROM_MORNING
