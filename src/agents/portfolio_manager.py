@@ -1372,27 +1372,13 @@ Based on all the above (memory of past decisions + environment trajectory + toda
           R2  rating actionable (neutral is not a candidate)
           R3  a long must be in the BUY-eligible set — the same set
               `validate_grounding` refuses increases outside of
-          R4  **Type A / range only** — computed R/R must be MEASURABLE, OR
-              the symbol is named on a current Active News State Change row.
-              That second clause is looser than
-              `_apply_subfloor_catalyst_rule`, which needs the PM to
-              actually CITE the row's date: before the decision exists there
-              is no citation to check, only whether one is possible.
-
-              **2026-09-11, docs/WORK.md item 1(d) — owner decision.** R4
-              used to read "R/R ≥ `rr_floor`". It no longer blocks on the
-              SIZE of the ratio, only on its ABSENCE, and it does not run at
-              all for a Type B / breakout candidate. A breakout has no
-              overhead level to measure a reward against and is managed by a
-              trailing stop with no fixed target (`src/risk/trailing.py`), so
-              a ratio computed for it exists only to satisfy the gate. A
-              range trade's real ratio is real information and is used as
-              such — it orders the candidates in `rank_candidates` rather
-              than admitting or refusing them. See
-              `src.risk.constants.reward_risk_floor_applies`. `rr_floor` is
-              still accepted and still threaded through to
-              `_apply_subfloor_catalyst_rule`, where it decides the
-              starter-size CAP (never a refusal).
+          R4  **retired 2026-09-17.** Used to read "R/R ≥ `rr_floor`", then
+              "R/R must be measurable or a catalyst row names the symbol".
+              Neither is a block. A range ratio, including None, is ranking
+              information. A breakout is not measured on reward:risk. The
+              `rr_floor` argument is accepted and ignored so callers do not
+              silently re-default a retired number. Catalyst is not an
+              admission door.
           R5  net independent source score ≥ 1 for the proposed direction
               (`signed_source_score`; §9.4 refuses net ≤ 0 outright —
               `agreement_refuses_trade`, a refusal gate with no schedule
@@ -1432,14 +1418,11 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         `PortfolioConstructor` instance to hand); production always
         supplies it.
         """
+        _ = (active_state_changes, asof, rr_floor, real_reward_risk_by_symbol)
         allowed = {
             str(s).strip().upper() for s in (allowed_buy_symbols or set())
             if str(s).strip()
         }
-        by_date = cls._state_change_symbols_by_date(active_state_changes, asof)
-        catalyst_symbols: set[str] = set()
-        for symbols in by_date.values():
-            catalyst_symbols.update(symbols)
         stale = stale_sources or {}
 
         verdicts: dict[str, list[str]] = {}
@@ -1453,21 +1436,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             direction = "short" if analysis.rating in ("sell", "strong_sell") else "long"
             if direction == "long" and symbol not in allowed:
                 blocked.append("R3 not BUY-eligible")
-            if reward_risk_floor_applies(analysis.setup_type):
-                if real_reward_risk_by_symbol is not None:
-                    reward_risk = real_reward_risk_by_symbol.get(symbol)
-                else:
-                    reward_risk = analysis.risk_reward
-                # 2026-09-11, item 1(d): a sub-floor ratio is no longer a
-                # BLOCK for a range trade — only an unmeasurable one is,
-                # which is the fail-closed case (no payoff arithmetic at
-                # all, not a poor payoff). The real ratio does its work in
-                # the ORDER instead, via `rank_candidates`.
-                if reward_risk is None and symbol not in catalyst_symbols:
-                    blocked.append(
-                        "R4 R/R unmeasurable (no computable payoff geometry) "
-                        "and no current state-change row names it"
-                    )
+            # R4 is retired. Reward:risk — computed, thin, or unmeasurable —
+            # does not admit or refuse. Ranking still consumes the number
+            # when it exists. `rr_floor` and catalyst rows are not a door.
             sources = evidence_registry.get(symbol, {})
             net = signed_source_score(
                 symbol, sources, direction, ignored_sources=stale.get(symbol),
@@ -2816,94 +2787,25 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         asof: date | None = None,
         real_reward_risk_by_symbol: dict[str, float | None] | None = None,
     ) -> PortfolioDecision:
-        """Cap every Type A / range target whose real reward:risk is below
-        `rr_floor`, and drop the ones whose payoff cannot be measured at all.
+        """Keep every target at the size the PM asked for.
 
-        **Rewritten 2026-09-11, docs/WORK.md item 1(d) — owner decision.**
-        Read this table, not the older prose below it:
+        **Rewritten 2026-09-17 — owner: residual invented R/R is a defect.
+        Overnight bind: unmeasurable payoff honesty is a recorded fact /
+        ranking hint with zero refuse, zero size floor, zero sub-floor
+        branch. Catalyst-exception theater around a dead floor is gone.**
 
-          Type B / breakout          -> exempt entirely. No drop, no cap, no
-                                        catalyst. There is no overhead level
-                                        to measure a reward against and the
-                                        position is managed by a trailing
-                                        stop with no fixed target
-                                        (`src/risk/trailing.py`), so nothing
-                                        here may key off a reward:risk
-                                        figure. See
-                                        `src.risk.constants.reward_risk_
-                                        floor_applies`.
-          Type A, ratio >= floor     -> untouched, as before.
-          Type A, ratio below floor  -> **KEPT** (this used to be a DROP
-                                        unless a catalyst resolved), risk
-                                        capped at `starter_risk_pct`. The
-                                        real ratio is real information about
-                                        this specific trade and does its
-                                        work in the ORDER — see
-                                        `rank_candidates` — instead of
-                                        behind one universal cutoff.
-          Type A, ratio unmeasurable -> unchanged: DROPPED unless the
-                                        catalyst resolves to a real dated
-                                        row, then kept and capped. Fails
-                                        closed, because an unknown payoff is
-                                        not a poor one.
+          Type B / breakout          -> untouched. No drop, no cap.
+          Type A, ratio measurable   -> untouched. Any computed ratio is
+                                        ranking information.
+          Type A, ratio unmeasurable -> kept at the asked size. Python
+                                        logs the missing ratio; it does
+                                        not drop, shrink, or require a
+                                        catalyst.
 
-        **The catalyst machinery is therefore now redundant for the
-        measurable sub-floor case** — the case it was actually built for
-        (item 1 parts (b)+(c), 2026-09-11). It still binds the unmeasurable
-        case. It is flagged, not removed: retiring it is an owner call.
-
-        The starter-size CAP is the last place a single fixed reward:risk
-        number is still applied identically to every range trade. It is kept
-        deliberately — removing a risk-reducing cap is a loosening nobody
-        asked for — but it is exactly the pattern `docs/OUTCOME.md`'s "no
-        arbitrary numbers, ever" principle warns about, and whoever revisits
-        this should know that.
-
-        Deliberately a per-target prune plus a size adjustment, NOT an entry
-        in `validate_grounding`'s error list — `decide()` treats any non-empty
-        error list as total session failure, which is the right penalty for
-        fabricated evidence and the wrong one for one decorative catalyst.
-        Same reasoning, and the same shape, as `_drop_unadjudicated_conflicts`
-        directly above.
-
-        SCOPE, deliberately asymmetric, mirroring §3.4 and §9.3: only targets
-        `_target_intent` classifies as "buy"/"short" — opening or increasing
-        — are gated. Exits and reductions are exempt; this desk must never
-        find it harder to cut risk than to add it.
-
-        WHICH RATIO. As of 2026-09-04, `real_reward_risk_by_symbol` (when
-        supplied) — `PortfolioConstructor.real_reward_risk_preview`'s
-        output, the same derived-target, noise-floor-widened reward:risk
-        `construct_orders` gates on. Before this fix it was
-        `TechAnalysisResult.risk_reward`: real Python arithmetic, but over
-        the analyst's own GUESSED target, never checked against structure —
-        a 2026-09-04 audit found this gate and the constructor's real one
-        passing disjoint sets on a real day because of exactly that gap. A
-        symbol absent from the map is `None` (fail closed, same as an
-        unmeasurable ratio always has been here). If the map is not
-        supplied at all (`None`, not merely missing an entry),
-        `TechAnalysisResult.risk_reward` is used as a last-resort fallback
-        for callers with no `PortfolioConstructor` to preview from —
-        production always supplies it. It is `TechAnalysisResult.
-        risk_reward` that is still rendered into the prompt as `R/R
-        x.xx:1` (that number is the analyst's own stated geometry, shown
-        as context — see `_fmt_tech` — not the number this gate now uses),
-        so the PM sees both: what the analyst claimed and, in the ranking
-        section, which names the desk's real gate actually admits. `None`
-        (neutral rating, unmeasurable geometry, or a target this desk's own
-        structure derivation refuses) counts as sub-floor: a target with no
-        computable REAL payoff is precisely the case a checkable catalyst
-        has to justify.
-
-        WHY THE CAP EXISTS EVEN WHEN THE CATALYST IS REAL. A verified
-        catalyst makes the trade permissible, not good — the payoff geometry
-        is unchanged and still breaks even only at a hit rate this desk has
-        never measured. The starter size is the smallest position the risk
-        budget will actually grant (`allocate_risk_budget` denies anything
-        under its floor), so this preserves the capability at the least the
-        desk can express rather than removing it.
+        `rr_floor` is accepted and ignored. Starter size is not assigned
+        here. This is not an entry in `validate_grounding`'s error list.
         """
-        by_date = cls._state_change_symbols_by_date(active_state_changes, asof)
+        _ = (rr_floor, starter_risk_pct, asof, active_state_changes)
         if real_reward_risk_by_symbol is not None:
             rr_by_symbol = {
                 a.symbol.upper(): real_reward_risk_by_symbol.get(a.symbol.upper())
@@ -2913,117 +2815,21 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             rr_by_symbol = {a.symbol.upper(): a.risk_reward for a in analyses}
         setup_by_symbol = {a.symbol.upper(): a.setup_type for a in analyses}
         held = {p.symbol.upper(): p for p in positions}
-        kept: list[TargetPosition] = []
         for target in decision.targets:
             intent = cls._target_intent(target, held, total_value)
             if intent not in ("buy", "short"):
-                kept.append(target)  # exits/reductions are exempt on purpose
                 continue
             symbol = target.symbol.upper()
-            # TYPE B / BREAKOUT — this gate does not apply at all
-            # (docs/WORK.md item 1(d), owner decision 2026-09-11). No
-            # drop, no catalyst requirement, no starter-size cap: none of
-            # them may key off a reward:risk figure for a trade with no
-            # overhead level to measure a reward against. A symbol with no
-            # analysis has no setup type either and stays on the range path,
-            # which is the conservative side.
             if not reward_risk_floor_applies(setup_by_symbol.get(symbol)):
-                kept.append(target)
                 continue
-            reward_risk = rr_by_symbol.get(symbol)
-            if reward_risk is not None and reward_risk >= rr_floor:
-                kept.append(target)
-                continue
-
-            # Phase 13 catalyst-gate fix: the exception requires a row
-            # whose recorded direction actually supports THIS trade — a
-            # long needs a bullish row, a short needs a bearish one. A row
-            # that merely names the symbol (no direction, or a neutral /
-            # opposite one) no longer qualifies.
-            required_direction = "bullish" if intent == "buy" else "bearish"
-            if reward_risk is not None:
-                # MEASURABLE BUT WEAK, Type A / range. **No longer dropped**
-                # (docs/WORK.md item 1(d), owner decision 2026-09-11). The
-                # ratio is real — this trade's own support against its own
-                # resistance — and a real per-trade signal belongs in the
-                # weighted score, not behind one universal cutoff. It is
-                # ranked on that real number by `rank_candidates`, and it
-                # falls through to the starter-size cap below.
-                #
-                # The catalyst check no longer decides anything on this
-                # path, so it is not run: a weak range payoff is kept with
-                # or without a citation. That makes the machinery built for
-                # item 1 parts (b)+(c) redundant for the measurable case —
-                # flagged for the owner, not removed here. What survives of
-                # it is the CAP, which is a risk-reducing protection nobody
-                # asked to loosen.
-                pass
-            elif not cls._catalyst_cites_state_change(
-                target.catalyst, symbol, required_direction, by_date,
-            ):
-                # UNMEASURABLE, Type A / range — still dropped without a
-                # verified catalyst, unchanged. This is the fail-closed case
-                # the rest of this codebase treats as strictly worse than a
-                # poor ratio: there is no payoff arithmetic at all, so there
-                # is nothing for the ranking to consume either.
-                logger.warning(
-                    "%s: dropping %s (%s) — R/R %s is under the %.2f floor and "
-                    "its catalyst resolves to no Active News State Change row "
-                    "naming %s with a recorded %s direction. A sub-floor pick "
-                    "may only claim the catalyst exception by citing the ISO "
-                    "date of a row that covers the symbol AND is recorded "
-                    "%s for it; an asserted-in-prose catalyst, a row with no "
-                    "recorded direction, or a row recorded neutral/opposite "
-                    "is not checkable-and-supportive and does not qualify. "
-                    "The rest of this session's decision is unaffected. "
-                    "catalyst was: %r",
-                    SUBFLOOR_CATALYST_UNVERIFIED_STATUS, target.symbol, intent,
-                    "n/a" if reward_risk is None else f"{reward_risk:.2f}",
-                    rr_floor, symbol, required_direction, required_direction,
-                    (target.catalyst or "")[:200],
-                )
-                continue
-
-            # Cap the size, never raise it. A legacy notional-only
-            # target (`risk_allocation_pct is None`) is converted onto the
-            # risk path rather than left uncapped: the constructor prefers
-            # risk over weight whenever both are present (see
-            # `TargetPosition`), so setting it here is what actually binds,
-            # and leaving the weight alone would be a way around this rule.
-            # Record that the exception was GRANTED, not merely claimed, so
-            # the constructor can tell this target apart from an ordinary
-            # sub-floor one. Set before the cap so the two facts — "checked"
-            # and "capped" — can never diverge; see
-            # `TargetPosition.subfloor_catalyst_verified` for why only Python
-            # may write it and why the constructor needs to be told at all.
-            #
-            # 2026-09-11: the flag is set ONLY where a catalyst was actually
-            # verified — i.e. the unmeasurable-geometry path above. A
-            # measurable-but-weak range target reaches the cap without any
-            # citation now, and marking it verified would record a check
-            # that never ran (exactly the failure
-            # `_subfloor_catalyst_verified` is a private attribute to
-            # prevent).
-            if reward_risk is None:
-                target.mark_subfloor_catalyst_verified()
-            previous = target.risk_allocation_pct
-            if previous is None or previous > starter_risk_pct:
-                target.risk_allocation_pct = starter_risk_pct
+            if rr_by_symbol.get(symbol) is None:
                 logger.info(
-                    "%s: %s capped to %.2f%% risk (was %s) — R/R %s is under "
-                    "the %.2f reference for a range setup%s. Deterministic, "
-                    "not PM inconsistency. The cap is the ONLY thing that "
-                    "number still does: item 1(d) removed the refusal.",
-                    SUBFLOOR_SIZE_CAPPED_STATUS, target.symbol,
-                    starter_risk_pct,
-                    "unsized by risk" if previous is None else f"{previous:.2f}%",
-                    "n/a" if reward_risk is None else f"{reward_risk:.2f}",
-                    rr_floor,
-                    " with a state change dated in its catalyst"
-                    if reward_risk is None else "",
+                    "%s: %s (%s) payoff geometry cannot be computed — "
+                    "recorded as unknown ranking hint, not dropped and "
+                    "not size-capped. Invented reward:risk floors are "
+                    "retired.",
+                    SUBFLOOR_CATALYST_UNVERIFIED_STATUS, target.symbol, intent,
                 )
-            kept.append(target)
-        decision.targets = kept
         return decision
 
     @staticmethod

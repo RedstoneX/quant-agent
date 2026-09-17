@@ -59,21 +59,9 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 
 ---
 
-**1. The reward:risk floor — 17 of 68 (25%). TOO STRICT. IN FLIGHT.**
-
-The headline's wording and share are pinned by `tests/test_status_board.py`; the floor itself no longer refuses trades. All four planned parts shipped — (a) one stop geometry, (b) checkable catalyst, (c) starter-size cap in code, (d) owner decision 2026-09-11: no ratio test on breakouts, a ratio is a tiebreak and a size cap on range trades. History, the SLB and NVDA cases, the null ticker-blinding result and the retracted 1.67/1.18 example: `docs/INCIDENT_HISTORY.md`, 2026-09-14, "the reward:risk floor stopped refusing trades". **Left, verified on origin/main 2026-09-14:**
-  - `min_reward_risk_after_widening: 1.5` still decides which range trades are "sub-floor" and so capped at starter size (`_apply_subfloor_catalyst_rule`); the Risk Manager prompt still says "roughly 1.5". Unsourced, and it decides size.
-  - The catalyst exception no longer changes any outcome; whether to remove it is flagged in `_execution_rr_floor`'s docstring and undecided.
-  - Not re-measured against the same 68.
-What would settle it: a cited or instrument-read basis for the sub-floor size cap, or deleting the cap and leaving the ratio as a ranking input only; then re-run the census.
-
 **3. Accepted by the broker, never filled, cancelled — 6 of 68 (9%). WORKING AS INTENDED.**
 
 Tape walking away from a still-open limit, repeg off, is this class. Desk lateness after Risk is broken, not "a little late": handshake starts during Risk, submit is not licensed leftover fund-max slack, overrun is `latency_window`. One in-ceiling catch-up is a safety net only. Slippage and R/R were not raised. Repeg stays off.
-
-**4. A SECOND reward:risk floor at execution time, set to 1.2 — 4 of 68 (6%). WORKING AS INTENDED, BUT.**
-
-It asks whether EXECUTION degraded the geometry the Risk Manager approved. Since 2026-09-11 it applies no bar to a breakout and `min(1.2, approved ratio)` to a range order, so it cannot reinstate the retired floor (`_execution_rr_floor`, `src/pipeline_stages.py`). `EXECUTION_REWARD_RISK_BELT = 1.2` itself is unsourced; resolve it with item 1's remaining 1.5, not separately.
 
 **17. Backup alert channel — OWNER DECISION, deferred, no due date.** The only open point: there is no notification channel beyond Telegram, so an alert that cannot reach Telegram reaches nobody. Deferred by the owner 2026-09-03 ("bigger problems first"), revisit at his discretion. Recommendation: `docs/BOARD_NOTES.md` ("item 17"). Everything else on this item shipped 2026-09-03 and was verified on the box 2026-09-13 (`docs/INCIDENT_HISTORY.md`, "item 17(a)/(b)" and 2026-09-13).
 
@@ -149,9 +137,9 @@ Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14. Settles with a before/after
 
 **77. Model selection: analyst seats re-tested, PM seat is the next open question — pointer, 2026-09-14.** Detail: `docs/architecture/MODEL_ROUTING_POLICY.md` ("2026-09-14 analyst seat re-test"). Next: PM model test after a fresh practice day, then risk_manager/position_reviewer, then restart.
 
-**78. Isolating a blank "I'll sell if" name is TEMPORARY — DEFECT (patch).** Instance of the missing-data standing principle. Permanent: Tech and PM actually produce a real falsifier on actionable ratings and non-zero targets; heal + one paid retry; still blank → refuse before the book, reason `soft-exit missing after retry`. Never invent. Catalyst stays optional except the dated unmeasurable-range exception. Delete the isolate when a live session proves never-blank.
+**78. Isolating a blank "I'll sell if" name is TEMPORARY — DEFECT (patch).** Instance of the missing-data standing principle. Permanent: Tech and PM actually produce a real falsifier on actionable ratings and non-zero targets; heal + one paid retry; still blank → refuse before the book, reason `soft-exit missing after retry`. Never invent. Catalyst stays optional. Delete the isolate when a live session proves never-blank.
 
-**Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 60, 61, 62, 66, 68, 69, 71, 72, 73 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Gate item 7 was moved, not closed: it is item 76. Item 60 (exit-refusal coherence) was closed 2026-09-16. Item 71 (stop write-back) was closed 2026-09-16. Item 72 (benchmark fixture) was filed and closed 2026-09-14. Item 73 (short stop-repair) was closed 2026-09-15. The two schemes are separate — 1, 3 and 4 are live in this queue while retired in the gate, and 20 is live here; 67, 90, 101 and 200 never existed. Item 38's follow-up survives as item 52, whose residue is item 63. Item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file. Next free number is 79.
+**Retired item numbers — never reuse.** 0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 60, 61, 62, 66, 68, 69, 71, 72, 73 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Gate item 7 was moved, not closed: it is item 76. Item 60 (exit-refusal coherence) was closed 2026-09-16. Item 71 (stop write-back) was closed 2026-09-16. Item 72 (benchmark fixture) was filed and closed 2026-09-14. Item 73 (short stop-repair) was closed 2026-09-15. Items 1 and 4 (invented reward:risk leftovers) were closed 2026-09-17. The two schemes are separate — 3 is live in this queue while retired in the gate, and 20 is live here; 67, 90, 101 and 200 never existed. Item 38's follow-up survives as item 52, whose residue is item 63. Item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file. Next free number is 79.
 
 ## Evidence-only follow-ups — do not interrupt natural validation unless evidence shows material harm
 

@@ -39,8 +39,6 @@ from src.data.smart_money import SECForm4Provider
 from src.data.earnings import EarningsDataProvider
 from src.risk.constants import (
     DEFAULT_DRAWDOWN_VOL_SENSITIVITY,
-    REWARD_RISK_FLOOR,
-    reward_risk_floor_applies,
 )
 from src.risk.metrics import unrealized_pnl_pct
 from src.risk.rules import (
@@ -2506,16 +2504,15 @@ class TradingPipeline:
            schema already has one for.
         2. **A stop/target edit cannot bypass the checks a fresh decision
            would have to clear.** The constructor measures reward:risk on a
-           range setup (refusing only an UNMEASURABLE ratio — a sub-floor one
-           is a ranking input, not a gate, since 2026-09-11, and a breakout
+           range setup (refusing only an UNMEASURABLE ratio — a computed
+           ratio is a ranking input, not a gate, and a breakout
            is never measured) and enforces a noise-band stop distance before
            a decision ever reaches the Risk Manager; both checks compared a
            modified decision only against itself, so an RM edit that widened
            a stop or pulled in a target could ship a BUY/SHORT whose
            reward:risk the constructor could not have measured, or a stop
-           resting inside the ATR noise band. `REWARD_RISK_FLOOR` is
-           consulted here only to LOG a range edit that lands under the
-           reference. This reuses the SAME arithmetic (`TradeDecision.reward_risk`,
+           resting inside the ATR noise band. Invented numeric reward:risk
+           floors are retired. This reuses the SAME arithmetic (`TradeDecision.reward_risk`,
            which is `models.reward_to_risk` — the one ratio definition every
            other gate in this codebase already shares) and the SAME
            configured floor (`RiskConfig.absolute_min_stop_atr_multiple`) the
@@ -2630,50 +2627,13 @@ class TradingPipeline:
         mod,
         symbols_bars: dict | None,
     ) -> str | None:
-        """Return a refusal reason if `modified` breaches a floor a freshly
-        constructed decision would have to clear, else None.
+        """Return a refusal reason if `modified` breaches a constructor
+        risk-side floor, else None.
 
-        Reuses `TradeDecision.reward_risk` (== `models.reward_to_risk`, the
-        one ratio definition this codebase shares end to end). Does not
-        re-derive the ratio or the number.
-
-        **2026-09-11, docs/WORK.md item 1(d).** This guard's whole premise
-        was "the constructor would have refused this trade at these prices".
-        The constructor no longer refuses on a reward:risk floor, so neither
-        does this:
-
-          * **Type B / breakout** — the reward:risk half does not run at
-            all. There is no overhead level to measure a reward against, so
-            an RM stop/target edit on a breakout cannot be judged by one.
-            The noise-band half below still runs: that is a RISK-side check
-            and it applies to every setup.
-          * **Type A / range** — a sub-floor ratio is no longer a refusal.
-            An UNMEASURABLE one still is, unchanged: this codebase fails
-            closed on unknown geometry, and an RM edit that makes the
-            arithmetic impossible is not an edit anyone reviewed.
+        **2026-09-17.** Invented reward:risk floors are retired. A computed
+        or missing ratio does not refuse an RM edit. What still refuses the
+        *edit* (not the ticket) is a stop pulled inside the ATR noise band.
         """
-        new_rr = modified.reward_risk
-        if new_rr is None:
-            return (
-                f"modified geometry (entry ${modified.entry_price:.2f}, stop "
-                f"${modified.stop_loss:.2f}, target ${modified.take_profit:.2f}) "
-                f"makes reward:risk unmeasurable — a stop or target on the "
-                f"wrong side of entry, or a non-finite price. Fails closed: "
-                f"an unknown payoff is not a permitted one. "
-                f"RM reason given: {mod.reason!r}"
-            )
-        if (
-            reward_risk_floor_applies(getattr(modified, "setup_type", None))
-            and new_rr < REWARD_RISK_FLOOR
-        ):
-            logger.info(
-                "Risk mod on %s leaves reward:risk %.2f, under the %.2f "
-                "reference (range setup) — allowed. Item 1(d) made that "
-                "ratio a ranking signal, not a gate; the constructor no "
-                "longer refuses it either.",
-                original.symbol, new_rr, REWARD_RISK_FLOOR,
-            )
-
         if mod.field != "stop_loss" or not symbols_bars:
             return None
 
@@ -6884,8 +6844,8 @@ class TradingPipeline:
         overstate the entry-side block rate.
 
         Every blocking reason is copied VERBATIM out of stored data —
-        `execution_skip.reason` (`qty_zero`, `geometry_rr`,
-        `insufficient_cash`), `verdict.reason_category` (`rr_fail`, …),
+        `execution_skip.reason` (`qty_zero`, `geometry_unmeasurable`,
+        historical `geometry_rr`, `insufficient_cash`), `verdict.reason_category` (`rr_fail`, …),
         `trades.fill_status` (`canceled`, …) — so this section and the
         RM-verdict section name the same failure the same way. Exactly three
         tokens are ours: `rm_zeroed`, `order_not_placed` and

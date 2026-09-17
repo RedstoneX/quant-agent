@@ -321,6 +321,10 @@ SKIP_PLAIN = {
         "the stop was too close to the entry for the possible gain to justify "
         "the risk"
     ),
+    "geometry_unmeasurable": (
+        "the order's prices could not compute a payoff at all — not a "
+        "reward-to-risk floor, an unknown payoff"
+    ),
     "insufficient_cash": "there was not enough settled cash to pay for it",
     "daily_loss_recheck": (
         "the account crossed its daily loss limit while the session was "

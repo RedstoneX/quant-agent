@@ -36,16 +36,14 @@ the trade's direction on a chart that yielded levels elsewhere.
 
 from __future__ import annotations
 
-import pytest
-
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.models import (
     PortfolioDecision, TargetPosition, TechAnalysisResult, TechReasoningChain,
     TradeDecision,
 )
-from src.pipeline_stages import EXECUTION_REWARD_RISK_BELT, _execution_rr_floor
+from src.pipeline_stages import _execution_payoff_skip_reason
 from src.portfolio_constructor import PortfolioConstructor
-from src.risk.constants import REWARD_RISK_FLOOR, STARTER_POSITION_RISK_PCT
+from src.risk.constants import STARTER_POSITION_RISK_PCT
 
 EQUITY = 100_000.0
 ENTRY = 100.0
@@ -152,14 +150,14 @@ def test_a_breakout_is_never_resized_by_any_reward_risk_computation():
 
 
 def test_a_breakout_is_exempt_from_the_pm_subfloor_gate_entirely():
-    """No drop, no catalyst requirement, and — unlike a range trade — no
-    starter-size cap either. None of those may key off a reward:risk figure
-    for a trade with no ceiling to measure one against."""
+    """No drop, no catalyst requirement, and no size-cap keyed off
+    reward:risk. None of those may key off a ratio for a trade with no
+    ceiling to measure one against."""
     analysis = _analysis("AAA", setup_type="breakout")
     result = PortfolioManagerAgent._apply_subfloor_catalyst_rule(
         _decision([_raw_target("AAA", risk=3.0)]), analyses=[analysis],
         positions=[], total_value=EQUITY, active_state_changes="",
-        rr_floor=REWARD_RISK_FLOOR, starter_risk_pct=STARTER_POSITION_RISK_PCT,
+        rr_floor=1.5, starter_risk_pct=STARTER_POSITION_RISK_PCT,
         real_reward_risk_by_symbol={"AAA": 0.4},
     )
     assert [t.symbol for t in result.targets] == ["AAA"]
@@ -167,20 +165,20 @@ def test_a_breakout_is_exempt_from_the_pm_subfloor_gate_entirely():
     assert result.targets[0].subfloor_catalyst_verified is False
 
 
-def test_a_range_trade_on_the_same_numbers_is_capped_where_a_breakout_is_not():
-    """The control for the test above: identical geometry, identical thin
-    ratio, only the setup type differs. The range trade keeps the
-    starter-size cap (a risk-reducing protection, deliberately retained);
-    the breakout keeps its full size."""
+def test_a_range_trade_on_the_same_numbers_is_not_size_capped_either():
+    """Control: identical geometry, identical thin ratio, only the setup
+    type differs. The invented 1.5 starter-size cap is gone, so the range
+    trade also keeps the size the PM asked for. Unmeasurable would still
+    drop; this ratio is real."""
     analysis = _analysis("AAA", setup_type="range")
     result = PortfolioManagerAgent._apply_subfloor_catalyst_rule(
         _decision([_raw_target("AAA", risk=3.0)]), analyses=[analysis],
         positions=[], total_value=EQUITY, active_state_changes="",
-        rr_floor=REWARD_RISK_FLOOR, starter_risk_pct=STARTER_POSITION_RISK_PCT,
+        rr_floor=1.5, starter_risk_pct=STARTER_POSITION_RISK_PCT,
         real_reward_risk_by_symbol={"AAA": 0.4},
     )
     assert [t.symbol for t in result.targets] == ["AAA"]
-    assert result.targets[0].risk_allocation_pct == STARTER_POSITION_RISK_PCT
+    assert result.targets[0].risk_allocation_pct == 3.0
 
 
 def test_the_built_breakout_order_carries_its_setup_type_to_execution():
@@ -193,49 +191,66 @@ def test_the_built_breakout_order_carries_its_setup_type_to_execution():
     assert orders[0].setup_type == "range"
 
 
-def test_the_execution_belt_does_not_apply_to_a_breakout_order():
-    """The last place the removed floor could have reappeared. A flat 1.2 at
-    execution would have killed exactly the trades this change exists to
-    allow, the moment execution moved anything."""
+def test_execution_does_not_skip_a_breakout_on_the_reward_side():
+    """A computed (or unmeasurable) ratio must not block a trend trade."""
     breakout = TradeDecision(
         action="BUY", symbol="AAA", allocation_pct=5.0, entry_price=ENTRY,
         stop_loss=STOP, take_profit=THIN_LEVEL, reasoning="t",
         setup_type="breakout",
     )
-    assert _execution_rr_floor(breakout) is None
+    assert _execution_payoff_skip_reason(
+        breakout, sizing_price=ENTRY + 1, stop_price=STOP,
+        geometry_changed=True, is_short=False,
+    ) is None
 
 
-def test_the_execution_belt_on_a_range_order_asks_only_about_degradation():
-    """For a range order the belt survives, but as the question it says it is
-    asking: did EXECUTION make this worse than what the Risk Manager
-    approved? `min` means it can only ever be lower than the flat belt, never
-    higher, so no ordinary order gets a looser bar."""
+def test_execution_does_not_skip_a_thin_but_measurable_range_ratio():
+    """The retired 1.2 belt asked whether execution degraded geometry.
+    A computed ratio, however thin, is not a skip."""
     thin = TradeDecision(
         action="BUY", symbol="AAA", allocation_pct=5.0, entry_price=ENTRY,
         stop_loss=STOP, take_profit=THIN_LEVEL, reasoning="t",
         setup_type="range",
     )
-    assert _execution_rr_floor(thin) == pytest.approx(thin.reward_risk)
-    assert _execution_rr_floor(thin) < EXECUTION_REWARD_RISK_BELT
+    assert thin.reward_risk is not None and thin.reward_risk < 1.2
+    assert _execution_payoff_skip_reason(
+        thin, sizing_price=ENTRY + 1, stop_price=STOP,
+        geometry_changed=True, is_short=False,
+    ) is None
 
     fat = TradeDecision(
         action="BUY", symbol="AAA", allocation_pct=5.0, entry_price=ENTRY,
         stop_loss=STOP, take_profit=FAT_LEVEL, reasoning="t",
         setup_type="range",
     )
-    assert _execution_rr_floor(fat) == EXECUTION_REWARD_RISK_BELT
+    assert _execution_payoff_skip_reason(
+        fat, sizing_price=ENTRY + 1, stop_price=STOP,
+        geometry_changed=True, is_short=False,
+    ) is None
+
+
+def test_execution_does_not_skip_when_range_payoff_cannot_be_computed():
+    range_order = TradeDecision(
+        action="BUY", symbol="AAA", allocation_pct=5.0, entry_price=ENTRY,
+        stop_loss=STOP, take_profit=FAT_LEVEL, reasoning="t",
+        setup_type="range",
+    )
+    assert _execution_payoff_skip_reason(
+        range_order, sizing_price=ENTRY, stop_price=ENTRY,
+        geometry_changed=True, is_short=False,
+    ) is None
 
 
 def test_a_breakout_with_no_measurable_reward_is_still_not_blocked_on_it():
-    """"Unmeasurable" is still a reward-side refusal, and the owner decision
-    is that no reward-side computation blocks a trend trade. A range trade
-    still fails closed here — that contrast is the assertion."""
+    """Unmeasurable payoff is ranking information, not a refuse — for both
+    setup types. The owner decision is that no reward-side computation
+    blocks a ticket."""
     constructor = PortfolioConstructor()
-    for setup, expected in (("breakout", STOP), ("range", None)):
+    for setup in ("breakout", "range"):
         assert constructor._widen_stop_past_noise(
             "AAA", _analysis("AAA", setup_type=setup), ENTRY, STOP,
             direction="long", target_price=float("nan"),
-        ) == expected, setup
+        ) == STOP, setup
 
 
 # ==========================================================================
@@ -291,12 +306,11 @@ def test_a_weak_range_ratio_is_not_rejected_and_ranks_below_a_strong_one():
     assert ranked[1].components["risk_reward_tiebreak"] == 0.4
 
 
-def test_the_weak_range_trade_still_ships_an_order_at_starter_size():
-    """The other half of "not a hard rejection": it actually trades. The
-    starter-size cap applied by the PM gate is what bounds it, not a
-    refusal."""
+def test_the_weak_range_trade_still_ships_an_order():
+    """Not a hard rejection: a thin-but-real range payoff actually trades
+    at the size asked, not at a starter-size cap."""
     orders = _build(
-        _analysis("AAA", setup_type="range"), risk=STARTER_POSITION_RISK_PCT,
+        _analysis("AAA", setup_type="range"), risk=3.0,
     )
     assert len(orders) == 1
     assert orders[0].stop_loss == STOP

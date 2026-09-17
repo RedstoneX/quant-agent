@@ -4,8 +4,7 @@ The #432 isolate-unknown-only gate is a temporary last-resort. The product
 is: require a real thesis_invalid_if on actionable Tech and on non-zero
 targets before the ticket book; one mechanical heal + one paid retry; if
 still incomplete, refuse that name with `soft-exit missing after retry`.
-Never invent a falsifier or catalyst string. Catalyst stays optional except
-the dated unmeasurable-range exception already gated in Python.
+Never invent a falsifier or catalyst string. Catalyst stays optional.
 """
 from types import SimpleNamespace
 from unittest.mock import MagicMock

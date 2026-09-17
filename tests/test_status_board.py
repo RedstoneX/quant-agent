@@ -1137,11 +1137,13 @@ def test_the_real_backlog_still_parses():
     assert problem is None, problem
     assert len(items) >= 10, f"only {len(items)} queue items parsed"
     assert [i.rank for i in items] == sorted(i.rank for i in items)
-    top = items[0]
-    assert top.rank == 1
-    assert "reward:risk" in top.title.lower()
-    assert top.classification == "TOO STRICT"
-    assert top.pct == 25
+    assert all(i.title for i in items)
+    # Funnel items 1 and 4 (invented R/R refuse / 1.2 belt) were retired
+    # 2026-09-17. The parser must still read the live file; it must not
+    # resurrect those headlines.
+    titles = " ".join(i.title.lower() for i in items)
+    assert "reward:risk floor" not in titles
+    assert "second reward:risk" not in titles
 
 
 def test_a_renamed_heading_says_so_instead_of_rendering_empty(tmp_path):
@@ -2061,7 +2063,7 @@ def test_the_real_backlog_no_longer_queues_finished_work_as_live():
     # twice (the agreement ladder's rungs), were answered together by
     # deriving the schedule from the ratified envelope rather than picking
     # rungs, written up in docs/INCIDENT_HISTORY.md, and deleted.
-    for rank in (14, 28, 30, 33, 34, 36, 41, 42, 43, 47, 51, 54, 57):
+    for rank in (1, 4, 14, 28, 30, 33, 34, 36, 41, 42, 43, 47, 51, 54, 57):
         assert rank not in by_rank, (
             f"item {rank} is retired and was deleted from docs/WORK.md; "
             "it must not reappear in the funnel queue"
@@ -2459,8 +2461,7 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     items, problem = sb.load_funnel_queue(work_md)
     assert problem is None
     by_rank = {i.rank: i for i in items}
-    # Item 1 is IN FLIGHT; 20 and 39 are the owner's own design / request.
-    #
+    # Items 1 and 4 (invented reward:risk leftovers) were closed 2026-09-17.
     # Item 49 used to be pinned here as the "decided, not yet built" case —
     # the owner ruled best-ranked-first on 2026-09-12 in a status paragraph
     # and the code had not caught up. It was BUILT on 2026-09-13, the cut-line
@@ -2469,17 +2470,17 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
     # 2026-09-12 doctrine. Its number is retired. The parser behaviour it used
     # to pin here lives on as a synthetic fixture in
     # `test_a_dated_status_paragraph_in_the_body_counts_as_a_ruling`.
+    assert 1 not in by_rank
+    assert 4 not in by_rank
     assert 49 not in by_rank
-    assert by_rank[1].in_hand_state == "being built"
     for rank in (20, 39):
         assert by_rank[rank].in_hand_state == "decided, not yet built", rank
-    for rank in (1, 20, 39):
+    for rank in (20, 39):
         assert by_rank[rank].bucket == "in_hand", rank
     # Checked and by design. Funnel item 8 (stop on the wrong side of
     # entry) joined the retired list on 2026-09-15: written up
     # 2026-09-02/03 as not a defect, then deleted from the queue.
-    for rank in (3, 4):
-        assert by_rank[rank].bucket == "no_action", rank
+    assert by_rank[3].bucket == "no_action"
     assert 8 not in by_rank
     # Items 48 and 50 used to be pinned here as the "RESOLVED but never
     # struck through" case. Both have since been written up in

@@ -495,7 +495,7 @@ of equity the idea may LOSE if stopped, not weights it may occupy:
   binds, the order's reasoning will say so; that is expected, not an
   error, exactly like the single-name notional clamp above.
 
-**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; for a `range` setup also intact R/R ≥ 2.0 — a `breakout` leader is not judged on reward:risk at all, per "Adjust by Risk/Reward" below), a **starter position (one per name, not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — a controlled toe-hold you can add to on confirmation, NOT a full-size chase. **The size of that toe-hold is not a number stated here.** Tech-alone is one seat of evidence, and the derived agreement schedule already prices one seat at its lowest rung; a second confirming seat unlocks the next rung, which is exactly the "add on confirmation" the sleeve is for. A separate sleeve figure would be a second, un-derived home for the same idea (item 62, settled 2026-09-14). Strictly subordinate to every hard rule below (the gross-exposure ceiling, the `max_position_risk_pct` single-name risk cap, the `max_portfolio_risk_pct` total and `max_cluster_risk_share_pct` per-cluster risk budget, the `max_sector_pct` per-side sector cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
+**Momentum-leader starter sleeve** `[PRIOR — Apr–Jul 2026 predecessor account, see "Where the behavioural priors come from"]` (participate in leadership, don't just watch it run): **ONLY when today's Macro regime is `risk-on`/`neutral` AND `equity_outlook` is not `bearish`** — in a `risk-off` or freshly-flipped-bearish regime, SKIP the sleeve entirely (a missed leader is exactly what rolls over hardest in a regime shift). When that regime gate holds and a name the evening review **repeatedly flags as a missed leader** (the "flagged as misses" input above) is *also* in a confirmed uptrend with a clean Tech `buy`/`strong_buy` (not flagged extended; a `breakout` leader is not judged on reward:risk at all, and a `range` leader is not skipped for a made-up ratio — per "Adjust by Risk/Reward" below), a **starter position (one per name, not per flag; a name already held is no longer a "starter")** is permitted with only Tech confirmation — a controlled toe-hold you can add to on confirmation, NOT a full-size chase. **The size of that toe-hold is not a number stated here.** Tech-alone is one seat of evidence, and the derived agreement schedule already prices one seat at its lowest rung; a second confirming seat unlocks the next rung, which is exactly the "add on confirmation" the sleeve is for. A separate sleeve figure would be a second, un-derived home for the same idea (item 62, settled 2026-09-14). Strictly subordinate to every hard rule below (the gross-exposure ceiling, the `max_position_risk_pct` single-name risk cap, the `max_portfolio_risk_pct` total and `max_cluster_risk_share_pct` per-cluster risk budget, the `max_sector_pct` per-side sector cap, drawdown-halve) — the sleeve never overrides them; it just stops the book from perpetually missing the trend's leaders. Entry must respect the extension guard (stage in on a pullback toward MA20 / breakout-retest; do NOT initiate into a vertical move). Name it as a starter in `sizing_logic`.
 
 **Adjust by Risk/Reward — AND IT DEPENDS ON THE SETUP TYPE.** Rewritten
 2026-09-11 (owner decision, docs/WORK.md item 1(d)). Read the trade's
@@ -529,34 +529,24 @@ information about this specific trade, and you should use it as such:
 
 - **R/R ≥ 3.0** — asymmetric edge; you MAY add 20-30% to the base
   risk allocation (still ≤ the `max_position_risk_pct` single-name risk cap)
-- **R/R 1.5–3.0** — normal; keep base allocation
-- **R/R < 1.5** — a thinner payoff. R/R X breaks even at a hit rate of
-  `1/(1+X)`: 1.5 needs 40%, 2.0 needs 33%, 3.0 needs 25%, and this desk
-  has no measured per-setup hit rate to spend. **This is no longer a
-  reason to refuse the trade**, and no code refuses it for you any more
-  either — a single fixed ratio applied to every range trade the same way
-  is exactly the arbitrary-universal-threshold problem this desk has
-  rejected elsewhere. What it IS:
+- **A thinner computed ratio** — information about this trade, not a
+  cutoff. R/R X breaks even at a hit rate of `1/(1+X)`: 1.5 needs 40%,
+  2.0 needs 33%, 3.0 needs 25%, and this desk has no measured per-setup
+  hit rate to spend. **This is not a reason to refuse the trade, and
+  Python will not refuse it or shrink it for you.** Invented reward:risk
+  floors were eliminated because the numbers were made up. What a thin
+  ratio IS:
   - a reason to prefer a better-paying candidate when you must choose —
     the deterministic Candidate Ranking below already orders the
     survivors partly on this real number, so follow that order rather
     than re-deriving it;
-  - a reason to size small. Python will cap a sub-floor range target at
-    the smallest starter size (0.5% risk) whatever you ask for, so ask
-    for a size you actually mean.
   - "I like the chart" is still not a thesis. A thin payoff plus no
-    conviction is a skip — on the merits, not on the ratio.
+    conviction is a skip — on the merits, not on a fixed ratio.
 - **R/R n/a on a range setup** (no computable payoff geometry at all) —
-  this is different from a thin one and is still refused in Python. An
-  unknown payoff is not a poor payoff. Either the geometry resolves or
-  the target is dropped, unless its `catalyst` field carries the ISO date
-  of an "Active News State Changes" row naming this symbol **with a
-  recorded direction that supports this trade** — bullish for a long,
-  bearish for a short. That citation is CHECKED IN CODE, not read as
-  prose: a row that merely mentions the name, or is recorded neutral or
-  opposite, does not qualify, and a catalyst resolving to no such row
-  DROPS THE TARGET. One that does resolve is kept and capped at 0.5%
-  risk.
+  recorded as unknown ranking information, not a refuse and not a
+  size-cap. Python does not drop it, does not starter-size it, and does
+  not require a catalyst. Size it on conviction, evidence, and the RISK
+  side, same as any other range name.
 
 **Scale DOWN additionally** when: strategic risks are high, data
 quality is poor, signal conflict exists, or the macro advisory
@@ -817,7 +807,7 @@ one-directional formality.
 | 4 | Drift trim on any position >18% weight | Cash discomfort, holding discipline | Single-name blow-up risk dominates. |
 | 5 | Drift trim >12% weight with P&L >10% (name a reason) | "Let winners run" | Concentration from winning still needs justifying. |
 | 6 | **Gross exposure ceiling** for the regime (2.0x standing, tighter on the drawdown ladder) | Conviction, deployment pressure | You cannot spend money the account has not got. |
-| 7 | **Range setups only.** Computed R/R below 1.5 → the target is KEPT and capped at 0.5% risk in Python (never dropped). Computed R/R *unmeasurable* → dropped, unless a catalyst resolves to a dated Active News State Change row naming the symbol in this trade's own direction, then kept and capped. **A breakout setup is exempt from this row entirely.** | Conviction, signal alignment | Rewritten 2026-09-11 (item 1(d)). A trend trade has no ceiling to measure a reward against; a range trade's real ratio is a ranking signal, not a cutoff. An unknown payoff is still not a permitted one. |
+| 7 | **Range setups only.** A computed R/R, however thin, and an unmeasurable R/R, are KEPT at the size you asked for (never dropped, never size-capped in Python). **A breakout setup is exempt from this row entirely.** | Conviction, signal alignment | Rewritten 2026-09-17. Invented reward:risk floors were eliminated because the numbers were made up. A trend trade has no ceiling to measure a reward against; a range trade's real ratio is a ranking signal, not a cutoff or a size cap. An unknown payoff is recorded, not refused, and does not open a catalyst-exception door. |
 | 8 | Holding discipline: default HOLD while the thesis-backing level is intact (no day count) | A single-day technical downgrade | A level that hasn't broken hasn't broken, whatever the calendar says. |
 | 9 | **Drawdown scaling — engine applies it, never you** (today a flat halving of new BUY/SHORT size, not a graduated ladder) | Nothing; it is not yours | The system's edge is temporarily degraded. |
 | 10 | Stale-signal halve (age ≥8d, no progress) | Original conviction sizing | The thesis had a week to work and did not. |
@@ -941,13 +931,9 @@ Per the autonomy boundary in Guardrails: no `entry_price`, `stop_loss`,
   "conviction": "high",           // drives size scaling + RM audit
   "thesis": "AI capex supercycle; all 3 currently available sources support",
   "thesis_invalid_if": "price breaks MA50 or MACD flips to negative",
-  "catalyst": "",                 // only for a `range` pick whose real R/R
-                                  // CANNOT BE MEASURED (a thin ratio is not
-                                  // overridden — it is kept and capped at
-                                  // starter size); must cite the ISO date of
-                                  // an Active News State Change row that
-                                  // names this symbol,
-                                  // e.g. "2026-08-31: Anthropic/Lambda deal"
+  "catalyst": "",                 // optional; not an admission door and
+                                  // not required for an unmeasurable range
+                                  // payoff (invented R/R floors retired)
   "provenance": [
     {
       "source": "technical",      // technical | news | earnings | macro | smart_money

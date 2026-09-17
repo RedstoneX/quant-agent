@@ -928,20 +928,17 @@ def test_pm_never_orders_a_name_a_gate_refused():
     assert blocked["OPPO"] == ["R5 net evidence +0 if long — no rung"]
 
 
-def test_an_unmeasurable_payoff_is_still_refused_by_r4():
-    """The half of R4 that survives item 1(d). A candidate whose payoff
-    arithmetic does not resolve at all has nothing for the ranking to
-    consume, and this codebase fails closed on unknown geometry."""
+def test_an_unmeasurable_payoff_is_not_refused_by_r4():
+    """R4 is retired. A candidate whose payoff arithmetic does not resolve
+    is still eligible; the missing ratio is ranking information."""
     analyses = [_tech("AAA", "buy", "medium")]
-    _, blocked = PortfolioManagerAgent.rank_candidates(
+    ranked, blocked = PortfolioManagerAgent.rank_candidates(
         analyses=analyses, evidence_registry=_registry(analyses),
         allowed_buy_symbols={"AAA"}, active_state_changes="", asof=SESSION,
         real_reward_risk_by_symbol={"AAA": None},
     )
-    assert blocked["AAA"] == [
-        "R4 R/R unmeasurable (no computable payoff geometry) and no current "
-        "state-change row names it"
-    ]
+    assert blocked == {}
+    assert [c.symbol for c in ranked] == ["AAA"]
 
 
 def test_r4_does_not_run_at_all_for_a_breakout_candidate():
@@ -964,10 +961,8 @@ def test_the_rr_floor_no_longer_decides_eligibility_at_any_value():
     """**Inverted 2026-09-11, docs/WORK.md item 1(d).** This used to prove
     the threaded floor was the one that decided eligibility, by moving it
     from 1.5 to 2.0 and watching a 1.6 candidate disappear. Nothing about
-    the ratio's SIZE decides eligibility any more, at any threaded value —
-    `rr_floor` survives only as the starter-size cap's threshold in
-    `_apply_subfloor_catalyst_rule`, which runs after the PM decides, not
-    here."""
+    the ratio's SIZE decides eligibility any more, at any threaded value.
+    Invented reward:risk floors do not refuse or shrink tickets."""
     analyses = [_tech("AAA", "buy", "high", target=108)]  # R/R 1.6
     kwargs = dict(
         analyses=analyses, evidence_registry=_registry(analyses),
