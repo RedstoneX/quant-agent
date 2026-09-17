@@ -139,6 +139,130 @@ a value being called as a statement.
 
 ---
 
+### 2026-09-17 — a 20% price band was applied to the stop, and it killed an approved short
+
+**In plain words:** the desk has a fat-finger guard — it refuses an order
+whose price is more than 20% away from the live quote, so a broken feed or a
+hallucinated number cannot be traded. That band was also being applied to the
+STOP price. A stop is supposed to sit outside the stock's normal daily
+swings, so on a jumpy stock the stop is legitimately a long way from the
+price, and the guard threw the trade away. On 17 September it threw away a
+FLNC short that the analyst, the portfolio manager and the risk manager had
+all already been paid to approve.
+
+**Confirmed from the production log**, 2026-09-17 17:05:30: `SELL_SHORT FLNC
+— stop_loss_price=$9.6600 deviates 24.1% from reference $7.79. Order
+REJECTED`. The same run's risk manager had approved it ("FLNC short is
+well-justified on technicals and earnings", R/R 1.51:1), and the desk's own
+constructor had measured the stop at "2.50 x ATR over a 10-session horizon —
+touch probability 20.7%". The stop was on the correct side, at a measured
+width the desk itself judged reasonable. The guard was the only thing that
+said no, and it said no after the money was spent.
+
+**Where the number came from.** `OUTLIER_MAX_DEVIATION = 0.20` is inherited
+from the upstream project (`ca4c51d9`, yebof, 2026-04-18) with no source. It
+was never reviewed against this desk's doctrine.
+
+**Why a flat percentage is the wrong shape of test for a stop.**
+
+1. Wrong units. A stop's distance from entry is a volatility distance. FLNC's
+   measured ATR(14) that session was $0.75 on a $7.785 price — 9.6% — so the
+   flat band refused any stop wider than about 2.1x that stock's ordinary
+   daily range. On a $500 name with a 1% ATR the same band permits twenty
+   such ranges. It bans nothing on a quiet stock and bans real structure on a
+   volatile one.
+2. It only caught the safe direction. Sizing is risk-based
+   (`_qty_by_risk_budget`: `risk_per_share = abs(entry - stop)`, `qty = risk
+   dollars / risk_per_share`), so a WIDER stop makes the position SMALLER.
+   The extreme case is self-limiting: a $0.01 stop under a $300 long makes
+   risk-per-share almost the whole share price, so the quantity collapses to
+   the authorised risk budget divided by the price and the worst case — the
+   stock to zero — loses exactly the budget that was approved. The dangerous
+   error is a too-TIGHT stop, which inflates size, and a deviation band never
+   caught that at all: a tight stop sits close to the reference by
+   definition.
+
+**What changed.** The 20% band now applies only to the price the order
+actually transacts at — the entry/limit price, the one whose corruption makes
+quantity sizing nonsense. Nothing about the band itself moved; only what it
+is applied to. The take-profit branch went with it (no caller has ever passed
+`take_profit_price`).
+
+**What the stop gets instead, at the same boundary.** Two checks that need no
+number: the stop must be a finite, positive number, and it must be on the
+correct side of the entry. Both refuse the order. The finiteness check also
+closes a separate hole found while doing this: `_quantize_price` maps NaN and
+Inf to `None`, which made `use_stop` False, so a non-finite stop used to
+submit the entry with NO protective stop at all, silently. Finiteness is now
+read before quantization.
+
+**What still protects a stop's WIDTH, unchanged.** The constructor measures
+it in the instrument's own ATR: `_widen_stop_past_noise` pushes an unbacked
+stop out to `min_stop_atr_multiple` (2.5) ATRs, honours a stop that sits on a
+computed structural level however tight down to
+`absolute_min_stop_atr_multiple` (1.0) ATR, and refuses a wrong-side or
+non-finite stop outright. `_qty_by_risk_budget` independently refuses invalid
+geometry. Spec §12.1 — honour a level-backed stop however tight, apply the
+volatility floor only when nothing computed backs it — is untouched by this
+change and was the reason not to write a new floor here.
+
+**No replacement number was invented for the stop, and none should be.** A
+percentage band on a stop has no published source, and fitting one to past
+trades would not make it non-arbitrary. If an absolute sanity bound on a stop
+is ever wanted, what would source it is a measured distribution of the
+desk's own realised stop widths in ATR terms per name — a reading, not a fit
+— and that is deliberately left unbuilt.
+
+**The wording, second half of the same fix.** A refusal used to read "stop
+$9.66 is 24% from price $7.79". A bare percentage is not judgeable: 24% is an
+outrage on a utility and an ordinary two sessions on a $7 stock, and the
+owner reasonably read a correct refusal as a bug. The message now carries the
+stock's own measured daily range beside the deviation — "limit price $4.96 is
+36% from price $7.79 — FLNC normally moves about $0.75 (10%) in a day" — from
+the ATR(14) the desk had already computed for that symbol and passed down
+from the entry stage. It is used for wording only; no code path branches on
+it, and when the caller has no ATR (the resume and sweep lanes carry no
+analysis) the range clause is omitted rather than filled with an invented
+number.
+
+**Alerting.** A stop refusal is a separate skip reason (`unusable_stop`) from
+a price refusal (`fat_finger_guard`), so the owner is never told a price was
+"too far from the market" when what actually happened is the stop could never
+have worked. Both still say the desk blocked it, not the broker.
+
+**Found while doing this, reported and LEFT ALONE.** A `stop_loss_price` of
+exactly `0.0` is this codebase's sentinel for "no stop", so the entry submits
+unprotected — pinned by `test_submit_order_buy_with_zero_stop_loss_skips_oto`.
+It is the same shape of hole as the NaN one, but it is explicit rather than
+silent, it pre-dates this work, and the production entry callsite already
+passes `None` rather than `0`, so nothing live reaches it. Not closed here.
+Separately, the fat-finger guard and its 2026-09-17 plain-words rewording had
+no write-up in these docs at all before this entry.
+
+**Not changed.** The 20% band's value. The kill switch. The constructor's ATR
+floors or the §12.1 level exemption. Nothing about how wide a stop is allowed
+to be. The `0.0` sentinel.
+
+### 2026-09-17 — the desk was paying a model to read a description of a safety net it had deleted three days earlier
+
+**In plain words:** when anything had automatically sold a position earlier in the day, the seat that reviews open positions was handed a note explaining why. That note said the desk performs an "emergency sell-all" when the day's loss passes 3%. Neither half had been true since 14 September: the sell-all was deleted and replaced by a stop-everything-and-check-the-stops halt that sells nothing, and the 3% figure had already been replaced by a limit measured from how much the book itself moves on an ordinary day. So a paid seat was reasoning about the desk's own emergency behaviour from a description that was two changes out of date, on exactly the days something had already gone wrong.
+
+**Cause — and it is not "someone forgot".** The change that deleted the sell-all shipped a full documentation pass: the backlog, the board notes and this file were all updated in the same commit. It touched no prompt. That is not an oversight by one person, it is a gap in what the word "documentation" points at here: `AGENTS.md` names three tiers of document, and the prompts are in none of them. Nothing in the project's own rules ever said a prompt was a document, so "every substantive change ships with a documentation pass" was satisfied without anyone looking at the text the desk actually pays to have read.
+
+**What was ruled out.** Not neglect of the prompts in general — five prompt files were edited in the three days after the change, including the very one carrying the stale claim. They were edited for other reasons and nothing pointed at the stale sentence. Not an absent mechanism either: a rendering mechanism has existed since 2026-09-11 that makes a numeric limit in a prompt physically unable to disagree with the settings file. It covers two of ten prompt files and, more to the point, it could not have helped: nothing was wrong with a number here. A mechanism described in words stopped existing, and words are not rendered from anything.
+
+**The sharpest finding.** The stale text was not in a prompt FILE. `config/prompts/position_reviewer.md` contains no such claim and never did — the sentence is assembled in Python, in the module that builds the reviewer's message. Any check scoped to the prompt directory would have caught none of it. The surface that matters is prompt markdown AND the Python that assembles prompts, and only the first of those looks like a document.
+
+**Four designs were weighed and three rejected.** Rendering constants into prompts: right for numbers, already exists, extended here to the one hand-typed daily-loss figure it had missed — but blind to this defect. Extracting claims from prompt prose and checking them: nothing can read "the desk performs an emergency sell" and know which function that is. Annotating every behavioural claim with a tie to what it describes: it would have worked, but it asks for maintenance on every sentence forever, and the failure being closed is precisely that nobody remembers the prompts exist. Requiring every number in a prompt to match a named constant: measured at 1,828 numeric tokens across the prompt files — mostly list numbering, dates and figures inside worked examples — it would demand about a thousand annotations and catch neither confirmed case.
+
+**What catches it instead: a check at the deletion site.** Retiring a mechanism now means recording it, in one file, with the WORDS that described it. The build then fails while any prompt, assembled prompt string, docstring or comment still uses those words. Maintenance is asked once, at the moment somebody has the facts open in front of them — the commit that does the deleting — and is free afterwards. Run against the tree as it stood the day before this fix, it finds every stale site, including the two that were live text a model read.
+
+**What it does not catch, said plainly.** A mechanism whose behaviour changes without being deleted: nothing is retired, so nothing is scanned. Drift in a description nobody retired — a threshold that moved, steps reordered, a guarantee quietly weakened. A phrase nobody thought to list. And a retirement nobody records at all, which is a convention and not enforcement; it is a convention placed at the one point in the work where the facts are known, which is the best available trade, not a guarantee.
+
+**One new way to stop the desk, on the record.** The rendering mechanism raises at agent construction time, so a typo in a placeholder halts trading before any capital moves. That is fail-closed and correct, and this change adds two more rendered placeholders. It is also a new way for a settings edit to stop the desk, and the owner should know it exists rather than discover it.
+
+**A third category, worth separating from drift.** Numbers that live only in prompt prose and correspond to nothing in the code: the trade-picking seat's whole sizing arithmetic (its conviction bases, its reward-to-risk bonus, its evening tilt, its stale-signal halving), the technical seat's "three aligned signals for high conviction", its eight-days-to-go-stale rule and its price-to-earnings stretch levels. These are not stale — nothing moved underneath them. They are unsourced numbers hiding where no audit of the code would ever find them, and no check proposed here would see them. Filed as backlog item 107.
+
 ### 2026-09-17 — a limit order that never filled turned out to be the market doing its job, not the desk being slow
 
 **In plain words:** about one in eleven trade ideas ended with the order sitting at the broker, the price drifting away before it filled, and the order getting cancelled with the opportunity gone. That looked like a defect worth chasing. Measured against 68 real proposals, it happened 6 times (9%), and every one of those was the market itself walking away from a still-open limit price — not the desk being late.
@@ -11157,108 +11281,4 @@ by timing instead. The separate, pre-existing race where a crashed morning
 run leaves no completion stamp (so the desk treats morning as finished at
 09:30 and the first paid intraday look can start at 10:00 while morning is
 still retrying) is untouched by either change.
-
-### 2026-09-17 — a 20% price band was applied to the stop, and it killed an approved short
-
-**In plain words:** the desk has a fat-finger guard — it refuses an order
-whose price is more than 20% away from the live quote, so a broken feed or a
-hallucinated number cannot be traded. That band was also being applied to the
-STOP price. A stop is supposed to sit outside the stock's normal daily
-swings, so on a jumpy stock the stop is legitimately a long way from the
-price, and the guard threw the trade away. On 17 September it threw away a
-FLNC short that the analyst, the portfolio manager and the risk manager had
-all already been paid to approve.
-
-**Confirmed from the production log**, 2026-09-17 17:05:30: `SELL_SHORT FLNC
-— stop_loss_price=$9.6600 deviates 24.1% from reference $7.79. Order
-REJECTED`. The same run's risk manager had approved it ("FLNC short is
-well-justified on technicals and earnings", R/R 1.51:1), and the desk's own
-constructor had measured the stop at "2.50 x ATR over a 10-session horizon —
-touch probability 20.7%". The stop was on the correct side, at a measured
-width the desk itself judged reasonable. The guard was the only thing that
-said no, and it said no after the money was spent.
-
-**Where the number came from.** `OUTLIER_MAX_DEVIATION = 0.20` is inherited
-from the upstream project (`ca4c51d9`, yebof, 2026-04-18) with no source. It
-was never reviewed against this desk's doctrine.
-
-**Why a flat percentage is the wrong shape of test for a stop.**
-
-1. Wrong units. A stop's distance from entry is a volatility distance. FLNC's
-   measured ATR(14) that session was $0.75 on a $7.785 price — 9.6% — so the
-   flat band refused any stop wider than about 2.1x that stock's ordinary
-   daily range. On a $500 name with a 1% ATR the same band permits twenty
-   such ranges. It bans nothing on a quiet stock and bans real structure on a
-   volatile one.
-2. It only caught the safe direction. Sizing is risk-based
-   (`_qty_by_risk_budget`: `risk_per_share = abs(entry - stop)`, `qty = risk
-   dollars / risk_per_share`), so a WIDER stop makes the position SMALLER.
-   The extreme case is self-limiting: a $0.01 stop under a $300 long makes
-   risk-per-share almost the whole share price, so the quantity collapses to
-   the authorised risk budget divided by the price and the worst case — the
-   stock to zero — loses exactly the budget that was approved. The dangerous
-   error is a too-TIGHT stop, which inflates size, and a deviation band never
-   caught that at all: a tight stop sits close to the reference by
-   definition.
-
-**What changed.** The 20% band now applies only to the price the order
-actually transacts at — the entry/limit price, the one whose corruption makes
-quantity sizing nonsense. Nothing about the band itself moved; only what it
-is applied to. The take-profit branch went with it (no caller has ever passed
-`take_profit_price`).
-
-**What the stop gets instead, at the same boundary.** Two checks that need no
-number: the stop must be a finite, positive number, and it must be on the
-correct side of the entry. Both refuse the order. The finiteness check also
-closes a separate hole found while doing this: `_quantize_price` maps NaN and
-Inf to `None`, which made `use_stop` False, so a non-finite stop used to
-submit the entry with NO protective stop at all, silently. Finiteness is now
-read before quantization.
-
-**What still protects a stop's WIDTH, unchanged.** The constructor measures
-it in the instrument's own ATR: `_widen_stop_past_noise` pushes an unbacked
-stop out to `min_stop_atr_multiple` (2.5) ATRs, honours a stop that sits on a
-computed structural level however tight down to
-`absolute_min_stop_atr_multiple` (1.0) ATR, and refuses a wrong-side or
-non-finite stop outright. `_qty_by_risk_budget` independently refuses invalid
-geometry. Spec §12.1 — honour a level-backed stop however tight, apply the
-volatility floor only when nothing computed backs it — is untouched by this
-change and was the reason not to write a new floor here.
-
-**No replacement number was invented for the stop, and none should be.** A
-percentage band on a stop has no published source, and fitting one to past
-trades would not make it non-arbitrary. If an absolute sanity bound on a stop
-is ever wanted, what would source it is a measured distribution of the
-desk's own realised stop widths in ATR terms per name — a reading, not a fit
-— and that is deliberately left unbuilt.
-
-**The wording, second half of the same fix.** A refusal used to read "stop
-$9.66 is 24% from price $7.79". A bare percentage is not judgeable: 24% is an
-outrage on a utility and an ordinary two sessions on a $7 stock, and the
-owner reasonably read a correct refusal as a bug. The message now carries the
-stock's own measured daily range beside the deviation — "limit price $4.96 is
-36% from price $7.79 — FLNC normally moves about $0.75 (10%) in a day" — from
-the ATR(14) the desk had already computed for that symbol and passed down
-from the entry stage. It is used for wording only; no code path branches on
-it, and when the caller has no ATR (the resume and sweep lanes carry no
-analysis) the range clause is omitted rather than filled with an invented
-number.
-
-**Alerting.** A stop refusal is a separate skip reason (`unusable_stop`) from
-a price refusal (`fat_finger_guard`), so the owner is never told a price was
-"too far from the market" when what actually happened is the stop could never
-have worked. Both still say the desk blocked it, not the broker.
-
-**Found while doing this, reported and LEFT ALONE.** A `stop_loss_price` of
-exactly `0.0` is this codebase's sentinel for "no stop", so the entry submits
-unprotected — pinned by `test_submit_order_buy_with_zero_stop_loss_skips_oto`.
-It is the same shape of hole as the NaN one, but it is explicit rather than
-silent, it pre-dates this work, and the production entry callsite already
-passes `None` rather than `0`, so nothing live reaches it. Not closed here.
-Separately, the fat-finger guard and its 2026-09-17 plain-words rewording had
-no write-up in these docs at all before this entry.
-
-**Not changed.** The 20% band's value. The kill switch. The constructor's ATR
-floors or the §12.1 level exemption. Nothing about how wide a stop is allowed
-to be. The `0.0` sentinel.
 
