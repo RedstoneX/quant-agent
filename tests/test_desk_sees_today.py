@@ -196,6 +196,8 @@ def test_live_session_context_in_session_live_missing_and_stale(monkeypatch, cap
     assert "live_unavailable" in out["MSFT"]
     assert "live_unavailable" in out["AAPL"]
     assert "price unavailable" in caplog.text
+    assert "IEX" in (out["AAPL"].get("live_unavailable") or "")
+    assert "IEX" in (out["MSFT"].get("live_unavailable") or "")
 
 
 def test_live_session_context_rereads_open_print_once(monkeypatch):

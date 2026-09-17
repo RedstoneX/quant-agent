@@ -630,6 +630,33 @@ def test_dead_hub_falls_to_rest_polling_not_one_snapshot(mock_stream_cls):
         broker.stop_trade_updates()
 
 
+@patch("src.execution.broker.TradingStream")
+def test_wait_trade_updates_auth_does_not_invent_a_longer_deadline(mock_stream_cls):
+    """Open Risk must not sit in handshake after the encoded budget from
+    hub open is gone. REST is labelled temporary, not the product."""
+    class NeverAuth(_FakeTradingStream):
+        async def _start_ws(self):
+            await asyncio.sleep(60)
+
+    mock_stream_cls.side_effect = lambda *a, **k: NeverAuth(
+        *a, hang=True, **k,
+    )
+    broker = _broker()
+    try:
+        broker.start_trade_updates()
+        assert broker._trade_hub is not None
+        broker._trade_hub.started_mono = time.monotonic() - 31.0
+        t0 = time.monotonic()
+        ok = broker.wait_trade_updates_auth()
+        assert time.monotonic() - t0 < 2.0
+        assert ok is False
+        assert broker._last_stream_warmup is not None
+        assert broker._last_stream_warmup.handshake_failed is True
+        assert "temporary REST" in (broker._last_stream_warmup.rest_fallback or "")
+    finally:
+        broker.stop_trade_updates()
+
+
 def test_auth_hook_drains_non_auth_frames_then_authorizes():
     """alpaca-py's `_auth` treats the first websocket frame as the
     handshake. A hello/listening frame before `authorized` used to raise

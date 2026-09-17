@@ -716,14 +716,14 @@ def _submit_window_overrun(ctx) -> bool:
 
 
 def _start_trade_updates_early(pipeline, ctx) -> None:
-    """Start trade_updates without waiting — overlap handshake with Risk review."""
+    """Start trade_updates without waiting — overlap handshake with PM, not Risk."""
     start = getattr(getattr(pipeline, "broker", None), "start_trade_updates", None)
     if not callable(start):
         return
     try:
         warmup = start()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("trade_updates start-during-Risk failed: %s", exc)
+        logger.warning("trade_updates start-before-Risk failed: %s", exc)
         ctx.desk_latency_stall = True
         return
     try:
@@ -733,6 +733,27 @@ def _start_trade_updates_early(pipeline, ctx) -> None:
     if isinstance(warmup, TradeStreamWarmup) and (
         warmup.handshake_failed or warmup.retried
     ):
+        ctx.desk_latency_stall = True
+
+
+def _await_trade_updates_auth_for_risk(pipeline, ctx) -> None:
+    """Auth must hold through the open Risk window, not only mid-morning.
+
+    Hub starts at PM (fallback: here). Wait only the remaining encoded
+    budget from hub open. Do not invent a longer deadline. Do not overlap
+    handshake with review as the product.
+    """
+    _start_trade_updates_early(pipeline, ctx)
+    wait = getattr(getattr(pipeline, "broker", None), "wait_trade_updates_auth", None)
+    if not callable(wait):
+        return
+    try:
+        ok = wait()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("trade_updates auth-before-Risk wait failed: %s", exc)
+        ctx.desk_latency_stall = True
+        return
+    if ok is False:
         ctx.desk_latency_stall = True
 
 
@@ -4325,6 +4346,10 @@ class DecisionStage:
         cash = ctx.deployable_cash
         last_equity = ctx.last_equity
 
+        # Handshake during PM so auth is done before the open Risk window.
+        # Start does not block; Risk waits remaining budget if needed.
+        _start_trade_updates_early(pipeline, ctx)
+
         # isinstance guard: stage tests stub `pipeline` with MagicMock, whose
         # auto-attrs would otherwise duck-type as an enabled sweeper.
         from src.execution.cash_sweep import CashSweeper
@@ -5281,8 +5306,10 @@ class RiskStage:
             portfolio_decision
         )
 
-        # Handshake overlaps the review so auth is not serial after Risk.
-        _start_trade_updates_early(pipeline, ctx)
+        # Handshake must be done before review so the open Risk window is
+        # not the auth defect window (measured 2026-09-17: storm cleared
+        # mid-morning; open Risk still failed).
+        _await_trade_updates_auth_for_risk(pipeline, ctx)
 
         verdict, rm_result = pipeline.risk_manager.review(
             portfolio_decision=portfolio_decision,

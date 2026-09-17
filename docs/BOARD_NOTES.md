@@ -170,6 +170,21 @@ it does not wait for morning to finish and then shout INTRADAY. First
 true paid look after the open is the next half-hour fire after morning
 is actually done.
 
+**Same day, later — measured again against the open.** One slow print
+does not justify a longer wait: each economics number on its own comes
+back in a few seconds, and a clean full batch can finish inside the
+existing ceiling. The open failed because the numbers were asked for
+one-after-another with their due-date paperwork on the same workers, so
+seven were never even requested. The fix is to actually request every
+required number in time, or name the ones that did not come back — not
+to wait longer, and not to make the numbers up. Six of the eight names
+that had yesterday's tape at 09:30 later showed a real today print. Two
+thin names still had none; the feed this account is allowed to read
+simply did not print, and a quote is not a print. Those two stay lost
+until a real print exists. The fill-socket login storm was gone by
+mid-morning; the open review is still the window that breaks if login
+starts there. The 09:30-is-morning rule from earlier today stands.
+
 **Why there is no number in it —** you said the minimum bar is a risk
 judgement and not an agent's to invent, and that stands: nothing published
 says how many of five research seats a desk needs before a decision is

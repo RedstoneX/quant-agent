@@ -214,6 +214,77 @@ def test_configured_observation_jobs_are_the_fifteen_required_series():
 
 
 @patch("src.data.macro.Fred")
+def test_observations_are_attempted_before_any_metadata_http(mock_fred_cls):
+    """Measured 2026-09-17 retest: 15/15 in ~85s when observation+metadata
+    shared worker slots; open 7/15 never started. Metadata must not occupy
+    the observation budget. Unknown freshness is named, not an invented
+    value, and the deadline is not lengthened."""
+    mock = MagicMock()
+    order: list[tuple[str, str]] = []
+
+    def _obs(series_id, **kw):
+        order.append(("obs", series_id))
+        return _series([1.0, 1.1, 1.2])
+
+    def _meta(series_id):
+        order.append(("meta", series_id))
+        return pd.Series({
+            "observation_end": "2026-09-16",
+            "last_updated": "2026-09-16",
+        })
+
+    mock.get_series.side_effect = _obs
+    mock.get_series_info.side_effect = _meta
+    mock_fred_cls.return_value = mock
+    provider = MacroDataProvider(
+        api_key="test-key", max_retries=0, total_fetch_deadline_s=90.0,
+    )
+    provider.get_macro_summary()
+    kinds = [kind for kind, _sid in order]
+    assert kinds.count("obs") == 15
+    assert kinds.count("meta") == 15
+    last_obs = max(i for i, kind in enumerate(kinds) if kind == "obs")
+    first_meta = min(i for i, kind in enumerate(kinds) if kind == "meta")
+    assert last_obs < first_meta
+    assert provider.last_coverage.status == "ok"
+    assert provider.last_coverage.configured == 15
+    assert provider.last_coverage.succeeded == 15
+
+
+@patch("src.data.macro.Fred")
+def test_observation_prefetch_in_flight_is_deadline_over_timeout_not_three_serial_waves(
+    mock_fred_cls, monkeypatch,
+):
+    """90s/15s used to size 3 workers as serial waves, which with
+    doubled HTTP burned ~85s of 90s. In-flight cap is the same
+    floor(deadline/timeout)=6, applied as concurrency."""
+    from concurrent.futures import ThreadPoolExecutor as RealPool
+
+    mock = MagicMock()
+    mock.get_series.side_effect = lambda sid, **kw: _series([1.0, 1.1, 1.2])
+    mock_fred_cls.return_value = mock
+    seen: list[int] = []
+
+    def _tracking_pool(*a, **k):
+        workers = k.get("max_workers")
+        if workers is None and a:
+            workers = a[0]
+        seen.append(workers)
+        return RealPool(*a, **k)
+
+    monkeypatch.setattr("src.data.macro.ThreadPoolExecutor", _tracking_pool)
+    provider = MacroDataProvider(
+        api_key="test-key",
+        request_timeout_s=15.0,
+        max_retries=0,
+        total_fetch_deadline_s=90.0,
+    )
+    provider.get_macro_summary()
+    assert seen, "prefetch never opened a pool"
+    assert seen[0] == 6
+
+
+@patch("src.data.macro.Fred")
 def test_parallel_prefetch_attempts_every_series_inside_a_serial_impossible_deadline(
     mock_fred_cls,
 ):

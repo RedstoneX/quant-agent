@@ -2788,14 +2788,15 @@ class TradingPipeline:
             classified = self._classify_live_snapshot(sym, snap)
             out[sym] = classified
             reason = classified.get("live_unavailable")
-            if reason == "no live trade price returned":
+            if reason == "IEX venue returned no live trade price":
                 missing.append(sym)
             elif reason:
                 stale.append(sym)
         retry_syms = missing + stale
         if retry_syms:
-            # One producing-step re-read of the open print. Same feed,
-            # no invented price, names kept.
+            # One producing-step re-read of the open print. Same entitled
+            # venue (IEX), which now also asks today's minute bars when
+            # snapshot last-trade is still yesterday. No invented price.
             try:
                 retried = self.broker.get_intraday_snapshots(retry_syms) or {}
             except Exception as exc:  # noqa: BLE001
@@ -2808,15 +2809,16 @@ class TradingPipeline:
                 classified = self._classify_live_snapshot(sym, retried.get(sym) or {})
                 out[sym] = classified
                 reason = classified.get("live_unavailable")
-                if reason == "no live trade price returned":
+                if reason == "IEX venue returned no live trade price":
                     missing.append(sym)
                 elif reason:
                     stale.append(sym)
         if missing or stale:
             logger.warning(
                 "live session context: in-session price unavailable for %d/%d "
-                "symbol(s) after open-print re-read (no price: %s; not today: %s) "
-                "— labelled STALE in the Tech prompt, not replaced by the last close",
+                "symbol(s) after IEX open-print path (no price: %s; IEX-thin/"
+                "no today print: %s) — labelled STALE in the Tech prompt, "
+                "not replaced by the last close and not treated as fresh tech",
                 len(missing) + len(stale), len(symbols),
                 missing[:10], stale[:10],
             )
@@ -2828,9 +2830,9 @@ class TradingPipeline:
 
         last = snap.get("last_price")
         if not isinstance(last, (int, float)) or last <= 0:
-            return {"live_unavailable": "no live trade price returned"}
+            return {"live_unavailable": "IEX venue returned no live trade price"}
         if not live_price_is_today(snap.get("last_trade_at")):
-            return {"live_unavailable": "last trade is not from today's session"}
+            return {"live_unavailable": "IEX venue has no today print"}
         return dict(snap)
 
     # Statuses Alpaca uses for terminal/non-terminal orders. Kept as a

@@ -511,14 +511,15 @@ def test_intraday_snapshots_uses_todays_open_print_when_last_trade_is_yesterday(
     assert out["XOM"]["session_open"] == 162.23
 
 
-def test_intraday_snapshots_uses_today_quote_when_trade_and_bar_are_not_today(
+def test_intraday_snapshots_does_not_treat_an_iex_quote_as_a_print(
     monkeypatch,
 ):
-    """Open print can live on the quote when last_trade and daily_bar are
-    still yesterday. Mid of a today-timestamped bid/ask is a real print,
-    not an invented price."""
+    """Mid-morning retest 2026-09-17: CHPX+DXPE still STALE — IEX-thin,
+    no print, API fast. A today quote is not a print and must not be
+    worn as last_trade_at / fresh tech."""
     from datetime import datetime, timedelta
 
+    from alpaca.data.enums import DataFeed
     from src.trading_calendar import ET
 
     now = datetime(2026, 9, 17, 9, 31, tzinfo=ET)
@@ -526,7 +527,7 @@ def test_intraday_snapshots_uses_today_quote_when_trade_and_bar_are_not_today(
     yesterday = now - timedelta(days=1)
     quote_ts = datetime(2026, 9, 17, 9, 30, 1, tzinfo=ET)
     b = _broker()
-    b._data_client = _snapshot_client({
+    client = _snapshot_client({
         "CHPX": SimpleNamespace(
             symbol="CHPX",
             latest_trade=SimpleNamespace(price=40.0, timestamp=yesterday),
@@ -540,8 +541,47 @@ def test_intraday_snapshots_uses_today_quote_when_trade_and_bar_are_not_today(
             ),
         ),
     })
+    client.get_stock_bars.return_value = {}
+    b._data_client = client
     out = b.get_intraday_snapshots(["CHPX"])
-    assert out["CHPX"]["last_price"] == pytest.approx(41.2)
-    assert out["CHPX"]["last_trade_at"] == quote_ts
-    assert out["CHPX"]["session_open"] is None
-    assert out["CHPX"]["session_high"] is None
+    assert out["CHPX"]["last_price"] == 40.0
+    assert out["CHPX"]["last_trade_at"] == yesterday
+    assert out["CHPX"]["last_price"] != pytest.approx(41.2)
+    assert client.get_stock_bars.called
+    req = client.get_stock_bars.call_args.args[0]
+    assert req.feed == DataFeed.IEX
+
+
+def test_intraday_snapshots_uses_iex_minute_bar_as_open_print(monkeypatch):
+    """Open-print path: when IEX snapshot last-trade and daily bar are
+    still yesterday, today's IEX 1-minute bar is a real print."""
+    from datetime import datetime, timedelta
+
+    from alpaca.data.enums import DataFeed
+    from src.trading_calendar import ET
+
+    now = datetime(2026, 9, 17, 9, 31, tzinfo=ET)
+    monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
+    yesterday = now - timedelta(days=1)
+    bar_ts = datetime(2026, 9, 17, 9, 31, tzinfo=ET)
+    b = _broker()
+    client = _snapshot_client({
+        "DXPE": SimpleNamespace(
+            symbol="DXPE",
+            latest_trade=SimpleNamespace(price=90.0, timestamp=yesterday),
+            previous_daily_bar=SimpleNamespace(close=89.0),
+            daily_bar=SimpleNamespace(
+                open=89.5, high=90.2, low=89.1, close=89.5,
+                volume=100, timestamp=yesterday,
+            ),
+        ),
+    })
+    client.get_stock_bars.return_value = {
+        "DXPE": [SimpleNamespace(open=91.0, close=91.4, timestamp=bar_ts)],
+    }
+    b._data_client = client
+    out = b.get_intraday_snapshots(["DXPE"])
+    assert out["DXPE"]["last_price"] == 91.4
+    assert out["DXPE"]["last_trade_at"] == bar_ts
+    req = client.get_stock_bars.call_args.args[0]
+    assert req.feed == DataFeed.IEX

@@ -19,6 +19,7 @@ from src.execution.cash_sweep import (
 )
 from src.pipeline_context import RunContext
 from src.pipeline_stages import (
+    DecisionStage,
     ExecutionStage,
     RiskStage,
     _known_entry_submit_budget_s,
@@ -50,11 +51,17 @@ def test_ensure_trade_updates_does_not_open_a_throwaway_socket():
     assert "stop()" not in src
 
 
-def test_risk_starts_trade_updates_before_review():
+def test_pm_starts_trade_updates_so_auth_is_not_the_risk_window():
+    src = inspect.getsource(DecisionStage.run)
+    assert "_start_trade_updates_early" in src
+
+
+def test_risk_awaits_trade_updates_auth_before_review():
+    """Open Risk window is the defect; overlap-with-review is not the product."""
     src = inspect.getsource(RiskStage._run_review)
-    start_at = src.find("_start_trade_updates_early")
+    wait_at = src.find("_await_trade_updates_auth_for_risk")
     review_at = src.find("risk_manager.review")
-    assert start_at != -1 and review_at != -1 and start_at < review_at
+    assert wait_at != -1 and review_at != -1 and wait_at < review_at
 
 
 def test_repeg_stays_off_by_default():

@@ -166,6 +166,16 @@ class _TradeUpdatesHub:
         )
         return max(0.0, float(left))
 
+    def wait_authed(self, timeout: float) -> bool:
+        """Wait remaining encoded budget. Does not invent a longer deadline."""
+        if self.authed():
+            return True
+        try:
+            self._authed.wait(timeout=max(0.0, float(timeout)))
+        except Exception:
+            pass
+        return self.authed()
+
     def wait(
         self, order_id: str, timeout_seconds: float, *,
         stop_states: frozenset,
@@ -2056,7 +2066,6 @@ class AlpacaBroker:
             # `session_*` namespace so no caller can mistake it for a
             # completed daily bar (2026-08-19 intraday-evidence fix).
             today_bar = getattr(snap, "daily_bar", None) if snap is not None else None
-            quote = getattr(snap, "latest_quote", None) if snap is not None else None
             # Alpaca's Trade model DOES carry its own `timestamp` field
             # (verified against the installed SDK, 2026-09-13) — this is
             # the provider's own market timestamp for the last print, not
@@ -2076,24 +2085,15 @@ class AlpacaBroker:
             # At the open, IEX latest_trade can still be yesterday while
             # today's forming bar already carries the open print
             # (measured 2026-09-17: 8/104 STALE including XOM). Use that
-            # today-timestamped bar — a real print. If the bar is not from
-            # today either, a today-timestamped quote is the live quote,
-            # not a last trade; still not an invented price. Session OHLC
-            # is omitted unless the bar itself is from today.
+            # today-timestamped bar — a real IEX print. A quote is not a
+            # print: mid-morning retest left CHPX+DXPE STALE on IEX-thin
+            # names with no trade; treating bid/ask as last_trade_at made
+            # missing tape look like a live price. Session OHLC is omitted
+            # unless the bar itself is from today.
             if not live_price_is_today(last_trade_at):
                 if live_price_is_today(bar_ts):
                     last_price = _num(today_bar, "close") or _num(today_bar, "open")
                     last_trade_at = bar_ts
-                else:
-                    quote_ts = getattr(quote, "timestamp", None) if quote is not None else None
-                    if live_price_is_today(quote_ts):
-                        bid = _num(quote, "bid_price")
-                        ask = _num(quote, "ask_price")
-                        if bid and ask:
-                            last_price = (bid + ask) / 2.0
-                        else:
-                            last_price = ask or bid
-                        last_trade_at = quote_ts
             out[symbol] = {
                 "last_price": last_price,
                 "last_trade_at": last_trade_at,
@@ -2103,7 +2103,117 @@ class AlpacaBroker:
                 "session_low": _num(session_bar, "low") if session_bar else None,
                 "session_volume": _num(session_bar, "volume") if session_bar else None,
             }
+        self._fill_iex_open_prints(out, requested)
         return out
+
+    def _fill_iex_open_prints(
+        self, out: dict[str, dict], requested: list[tuple[str, str]],
+    ) -> None:
+        """One IEX 1-minute bar read for names still missing a today print.
+
+        Measured 2026-09-17 mid-morning: 6/8 recovered; CHPX+DXPE stayed
+        STALE — IEX-thin, no print, API fast. A quote is not a print and
+        SIP is not entitled (unset feed returns empty bars silently).
+        This asks the entitled venue for today's forming minutes. Empty
+        is venue truth: leave the yesterday trade stamped not-today so
+        Tech is lost, not fresh. Never invent a price.
+        """
+        from alpaca.data.enums import DataFeed
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+        from src.trading_calendar import (
+            ET,
+            REGULAR_SESSION_OPEN_MIN,
+            et_now,
+            live_price_is_today,
+        )
+
+        missing = [
+            (symbol, mapped)
+            for symbol, mapped in requested
+            if not live_price_is_today((out.get(symbol) or {}).get("last_trade_at"))
+        ]
+        if not missing or self._data_client is None:
+            return
+        getter = getattr(self._data_client, "get_stock_bars", None)
+        if not callable(getter):
+            return
+        now = et_now()
+        open_h, open_m = divmod(REGULAR_SESSION_OPEN_MIN, 60)
+        session_open = now.replace(
+            hour=open_h, minute=open_m, second=0, microsecond=0,
+        )
+        if now.tzinfo is not None and session_open.tzinfo is None:
+            session_open = session_open.replace(tzinfo=now.tzinfo)
+        if session_open.tzinfo is None:
+            session_open = session_open.replace(tzinfo=ET)
+        if now < session_open:
+            return
+        mapped = list(dict.fromkeys(m for _, m in missing))
+        try:
+            raw = getter(
+                StockBarsRequest(
+                    symbol_or_symbols=mapped,
+                    timeframe=TimeFrame(1, TimeFrameUnit.Minute),
+                    start=session_open,
+                    end=now,
+                    feed=DataFeed.IEX,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "get_intraday_snapshots: IEX open-print bar read failed: %s",
+                exc,
+            )
+            return
+
+        def _bars_for(alpaca_symbol: str) -> list:
+            if raw is None:
+                return []
+            data = getattr(raw, "data", None)
+            if isinstance(data, dict):
+                bars = data.get(alpaca_symbol)
+            elif isinstance(raw, dict):
+                bars = raw.get(alpaca_symbol)
+            else:
+                return []
+            if not bars:
+                return []
+            try:
+                return list(bars)
+            except TypeError:
+                return []
+
+        def _num(obj, attr):
+            try:
+                v = float(getattr(obj, attr, 0) or 0)
+            except (TypeError, ValueError):
+                return None
+            return v if v > 0 else None
+
+        for symbol, alpaca_symbol in missing:
+            latest = None
+            for bar in _bars_for(alpaca_symbol):
+                ts = getattr(bar, "timestamp", None)
+                if not live_price_is_today(ts):
+                    continue
+                price = _num(bar, "close") or _num(bar, "open")
+                if price is None:
+                    continue
+                latest = (price, ts)
+            if latest is None:
+                continue
+            price, ts = latest
+            slot = out.get(symbol)
+            if not isinstance(slot, dict):
+                continue
+            slot["last_price"] = price
+            slot["last_trade_at"] = ts
+            logger.info(
+                "get_intraday_snapshots: IEX minute bar is the open print "
+                "for %s (snapshot last_trade was not today)",
+                symbol,
+            )
 
     @staticmethod
     def _extract_symbol_payload(payload, symbol: str):
@@ -2656,8 +2766,10 @@ class AlpacaBroker:
         """Start (or reuse) the kept trade_updates socket. Does not wait for auth.
 
         A probe-then-teardown handshake duplicated auth. This starts the
-        real socket and leaves it up for fill waits. Call from Risk so the
-        handshake overlaps the review; Execution calling again is a no-op.
+        real socket and leaves it up for fill waits. Call from PM so the
+        handshake finishes before the open Risk window; Risk waiting on
+        remaining budget is a fallback, not the product. Execution
+        calling again is a no-op.
         """
         return self.start_trade_updates()
 
@@ -2743,6 +2855,47 @@ class AlpacaBroker:
             warmup = self._hub_warmup(hub)
             self._last_stream_warmup = warmup
             return warmup
+
+    def wait_trade_updates_auth(self) -> bool:
+        """Wait until authorized or the encoded budget from hub-open is gone.
+
+        Measured 2026-09-17: the auth storm cleared mid-morning; the open
+        Risk window is still the defect. Handshake must finish before
+        review, not overlap it. Remaining time is the reconnect-max
+        budget that started at hub open — not a longer clock. False is a
+        named fail; REST is the labelled temporary safety net.
+        """
+        hub = getattr(self, "_trade_hub", None)
+        if hub is None or not hub.is_alive():
+            return False
+        if hub.authed():
+            return True
+        if not hub.handshake_hook:
+            return True
+        remaining = hub.auth_remaining_s()
+        if remaining <= 0:
+            logger.warning(
+                "trade_updates websocket did not authenticate within the "
+                "encoded %.1fs budget (started at hub open, before Risk) — %s",
+                _ALPACA_STREAM_AUTH_DEADLINE_S, _TEMPORARY_REST_SAFETY,
+            )
+            self._last_stream_warmup = TradeStreamWarmup(
+                ready=False, handshake_failed=True, retried=True,
+                rest_fallback=_TEMPORARY_REST_SAFETY,
+            )
+            return False
+        if hub.wait_authed(remaining):
+            return True
+        logger.warning(
+            "trade_updates websocket did not authenticate within "
+            "remaining %.1fs before Risk — %s",
+            remaining, _TEMPORARY_REST_SAFETY,
+        )
+        self._last_stream_warmup = TradeStreamWarmup(
+            ready=False, handshake_failed=True, retried=True,
+            rest_fallback=_TEMPORARY_REST_SAFETY,
+        )
+        return False
 
     def stop_trade_updates(self) -> None:
         """Tear down the kept trade_updates socket. Idempotent."""

@@ -51,9 +51,18 @@ logger = logging.getLogger(__name__)
 # without an attempt (UNRATE, HY OAS, real yield, breakeven, dollar, IG
 # OAS, claims) because the first eight observation+metadata calls ran
 # SERIALLY and ate the 90s ceiling. Required series that were never even
-# asked for is a producer defect, not a FRED outage. `get_macro_summary`
-# now prefetches every configured series in parallel so each one gets a
-# real attempt inside the same ceiling.
+# asked for is a producer defect, not a FRED outage.
+#
+# Retest the same day, mid-morning vs that open: isolated series land in
+# 1.5–6.7s; a full batch can make 15/15 in ~85s when nothing cascades;
+# the open miss was still 7/15 never attempted. Strongest remaining root
+# is observation+metadata sharing the same worker slots under the existing
+# 90s ceiling (two HTTP per series, 3-wide because workers were sized as
+# if each job used a full 15s timeout). A healthy batch burning 85s of 90s
+# is one cascade from skipping the rest. Fix: prefetch observations first
+# so every required series gets a real attempt inside the same 90s, then
+# metadata on remaining budget (unknown freshness is named, not a missing
+# value). Do not invent a longer timeout. Do not invent series values.
 
 
 # Exception text longer than this is truncated before it reaches a log line
@@ -413,6 +422,11 @@ class MacroDataProvider:
         self._state_lock = threading.Lock()
         self._series_result_cache: dict[str, pd.Series] = {}
         self._fred_http_sema: threading.Semaphore | None = None
+        # When True, observation prefetch must not fetch /fred/series
+        # metadata on the same worker: that doubling was the 85s/90s
+        # healthy-batch cost on 2026-09-17. Freshness is recorded after
+        # every required observation has been attempted.
+        self._defer_freshness = False
 
     def _request_timeout_remaining(self) -> float:
         """Per-HTTP timeout for one FRED call, clipped to the shared deadline."""
@@ -731,6 +745,25 @@ class MacroDataProvider:
                     return {"freshness": f.status, "freshness_detail": f.describe()}
         return {"freshness": FRESHNESS_UNKNOWN, "freshness_detail": ""}
 
+    def _fred_in_flight_workers(self, n_jobs: int) -> int:
+        """In-flight HTTP cap derived from the existing deadline/timeout.
+
+        `floor(deadline/timeout)` is how many full-timeout requests fit in
+        the ceiling. Using that as *serial waves* produced 3 workers at
+        90s/15s, so a healthy 1.5–6.7s series was scheduled as if it were
+        15s and observation+metadata still burned ~85s. Using it as
+        in-flight concurrency (and as the wave count, taking the larger)
+        keeps every job able to start inside the same ceiling without a
+        15-wide burst and without inventing a longer timeout.
+        """
+        if n_jobs <= 0:
+            return 1
+        wave_budget = max(
+            1, int(self.total_fetch_deadline_s // self.request_timeout_s),
+        )
+        workers = max(-(-n_jobs // wave_budget), wave_budget)
+        return min(n_jobs, workers)
+
     def _safe_get_series(self, series_id: str, **kwargs) -> pd.Series:
         with self._state_lock:
             cached = self._series_result_cache.get(series_id)
@@ -744,7 +777,13 @@ class MacroDataProvider:
         finally:
             if sema is not None:
                 sema.release()
-        return self._cache_series(series_id, series)
+        series = self._cache_series(series_id, series)
+        if not getattr(self, "_defer_freshness", False):
+            with self._state_lock:
+                already = series_id in self._run_freshness
+            if not already and series is not None and len(series) > 0:
+                self._record_freshness(series_id, series)
+        return series
 
     def _uncache_failed_series(self) -> list[str]:
         """Drop failed series so one bounded retry can actually re-ask FRED.
@@ -801,26 +840,67 @@ class MacroDataProvider:
         )
         self._prefetch_configured_series(jobs)
 
-    def _prefetch_configured_series(self, jobs: list[tuple[str, dict]] | None = None) -> None:
-        """Attempt the given FRED jobs (default: every configured series).
+    def _prefetch_series_metadata(self, series_ids: list[str]) -> None:
+        """Fetch /fred/series metadata AFTER every observation attempt.
 
-        Serial fetch was the 2026-09-17 defect: the first eight
-        observation+metadata calls ate 90s and the last seven were skipped
-        with `fetch_deadline_exceeded` without an attempt. Independent
-        FRED series run concurrently here so each one gets a real try.
+        Freshness metadata is not a required series value. Missing
+        metadata degrades to `freshness: unknown` — never an invented
+        observation. Runs on remaining budget only; does not extend the
+        deadline.
+        """
+        pending = [sid for sid in series_ids if sid]
+        if not pending:
+            return
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            logger.warning(
+                "FRED metadata skipped — observation budget already spent; "
+                "freshness will report unknown for %s",
+                ", ".join(pending),
+            )
+            return
+        workers = self._fred_in_flight_workers(len(pending))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = {pool.submit(self._series_info, sid): sid for sid in pending}
+            for fut in as_completed(futs):
+                sid = futs[fut]
+                try:
+                    fut.result()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "FRED metadata worker crashed for %s: %s — "
+                        "freshness will report unknown",
+                        sid, exc,
+                    )
+
+    def _record_freshness_after_observations(self) -> None:
+        """Classify freshness only after every required series was attempted."""
+        with self._state_lock:
+            pending = [
+                sid for sid, series in self._series_result_cache.items()
+                if sid not in self._run_freshness
+                and series is not None and len(series) > 0
+            ]
+            snapshots = {
+                sid: self._series_result_cache[sid] for sid in pending
+            }
+        if not pending:
+            return
+        self._prefetch_series_metadata(pending)
+        for sid, series in snapshots.items():
+            self._record_freshness(sid, series)
+
+    def _prefetch_configured_series(self, jobs: list[tuple[str, dict]] | None = None) -> None:
+        """Attempt the given FRED *observation* jobs.
+
+        Serial fetch was the 2026-09-17 open defect. Retest: isolated
+        series 1.5–6.7s; 15/15 in ~85s when observation+metadata shared
+        worker slots. This pool fetches observations only so every
+        required series gets a real try inside the existing 90s.
         """
         jobs = list(jobs) if jobs is not None else _configured_observation_jobs()
         if not jobs:
             return
-        # Concurrent enough that every series can still START inside the
-        # existing 90s ceiling even if each attempt uses a full
-        # request_timeout_s — floor(deadline/timeout) waves, so workers
-        # = ceil(n / waves). Defaults: 90/15 → 6 waves → 3 workers, not
-        # a burst of 15 and not a new fitted constant.
-        wave_budget = max(
-            1, int(self.total_fetch_deadline_s // self.request_timeout_s),
-        )
-        workers = min(len(jobs), -(-len(jobs) // wave_budget))
+        workers = self._fred_in_flight_workers(len(jobs))
         self._fred_http_sema = threading.Semaphore(workers)
         try:
             with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -939,7 +1019,6 @@ class MacroDataProvider:
                 )
             return pd.Series(dtype=float)
         self._note_coverage(series_id, ok=True, reason="")
-        self._record_freshness(series_id, result)
         return result
 
     @staticmethod
@@ -1333,8 +1412,9 @@ class MacroDataProvider:
 
         Resets the per-call resilience state (fetch deadline, coverage
         counters, observation cache) FIRST, prefetches every configured
-        series in parallel so later series cannot be skipped solely because
-        earlier ones were slow, retries any still-missing series once inside
+        *observation* in parallel so later series cannot be skipped solely
+        because earlier ones were slow (metadata is a second phase on
+        remaining budget), retries any still-missing series once inside
         the remaining deadline (not a longer ceiling), then assembles the
         payload from cache.
         Snapshots coverage into `self.last_coverage` (a MacroCoverage) —
@@ -1353,9 +1433,11 @@ class MacroDataProvider:
         # carried across calls.
         self._series_info_cache = {}
         self._series_result_cache = {}
+        self._defer_freshness = True
         try:
             self._prefetch_configured_series()
             self._retry_failed_series_once()
+            self._record_freshness_after_observations()
             summary = {
                 "vix": self.get_vix(),
                 "treasury": self.get_treasury_yields(),
@@ -1389,4 +1471,5 @@ class MacroDataProvider:
             # Scoped to this one call — a later direct get_vix()/etc. call
             # (outside get_macro_summary()) must not inherit a stale,
             # already-expired deadline from a previous run.
+            self._defer_freshness = False
             self._deadline = None
