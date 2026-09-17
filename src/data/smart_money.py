@@ -578,6 +578,62 @@ class SECForm4Provider:
             ))
         return rows
 
+    def known_accessions(self) -> set[str]:
+        """Form 4 accessions already processed or cached. No network."""
+        out: set[str] = set()
+        manifest = self._load_json(self.manifest_path, {})
+        for raw in (manifest.get("processed_accessions") or []) if isinstance(manifest, dict) else []:
+            text = str(raw or "").strip()
+            if text:
+                out.add(text)
+        cached = self._load_json(self.observations_path, [])
+        for row in cached if isinstance(cached, list) else []:
+            if not isinstance(row, dict):
+                continue
+            text = str(row.get("accession_number") or "").strip()
+            if text:
+                out.add(text)
+        return out
+
+    def peek_accessions(self, symbols: list[str] | None = None) -> set[str]:
+        """Known accessions plus newly listed filings for names we watch.
+
+        Discovery-only — does not download submissions. Restricted to
+        tickers already in the observations cache and any ``symbols``
+        the caller names (the desk universe). A market-wide Form 4 is
+        not a change to remembered research. Failed discover returns
+        the already-known set.
+        """
+        known = self.known_accessions()
+        relevant = {_symbol(s) for s in (symbols or []) if str(s).strip()}
+        cached = self._load_json(self.observations_path, [])
+        for row in cached if isinstance(cached, list) else []:
+            if not isinstance(row, dict):
+                continue
+            ticker = _symbol(row.get("symbol") or "")
+            if ticker:
+                relevant.add(ticker)
+        if not relevant:
+            return known
+        try:
+            deadline = time.monotonic() + self.refresh_deadline_s
+            listed = self._listed_map(deadline)
+            for filing in self._discover(listed, deadline, known):
+                cik = str((filing or {}).get("cik") or "")
+                tickers = listed.get(cik) if isinstance(listed, dict) else None
+                if not isinstance(tickers, dict):
+                    continue
+                if not any(_symbol(t) in relevant for t in tickers):
+                    continue
+                text = str((filing or {}).get("accession") or "").strip()
+                if text:
+                    known.add(text)
+        except _RefreshDeadline:
+            logger.warning("SEC Form 4 accession peek hit refresh deadline")
+        except Exception as exc:  # noqa: BLE001 — failed peek ≠ new filing
+            logger.warning("SEC Form 4 accession peek failed: %s", exc)
+        return known
+
     def refresh(self) -> dict:
         """Network refresh with a JSON-safe status/result summary."""
         deadline = time.monotonic() + self.refresh_deadline_s

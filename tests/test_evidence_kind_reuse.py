@@ -16,11 +16,13 @@ from src.evidence_kind import (
     chart_reuse,
     covered_news_headlines,
     earnings_reuse,
+    headline_mentions_symbols,
     insider_reuse,
     macro_reuse,
     newer_material_wire,
     news_reuse,
     payload_quality,
+    same_session_from_date,
 )
 from src import evidence_gate
 
@@ -132,3 +134,15 @@ def test_covered_headlines_read_model_or_dict():
     assert "Apple beats" in covered_news_headlines(
         {"stock_news": {"AAPL": [{"headline": "Apple beats"}]}}
     )
+    assert headline_mentions_symbols("AAPL guidance cut after close", ["AAPL"]) is True
+    assert headline_mentions_symbols("Fed holds rates after the close", ["AAPL"]) is False
+    assert headline_mentions_symbols("Guidance cut after close AAPL cuts FY outlook", ["AAPL"]) is True
+    assert headline_mentions_symbols("Apple beats", []) is False
+
+
+def test_undated_is_not_same_session():
+    from src.trading_calendar import et_today
+    assert same_session_from_date(str(et_today())) is True
+    assert same_session_from_date(None) is False
+    assert same_session_from_date("") is False
+    assert same_session_from_date("yesterday") is False

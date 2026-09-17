@@ -10,6 +10,83 @@ from src.util.time import et_today
 
 logger = logging.getLogger(__name__)
 
+# Statistical-release prints a regime call is actually based on.
+# Daily market quotes (VIX, treasuries, dollar, OAS) reprint every
+# session; treating those as expiry would invent churn and kill the
+# cross-day remember path. CPI / unemployment / claims are the prints
+# that can change under an unchanged regime label.
+_SERIES_PRINT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("inflation", "headline_cpi_yoy"),
+    ("inflation", "core_cpi_yoy"),
+    ("inflation", "pce_yoy"),
+    ("unemployment", "current"),
+    ("jobless_claims", "current"),
+)
+_SERIES_PRINT_IDS = frozenset({
+    "CPIAUCSL", "CPILFESL", "PCEPI", "UNRATE", "ICSA",
+})
+
+
+def series_prints_from_summary(summary, freshness=None) -> dict:
+    """Fingerprint the actual FRED prints a macro call was based on.
+
+    Values are the current readings. Observation dates come from
+    ``SeriesFreshness.latest_observation`` when the provider recorded
+    them this fetch. Empty on anything unreadable — never invented.
+    """
+    values: dict[str, float] = {}
+    if isinstance(summary, dict):
+        for group, field in _SERIES_PRINT_FIELDS:
+            block = summary.get(group)
+            if not isinstance(block, dict):
+                continue
+            raw = block.get(field)
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                continue
+            values[f"{group}.{field}"] = float(raw)
+    observations: dict[str, str] = {}
+    recorded = freshness if isinstance(freshness, dict) else {}
+    for series_id, item in recorded.items():
+        if str(series_id) not in _SERIES_PRINT_IDS:
+            continue
+        obs = getattr(item, "latest_observation", None)
+        if obs is None:
+            continue
+        text = str(obs).strip()[:10]
+        if len(text) == 10:
+            observations[str(series_id)] = text
+    return {"values": values, "observations": observations}
+
+
+def series_prints_changed(stored, live) -> bool:
+    """True when a live FRED fetch shows a different print than the snapshot.
+
+    A missing live series is not a change (failed detector). A stored
+    fingerprint with no values/observations cannot claim a change either
+    — that would invent churn from an old snapshot that never recorded
+    prints.
+    """
+    if not isinstance(stored, dict) or not isinstance(live, dict):
+        return False
+    stored_vals = stored.get("values") if isinstance(stored.get("values"), dict) else {}
+    live_vals = live.get("values") if isinstance(live.get("values"), dict) else {}
+    for key, stored_val in stored_vals.items():
+        if key not in live_vals:
+            continue
+        try:
+            if float(live_vals[key]) != float(stored_val):
+                return True
+        except (TypeError, ValueError):
+            continue
+    stored_obs = stored.get("observations") if isinstance(stored.get("observations"), dict) else {}
+    live_obs = live.get("observations") if isinstance(live.get("observations"), dict) else {}
+    for series_id, stored_date in stored_obs.items():
+        live_date = str(live_obs.get(series_id) or "").strip()[:10]
+        stored_text = str(stored_date or "").strip()[:10]
+        if live_date and stored_text and live_date > stored_text:
+            return True
+    return False
+
 
 def _atomic_write(path: Path, data: str) -> None:
     tmp = path.with_suffix(".tmp")
@@ -66,7 +143,7 @@ class MacroStore:
             logger.warning("Failed to load last macro state: %s", e)
             return None
 
-    def save_last_state(self, analysis: dict) -> None:
+    def save_last_state(self, analysis: dict, series_prints: dict | None = None) -> None:
         """Persist the shift-relevant subset PLUS the live fields needed
         to re-validate as MacroAnalysis on a later tick.
 
@@ -77,6 +154,10 @@ class MacroStore:
         is stored as `sector_guidance_rows` so we do not invent reasons
         when rehydrating. We do not invent a chain if the caller never
         had one.
+
+        ``series_prints`` is the FRED value/timestamp fingerprint the
+        regime call actually saw. Expiry later compares live prints
+        against this, not the regime label string.
         """
         if not isinstance(analysis, dict):
             return
@@ -97,6 +178,13 @@ class MacroStore:
             "bear_triggers": analysis.get("bear_triggers") or [],
             "alignment_with_news": analysis.get("alignment_with_news") or "",
         }
+        if isinstance(series_prints, dict) and (
+            series_prints.get("values") or series_prints.get("observations")
+        ):
+            snapshot["series_prints"] = {
+                "values": dict(series_prints.get("values") or {}),
+                "observations": dict(series_prints.get("observations") or {}),
+            }
         chain = analysis.get("reasoning_chain")
         if isinstance(chain, dict) and chain:
             snapshot["reasoning_chain"] = chain

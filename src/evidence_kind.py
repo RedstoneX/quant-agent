@@ -26,6 +26,7 @@ A blank, parse-failed, or LOST payload is never research. Heal it
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 KIND_NEWS = "news"
 KIND_CHART = "chart"
@@ -68,6 +69,29 @@ class KindReuse:
     @property
     def pay_again(self) -> bool:
         return self.decision == DECISION_REFETCH
+
+
+def same_session_from_date(stored_date, today: str | date | None = None) -> bool:
+    """True only when ``stored_date`` is a real YYYY-MM-DD equal to today.
+
+    An undated or unparseable snapshot is NOT same-session. Claiming
+    same-session reuse requires a trustworthy timestamp; undated must
+    fail closed on that claim (it may still be remembered across days
+    when the kind allows it).
+    """
+    text = str(stored_date or "").strip()[:10]
+    if len(text) != 10:
+        return False
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        return False
+    if today is None:
+        from src.util.time import et_today
+        today_text = str(et_today())
+    else:
+        today_text = str(today).strip()[:10]
+    return text == today_text
 
 
 def payload_quality(payload, *, required_keys: tuple[str, ...] = ()) -> str:
@@ -286,6 +310,29 @@ def covered_news_headlines(report) -> frozenset[str]:
             if text:
                 out.add(text)
     return frozenset(out)
+
+
+def headline_mentions_symbols(title: str, symbols) -> bool:
+    """True when ``title`` (or title-plus-summary text) contains a watched ticker.
+
+    Word-boundary match, same idea as ``NewsDataProvider.tag_symbol_mentions``.
+    Callers that have a summary should pass ``f"{title} {summary}"`` so a
+    ticker named only in the body still counts. A general-wire headline
+    that does not name a watched ticker is not a change to remembered
+    stock research.
+    """
+    import re
+    text = str(title or "").strip()
+    if not text:
+        return False
+    upper = text.upper()
+    for raw in symbols or []:
+        sym = str(raw or "").strip().upper()
+        if not sym:
+            continue
+        if re.search(r"\b" + re.escape(sym) + r"\b", upper):
+            return True
+    return False
 
 
 def newer_material_wire(covered: frozenset[str], fetched_headlines: list[str] | tuple[str, ...] | frozenset[str]) -> bool:

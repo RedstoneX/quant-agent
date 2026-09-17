@@ -619,3 +619,26 @@ class CombinedSmartMoneyProvider:
                 errors.append(f"{name}:fetch_exception:{type(exc).__name__}")
         error = "; ".join(errors) or None
         return observations, error
+
+    def peek_form4_accessions(self, symbols: list[str] | None = None) -> set[str]:
+        """Union of Form 4 accessions currently visible on every sub-provider.
+
+        Congressional providers have no accession peek; they are skipped.
+        A sub-provider failure is isolated — same posture as refresh/fetch.
+        ``symbols`` restricts discovery to names this desk is watching.
+        """
+        out: set[str] = set()
+        for index, provider in enumerate(self.providers):
+            peek = getattr(provider, "peek_accessions", None)
+            if not callable(peek):
+                continue
+            name = f"{index}:{type(provider).__name__}"
+            try:
+                try:
+                    found = peek(symbols)
+                except TypeError:
+                    found = peek()
+                out.update(str(a).strip() for a in (found or []) if str(a).strip())
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Form 4 accession peek failed (%s): %s", name, exc)
+        return out

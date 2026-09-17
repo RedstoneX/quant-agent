@@ -22,6 +22,20 @@ what would catch it next time.
 
 ---
 
+### 2026-09-17 — research reuse said it would expire, then never looked
+
+**In plain words:** the desk was supposed to reuse this morning's research until something real changed — a new headline, a new insider filing, a new economics print — and pay again only then. The expiry checks were wired to helpers that did not exist, so expiry never ran. Economics expiry also compared only the regime name, so a new CPI print under the same "risk-on" label would have been treated as unchanged. A snapshot with no date was treated as "from this session".
+
+**Cause.** The live-wire and Form 4 checks were called through a missing-method lookup that returned "not callable, so nothing changed". That is the same as never checking. The economics check compared the stored regime string to a later snapshot's regime string and ignored the FRED numbers that snapshot was based on. Same-session was `missing date or date is today`, so an undated file counted as today.
+
+**Fix.** The three helpers now exist and read the stores that already hold the evidence: live RSS titles against the remembered report and the raw headline file; Form 4 accessions from the EDGAR listing against the already-processed cache; remembered insider findings from the specialist evidence table plus that cache. Economics expiry compares the actual statistical prints (CPI, unemployment, claims) and their observation dates, not daily market quotes, and those fingerprints are written when a regime is saved. An undated snapshot cannot claim same-session; if it is still a good regime and the prints have not changed, it can be remembered across days. News and Form 4 peeks are scoped to names the desk is watching — a market-wide filing or an unrelated wire is not a change to remembered research, because a false expiry on the midday tick cannot be healed (that tick does not re-pay those seats). A failed peek or a failed FRED fetch is not a change — that would invent churn from an outage. Blank or unreadable answers are still not research.
+
+**What this does not change.** Same-session reuse of a good dated answer stays usable. No second news clock. No seat-count. Spend caps untouched. Paper only.
+
+**What would catch it next time.** Tests that the peek/loaders exist and that a new headline or a new Form 4 accession expires reuse; a test that a new economics print expires reuse even when the regime name is unchanged; a test that an undated snapshot is not same-session; a test that an unchanged dated same-session answer is still reused.
+
+---
+
 ### 2026-09-17 — the midday scan charted only the stocks that jumped, so adding to a quiet holding could throw out the whole plan
 
 **In plain words:** every half hour the desk looks for stocks that have moved a lot and asks the chart seat about those. The trade-picking seat still sees every stock you already own. If it asked to add to a quiet holding — one that had not jumped 3% — the safety check said "there is no chart from this run" and threw away the whole plan, including any new idea that was fully researched. Paying for the decision and then binning it is waste. Dropping the quiet name and keeping the rest would have been skip-and-continue, which is not the product when the missing thing is research the desk should have produced.
