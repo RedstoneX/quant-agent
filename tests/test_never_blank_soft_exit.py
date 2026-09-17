@@ -4,9 +4,12 @@ The #432 isolate-unknown-only gate is a temporary last-resort. The product
 is: require a real thesis_invalid_if on actionable Tech and on
 opens/increases before the ticket book; one mechanical heal + one paid
 retry; if still incomplete, refuse that open name with
-`soft-exit missing after retry`. Reductions and closes may omit the
-field — a blank trim must still become SELL/COVER. Never invent a
-falsifier or catalyst string. Catalyst stays optional.
+`soft-exit missing after retry`. A blank-falsifier reduction is not a
+soft-exit: SELL/COVER fires only when a mechanical size-down vs the live
+book is checkable AND that warrant is the named trigger. PM thesis free
+text explains; it cannot create the sell. Never invent a falsifier or
+catalyst string. Catalyst stays optional. Missing symbol-specific news
+alone stays warn/log, not a warrant.
 """
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -280,16 +283,18 @@ def _held(symbol: str, qty: float, price: float, *, sector="Technology"):
     )
 
 
-def test_held_trim_with_blank_falsifier_is_still_admitted_and_sells():
-    """Held long; PM emits a lower NON-ZERO risk target with blank
-    thesis_invalid_if. That is a reduction — admit it, and construct_orders
-    still builds a SELL. An open and an increase with the same blank field
-    stay refused. Never invents a falsifier string.
+def test_held_trim_free_text_thesis_is_not_a_soft_exit_sell():
+    """Held long; lower NON-ZERO risk; blank thesis_invalid_if; only
+    free-text PM thesis. That must not become a soft-exit SELL — free
+    text explains, it cannot create the sell. Opens and increases with
+    the same blank field stay refused. Never invents a falsifier.
 
     Live figures from intra_check-44594a05 (AAPL 1.91% → 1.0%).
     """
     from src.pipeline_stages import _targets_admitted_to_book
-    from src.portfolio_constructor import PortfolioConstructor
+    from src.portfolio_constructor import (
+        PortfolioConstructor, is_soft_exit_reduction,
+    )
 
     equity = 9_694.25
     qty, px, stop = 9.763, 332.96, 315.85
@@ -327,17 +332,70 @@ def test_held_trim_with_blank_falsifier_is_still_admitted_and_sells():
         total_value=equity, price_map={"AAPL": px},
         existing_risk_pct=current_risk, live_stops={"AAPL": stop},
     )
+    soft_exits = [
+        d for d in decisions
+        if d.symbol == "AAPL" and is_soft_exit_reduction(d)
+    ]
+    assert soft_exits == []
+    for d in decisions:
+        if d.action in ("SELL", "COVER") and d.symbol == "AAPL":
+            assert missing_stated_falsifier(d.thesis_invalid_if)
+            assert not d.reasoning.startswith("trim to fund NET")
+            assert "news" not in d.reasoning.lower()
+
+
+def test_held_trim_mechanical_size_down_warrant_is_the_named_trigger():
+    """Held position, lower non-zero, blank falsifier, mechanical
+    size-down vs the live book is checkable → SELL/COVER admitted and
+    built with that warrant as the named trigger, not PM thesis.
+    """
+    from src.pipeline_stages import _targets_admitted_to_book
+    from src.portfolio_constructor import (
+        MECHANICAL_SIZE_DOWN_TRIGGER, PortfolioConstructor,
+        cites_mechanical_size_down, is_soft_exit_reduction,
+    )
+
+    equity = 9_694.25
+    qty, px, stop = 9.763, 332.96, 315.85
+    held = _held("AAPL", qty, px)
+    trim = TargetPosition(
+        symbol="AAPL", risk_allocation_pct=1.0, thesis="trim to fund NET",
+        thesis_invalid_if="",
+    )
+    current_risk = {"AAPL": 1.91}
+
+    admitted, refused = _targets_admitted_to_book(
+        [trim], positions=[held], total_value=equity,
+        existing_risk_pct=current_risk,
+    )
+    assert refused == []
+    assert [t.symbol for t in admitted] == ["AAPL"]
+    assert admitted[0].thesis_invalid_if == ""
+
+    decisions = PortfolioConstructor().construct_orders(
+        targets=admitted, positions=[held], analyses=[],
+        total_value=equity, price_map={"AAPL": px},
+        existing_risk_pct=current_risk, live_stops={"AAPL": stop},
+    )
     sells = [d for d in decisions if d.action == "SELL" and d.symbol == "AAPL"]
     assert len(sells) == 1
     assert sells[0].thesis_invalid_if in (None, "")
+    assert sells[0].reasoning.startswith(MECHANICAL_SIZE_DOWN_TRIGGER)
+    assert cites_mechanical_size_down(sells[0].reasoning)
+    assert "1.91" in sells[0].reasoning and "1.00" in sells[0].reasoning
+    assert not is_soft_exit_reduction(sells[0])
 
 
-def test_held_short_trim_with_blank_falsifier_is_still_admitted_and_covers():
-    """Held short; lower non-zero risk target, blank thesis_invalid_if →
-    COVER is still built. A new short with the same blank field is refused.
+def test_held_short_trim_mechanical_size_down_warrant_covers():
+    """Held short; lower non-zero risk; blank falsifier; checkable
+    size-down → COVER named on the mechanical warrant, not thesis.
+    A new short with the same blank field is refused.
     """
     from src.pipeline_stages import _targets_admitted_to_book
-    from src.portfolio_constructor import PortfolioConstructor
+    from src.portfolio_constructor import (
+        MECHANICAL_SIZE_DOWN_TRIGGER, PortfolioConstructor,
+        is_soft_exit_reduction,
+    )
 
     equity = 100_000.0
     # 80 short @ $250, live stop $270: $20/share × 80 = $1,600 = 1.6% equity.
@@ -370,14 +428,21 @@ def test_held_short_trim_with_blank_falsifier_is_still_admitted_and_covers():
     covers = [d for d in decisions if d.action == "COVER" and d.symbol == "TSLA"]
     assert len(covers) == 1
     assert covers[0].thesis_invalid_if in (None, "")
+    assert covers[0].reasoning.startswith(MECHANICAL_SIZE_DOWN_TRIGGER)
+    assert not is_soft_exit_reduction(covers[0])
+    assert not covers[0].reasoning.startswith("cover down")
 
 
-def test_legacy_weight_trim_with_blank_falsifier_is_still_admitted_and_sells():
-    """Unsigned target_weight_pct below current long weight is a reduction
-    even without a risk map — same exemption as a risk-based trim.
+def test_legacy_weight_trim_mechanical_size_down_warrant_sells():
+    """Unsigned target_weight_pct below current long weight is a
+    checkable size-down even without a risk map — constructor names
+    that warrant, not the free-text thesis.
     """
     from src.pipeline_stages import _targets_admitted_to_book
-    from src.portfolio_constructor import PortfolioConstructor
+    from src.portfolio_constructor import (
+        MECHANICAL_SIZE_DOWN_TRIGGER, PortfolioConstructor,
+        is_soft_exit_reduction,
+    )
 
     held = _held("NVDA", 150, 100.0)  # 15% of $100k
     trim = TargetPosition(
@@ -395,6 +460,39 @@ def test_legacy_weight_trim_with_blank_falsifier_is_still_admitted_and_sells():
     )
     sells = [d for d in decisions if d.action == "SELL" and d.symbol == "NVDA"]
     assert len(sells) == 1
+    assert sells[0].reasoning.startswith(MECHANICAL_SIZE_DOWN_TRIGGER)
+    assert "15.00%" in sells[0].reasoning and "10.00%" in sells[0].reasoning
+    assert not is_soft_exit_reduction(sells[0])
+    assert sells[0].thesis_invalid_if in (None, "")
+
+
+def test_build_sell_free_text_without_checkable_size_down_is_not_a_sell():
+    """Direct builder: free-text thesis and blank falsifier cannot
+    create a SELL when weight is not actually down vs the live book.
+    """
+    from src.portfolio_constructor import PortfolioConstructor
+
+    pos = _held("AAPL", 10, 100.0)
+    target = TargetPosition(
+        symbol="AAPL", risk_allocation_pct=1.0, thesis="trim to fund NET",
+        thesis_invalid_if="",
+    )
+    assert PortfolioConstructor._build_sell(target, pos, 5.0, 5.0) is None
+    assert PortfolioConstructor._build_sell(target, pos, 5.0, 8.0) is None
+
+
+def test_mechanical_size_down_is_not_a_midday_hard_trigger():
+    """Do not add the constructor phrase to the midday substring gate.
+    A reviewer LLM could emit it with nothing behind it.
+    """
+    from src.pipeline import _reason_cites_hard_trigger
+    from src.portfolio_constructor import format_mechanical_size_down_reason
+
+    reason = format_mechanical_size_down_reason(
+        current_weight_pct=3.35, target_weight_pct=1.76,
+        current_risk_pct=1.91, target_risk_pct=1.0,
+    )
+    assert not _reason_cites_hard_trigger(reason)
 
 
 def test_fill_retry_is_not_spent_on_a_held_trim():

@@ -312,6 +312,12 @@ _EXIT_TRIGGER_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "correlation breach", "correlation cluster breach",
     )),
     ("broker_stop_fill", ("stop hit", "stopped out")),
+    # Constructor-stamped funding-trim. Descriptive only — not a midday
+    # hard-trigger. Do NOT add this phrase to pipeline._HARD_TRIGGER_KEYWORDS
+    # (correlation-breach lesson: wording with no verifier).
+    ("mechanical_size_down", (
+        "mechanical size-down vs live book",
+    )),
 )
 
 #: Explicit fallback — never silently fold an exit-family row with no

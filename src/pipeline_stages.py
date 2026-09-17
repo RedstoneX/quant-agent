@@ -1436,8 +1436,9 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
             ):
                 # Already recorded as SOFT_EXIT_MISSING_AFTER_RETRY
                 # before the constructor ran. Do not re-file as a
-                # generic drop. A reduction with a blank falsifier
-                # is NOT this skip — it was admitted.
+                # generic drop. A checkable size-down with a blank
+                # falsifier is NOT this skip — it was admitted so the
+                # constructor can stamp a mechanical warrant.
                 continue
             # Falls back to a generic label only if a future refactor adds
             # a new drop path the capture's log-message pattern doesn't
@@ -2672,9 +2673,12 @@ def _target_increase_missing_falsifier(
 
     Classification reuses `PortfolioManagerAgent._target_intent` (current
     size/risk vs the proposed target). Reductions and closes are never
-    this check — a blank `thesis_invalid_if` must not block a SELL/COVER.
-    Fail-safe matches `_target_intent`: unknown current risk is treated
-    as an increase, the stricter gate. Never invents a string.
+    this check — a blank `thesis_invalid_if` on a checkable size-down
+    is not a missing open falsifier. The constructor still must name a
+    mechanical live-book warrant rather than PM thesis; that is not
+    this function. Fail-safe matches `_target_intent`: unknown current
+    risk is treated as an increase, the stricter gate. Never invents a
+    string.
     """
     held = {
         str(getattr(p, "symbol", "")).upper(): p
@@ -2696,9 +2700,12 @@ def _targets_admitted_to_book(
     Permanent never-blank path: heal + one paid retry already ran on the
     PM seat so it actually produces the field. Remaining blanks on
     opens/increases are refused here so they do not consume risk budget
-    or become tickets. Reductions and closes are admitted even with a
-    blank `thesis_invalid_if` — a size drop must still become SELL/COVER.
-    Classification reuses `_target_intent` (risk/weight vs the live book).
+    or become tickets. Reductions and closes with a blank
+    `thesis_invalid_if` are admitted only when `_target_intent`
+    classifies a checkable size-down vs the live book (risk/weight).
+    Those are not soft-exits: the constructor stamps a mechanical
+    size-down warrant as the named trigger. PM thesis free text cannot
+    create the sell. Classification reuses `_target_intent`.
     That label can disagree with the constructor's order side when a
     lower risk request meets a tighter stop (more shares). The RiskStage
     isolate still drops any constructed BUY/SHORT whose falsifier is

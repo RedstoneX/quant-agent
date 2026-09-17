@@ -341,7 +341,8 @@ def missing_stated_falsifier(value: str | None) -> bool:
     Empty, whitespace, and the recordable don't-know token `unknown` are
     all missing. Neutral Tech may omit; an actionable rating and an
     open/increase target may not enter the ticket book in this state.
-    A reduction or close may omit.
+    A reduction or close may omit the field — that omit does not make
+    PM thesis free text a sell warrant.
     """
     return not stated_soft_exit(value)
 
@@ -350,9 +351,13 @@ def open_target_missing_falsifier(target, *, intent: str | None = None) -> bool:
     """Open/increase target with no real thesis_invalid_if.
 
     Falsifier is required only for opens and increases. Reductions and
-    closes may omit it. Never invents a string. Catalyst is not this
-    check — it stays optional except the dated unmeasurable-range
-    exception already gated in Python.
+    closes may omit it; a blank-falsifier size-down is not a soft-exit
+    — the constructor may only build SELL/COVER when a mechanical
+    size-down vs the live book is checkable, and that warrant is the
+    named trigger. PM thesis free text explains; it cannot create the
+    sell. Never invents a string. Catalyst is not this check — it
+    stays optional except the dated unmeasurable-range exception
+    already gated in Python.
 
     `intent` is `"buy"` / `"short"` / `"sell"` from
     `PortfolioManagerAgent._target_intent` (current size/risk vs the
