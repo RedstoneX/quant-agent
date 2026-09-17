@@ -264,7 +264,10 @@ const steps = [
     await lifecycle.scrollIntoViewIfNeeded();
   }],
   ["04-ipad-landscape-chart", { width: 1180, height: 820 }, "populated", async (page) => {
-    await page.getByRole("button", { name: "Chart", exact: true }).click();
+    // 1180 is above the cockpit Dockview gate (lg / 1024) and below the
+    // research-desk gate (xl / 1280). Chart is a dockview tab, not the
+    // composed iPad pane button.
+    await page.getByRole("tab", { name: "Chart" }).click();
   }],
   ["05-ipad-portrait-candidates", { width: 820, height: 1180 }],
   ["06-desktop-no-session-empty", { width: 1600, height: 1000 }, "empty"],
@@ -291,6 +294,15 @@ const steps = [
   ["17-desktop-system-rearmed", { width: 1600, height: 1000 }, "populated", async (page) => { await openDiagnostics(page); await page.getByText("rearmed · checks passed", { exact: true }).waitFor(); }],
   ["18-ipad-system-hard-stop", { width: 820, height: 1180 }, "error", async (page) => { await openDiagnostics(page); await page.getByText("hard stop · operator reset", { exact: true }).waitFor(); }],
   ["19-desktop-system-circuit-unavailable", { width: 1600, height: 1000 }, "unavailable", async (page) => { await page.getByText("paid-analysis safety circuit unavailable", { exact: true }).waitFor(); await openDiagnostics(page); await page.getByText("unavailable", { exact: true }).last().waitFor(); }],
+  ["20-laptop-cockpit-dockview", { width: 1100, height: 800 }, "populated", async (page) => {
+    // Regression: a normal (non-maximized) desktop window must mount
+    // Dockview so Chart/Positions/Candidates tabs can be rearranged.
+    // Previously this width used the iPad pane strip and drag was locked
+    // until the window crossed 1280px.
+    await page.getByRole("tab", { name: "Chart" }).waitFor();
+    await page.getByRole("tab", { name: "Positions" }).waitFor();
+    await page.getByRole("tab", { name: "Candidates" }).waitFor();
+  }],
 ];
 
 const results = [];

@@ -1,23 +1,38 @@
 import { useEffect, useState } from "react";
 
-// Matches Tailwind's default `xl:` breakpoint (1280px) — the same
-// breakpoint the primary cockpit already switches on for its
-// Candidates/Chart/Decision-Room tab strip. Dockview is only ever
-// instantiated above this width; below it, App.tsx renders the plain
-// `SupportTabs` strip instead, so a touch/narrow viewport never pays for
-// (or has to fight) a drag-and-drop workspace it can't meaningfully use.
-const QUERY = "(min-width: 1280px)";
+// Cockpit Dockview vs the composed Positions/Candidates/Chart pane strip.
+// Tailwind `lg` (1024px). The previous `xl` (1280px) gate treated a normal
+// non-maximized desktop window as an iPad: Dockview never mounted, so
+// tabs could not be rearranged until the window crossed 1280 and the
+// layout flipped. iPad portrait (~820px) stays on the composed strip.
+export const COCKPIT_DESKTOP_MIN_WIDTH_PX = 1024;
+export const COCKPIT_DESKTOP_QUERY = `(min-width: ${COCKPIT_DESKTOP_MIN_WIDTH_PX}px)`;
 
-export function useIsDesktop(): boolean {
-  const [isDesktop, setIsDesktop] = useState(() => (typeof window === "undefined" ? true : window.matchMedia(QUERY).matches));
+// Research desk keeps `xl` so iPad landscape stays a reading composition
+// rather than a squeezed Dockview — that surface was not the rearrange bug.
+export const RESEARCH_DESKTOP_MIN_WIDTH_PX = 1280;
+export const RESEARCH_DESKTOP_QUERY = `(min-width: ${RESEARCH_DESKTOP_MIN_WIDTH_PX}px)`;
+
+function useMatch(query: string): boolean {
+  const [matches, setMatches] = useState(() => (typeof window === "undefined" ? true : window.matchMedia(query).matches));
 
   useEffect(() => {
-    const mql = window.matchMedia(QUERY);
-    const onChange = () => setIsDesktop(mql.matches);
+    const mql = window.matchMedia(query);
+    const onChange = () => setMatches(mql.matches);
     onChange();
     mql.addEventListener("change", onChange);
     return () => mql.removeEventListener("change", onChange);
-  }, []);
+  }, [query]);
 
-  return isDesktop;
+  return matches;
+}
+
+/** True when the cockpit should mount Dockview (move/resize/dock). */
+export function useIsDesktop(): boolean {
+  return useMatch(COCKPIT_DESKTOP_QUERY);
+}
+
+/** True when the Research desk should mount its Dockview workspace. */
+export function useIsResearchDesktop(): boolean {
+  return useMatch(RESEARCH_DESKTOP_QUERY);
 }

@@ -682,7 +682,7 @@ export function PriceChartPanel({
     // Handled manually rather than via lightweight-charts' own
     // `autoSize: true` — this cockpit mounts the chart inside a pane that
     // can be `display:none` (the mobile/iPad "Chart" tab starts hidden;
-    // the desktop 3-column pane can also cross the xl breakpoint on
+    // the desktop 3-column pane can also cross the lg breakpoint on
     // resize). autoSize correctly picks up the new pixel size on a
     // hidden->visible transition, but does NOT itself re-fit the visible
     // time range afterward, leaving all bars compressed into whatever
@@ -1395,7 +1395,7 @@ export function PriceChartPanel({
           the manual ResizeObserver above needs a real box to measure from
           the start. `h-full` lets it inherit whatever height App.tsx's
           flex-1 chart wrapper actually computed (viewport-bounded on
-          desktop). Below `xl` (the mobile/iPad single-pane view, which has
+          desktop). Below `lg` (the mobile/iPad portrait single-pane view, which has
           no viewport-bounded ancestor to inherit from) the chart was
           previously pinned to a flat 320px regardless of the device's
           actual screen — cramped on every iPad size, reported by the
@@ -1410,9 +1410,9 @@ export function PriceChartPanel({
           on a blank "OK" box. */}
       {/* Fix (owner UI pass): candle/volume area + the bottom range slider
           now live in ONE flex column that is itself sized exactly the way
-          the old lone div was (`h-[60vh]` below `xl` where there's no
+          the old lone div was (`h-[60vh]` below `lg` where there's no
           viewport-bounded ancestor to inherit real height from — see the
-          comment on the outer container above; `h-full` within `xl`, where
+          comment on the outer container above; `h-full` within `lg`, where
           the dockview panel/App.tsx flex-1 wrapper DOES provide one). The
           bug this fixes: previously the chart sub-div claimed the FULL
           h-[60vh]/h-full box on its own, and the slider was appended as a
@@ -1434,7 +1434,7 @@ export function PriceChartPanel({
           floor, enforced where it always was — the resize observer's own
           `Math.max(rect.height, MIN_CHART_HEIGHT)` — so the chart can never
           be squeezed to unusable regardless of how the flex split lands. */}
-      <div className="flex h-[60vh] xl:h-full min-h-[280px] flex-col">
+      <div className="flex h-[60vh] lg:h-full min-h-[280px] flex-col">
         <div className="relative flex-1 min-h-0">
           <div ref={containerRef} className="w-full h-full" />
           {/* Dividend/earnings fixed bottom row (owner re-test, 2026-09-10):

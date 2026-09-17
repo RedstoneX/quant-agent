@@ -3,7 +3,7 @@ import { DockviewReact, type DockviewApi, type DockviewReadyEvent, type IDockvie
 import "dockview-react/dist/styles/dockview.css";
 import { api, type ResearchDailyResponse, type ResearchDeskData } from "../../api/client";
 import { todayEtDate } from "../../lib/format";
-import { useIsDesktop } from "../../lib/useIsDesktop";
+import { useIsResearchDesktop } from "../../lib/useIsDesktop";
 import { AgentBriefsPanel, DailyThesisPanel, DecisionDeltaPanel, ReviewPanel, SignalStackPanel, SmartMoneyPanel } from "./ResearchPanels";
 import { ResearchState } from "./ResearchPrimitives";
 import { buildResearchDesk } from "./buildResearchDesk";
@@ -166,7 +166,7 @@ function IPadResearchDesk({ data }: { data: ResearchDeskData }) {
 }
 
 export function ResearchDesk() {
-  const isDesktop = useIsDesktop();
+  const isDesktop = useIsResearchDesktop();
   const [date, setDate] = useState(todayEtDate());
   const [data, setData] = useState<ResearchDailyResponse | null>(null);
   const [priorData, setPriorData] = useState<ResearchDailyResponse | null>(null);

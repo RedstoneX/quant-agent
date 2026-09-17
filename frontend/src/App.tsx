@@ -94,15 +94,16 @@ const PANE_LABELS: Record<MobilePane, string> = {
   chart: "Chart",
 };
 
-// Below the `xl` breakpoint (covers every iPad size, portrait or
-// landscape) the three cockpit panes become an explicit tab strip instead
-// of being squeezed side by side — a real tabbed surface, not a
-// compressed desktop layout. Positions leads (item 1 of the cockpit
-// trader rework): it's the first tab and the default landing pane on
-// every breakpoint, matching the desktop Dockview layout below.
+// Below Tailwind `lg` (1024px) the three cockpit panes become an explicit
+// tab strip instead of Dockview — a real tabbed surface for phones and
+// iPad portrait. Positions leads (item 1 of the cockpit trader rework):
+// it's the first tab and the default landing pane, matching the desktop
+// Dockview layout below. `lg` rather than `xl` (1280): a normal desktop
+// window must be able to move Chart/Candidates/Positions without first
+// widening past a layout-mode flip.
 function PaneNav({ pane, onChange }: { pane: MobilePane; onChange: (p: MobilePane) => void }) {
   return (
-    <div className="xl:hidden flex border-b border-border">
+    <div className="lg:hidden flex border-b border-border">
       {(["positions", "watchlist", "chart"] as const).map((p) => (
         <button
           key={p}
