@@ -16,10 +16,11 @@ Two jobs, both fail-closed on missing data, neither invents a price:
    (ex-div shift, scale-in rearm, residual reprotect) call
    `write_back_stop_loss` after the broker accepts.
 
-2. Reconcile that recorded level against the broker's live stop and
-   REPORT mismatches. An out-of-band change leaves no write-back row to
-   catch; this is the catch. It never copies the broker price into the
-   archive — that would silently bless a move nobody in this code made.
+2. Reconcile that recorded level against the broker's live stop. When
+   the live protective order exists, write THAT price back onto the
+   opening row (COP/EQNR: archive lagged the desk's own stop). That is
+   not an invented level. Remaining mismatches still page — never mute
+   an alert without fixing the record.
 
 `initial_stop_loss` on the same opening row is the entry bet, frozen on
 the first write-back (and set at insert). R-multiple and the Type A
@@ -302,8 +303,44 @@ def reconcile_recorded_stop_levels(
     return mismatches
 
 
+def write_back_live_protective_stops(
+    db: Any, mismatches: list[StopLevelMismatch],
+) -> list[StopLevelMismatch]:
+    """Copy the desk's live protective order onto the opening row.
+
+    `live` came from `broker.get_current_stop_price` — an order we already
+    hold, not a number we invented. Returns mismatches that could not be
+    written (those still page). Successful write-back is the fix; it is
+    not a mute.
+    """
+    remaining: list[StopLevelMismatch] = []
+    for item in mismatches or []:
+        live = _finite_price(item.live)
+        if live <= 0:
+            remaining.append(item)
+            continue
+        recorded = write_back_stop_loss(
+            db, item.symbol, live, is_short=item.is_short,
+        )
+        if not recorded:
+            remaining.append(item)
+            continue
+        logger.info(
+            "stop-level reconcile: wrote live protective stop $%.4f back "
+            "onto %s archive (was %s)",
+            live, item.symbol, item.recorded,
+        )
+    return remaining
+
+
 def report_stop_level_mismatches(mismatches: list[StopLevelMismatch]) -> None:
-    """Log every mismatch and page the owner once per batch. Never raises."""
+    """Log and page every remaining mismatch. Do not mute; do not invent.
+
+    Write-back of the live protective order happens first (see
+    `write_back_live_protective_stops`). Anything still listed here is an
+    unfixed record. 2026-09-16 once-per-day paging cleared the COP/EQNR
+    alerts without fixing the archive; that mute is gone.
+    """
     if not mismatches:
         return
     for item in mismatches:
@@ -320,10 +357,11 @@ def report_stop_level_mismatches(mismatches: list[StopLevelMismatch]) -> None:
         "stop. Analysis drawn from the archive would be stale. The broker "
         "stop was NOT changed by this check.\n"
         f"{lines}\n"
-        "Write-back covers in-code replace/trail/repair/rearm/ex-div. "
-        "A mismatch after that is an out-of-band move, or a write-back "
-        "that failed. Do not treat a 'traded through its stop' reading "
-        "from the archive as real until these match."
+        "Write-back covers in-code replace/trail/repair/rearm/ex-div and "
+        "a live protective order found at reconcile. A mismatch after "
+        "that is an out-of-band move, or a write-back that failed. Do not "
+        "treat a 'traded through its stop' reading from the archive as "
+        "real until these match."
     )
     try:
         from src import notifier as _notifier

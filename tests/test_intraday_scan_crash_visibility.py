@@ -294,24 +294,21 @@ def test_scan_never_ran_because_another_session_active_stays_healthy_and_silent(
     tmp_path, monkeypatch,
 ):
     _make_db(tmp_path, monkeypatch)
-    p = _pipeline(
-        enabled=True,
-        other_session_rows=[{
-            "symbol": "MSFT", "action": "BUY", "run_id": "run-morning1",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "reasoning": "morning run mid-flight",
-        }],
-    )
+    p = _pipeline(enabled=True)
+    p._blocking_owner_session = MagicMock(return_value="morning")
+    p._intra_window_remaining_s = MagicMock(return_value=0.0)
 
     result = p.run_intra_check()
 
     assert result["status"] == "ok"
     # Same status as literal process-lock contention above — both are
     # "something else already owns this window" from the caller's
-    # perspective, one via the advisory flock, one via the DB-row guard.
-    assert result["intraday_scan"] == {
-        "status": "intraday_scan_lock_contended", "run_id": result["run_id"],
-    }
+    # perspective, one via the advisory flock, one via the owner lock
+    # still held at the end of this tick's wait. The owner-lock skip
+    # additionally names movers so they do not vanish silently.
+    nested = result["intraday_scan"]
+    assert nested["status"] == "intraday_scan_lock_contended"
+    assert nested["run_id"] == result["run_id"]
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
 
 

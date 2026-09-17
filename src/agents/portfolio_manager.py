@@ -1580,12 +1580,22 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     macro_analysis if isinstance(macro_analysis, dict)
                     else macro_analysis.model_dump()
                 )
-                from src.seat_heal import coerce_macro_shape
+                from src.seat_heal import coerce_macro_shape, describe_macro_parse_failure
                 payload, _fixes = coerce_macro_shape(payload)
                 macro = MacroAnalysis.model_validate(payload)
-            except Exception:
+            except Exception as exc:
                 macro = None
-                logger.warning("Phase 13: macro_analysis failed to parse", exc_info=True)
+                from src.seat_heal import describe_macro_parse_failure
+                reason = describe_macro_parse_failure(
+                    macro_analysis if isinstance(macro_analysis, dict) else {},
+                    exc,
+                )
+                logger.error("Phase 13: macro_analysis failed to parse: %s", reason, exc_info=True)
+                failures = getattr(PortfolioManagerAgent, "_macro_parse_failures", None)
+                if not isinstance(failures, list):
+                    PortfolioManagerAgent._macro_parse_failures = []
+                    failures = PortfolioManagerAgent._macro_parse_failures
+                failures.append(reason)
             if macro is not None:
                 sectors = {
                     str(k).strip().upper(): str(v)

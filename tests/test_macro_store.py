@@ -20,8 +20,14 @@ def test_save_then_load_round_trip(tmp_path):
             "cash_recommendation_pct": 25.0,
             "reasoning": "Hold buffer for inflation tail.",
         },
-        # Fields not in the snapshot subset — should be dropped.
-        "reasoning_chain": {"volatility_analysis": "…"},
+        "reasoning_chain": {
+            "volatility_analysis": "vix ok",
+            "yield_curve_analysis": "curve ok",
+            "monetary_policy_analysis": "fed ok",
+            "inflation_labor_credit": "cpi ok",
+            "cross_signal_synthesis": "together ok",
+            "sector_implications": "tech ow",
+        },
         "sector_guidance": [
             {"sector": "Technology", "stance": "overweight", "reason": "AI capex cycle"},
         ],
@@ -32,18 +38,21 @@ def test_save_then_load_round_trip(tmp_path):
     assert loaded["regime"] == "risk-on"
     assert loaded["equity_outlook"] == "bullish"
     assert loaded["position_guidance"]["target_invested_pct"] == 75.0
-    # Ensure the large fields are NOT persisted (we want the snapshot tiny).
-    assert "reasoning_chain" not in loaded
-    # sector_guidance IS persisted — but compactly, as {sector: direction}.
-    # 2026-07-16 audit: this test used to assert it was dropped, pinning the
-    # bug that made every downstream macro_sector_stance permanently
-    # "unknown". The "keep it tiny" intent is honoured by storing the
-    # normalized map WITHOUT the bulky `reason` prose (that lives in
-    # agent_logs).
+    # 2026-09-16: dropping reasoning_chain made every later Phase 13
+    # re-parse a ValidationError. Compact dict sector_guidance stays for
+    # existing readers; live rows (with reasons) are stored separately so
+    # we do not invent reasons when rehydrating.
+    assert loaded["reasoning_chain"]["volatility_analysis"] == "vix ok"
     assert loaded["sector_guidance"] == {"Technology": "bullish"}
     assert "reason" not in json.dumps(loaded["sector_guidance"])
-    # Date stamp is added on save.
+    assert loaded["sector_guidance_rows"][0]["reason"] == "AI capex cycle"
     assert "date" in loaded
+    from src.seat_heal import coerce_macro_shape
+    from src.models import MacroAnalysis
+    coerced, _fixes = coerce_macro_shape(loaded)
+    parsed = MacroAnalysis.model_validate(coerced)
+    assert parsed.regime == "risk-on"
+    assert parsed.sector_guidance[0].reason == "AI capex cycle"
 
 
 def test_corrupt_file_returns_none(tmp_path):

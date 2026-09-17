@@ -559,17 +559,17 @@ def test_success_after_provably_free_attempt_is_charged_only_the_real_cost(
         ).fetchone()[0] == 1
 
 
-def test_success_after_ambiguous_attempt_marks_inexact_instead_of_a_phantom_charge(tmp_path):
-    """Renamed from `test_success_after_ambiguous_attempt_still_carries_the_
-    failed_reserve`, which pinned the OLD behaviour: a 500 might have billed
-    for a stream that started and died, so its conservative reserve was
-    added on top of the real settled cost. That assertion is now WRONG on
-    its own terms -- item 14 (2026-09-02) deleted the reservation there was
-    ever anything to add. The fail-closed intent survives in a different
-    place: the day/session is marked inexact (so `_enforce_settled_limits_
-    locked` latches on it), while the ledger itself only ever holds the
-    ACTUAL cost of the response that came back -- no invented figure for
-    what an ambiguous failed attempt might have cost."""
+def test_success_after_ambiguous_attempt_keeps_spend_exact_and_does_not_latch(tmp_path):
+    """A 500 might have billed for a stream that started and died.
+
+    Item 14 deleted the reservation there was ever anything to add, so the
+    ledger only ever holds the winner's real cost. That winner with a
+    real cost_usd keeps the day exact — marking inexact was a second lie
+    about spend. unknown_cost_rows stays 0 and legacy_unknown_cost does
+    not latch. A fully-failed ambiguous call (`fail_call`) and a completed
+    call with no telemetry still latch. Caps are not raised; settled
+    spend is not erased.
+    """
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
     ambiguous = _StatusCodeError(500, "upstream exploded mid-stream")
@@ -582,20 +582,34 @@ def test_success_after_ambiguous_attempt_marks_inexact_instead_of_a_phantom_char
     # Only the real, settled cost is ever booked -- never a guess.
     assert _settled(path, reservation) == pytest.approx(0.0014)
     with sqlite3.connect(path) as conn:
+        day_row = conn.execute(
+            "SELECT unknown_cost_rows, costs_exact FROM llm_budget_days",
+        ).fetchone()
         assert conn.execute(
             "SELECT costs_exact FROM llm_budget_sessions WHERE run_id=?",
             ("run-retry-500",),
-        ).fetchone()[0] == 0
-    # Fail-closed is not lost: an inexact day hard-latches on the very next
-    # authorization boundary, same posture as the deleted phantom charge.
-    assert circuit.status()["trigger_code"] == "legacy_unknown_cost"
+        ).fetchone()[0] == 1
+        # Incrementing unknown_cost_rows here was the 2026-09-16 midday
+        # wipe (event id=27) at ~$0.65 of $2.75. The winner's cost is
+        # known, so the day stays exact.
+        assert day_row[0] == 0
+        assert day_row[1] == 1
+    state = circuit.status()
+    assert state["suspended"] is False
+    assert state.get("trigger_code") != "legacy_unknown_cost"
+    # Caps still bind on the booked total — the next call is authorized.
+    circuit.begin_call(
+        agent_name="tech_analyst", model="google/gemini-3.5-flash-lite",
+        system_prompt="s", user_message="u", max_output_tokens=100,
+    )
 
 
-def test_one_ambiguous_attempt_among_free_ones_still_marks_inexact(tmp_path):
-    """Renamed from `..._keeps_the_whole_reserve`: ambiguity is still
-    contagious (see `_all_attempts_provably_free`) -- one attempt that
-    might have been billed still makes the whole call's exactness suspect
-    -- but there is no reservation left to inflate a dollar charge with."""
+def test_one_ambiguous_attempt_among_free_ones_stays_exact(tmp_path):
+    """A mixed retry still books only the winner's real cost.
+
+    Ambiguity on a prior attempt is not a reason to mark the day inexact
+    once the provider returned a number for the seat that succeeded.
+    """
     path = _db_path(tmp_path)
     circuit = LLMCostCircuitBreaker(path, _config(), _Notifier())
     free = _StatusCodeError(429, "rate limited")
@@ -611,7 +625,11 @@ def test_one_ambiguous_attempt_among_free_ones_still_marks_inexact(tmp_path):
         assert conn.execute(
             "SELECT costs_exact FROM llm_budget_sessions WHERE run_id=?",
             ("run-retry-mixed",),
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT unknown_cost_rows FROM llm_budget_days",
         ).fetchone()[0] == 0
+    assert circuit.status()["suspended"] is False
 
 
 def test_caller_that_names_no_attempts_is_treated_as_exact(tmp_path):

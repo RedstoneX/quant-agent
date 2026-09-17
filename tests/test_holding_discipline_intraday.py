@@ -473,3 +473,15 @@ def test_the_intraday_assembler_labels_a_same_day_carry_forward_honestly():
 
     assert spy.call_args.kwargs["macro_status"] == "carried_from_morning"
     assert spy.call_args.kwargs["macro_regime_today"] == "risk-on"
+
+
+def test_regime_only_snapshot_is_trusted_for_exits_not_passed_to_pm():
+    """A same-day {date, regime} trim must still prove a false flip.
+    The same payload must not be smuggled into PM as a MacroAnalysis."""
+    from src.pipeline_stages import _macro_analysis_as_dict
+
+    pipeline = _pipeline(macro_state=_MACRO_RISK_ON_TODAY, protected=True)
+    carried = pipeline._carry_forward_macro()
+    assert carried.status == "carried_from_morning"
+    assert carried.payload["regime"] == "risk-on"
+    assert _macro_analysis_as_dict(carried.payload) is None

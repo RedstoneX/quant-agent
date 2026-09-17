@@ -56,9 +56,11 @@ This file records what is accepted and true **now**. Git history preserves imple
   `initial_stop_loss` so R-multiple is not rewritten by a trail. Repair
   restores that live recorded level, not the frozen entry stop; a stop that
   would fire immediately is still refused (restoring the entry stop would be
-  a widen). A session and watchdog reconcile reports, and does not copy, when
-  that number still disagrees with the broker (an out-of-band move leaves no
-  write-back row). Do not treat a "traded through its stop" reading from the
+  a widen). A session and watchdog reconcile writes the desk's live protective
+  order back onto the opening row when that order exists (COP/EQNR:
+  archive lagged our own stop — not an invented level). Remaining
+  mismatches still page; do not mute an alert without fixing the
+  record. Do not treat a "traded through its stop" reading from the
   archive as real while they disagree. Items 35 and 69 stay archive illusions,
   not re-filed as fixed. The halt still asks the broker whether a stop
   *exists*.
@@ -598,10 +600,17 @@ still exists in the schema/rearm logic purely to recognize pre-2026-09-02
 historical rows; nothing in the current code can create a new one — see
 the same 2026-09-03 entry in `docs/INCIDENT_HISTORY.md`.) Trip and
 successful rearm each send
-one deduplicated Telegram alert. Missing/corrupt or inexact accounting, unknown
-pricing/cost, unresolved attempted requests, provider-attempt exhaustion and any
-unrecognized trigger remain a hard global latch requiring an auditable operator
-reset. Reset never erases settled spend and cannot bypass a quota hold.
+one deduplicated Telegram alert. Missing/corrupt accounting, a row whose own cost is unknown (no telemetry,
+or a fully-failed ambiguous attempt), unknown pricing, unresolved attempted
+requests, provider-attempt exhaustion and any unrecognized trigger remain a
+hard global latch requiring an auditable operator reset. A completed call
+that reports a real cost after an earlier ambiguous attempt on the same
+logical call keeps spend exact (`costs_exact=1`) and does **not** increment
+`unknown_cost_rows` and does **not** hard-latch: the 2026-09-16 midday wipe
+(event id=27) was that false latch while known spend was ~$0.65 of $2.75.
+Caps still bind on the booked total. Reset never erases settled spend and
+cannot bypass a quota hold. Caps are not raised to hide a latch. Operator
+reset remains the product for a real unknown row.
 
 Broker-resident stops, deterministic loss protection, order/fill reconciliation,
 close/P&L jobs and the read-only API remain active under every hold/latch.

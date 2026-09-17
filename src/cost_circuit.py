@@ -2252,9 +2252,9 @@ class LLMCostCircuitBreaker:
             self._trip_locked(
                 conn, code="legacy_unknown_cost",
                 detail=(f"{unknown_cost_rows} same-day row(s) (pre-deployment agent "
-                        "logs, or a call that failed ambiguously -- see fail_call/"
-                        "complete_call) have unknown cost; daily spend cannot be "
-                        "bounded safely"),
+                        "logs, or a fully-failed call with unknown cost — see "
+                        "fail_call / complete_call with no telemetry) have unknown "
+                        "cost; daily spend cannot be bounded safely"),
                 run_id=run_id, mode=mode, agent_name=agent_name,
                 attempts=attempts, attempts_exact=attempts_exact,
                 costs_exact=False, session_cost=session, daily_cost=daily,
@@ -2578,12 +2578,15 @@ class LLMCostCircuitBreaker:
         NOT produce the response being settled here (a retried primary, a
         failed primary whose failover then succeeded) -- no longer adds a
         dollar charge: there is no reservation left to estimate one from.
-        If every one of them is provably a $0 failure
-        (`_is_known_zero_cost_failure`), nothing changes. If even one is
-        ambiguous, the day/session is marked inexact so
-        `_enforce_settled_limits_locked` below fails closed on it -- the
-        same fail-closed posture as before, just without inventing a
-        figure for what an ambiguous failed attempt might have cost.
+        A winner that reports a real `cost_usd` keeps the day/session
+        exact: the booked increment is that number, not a guess and not an
+        inexact flag. Marking exactness from one ambiguous prior attempt
+        was a second lie about spend (2026-09-16). `unknown_cost_rows` and
+        the `legacy_unknown_cost` latch stay reserved for a row whose OWN
+        cost is missing (`actual_cost_usd is None`, or `fail_call` on a
+        fully-failed ambiguous attempt). Caps are not raised; settled
+        spend is not erased; operator reset remains the product for a
+        real unknown row.
         """
 
         if not self.enabled or reservation.reservation_id == "disabled":
@@ -2599,10 +2602,23 @@ class LLMCostCircuitBreaker:
         day, _, _ = _et_day_and_utc_bounds()
         unknown = actual_cost_usd is None
         accounted = 0.0 if unknown else float(actual_cost_usd)
-        prior_failures_ambiguous = bool(failed_attempt_errors) and not (
-            _all_attempts_provably_free(failed_attempt_errors[-1], failed_attempt_errors)
-        )
-        exact = not unknown and not prior_failures_ambiguous
+        # A completed call with provider-reported cost is an exact row even
+        # when an earlier attempt on the SAME logical call was ambiguous.
+        # Incrementing `unknown_cost_rows` here was the 2026-09-16 false
+        # latch: a successful position_reviewer ($0.003861 real cost) tripped
+        # `legacy_unknown_cost` and wiped every paid scan through close while
+        # known spend was ~$0.65 of $2.75. Marking `costs_exact=0` on that
+        # same winner was a second spend lie: the booked increment is the
+        # provider's number. `unknown_cost_rows` is reserved for rows whose
+        # OWN cost is missing (no telemetry, or fail_call on a fully-failed
+        # ambiguous attempt) — not for a winner with a number.
+        if failed_attempt_errors and not unknown:
+            logger.info(
+                "cost-circuit: %s completed at $%.6f after %d prior attempt(s); "
+                "booking the winner as exact",
+                reservation.agent_name, accounted, len(failed_attempt_errors),
+            )
+        exact = not unknown
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             updated_session = conn.execute(
@@ -2622,12 +2638,7 @@ class LLMCostCircuitBreaker:
                 "updated_at=datetime('now') WHERE day=?",
                 (
                     accounted,
-                    # Either "no telemetry at all" or "an earlier attempt on
-                    # this call was ambiguous" makes the day's real total
-                    # unprovable -- both fail closed the same way, via
-                    # `_enforce_settled_limits_locked`'s unknown_cost_rows
-                    # check, immediately below and at the next boundary.
-                    int(unknown or prior_failures_ambiguous),
+                    int(unknown),
                     int(exact), day,
                 ),
             )
@@ -2653,9 +2664,10 @@ class LLMCostCircuitBreaker:
                 )
             else:
                 # (b): stop the instant REAL SETTLED spend -- this call's
-                # actual reported cost included -- reaches either cap. Also
-                # catches the ambiguous-prior-attempt case above, via the
-                # day's now-nonzero unknown_cost_rows.
+                # actual reported cost included -- reaches either cap.
+                # An inexact day from an ambiguous prior attempt does NOT
+                # hard-latch here: the winner's cost is booked; remaining
+                # caps still bind on the known minimum.
                 self._enforce_settled_limits_locked(
                     conn, day=day, run_id=reservation.run_id, mode=reservation.mode,
                     agent_name=reservation.agent_name, attempts=attempts,
