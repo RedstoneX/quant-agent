@@ -500,3 +500,146 @@ def test_pm_short_target_outside_universe_is_rejected():
         total_value=100_000, allowed_buy_symbols={"AAPL", "MSFT"},
     )
     assert any("outside the configured universe" in error for error in errors)
+
+
+# --------------------------------------------------------------------------
+# 2026-09-17 incident (intra_check-44594a05): a risk-based TRIM of a held
+# name with no current-run Technical analysis was classified as an increase
+# and failed grounding, which rejected the whole plan — including a valid,
+# fully grounded new entry.
+# --------------------------------------------------------------------------
+
+def _held_long(symbol: str) -> Position:
+    return Position(
+        symbol=symbol, qty=100.0, avg_entry=230.0, current_price=229.0,
+        market_value=22_900.0, unrealized_pnl=-100.0, sector="Technology",
+    )
+
+
+def _trim_and_open_targets() -> list[dict]:
+    return [
+        {
+            # Funding trim: AAPL from 1.91% equity at risk down to 1.0%.
+            "symbol": "AAPL", "risk_allocation_pct": 1.0, "conviction": "medium",
+            "thesis": "Trim AAPL toward 1.0% risk to fund NET.",
+            "provenance": [{
+                "source": "macro", "observed_stance": "bullish",
+                "relationship": "context", "evidence": "macro backdrop",
+            }],
+        },
+        {
+            "symbol": "NET", "risk_allocation_pct": 1.75, "conviction": "high",
+            "thesis": "Open NET on the current-run strong buy.",
+            "provenance": [
+                {
+                    "source": "technical", "observed_stance": "strong_buy",
+                    "relationship": "supports", "evidence": "current-run scan",
+                },
+                {
+                    "source": "macro", "observed_stance": "bullish",
+                    "relationship": "supports", "evidence": "macro backdrop",
+                },
+            ],
+        },
+    ]
+
+
+@patch("anthropic.Anthropic")
+def test_risk_trim_of_unanalysed_holding_does_not_reject_the_plan(mock_cls):
+    from unittest.mock import MagicMock
+    response_text = json.dumps({
+        "reasoning_chain": {
+            "macro_filter": "checked", "news_check": "checked",
+            "earnings_check": "checked", "signal_conflicts": "none",
+            "sizing_logic": "checked", "portfolio_balance": "checked",
+            "cash_target": "checked",
+        },
+        "targets": _trim_and_open_targets(),
+        "portfolio_view": "Open NET, fund it by trimming AAPL.",
+    })
+    mock_client = MagicMock()
+    mock_response = MagicMock()
+    mock_response.content = [MagicMock(text=response_text)]
+    mock_response.usage.input_tokens = 500
+    mock_response.usage.output_tokens = 200
+    mock_client.messages.create.return_value = mock_response
+    mock_cls.return_value = mock_client
+
+    agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6-20250725")
+    decision, result = agent.decide(
+        analyses=[_analysis("NET", "strong_buy")],  # intraday: movers only
+        positions=[_held_long("AAPL")],
+        macro_analysis={"equity_outlook": "bullish"},
+        cash_balance=50_000, total_value=100_000,
+        allowed_buy_symbols={"AAPL", "NET"},
+        existing_risk_pct={"AAPL": 1.91},
+    )
+    assert decision is not None, f"decide() failed closed: {result.semantic_error}"
+    assert {t.symbol for t in decision.targets} == {"AAPL", "NET"}
+
+
+def _risk_target(symbol: str, risk: float, direction: str = "long"):
+    from src.models import TargetPosition
+    return TargetPosition(
+        symbol=symbol, risk_allocation_pct=risk, direction=direction,
+        thesis="risk target",
+    )
+
+
+def test_risk_target_below_current_risk_is_a_trim():
+    held = {"AAPL": _held_long("AAPL")}
+    assert PortfolioManagerAgent._target_intent(
+        _risk_target("AAPL", 1.0), held, 100_000,
+        existing_risk_pct={"AAPL": 1.91},
+    ) == "sell"
+
+
+def test_risk_target_at_or_above_current_risk_stays_an_increase():
+    held = {"AAPL": _held_long("AAPL")}
+    for risk in (1.91, 2.5):
+        assert PortfolioManagerAgent._target_intent(
+            _risk_target("AAPL", risk), held, 100_000,
+            existing_risk_pct={"AAPL": 1.91},
+        ) == "buy"
+
+
+def test_risk_target_fails_safe_when_current_risk_is_unknown():
+    held = {"AAPL": _held_long("AAPL")}
+    # No risk map at all, or no entry for this holding: today's strict rule.
+    assert PortfolioManagerAgent._target_intent(
+        _risk_target("AAPL", 1.0), held, 100_000, existing_risk_pct=None,
+    ) == "buy"
+    assert PortfolioManagerAgent._target_intent(
+        _risk_target("AAPL", 1.0), held, 100_000, existing_risk_pct={"MSFT": 3.0},
+    ) == "buy"
+
+
+def test_risk_target_is_never_a_trim_for_a_name_not_held_or_held_other_side():
+    # Not held: a lower number in a stale map must not turn an open into a trim.
+    assert PortfolioManagerAgent._target_intent(
+        _risk_target("NET", 1.0), {}, 100_000, existing_risk_pct={"NET": 2.0},
+    ) == "buy"
+    # Held long, target short: a side flip is an opening, never a trim.
+    held = {"AAPL": _held_long("AAPL")}
+    assert PortfolioManagerAgent._target_intent(
+        _risk_target("AAPL", 1.0, "short"), held, 100_000,
+        existing_risk_pct={"AAPL": 1.91},
+    ) == "short"
+
+
+def test_genuine_increase_on_unanalysed_holding_still_rejected():
+    decision = PortfolioDecision.model_validate({
+        "reasoning_chain": {
+            "macro_filter": "m", "news_check": "n", "earnings_check": "e",
+            "signal_conflicts": "s", "sizing_logic": "z",
+            "portfolio_balance": "b", "cash_target": "c",
+        },
+        "targets": [dict(_trim_and_open_targets()[0], risk_allocation_pct=2.5)],
+        "portfolio_view": "increase",
+    })
+    errors = PortfolioManagerAgent.validate_grounding(
+        decision, analyses=[], positions=[_held_long("AAPL")], news_intel=None,
+        earnings_analyses=[], macro_analysis={"equity_outlook": "bullish"},
+        total_value=100_000, existing_risk_pct={"AAPL": 1.91},
+    )
+    assert any("lacks a current-run Technical analysis" in e for e in errors)

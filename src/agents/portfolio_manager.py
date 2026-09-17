@@ -2121,6 +2121,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             # session, not one target).
             decision = self._drop_unadjudicated_conflicts(
                 decision, positions=positions, total_value=total_value,
+                existing_risk_pct=existing_risk_pct,
             )
             # The sub-floor catalyst gate. Same per-target-prune contract as
             # the conflict drop above and applied in the same place, before
@@ -2132,6 +2133,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 active_state_changes=active_state_changes,
                 rr_floor=rr_floor, starter_risk_pct=starter_risk_pct,
                 real_reward_risk_by_symbol=real_reward_risk_by_symbol,
+                existing_risk_pct=existing_risk_pct,
             )
             errors = self.validate_grounding(
                 decision, analyses=analyses, positions=positions,
@@ -2141,6 +2143,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 smart_money_findings=smart_money_findings or [],
                 symbol_sectors=symbol_sectors or {},
                 allowed_buy_symbols=allowed_buy_symbols,
+                existing_risk_pct=existing_risk_pct,
             )
             if errors:
                 logger.error(
@@ -2213,6 +2216,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     # first-attempt path, applied before grounding here too.
                     decision = self._drop_unadjudicated_conflicts(
                         decision, positions=positions, total_value=total_value,
+                        existing_risk_pct=existing_risk_pct,
                     )
                     # Same sub-floor catalyst gate as the first-attempt path.
                     # A schema repair must not be a way around it.
@@ -2222,6 +2226,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         active_state_changes=active_state_changes,
                         rr_floor=rr_floor, starter_risk_pct=starter_risk_pct,
                         real_reward_risk_by_symbol=real_reward_risk_by_symbol,
+                        existing_risk_pct=existing_risk_pct,
                     )
                     errors = self.validate_grounding(
                         decision, analyses=analyses, positions=positions,
@@ -2231,6 +2236,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         smart_money_findings=smart_money_findings or [],
                         symbol_sectors=symbol_sectors or {},
                         allowed_buy_symbols=allowed_buy_symbols,
+                        existing_risk_pct=existing_risk_pct,
                     )
                     if errors:
                         logger.error(
@@ -2265,6 +2271,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     @staticmethod
     def _target_intent(
         target: TargetPosition, held: dict[str, Position], total_value: float,
+        existing_risk_pct: dict[str, float] | None = None,
     ) -> str:
         """"buy" / "short" (opens or increases exposure) vs "sell" (exits or
         reduces it).
@@ -2275,14 +2282,25 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         conflict adjudication?) classify a target by — factored out so the
         two can never disagree about what counts as an increase.
 
-        Risk-based targets (spec §2.1) state risk, not weight, so a weight
-        comparison cannot classify them — the position's current risk
-        depends on its stop, which isn't available here. Any non-zero risk
-        allocation is therefore treated as an INCREASE regardless of
-        whether it might actually be a partial trim: the safe
-        classification either way, since the increase branch in both
-        callers applies the STRICTER treatment. `is_close` (zero risk, or
-        a legacy zero weight) is always a full exit.
+        Risk-based targets (spec §2.1) state risk, not weight, so they are
+        compared against the holding's CURRENT risk: `existing_risk_pct`,
+        the per-symbol stop-based budget risk (% of equity) from the heat
+        roll-up (`src/risk/metrics.py`) — the same "equity at-risk" figure
+        the PM is shown per holding and the constructor rations against
+        (`src/pipeline_stages.py::_book_risk_inputs`). A request strictly
+        BELOW that figure, on a name held on the SAME side, is a trim
+        ("sell"). Anything else — not held, held on the other side, or a
+        request at or above current risk — is an increase.
+
+        Fail safe: when current risk cannot be determined for this holding
+        (no map, or no entry for the symbol), the target is classified as an
+        INCREASE, the stricter treatment in both callers. 2026-09-17
+        incident (intra_check-44594a05): before current risk was consulted,
+        EVERY non-zero risk target was an increase, so an intraday funding
+        trim of a held name the scan had not analysed failed "increase lacks
+        a current-run Technical analysis" and rejected the whole plan,
+        including a valid new entry. `is_close` (zero risk, or a legacy zero
+        weight) is always a full exit.
         """
         symbol = target.symbol.upper()
         pos = held.get(symbol)
@@ -2292,7 +2310,18 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         if target.risk_allocation_pct is not None:
             if target.is_close:
                 return "sell"
-            return "short" if target.direction == "short" else "buy"
+            increase = "short" if target.direction == "short" else "buy"
+            if pos is None or existing_risk_pct is None or not pos.qty:
+                return increase
+            held_side = "short" if pos.qty < 0 else "long"
+            if held_side != target.direction:
+                return increase
+            current_risk = {
+                str(k).upper(): v for k, v in existing_risk_pct.items()
+            }.get(symbol)
+            if current_risk is None:
+                return increase
+            return "sell" if target.risk_allocation_pct < current_risk else increase
         return "buy" if (target.target_weight_pct or 0.0) > current_weight + 0.01 else "sell"
 
     @classmethod
@@ -2303,6 +2332,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         total_value: float, symbol_sectors: dict[str, str] | None = None,
         smart_money_findings: list[SmartMoneyFinding] | None = None,
         allowed_buy_symbols: set[str] | None = None,
+        existing_risk_pct: dict[str, float] | None = None,
     ) -> list[str]:
         """Validate only machine-readable claims against the prompt registry.
 
@@ -2354,22 +2384,20 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 errors.append(f"{symbol}: target has no structured specialist provenance")
                 continue
 
-            # Risk-based targets (spec §2.1) state risk, not weight, so a
-            # weight comparison cannot classify them — the position's
-            # current risk depends on its stop, which this validator does not
-            # have. `_target_intent` therefore treats any non-zero risk
-            # allocation as an INCREASE — a BUY when `direction=="long"`, a
-            # SHORT when `direction=="short"` (Stage 3). That is the safe
-            # classification either way: the increase branch below applies
-            # the STRICTER checks (universe membership, an actual technical
-            # analysis backing the name) to BOTH, so a misclassified trim is
-            # over-validated rather than waved through, and a short is held
-            # to exactly the same grounding contract as a long — it is
-            # neither exempted nor made impossible. §9.3's conflict
+            # Risk-based targets (spec §2.1) state risk, not weight.
+            # `_target_intent` compares them against the holding's current
+            # stop-based risk (`existing_risk_pct`): below it on the same
+            # side is a trim; everything else — and any holding whose current
+            # risk is unknown — is an INCREASE, a BUY for a long and a SHORT
+            # for a short (Stage 3). The increase branch below applies the
+            # STRICTER checks (universe membership, an actual technical
+            # analysis backing the name) to both sides alike. §9.3's conflict
             # adjudication (`_drop_unadjudicated_conflicts`) reuses this same
             # classification for its own "opens or increases" scope, so the
             # two never disagree about what counts as an increase.
-            intent = cls._target_intent(target, held, total_value)
+            intent = cls._target_intent(
+                target, held, total_value, existing_risk_pct=existing_risk_pct,
+            )
             if intent in ("buy", "short"):
                 if allowed_buy_symbols is not None and symbol not in {
                     str(item).strip().upper() for item in allowed_buy_symbols
@@ -2541,6 +2569,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     @classmethod
     def _drop_unadjudicated_conflicts(
         cls, decision: PortfolioDecision, *, positions: list[Position], total_value: float,
+        existing_risk_pct: dict[str, float] | None = None,
     ) -> PortfolioDecision:
         """An unresolved seat conflict on a target that OPENS or INCREASES
         exposure drops THAT ONE TARGET; it never fails the whole session.
@@ -2573,7 +2602,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         signal_conflicts = decision.reasoning_chain.signal_conflicts
         kept: list[TargetPosition] = []
         for target in decision.targets:
-            intent = cls._target_intent(target, held, total_value)
+            intent = cls._target_intent(
+                target, held, total_value, existing_risk_pct=existing_risk_pct,
+            )
             if intent not in ("buy", "short"):
                 kept.append(target)  # exits/reductions are exempt on purpose
                 continue
@@ -2786,6 +2817,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         starter_risk_pct: float,
         asof: date | None = None,
         real_reward_risk_by_symbol: dict[str, float | None] | None = None,
+        existing_risk_pct: dict[str, float] | None = None,
     ) -> PortfolioDecision:
         """Keep every target at the size the PM asked for.
 
@@ -2816,7 +2848,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         setup_by_symbol = {a.symbol.upper(): a.setup_type for a in analyses}
         held = {p.symbol.upper(): p for p in positions}
         for target in decision.targets:
-            intent = cls._target_intent(target, held, total_value)
+            intent = cls._target_intent(
+                target, held, total_value, existing_risk_pct=existing_risk_pct,
+            )
             if intent not in ("buy", "short"):
                 continue
             symbol = target.symbol.upper()
