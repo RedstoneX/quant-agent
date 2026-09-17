@@ -79,6 +79,8 @@ const positions = [
   { symbol: "MSFT", qty: 8, avg_entry: 410.2, current_price: 412.1, market_value: 3296.8, unrealized_pnl: 15.2, unrealized_intraday_pnl: 6, sector: "Technology", is_cash_equivalent: false, direction: "long" },
   { symbol: "NVDA", qty: 5, avg_entry: 118.4, current_price: 121.0, market_value: 605, unrealized_pnl: 13, unrealized_intraday_pnl: 4, sector: "Technology", is_cash_equivalent: false, direction: "long" },
   { symbol: "AMD", qty: 20, avg_entry: 155.1, current_price: 152.4, market_value: 3048, unrealized_pnl: -54, unrealized_intraday_pnl: -12, sector: "Technology", is_cash_equivalent: false, direction: "long" },
+  { symbol: "TSLA", qty: 6, avg_entry: 240.0, current_price: 238.5, market_value: 1431, unrealized_pnl: -9, unrealized_intraday_pnl: -3, sector: "Consumer", is_cash_equivalent: false, direction: "long" },
+  { symbol: "AMZN", qty: 4, avg_entry: 180.0, current_price: 182.5, market_value: 730, unrealized_pnl: 10, unrealized_intraday_pnl: 2, sector: "Consumer", is_cash_equivalent: false, direction: "long" },
   { symbol: "SGOV", qty: 259, avg_entry: 100.2, current_price: 100.39, market_value: 26001, unrealized_pnl: 49, unrealized_intraday_pnl: 3, sector: "Cash equivalent", is_cash_equivalent: true, direction: "cash_equivalent" },
 ];
 const orders = [
@@ -213,9 +215,10 @@ async function openDiagnostics(page) {
   await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
 }
 
-async function shot(name, viewport, scenario = "populated", interact) {
+async function shot(name, viewport, scenario = "populated", interact, destDir) {
   const stepErrors = [];
   let context;
+  const outDir = destDir || (Number(name.slice(0, 2)) >= 8 ? researchOutput : output);
   try {
     context = await browser.newContext({ viewport, colorScheme: "dark" });
     const page = await context.newPage();
@@ -236,13 +239,13 @@ async function shot(name, viewport, scenario = "populated", interact) {
       return offenders.join(" | ");
     });
     if (overflow) stepErrors.push(`${name}: document has horizontal overflow (${overflow})`);
-    await page.screenshot({ path: resolve(Number(name.slice(0, 2)) >= 8 ? researchOutput : output, `${name}.png`), fullPage: true });
+    await page.screenshot({ path: resolve(outDir, `${name}.png`), fullPage: true });
   } catch (err) {
     stepErrors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
     try {
       const page = context?.pages()[0];
       if (page) {
-        await page.screenshot({ path: resolve(Number(name.slice(0, 2)) >= 8 ? researchOutput : output, `${name}.png`), fullPage: true });
+        await page.screenshot({ path: resolve(outDir, `${name}.png`), fullPage: true });
       }
     } catch {
       /* failure shot is evidence, not required */
@@ -266,13 +269,9 @@ const steps = [
     await page.getByText("position 12", { exact: false }).waitFor();
   }],
   ["02-desktop-positions-liquidity", { width: 1600, height: 1000 }, "populated", async (page) => {
-    // Positions & Liquidity moved: Positions is now the primary
-    // leftmost/active-by-default dockview pane (item 1 of the cockpit
-    // trader rework) and Liquidity is a compact row that's always visible
-    // in the header, not a tab either of them ever needs to be clicked
-    // into. Explicitly activating the Positions tab keeps this step
-    // meaningful (proves the tab is reachable and renders) rather than
-    // deleting the interaction outright.
+    // Positions is the primary leftmost/active-by-default dockview pane.
+    // Liquidity lives in the compact NLV line by default (deployable cash)
+    // and in the full header strip behind "Show full header".
     await page.getByRole("tab", { name: "Positions" }).click();
   }],
   ["03-desktop-candidate-lifecycle", { width: 1600, height: 1000 }, "populated", async (page) => {
@@ -312,11 +311,42 @@ const steps = [
   ["19-desktop-system-circuit-unavailable", { width: 1600, height: 1000 }, "unavailable", async (page) => { await page.getByText("paid-analysis safety circuit unavailable", { exact: true }).waitFor(); await openDiagnostics(page); await page.getByText("unavailable", { exact: true }).last().waitFor(); }],
 ];
 
+const hierarchyOnly = process.argv.includes("--hierarchy");
+const hierarchyDir = resolve(process.env.QAMC_HIERARCHY_OUTPUT || "../docs/visual/pr-444/hierarchy");
+const hierarchySteps = [
+  ["a-chart-dominant-desktop", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByText("Apple Inc.").waitFor();
+    await page.getByText("position 12", { exact: false }).waitFor();
+    await page.locator(".tv-lightweight-charts").first().waitFor();
+  }],
+  ["b-holdings-wrap-four", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("button", { name: /Holdings/ }).click();
+    await page.getByRole("button", { name: "Chart AAPL" }).waitFor();
+    await page.getByRole("button", { name: "Chart SGOV" }).waitFor();
+  }],
+  ["c-orders-stop-target", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Orders" }).click();
+    await page.getByText("Stop", { exact: true }).waitFor();
+    await page.getByText("Target", { exact: true }).waitFor();
+    await page.getByText("Limit", { exact: true }).waitFor();
+  }],
+];
+
 const results = [];
-for (const [name, viewport, scenario, interact] of steps) {
-  const result = await shot(name, viewport, scenario, interact);
-  results.push(result);
-  console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+if (!hierarchyOnly) {
+  for (const [name, viewport, scenario, interact] of steps) {
+    const result = await shot(name, viewport, scenario, interact);
+    results.push(result);
+    console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+  }
+}
+if (hierarchyOnly) {
+  await mkdir(hierarchyDir, { recursive: true });
+  for (const [name, viewport, scenario, interact] of hierarchySteps) {
+    const result = await shot(name, viewport, scenario, interact, hierarchyDir);
+    results.push(result);
+    console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+  }
 }
 
 await browser.close();
@@ -332,5 +362,5 @@ if (failed.length) {
   }
   process.exitCode = 1;
 } else {
-  console.log(`screenshots: ${output}`);
+  console.log(`screenshots: ${hierarchyOnly ? hierarchyDir : output}`);
 }

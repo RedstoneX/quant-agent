@@ -7,8 +7,8 @@ used to reset on reload, so a drag that "took" would snap back. Growth
 is persisted next to the layout blob; the math is a pure function so a
 later drag from a grown sash adds/subtracts instead of replacing. */
 
-export const COCKPIT_LAYOUT_KEY = "qamc.dockview.cockpit.v6";
-export const COCKPIT_GROWTH_KEY = "qamc.dockview.cockpit.v6.growth";
+export const COCKPIT_LAYOUT_KEY = "qamc.dockview.cockpit.v7";
+export const COCKPIT_GROWTH_KEY = "qamc.dockview.cockpit.v7.growth";
 /** Same floor `buildDefaultLayout` sets as Positions/Orders minimumHeight. */
 export const BOTTOMS_FLOOR_PX = 260;
 

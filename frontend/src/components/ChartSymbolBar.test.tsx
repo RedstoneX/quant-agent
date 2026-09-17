@@ -48,4 +48,22 @@ describe("ChartSymbolBar", () => {
     expect(screen.queryByRole("button", { name: /lifecycle/i })).toBeNull();
     expect(screen.queryByText("null")).toBeNull();
   });
+
+  it("does not mix the default market-context symbol with a real name", async () => {
+    mockCompany({ symbol: "AAPL", name: "Apple Inc." });
+    render(
+      <ChartSymbolBar
+        symbol="AAPL"
+        previousSymbol="SPY"
+        onGoBack={() => undefined}
+        canOpenLifecycle
+        onOpenLifecycle={() => undefined}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("Apple Inc.")).toBeTruthy());
+    expect(screen.getByText("AAPL")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /back to spy/i })).toBeNull();
+    expect(screen.queryByText(/←/)).toBeNull();
+  });
 });

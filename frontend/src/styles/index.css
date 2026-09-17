@@ -58,13 +58,10 @@
      plus the primary row's own top+bottom p-3 padding (24px), kept live by
      a ResizeObserver in App.tsx — see chromeRef there. This :root value is
      only the pre-JS fallback for first paint; it is overwritten within
-     milliseconds of mount and never relied on after that. Value matches
-     this build's actual measured chrome height post-Fix-2 (526px, with
-     the enlarged risk gauge — HeroBand is genuinely taller than the
-     423px pre-fix baseline now, since Fix 2 grows the gauge and Fix 4's
-     regime-dedup saving lands in the Decision Room column, not the chrome
-     stack). */
-  --chrome-h: 526px;
+     milliseconds of mount and never relied on after that. Compact header
+     default (hierarchy pass) lands near ~200px; 220px is a first-paint
+     guess so the chart is not crushed before ResizeObserver runs. */
+  --chrome-h: 220px;
 }
 
 @media (prefers-color-scheme: light) {

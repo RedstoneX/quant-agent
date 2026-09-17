@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { PositionItem } from "../api/client";
 import { HoldingsStrip } from "./HoldingsStrip";
@@ -48,5 +48,23 @@ describe("HoldingsStrip", () => {
     expect(grid?.className).toContain("xl:grid-cols-4");
     expect(grid?.className).not.toContain("overflow-x-auto");
     expect(screen.getByLabelText("Holdings").className).toContain("overflow-x-hidden");
+  });
+
+  it("collapses to a summary line in compact chrome until expanded", () => {
+    const positions = ["AAPL", "RSG", "NOK", "AMD", "MRVL"].map((symbol, index) =>
+      position({ symbol, market_value: 1000 - index }),
+    );
+    render(
+      <HoldingsStrip
+        positions={positions}
+        error={null}
+        updatedAt={new Date("2026-08-25T18:30:00Z")}
+        compact
+      />,
+    );
+    expect(screen.getByLabelText("Holdings").querySelector(".grid")).toBeNull();
+    expect(screen.getByText("5 open")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Holdings/ }));
+    expect(screen.getByLabelText("Holdings").querySelector(".grid")?.className).toContain("xl:grid-cols-4");
   });
 });

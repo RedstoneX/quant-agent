@@ -100,7 +100,7 @@ export function HeroBand({
 }) {
   if (!account) {
     return (
-      <Card className="mx-3 mt-3 !w-auto !bg-panel !p-3 !ring-border text-center">
+      <Card className="mx-3 mt-1 !w-auto !bg-panel !p-2 !ring-border text-center">
         <Text>{accountError ? `Account unavailable: ${accountError}` : "Loading account…"}</Text>
       </Card>
     );
@@ -132,7 +132,7 @@ export function HeroBand({
 
   if (collapsed) {
     return (
-      <div className="mx-3 mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-border bg-panel px-3 py-2">
+      <div className="mx-3 mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg border border-border bg-panel px-3 py-1">
         <span className="flex items-baseline gap-2">
           <span className="label-xs">NLV</span>
           <span className="font-mono text-[length:var(--fs-stat)] font-semibold tabular-nums text-ink">
@@ -149,16 +149,19 @@ export function HeroBand({
             index="date"
             categories={["equity"]}
             colors={["cyan"]}
-            className="h-6 w-20"
+            className="h-5 w-16"
             showGradient
           />
         )}
         <span className={`font-mono text-[length:var(--fs-body)] font-semibold tabular-nums ${pnlClass(account.daily_pnl)}`}>
           {fmtMoney(account.daily_pnl)} ({fmtPct(account.daily_pnl_pct)}) today
         </span>
-        <span className={`font-mono text-[length:var(--fs-body)] tabular-nums ${pnlClass(unrealized)}`}>
-          {fmtMoney(unrealized)} unrealized
-        </span>
+        {liquidity && (
+          <span className="text-[length:var(--fs-meta)] text-dim" title="Cash plus the parked sweep vehicle — the figure sizing uses">
+            <span className="label-xs">Deployable</span>{" "}
+            <span className="font-mono font-semibold tabular-nums text-ink">{fmtMoneyCompact(liquidity.deployable_cash)}</span>
+          </span>
+        )}
         <span className="text-[length:var(--fs-meta)] text-dim">
           {deployedLabel} net exposure
           {maxTotalPct !== null ? ` / ${maxTotalPct.toFixed(0)}% ceiling` : ""}

@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 
+/** Chart landing symbol when no name is selected — market context, not a
+ * holding. Must not render as "← SPY" beside a real company/ticker. */
+export const MARKET_CONTEXT_SYMBOL = "SPY";
+
 /** One short row above the chart: company name (when the cache has one),
  * ticker, Lifecycle. No holding grid, no decision strip — those live on
  * Positions and inside Lifecycle. A missing name stays missing; nothing
@@ -41,9 +45,13 @@ export function ChartSymbolBar({
     };
   }, [symbol]);
 
+  const showBack =
+    Boolean(previousSymbol && previousSymbol !== symbol && onGoBack) &&
+    previousSymbol !== MARKET_CONTEXT_SYMBOL;
+
   return (
     <div className="flex h-7 min-w-0 flex-shrink-0 flex-nowrap items-center gap-2 overflow-hidden px-1">
-      {previousSymbol && previousSymbol !== symbol && onGoBack && (
+      {showBack && (
         <button
           type="button"
           className="flex-shrink-0 text-[length:var(--fs-meta)] text-accent hover:underline"

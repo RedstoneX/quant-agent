@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Badge, Text } from "@tremor/react";
 import { PositionItem } from "../api/client";
 import { fmtMoney, fmtNum, fmtPct, pnlClass } from "../lib/format";
@@ -6,7 +7,9 @@ import { fmtMoney, fmtNum, fmtPct, pnlClass } from "../lib/format";
  * asks on arrival, answered in an always-visible strip rather than behind
  * a workspace tab. Cards keep their existing content and stay about this
  * size; they wrap at four per row on a normal desktop (fewer on a
- * narrower window) instead of sliding sideways. PositionsPanel remains
+ * narrower window) instead of sliding sideways. Compact chrome (the
+ * cockpit default) collapses this to a count/P&L line so the chart owns
+ * the screen; expanding restores the wrap grid. PositionsPanel remains
  * the full, sortable, column-complete view (now its own dockable panel);
  * this is the glance. Every figure here is the same broker-marked
  * PositionItem data that panel renders — no separate fetch, no
@@ -71,50 +74,73 @@ export function HoldingsStrip({
   error,
   updatedAt,
   onSelectSymbol,
+  compact = false,
 }: {
   positions: PositionItem[];
   error?: string | null;
   updatedAt?: Date | null;
   onSelectSymbol?: (symbol: string) => void;
+  /* Compact cockpit chrome: one summary line so the chart owns the
+   * viewport. Cards keep their size and still wrap at four per row
+   * when this strip is expanded — they just are not the default stage. */
+  compact?: boolean;
 }) {
+  const [expanded, setExpanded] = useState(!compact);
+  useEffect(() => {
+    setExpanded(!compact);
+  }, [compact]);
+
   const directional = positions.filter((p) => !p.is_cash_equivalent);
   const unrealized = directional.reduce((sum, p) => sum + (p.unrealized_pnl || 0), 0);
   const everLoaded = Boolean(updatedAt);
+  const summary = (
+    <>
+      <Text className="uppercase tracking-wide">Holdings</Text>
+      <Badge color="slate" size="xs">
+        {directional.length} open
+      </Badge>
+      {directional.length > 0 && (
+        <span className={`font-mono text-[length:var(--fs-meta)] font-semibold ${pnlClass(unrealized)}`}>
+          {fmtMoney(unrealized)} unrealized
+        </span>
+      )}
+      {error && (
+        <Badge color="amber" size="xs" className="ml-auto">
+          {everLoaded ? "stale" : "unavailable"}
+        </Badge>
+      )}
+    </>
+  );
 
   return (
-    /* Vertical-space reallocation pass, 2026-09-11: mt-3 -> mt-2, a
-       low-risk trim of the inter-section chrome gap (see other stacked
-       sections below for the same trim) that feeds a few extra px back
-       into the live-measured --chrome-h budget without cramming
-       anything. */
-    <section className="mx-3 mt-2 min-w-0 overflow-x-hidden" aria-label="Holdings">
-      <div className="flex items-center gap-2 pb-1.5">
-        <Text className="uppercase tracking-wide">Holdings</Text>
-        <Badge color="slate" size="xs">
-          {directional.length} open
-        </Badge>
-        {directional.length > 0 && (
-          <span className={`font-mono text-[length:var(--fs-meta)] font-semibold ${pnlClass(unrealized)}`}>
-            {fmtMoney(unrealized)} unrealized
+    <section className="mx-3 mt-1 min-w-0 overflow-x-hidden" aria-label="Holdings">
+      {compact ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="flex w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-panel px-3 py-1 text-left hover:border-accent/60"
+        >
+          {summary}
+          <span className="ml-auto text-xs text-dim flex-shrink-0" aria-hidden="true">
+            {expanded ? "▾ hide" : "▸ show"}
           </span>
-        )}
-        {error && (
-          <Badge color="amber" size="xs" className="ml-auto">
-            {everLoaded ? "stale" : "unavailable"}
-          </Badge>
-        )}
-      </div>
-      {positions.length === 0 ? (
-        <div className="rounded-lg border border-border bg-panel-alt px-3 py-2 text-[length:var(--fs-meta)] text-dim">
-          {error && !everLoaded ? `Positions read failed: ${error}` : "No open positions."}
-        </div>
+        </button>
       ) : (
-        <div className="grid w-full min-w-0 grid-cols-1 justify-items-start gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {holdingsOrder(positions).map((position) => (
-            <HoldingChip key={position.symbol} position={position} onSelect={onSelectSymbol} />
-          ))}
-        </div>
+        <div className="flex items-center gap-2 pb-1.5">{summary}</div>
       )}
+      {expanded &&
+        (positions.length === 0 ? (
+          <div className="mt-1 rounded-lg border border-border bg-panel-alt px-3 py-2 text-[length:var(--fs-meta)] text-dim">
+            {error && !everLoaded ? `Positions read failed: ${error}` : "No open positions."}
+          </div>
+        ) : (
+          <div className="mt-1 grid w-full min-w-0 grid-cols-1 justify-items-start gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {holdingsOrder(positions).map((position) => (
+              <HoldingChip key={position.symbol} position={position} onSelect={onSelectSymbol} />
+            ))}
+          </div>
+        ))}
     </section>
   );
 }

@@ -1353,6 +1353,9 @@ export function PriceChartPanel({
   return (
     <Panel
       title={symbol ? `Price — ${symbol}` : "Price chart"}
+      hideTitle
+      dense
+      flush
       status={status}
       subtitle={quoteLine ? `${quoteLine}${positionLine}` : positionLine || undefined}
       actions={

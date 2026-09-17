@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "visual:acceptance": "node scripts/dashboard-visual-acceptance.mjs"
+    "visual:acceptance": "node scripts/dashboard-visual-acceptance.mjs",
+    "visual:hierarchy": "node scripts/dashboard-visual-acceptance.mjs --hierarchy"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

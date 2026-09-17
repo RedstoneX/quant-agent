@@ -11,6 +11,9 @@ export function Panel({
   actions,
   full,
   accent,
+  hideTitle,
+  dense,
+  flush,
   children,
 }: {
   title: string;
@@ -25,6 +28,11 @@ export function Panel({
   actions?: ReactNode;
   full?: boolean;
   accent?: boolean;
+  /* Chart stage: skip the duplicate "Price — TICKER" heading; timeframes
+   * and the live quote stay. */
+  hideTitle?: boolean;
+  dense?: boolean;
+  flush?: boolean;
   children: ReactNode;
 }) {
   const statusColor: Color =
@@ -44,16 +52,21 @@ export function Panel({
       className={`!p-0 !bg-panel !ring-border rounded-xl overflow-hidden flex flex-col h-full ${full ? "md:col-span-2" : ""} ${
         status === "stale" ? "!ring-warn/60" : ""
       }`}
+      aria-label={hideTitle ? title : undefined}
     >
-      <div className="panel-head">
-        <h2>{title}</h2>
-        <div className="ml-auto flex items-center gap-2">
+      <div className={`panel-head ${dense ? "!px-2 !py-1" : ""}`}>
+        {!hideTitle && <h2>{title}</h2>}
+        <div className={`${hideTitle ? "" : "ml-auto"} flex items-center gap-2`}>
           {actions}
           {statusLabel && <Badge color={statusColor} size="xs">{statusLabel}</Badge>}
         </div>
-        {subtitle && <span className="basis-full text-[0.8125rem] text-dim">{subtitle}</span>}
+        {subtitle && (
+          <span className={`basis-full truncate ${dense ? "text-[length:var(--fs-micro)] text-dim" : "text-[0.8125rem] text-dim"}`}>
+            {subtitle}
+          </span>
+        )}
       </div>
-      <div className="panel-body">{children}</div>
+      <div className={`panel-body ${flush ? "!p-0" : ""}`}>{children}</div>
     </Card>
   );
 }

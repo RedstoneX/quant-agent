@@ -96,7 +96,7 @@ function ChartPane() {
   const { openCandidateDetail } = useModalActions();
   const candidate = state.funnel?.candidates.find((item) => item.symbol === state.chartSymbol);
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden px-2 py-1">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden px-1 py-0">
       <ChartSymbolBar
         symbol={state.chartSymbol}
         previousSymbol={state.previousChartSymbol}
@@ -172,6 +172,12 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   workspaceSlot: WorkspaceSlotPane,
 };
 
+// Bumped v6 -> v7 (hierarchy pass): default bottoms height drops from
+// the 340 "header + 5 rows" start to the 260 floor so the chart row is
+// the largest region on first load / Reset layout. v6 blobs would
+// otherwise keep the shorter chart. Reset layout still restores this
+// shape; the sash and rearrange behavior are unchanged.
+//
 // Bumped v5 -> v6 (owner request, direct): the bottom row's middle
 // "Workspace" slot — genuinely empty by default, see WorkspaceSlotPane
 // above — was eating roughly a third of the bottom row's width while
@@ -302,7 +308,7 @@ function buildDefaultLayout(api: DockviewApi) {
     component: "positions",
     title: "Positions",
     position: { referencePanel: "chart", direction: "below" },
-    initialHeight: 340,
+    initialHeight: BOTTOMS_FLOOR_PX,
     minimumHeight: BOTTOMS_FLOOR_PX,
     minimumWidth: 80,
   });
@@ -481,9 +487,8 @@ export function DesktopCockpitWorkspace() {
     // plus 16px reclaimed from the footer's own py-4 -> py-2 in App.tsx,
     // is added straight into the box's own height formula below instead
     // of staying an unaccounted-for page margin.
-    <div className="px-3 pb-2">
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-dim">Trading workspace — move, resize or dock panels</span>
+    <div className="px-3 pb-1">
+      <div className="mb-0.5 flex items-center justify-end">
         <button type="button" onClick={reset} className="text-xs text-accent underline">Reset layout</button>
       </div>
       {/* Item 2 of cockpit pass 3 (SUPERSEDED AGAIN, owner override

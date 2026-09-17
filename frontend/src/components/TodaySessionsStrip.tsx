@@ -108,18 +108,33 @@ export function TodaySessionsStrip({
     lastTime ? ` · last ${lastTime}` : ""
   } · ${noTradeCount} no-trade · ${fillsCount} fill${fillsCount === 1 ? "" : "s"}`;
 
+  const selectedFunnel = selectedRun ? funnels[selectedRun.run_id] : undefined;
+  const selectedSweepOnly =
+    selectedFunnel?.decision_state === "executed" &&
+    isSweepOnlyExecution(trades.filter((trade) => trade.run_id === selectedRun?.run_id));
+  const verdictLabel = selectedFunnel
+    ? selectedSweepOnly
+      ? "sweep only"
+      : STATE_LABELS[selectedFunnel.decision_state]
+    : null;
+
   return (
-    /* Vertical-space reallocation pass, 2026-09-11: mt-3 -> mt-2, same
-       low-risk inter-section trim as the other stacked chrome sections. */
-    <section className="mx-3 mt-2" aria-label="Today’s sessions">
+    /* Compact default: one sessions line (count + selected-run verdict)
+       rather than a second decision banner competing with the chart. */
+    <section className="mx-3 mt-1" aria-label="Today’s sessions">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-2 rounded-lg border border-border bg-panel px-3 py-1.5 text-left hover:border-accent/60"
+        className="flex w-full items-center gap-2 rounded-lg border border-border bg-panel px-3 py-1 text-left hover:border-accent/60"
       >
         <Text className="uppercase tracking-wide flex-shrink-0">Sessions</Text>
         <span className="text-[length:var(--fs-meta)] text-ink truncate">{summaryText}</span>
+        {verdictLabel && selectedFunnel && (
+          <Badge color={selectedSweepOnly ? "slate" : STATE_BADGE_COLOR[selectedFunnel.decision_state]} size="xs">
+            {verdictLabel}
+          </Badge>
+        )}
         {error && <Badge color="amber" size="xs">stale</Badge>}
         {autoFollow && <Badge color="cyan" size="xs" className="ml-auto flex-shrink-0">AUTO / PRIMARY</Badge>}
         <span className="text-dim text-xs flex-shrink-0" aria-hidden="true">{expanded ? "▾ hide" : "▸ show"}</span>

@@ -20,7 +20,7 @@ import { DecisionStateBanner } from "./components/DecisionStateBanner";
 import { TodaySessionsStrip } from "./components/TodaySessionsStrip";
 import { CandidateRail } from "./components/CandidateRail";
 import { PriceChartPanel } from "./components/PriceChartPanel";
-import { ChartSymbolBar } from "./components/ChartSymbolBar";
+import { ChartSymbolBar, MARKET_CONTEXT_SYMBOL } from "./components/ChartSymbolBar";
 import { PositionsPanel } from "./components/PositionsPanel";
 import { SupportTabs } from "./components/SupportTabs";
 import { DesktopCockpitWorkspace } from "./components/DesktopCockpitWorkspace";
@@ -271,7 +271,7 @@ export default function App() {
   // chart-led MARKET context (docs/OUTCOME.md) even before any candidate
   // exists; a real per-run candidate always overrides it once one exists
   // (see the selectedRunId effect below).
-  const [chartSymbol, setChartSymbolState] = useState<string | null>("SPY");
+  const [chartSymbol, setChartSymbolState] = useState<string | null>(MARKET_CONTEXT_SYMBOL);
   // Quick "back to previous symbol" (owner request): a single-slot ref, not
   // a full navigation history — tracks only the symbol charted immediately
   // before the current one. Kept as a ref (not state) since it never needs
@@ -283,7 +283,14 @@ export default function App() {
   const chartSymbolRef = useRef(chartSymbol);
   const previousChartSymbolRef = useRef<string | null>(null);
   function setChartSymbol(next: string | null, opts?: { isBack?: boolean }) {
-    if (!opts?.isBack && chartSymbolRef.current && chartSymbolRef.current !== next) {
+    // The default market-context symbol is not a name the trader charted.
+    // Recording it as "previous" produced "← SPY" next to Apple/AAPL.
+    if (
+      !opts?.isBack &&
+      chartSymbolRef.current &&
+      chartSymbolRef.current !== next &&
+      chartSymbolRef.current !== MARKET_CONTEXT_SYMBOL
+    ) {
       previousChartSymbolRef.current = chartSymbolRef.current;
     }
     chartSymbolRef.current = next;
@@ -466,7 +473,7 @@ export default function App() {
   useEffect(() => {
     if (!selectedRunId) return;
     const f = todaysFunnels[selectedRunId];
-    setChartSymbol(f && f.candidates.length ? f.candidates[0].symbol : "SPY");
+    setChartSymbol(f && f.candidates.length ? f.candidates[0].symbol : MARKET_CONTEXT_SYMBOL);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunId]);
 
@@ -596,13 +603,21 @@ export default function App() {
                 broker-marked positions state HeroBand/PositionsPanel
                 already render; a click charts the symbol in place, no
                 modal (item 2/3 — see chartPositionSymbol). */}
-            <HoldingsStrip positions={positions} error={positionsError} updatedAt={positionsUpdatedAt} onSelectSymbol={chartPositionSymbol} />
+            <HoldingsStrip
+              positions={positions}
+              error={positionsError}
+              updatedAt={positionsUpdatedAt}
+              onSelectSymbol={chartPositionSymbol}
+              compact={chromeCompact}
+            />
             <HeroBand account={account} accountError={accountError} positions={positions} regime={latestRegime} collapsed={chromeCompact} />
-            {/* Item 9: six liquidity stat tiles condensed to one compact
-                row, and moved out of the workspace tab strip entirely —
-                secondary portfolio-abstraction chrome, same spirit as
-                HeroBand's own demotion (item 6). */}
-            <LiquidityStrip account={account} accountError={accountError} positions={positions} />
+            {/* Liquidity and the decision banner stay available behind
+                "Show full header". Compact default folds deployable cash
+                into the NLV line and the selected-run verdict onto
+                Sessions so this stack cannot out-height the chart. */}
+            {!chromeCompact && (
+              <LiquidityStrip account={account} accountError={accountError} positions={positions} />
+            )}
             <TodaySessionsStrip
               runs={todaysRuns}
               funnels={todaysFunnels}
@@ -615,7 +630,9 @@ export default function App() {
               onFollowLatest={followPrimarySession}
               onSelectTrade={selectSessionTrade}
             />
-            <DecisionStateBanner funnel={funnel} trades={todaysTrades} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} compact={chromeCompact} />
+            {!chromeCompact && (
+              <DecisionStateBanner funnel={funnel} trades={todaysTrades} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} compact={chromeCompact} />
+            )}
           </>
         )}
       </div>
