@@ -1,8 +1,12 @@
 import json
+import re
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
+
+import pytest
 
 from src import trader_feed
 from src.data.company import CompanyProfile, CompanyProfileStore
@@ -10,12 +14,19 @@ from src.notifier import TelegramNotifier
 
 _ET = ZoneInfo("America/New_York")
 # A deliberately NOT-top-of-hour, NOT-9:30 instant — `trader_feed._is_hourly_
-# checkpoint` fires on minute==0 (or 9:30), and without pinning the clock a
-# quiet-tick "no message" assertion is flaky once an hour in real time. Any
-# test asserting `msg is None` for intra_check must pin the clock with this.
-_QUIET_TICK_TIME = datetime(2026, 9, 17, 10, 15, tzinfo=_ET)
-# A top-of-hour instant, for the hourly-desk-check tests.
-_TOP_OF_HOUR_TIME = datetime(2026, 9, 17, 14, 0, tzinfo=_ET)
+# checkpoint` fires on intra_check's own first-tick-of-the-hour minute (or
+# 9:30), and without pinning the clock a quiet-tick "no message" assertion
+# is flaky once an hour in real time. Any test asserting `msg is None` for
+# intra_check must pin the clock with this.
+#
+# 2026-09-17: intra_check's real systemd cadence is `*:15,45` (moved off
+# `*:0/30` by #454), so :15 is now the hourly-checkpoint minute and :45 is
+# the ordinary quiet tick — :15 no longer means "quiet" here.
+_QUIET_TICK_TIME = datetime(2026, 9, 17, 10, 45, tzinfo=_ET)
+# A top-of-hour instant, for the hourly-desk-check tests — the FIRST tick
+# intra_check makes each hour under its real `*:15,45` cadence, i.e. :15,
+# not :00 (intra_check never ticks at :00).
+_TOP_OF_HOUR_TIME = datetime(2026, 9, 17, 14, 15, tzinfo=_ET)
 
 
 def _pin_clock(monkeypatch, when: datetime) -> None:
@@ -1254,6 +1265,100 @@ def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
     # No leading/trailing/double blank line in the synthetic summary either.
     assert not msg.startswith("\n") and not msg.endswith("\n")
     assert "\n\n\n" not in msg
+
+
+# === 2026-09-17 regression guard: the hourly checkpoint must track
+# intra_check's REAL timer cadence, not a hard-coded minute ===
+#
+# PR #454 moved intra_check's systemd timer from `*:0/30` to `*:15,45` the
+# same night, and `_is_hourly_checkpoint` kept checking `minute == 0` — a
+# minute intra_check never ticks on any more. The guaranteed once-per-hour
+# message silently stopped firing on any quiet day. This block (a) proves
+# that would have been caught, and (b) pins the fix so the NEXT cadence
+# move can't repeat it silently: `_is_hourly_checkpoint` now reads its
+# checkpoint minute from the unit file itself, and this test independently
+# re-parses that same file and fails the build the moment the two disagree.
+
+_INTRA_CHECK_TIMER = (
+    Path(trader_feed.__file__).resolve().parent.parent
+    / "scripts" / "systemd" / "quant-agent-intra_check.timer"
+)
+
+
+def _real_intra_check_oncalendar_minutes() -> tuple[int, ...]:
+    """Independently re-derives intra_check's per-hour tick minutes straight
+    from the unit file's `OnCalendar=` line — deliberately NOT calling
+    `trader_feed._intra_check_tick_minutes`, so a bug in that function's own
+    parsing can't hide from this test."""
+    text = _INTRA_CHECK_TIMER.read_text()
+    spec = next(
+        line.split("=", 1)[1].strip()
+        for line in text.splitlines()
+        if line.strip().startswith("OnCalendar=")
+    )
+    match = re.fullmatch(r"\*:(\d{1,2}(?:,\d{1,2})*)", spec)
+    assert match, f"unexpected OnCalendar spec {spec!r} in {_INTRA_CHECK_TIMER}"
+    return tuple(sorted({int(m) for m in match.group(1).split(",")}))
+
+
+def test_hourly_checkpoint_minute_matches_intra_check_timer_cadence():
+    """The regression guard itself: if a future PR moves intra_check's
+    timer again without updating (or correctly re-deriving) the
+    hourly-checkpoint minute, this fails — instead of the owner's
+    guaranteed hourly message silently going quiet in production again."""
+    real_minutes = _real_intra_check_oncalendar_minutes()
+    assert trader_feed._intra_check_tick_minutes() == real_minutes
+    assert trader_feed._hourly_checkpoint_minute() == min(real_minutes)
+
+
+def test_is_hourly_checkpoint_follows_a_synthetic_cadence_change(monkeypatch):
+    """`_is_hourly_checkpoint` must track WHATEVER cadence intra_check's
+    timer reports, not a number frozen at write-time — simulate the timer
+    moving to `*:20,50` and confirm the checkpoint minute moves with it."""
+    monkeypatch.setattr(trader_feed, "_intra_check_tick_minutes", lambda: (20, 50))
+    assert trader_feed._hourly_checkpoint_minute() == 20
+    assert trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, 10, 20, tzinfo=_ET))
+    assert not trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, 10, 50, tzinfo=_ET))
+    assert not trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, 10, 0, tzinfo=_ET))
+    # The 9:30 session-open exception survives any cadence.
+    assert trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, 9, 30, tzinfo=_ET))
+
+
+def test_intra_check_ticks_send_exactly_one_guaranteed_message_per_hour(
+    tmp_path, monkeypatch,
+):
+    """Walk every real intra_check tick across a full trading session
+    (09:30-16:00 ET, `*:15,45` cadence) on a completely quiet day and
+    confirm the guaranteed hourly pulse fires EXACTLY once per clock hour
+    — not zero, not two."""
+    _make_db(tmp_path, monkeypatch)
+    minutes = trader_feed._intra_check_tick_minutes()
+    # The real intra_check schedule: 9:30 (session open, no earlier :15/:45
+    # tick that day), then every configured minute from 9:45 through 15:45.
+    ticks = [(9, 30)] + [
+        (hour, minute)
+        for hour in range(9, 16)
+        for minute in minutes
+        if not (hour == 9 and minute < 30)
+    ]
+    checkpoint_hits = [
+        (hour, minute) for hour, minute in ticks
+        if trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, hour, minute, tzinfo=_ET))
+    ]
+    # One session-open exception, plus one per ordinary hour 10 through 15.
+    assert checkpoint_hits == [(9, 30)] + [(h, min(minutes)) for h in range(10, 16)]
+
+
+def test_hourly_checkpoint_unparseable_oncalendar_fails_loudly(tmp_path, monkeypatch):
+    """A cadence syntax `_intra_check_tick_minutes` doesn't understand (a
+    day restriction, a `/` step, ...) must raise, not silently fall back to
+    a guessed minute — the whole point of this fix is that a mismatch
+    between the timer and the checkpoint logic is never quiet again."""
+    fake_timer = tmp_path / "quant-agent-intra_check.timer"
+    fake_timer.write_text("[Timer]\nOnCalendar=Mon..Fri *:15,45\n")
+    monkeypatch.setattr(trader_feed, "_INTRA_CHECK_TIMER_PATH", fake_timer)
+    with pytest.raises(RuntimeError):
+        trader_feed._intra_check_tick_minutes()
 
 
 def test_signals_list_never_drops_an_analyzed_symbol(tmp_path, monkeypatch):
