@@ -236,6 +236,14 @@ async function shot(name, viewport, scenario = "populated", interact) {
     await page.screenshot({ path: resolve(Number(name.slice(0, 2)) >= 8 ? researchOutput : output, `${name}.png`), fullPage: true });
   } catch (err) {
     stepErrors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+    try {
+      const page = context?.pages()[0];
+      if (page) {
+        await page.screenshot({ path: resolve(Number(name.slice(0, 2)) >= 8 ? researchOutput : output, `${name}.png`), fullPage: true });
+      }
+    } catch {
+      /* failure shot is evidence, not required */
+    }
   } finally {
     if (context) await context.close().catch(() => {});
   }
@@ -250,7 +258,10 @@ async function shot(name, viewport, scenario = "populated", interact) {
 // browser.newContext(), and results are collected for a summary at the
 // end; the process still exits non-zero if anything failed.
 const steps = [
-  ["01-desktop-cockpit-populated", { width: 1600, height: 1000 }],
+  ["01-desktop-cockpit-populated", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByText("Apple Inc.").waitFor();
+    await page.getByText("position 12", { exact: false }).waitFor();
+  }],
   ["02-desktop-positions-liquidity", { width: 1600, height: 1000 }, "populated", async (page) => {
     // Positions & Liquidity moved: Positions is now the primary
     // leftmost/active-by-default dockview pane (item 1 of the cockpit
