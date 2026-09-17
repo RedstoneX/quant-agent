@@ -1,4 +1,3 @@
-import html
 import json
 import sqlite3
 from datetime import datetime
@@ -597,6 +596,9 @@ NVIDIA = CompanyProfile(symbol="NVDA", name="NVIDIA Corporation", industry="Semi
 
 
 def test_morning_alert_names_the_company_it_traded(tmp_path, monkeypatch):
+    """2026-09-17 redesign: no separate 'who:' block any more — the company
+    name sits inline next to the ticker the first time it appears, inside
+    the scan-first <b>✅ DONE</b> section (see NEW LAYOUT item 3/7)."""
     db = _make_db(tmp_path, monkeypatch)
     run = "run-identity-morning"
     _evidence(
@@ -614,10 +616,11 @@ def test_morning_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     ):
         msg = trader_feed.format_session_result("morning", result, 12.0)
 
-    assert "who:" in msg
-    assert "CCJ — Cameco Corporation · Uranium" in msg
-    # Identities render after the real decision content, not instead of it.
-    assert msg.index("who:") > msg.index("BUY CCJ")
+    assert "who:" not in msg
+    assert "<b>✅ DONE</b>" in msg
+    assert "BUY CCJ (Cameco Corporation)" in msg
+    # The identity renders inside DONE, not a separate trailing block.
+    assert msg.index("BUY CCJ (Cameco Corporation)") > msg.index("<b>✅ DONE</b>")
 
 
 def test_midday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
@@ -637,7 +640,8 @@ def test_midday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     ):
         msg = trader_feed.format_session_result("midday", result, 9.0)
 
-    assert "CCJ — Cameco Corporation · Uranium" in msg
+    assert "who:" not in msg
+    assert "REDUCE CCJ (Cameco Corporation)" in msg
 
 
 def test_close_alert_names_the_company_it_traded(tmp_path, monkeypatch):
@@ -655,7 +659,8 @@ def test_close_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     ):
         msg = trader_feed.format_session_result("close", result, 7.0)
 
-    assert "CCJ — Cameco Corporation · Uranium" in msg
+    assert "who:" not in msg
+    assert "SELL CCJ (Cameco Corporation)" in msg
 
 
 def test_intraday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
@@ -676,7 +681,8 @@ def test_intraday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     ):
         msg = trader_feed.format_session_result("intra_check", outer, 4.0)
 
-    assert "CCJ — Cameco Corporation · Uranium" in msg
+    assert "who:" not in msg
+    assert "BUY CCJ (Cameco Corporation)" in msg
 
 
 def test_missing_profile_degrades_cleanly_through_the_real_formatter(tmp_path, monkeypatch):
@@ -732,18 +738,18 @@ def test_missing_profile_lookup_exception_still_ships_the_alert(tmp_path, monkey
     assert "BUY CCJ" in msg
 
 
-def test_length_pressure_drops_identities_before_decision_content(tmp_path, monkeypatch):
-    """Telegram's real length budget (`TelegramNotifier.MAX_MESSAGE_CHARS`,
-    `_build_payload`'s tail truncation) is exercised for real here — not
-    reimplemented. `_append_identities` in src/trader_feed.py appends the
-    `who:` block LAST in every formatter, after the footer, specifically so
-    that when the aggregate message must be cut, the existing tail-cut in
-    `_build_payload` removes identities first. Shrinking
-    `MAX_MESSAGE_CHARS` down to exactly the length of everything BEFORE the
-    `who:` section proves that: the cut must land at or before the `who:`
-    boundary, never inside the PM/risk decision content that precedes it."""
+def test_length_pressure_drops_details_before_scan_first_content(tmp_path, monkeypatch):
+    """2026-09-17 redesign: length pressure must clip inside `<b>DETAILS</b>`
+    (`trader_feed._wrap_details`, sized against
+    `TelegramNotifier.MAX_MESSAGE_CHARS`) and NEVER the scan-first sections
+    above it (header, DONE, BLOCKED, LOOKED AT) — the hard rule from the
+    brief: "if clipping, clip inside DETAILS, never the top sections."
+    A very long PM rationale (well past every per-field clip) forces the
+    formatter's own DETAILS budgeting to trim, proven against the real
+    `_build_payload` length budget, not reimplemented."""
     db = _make_db(tmp_path, monkeypatch)
     run = "run-tight-budget"
+    long_reasoning = "Uranium demand tailwind, clean breakout. " * 60  # ~2500 chars
     _evidence(
         db, run, "portfolio_manager", "reasoning",
         {"portfolio_view": "Only one clean setup survives the morning screen"},
@@ -751,7 +757,7 @@ def test_length_pressure_drops_identities_before_decision_content(tmp_path, monk
     _evidence(
         db, run, "portfolio_manager", "proposed_order",
         {"action": "BUY", "symbol": "CCJ", "allocation_pct": 8,
-         "reasoning": "Uranium demand tailwind, clean breakout"},
+         "reasoning": long_reasoning},
         symbol="CCJ",
     )
     _evidence(
@@ -759,7 +765,13 @@ def test_length_pressure_drops_identities_before_decision_content(tmp_path, monk
         {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
          "reasoning": "Sizing acceptable given current exposure"},
     )
+    _trade(db, run, "CCJ", "BUY", qty=40, price=58.10)
     result = {"status": "executed", "run_id": run, "orders": [{"symbol": "CCJ"}]}
+
+    # A tight budget — comfortably fits the scan-first sections (header,
+    # P&L-less morning header, DONE) but not the full ~2500-char DETAILS
+    # payload plus its wrapper tags.
+    monkeypatch.setattr(TelegramNotifier, "MAX_MESSAGE_CHARS", 900)
 
     with patch.object(
         CompanyProfileStore, "get_many",
@@ -767,30 +779,25 @@ def test_length_pressure_drops_identities_before_decision_content(tmp_path, monk
     ):
         msg = trader_feed.format_session_result("morning", result, 12.0)
 
-    # Sanity: with a generous budget, identities really are in the message —
-    # otherwise the truncation test below would trivially pass for the
-    # wrong reason (nothing to drop).
-    assert "Cameco" in msg
-    core_text, _, _ = msg.partition("\nwho:")
-    assert core_text != msg
+    # The scan-first DONE line survives intact, company name and all.
+    assert "BUY CCJ (Cameco Corporation)" in msg
+    assert "<b>✅ DONE</b>" in msg
+    # DETAILS is present but visibly truncated — the long reasoning does not
+    # survive in full.
+    assert "<b>DETAILS</b>" in msg
+    assert "[details truncated" in msg
+    assert long_reasoning.strip() not in msg
 
     notifier = TelegramNotifier(token="t", chat_id="c")
-    # Exactly the escaped length of everything before "who:" — no slack for
-    # even one character of the identity section to survive.
-    monkeypatch.setattr(
-        TelegramNotifier, "MAX_MESSAGE_CHARS", len(html.escape(core_text)),
-    )
-
     symbols = trader_feed.extract_alert_symbols(run, result)
-    payload = notifier._build_payload(msg, symbols=symbols)
+    payload = notifier._build_payload(msg, symbols=symbols, preserve_structural_markup=True)
     final_text = payload["text"]
 
-    assert "who:" not in final_text
-    assert "Cameco" not in final_text
-    # Real decision content — PM section, risk rationale — survives even
-    # though the message as a whole had to be cut.
-    assert "🧠 PM/Constructor" in final_text
-    assert "Sizing acceptable" in final_text
+    # The real Telegram-bound payload also fits, and the same scan-first
+    # content survives all the way through escaping/linkification.
+    assert len(final_text) <= TelegramNotifier.MAX_MESSAGE_CHARS + 200
+    assert "DONE" in final_text
+    assert "Cameco Corporation" in final_text
 
 
 # === Review-only symbols (2026-09-01 gap fix) ===
@@ -806,12 +813,28 @@ def test_length_pressure_drops_identities_before_decision_content(tmp_path, monk
 # into `TelegramNotifier._build_payload` for the real link — the exact two
 # consumers `src/scheduler.py`/`main.py` wire together for a live alert.
 
+def _insert_position(db, symbol, qty=10, avg_entry=100.0, current_price=105.0):
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO positions VALUES (?, ?, ?, ?, ?, ?)",
+        (symbol, qty, avg_entry, current_price, qty * current_price,
+         qty * (current_price - avg_entry)),
+    )
+    conn.commit()
+    conn.close()
+
+
 def test_midday_hold_only_symbol_gets_linked_and_identified(tmp_path, monkeypatch):
     """The reported gap, reproduced: a HOLD that never became a broker
-    trade must still surface in extract_alert_symbols — same identity and
-    tap-through link treatment as a symbol that did trade."""
+    trade must still surface in extract_alert_symbols — same tap-through
+    link treatment as a symbol that did trade. 2026-09-17 redesign: HELD
+    is read from broker-truth `positions` (see `_held_symbols` — the fix
+    for the "7 hold(s) / 2 listed" defect), so a realistic fixture holds
+    the position; the identity now renders inline in <b>HELD</b>, and the
+    reviewer's own HOLD reasoning is kept, unchanged, inside DETAILS."""
     db = _make_db(tmp_path, monkeypatch)
     run = "run-hold-only"
+    _insert_position(db, "NVDA")
     result = {
         "status": "reviewed", "run_id": run, "positions": 1,
         "orders": [],
@@ -828,23 +851,26 @@ def test_midday_hold_only_symbol_gets_linked_and_identified(tmp_path, monkeypatc
     ):
         msg = trader_feed.format_session_result("midday", result, 9.0)
 
-    assert "HOLD NVDA" in msg
-    assert "NVDA — NVIDIA Corporation · Semiconductors" in msg
+    assert "who:" not in msg
+    assert "<b>HELD (1)</b>" in msg
+    assert "NVDA (NVIDIA Corporation)" in msg
+    assert "HOLD NVDA — Thesis intact" in msg  # unchanged, inside DETAILS
 
     symbols = trader_feed.extract_alert_symbols(run, result)
     assert symbols == ["NVDA"]
 
     notifier = TelegramNotifier(token="t", chat_id="c")
-    payload = notifier._build_payload(msg, symbols=symbols)
+    payload = notifier._build_payload(msg, symbols=symbols, preserve_structural_markup=True)
     assert '<a href="https://finance.yahoo.com/quote/NVDA">NVDA</a>' in payload["text"]
 
 
 def test_close_decided_but_unexecuted_sell_gets_linked_and_identified(tmp_path, monkeypatch):
     """A close-review SELL the reviewer decided on, where execution never
-    completed (no broker order), must still be linked and identified —
-    it is often the one the operator most wants to look up."""
+    completed (no broker order — still held), must still be linked and
+    identified — it is often the one the operator most wants to look up."""
     db = _make_db(tmp_path, monkeypatch)
     run = "run-sell-unexecuted"
+    _insert_position(db, "NVDA")
     result = {
         "status": "reviewed", "run_id": run, "positions": 1,
         "orders": [],
@@ -861,14 +887,15 @@ def test_close_decided_but_unexecuted_sell_gets_linked_and_identified(tmp_path, 
     ):
         msg = trader_feed.format_session_result("close", result, 9.0)
 
-    assert "SELL NVDA" in msg
-    assert "NVDA — NVIDIA Corporation · Semiconductors" in msg
+    assert "who:" not in msg
+    assert "NVDA (NVIDIA Corporation)" in msg
+    assert "SELL NVDA — Thesis broken" in msg  # unchanged, inside DETAILS
 
     symbols = trader_feed.extract_alert_symbols(run, result)
     assert symbols == ["NVDA"]
 
     notifier = TelegramNotifier(token="t", chat_id="c")
-    payload = notifier._build_payload(msg, symbols=symbols)
+    payload = notifier._build_payload(msg, symbols=symbols, preserve_structural_markup=True)
     assert '<a href="https://finance.yahoo.com/quote/NVDA">NVDA</a>' in payload["text"]
 
 
@@ -876,7 +903,7 @@ def test_traded_symbol_named_in_both_orders_and_review_appears_once(tmp_path, mo
     """A symbol that DID trade is present in both `result["orders"]` and
     `review["actions"]` (the reviewer's REDUCE led to the broker order) —
     it must appear once in the symbol list, not twice, and once in the
-    identity block, not twice."""
+    <b>✅ DONE</b> line, not twice."""
     db = _make_db(tmp_path, monkeypatch)
     run = "run-dedupe"
     _trade(db, run, "CCJ", "REDUCE", qty=5, price=60.0)
@@ -898,10 +925,10 @@ def test_traded_symbol_named_in_both_orders_and_review_appears_once(tmp_path, mo
     ):
         msg = trader_feed.format_session_result("midday", result, 9.0)
 
-    assert msg.count("CCJ — Cameco Corporation · Uranium") == 1
+    assert msg.count("CCJ (Cameco Corporation)") == 1
 
     notifier = TelegramNotifier(token="t", chat_id="c")
-    payload = notifier._build_payload(msg, symbols=symbols)
+    payload = notifier._build_payload(msg, symbols=symbols, preserve_structural_markup=True)
     assert "<a href" in payload["text"]
 
 
@@ -1003,14 +1030,24 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
 
     assert msg is not None
 
-    # --- plain status, not the raw code ---
-    assert "Status: No trade" in msg
+    # --- plain outcome word in the header, not the raw status code ---
+    assert "· FAILED" in msg.splitlines()[0]
     assert "intraday_no_trades" not in msg
 
     # --- signed money, sign before '$', true minus for negatives ---
     assert "+$0.13" in msg
 
-    # --- PM view label, PM's own text untouched ---
+    # --- scan-first sections: VST blocked (desk-side, insufficient cash),
+    # AVGO looked at and passed (neutral) ---
+    assert "<b>❌ BLOCKED / FAILED</b>" in msg
+    assert "VST (Vistra Corp)" in msg
+    assert "Desk (insufficient cash): funding sale pending" in msg
+    assert "<b>👀 LOOKED AT, NO TRADE</b>" in msg
+    assert "AVGO NEUTRAL/low — PM passed" in msg
+
+    # --- PM view label, PM's own text untouched, inside DETAILS ---
+    assert "<b>DETAILS</b>" in msg
+    assert "<blockquote expandable>" in msg and "</blockquote>" in msg
     assert "PM view (this check): No trades today." in msg
     assert "View: No trades today." not in msg  # old bare label is gone
 
@@ -1019,22 +1056,15 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     assert "provider request" not in msg
     assert f"run {run}" not in msg
 
-    # --- company identity for an ANALYZED (not traded) signal ---
-    assert "who:" in msg
-    assert "VST — Vistra Corp · Utilities" in msg
+    # --- no separate 'who:' identity block any more ---
+    assert "who:" not in msg
 
-    # --- section spacing: blank lines between sections, bullets stay tight,
-    # no double blank, no leading/trailing blank line ---
+    # --- section spacing: no leading/trailing blank line, no double blank ---
     lines = msg.split("\n")
     assert lines[0].strip() != "" and lines[-1].strip() != ""
     assert "\n\n\n" not in msg
-    # The two signal bullets are one section — no blank line between them.
-    signals_idx = next(i for i, l in enumerate(lines) if l.startswith("🔎 Signals"))
-    assert lines[signals_idx + 1].startswith("   • ")
-    assert lines[signals_idx + 2].startswith("   • ")
-    assert not lines[signals_idx + 3].startswith("   • ")  # exactly two bullets
-    # But there IS a blank line separating the header block from the P&L
-    # line, and the signals block from the footer.
+    # A blank line separates the header from the P&L line, and the
+    # scan-first sections from the footer.
     pnl_idx = next(i for i, l in enumerate(lines) if l.startswith("📈 Session P&L"))
     assert lines[pnl_idx - 1] == ""
     footer_idx = next(i for i, l in enumerate(lines) if l.startswith("🧾"))
@@ -1185,3 +1215,193 @@ def test_signals_list_never_drops_an_analyzed_symbol(tmp_path, monkeypatch):
     assert "🔎 Signals: 5 analyzed" in msg
     for sym in symbols:
         assert f"   • {sym}:" in msg, f"{sym} missing from the signals list"
+
+
+# === 2026-09-17 scan-first redesign: reproduces the real 13:05 message ===
+#
+# Owner feedback on the pre-redesign live message: "unless I read
+# everything word for word, I have no idea what was actually really done
+# and what just failed or was killed... there has to be a better way of
+# creating a logical format so it's easier to read or scan." This fixture
+# reproduces that exact 13:05 intraday tick's data (AMD BUY submitted-not-
+# filled, FLNC SHORT blocked by QAMC's own fat-finger guard — not the
+# broker, CHPX/OKLO/RKLB analyzed and passed) and asserts the new
+# scan-first section placement, not just substring presence.
+
+AMD_PROFILE = CompanyProfile(symbol="AMD", name="Advanced Micro Devices", industry="Semiconductors")
+FLNC_PROFILE = CompanyProfile(symbol="FLNC", name="Fluence Energy", industry="Energy Storage")
+CHPX_PROFILE = CompanyProfile(symbol="CHPX", name="Global X AI Semiconductor ETF", industry="ETF")
+OKLO_PROFILE = CompanyProfile(symbol="OKLO", name="Oklo Inc", industry="Nuclear Power")
+RKLB_PROFILE = CompanyProfile(symbol="RKLB", name="Rocket Lab", industry="Aerospace")
+_1305_PROFILES = {
+    "AMD": AMD_PROFILE, "FLNC": FLNC_PROFILE, "CHPX": CHPX_PROFILE,
+    "OKLO": OKLO_PROFILE, "RKLB": RKLB_PROFILE,
+}
+
+
+def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
+    """Reproduces the real 13:05 message end to end and checks the new
+    layout mechanically, not just by substring:
+      - header carries ONE outcome word (PARTIAL: one done, one blocked)
+      - AMD is DONE but 'placed, waiting to fill' — never implying a fill
+        the DB doesn't confirm (trades.fill_status='submitted')
+      - FLNC is BLOCKED/FAILED and says the DESK's own fat-finger guard
+        stopped it — not "broker rejected" (the operator-reported defect:
+        the live message blamed the broker for QAMC's own price-sanity
+        check; see journalctl quant-agent-intra_check.service ~17:05:30
+        UTC, "Fat-finger guard: ... Order REJECTED")
+      - CHPX/OKLO/RKLB are LOOKED AT, NO TRADE — analyzed and passed, not
+        silently absent (the "5 actionable" vs "2 acted on" defect)
+      - DONE / BLOCKED / LOOKED AT all render before DETAILS, and the full
+        per-stock reasoning survives unchanged inside DETAILS
+      - no separate 'who:' block; company names are inline instead
+    """
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-1305"
+
+    for sym, rating, conviction, rr, reason in [
+        ("AMD", "buy", "high", 0.23, "Breakout above the 50-day with volume confirmation."),
+        ("CHPX", "buy", "medium", 1.6, "AI semiconductor basket tracking the group move."),
+        ("FLNC", "sell", "medium", 1.4, "Storage names rolling over; breakdown below the 20-day."),
+        ("OKLO", "buy", "medium", 1.8, "SMR nuclear theme continuation, extended."),
+        ("RKLB", "buy", "medium", 1.5, "Launch cadence news flow supportive."),
+    ]:
+        _evidence(
+            db, run, "tech_analyst", "analysis",
+            {"symbol": sym, "rating": rating, "conviction": conviction,
+             "risk_reward": rr, "reasoning": reason},
+            symbol=sym,
+        )
+
+    _evidence(
+        db, run, "portfolio_manager", "reasoning",
+        {"portfolio_view": "AMD and FLNC clear the bar this check; CHPX/OKLO/RKLB are "
+                            "tracking their group moves without an idiosyncratic edge."},
+    )
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "BUY", "symbol": "AMD", "allocation_pct": 19.81,
+         "stop_loss": 520.00, "reasoning": "Breakout confirmation, cleanest expression in the book."},
+        symbol="AMD",
+    )
+    _evidence(
+        db, run, "portfolio_manager", "proposed_order",
+        {"action": "SELL", "symbol": "FLNC", "allocation_pct": 3.46,
+         "stop_loss": 8.20, "reasoning": "Short expression of storage-sector weakness."},
+        symbol="FLNC",
+    )
+    _evidence(
+        db, run, "risk_manager", "verdict",
+        {"approved": True, "reason_category": "rr_fail", "scale_all_buys": 1.0,
+         "reasoning": "AMD's structural R/R is thin but sizing is inside policy."},
+    )
+
+    # AMD: order accepted by the broker, still working (never implies a fill).
+    _trade(db, run, "AMD", "BUY", qty=1.7662, price=551.20, status="submitted")
+    # FLNC: the pending row a submit attempt always writes first — this one
+    # never went live (see the execution_skip below for WHY).
+    _trade(db, run, "FLNC", "SELL", qty=43, price=7.75, status="submit_failed")
+
+    # The real defect: FLNC's own price-sanity check (fat-finger guard)
+    # blocked it BEFORE the broker ever saw the order — reason code
+    # 'fat_finger_guard', not 'broker_rejected'.
+    _evidence(
+        db, run, "execution", "execution_skip",
+        {"symbol": "FLNC", "reason": "fat_finger_guard",
+         "detail": "QAMC's own price-sanity check blocked this before it reached the "
+                   "broker: stop_loss_price=$9.6600 deviates 24.1% from reference $7.79"},
+        symbol="FLNC",
+    )
+    _agent_log(db, run, "portfolio_manager", "2 changes", cost=0.21)
+
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": 34.34, "daily_return_pct": 0.35,
+        "intraday_scan": {
+            "status": "intraday_executed", "run_id": run,
+            "candidates": ["AMD", "CHPX", "FLNC", "OKLO", "RKLB"],
+            "orders": [{"symbol": "AMD"}, {"symbol": "FLNC"}],
+        },
+    }
+
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {
+            s: _1305_PROFILES[s] for s in symbols if s in _1305_PROFILES
+        },
+    ):
+        _pin_clock(monkeypatch, datetime(2026, 9, 17, 13, 5, tzinfo=_ET))
+        msg = trader_feed.format_session_result("intra_check", outer, 300.0)
+
+    assert msg is not None
+
+    # --- header: ONE outcome word, computed (one done, one blocked) ---
+    header = msg.splitlines()[0]
+    assert header.startswith("⚡ INTRADAY OPPORTUNITY · 13:05 ET")
+    assert header.endswith("PARTIAL")
+
+    # --- section placement: DONE, then BLOCKED, then LOOKED AT, then
+    # DETAILS, then the footer — in that order, each present exactly once ---
+    for marker in (
+        "<b>✅ DONE</b>", "<b>❌ BLOCKED / FAILED</b>",
+        "<b>👀 LOOKED AT, NO TRADE</b>", "<b>DETAILS</b>", "🧾 AI cost",
+    ):
+        assert msg.count(marker) == 1, f"{marker!r} should appear exactly once"
+    done_idx = msg.index("<b>✅ DONE</b>")
+    blocked_idx = msg.index("<b>❌ BLOCKED / FAILED</b>")
+    looked_idx = msg.index("<b>👀 LOOKED AT, NO TRADE</b>")
+    details_idx = msg.index("<b>DETAILS</b>")
+    footer_idx = msg.index("🧾 AI cost")
+    assert done_idx < blocked_idx < looked_idx < details_idx < footer_idx
+
+    # --- AMD: DONE, submitted but NOT implied filled ---
+    done_section = msg[done_idx:blocked_idx]
+    assert "BUY AMD (Advanced Micro Devices)" in done_section
+    assert "placed, waiting to fill" in done_section
+    assert "filled" not in done_section.replace("waiting to fill", "")
+    assert "stop $520.00" in done_section
+
+    # --- FLNC: BLOCKED/FAILED, blamed on the DESK, not the broker ---
+    blocked_section = msg[blocked_idx:looked_idx]
+    assert "FLNC (Fluence Energy)" in blocked_section
+    assert "Desk safety check" in blocked_section
+    # The old defect: this used to read "broker rejected" — must not any more.
+    assert "broker rejected" not in blocked_section.lower()
+    assert "broker_rejected" not in blocked_section.lower()
+
+    # --- CHPX/OKLO/RKLB: analyzed and passed, not silently dropped ---
+    looked_section = msg[looked_idx:details_idx]
+    assert "CHPX (Global X AI Semiconductor ETF) BUY/medium — PM passed" in looked_section
+    assert "OKLO (Oklo Inc) BUY/medium — PM passed" in looked_section
+    assert "RKLB (Rocket Lab) BUY/medium — PM passed" in looked_section
+
+    # --- DETAILS: the full existing per-stock reasoning, unchanged,
+    # collapsed behind a real Telegram HTML expandable blockquote ---
+    details_section = msg[details_idx:footer_idx]
+    assert details_section.startswith("<b>DETAILS</b>\n<blockquote expandable>")
+    assert details_section.rstrip().endswith("</blockquote>")
+    assert "🔎 Signals: 5 analyzed · 5 actionable" in details_section
+    for sym, reason in [
+        ("AMD", "Breakout above the 50-day with volume confirmation."),
+        ("CHPX", "AI semiconductor basket tracking the group move."),
+        ("FLNC", "Storage names rolling over; breakdown below the 20-day."),
+        ("OKLO", "SMR nuclear theme continuation, extended."),
+        ("RKLB", "Launch cadence news flow supportive."),
+    ]:
+        assert f"{sym}:" in details_section and reason in details_section
+    assert "🧠 PM/Constructor: 2 change(s) · 0 hold(s)" in details_section
+    assert "🛡️ Risk: APPROVED · rr_fail" in details_section
+    assert "fat_finger_guard" in details_section  # raw evidence, unabridged
+
+    # --- no separate 'who:' identity block anywhere ---
+    assert "who:" not in msg
+
+    # --- real Telegram payload: still fits, markup survives escaping,
+    # linkification does not corrupt the structural tags ---
+    notifier = TelegramNotifier(token="t", chat_id="c", mission_control_url="https://mc.example/run/1")
+    symbols = trader_feed.extract_alert_symbols(run, outer["intraday_scan"])
+    payload = notifier._build_payload(msg, symbols=symbols, preserve_structural_markup=True)
+    final_text = payload["text"]
+    assert len(final_text) <= TelegramNotifier.MAX_MESSAGE_CHARS + 300
+    assert final_text.count("<blockquote expandable>") == 1
+    assert final_text.count("</blockquote>") == 1
+    assert "<b>✅ DONE</b>" in final_text

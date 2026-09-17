@@ -17,15 +17,16 @@ from typing import Any
 
 from src.notifier import (
     _actionable_coverage_gaps,
-    _append_company_identities,
     _clip_text,
     _DB_PATH as _NOTIFIER_DB_PATH,
     _fmt_signed_money,
+    _lookup_company_profiles,
     _new_block,
     _new_section,
     _seal_section,
+    company_name,
     format_session_result as _base_format_session_result,
-    humanize_status,
+    TelegramNotifier,
 )
 from src.trading_calendar import et_now
 
@@ -145,6 +146,271 @@ def _status_emoji(status: str) -> str:
     }:
         return "🔴"
     return "⚪"
+
+
+# === Scan-first markup helpers (2026-09-17 redesign) ===
+#
+# Owner feedback on the pre-redesign messages: "unless I read everything
+# word for word, I have no idea what was actually really done and what
+# just failed or was killed." Every formatter below now leads with a
+# plain-English outcome word and three short, structured sections — DONE /
+# BLOCKED-FAILED / LOOKED AT, NO TRADE (HELD / WATCH for a position review)
+# — built from the SAME underlying evidence the old wall-of-text used, so
+# nothing is newly invented; it is re-shaped. The full per-stock reasoning
+# the owner said he is happy with is kept, verbatim, inside a collapsed
+# `<b>DETAILS</b>` / `<blockquote expandable>` block (Telegram Bot API HTML
+# style, https://core.telegram.org/bots/api#html-style, documents
+# `<blockquote>` and `<blockquote expandable>` as supported parse_mode=HTML
+# tags) — one tap opens it. `<b>`/`<blockquote expandable>` are literal
+# tags in the plain text this module returns; see
+# `src.notifier._escape_with_markup` for how they survive `html.escape`
+# without any other text being able to inject one.
+
+
+def _b(text: str) -> str:
+    """A literal `<b>...</b>` section header — see the module-level note
+    above. Never build a `<b>` tag around text some other way; the escape
+    step in src/notifier.py only preserves this exact fixed string."""
+    return f"<b>{text}</b>"
+
+
+def _ticker_co(symbol: str, profiles: dict[str, Any] | None) -> str:
+    """'SYM (Company Name)', or bare 'SYM' when the company cache doesn't
+    know it — never a broken "(?)" placeholder, same posture as
+    `src.notifier._append_company_identities`."""
+    symbol = str(symbol or "?").upper()
+    name = company_name(symbol, profiles) if profiles is not None else None
+    return f"{symbol} ({name})" if name else symbol
+
+
+def _all_symbols(*groups: Any) -> list[str]:
+    """First-seen-order, deduped, upper-cased union of every symbol across
+    `groups` (each a list of dicts with a 'symbol' key, or a plain list of
+    ticker strings) — one CompanyProfileStore batch fetch per message
+    instead of one per section."""
+    seen: list[str] = []
+    for group in groups:
+        for item in group or []:
+            raw = item.get("symbol") if isinstance(item, dict) else item
+            sym = str(raw or "").strip().upper()
+            if sym and sym not in seen:
+                seen.append(sym)
+    return seen
+
+
+# Plain-English "who actually stopped it" for an execution-skip `reason`
+# code (src/pipeline_stages.py's `_record_execution_skip` call sites) — the
+# operator asked to be told desk safety check / risk manager / broker /
+# not-filled-in-time, not an internal snake_case reason code. Risk-manager
+# refusals and "not filled in time" are classified separately (they don't
+# come through `execution_skips` — see `_blocked_rows`).
+_SKIP_WHO_LABELS: dict[str, str] = {
+    "fat_finger_guard": "Desk safety check",
+    "kill_switch_halted": "Desk safety check (kill switch)",
+    "broker_rejected": "Broker",
+    "daily_loss_recheck": "Desk safety check (daily-loss breaker)",
+    "insufficient_cash": "Desk (insufficient cash)",
+    "below_min_notional": "Desk (order too small)",
+    "no_price": "Desk (no verifiable price)",
+    "stale_entry": "Desk (price moved since the decision)",
+    "qty_zero": "Desk (sizing rounds to zero)",
+    "latency_window": "Desk (too slow — latency)",
+    "slippage_gated": "Desk (price ran past the slippage limit)",
+    "borrow_gate": "Desk (short not available to borrow)",
+    "short_add_blocked": "Desk (adding to a short isn't supported)",
+    "rotation_room_not_freed": "Desk (no rotation room freed)",
+}
+
+
+def _skip_who(reason: str) -> str:
+    return _SKIP_WHO_LABELS.get(str(reason or ""), "Desk")
+
+
+def _decision_action_for(symbol: str, snap: dict[str, Any]) -> str:
+    """The PM/constructor's own action word for `symbol` this run (BUY /
+    SELL / SHORT / COVER / HOLD / ...), so a BLOCKED/FAILED line can say
+    "SHORT FLNC" rather than a bare "? FLNC"."""
+    for row in snap.get("pm_orders") or []:
+        if isinstance(row, dict) and str(row.get("symbol", "")).upper() == symbol:
+            return str(row.get("action", "?")).upper()
+    return "?"
+
+
+def _symbol_stop(symbol: str, snap: dict[str, Any]) -> float | None:
+    """The stop QAMC actually intends for `symbol` — the constructor's own
+    `TradeDecision.stop_loss`, overridden by a risk-manager modification of
+    the SAME field when one exists (Risk can retune a symbol's stop without
+    the constructor knowing — see `RiskModification`). Not the broker's
+    fill data: `trades` carries no stop column at all."""
+    stop: float | None = None
+    for row in snap.get("pm_orders") or []:
+        if isinstance(row, dict) and str(row.get("symbol", "")).upper() == symbol:
+            stop = _number(row.get("stop_loss"))
+            break
+    for row in snap.get("risk_mods") or []:
+        if (
+            isinstance(row, dict)
+            and str(row.get("symbol", "")).upper() == symbol
+            and str(row.get("field", "")).lower() == "stop_loss"
+        ):
+            new_value = _number(row.get("new_value"))
+            if new_value is not None:
+                stop = new_value
+    return stop
+
+
+def _trade_reached_broker(fill_status: Any) -> bool:
+    """True once an order is live at the broker — filled, or still working
+    ('submitted'/'pending_submit'). False for every terminal-fail status
+    (`canceled`, `expired`, `rejected`, `submit_failed`, ...): a `trades`
+    row exists, but nothing is protecting the operator's capital."""
+    return str(fill_status or "").lower() in {"filled", "submitted", "pending_submit"}
+
+
+def _classify_trades(snap: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+    """Real (non-HOLD, non-sweep) trades split into (reached_broker,
+    did_not_reach) — see `_trade_reached_broker`."""
+    _, real = _execution_rows(snap)
+    reached: list[dict] = []
+    stalled: list[dict] = []
+    for row in real:
+        (reached if _trade_reached_broker(row.get("fill_status")) else stalled).append(row)
+    return reached, stalled
+
+
+def _done_rows(snap: dict[str, Any]) -> list[dict]:
+    reached, _ = _classify_trades(snap)
+    return reached
+
+
+def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
+    """Everything that did NOT make it, one row per symbol, each carrying
+    who actually stopped it and why — see NEW LAYOUT item 4. Three sources,
+    in priority order (a symbol is never listed twice): the execution
+    skips QAMC's own deterministic gates recorded; symbols the risk manager
+    refused outright (`RiskVerdict.rejected_symbols`, Phase 10.1 — a
+    per-symbol refusal distinct from the whole-plan `approved` bool); and
+    a real trade row that reached neither a fill nor a live working order
+    (a DAY order that expired unfilled, a submit that ultimately failed).
+    """
+    rows: list[dict] = []
+    seen: set[str] = set()
+
+    skips = [row for row in (result.get("execution_skips") or []) if isinstance(row, dict)]
+    if not skips:
+        skips = [row for row in (snap.get("skips") or []) if isinstance(row, dict)]
+    for row in skips:
+        symbol = str(row.get("symbol", "?")).upper()
+        if symbol in seen:
+            continue
+        rows.append({
+            "symbol": symbol,
+            "action": _decision_action_for(symbol, snap),
+            "who": _skip_who(row.get("reason", "")),
+            "reason": row.get("detail") or row.get("reason") or "blocked",
+        })
+        seen.add(symbol)
+
+    risk = snap.get("risk")
+    if isinstance(risk, dict):
+        for row in risk.get("rejected_symbols") or []:
+            if not isinstance(row, dict):
+                continue
+            symbol = str(row.get("symbol", "?")).upper()
+            if symbol in seen:
+                continue
+            rows.append({
+                "symbol": symbol,
+                "action": _decision_action_for(symbol, snap),
+                "who": "Risk manager",
+                "reason": row.get("reason") or "refused without a stated reason",
+            })
+            seen.add(symbol)
+
+    _, stalled = _classify_trades(snap)
+    for row in stalled:
+        symbol = str(row.get("symbol", "?")).upper()
+        if symbol in seen:
+            continue
+        status = str(row.get("fill_status") or "unknown")
+        rows.append({
+            "symbol": symbol,
+            "action": str(row.get("action", "?")).upper(),
+            "who": "Not filled in time",
+            "reason": f"order never became a live fill (status: {status})",
+        })
+        seen.add(symbol)
+
+    return rows
+
+
+def _looked_at_rows(
+    snap: dict[str, Any], candidates: list[str] | None, acted_symbols: set[str],
+) -> list[dict]:
+    """Analyzed signals that were neither done nor blocked — the PM/
+    constructor's silent "pass". Addresses the 5-analyzed/5-actionable
+    defect: the header used to claim more than the message ever said what
+    happened to."""
+    rows = []
+    for row in _signal_rows(snap, candidates):
+        symbol = str(row.get("symbol", "")).upper()
+        if not symbol or symbol in acted_symbols:
+            continue
+        rows.append(row)
+    return rows
+
+
+def _outcome_word(status: str, done_count: int, blocked_count: int) -> str:
+    """ONE plain word for the header line — TRADED / NO CHANGE / FAILED /
+    PARTIAL — computed from the SAME counts the sections below render, so
+    the header can never claim something the body doesn't show."""
+    if _status_emoji(status) == "🔴":
+        return "FAILED"
+    if done_count and blocked_count:
+        return "PARTIAL"
+    if done_count:
+        return "TRADED"
+    if blocked_count:
+        return "FAILED"
+    return "NO CHANGE"
+
+
+# Reserved characters, not a trading number: `_wrap_details` must guarantee
+# its own output fits inside `TelegramNotifier.MAX_MESSAGE_CHARS` so the
+# tag-blind emergency clip in `notifier._build_payload` never has to run
+# for an ordinary alert (that fallback can only cut on a text/entity
+# boundary, not a `<blockquote expandable>` boundary). Covers the Mission
+# Control `<a href>` link `send()` appends after this text, plus slack for
+# `html.escape` expanding a handful of '&'/'"'/"'" characters in PM/risk
+# prose — this module never learns the real escaped length, only text.py's
+# `_build_payload` does.
+_DETAILS_SAFETY_RESERVE_CHARS = 250
+
+
+def _wrap_details(lines: list[str], detail_lines: list[str]) -> None:
+    """Append the full, unabridged per-stock reasoning as a collapsed
+    `<b>DETAILS</b>` / `<blockquote expandable>` block — NEW LAYOUT item 7.
+    Content is unchanged from the pre-redesign message; only its
+    presentation (collapsed, tapped open) is new. Sized to fit the
+    remaining Telegram budget so a clip, if one is needed, lands inside
+    DETAILS and never inside the scan-first sections above it.
+    """
+    text = "\n".join(line for line in detail_lines if line is not None).strip("\n")
+    if not text:
+        return
+    wrapper_overhead = len("<b>DETAILS</b>\n<blockquote expandable></blockquote>")
+    used = len("\n".join(lines))
+    budget = (
+        TelegramNotifier.MAX_MESSAGE_CHARS - used - wrapper_overhead
+        - _DETAILS_SAFETY_RESERVE_CHARS
+    )
+    budget = max(0, budget)
+    if len(text) > budget:
+        text = _clip_text(text, budget, marker="\n[details truncated — see Mission Control]")
+    start = len(lines)
+    lines.append(_b("DETAILS"))
+    lines.append(f"<blockquote expandable>{text}</blockquote>")
+    _seal_section(lines, start)
 
 
 def _empty_snapshot() -> dict[str, Any]:
@@ -320,48 +586,6 @@ def extract_alert_symbols(run_id: str | None, result: dict | None) -> list[str]:
     return symbols[:10]
 
 
-def _append_identities(
-    lines: list[str],
-    run_id: str | None,
-    result: dict | None,
-    extra_symbols: list[str] | None = None,
-) -> None:
-    """`who:` block for the rich trader-feed formatters below — the same
-    `extract_alert_symbols` source already used to decide which tickers get
-    a tap-through link, plus (2026-09-17) `extra_symbols` — the symbols a
-    formatter's "🔎 Signals" section is about to show as bullets, via
-    `_signal_symbols`. A no-trade intraday tick has no order/trade/skip
-    evidence for `extract_alert_symbols` to find, so before this its
-    analyzed-but-not-traded candidates (e.g. "VST", "AVGO") got no identity
-    line at all — the operator saw a bare ticker with no idea which company
-    it was. Both lists feed the SAME `src.notifier._append_company_identities`
-    call (the ONE place that turns symbols into identity text; see its
-    docstring — do not add a second lookup, extend the symbol list instead),
-    which already dedupes, so a symbol present in both never renders twice.
-    Deliberately called LAST by every formatter below, after the footer:
-    `TelegramNotifier._build_payload`'s length-budget fallback truncates
-    from the tail of the message when it must, so whatever is appended last
-    is the first thing a length-pressured alert drops — and identity lines
-    are the least important content here, never the order list, the PM/risk
-    rationale, or the footer.
-
-    Wrapped locally (not left to the `format_session_result` dispatcher's
-    own try/except) because that outer handler's fallback on any exception
-    is the OLD, plainer base formatter for the WHOLE message — losing every
-    section this module adds, not just the identity garnish. A failure here
-    must cost only the `who:` block.
-    """
-    try:
-        symbols = extract_alert_symbols(run_id, result)
-        for sym in extra_symbols or []:
-            sym = str(sym or "").strip().upper()
-            if sym and sym not in symbols:
-                symbols.append(sym)
-        _append_company_identities(lines, symbols)
-    except Exception as exc:  # noqa: BLE001 — identities are a garnish, never worth the alert
-        logger.warning("trader-feed: company identities failed: %s", exc)
-
-
 def _append_market(lines: list[str], snap: dict[str, Any]) -> None:
     macro = snap.get("macro")
     if not isinstance(macro, dict):
@@ -423,33 +647,25 @@ def _signal_rows(
     )
 
 
-def _signal_row_line(row: dict) -> str:
+def _signal_row_line(row: dict, profiles: dict[str, Any] | None = None) -> str:
     """One '   • SYM: RATING/conviction · R/R x.xx — reason' bullet, the
     one place that renders a tech-analysis row this way — shared by
-    `_append_signals` and the hourly desk-check summary."""
+    `_append_signals` (unchanged, default `profiles=None`: this text is
+    the "full existing per-stock reasons... unchanged in content" DETAILS
+    content) and the hourly desk-check summary, which passes `profiles` to
+    put the company name inline since it has no separate DONE/LOOKED-AT
+    section to have already introduced it."""
     sym = str(row.get("symbol", "?")).upper()
+    label = _ticker_co(sym, profiles) if profiles is not None else sym
     rating = str(row.get("rating", "?")).upper()
     conviction = str(row.get("conviction", "?")).lower()
     rr = row.get("risk_reward")
     rr_text = f" · R/R {rr:g}" if isinstance(rr, (int, float)) else ""
     reason = _clip(row.get("reasoning"), 420)
-    text = f"   • {sym}: {rating}/{conviction}{rr_text}"
+    text = f"   • {label}: {rating}/{conviction}{rr_text}"
     if reason:
         text += f" — {reason}"
     return text
-
-
-def _signal_symbols(snap: dict[str, Any], candidates: list[str] | None = None) -> list[str]:
-    """Upper-cased symbols the signals section actually renders as bullets
-    — fed into `_append_identities` so the `who:` block can name them too,
-    without a second CompanyProfileStore lookup anywhere (see
-    `src.notifier._append_company_identities`'s docstring: it must stay the
-    ONLY place that turns a symbol list into identity text)."""
-    return [
-        str(row.get("symbol", "")).upper()
-        for row in _signal_rows(snap, candidates)
-        if row.get("symbol")
-    ]
 
 
 def _append_signals(
@@ -682,14 +898,109 @@ def _append_coverage_gaps(lines: list[str], result: dict) -> None:
         lines.append(f"🚨 STOP MIS-SIZED: {len(partial)} · {names}")
 
 
+def _append_done(lines: list[str], rows: list[dict], snap: dict, profiles: dict) -> None:
+    """NEW LAYOUT item 3 — orders that actually reached the broker, one
+    line each, the true fill state (never implying a fill that hasn't
+    happened — `trades.fill_status` stays 'submitted' until it has)."""
+    if not rows:
+        return
+    lines.append(_b("✅ DONE"))
+    for row in rows:
+        action = str(row.get("action", "?")).upper()
+        symbol = str(row.get("symbol", "?")).upper()
+        qty = _number(row.get("fill_qty")) or _number(row.get("qty"))
+        price = _number(row.get("fill_price")) or _number(row.get("price"))
+        fill_status = str(row.get("fill_status") or "").lower()
+        state = "filled" if fill_status == "filled" else "placed, waiting to fill"
+        qty_text = f"{qty:g}" if qty is not None else "?"
+        price_text = f"${price:,.2f}" if price is not None and price > 0 else "?"
+        stop = _symbol_stop(symbol, snap)
+        stop_text = f" · stop ${stop:,.2f}" if stop is not None else ""
+        lines.append(
+            f"   • {action} {_ticker_co(symbol, profiles)} {qty_text} @ "
+            f"{price_text} — {state}{stop_text}"
+        )
+
+
+def _append_blocked(lines: list[str], rows: list[dict], profiles: dict) -> None:
+    """NEW LAYOUT item 4 — who actually stopped it, in plain words. See
+    `_blocked_rows` for the three sources this merges."""
+    if not rows:
+        return
+    lines.append(_b("❌ BLOCKED / FAILED"))
+    for row in rows:
+        reason = _clip(row.get("reason"), 300)
+        lines.append(
+            f"   • {row['action']} {_ticker_co(row['symbol'], profiles)} — "
+            f"{row['who']}: {reason}"
+        )
+
+
+def _append_looked_at(lines: list[str], rows: list[dict], profiles: dict) -> None:
+    """NEW LAYOUT item 5 — analyzed signals the PM/constructor passed on,
+    one line each: ticker, company, rating/conviction, plain outcome."""
+    if not rows:
+        return
+    lines.append(_b("👀 LOOKED AT, NO TRADE"))
+    for row in rows:
+        symbol = str(row.get("symbol", "?")).upper()
+        rating = str(row.get("rating", "?")).upper()
+        conviction = str(row.get("conviction", "?")).lower()
+        lines.append(f"   • {_ticker_co(symbol, profiles)} {rating}/{conviction} — PM passed")
+
+
+def _append_held(lines: list[str], symbols: list[str], profiles: dict) -> None:
+    """NEW LAYOUT item 6 — every held ticker, once, with the correct count
+    (the defect this fixes: a live message once said "7 hold(s)" over 6
+    positions with only 2 actually listed)."""
+    if not symbols:
+        return
+    lines.append(_b(f"HELD ({len(symbols)})"))
+    for symbol in symbols:
+        lines.append(f"   • {_ticker_co(symbol, profiles)}")
+
+
+def _watch_rows(result: dict) -> list[dict]:
+    """Positions already flagged by code the desk runs today — the
+    STOP MIS-SIZED half of `_append_coverage_gaps` (the milder of its two
+    banners; "NO STOP AT ALL" stays the loud top-of-message 🚨 banner it
+    already is). No new threshold is invented here — only what
+    `_gap_is_uncovered` already classifies."""
+    from src.notifier import _gap_is_uncovered
+
+    gaps = result.get("stop_coverage_gaps")
+    if not isinstance(gaps, list):
+        return []
+    return [
+        row for row in gaps
+        if isinstance(row, dict) and not _gap_is_uncovered(row)
+    ]
+
+
+def _append_watch(lines: list[str], rows: list[dict], profiles: dict) -> None:
+    if not rows:
+        return
+    lines.append(_b("⚠️ WATCH"))
+    for row in rows:
+        symbol = str(row.get("symbol", "?")).upper()
+        lines.append(f"   • {_ticker_co(symbol, profiles)} — stop coverage is mis-sized")
+
+
 def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     run_id = result.get("run_id")
     snap = _read_run(run_id)
     status = str(result.get("status", "unknown"))
-    lines = [
-        f"{_status_emoji(status)} {mode.upper()} · {et_now().strftime('%H:%M ET')}",
-        f"Status: {humanize_status(status)}",
-    ]
+
+    done_rows = _done_rows(snap)
+    blocked_rows = _blocked_rows(result, snap)
+    acted = {row["symbol"] for row in done_rows} | {row["symbol"] for row in blocked_rows}
+    looked_at_rows = _looked_at_rows(snap, None, acted)
+    profiles = _lookup_company_profiles(
+        _all_symbols(done_rows, blocked_rows, looked_at_rows)
+    )
+
+    outcome = _outcome_word(status, len(done_rows), len(blocked_rows))
+    lines = [f"{_status_emoji(status)} {mode.upper()} · {et_now().strftime('%H:%M ET')} · {outcome}"]
 
     _new_block(lines, _append_coverage_gaps, result)
 
@@ -705,13 +1016,33 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
 
     _new_block(lines, _append_market, snap)
     _new_block(lines, _append_book, snap)
-    _new_block(lines, _append_signals, snap)
-    _new_block(lines, _append_pm, snap, may_glue=True)
-    _new_block(lines, _append_risk, snap)
-    _new_block(lines, _append_gate_and_execution, result, snap)
+    _new_block(lines, _append_done, done_rows, snap, profiles)
+    _new_block(lines, _append_blocked, blocked_rows, profiles)
+    _new_block(lines, _append_looked_at, looked_at_rows, profiles)
+
+    detail_lines: list[str] = []
+    _new_block(detail_lines, _append_signals, snap)
+    _new_block(detail_lines, _append_pm, snap, may_glue=True)
+    _new_block(detail_lines, _append_risk, snap)
+    _new_block(detail_lines, _append_gate_and_execution, result, snap)
+    _wrap_details(lines, detail_lines)
+
     _new_block(lines, _append_footer, snap, elapsed)
-    _new_block(lines, _append_identities, run_id, result, _signal_symbols(snap))
     return "\n".join(lines)
+
+
+def _held_symbols(snap: dict[str, Any]) -> list[str]:
+    """Every symbol actually held, read from broker-truth `positions` —
+    NOT the reviewer's self-reported `actions` list, which is LLM output
+    and can under- or over-count (the defect this fixes: a live message
+    once said "7 hold(s)" over 6 real positions, with only 2 ever named).
+    Ordered exactly as `_append_book` already ranks them (by position
+    size), excludes cash-sweep vehicles the same way."""
+    positions = [row for row in (snap.get("positions") or []) if isinstance(row, dict)]
+    return [
+        str(row.get("symbol", "")).upper() for row in positions
+        if str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS
+    ]
 
 
 def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
@@ -719,9 +1050,19 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     snap = _read_run(run_id)
     status = str(result.get("status", "unknown"))
     review = result.get("review") if isinstance(result.get("review"), dict) else {}
+
+    done_rows = _done_rows(snap)
+    blocked_rows = _blocked_rows(result, snap)
+    held_symbols = _held_symbols(snap)
+    watch_rows = _watch_rows(result)
+    profiles = _lookup_company_profiles(
+        _all_symbols(done_rows, blocked_rows, held_symbols, watch_rows)
+    )
+
+    outcome = _outcome_word(status, len(done_rows), len(blocked_rows))
     lines = [
-        f"{_status_emoji(status)} {mode.upper()} REVIEW · {et_now().strftime('%H:%M ET')}",
-        f"Status: {humanize_status(status)}",
+        f"{_status_emoji(status)} {mode.upper()} REVIEW · "
+        f"{et_now().strftime('%H:%M ET')} · {outcome}"
     ]
 
     def _render_halt_banner(lines: list[str]) -> None:
@@ -755,40 +1096,48 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
         if bits:
             lines.append("📍 Review: " + " · ".join(bits))
 
-        overall = _clip(review.get("overall_assessment"), 650)
-        if overall:
-            lines.append(f"🧠 Reviewer: {overall}")
-
     _new_block(lines, _render_review_summary)
+
+    _new_block(lines, _append_done, done_rows, snap, profiles)
+    _new_block(lines, _append_blocked, blocked_rows, profiles)
+    _new_block(lines, _append_held, held_symbols, profiles)
+    _new_block(lines, _append_watch, watch_rows, profiles)
+    _new_block(lines, _append_book, snap)
 
     actions = [row for row in (review.get("actions") or []) if isinstance(row, dict)]
     actionable = [row for row in actions if str(row.get("action", "")).upper() != "HOLD"]
     holds = [row for row in actions if str(row.get("action", "")).upper() == "HOLD"]
 
+    detail_lines: list[str] = []
+    overall = _clip(review.get("overall_assessment"), 650)
+    if overall:
+        detail_lines.append(f"🧠 Reviewer: {overall}")
+
     def _render_decisions(lines: list[str]) -> None:
-        if actions:
-            lines.append(f"🎯 Decisions: {len(actionable)} action(s) · {len(holds)} hold(s)")
-            for row in actionable[:5]:
-                action = str(row.get("action", "?")).upper()
-                symbol = str(row.get("symbol", "?")).upper()
-                stop = _number(row.get("new_stop_price"))
-                stop_text = f" → stop ${stop:,.2f}" if stop is not None else ""
-                reason = _clip(row.get("reason"), 420)
-                text = f"   • {action} {symbol}{stop_text}"
-                if reason:
-                    text += f" — {reason}"
-                lines.append(text)
-            for row in holds[:2]:
-                symbol = str(row.get("symbol", "?")).upper()
-                reason = _clip(row.get("reason"), 420)
-                text = f"   • HOLD {symbol}"
-                if reason:
-                    text += f" — {reason}"
-                lines.append(text)
+        if not actions:
+            return
+        lines.append(f"🎯 Decisions: {len(actionable)} action(s) · {len(holds)} hold(s)")
+        # Uncapped — same reasoning as `_signal_rows`: a header count must
+        # never claim more than the bullets beneath it actually show.
+        for row in actionable:
+            action = str(row.get("action", "?")).upper()
+            symbol = str(row.get("symbol", "?")).upper()
+            stop = _number(row.get("new_stop_price"))
+            stop_text = f" → stop ${stop:,.2f}" if stop is not None else ""
+            reason = _clip(row.get("reason"), 420)
+            text = f"   • {action} {symbol}{stop_text}"
+            if reason:
+                text += f" — {reason}"
+            lines.append(text)
+        for row in holds:
+            symbol = str(row.get("symbol", "?")).upper()
+            reason = _clip(row.get("reason"), 420)
+            text = f"   • HOLD {symbol}"
+            if reason:
+                text += f" — {reason}"
+            lines.append(text)
 
-    _new_block(lines, _render_decisions)
-
-    _new_block(lines, _append_book, snap)
+    _new_block(detail_lines, _render_decisions, may_glue=True)
 
     def _render_gate_and_outcome(lines: list[str]) -> None:
         _append_gate_and_execution(lines, result, snap, explain_no_trade=False)
@@ -801,9 +1150,10 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
             elif not actions and status == "reviewed":
                 lines.append("⏸️ NO ACTION — review completed with no broker action")
 
-    _new_block(lines, _render_gate_and_outcome)
+    _new_block(detail_lines, _render_gate_and_outcome)
+    _wrap_details(lines, detail_lines)
+
     _new_block(lines, _append_footer, snap, elapsed)
-    _new_block(lines, _append_identities, run_id, result)
     return "\n".join(lines)
 
 
@@ -819,10 +1169,18 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     run_id = nested.get("run_id") or outer.get("run_id")
     snap = _read_run(run_id)
     status = str(nested.get("status", "unknown"))
-    lines = [
-        f"⚡ INTRADAY OPPORTUNITY · {et_now().strftime('%H:%M ET')}",
-        f"Status: {humanize_status(status)}",
-    ]
+
+    candidates = [str(symbol).upper() for symbol in (nested.get("candidates") or []) if symbol]
+    done_rows = _done_rows(snap)
+    blocked_rows = _blocked_rows(nested, snap)
+    acted = {row["symbol"] for row in done_rows} | {row["symbol"] for row in blocked_rows}
+    looked_at_rows = _looked_at_rows(snap, candidates, acted)
+    profiles = _lookup_company_profiles(
+        _all_symbols(done_rows, blocked_rows, looked_at_rows)
+    )
+
+    outcome = _outcome_word(status, len(done_rows), len(blocked_rows))
+    lines = [f"⚡ INTRADAY OPPORTUNITY · {et_now().strftime('%H:%M ET')} · {outcome}"]
 
     def _render_status_banner(lines: list[str]) -> None:
         if status == "paid_analysis_suspended":
@@ -874,16 +1232,20 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     if pnl is not None or ret is not None:
         _new_section(lines, _fmt_pnl_line("📈 Session P&L:", pnl, ret))
 
-    candidates = [str(symbol).upper() for symbol in (nested.get("candidates") or []) if symbol]
-    _new_block(lines, _append_signals, snap, candidates=candidates)
-    _new_block(lines, _append_pm, snap, may_glue=True)
-    _new_block(lines, _append_risk, snap)
-    _new_block(lines, _append_gate_and_execution, nested, snap)
-    _new_block(lines, _append_footer, snap, elapsed)
+    _new_block(lines, _append_done, done_rows, snap, profiles)
+    _new_block(lines, _append_blocked, blocked_rows, profiles)
+    _new_block(lines, _append_looked_at, looked_at_rows, profiles)
+
+    detail_lines: list[str] = []
+    _new_block(detail_lines, _append_signals, snap, candidates=candidates)
+    _new_block(detail_lines, _append_pm, snap, may_glue=True)
+    _new_block(detail_lines, _append_risk, snap)
     # `nested`, not `outer`: on the intraday path the traded-order evidence
-    # (and the run_id it's keyed by) lives in the `intraday_scan` sub-dict —
-    # same source `_append_gate_and_execution` above already reads.
-    _new_block(lines, _append_identities, run_id, nested, _signal_symbols(snap, candidates))
+    # (and the run_id it's keyed by) lives in the `intraday_scan` sub-dict.
+    _new_block(detail_lines, _append_gate_and_execution, nested, snap)
+    _wrap_details(lines, detail_lines)
+
+    _new_block(lines, _append_footer, snap, elapsed)
     return "\n".join(lines)
 
 
@@ -1079,9 +1441,13 @@ def _format_hourly_desk_check(result: dict, nested: dict | None, elapsed: float)
     """
     run_id = result.get("run_id")
     snap = _read_run(run_id)
-    lines = [f"🕐 DESK CHECK · {et_now().strftime('%H:%M ET')}", "Covering the last hour"]
-
     trade_count = _read_hour_trade_count()
+    outcome = "TRADED" if trade_count else "NO CHANGE"
+    lines = [
+        f"🕐 DESK CHECK · {et_now().strftime('%H:%M ET')} · {outcome}",
+        "Covering the last hour",
+    ]
+
     if trade_count == 0:
         _new_section(lines, "⏸️ No action this hour")
     else:
@@ -1103,6 +1469,17 @@ def _format_hourly_desk_check(result: dict, nested: dict | None, elapsed: float)
     _new_section(lines, f"💼 Positions held: {len(risk_positions)}")
 
     hour_rows = _read_hour_evidence()
+    hour_symbols = [
+        str(row.get("symbol", "")).upper() for row in hour_rows if row.get("symbol")
+    ]
+    profiles = _lookup_company_profiles(hour_symbols)
+
+    _cov_start = len(lines)
+    _append_coverage_gaps(lines, result)
+    _cov_added = len(lines) > _cov_start
+    _seal_section(lines, _cov_start)
+    if not _cov_added:
+        _new_section(lines, "🛡️ Stop coverage: OK")
 
     def _render_hour_signals(lines: list[str]) -> None:
         lines.append(f"🔎 Signals this hour: {len(hour_rows)} analyzed")
@@ -1116,25 +1493,19 @@ def _format_hourly_desk_check(result: dict, nested: dict | None, elapsed: float)
         )
         # Uncapped, same reasoning as `_signal_rows`: the header just above
         # states the real count — the bullets below it must match, not
-        # silently truncate to a smaller number.
+        # silently truncate to a smaller number. Company name inline
+        # (`profiles`) since this is the only per-symbol listing in this
+        # message — there is no separate DONE/LOOKED-AT section to have
+        # already introduced it.
         for row in ordered:
-            lines.append(_signal_row_line(row))
+            lines.append(_signal_row_line(row, profiles=profiles))
 
+    detail_lines: list[str] = []
     if hour_rows:
-        _new_block(lines, _render_hour_signals)
+        _new_block(detail_lines, _render_hour_signals)
     else:
-        _new_section(lines, f"🔎 Movers scanned: {_movers_scanned_text(nested)}")
-
-    _cov_start = len(lines)
-    _append_coverage_gaps(lines, result)
-    _cov_added = len(lines) > _cov_start
-    _seal_section(lines, _cov_start)
-    if not _cov_added:
-        _new_section(lines, "🛡️ Stop coverage: OK")
+        _new_section(detail_lines, f"🔎 Movers scanned: {_movers_scanned_text(nested)}")
+    _wrap_details(lines, detail_lines)
 
     _new_block(lines, _append_footer, snap, elapsed)
-    hour_symbols = [
-        str(row.get("symbol", "")).upper() for row in hour_rows if row.get("symbol")
-    ]
-    _new_block(lines, _append_identities, run_id, result, hour_symbols)
     return "\n".join(lines)

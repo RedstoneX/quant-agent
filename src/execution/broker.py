@@ -2964,6 +2964,8 @@ class AlpacaBroker:
             return {
                 "id": None, "status": "kill_switch_halted",
                 "symbol": _internal_symbol(symbol),
+                "detail": "the trading kill switch is active — every order "
+                          "is halted until the file is removed",
             }
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         internal_symbol = _internal_symbol(symbol)
@@ -2998,7 +3000,21 @@ class AlpacaBroker:
                         "Order REJECTED (likely data glitch or LLM hallucination).",
                         side.upper(), symbol, label, candidate, deviation * 100, reference_price,
                     )
-                    return {"id": None, "status": "rejected_outlier", "symbol": internal_symbol}
+                    return {
+                        "id": None, "status": "rejected_outlier", "symbol": internal_symbol,
+                        # Surfaced downstream (src/pipeline_stages.py's
+                        # execution-skip record, then the Telegram alert) so
+                        # the operator reads the REAL blocker — QAMC's own
+                        # price-sanity check, before this order ever reached
+                        # the broker — instead of a generic "broker
+                        # rejected", which used to read as if the broker had
+                        # refused a perfectly sane order.
+                        "detail": (
+                            f"{label}=${candidate:.4f} deviates {deviation * 100:.1f}% "
+                            f"from reference ${reference_price:.2f} (likely a data "
+                            "glitch or a hallucinated price)"
+                        ),
+                    }
 
         # Protective stop for a BUY is placed as a SEPARATE GTC stop-limit
         # AFTER the entry fills — NOT as an OTO leg.

@@ -264,7 +264,11 @@ def main():
                     symbols = extract_alert_symbols(run_id, result if isinstance(result, dict) else None)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("extract_alert_symbols failed in finally: %s", exc)
-                notifier.send(message, symbols=symbols)
+                # preserve_structural_markup=True: `message` is
+                # `format_session_result`'s output (src/trader_feed.py),
+                # which embeds literal <b>/<blockquote expandable> tags on
+                # purpose — see TelegramNotifier.send()'s docstring.
+                notifier.send(message, symbols=symbols, preserve_structural_markup=True)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("notifier crashed in finally: %s", exc)
     logger.info("Result: %s", result)
