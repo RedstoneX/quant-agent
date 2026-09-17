@@ -80,10 +80,10 @@ class _TradeUpdatesHub:
 
     Alpaca allows one trade_updates socket per account. Opening it only
     inside `wait_for_order_*` made handshake serial after Risk and burned
-    the fill/funding timeout (measured 2026-09-16). Start during Risk so
-    auth overlaps the review; fill waits attach here instead of opening
-    a second socket. Auth budget starts at `started_mono` and uses
-    alpaca-py's reconnect max — not a second fitted clock.
+    the fill/funding timeout (measured 2026-09-16). Start at PM so auth
+    finishes before the open Risk window; fill waits attach here instead
+    of opening a second socket. Auth budget starts at `started_mono` and
+    uses alpaca-py's reconnect max — not a second fitted clock.
     """
 
     def __init__(self, broker: "AlpacaBroker"):
@@ -158,6 +158,10 @@ class _TradeUpdatesHub:
     def authed(self) -> bool:
         return self._authed.is_set() or self._connected.is_set()
 
+    def authorized(self) -> bool:
+        """True only after the websocket said authorized — not merely connected."""
+        return self._authed.is_set()
+
     def auth_remaining_s(self) -> float:
         if not self.handshake_hook:
             return float("inf")
@@ -167,14 +171,16 @@ class _TradeUpdatesHub:
         return max(0.0, float(left))
 
     def wait_authed(self, timeout: float) -> bool:
-        """Wait remaining encoded budget. Does not invent a longer deadline."""
-        if self.authed():
+        """Wait for authorized. A connected handler is not the handshake."""
+        if self.authorized():
+            return True
+        if not self.handshake_hook:
             return True
         try:
             self._authed.wait(timeout=max(0.0, float(timeout)))
         except Exception:
             pass
-        return self.authed()
+        return self.authorized()
 
     def wait(
         self, order_id: str, timeout_seconds: float, *,
@@ -2868,9 +2874,9 @@ class AlpacaBroker:
         hub = getattr(self, "_trade_hub", None)
         if hub is None or not hub.is_alive():
             return False
-        if hub.authed():
-            return True
         if not hub.handshake_hook:
+            return True
+        if hub.authorized():
             return True
         remaining = hub.auth_remaining_s()
         if remaining <= 0:

@@ -506,15 +506,16 @@ class MacroDataProvider:
     def _configured_retries(self) -> int:
         """Retries for one series on this call.
 
-        Serial fetches used a consecutive-failure breaker so a FRED outage
-        would not walk fifteen series × three attempts. Parallel prefetch
-        gives every configured series its own attempts inside the shared
-        deadline, so the breaker no longer starves later series of a try.
+        Inside get_macro_summary the producing step is: one observation
+        attempt per series on the prefetch pass, then one bounded re-ask
+        of whatever still failed (`_retry_failed_series_once`). Stacking
+        max_retries=2 on the first pass (three HTTP per series) is how a
+        healthy batch burned ~85s of 90s and a cascade skipped the rest.
         Direct single-indicator calls (get_vix outside get_macro_summary)
-        still honour the breaker — they have no sibling series on the clock.
+        still honour max_retries and the consecutive-failure breaker.
         """
         if self._deadline is not None:
-            return self.max_retries
+            return 0
         with self._state_lock:
             consecutive = self._consecutive_failed_series
         return (
@@ -748,21 +749,20 @@ class MacroDataProvider:
     def _fred_in_flight_workers(self, n_jobs: int) -> int:
         """In-flight HTTP cap derived from the existing deadline/timeout.
 
-        `floor(deadline/timeout)` is how many full-timeout requests fit in
-        the ceiling. Using that as *serial waves* produced 3 workers at
-        90s/15s, so a healthy 1.5–6.7s series was scheduled as if it were
-        15s and observation+metadata still burned ~85s. Using it as
-        in-flight concurrency (and as the wave count, taking the larger)
-        keeps every job able to start inside the same ceiling without a
-        15-wide burst and without inventing a longer timeout.
+        floor(deadline/timeout) full-timeout waves fit in the ceiling;
+        workers = ceil(n / waves) so every job can still start inside it
+        (defaults 90/15 → 3). That 3-wide burned ~85s when each job also
+        fetched metadata. Observations-only keeps the same cap — a 15-wide
+        burst previously 429'd; 6-wide was not measured against FRED and
+        is not invented here. Isolated series are 1.5–6.7s, so 3-wide
+        observations finish with room for the one bounded retry.
         """
         if n_jobs <= 0:
             return 1
         wave_budget = max(
             1, int(self.total_fetch_deadline_s // self.request_timeout_s),
         )
-        workers = max(-(-n_jobs // wave_budget), wave_budget)
-        return min(n_jobs, workers)
+        return min(n_jobs, -(-n_jobs // wave_budget))
 
     def _safe_get_series(self, series_id: str, **kwargs) -> pd.Series:
         with self._state_lock:

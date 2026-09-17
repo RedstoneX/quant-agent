@@ -252,12 +252,12 @@ def test_observations_are_attempted_before_any_metadata_http(mock_fred_cls):
 
 
 @patch("src.data.macro.Fred")
-def test_observation_prefetch_in_flight_is_deadline_over_timeout_not_three_serial_waves(
+def test_observation_prefetch_keeps_three_workers_and_does_not_fetch_metadata_on_them(
     mock_fred_cls, monkeypatch,
 ):
-    """90s/15s used to size 3 workers as serial waves, which with
-    doubled HTTP burned ~85s of 90s. In-flight cap is the same
-    floor(deadline/timeout)=6, applied as concurrency."""
+    """90s/15s sizes 3 workers. The 85s healthy-batch cost was metadata
+    on those same slots, not a need for a 6-wide burst (15-wide 429'd;
+    6-wide was not measured against FRED)."""
     from concurrent.futures import ThreadPoolExecutor as RealPool
 
     mock = MagicMock()
@@ -281,7 +281,31 @@ def test_observation_prefetch_in_flight_is_deadline_over_timeout_not_three_seria
     )
     provider.get_macro_summary()
     assert seen, "prefetch never opened a pool"
-    assert seen[0] == 6
+    assert seen[0] == 3
+
+
+@patch("src.data.macro.Fred")
+def test_macro_summary_first_pass_is_one_attempt_then_one_bounded_retry(
+    mock_fred_cls,
+):
+    """Default max_retries=2 must not stack three HTTP onto the observation
+    pass. Prefetch is one attempt; the dedicated retry is the second."""
+    mock = MagicMock()
+    attempts: dict[str, int] = {}
+
+    def _side_effect(series_id, **kw):
+        attempts[series_id] = attempts.get(series_id, 0) + 1
+        if series_id == "ICSA" and attempts[series_id] == 1:
+            raise TimeoutError("The read operation timed out")
+        return _series([1.0, 1.1, 1.2])
+
+    mock.get_series.side_effect = _side_effect
+    mock_fred_cls.return_value = mock
+    provider = MacroDataProvider(api_key="test-key")  # shipped defaults
+    provider.get_macro_summary()
+    assert attempts["ICSA"] == 2
+    assert max(attempts.values()) <= 2
+    assert provider.last_coverage.status == "ok"
 
 
 @patch("src.data.macro.Fred")
