@@ -30,7 +30,7 @@ from src.notifier import (
     format_session_result as _base_format_session_result,
     TelegramNotifier,
 )
-from src.trading_calendar import et_now
+from src.trading_calendar import et_now, in_session_window
 
 logger = logging.getLogger(__name__)
 
@@ -1426,6 +1426,35 @@ def _format_intra_check(result: dict, elapsed_seconds: float) -> str | None:
             own_message = _base_format_session_result(
                 "intra_check", result, elapsed_seconds, error=None,
             )
+
+    # Owner decision, 2026-09-17: inside the midday position-review window
+    # (13:00-14:30 ET, `SESSION_WINDOWS["midday"]` — the same constant
+    # `midday`'s own run_if_et_window.sh gating uses, not a new number), the
+    # midday report is the one message that window owes the owner. A quiet
+    # intra_check tick — nothing actionable above, i.e. `own_message` is
+    # still None — is suppressed here, unconditionally, BEFORE the hourly-
+    # checkpoint check below is even consulted.
+    #
+    # That ordering matters, and is now LIVE, not hypothetical: #462 derived
+    # the hourly-checkpoint minute from intra_check's own `*:15,45` timer
+    # cadence (first tick per hour = :15), so 13:15 and 14:15 — not 13:00/
+    # 14:00 — are the hour-owning ticks inside this window. A quiet tick at
+    # 13:15 or 14:15 is suppressed by this branch exactly like any other
+    # quiet midday-window tick, before `_is_hourly_checkpoint` is even
+    # asked. That does consume the hour's one guaranteed-pulse slot without
+    # sending anything FROM intra_check — but it does not leave the window
+    # silent: `midday` sends its own position-review report unconditionally
+    # at :00 and :30 throughout 13:00-14:30 (see `_format_position_review`,
+    # which always returns a message, never `None`), so the owner already
+    # has a message either side of 13:15/14:15 regardless of this
+    # suppression. Anything actionable (an order placed/filled/cancelled/
+    # refused, a stop-coverage gap, a scan crash, `paid_analysis_suspended`,
+    # etc.) already set `own_message` above and returns unconditionally, in
+    # or out of this window — never suppressed. Outside 13:00-14:30 ET this
+    # branch never triggers and behaviour (including the guaranteed hourly
+    # pulse, now correctly reachable again per #462) is unchanged.
+    if own_message is None and in_session_window("midday", when=et_now()):
+        return None
 
     if not _is_hourly_checkpoint():
         return own_message  # None here means: quiet tick, no send.
