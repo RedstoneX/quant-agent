@@ -2460,6 +2460,22 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                 polarity_supports = stance_is_aligned(
                     source, symbol, stance, wants_bullish=(intent == "buy"),
                 )
+                # A PARTIAL trim keeps a position. Evidence aligned with the
+                # side still held supports HOLDING that remainder — trimming
+                # a bullish long for concentration is coherent, and must not
+                # need bearish evidence to be grounded (2026-09-17,
+                # intra_check-44594a05: AAPL trimmed with bullish earnings
+                # tagged "supports" rejected the whole plan). Either polarity
+                # may therefore SUPPORT a partial trim. Full closes, opens and
+                # increases are untouched, and the `conflicts` check below
+                # still reads the reduction's own polarity.
+                supports_retained = (
+                    intent == "sell" and pos is not None and not target.is_close
+                    and pos.qty != 0
+                    and stance_is_aligned(
+                        source, symbol, stance, wants_bullish=pos.qty > 0,
+                    )
+                )
                 if claim.relationship == "supports":
                     if source == "smart_money" and not smart_money_correlates:
                         errors.append(
@@ -2468,7 +2484,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                             "on its own; use context"
                         )
                         continue
-                    if not polarity_supports:
+                    if not (polarity_supports or supports_retained):
                         errors.append(
                             f"{symbol}: {source} stance {stance!r} does not support "
                             f"the proposed {intent}; record a conflict or context"
