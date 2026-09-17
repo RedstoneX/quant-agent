@@ -22,7 +22,7 @@ export const CHART_FLOOR_PX = 200;
 /** Holdings row floor: tab strip plus one chip row. */
 export const HOLDINGS_FLOOR_PX = 88;
 /** Starting Holdings height — two chip rows, chart still the largest pane. */
-export const HOLDINGS_DEFAULT_PX = 132;
+export const HOLDINGS_DEFAULT_PX = 176;
 
 export type BottomsSashStart = {
   growth: number;

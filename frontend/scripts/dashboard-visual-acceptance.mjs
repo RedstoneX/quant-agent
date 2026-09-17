@@ -320,14 +320,40 @@ const locksDir = resolve(process.env.QAMC_LOCKS_OUTPUT || "../docs/visual/pr-444
 async function dragVerticalSash(page, index, dy) {
   const sashes = page.locator(".dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash");
   await sashes.nth(index).waitFor();
-  const box = await sashes.nth(index).boundingBox();
-  if (!box) throw new Error(`no bounding box for vertical sash ${index}`);
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x, y + dy, { steps: 12 });
-  await page.mouse.up();
+  await page.evaluate(
+    ({ index, dy }) => {
+      const sash = document.querySelectorAll(
+        ".dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash",
+      )[index];
+      if (!sash) throw new Error(`no vertical sash ${index}`);
+      const box = sash.getBoundingClientRect();
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      const fire = (type, target, clientY) => {
+        target.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: x,
+            clientY,
+            button: 0,
+            buttons: type === "pointerup" ? 0 : 1,
+            pointerId: 1,
+            pointerType: "mouse",
+            view: window,
+          }),
+        );
+      };
+      fire("pointerdown", sash, y);
+      const steps = 8;
+      for (let i = 1; i <= steps; i += 1) {
+        fire("pointermove", document, y + (dy * i) / steps);
+      }
+      fire("pointerup", document, y + dy);
+    },
+    { index, dy },
+  );
 }
 
 const hierarchySteps = [
@@ -358,6 +384,7 @@ const lockSteps = [
     await page.getByRole("button", { name: "Chart SGOV" }).waitFor();
     await page.getByText("Apple Inc.").waitFor();
     await page.getByText("ENTRY", { exact: false }).waitFor();
+    await page.getByText("Live $", { exact: false }).waitFor();
   }],
   ["b-resize-from-above", { width: 1600, height: 1000 }, "populated", async (page) => {
     await page.getByRole("tab", { name: "Holdings" }).waitFor();
@@ -365,8 +392,9 @@ const lockSteps = [
     await dragVerticalSash(page, 0, 80);
   }],
   ["b-resize-from-below", { width: 1600, height: 1000 }, "populated", async (page) => {
-    await page.getByText("ENTRY", { exact: false }).waitFor();
-    await dragVerticalSash(page, 1, -70);
+    await page.getByText("Live $", { exact: false }).waitFor();
+    await dragVerticalSash(page, 1, -120);
+    await page.getByText("Live $", { exact: false }).waitFor();
   }],
 ];
 
