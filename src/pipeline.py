@@ -1265,6 +1265,46 @@ class TradingPipeline:
         except Exception:  # noqa: BLE001 — a broken config must not take down a session
             return None
 
+    def _retired_cash_park_symbol(self) -> str | None:
+        """The configured sweep vehicle when the sweep is DISABLED, else None.
+
+        Owner mandate 2026-09-17 turned the sweep off. A vehicle bought
+        before that is still a deliberately stopless holding until
+        `_release_retired_cash_park` sells it, so the stop-coverage audit
+        must keep exempting it rather than raising a naked-position banner
+        (its opening row is SWEEP_BUY, so the repair could not rebuild a
+        stop anyway).
+        """
+        from src.execution.cash_sweep import CashSweeper
+        sweeper = getattr(self, "cash_sweeper", None)
+        if not isinstance(sweeper, CashSweeper):
+            return None
+        try:
+            if sweeper.enabled():
+                return None
+            sym = sweeper.symbol
+        except Exception:  # noqa: BLE001
+            return None
+        return sym if isinstance(sym, str) and sym.strip() else None
+
+    def _release_retired_cash_park(self, run_id: str | None) -> None:
+        """Sell any sweep vehicle still held after the sweep was disabled.
+
+        Called at the start of every market-hours session (morning, midday/
+        close review, intra_check), right after the stop-coverage audit and
+        before any seat reads the book, so the release lands in cash the
+        same session. Non-fatal by design; see
+        `CashSweeper.release_retired_vehicle`.
+        """
+        from src.execution.cash_sweep import CashSweeper
+        sweeper = getattr(self, "cash_sweeper", None)
+        if not isinstance(sweeper, CashSweeper):
+            return
+        try:
+            sweeper.release_retired_vehicle(run_id=run_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("cash sweep retired: release failed (non-fatal): %s", exc)
+
     def _news_held_symbols(self, positions) -> list[str]:
         """Held symbols eligible for the capped per-symbol company-news fetch.
 
@@ -2136,7 +2176,7 @@ class TradingPipeline:
         total_value: float,
         daily_pnl: float,
         baseline: float | None = None,
-        macro_target_invested_pct: float | None = None,
+        invested_target_pct: float | None = None,
         correlation_matrix: dict[str, dict[str, float]] | None = None,
         cash: float | None = None,
         in_drawdown: bool = False,
@@ -2171,8 +2211,8 @@ class TradingPipeline:
         pending_gross_investment = 0.0
         # Raw (unsigned, UN-leveraged) notional already approved this batch.
         # This is the pending leg of `book_exposure`'s `deployed` measure —
-        # capital committed, which is what macro's `target_invested_pct` is
-        # defined against. Distinct from `pending_cash_outflow` (BUYs only,
+        # capital committed, which is what the invested target
+        # (`DESK_INVESTED_TARGET_PCT`) is defined against. Distinct from `pending_cash_outflow` (BUYs only,
         # a funding question) and from `pending_gross_investment` (leverage
         # multiplied, a ceiling question).
         pending_raw_investment = 0.0
@@ -2358,10 +2398,14 @@ class TradingPipeline:
                 decision.action, gross_investment,
             )
 
-        # Advisory check: projected net exposure vs macro's target_invested_pct.
-        # Does NOT block trades; emits a non-hard violation so RiskManager sees it
-        # and can either scale_all_buys or override with a reasoning.
-        if macro_target_invested_pct is not None and total_value > 0:
+        # Advisory check: projected capital at work vs the invested target
+        # (`DESK_INVESTED_TARGET_PCT`, fixed at 100% by the owner mandate of
+        # 2026-09-17 — macro no longer sets it). Does NOT block trades; emits
+        # a non-hard violation so RiskManager sees the gap. It reports
+        # UNDER-deployment only: a book at or above the target (margin is
+        # enabled) is not a reason to scale anything down — leverage is
+        # already capped, and enforced, by the §11.2 gross ceiling.
+        if invested_target_pct is not None and total_value > 0:
             from src.risk.rules import book_exposure, RiskViolation
             # Read through `book_exposure` — the SAME function that produces
             # PM's `invested_pct`. Before this, the two seats were judged
@@ -2378,32 +2422,26 @@ class TradingPipeline:
                 pending_net_usd=pending_investment,
             )
             projected_invested_pct = projected.deployed_pct
-            deviation = projected_invested_pct - macro_target_invested_pct
-            if abs(deviation) > 15:
-                # RC3: direction matters. The old symmetric message told RM
-                # to "consider scale_all_buys" for BOTH directions — for an
-                # UNDER-deployed book that advice compounds the exact drag
-                # it should be correcting (three months of 39% invested vs
-                # a 72-75% target).
-                if deviation < 0:
-                    guidance = (
-                        "advisory — book is UNDER macro's target; do NOT "
-                        "scale down the remaining BUYs for this reason. If "
-                        "cutting anything, name a risk specific to the trade, "
-                        "not the gap."
-                    )
-                else:
-                    guidance = "advisory — RM should consider scale_all_buys"
+            deviation = projected_invested_pct - invested_target_pct
+            # RC3 (the 15pp band is unchanged): an UNDER-deployed book is the
+            # drag this advisory exists to surface. The OVER branch that told
+            # RM to "consider scale_all_buys" was deleted with the mandate —
+            # there is no macro target left to be above, and scaling entries
+            # down leaves exactly the idle cash the owner ruled out.
+            if deviation < -15:
                 remaining_violations.append(RiskViolation(
-                    rule="macro_exposure_deviation",
+                    rule="deployment_gap",
                     message=(
                         f"Projected invested {projected_invested_pct:.0f}% (capital at "
-                        f"work; net direction {projected.net_pct:+.0f}%) deviates "
-                        f"from Macro target {macro_target_invested_pct:.0f}% by {deviation:+.0f}pp "
-                        f"({guidance})"
+                        f"work; net direction {projected.net_pct:+.0f}%) is "
+                        f"{-deviation:.0f}pp UNDER the fully-invested mandate "
+                        f"({invested_target_pct:.0f}%) (advisory — do NOT scale "
+                        f"down BUYs or SHORTs for exposure reasons; idle cash is "
+                        f"the cost here. If cutting anything, name a risk "
+                        f"specific to the trade, not the gap.)"
                     ),
                     value=projected_invested_pct,
-                    limit=macro_target_invested_pct,
+                    limit=invested_target_pct,
                 ))
 
         return allowed_decisions, remaining_violations, blocked_reasons
@@ -2933,7 +2971,12 @@ class TradingPipeline:
         longs_checked = 0
         shorts_checked = 0
         sweeper = self._sweeper()
-        sweep_symbol = sweeper.symbol if sweeper is not None else None
+        # A DISABLED sweep's vehicle is still exempt while it is held: it is
+        # awaiting `_release_retired_cash_park`, not naked.
+        sweep_symbol = (
+            sweeper.symbol if sweeper is not None
+            else self._retired_cash_park_symbol()
+        )
         for p in positions:
             symbol = getattr(p, "symbol", None)
             try:
@@ -5204,7 +5247,12 @@ class TradingPipeline:
         return "\n".join(lines)
 
     def _build_macro_trajectory(self) -> str:
-        """L3b memory: last 7 days of macro regime / confidence / target_invested_pct."""
+        """L3b memory: last 7 days of macro regime / confidence / equity outlook.
+
+        No invested target: macro stopped setting one with the owner's
+        fully-invested mandate (2026-09-17). Older snapshots still carry
+        `position_guidance.target_invested_pct`; it is deliberately not read.
+        """
         try:
             history = self.macro_store.load_history(days=7)
         except Exception as e:
@@ -5217,9 +5265,8 @@ class TradingPipeline:
             d = snap.get("date", "?")
             regime = snap.get("regime", "?")
             conf = snap.get("confidence", "?")
-            pg = snap.get("position_guidance") or {}
-            target = pg.get("target_invested_pct", "?")
-            lines.append(f"- {d}: {regime} ({conf}) → target {target}%")
+            outlook = snap.get("equity_outlook") or "?"
+            lines.append(f"- {d}: {regime} ({conf}) → outlook {outlook}")
         return "\n".join(lines)
 
     def _build_active_state_changes(self) -> str:
@@ -7771,7 +7818,7 @@ class TradingPipeline:
         # Book state.
         #
         # `invested_pct` comes from `book_exposure` — the SAME function the
-        # pre-trade gate's `macro_exposure_deviation` advisory reads, so PM
+        # pre-trade gate's `deployment_gap` advisory reads, so PM
         # and RM can no longer be told opposite things about one book (they
         # were: 70% "10pp OVER" to PM and 10% "50pp UNDER" to RM on the same
         # $50k-long/$20k-SQQQ book). `positions` here is already sweep-split
@@ -7859,19 +7906,16 @@ class TradingPipeline:
         f.rolling_20d_pct = recent_performance.get("rolling_20d_pct")
         f.in_drawdown = bool(recent_performance.get("in_drawdown"))
 
-        # RC3: deployment gap vs the macro target as a hard fact in PM's
-        # face. `invested_pct` above is sweep-aware (the DecisionStage view
-        # already counts parked T-bills as cash, not exposure).
-        try:
-            target = None
-            if macro_analysis is not None:
-                guidance = getattr(macro_analysis, "position_guidance", None)
-                target = getattr(guidance, "target_invested_pct", None)
-            if isinstance(target, (int, float)) and math.isfinite(target):
-                f.macro_target_invested_pct = float(target)
-                f.deployment_gap_pp = round(f.invested_pct - float(target), 1)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("pm_facts: deployment gap failed: %s", e)
+        # RC3: deployment gap vs the invested target as a hard fact in PM's
+        # face. The target is the owner's fixed fully-invested mandate
+        # (2026-09-17), not a macro output — macro no longer sets or lowers
+        # it. Only rendered when there is a book to measure.
+        from src.risk.rules import DESK_INVESTED_TARGET_PCT
+        if total_value > 0:
+            f.invested_target_pct = DESK_INVESTED_TARGET_PCT
+            f.deployment_gap_pp = round(
+                f.invested_pct - DESK_INVESTED_TARGET_PCT, 1,
+            )
 
         # Audit §1.3/§1.4 — the book's real risk, and each position's
         # R-multiple. None on failure; PMFacts.render() then says "unknown"
@@ -11001,6 +11045,9 @@ class TradingPipeline:
             # ahead of the drain changes nothing for them — the drain still
             # restores their coverage microseconds later, exactly as before.
             coverage_gaps = self._reconcile_stop_coverage()
+            # 0a'. Sweep retired (owner mandate 2026-09-17): sell any T-bill
+            # vehicle still held into cash before any seat reads the book.
+            self._release_retired_cash_park(run_id)
             # 0b. Drain orphaned protection-restore intents from prior
             # sessions where finalize had to bail (lingering SELL didn't
             # converge, or broker API hiccup). Each drained row brings a
@@ -11801,6 +11848,8 @@ class TradingPipeline:
         self._reconcile_orphan_pending_submits()  # audit F4
         # Broker-truth coverage audit (independent of the WAL).
         coverage_gaps = self._reconcile_stop_coverage()
+        # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
+        self._release_retired_cash_park(run_id)
         # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ) — midday/close run
         # every trading day, so this is the most frequent chance to catch a
         # stop that fired since the last pass and write it back before the
@@ -12479,6 +12528,8 @@ class TradingPipeline:
             coverage_gaps = self._reconcile_stop_coverage()
         except Exception as exc:  # noqa: BLE001
             logger.warning("intra coverage reconcile failed (non-fatal): %s", exc)
+        # Sweep retired (owner mandate 2026-09-17): release any held vehicle.
+        self._release_retired_cash_park(run_id)
         self._reconcile_orphan_pending_submits()  # audit F4
         # Broker-truth EXIT audit (2026-08-28 ONDS/CCJ). intra_check fires
         # every ~30 min, so this is the tightest window this reconciler

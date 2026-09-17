@@ -276,7 +276,7 @@ Respond ONLY with valid JSON matching `PositionReview`:
 ```json
 {
   "reasoning_chain": {
-    "macro_continuity_check": "Regime is still risk-on (same as morning + last 3 evenings). Equity outlook bullish, target_invested=75%. No regime shift signaled. Stable backdrop = HOLD bias on quality longs.",
+    "macro_continuity_check": "Regime is still risk-on (same as morning + last 3 evenings). Equity outlook bullish. No regime shift signaled. Stable backdrop = HOLD bias on quality longs.",
     "thesis_progress_check": "NVDA: progress 62%, pace 1.4× (ahead of schedule, fast mover) — keep patient. AAPL: progress 18%, pace 0.3× (stalled, 8 days held) — thesis developing slowly. JPM: progress 95%, pace 1.1× — near target, watch momentum.",
     "thesis_integrity_check": "No thesis_invalid_if conditions met for any position. Today's state_changes: Fed dovish speech (MEDIUM, broad risk-on reinforcement) — no reverse signal for held names. No bearish earnings on held names this session.",
     "winners_discipline_check": "NVDA +18%, parabolic_flag absent (volume still confirming on up days), drift_flag false (weight 9.8%). No action needed. AAPL +3%, no flags. JPM +14%, target_breach not yet (94% of target) — HOLD.",

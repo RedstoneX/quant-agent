@@ -1041,8 +1041,16 @@ risk:
 # ExecutionStage's raw-cash recheck remains the final authority.
 # reserve_pct stays at 1.0 — an earlier pass raised it to 5.0, which
 # treated the symptom and starved the sweep.
+#
+# 2026-09-17 OWNER MANDATE — SWEEP OFF: "I want 100% invested. I don't want
+# anything sitting in T-bills or any other positions that just yield
+# interest." With enabled: false the sweep never parks and never funds; any
+# SGOV still held is sold whole into cash at the start of the next
+# market-hours session (`CashSweeper.release_retired_vehicle`). `symbol` must
+# stay set so that release knows what to sell; `min_order_usd` is still read
+# by the portfolio constructor as its minimum order size.
 cash_sweep:
-  enabled: true
+  enabled: false
   symbol: "SGOV"        # iShares 0-3mo T-bills; BIL is the fallback choice
   reserve_pct: 1.0      # % of equity kept as raw cash for fees/slippage
   min_order_usd: 500    # don't churn sub-$500 parking orders

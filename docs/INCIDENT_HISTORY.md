@@ -22,6 +22,20 @@ what would catch it next time.
 
 ---
 
+### 2026-09-17 — the desk held back cash because macro said 80%, and parked the rest in T-bills; the owner ruled fully invested
+
+**In plain words:** the macro seat was setting how much of the account should be invested, and on 17 September it said 80%. The trade-picking seat then skipped a clean CRM buy purely to stay near that number, and the risk seat had a standing prompt to shrink every buy when the book ran above it. Whatever cash was left was swept into a T-bill fund. You said: *"I want 100% invested. I don't want anything sitting in T-bills or any other positions that just yield interest."*
+
+**Cause.** Not a code fault — a mandate the system was built to follow and you have now changed. The old rule allowed T-bills "when the desk genuinely finds nothing worth owning". Because the desk can short, that condition never honestly applies.
+
+**Change.** The invested target is now a fixed 100% of equity, not a macro output. Macro still says which way to lean and which sectors. The risk seat's check now only speaks when the book is well under fully invested, and never asks for buys or shorts to be shrunk for being "above target". The T-bill sweep is switched off. Any T-bill fund still held is sold whole into cash at the start of the next market-hours session, so it cannot linger as an unprotected holding nothing is designed to sell.
+
+**What this does not change.** Stops, per-trade risk, the drawdown ladder and the short-selling limits are untouched. The drawdown ladder can still force the book below fully invested (0.5x at worse than -20%), and that is deliberate. The 1% cash reserve setting is only read by the retired sweep and a dashboard figure; nothing enforces it as a floor.
+
+**What would catch it next time.** Tests that the risk advisory never asks for a scale-down above target, that a legacy macro target cannot move the invested target, and that a held T-bill fund is released with the sweep off.
+
+---
+
 ### 2026-09-17 — leftover reward-to-risk numbers were still killing and shrinking tickets after the floor itself had been retired (items 1 and 4, CLOSED)
 
 **In plain words:** You had already said the desk must not refuse a trade just because a made-up payoff ratio was under one and a half. That refusal was gone. What was still armed was two leftovers of the same invention: just before sending, a range order could be skipped if execution moved the price and the new ratio fell under 1.2 (or under the already-approved thinner ratio), and the portfolio manager still cut a range ticket to the smallest size when the measurable ratio was under 1.5. Yesterday that first leftover killed RSG after the reviewer had approved it. You called residual reward-to-risk on live main a defect and said the numbers were just made up.

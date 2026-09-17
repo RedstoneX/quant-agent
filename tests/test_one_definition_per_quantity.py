@@ -160,17 +160,17 @@ def _gate_projected_pct(positions, total_value, target):
 
     Goes through `TradingPipeline._filter_hard_risk_decisions` with an empty
     decision list, which is the shortest path that still executes the
-    production `macro_exposure_deviation` code.
+    production `deployment_gap` code (formerly `macro_exposure_deviation`).
     """
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline._sweeper = lambda: None
     pipeline.risk_engine = MagicMock(check=MagicMock(return_value=[]))
     _allowed, violations, _blocked = pipeline._filter_hard_risk_decisions(
         decisions=[], positions=positions, total_value=total_value,
-        daily_pnl=0.0, cash=0.0, macro_target_invested_pct=target,
+        daily_pnl=0.0, cash=0.0, invested_target_pct=target,
     )
-    macro = [v for v in violations if v.rule == "macro_exposure_deviation"]
-    return macro[0].value if macro else None
+    gap = [v for v in violations if v.rule == "deployment_gap"]
+    return gap[0].value if gap else None
 
 
 THE_MEASURED_BOOK = [
@@ -182,10 +182,11 @@ THE_MEASURED_BOOK = [
 def test_pm_and_risk_gate_report_the_same_invested_pct():
     """The exact book that produced +10pp OVER for PM and -50pp UNDER for RM.
 
-    The advisory only speaks when it deviates by more than 15pp, so the
-    comparison is made at a target that clears that band. `target=60` is
-    covered by the test below, where the whole point is that the advisory now
-    stays SILENT because it agrees with the PM.
+    The advisory only speaks when the book is more than 15pp UNDER the
+    target, so the comparison is made at the 100% fully-invested mandate
+    (2026-09-17), which this 70% book is 30pp under. `target=60` is covered by
+    the test below, where the whole point is that the advisory now stays
+    SILENT because it agrees with the PM.
     """
     total_value = 100_000.0
     facts = _pipeline_for_facts()._build_pm_facts(
@@ -193,7 +194,7 @@ def test_pm_and_risk_gate_report_the_same_invested_pct():
         total_value=total_value, cash=30_000.0,
         recent_performance={},
     )
-    gate_pct = _gate_projected_pct(THE_MEASURED_BOOK, total_value, target=40.0)
+    gate_pct = _gate_projected_pct(THE_MEASURED_BOOK, total_value, target=100.0)
 
     assert facts.invested_pct == pytest.approx(70.0)
     assert gate_pct == pytest.approx(facts.invested_pct), (
@@ -209,7 +210,7 @@ def test_the_gate_no_longer_contradicts_the_pm_on_the_measured_book():
     """At a 60% target the PM reads +10pp OVER — within its own band.
 
     The gate used to answer the same question with `abs(50k - 60k)/100k` =
-    10% and fire `macro_exposure_deviation` at -50pp with "do NOT scale down
+    10% and fire the old `macro_exposure_deviation` at -50pp with "do NOT scale down
     the remaining BUYs". It now agrees with the PM and says nothing.
     """
     assert _gate_projected_pct(THE_MEASURED_BOOK, 100_000.0, target=60.0) is None

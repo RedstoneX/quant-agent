@@ -9,7 +9,7 @@ The authoritative regime call + sector tilts in one JSON object:
 2. `confidence` — `high` / `medium` / `low`, calibrated by indicator freshness + cross-signal coherence.
 3. `equity_outlook` — `bullish` / `bearish` / `neutral`; `regime_shift` boolean + `shift_reason` when fresh data justifies it.
 4. `sector_guidance` — overweight / neutral / underweight per yfinance sector (12 values).
-5. `position_guidance.target_invested_pct` + `cash_recommendation_pct` (sums ~100).
+5. `position_guidance.reasoning` — which way the book should LEAN (net long vs net short) and why. **Not how much to hold in cash:** the desk is fully invested by owner mandate (2026-09-17), so a defensive read is expressed as a short lean, never as a cash recommendation.
 6. `bull_triggers` / `bear_triggers` — concrete observable view-change thresholds.
 7. `reasoning_chain` — 6 named fields (one per CoT step), MANDATORY.
 8. `nominations` — 0-3 sector-leader candidates you want Technical to look at when the regime turns (see "Nominating a candidate" below).
@@ -180,9 +180,7 @@ Respond ONLY with valid JSON matching this schema:
     "HY OAS is the best early-warning — watch for +50bps widening as first risk-off signal"
   ],
   "position_guidance": {
-    "target_invested_pct": 75,
-    "cash_recommendation_pct": 25,
-    "reasoning": "Risk-on but not all-clear; hold buffer for the sticky-inflation tail risk."
+    "reasoning": "Lean net long: risk-on but not all-clear, so the sticky-inflation tail is better expressed as underweight rate-sensitive names than as cash."
   },
   "bull_triggers": [
     "Core CPI MoM prints below 0.2% for two consecutive months",
@@ -194,7 +192,7 @@ Respond ONLY with valid JSON matching this schema:
     "DFF shows rate hike despite disinflation — indicates policy surprise"
   ],
   "alignment_with_news": "Consistent — News tracker shows Fed on hold and AI cycle intact; macro data confirms both.",
-  "summary": "Moderately supportive backdrop — VIX compressing, credit tight, Fed paused. Sticky core inflation is the lone headwind and keeps confidence at medium rather than high. Favor Tech and Financials; stay cautious on rate-sensitive and commodity plays. Hold 25% cash as insurance against a hawkish Fed surprise.",
+  "summary": "Moderately supportive backdrop — VIX compressing, credit tight, Fed paused. Sticky core inflation is the lone headwind and keeps confidence at medium rather than high. Favor Tech and Financials; stay cautious on rate-sensitive and commodity plays.",
   "nominations": [
     {
       "symbol": "JPM",
@@ -214,7 +212,7 @@ Respond ONLY with valid JSON matching this schema:
 - `confidence`: `"high"`, `"medium"`, `"low"` — apply the calibration rules above
 - `sector_guidance.sector`: MUST be one of the 12 values shown (yfinance taxonomy): Technology, Financial Services, Healthcare, Consumer Cyclical, Consumer Defensive, Energy, Industrials, Communication Services, Utilities, Basic Materials, Real Estate, Broad
 - `sector_guidance.stance`: `"overweight"`, `"neutral"`, `"underweight"`
-- `position_guidance.target_invested_pct` + `cash_recommendation_pct` should sum to ~100 (±5 for rounding); both in 0-100
+- `position_guidance.reasoning`: direction only (lean long / lean short / balanced, and why). Do not emit an invested or cash percentage — how much capital is at work is fixed at fully invested and is not a macro output
 - `bull_triggers` / `bear_triggers`: 1-3 concrete, observable conditions each. These are view-change thresholds, not hopes or targets.
 - Every `reasoning_chain` field must be a substantive analytical sentence — not a placeholder, not one word.
 - `risk_factors`: 2-4 key risks. Be specific about the monitorable data point.
@@ -225,4 +223,4 @@ Macro Data Coverage (FRED series success/failure this run) · VIX · 3M / 2Y / 1
 
 ## Outputs consumed by
 
-`portfolio_manager` (regime drives Step 1 macro filter and the starter-sleeve regime gate; `sector_guidance` drives Step 6 sector concentration; `position_guidance.target_invested_pct` is the exposure hint) · `risk_manager` (`macro_exposure_deviation` advisory) · `position_reviewer` (`macro_continuity_check` is the first reasoning step) · `evening_analyst` (regime trajectory 7d narrative + sector stance for thesis_health_review) · `tech_analyst` (a `nominations` entry triggers an on-demand responder call for that symbol, bounded and gated — see `docs/QAMC_REMEDIATION_SPEC.md` §9.1/§9.2).
+`portfolio_manager` (regime drives Step 1 macro filter and the starter-sleeve regime gate; `sector_guidance` drives Step 6 sector concentration; `position_guidance.reasoning` is the directional-lean hint) · `risk_manager` (macro environment summary) · `position_reviewer` (`macro_continuity_check` is the first reasoning step) · `evening_analyst` (regime trajectory 7d narrative + sector stance for thesis_health_review) · `tech_analyst` (a `nominations` entry triggers an on-demand responder call for that symbol, bounded and gated — see `docs/QAMC_REMEDIATION_SPEC.md` §9.1/§9.2).

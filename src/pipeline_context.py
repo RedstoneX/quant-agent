@@ -202,7 +202,9 @@ class RunContext:
     analysis_failure_error: str | None = None
     correlation_matrix: dict = field(default_factory=dict)
     daily_pnl: float = 0.0
-    macro_target_pct: float | None = None
+    # The invested target the pre-trade `deployment_gap` advisory measured
+    # against — the fixed fully-invested mandate, not a macro output.
+    invested_target_pct: float | None = None
     # Stage 1 (QAMC correlation plumbing): set once by DecisionStage right
     # after a successful PM call. Threaded through to the risk_manager
     # agent_logs row and every trades row this run produces, so a single id
@@ -344,12 +346,14 @@ class PMFacts:
     rolling_20d_pct: float | None = None
     in_drawdown: bool = False
 
-    # RC3 (2026-07-16): deployment vs the macro target. Macro demanded
+    # RC3 (2026-07-16): deployment vs the invested target. Macro demanded
     # 72-75% invested for three months while realized invested% averaged
     # 39% and NOTHING forced the gap into PM's face — every layer shaved
-    # sizes independently and no one reconciled the compound. None when
-    # macro didn't provide a target this session.
-    macro_target_invested_pct: float | None = None
+    # sizes independently and no one reconciled the compound. Since the
+    # owner mandate of 2026-09-17 the target is the fixed fully-invested
+    # `DESK_INVESTED_TARGET_PCT` (100%), no longer a macro output. None only
+    # when there was no book to measure.
+    invested_target_pct: float | None = None
     deployment_gap_pp: float | None = None  # invested - target (negative = under)
 
     # Phase 2 / audit §1.3-§1.4: the book's actual risk, computed in Python.
@@ -536,30 +540,27 @@ class PMFacts:
         return f"\n\n{block}" if block else ""
 
     def _render_deployment_gap(self) -> str:
-        if self.macro_target_invested_pct is None or self.deployment_gap_pp is None:
+        if self.invested_target_pct is None or self.deployment_gap_pp is None:
             return ""
-        if self.deployment_gap_pp > 15:
-            return (
-                f"\n\n### Deployment vs Macro Target"
-                f"\n- invested={self.invested_pct:.1f}% vs macro target="
-                f"{self.macro_target_invested_pct:.0f}% — {self.deployment_gap_pp:.0f}pp OVER"
-                f" the target. The RM advisory will flag this; trims/rotation"
-                f" are a valid response, especially if macro is not risk-on."
-            )
+        # No OVER branch: there is no macro target left to be above, and a
+        # book past 100% (margin) is governed by the enforced gross ceiling,
+        # not by a prompt nudge to trim.
         if self.deployment_gap_pp >= -15:
             return (
-                f"\n\n### Deployment vs Macro Target"
-                f"\n- invested={self.invested_pct:.1f}% vs macro target="
-                f"{self.macro_target_invested_pct:.0f}% (gap {self.deployment_gap_pp:+.0f}pp — within band)"
+                f"\n\n### Deployment vs Fully-Invested Mandate"
+                f"\n- invested={self.invested_pct:.1f}% vs mandate="
+                f"{self.invested_target_pct:.0f}% (gap {self.deployment_gap_pp:+.0f}pp)."
+                f" Any cash left undeployed is a cost — name why in `cash_target`."
             )
         return (
             f"\n\n### ⚠️ DEPLOYMENT GAP (address in cash_target step)"
-            f"\n- invested={self.invested_pct:.1f}% vs macro target="
-            f"{self.macro_target_invested_pct:.0f}% — you are {-self.deployment_gap_pp:.0f}pp UNDER the target"
+            f"\n- invested={self.invested_pct:.1f}% vs fully-invested mandate="
+            f"{self.invested_target_pct:.0f}% — you are {-self.deployment_gap_pp:.0f}pp UNDER the target"
             f"\n- This gap has been the single largest P&L drag (idle cash in a"
             f" rising market). In `cash_target`, either (a) close it with"
             f" qualified candidates THIS session, or (b) name the concrete"
             f" blocker per unfilled slot (no-qualified-setups after filters /"
             f" regime gate / earnings-queue). \"Staying cautious\" without a"
-            f" named blocker is not an answer."
+            f" named blocker is not an answer, and a bearish read is expressed"
+            f" with shorts or inverse ETFs, not with cash."
         )

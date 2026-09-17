@@ -890,3 +890,93 @@ def test_fund_buys_fails_closed_when_it_cannot_confirm():
 
     assert freed == 0.0
     assert ctx.cash == 1_000.0
+
+
+# ---------- sweep retired (owner mandate 2026-09-17: fully invested) ----------
+#
+# `cash_sweep.enabled: false` turns every other hook inert — fund_buys no
+# longer releases the vehicle, park_excess no longer buys it and
+# split_positions stops hiding it. SGOV bought before the switch must not be
+# left as a stranded, stopless, thesis-less holding: it is sold whole at the
+# start of the next market-hours session.
+
+def _retired_pipeline():
+    p = _sweep_pipeline(enabled=False)
+    p._submit_protected_sell = MagicMock(return_value=(
+        {"id": "release-1", "status": "accepted"},
+        {"symbol": "SGOV", "order_id": "release-1"},
+    ))
+    p._finalize_pending_protections = MagicMock()
+    p.broker.get_positions.return_value = [SGOV, NVDA]
+    return p
+
+
+def test_retired_sweep_releases_whole_held_vehicle_into_cash():
+    p = _retired_pipeline()
+
+    order = p.cash_sweeper.release_retired_vehicle(run_id="run-x")
+
+    assert order == {"id": "release-1", "status": "accepted"}
+    kwargs = p._submit_protected_sell.call_args.kwargs
+    assert kwargs["symbol"] == "SGOV"
+    assert kwargs["qty"] == SGOV.qty            # the whole position, not a slice
+    assert kwargs["position_qty_before_sell"] == SGOV.qty
+    assert kwargs["label"] == "SWEEP_SELL"      # ledger isolation holds
+    trade = p.db.insert_trade.call_args.kwargs
+    assert trade["action"] == "SWEEP_SELL" and trade["symbol"] == "SGOV"
+    assert trade["run_id"] == "run-x"
+    p._finalize_pending_protections.assert_called_once()
+
+
+def test_retired_release_is_noop_while_sweep_enabled():
+    p = _retired_pipeline()
+    p.config.cash_sweep = CashSweepConfig(enabled=True, symbol="SGOV")
+    assert p.cash_sweeper.release_retired_vehicle(run_id="r") is None
+    p._submit_protected_sell.assert_not_called()
+
+
+def test_retired_release_is_noop_when_nothing_held():
+    p = _retired_pipeline()
+    p.broker.get_positions.return_value = [NVDA]
+    assert p.cash_sweeper.release_retired_vehicle(run_id="r") is None
+    p._submit_protected_sell.assert_not_called()
+
+
+def test_retired_release_survives_broker_failure():
+    p = _retired_pipeline()
+    p.broker.get_positions.side_effect = ConnectionError("down")
+    p._release_retired_cash_park("r")           # must not raise
+    p._submit_protected_sell.assert_not_called()
+
+
+def test_reconcile_stop_coverage_still_skips_vehicle_awaiting_release():
+    """Held SGOV after the switch is awaiting release, not naked — no red
+    banner, and no stop-repair attempt on a SWEEP_BUY opening row."""
+    p = _sweep_pipeline(enabled=False)
+    p.broker.get_positions.return_value = [SGOV]
+    p.db.get_pending_protection_restores.return_value = []
+    p.broker.snapshot_protective_stops.return_value = (True, [])
+    assert p._reconcile_stop_coverage() == []
+    p.broker.snapshot_protective_stops.assert_not_called()
+
+
+def test_disabled_sweep_releases_held_sgov_on_next_session(tmp_path):
+    """(b) End-to-end through run_midday with the sweep OFF and SGOV still
+    held: the session releases it (one full SWEEP_SELL) and parks nothing."""
+    p = _position_review_fixture(tmp_path)
+    p.config.cash_sweep = CashSweepConfig(enabled=False, symbol="SGOV")
+    p._submit_protected_sell = MagicMock(return_value=(
+        {"id": "release-1", "status": "accepted"},
+        {"symbol": "SGOV", "order_id": "release-1"},
+    ))
+    p._finalize_pending_protections = MagicMock()
+
+    result = p.run_midday()
+
+    assert result["status"] == "reviewed"
+    sells = [c.kwargs for c in p._submit_protected_sell.call_args_list
+             if c.kwargs.get("symbol") == "SGOV"]
+    assert len(sells) == 1
+    assert sells[0]["qty"] == SGOV.qty and sells[0]["label"] == "SWEEP_SELL"
+    assert not any(o.get("action") == "SWEEP_BUY" for o in result["orders"])
+    p.broker.submit_order.assert_not_called()   # no parking buy

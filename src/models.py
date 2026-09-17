@@ -2218,7 +2218,7 @@ RiskReasonCategory = Literal[
     "concentration",     # sector / single-name too heavy
     "correlation_risk",  # theme/factor clustering flagged
     "event_risk",        # pre-earnings / FOMC / macro event volatility
-    "macro_misalign",    # PM's net exposure deviates from Macro target
+    "macro_misalign",    # plan direction contradicts the macro read (legacy: exposure vs a macro target, removed 2026-09-17)
     "data_degraded",     # multiple upstream sources failed
     "signal_fidelity",   # PM contradicts TechAnalyst without explanation
     "other",             # doesn't fit the above
@@ -2467,8 +2467,17 @@ class MacroSectorGuidance(LLMOutputModel):
 
 
 class MacroPositionGuidance(LLMOutputModel):
-    target_invested_pct: float = Field(ge=0, le=100)
-    cash_recommendation_pct: float = Field(ge=0, le=100)
+    """Macro's read on which way the book should LEAN (net long vs net
+    short, and why) — never how much of it sits idle.
+
+    Owner mandate 2026-09-17: the desk is fully invested, always. The
+    invested target is `src.risk.rules.DESK_INVESTED_TARGET_PCT`, a fixed
+    mandate, not a macro output. `target_invested_pct` and
+    `cash_recommendation_pct` were deleted from this model that day so no
+    seat can be handed a macro reason to hold cash. Snapshots persisted
+    before then still carry both keys; unknown keys are ignored, so they
+    still parse and the numbers simply stop reaching anyone.
+    """
     reasoning: str
 
 

@@ -365,8 +365,13 @@ RULE_PLAIN = {
         "together"
     ),
     "drawdown_buy_cap": "the account is in a drawdown, so buying is capped",
+    # Historical runs only — retired 2026-09-17 with the fully-invested
+    # mandate; `deployment_gap` replaced it.
     "macro_exposure_deviation": (
         "it moved the account too far from the exposure the macro view called for"
+    ),
+    "deployment_gap": (
+        "the account was left well short of fully invested"
     ),
     "data_degraded": (
         "some of the data feeding the decision was missing or stale"

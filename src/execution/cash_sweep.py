@@ -318,6 +318,82 @@ class CashSweeper:
         )
         return confirmed
 
+    # ---------- retirement (sweep disabled, vehicle still held) ----------
+
+    def release_retired_vehicle(self, run_id: str | None = None) -> dict | None:
+        """Sell the WHOLE held vehicle back into cash when the sweep is OFF.
+
+        Owner mandate 2026-09-17: fully invested, nothing in T-bills. With
+        `cash_sweep.enabled: false` every other sweep hook goes inert —
+        `fund_buys` no longer releases the vehicle, `park_excess` no longer
+        buys it, and `split_positions` stops hiding it. A vehicle bought
+        before the switch would otherwise sit as a stopless, thesis-less
+        position that nothing is designed to sell. This is the one path that
+        does: a deterministic, zero-LLM full exit, recorded as SWEEP_SELL so
+        the ledger isolation in the module docstring still holds.
+
+        No-op when the sweep is enabled (the vehicle is then still managed),
+        when no symbol is configured, or when nothing is held. Best-effort:
+        any broker failure logs and returns None, and the next session tries
+        again. Returns the accepted order dict, or None.
+        """
+        if self.enabled():
+            return None
+        sym = self.symbol
+        if not isinstance(sym, str) or not sym.strip():
+            return None
+        pipeline = self._pipeline
+        try:
+            positions = pipeline.broker.get_positions()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("cash sweep retired: position read failed — "
+                           "not releasing %s this session: %s", sym, e)
+            return None
+        held = next(
+            (p for p in (positions or []) if getattr(p, "symbol", None) == sym),
+            None,
+        )
+        if held is None:
+            return None
+        try:
+            qty = float(getattr(held, "qty", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(qty) or qty <= 0:
+            return None
+        price = getattr(held, "current_price", None)
+        if not (isinstance(price, (int, float)) and math.isfinite(price) and price > 0):
+            logger.warning("cash sweep retired: no usable price for %s — "
+                           "not releasing this session", sym)
+            return None
+        sell_qty = pipeline._full_sell_qty(qty)
+        if sell_qty is None:
+            return None
+        sale = pipeline._submit_protected_sell(
+            symbol=sym, qty=sell_qty, limit_price=round(price * _SELL_LIMIT_PAD, 2),
+            reference_price=price, position_qty_before_sell=qty,
+            label="SWEEP_SELL",
+        )
+        if sale is None:
+            return None
+        order, prot = sale
+        try:
+            pipeline.db.insert_trade(
+                symbol=sym, action="SWEEP_SELL", qty=sell_qty, price=price,
+                reasoning=(
+                    "cash sweep retired (owner mandate 2026-09-17: fully "
+                    f"invested, no T-bills): releasing all held {sym} into cash"
+                ),
+                run_id=run_id, broker_order_id=order.get("id"),
+                fill_status="submitted",
+            )
+        except Exception as e:  # noqa: BLE001 — ledger failure must not strand finalize
+            logger.warning("cash sweep retired: insert_trade failed for SWEEP_SELL: %s", e)
+        pipeline._finalize_pending_protections([prot], context="CASH SWEEP RETIRED")
+        logger.info("cash sweep retired: submitted full release of %s (%s sh @ ~$%.2f)",
+                    sym, pipeline._format_qty(sell_qty), price)
+        return order
+
     # ---------- parking (after a session's trading is done) ----------
 
     def park_excess(self, ctx) -> dict | None:
