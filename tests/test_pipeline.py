@@ -989,6 +989,47 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline._check_late_breach_and_halt.assert_called_once()
 
 
+def test_total_pnl_since_reset_uses_earliest_row_prior_equity(tmp_path):
+    """The Telegram feed's 'total P&L' baseline: the earliest surviving
+    `daily_pnl` row's account equity BEFORE that day's own P&L
+    (total_value - daily_pnl) — the broker's own last_equity going into
+    the first post-reset trading day, a value already recorded on that
+    row, not reconstructed. Total P&L is current equity vs. that baseline;
+    total return % is over the same baseline."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_daily_pnl(date="2026-09-02", total_value=9862.74, daily_pnl=44.70, daily_return_pct=0.46)
+    db.insert_daily_pnl(date="2026-09-16", total_value=9717.05, daily_pnl=-147.81, daily_return_pct=-1.50)
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+
+    total_pnl, total_return_pct, since = pipeline._total_pnl_since_reset(9900.00)
+
+    baseline = 9862.74 - 44.70  # equity going into the first post-reset day
+    assert since == "2026-09-02"
+    assert total_pnl == pytest.approx(9900.00 - baseline)
+    assert total_return_pct == pytest.approx((9900.00 - baseline) / baseline * 100)
+    db.close()
+
+
+def test_total_pnl_since_reset_no_baseline_is_none_not_zero(tmp_path):
+    """No `daily_pnl` row recorded yet (fresh DB) — the baseline is
+    genuinely unknown, so this must say so, never fabricate a 0."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+
+    assert pipeline._total_pnl_since_reset(9900.00) == (None, None, None)
+    db.close()
+
+
 def test_halt_reconciles_fills_before_judging_coverage(tmp_path):
     """The dedupe/staleness reasoning that used to protect the liquidator
     still applies to the halt, for a different reason: DB rows can be stale

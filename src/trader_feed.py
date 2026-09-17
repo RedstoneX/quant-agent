@@ -1071,13 +1071,10 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
         f"{fmt_time_12h(et_now())} · {outcome}"
     ]
 
-    # NEW LAYOUT item 2 applies here too — only when the review's own
-    # result dict actually carries it (a midday/close run doesn't always;
-    # an absent P&L is omitted, never invented as "n/a" or a blank line).
-    pnl = _number(result.get("daily_pnl"))
-    ret = _number(result.get("daily_return_pct"))
-    if pnl is not None or ret is not None:
-        _new_section(lines, _fmt_pnl_line("📈 Session P&L:", pnl, ret))
+    # Owner request 2026-09-17: today's + total P&L, always shown (never
+    # silently dropped the way the old "Session P&L" line was on every
+    # midday/close message — `run_position_review` now always sets these).
+    _new_section(lines, *_pnl_section_lines(result))
 
     def _render_halt_banner(lines: list[str]) -> None:
         if status == "emergency_sold":
@@ -1172,11 +1169,50 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
 
 
 def _fmt_pnl_line(label: str, pnl: float | None, ret: float | None) -> str:
-    """'📈 Session P&L: +$12.34 (+0.10%)' — shared by the per-tick intraday
-    formatter and the hourly desk-check summary."""
-    pnl_text = _fmt_signed_money(pnl) if pnl is not None else "n/a"
-    ret_text = f"{ret:+.2f}%" if ret is not None else "n/a"
+    """'📈 Today's P&L: +$12.34 (+0.10%)' — a missing figure renders as the
+    honest 'not available', never a fabricated 0. If BOTH are unknown the
+    parenthetical is dropped too ('not available (not available)' reads as
+    a bug, not an honest gap)."""
+    if pnl is None and ret is None:
+        return f"{label} not available"
+    pnl_text = _fmt_signed_money(pnl) if pnl is not None else "not available"
+    ret_text = f"{ret:+.2f}%" if ret is not None else "not available"
     return f"{label} {pnl_text} ({ret_text})"
+
+
+def _pnl_section_lines(result: dict) -> list[str]:
+    """The two-line P&L block every trader-feed message shows in the spot
+    the old, undated 'Session P&L' line used to sit (owner request,
+    2026-09-17): he did not know whether "session" meant this run, this
+    calendar day, or something else — it actually meant this run's/tick's
+    OWN process, i.e. it was silently absent on every midday/close message
+    (`run_position_review` never set `daily_pnl` at all) and, when it did
+    show on an intraday tick, was really just today's account change under
+    an unexplained label.
+
+    'Today's P&L' is the broker's own day-over-day account change
+    (today's total value vs. its `last_equity`, i.e. official prior-close
+    equity) — the SAME basis `run_evening`'s already-trusted 'Daily P&L'
+    line uses (src/notifier.py), just not yet 4pm-close-verified mid-day.
+
+    'Total P&L' is deliberately labelled with the date it starts from
+    rather than called "total" bare: the 2026-09-02 book-wide liquidation
+    archived every earlier record (docs/INCIDENT_HISTORY.md), so a total
+    spanning that boundary would be meaningless — seeing "total" would
+    read as "since the account began", which it is not. See
+    `TradingPipeline._total_pnl_since_reset` for exactly which recorded
+    value the baseline comes from (never reconstructed).
+    """
+    today_pnl = _number(result.get("daily_pnl"))
+    today_ret = _number(result.get("daily_return_pct"))
+    total_pnl = _number(result.get("total_pnl"))
+    total_ret = _number(result.get("total_return_pct"))
+    since = result.get("total_pnl_since")
+    total_label = f"📊 Total P&L since {since}:" if since else "📊 Total P&L:"
+    return [
+        _fmt_pnl_line("📈 Today's P&L:", today_pnl, today_ret),
+        _fmt_pnl_line(total_label, total_pnl, total_ret),
+    ]
 
 
 def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
@@ -1241,10 +1277,7 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
 
     _new_block(lines, _render_status_banner)
 
-    pnl = _number(outer.get("daily_pnl"))
-    ret = _number(outer.get("daily_return_pct"))
-    if pnl is not None or ret is not None:
-        _new_section(lines, _fmt_pnl_line("📈 Session P&L:", pnl, ret))
+    _new_section(lines, *_pnl_section_lines(outer))
 
     _new_block(lines, _append_done, done_rows, snap, profiles)
     _new_block(lines, _append_blocked, blocked_rows, profiles)
@@ -1568,10 +1601,7 @@ def _format_hourly_desk_check(
             f"⚡ {trade_count} order(s) this hour — see the alert(s) already sent",
         )
 
-    pnl = _number(result.get("daily_pnl"))
-    ret = _number(result.get("daily_return_pct"))
-    if pnl is not None or ret is not None:
-        _new_section(lines, _fmt_pnl_line("📈 Session P&L:", pnl, ret))
+    _new_section(lines, *_pnl_section_lines(result))
 
     positions = [row for row in (snap.get("positions") or []) if isinstance(row, dict)]
     risk_positions = [

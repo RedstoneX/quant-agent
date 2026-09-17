@@ -1487,6 +1487,54 @@ class TradingPipeline:
             baseline, pnl, basis,
         )
 
+    def _total_pnl_since_reset(
+        self, total_value: float,
+    ) -> tuple[float | None, float | None, str | None]:
+        """`(total_pnl, total_return_pct, since_date)` for the Telegram
+        feed's "total P&L" line.
+
+        **Why "since reset" and not "since inception".** The desk's
+        2026-09-02 book-wide liquidation archived every prior trade/
+        daily_pnl row (see docs/INCIDENT_HISTORY.md); the live `daily_pnl`
+        table has held no row earlier than that date since. A "total"
+        spanning that boundary would silently splice pre-reset and
+        post-reset history into one number the owner would act on as if it
+        were continuous — exactly the defect he flagged. So the baseline
+        is the EARLIEST row this table actually has, never reconstructed
+        from the archive.
+
+        **Why that row's `total_value - daily_pnl`, not its `equity_close`.**
+        `equity_close` is that day's OWN 4pm close — already one day inside
+        the post-reset period, which would drop that first day's P&L from
+        the total. `total_value - daily_pnl` recovers the broker's
+        last_equity going into that day (the same basis `daily_pnl` itself
+        is built from everywhere else in this file), i.e. the account's
+        equity immediately before the first post-reset trading day —
+        a value already recorded on that row, not invented here.
+
+        Returns `(None, None, None)` when no `daily_pnl` row exists yet
+        (fresh DB) or the recorded baseline is non-finite/non-positive —
+        never a fabricated 0.
+        """
+        try:
+            earliest = self.db.get_earliest_daily_pnl()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("total P&L baseline lookup failed: %s", exc)
+            return None, None, None
+        if not earliest:
+            return None, None, None
+        try:
+            baseline = float(earliest["total_value"]) - float(earliest["daily_pnl"])
+            tv = float(total_value)
+        except (TypeError, ValueError, KeyError):
+            return None, None, None
+        if not (baseline > 0) or not math.isfinite(baseline) or not math.isfinite(tv):
+            return None, None, None
+        total_pnl = tv - baseline
+        total_return_pct = total_pnl / baseline * 100
+        since_date = str(earliest.get("date") or "") or None
+        return total_pnl, total_return_pct, since_date
+
     def _verify_stop_coverage_at_halt(self, positions) -> list[dict]:
         """Per-symbol stop-coverage truth, read from the broker, for a halt.
 
@@ -11915,6 +11963,15 @@ class TradingPipeline:
         last_equity = ctx.last_equity
         self._sync_positions_from_broker(positions)
 
+        # Today's P&L for the Telegram feed (item: "Session P&L" rename) —
+        # same basis as `run_intra_check`/`run_evening`: the broker's own
+        # last_equity (prior trading-day close), not a run-scoped figure.
+        daily_pnl = (total_value - last_equity) if last_equity else 0.0
+        daily_return_pct = (daily_pnl / last_equity * 100) if last_equity else 0.0
+        total_pnl, total_return_pct, total_pnl_since = (
+            self._total_pnl_since_reset(total_value)
+        )
+
         # Hard circuit breaker: if the session is already through the daily-loss
         # limit, bypass all LLM/news/earnings work and HALT (docs/WORK.md item
         # 32 — the force-liquidation this used to do is deleted). Keeps the
@@ -11935,6 +11992,11 @@ class TradingPipeline:
             )
             halt["session"] = session_type
             halt["review"] = None
+            halt["daily_pnl"] = daily_pnl
+            halt["daily_return_pct"] = daily_return_pct
+            halt["total_pnl"] = total_pnl
+            halt["total_return_pct"] = total_return_pct
+            halt["total_pnl_since"] = total_pnl_since
             return halt
 
         # 1b. (DELETED 2026-09-12, owner decision.) A midday "auto take-profit"
@@ -12280,6 +12342,25 @@ class TradingPipeline:
                 )
                 halt["session"] = session_type
                 halt["review"] = review.model_dump() if review else None
+                # Best-available truth at halt time: the just-refreshed
+                # account snapshot above, not the pre-review one this
+                # function otherwise carries as `total_value`/`daily_pnl`.
+                fresh_total_value = (
+                    fresh_account.get("portfolio_value", total_value)
+                    if isinstance(fresh_account, dict) else total_value
+                )
+                fresh_last_equity = (
+                    fresh_account.get("last_equity", fresh_total_value)
+                    if isinstance(fresh_account, dict) else last_equity
+                )
+                halt["daily_pnl"] = (
+                    (fresh_total_value - fresh_last_equity) if fresh_last_equity else 0.0
+                )
+                halt["daily_return_pct"] = (
+                    (halt["daily_pnl"] / fresh_last_equity * 100) if fresh_last_equity else 0.0
+                )
+                (halt["total_pnl"], halt["total_return_pct"],
+                 halt["total_pnl_since"]) = self._total_pnl_since_reset(fresh_total_value)
                 # The session's own earlier orders (deterministic trails and
                 # the like) are preserved for the feed. The halt itself
                 # placed none — `halted` / `halt_reason` are the record of
@@ -12367,6 +12448,14 @@ class TradingPipeline:
             # Spec §11.2 — gross exposure, its ladder-resolved ceiling and the
             # distance to forced liquidation, for the operator alert.
             "leverage": dict(ctx.leverage),
+            # Telegram P&L line ("Session P&L" rename): today's account
+            # change (broker last_equity basis, same as run_intra_check/
+            # run_evening) plus total since the last recorded baseline.
+            "daily_pnl": daily_pnl,
+            "daily_return_pct": daily_return_pct,
+            "total_pnl": total_pnl,
+            "total_return_pct": total_return_pct,
+            "total_pnl_since": total_pnl_since,
         }
 
     def run_earnings_preprocess(self) -> dict:
@@ -12640,6 +12729,9 @@ class TradingPipeline:
         ctx.daily_pnl = daily_pnl
         self._sync_positions_from_broker(positions)
         daily_return_pct = (daily_pnl / last_equity * 100) if last_equity > 0 else 0
+        total_pnl, total_return_pct, total_pnl_since = (
+            self._total_pnl_since_reset(total_value)
+        )
         logger.info(
             "Intra snapshot: equity=$%.2f, last_close=$%.2f, pnl=$%.2f (%.2f%%), positions=%d",
             total_value, last_equity, daily_pnl, daily_return_pct, len(positions),
@@ -12658,6 +12750,9 @@ class TradingPipeline:
                 "status": "ok",
                 "daily_pnl": daily_pnl,
                 "daily_return_pct": daily_return_pct,
+                "total_pnl": total_pnl,
+                "total_return_pct": total_return_pct,
+                "total_pnl_since": total_pnl_since,
                 "positions": len(positions),
                 "run_id": run_id,
                 "stop_coverage_gaps": coverage_gaps,
@@ -12720,6 +12815,9 @@ class TradingPipeline:
         )
         halt["daily_pnl"] = daily_pnl
         halt["daily_return_pct"] = daily_return_pct
+        halt["total_pnl"] = total_pnl
+        halt["total_return_pct"] = total_return_pct
+        halt["total_pnl_since"] = total_pnl_since
         return halt
 
     def _recently_intraday_evaluated(self, symbol: str, cooldown_hours: float) -> bool:
