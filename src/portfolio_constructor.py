@@ -1277,7 +1277,10 @@ class PortfolioConstructor:
                     target, price_map.get(sym), (live_stops or {}).get(sym.upper()),
                 )
                 if entry is None or stop is None:
-                    continue  # refused by name inside; position unchanged
+                    # drop-reason: delegated — `_held_trim_entry_and_stop`
+                    # files TRIM_REFUSAL_NO_USABLE_LIVE_STOP before returning
+                    # (None, None). The position is left unchanged.
+                    continue
                 live_stop_trims.add(sym)
             else:
                 entry, stop = self._resolve_entry_and_stop(
@@ -1575,6 +1578,7 @@ class PortfolioConstructor:
             f"is left unchanged. This is not a market data fault.",
             action=action,
         )
+        # drop-reason: filed just above (TRIM_REFUSAL_NO_USABLE_LIVE_STOP).
         return (None, None)
 
     def _derive_target(

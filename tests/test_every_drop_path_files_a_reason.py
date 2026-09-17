@@ -196,6 +196,7 @@ _CANDIDATE_ENDING_METHODS = frozenset({
     "_construct_orders_impl",
     "_plan_risk_targets",
     "_resolve_entry_and_stop",
+    "_held_trim_entry_and_stop",
     "_widen_stop_past_noise",
     "_build_buy",
     "_build_short",
