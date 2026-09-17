@@ -164,6 +164,26 @@ def test_conflict_on_reduce_of_legacy_weight_target_is_never_blocked():
     assert {t.symbol for t in result.targets} == {"XLF"}
 
 
+def test_risk_based_trim_is_exempt_but_risk_increase_is_still_adjudicated():
+    """A risk target BELOW the holding's current stop-based risk is a trim
+    and exempt; the same unaddressed conflict on a risk INCREASE, or on a
+    holding whose current risk is unknown, is still dropped (2026-09-17)."""
+    position = _held("DIS")
+    conflicts = "No mention of the name or the source at all."
+
+    def run(risk: float, existing: dict[str, float] | None) -> set[str]:
+        target = dict(_buy_target("DIS", conflict_source="macro"), risk_allocation_pct=risk)
+        result = PortfolioManagerAgent._drop_unadjudicated_conflicts(
+            _decision([target], conflicts=conflicts), positions=[position],
+            total_value=100_000, existing_risk_pct=existing,
+        )
+        return {t.symbol for t in result.targets}
+
+    assert run(1.0, {"DIS": 2.0}) == {"DIS"}      # trim: exempt
+    assert run(3.0, {"DIS": 2.0}) == set()        # increase: dropped
+    assert run(1.0, None) == set()                # unknown risk: fail safe
+
+
 def test_symbol_substring_cannot_satisfy_the_match():
     """Word-boundary matching: "V" appearing only inside "AVGO"/"INVALID"
     must NOT satisfy the match for a conflict on symbol "V"."""
