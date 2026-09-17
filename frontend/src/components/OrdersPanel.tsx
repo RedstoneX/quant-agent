@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { Badge, Select, SelectItem, TextInput } from "@tremor/react";
 import { legacyCreateColumnHelper as createColumnHelper, type LegacyColumnDef } from "@tanstack/react-table/legacy";
-import { OrderItem } from "../api/client";
+import { OrderItem, TradeItem } from "../api/client";
 import { fmtMoney, fmtNum, fmtTime } from "../lib/format";
+import { recordedOrderTarget } from "../lib/orderTarget";
 import { Panel, StateMessage } from "./ui/Panel";
 import { DataTable } from "./ui/DataTable";
 
@@ -16,6 +17,7 @@ export function OrdersPanel({
   onStatusChange,
   onInspect,
   onSelectSymbol,
+  trades = [],
 }: {
   orders: OrderItem[];
   error: string | null;
@@ -31,6 +33,9 @@ export function OrdersPanel({
    * DataTable's row-level onClick, which this cell's own stopPropagation
    * has to defeat. */
   onSelectSymbol?: (symbol: string) => void;
+  /** Read-only trade rows used to surface the recorded take-profit as
+   * Target. The broker order has no take-profit field of its own. */
+  trades?: TradeItem[];
 }) {
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
@@ -59,6 +64,12 @@ export function OrdersPanel({
       }),
       columnHelper.accessor("side", { header: "Side", cell: (info) => (info.getValue() || "—").toUpperCase() }),
       columnHelper.accessor("order_type", { header: "Type", cell: (info) => (info.getValue() || "—").replace(/_/g, " ") }),
+      columnHelper.accessor("stop_price", { header: "Stop", cell: (info) => fmtMoney(info.getValue()) }),
+      columnHelper.accessor((row) => recordedOrderTarget(row, trades), {
+        id: "target",
+        header: "Target",
+        cell: (info) => fmtMoney(info.getValue()),
+      }),
       columnHelper.accessor("qty", { header: "Requested", cell: (info) => fmtNum(info.getValue()) }),
       columnHelper.accessor("status", {
         header: "Status",
@@ -69,11 +80,10 @@ export function OrdersPanel({
         cell: (info) => `${fmtNum(info.getValue())} @ ${fmtMoney(info.row.original.filled_avg_price)}`,
       }),
       columnHelper.accessor("limit_price", { header: "Limit", cell: (info) => fmtMoney(info.getValue()) }),
-      columnHelper.accessor("stop_price", { header: "Stop", cell: (info) => fmtMoney(info.getValue()) }),
       columnHelper.accessor("submitted_at", { header: "Submitted", cell: (info) => fmtTime(info.getValue()) }),
       columnHelper.accessor("filled_at", { header: "Filled", cell: (info) => fmtTime(info.getValue()) }),
     ] as LegacyColumnDef<OrderItem, unknown>[],
-    [onSelectSymbol]
+    [onSelectSymbol, trades]
   );
   const panelStatus = error ? "degraded" : loading ? "loading" : "ok";
 

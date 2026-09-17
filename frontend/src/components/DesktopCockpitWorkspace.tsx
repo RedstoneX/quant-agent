@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Card, Text } from "@tremor/react";
 import { DockviewReact, type DockviewApi, type DockviewReadyEvent, type IDockviewPanelProps } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
 import { useCockpitWorkspace } from "../context/CockpitWorkspaceContext";
@@ -7,9 +6,17 @@ import { useSupportWorkspace } from "../context/SupportWorkspaceContext";
 import { useModalActions } from "../context/ModalContext";
 import { CandidateRail } from "./CandidateRail";
 import { PriceChartPanel } from "./PriceChartPanel";
-import { PositionHoldingStrip } from "./PositionHoldingStrip";
-import { DecisionSummaryLine } from "./DecisionSummaryLine";
+import { ChartSymbolBar } from "./ChartSymbolBar";
 import { PositionsPanel } from "./PositionsPanel";
+import {
+  BOTTOMS_FLOOR_PX,
+  COCKPIT_LAYOUT_KEY,
+  clearPersistedGrowth,
+  growthOwnsDrag,
+  nextSashGrowth,
+  readPersistedGrowth,
+  writePersistedGrowth,
+} from "../lib/cockpitSash";
 import { OrdersPanel } from "./OrdersPanel";
 import { TradesPanel } from "./TradesPanel";
 import { RunsPanel } from "./RunsPanel";
@@ -17,7 +24,6 @@ import { DirectionalBiasPanel } from "./DirectionalBiasPanel";
 import { MissedOpportunitiesPanel } from "./MissedOpportunitiesPanel";
 import { SearchPanel } from "./SearchPanel";
 import { HealthPanel } from "./HealthPanel";
-import { Pill } from "./ui/Pill";
 import { Panel, StateMessage } from "./ui/Panel";
 
 // Item 2 of cockpit pass 3: the middle column of the bottom row used to
@@ -76,13 +82,9 @@ function CandidatesPane() {
   return <div className="h-full overflow-y-auto p-2"><CandidateRail funnel={state.funnel} loading={state.loading} error={state.error} updatedAt={state.updatedAt} selectedSymbol={state.chartSymbol} onSelectSymbol={state.onSelectSymbol} /></div>;
 }
 
-// Owner correction: the Decision Room panel is gone (see PR description).
-// What used to be its "position I hold" answer is now
-// PositionHoldingStrip — an inline compact strip under the chart, never a
-// popup/modal/drawer — and its "what did this run's candidate do" answer
-// is DecisionSummaryLine, a single line that renders nothing at all
-// unless there is real content. Both sit directly under the chart, in the
-// same pane, so nothing ever covers the candles.
+// Above the candles: company name + ticker + Lifecycle. Holding figures
+// stay on Positions and on the chart's own entry/stop lines. The decision
+// one-liner lives inside Lifecycle, not as a second strip here.
 function ChartPane() {
   const state = useCockpitWorkspace();
   // Read-only broker positions/orders/trades, sourced from the same
@@ -93,53 +95,20 @@ function ChartPane() {
   const support = useSupportWorkspace();
   const { openCandidateDetail } = useModalActions();
   const candidate = state.funnel?.candidates.find((item) => item.symbol === state.chartSymbol);
-  const heldPosition = state.chartSymbol ? support.positions.find((p) => p.symbol === state.chartSymbol) : undefined;
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden p-2 gap-2">
-      <Card className="flex flex-shrink-0 !bg-panel-alt !p-2.5 !ring-border">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          {state.previousChartSymbol && state.previousChartSymbol !== state.chartSymbol && state.onGoBackSymbol && (
-            <Button
-              type="button"
-              variant="secondary"
-              size="xs"
-              color="cyan"
-              onClick={state.onGoBackSymbol}
-              title={`Back to ${state.previousChartSymbol}`}
-              aria-label={`Back to ${state.previousChartSymbol}`}
-            >
-              &larr; {state.previousChartSymbol}
-            </Button>
-          )}
-          <span className="font-bold">{state.chartSymbol || "Market"}</span>
-          {candidate && <><Pill text={candidate.direction} /><Pill text={candidate.order_status || (candidate.executed ? "executed" : "not executed")} /></>}
-          {!candidate && <Text>Market context; no selected-run candidate evidence.</Text>}
-          {candidate && state.funnel && (
-            <Button className="ml-auto" size="xs" variant="light" color="cyan" onClick={() => openCandidateDetail(state.funnel!.run_id, candidate.symbol)}>Lifecycle &rarr;</Button>
-          )}
-        </div>
-      </Card>
-      {heldPosition && (
-        <div className="flex-shrink-0">
-          <PositionHoldingStrip position={heldPosition} openOrders={support.openOrders} trades={support.trades} />
-        </div>
-      )}
-      <div className="flex-shrink-0">
-        <DecisionSummaryLine funnel={state.funnel} symbol={state.chartSymbol} />
-      </div>
-      {/* Fix (owner UI pass, item 4 "chart internal scrollbar"): this used
-          to be `overflow-y-auto` on the column above, which is what
-          actually produced the ugly internal scrollbar — the chart's own
-          `h-full` (see PriceChartPanel.tsx) was fighting the header
-          Card/PositionHoldingStrip/DecisionSummaryLine above it for a
-          share of this dockview panel's real height, and overflow-y-auto
-          papered over that fight with a scrollbar instead of letting the
-          chart actually shrink to fit. `overflow-hidden` above plus
-          `min-h-0` here (so this flex item can shrink below its content
-          size instead of forcing the column to overflow) is what makes the
-          chart genuinely responsive to the panel's real height now — see
-          PriceChartPanel.tsx's own flex-column restructuring of its
-          chart-area/slider split for the other half of this fix. */}
+      <ChartSymbolBar
+        symbol={state.chartSymbol}
+        previousSymbol={state.previousChartSymbol}
+        onGoBack={state.onGoBackSymbol}
+        canOpenLifecycle={!!(candidate && state.funnel)}
+        onOpenLifecycle={() => {
+          if (candidate && state.funnel) openCandidateDetail(state.funnel.run_id, candidate.symbol);
+        }}
+      />
+      {/* `overflow-hidden` on the column plus `min-h-0` here so the chart
+          shrinks to the panel's real height instead of growing a nested
+          scrollbar against the identity row. */}
       <div className="min-h-0 flex-1">
         <PriceChartPanel
           symbol={state.chartSymbol}
@@ -156,7 +125,7 @@ function ChartPane() {
 
 function OrdersPane() {
   const state = useSupportWorkspace();
-  return <div className="h-full overflow-y-auto p-2"><OrdersPanel orders={state.orders} error={state.ordersError} loading={state.ordersLoading} status={state.orderStatus} onStatusChange={state.onOrderStatusChange} onInspect={state.onInspectOrder} onSelectSymbol={state.onSelectPositionSymbol} /></div>;
+  return <div className="h-full overflow-y-auto p-2"><OrdersPanel orders={state.orders} error={state.ordersError} loading={state.ordersLoading} status={state.orderStatus} onStatusChange={state.onOrderStatusChange} onInspect={state.onInspectOrder} onSelectSymbol={state.onSelectPositionSymbol} trades={state.trades} /></div>;
 }
 
 function TradesPane() {
@@ -232,13 +201,13 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
 // is genuinely additive/positional, not a fixed schema, so a v4 blob
 // would have loaded fine under this key too. (v3 -> v4 / v2 -> v3
 // history: the Decision Room panel was removed entirely — its content
-// moved inline under the chart as PositionHoldingStrip/DecisionSummaryLine
-// or already exists on the Research Desk as DecisionDeltaPanel; Positions
+// lives in Lifecycle (summarizeDecision) and the Research Desk
+// DecisionDeltaPanel; Positions
 // moved from a background tab inside the chart group to its own leftmost,
 // active-by-default group; Liquidity left the workspace entirely for a
 // compact header row — item 9; System+Search merged into one Diagnostics
 // panel — item 13.)
-const STORAGE_KEY = "qamc.dockview.cockpit.v6";
+const STORAGE_KEY = COCKPIT_LAYOUT_KEY;
 
 // Item 2 of cockpit pass 3, revised per direct owner request ("a better
 // DEFAULT, not a lock" — every panel below stays exactly as
@@ -254,7 +223,10 @@ const STORAGE_KEY = "qamc.dockview.cockpit.v6";
 // starting shape.
 function buildDefaultLayout(api: DockviewApi) {
   // Top row: the chart, full width — nothing else in this row.
-  api.addPanel({ id: "chart", component: "chart", title: "Chart" });
+  // minimumWidth is dockview's floor for a column, kept low so a panel
+  // can still be dragged beside the chart at a normal desktop width
+  // rather than only when the window is extra-wide.
+  api.addPanel({ id: "chart", component: "chart", title: "Chart", minimumWidth: 80 });
   // The non-trading analysis panels ride along as background tabs on the
   // chart group (unchanged from before this pass) rather than moving to
   // the bottom row — they pair conceptually with "studying a symbol/run",
@@ -331,10 +303,11 @@ function buildDefaultLayout(api: DockviewApi) {
     title: "Positions",
     position: { referencePanel: "chart", direction: "below" },
     initialHeight: 340,
-    minimumHeight: 260,
+    minimumHeight: BOTTOMS_FLOOR_PX,
+    minimumWidth: 80,
   });
   api.addPanel({ id: "candidates", component: "candidates", title: "Candidates", position: { referencePanel: "positions", direction: "within" }, inactive: true });
-  api.addPanel({ id: "orders", component: "orders", title: "Orders", position: { referencePanel: "positions", direction: "right" }, minimumHeight: 260 });
+  api.addPanel({ id: "orders", component: "orders", title: "Orders", position: { referencePanel: "positions", direction: "right" }, minimumHeight: BOTTOMS_FLOOR_PX, minimumWidth: 80 });
   api.addPanel({ id: "trades", component: "trades", title: "Trades", position: { referencePanel: "orders", direction: "within" }, inactive: true });
 
   api.getPanel("positions")?.api.setActive();
@@ -404,36 +377,22 @@ const WORKSPACE_DEFAULT_HEIGHT = "max(760px, calc(100vh - var(--chrome-h) + 32px
 export function DesktopCockpitWorkspace() {
   const apiRef = useRef<DockviewApi | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  // Extra pixels grown on top of WORKSPACE_DEFAULT_HEIGHT — see the block
-  // comment above WORKSPACE_DEFAULT_HEIGHT for the mechanism. Deliberately
-  // NOT persisted to localStorage: it is a page-layout consequence of
-  // whatever dockview panel sizes ARE persisted (STORAGE_KEY below), not
-  // independent state of its own — recomputing it from cursor history on
-  // next load would require replaying a drag that already happened, so
-  // instead the box simply resets to its default resting height on reload
-  // and grows again on the next drag past the floor, same as before this
-  // fix for the very first drag.
-  const [growth, setGrowth] = useState(0);
-  // Mirrors `growth` for the native mousedown handler below (which closes
-  // over refs, not state, since it's registered once and dockview's sash
-  // nodes come and go outside React's render cycle).
-  const growthRef = useRef(0);
+  // Extra pixels grown on top of WORKSPACE_DEFAULT_HEIGHT when the bottoms
+  // row is already on its floor and the operator keeps dragging the sash
+  // down. Persisted: without this, reload restored dockview proportions
+  // into the default-height box and the split snapped back.
+  const [growth, setGrowth] = useState(() => readPersistedGrowth());
+  const growthRef = useRef(growth);
   useEffect(() => {
     growthRef.current = growth;
   }, [growth]);
-  // Tracks the in-progress sash drag, if any: the Y coordinate (viewport
-  // px) beyond which the mouse has gone past what the box's NATURAL
-  // (ungrown) height can give the sash — i.e. wrapper's bottom edge with
-  // today's growth backed out, minus the fixed floor reserved for
-  // Positions/Orders. Computed once at mousedown; see onMouseDown below.
-  // startGrowth is this same drag's `growth` value AT mousedown, so
-  // mouseup can work out exactly how much THIS drag added (see the
-  // dockview-commit fix in onMouseUp below).
-  const dragRef = useRef<{ naturalMaxY: number; startGrowth: number } | null>(null);
+  const dragRef = useRef<{ startY: number; startGrowth: number } | null>(null);
 
   const reset = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
+    clearPersistedGrowth();
     setGrowth(0);
+    growthRef.current = 0;
     const api = apiRef.current;
     if (!api) return;
     [...api.panels].forEach((panel) => api.removePanel(panel));
@@ -451,106 +410,54 @@ export function DesktopCockpitWorkspace() {
     });
   }, []);
 
-  // See the WORKSPACE_DEFAULT_HEIGHT comment above for why this exists,
-  // and for why this is geometry-driven rather than watching dockview's
-  // own sash state. Native DOM listeners (not React synthetic ones)
-  // because dockview's sash element is created and destroyed by
-  // dockview-core itself, deep inside DockviewReact's own tree — there is
-  // no React node of ours to attach a handler to directly, so this
-  // delegates from the wrapper.
+  // Native listeners: dockview creates/destroys sash nodes itself, so
+  // there is no React node of ours to attach to. Capture-phase pointerdown
+  // so we can take over when the bottoms row is on its floor (native
+  // dockview then has nothing left to give) without fighting its own
+  // pointerdown handler on the same sash.
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
 
-    const onMouseMove = (e: MouseEvent) => {
+    const onPointerMove = (e: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
-      // Pure function of cursor position: how far below the natural
-      // (ungrown) floor-line has the mouse gone. Growth is recomputed in
-      // full on every move rather than accumulated, so dragging back up
-      // shrinks it smoothly and dragging down keeps extending it with no
-      // ceiling — no dependency on dockview's internal clamp/class state.
-      const growthPx = Math.max(0, e.clientY - drag.naturalMaxY);
-      // Written synchronously here (not left to the [growth]-effect above,
-      // which only fires after React commits + a passive-effect pass) so
-      // onMouseUp below can read the exact just-set value the instant the
-      // drag ends, with no risk of reading a render-cycle-stale ref.
-      growthRef.current = growthPx;
-      setGrowth(growthPx);
-    };
-    // Root-cause (traced against dockview-core's actual built output, not
-    // assumed): this sash is a REAL dockview-core sash — dockview attaches
-    // its OWN native `pointerdown` drag handler directly on it
-    // (splitview.ts's `addView`), which runs independently of the growth
-    // tracking above and is not disabled by it. That native handler saves
-    // dockview's internal chart/positions size ratio (`saveProportions()`)
-    // on ITS OWN pointerup, using whatever sizes dockview had at that exact
-    // instant — which is the PRE-growth split, because dockview only learns
-    // the wrapper actually got taller asynchronously, via a ResizeObserver
-    // reacting to the CSS `growth` change above (React state -> re-render ->
-    // paint -> observer callback, several ticks later than the drag itself).
-    // The next time that observer fires — which reliably happens right
-    // around mouseup, once the browser has painted the final grown height —
-    // dockview redistributes the (now larger) total using those STALE,
-    // pre-growth proportions, handing the chart back roughly its ORIGINAL
-    // share and giving the rest to Positions/Orders. The wrapper's own CSS
-    // height (`growth` state, set above) never actually resets — nothing
-    // clears it outside the "Reset layout" button — but the chart panel
-    // inside visibly shrinks back right as the mouse comes up, which reads
-    // exactly like "the whole thing snaps back."
-    //
-    // Fix: once a drag that earned real growth ends, commit that growth
-    // straight into dockview's OWN layout via its public group API
-    // (`setSize`) instead of leaving dockview to find out about it later
-    // through the racy ResizeObserver path. This makes dockview save FRESH
-    // proportions that already include the growth, so the very next
-    // relayout (quote poll, any re-render, the async observer catching up)
-    // preserves it instead of overwriting it.
-    const onMouseUp = () => {
-      const drag = dragRef.current;
-      dragRef.current = null;
-      document.removeEventListener("mousemove", onMouseMove);
-      const earned = drag ? growthRef.current - drag.startGrowth : 0;
-      if (earned > 0) {
-        const chartGroup = apiRef.current?.getPanel("chart")?.group;
-        if (chartGroup) {
-          const currentHeight = chartGroup.api.height ?? 0;
-          chartGroup.api.setSize({ height: currentHeight + earned });
-        }
+      const next = nextSashGrowth(drag.startGrowth, drag.startY, e.clientY);
+      const delta = next - growthRef.current;
+      growthRef.current = next;
+      setGrowth(next);
+      if (delta === 0) return;
+      const chartGroup = apiRef.current?.getPanel("chart")?.group;
+      if (chartGroup) {
+        chartGroup.api.setSize({ height: Math.max(80, (chartGroup.api.height ?? 0) + delta) });
       }
     };
-    const onMouseDown = (e: MouseEvent) => {
+    const onPointerUp = () => {
+      dragRef.current = null;
+      document.removeEventListener("pointermove", onPointerMove);
+      writePersistedGrowth(growthRef.current);
+    };
+    const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
       const target = e.target as HTMLElement | null;
-      // Scoped to a vertical-split sash (stacked top/bottom, i.e. the
-      // chart-vs-Positions/Orders divider and any other row split a user
-      // creates by rearranging panels) — dockview.css's own selector shape
-      // for that sash kind, not a guess at a class name. Only used to
-      // identify that a relevant drag started; the growth math below never
-      // reads anything else off this element or off dockview's state.
       const sash = target?.closest<HTMLElement>(
         ".dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash"
       );
       if (!sash) return;
-      // Round-4 fix — see the block comment above WORKSPACE_DEFAULT_HEIGHT
-      // for the full trace. The trigger line is the sash's OWN live
-      // position, not a hard-coded reserved-floor constant: dockview has
-      // already placed this sash at exactly the true natural-maximum
-      // boundary for whatever the CURRENT panel arrangement is (one row,
-      // two stacked rows, or anything else the user rearranges it into),
-      // so reading it directly is correct for every topology with no
-      // assumption baked in.
-      const naturalMaxY = sash.getBoundingClientRect().top;
-      dragRef.current = { naturalMaxY, startGrowth: growthRef.current };
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp, { once: true });
+      const bottomsHeight = apiRef.current?.getPanel("positions")?.group?.api.height ?? 0;
+      if (!growthOwnsDrag(growthRef.current, bottomsHeight)) return;
+      e.stopPropagation();
+      e.preventDefault();
+      dragRef.current = { startY: e.clientY, startGrowth: growthRef.current };
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", onPointerUp, { once: true });
     };
 
-    wrapper.addEventListener("mousedown", onMouseDown);
+    wrapper.addEventListener("pointerdown", onPointerDown, true);
     return () => {
-      wrapper.removeEventListener("mousedown", onMouseDown);
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
+      wrapper.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
     };
   }, []);
 
@@ -646,7 +553,17 @@ export function DesktopCockpitWorkspace() {
         style={growth > 0 ? { height: `calc(${WORKSPACE_DEFAULT_HEIGHT} + ${growth}px)` } : undefined}
         className="h-[max(760px,calc(100vh-var(--chrome-h)+32px))] rounded-lg border border-border overflow-hidden"
       >
-        <DockviewReact className="dockview-theme-qamc" onReady={onReady} components={COMPONENTS} />
+        <DockviewReact
+          className="dockview-theme-qamc"
+          onReady={onReady}
+          components={COMPONENTS}
+          disableDnd={false}
+          disableFloatingGroups={false}
+          dndEdges={{
+            size: { value: 100, type: "pixels" },
+            activationSize: { value: 20, type: "pixels" },
+          }}
+        />
       </div>
     </div>
   );

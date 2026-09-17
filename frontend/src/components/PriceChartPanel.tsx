@@ -1303,9 +1303,9 @@ export function PriceChartPanel({
         { hour: "2-digit", minute: "2-digit" }
       )
     : null;
-  // The operator's own position in the charted symbol, echoed in the panel
-  // subtitle as well as on the chart's entry line — the line label is
-  // small and sits against the price scale; this is the readable version.
+  // The operator's own position in the charted symbol, echoed as qty @
+  // entry next to the live quote. Unrealized P&L is not repeated here —
+  // it already lives on Positions and the holdings strip.
   // Bottom range-slider geometry — the full loaded series (0..bars.length)
   // is the track's domain; the window is the chart's own visible logical
   // range clamped into that domain, expressed as percentages so the CSS
@@ -1332,9 +1332,7 @@ export function PriceChartPanel({
       : null;
   const heldPosition = symbol ? positions.find((item) => item.symbol === symbol) : undefined;
   const positionLine = heldPosition
-    ? ` · position ${fmtNum(heldPosition.qty)} @ ${fmtMoney(heldPosition.avg_entry)} · ${
-        (heldPosition.unrealized_pnl ?? 0) >= 0 ? "+" : ""
-      }${fmtMoney(heldPosition.unrealized_pnl)} unrealized`
+    ? ` · position ${fmtNum(heldPosition.qty)} @ ${fmtMoney(heldPosition.avg_entry)}`
     : "";
   const quoteLine = !symbol
     ? undefined

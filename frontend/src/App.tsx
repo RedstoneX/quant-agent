@@ -1,5 +1,4 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Button, Card } from "@tremor/react";
 import {
   api,
   AccountResponse,
@@ -21,8 +20,7 @@ import { DecisionStateBanner } from "./components/DecisionStateBanner";
 import { TodaySessionsStrip } from "./components/TodaySessionsStrip";
 import { CandidateRail } from "./components/CandidateRail";
 import { PriceChartPanel } from "./components/PriceChartPanel";
-import { PositionHoldingStrip } from "./components/PositionHoldingStrip";
-import { DecisionSummaryLine } from "./components/DecisionSummaryLine";
+import { ChartSymbolBar } from "./components/ChartSymbolBar";
 import { PositionsPanel } from "./components/PositionsPanel";
 import { SupportTabs } from "./components/SupportTabs";
 import { DesktopCockpitWorkspace } from "./components/DesktopCockpitWorkspace";
@@ -33,17 +31,12 @@ import { useOrderStatus } from "./components/OrdersPanel";
 import { JournalPanel } from "./components/JournalPanel";
 import { RunDetailModal } from "./components/RunDetailModal";
 import { CandidateDetailModal } from "./components/CandidateDetailModal";
-import { Pill } from "./components/ui/Pill";
 import { bestPrimaryRunId } from "./components/funnelShared";
 import { todayEtDate } from "./lib/format";
 import { ResearchDesk } from "./components/research/ResearchDesk";
 import { AnalystScorecard } from "./components/scorecard/AnalystScorecard";
 
 type View = "cockpit" | "desk" | "scorecard" | "journal";
-// "decision" removed (owner correction — the Decision Room panel is gone
-// from the cockpit entirely; see PositionHoldingStrip/DecisionSummaryLine
-// rendered inline under the chart pane instead, and PR description for
-// where its content went).
 type MobilePane = "positions" | "watchlist" | "chart";
 
 /* Top-level view switcher — Cockpit (the live working surface) vs Journal
@@ -116,66 +109,6 @@ function PaneNav({ pane, onChange }: { pane: MobilePane; onChange: (p: MobilePan
         </button>
       ))}
     </div>
-  );
-}
-
-// Center-column header for whichever symbol is currently charted — derived
-// only from the selected run's already-fetched funnel data (no extra
-// fetch), so the chart never sits contextless above a bare candlestick.
-function SelectedSymbolContext({
-  funnel,
-  symbol,
-  previousSymbol,
-  onGoBack,
-  onOpenDetail,
-}: {
-  funnel: RunFunnelResponse | null;
-  symbol: string | null;
-  /** Quick "back to previous symbol" — see App.tsx's chartSymbol wrapper.
-   * Omitted (no button rendered) when there's nothing to go back to. */
-  previousSymbol?: string | null;
-  onGoBack?: () => void;
-  onOpenDetail: () => void;
-}) {
-  if (!symbol) return null;
-  const c = funnel?.candidates.find((x) => x.symbol === symbol);
-  return (
-    <Card className="mb-3 flex !w-auto flex-wrap items-center gap-2 !bg-panel-alt !p-2.5 !ring-border">
-      {previousSymbol && previousSymbol !== symbol && onGoBack && (
-        <Button
-          type="button"
-          variant="secondary"
-          size="xs"
-          color="cyan"
-          onClick={onGoBack}
-          title={`Back to ${previousSymbol}`}
-          aria-label={`Back to ${previousSymbol}`}
-        >
-          &larr; {previousSymbol}
-        </Button>
-      )}
-      <span className="font-bold text-[0.95rem]">{symbol}</span>
-      {c ? (
-        <>
-          <Pill text={c.direction} />
-          {c.is_bearish_hedge && <Pill text="bearish_hedge" />}
-          {c.executed ? (
-            <Pill text="executed" />
-          ) : c.reached_proposed_order ? (
-            <Pill text={c.risk_modified ? "modified" : "proposed"} />
-          ) : c.reached_pm_target ? (
-            <Pill text="reached_pm" />
-          ) : null}
-          <Button type="button" variant="light" size="xs" color="cyan" onClick={onOpenDetail} className="ml-auto">
-            Full drill-down &rarr;
-          </Button>
-        </>
-      ) : (
-        <span className="text-dim text-[0.8125rem]">
-          {funnel ? "not among the selected run’s candidates" : "broad-market context — no session today yet"}
-        </span>
-      )}
-    </Card>
   );
 }
 
@@ -368,10 +301,6 @@ export default function App() {
     previousChartSymbolRef.current = current;
     markChartInteraction();
   }
-  // Mobile chart pane's inline holding strip (owner correction — no
-  // modal/drawer, see PositionHoldingStrip). Desktop's Dockview ChartPane
-  // derives the same thing from SupportWorkspace context directly.
-  const chartHeldPosition = chartSymbol ? positions.find((p) => p.symbol === chartSymbol) : undefined;
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [view, setView] = useState<View>("cockpit");
   // Positions leads on every breakpoint (item 1) — the trader's first
@@ -590,12 +519,9 @@ export default function App() {
     }
   }
 
-  // Position-panel-specific: chart the symbol so PositionHoldingStrip picks
-  // it up inline under the chart (it already reads chartSymbol/positions)
-  // — and nothing else. Deliberately never opens the candidate-detail
-  // modal, unlike inspectSymbol above: clicking a holding answers "what is
-  // my position?", not "what did this candidate do in some run?", and no
-  // popup/modal/dialog/drawer may ever cover the chart on a position
+  // Position-panel-specific: chart the symbol, open nothing. Clicking a
+  // holding answers "what is my position?", not "what did this candidate
+  // do in some run?", and no popup may cover the chart on a position
   // click (cockpit trader rework, item 2/3 as corrected by the owner).
   function chartPositionSymbol(symbol: string) {
     setChartSymbol(symbol);
@@ -726,9 +652,13 @@ export default function App() {
                 {mobilePane === "watchlist" && <CandidateRail funnel={funnel} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} selectedSymbol={chartSymbol} onSelectSymbol={setChartSymbol} />}
                 {mobilePane === "chart" && (
                   <div className="flex min-h-[520px] flex-col gap-2">
-                    <SelectedSymbolContext funnel={funnel} symbol={chartSymbol} previousSymbol={previousChartSymbolRef.current} onGoBack={goBackToPreviousSymbol} onOpenDetail={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)} />
-                    {chartHeldPosition && <PositionHoldingStrip position={chartHeldPosition} openOrders={openOrders} trades={trades} />}
-                    <DecisionSummaryLine funnel={funnel} symbol={chartSymbol} />
+                    <ChartSymbolBar
+                      symbol={chartSymbol}
+                      previousSymbol={previousChartSymbolRef.current}
+                      onGoBack={goBackToPreviousSymbol}
+                      canOpenLifecycle={!!(chartSymbol && funnel)}
+                      onOpenLifecycle={() => chartSymbol && funnel && modalActions.openCandidateDetail(funnel.run_id, chartSymbol)}
+                    />
                     <div className="min-h-0 flex-1"><PriceChartPanel symbol={chartSymbol} trades={selectedSessionTrades} positionTrades={trades} positions={positions} openOrders={openOrders} onUserInteraction={markChartInteraction} /></div>
                   </div>
                 )}

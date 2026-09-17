@@ -6,9 +6,8 @@ import { FlowStage, FlowStatus } from "./agentflow/types";
 // run-level presentation building blocks, used by the run detail modal
 // (RunDetailModal's FunnelSteps). Originally also used by the cockpit's
 // Decision Room panel; that panel was removed from the cockpit entirely
-// in the trader-focused rework (its content either moved inline under the
-// chart — see DecisionSummaryLine.tsx/PositionHoldingStrip.tsx — or
-// already existed on the Research Desk as DecisionDeltaPanel).
+// in the trader-focused rework. The decision one-liner now lives in
+// Lifecycle (summarizeDecision). Holding figures stay on Positions.
 
 export const STATE_LABELS: Record<DecisionState, string> = {
   executed: "EXECUTED",

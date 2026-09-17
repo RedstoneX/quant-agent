@@ -127,6 +127,9 @@ async function installRoutes(page, scenario = "populated") {
     if (path === "/account") return json(route, scenario === "error" ? { ...account, error: "broker snapshot unavailable" } : account);
     if (path === "/positions") return json(route, { positions: scenario === "empty" || scenario === "error" ? [] : positions, error: scenario === "error" ? "position snapshot unavailable" : null });
     if (path === "/orders") return json(route, { orders: scenario === "empty" || scenario === "error" ? [] : orders, error: scenario === "error" ? "order snapshot unavailable" : null });
+    if (path === "/company/AAPL") return json(route, { symbol: "AAPL", name: "Apple Inc.", error: null });
+    if (path === "/company/MSFT") return json(route, { symbol: "MSFT", name: "Microsoft Corporation", error: null });
+    if (path.startsWith("/company/")) return json(route, { symbol: path.split("/").at(-1), name: null, error: null });
     if (path === "/trades") return json(route, { trades: scenario === "empty" || scenario === "error" ? [] : [exitTrade, trade], count: scenario === "empty" || scenario === "error" ? 0 : 2 });
     if (path === "/health") {
       const base = { available: true, daily_cost_usd: .42, daily_limit_usd: 1.5, active_quota_holds: [] };

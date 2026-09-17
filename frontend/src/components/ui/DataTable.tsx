@@ -41,7 +41,9 @@ export function DataTable<T extends object>({
   compact?: boolean;
   /** Opt-in: adds a drag handle to the right edge of each header cell to
    * resize columns, and persists the resulting widths to localStorage
-   * under `storageKey`. Default false so existing consumers are unaffected. */
+   * under `storageKey`. Default false so existing consumers are unaffected.
+   * When on, columns have no header min beyond ~1ch (8px) so Stop/Target
+   * can stay on screen instead of being pushed into horizontal scroll. */
   resizable?: boolean;
   /** Opt-in: adds a drag handle to reorder columns via native HTML5 drag
    * and drop, and persists the resulting order to localStorage under
@@ -146,6 +148,7 @@ export function DataTable<T extends object>({
     onColumnSizingChange: resizable ? setColumnSizing : undefined,
     enableColumnResizing: resizable,
     columnResizeMode: "onChange",
+    defaultColumn: resizable ? { minSize: 8 } : undefined,
     onColumnOrderChange: reorderable ? setColumnOrder : undefined,
     getRowId,
     getCoreRowModel: getCoreRowModel(),
@@ -243,7 +246,7 @@ export function DataTable<T extends object>({
 
   return (
     <div className="max-w-full overflow-x-auto rounded-lg ring-1 ring-border">
-      <Table className={compact ? "text-xs" : "text-sm"} style={resizable ? { width: table.getTotalSize() } : undefined}>
+      <Table className={compact ? "text-xs" : "text-sm"} style={resizable ? { width: "100%", tableLayout: "fixed" } : undefined}>
         <TableHead>
           {table.getHeaderGroups().map((group) => (
             <TableRow key={group.id}>
@@ -251,8 +254,8 @@ export function DataTable<T extends object>({
                 <TableHeaderCell
                   key={header.id}
                   data-column-id={header.column.id}
-                  className={`relative whitespace-nowrap px-2 py-2 ${reorderable ? "cursor-grab select-none" : ""}`}
-                  style={resizable ? { width: header.getSize() } : undefined}
+                  className={`relative px-2 py-2 ${resizable ? "overflow-hidden" : "whitespace-nowrap"} ${reorderable ? "cursor-grab select-none" : ""}`}
+                  style={resizable ? { width: header.getSize(), minWidth: 8 } : undefined}
                   // Drag-anywhere reorder (2026-09-11): pointerdown on ANY
                   // part of the header cell starts click-vs-drag tracking,
                   // not just the small grip icon below. The grip stays as
@@ -346,8 +349,8 @@ export function DataTable<T extends object>({
               {row.getVisibleCells().map((cell) => (
                 <TableCell
                   key={cell.id}
-                  className="whitespace-nowrap font-mono tabular-nums px-2 py-2"
-                  style={resizable ? { width: cell.column.getSize() } : undefined}
+                  className={`font-mono tabular-nums px-2 py-2 ${resizable ? "overflow-hidden" : "whitespace-nowrap"}`}
+                  style={resizable ? { width: cell.column.getSize(), minWidth: 8 } : undefined}
                 >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </TableCell>

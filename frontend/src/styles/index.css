@@ -253,6 +253,9 @@ tr:last-child td {
   --dv-tab-border-radius: 6px 6px 0 0;
   --dv-sash-color: rgb(var(--c-border));
   --dv-active-sash-color: rgb(var(--c-accent));
+  /* Taller than dockview's default 4px so the chart-vs-bottoms sash is
+   * grabable from the Positions/Orders side, not only from a hairline. */
+  --dv-sash-size: 8px;
   --dv-group-view-background-color: rgb(var(--c-surface));
   --dv-tabs-and-actions-container-background-color: rgb(var(--c-surface-2));
   --dv-activegroup-visiblepanel-tab-background-color: rgb(var(--c-surface));
@@ -266,6 +269,10 @@ tr:last-child td {
   --dv-inactivegroup-hiddenpanel-tab-color: rgb(var(--c-ink-faint));
   --dv-separator-border: rgb(var(--c-border));
   font-family: "IBM Plex Sans", sans-serif;
+}
+
+.dockview-theme-qamc .dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash {
+  height: 12px;
 }
 
 /* Research Intelligence Desk. Desktop is a true Dockview workstation;

@@ -17,6 +17,7 @@ describe("Mission Control component policy", () => {
   it("keeps the approved table, financial-chart and desktop-workspace components", () => {
     expect(sourceModules["./PositionsPanel.tsx"]).toContain("DataTable");
     expect(sourceModules["./OrdersPanel.tsx"]).toContain("DataTable");
+    expect(sourceModules["./ui/DataTable.tsx"]).toContain("minSize: 8");
     expect(sourceModules["./TradesPanel.tsx"]).toContain("DataTable");
     expect(sourceModules["./PriceChartPanel.tsx"]).toContain("lightweight-charts");
     expect(sourceModules["./DesktopCockpitWorkspace.tsx"]).toContain("DockviewReact");

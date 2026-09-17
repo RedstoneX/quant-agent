@@ -153,6 +153,24 @@ class CompanyProfileStore:
         self._save()
         return profile
 
+    def peek_cached(self, symbol: str) -> CompanyProfile:
+        """Return the on-disk identity even if the cache is stale. Never fetches.
+
+        Mission Control uses this so a name that aged past the fetch TTL is
+        still the company's name rather than a blank ticker. A missing or
+        unreadable entry degrades to `name=None` — never invented.
+        """
+        symbol = str(symbol).strip().upper()
+        entry = self._cache.get(symbol)
+        if not isinstance(entry, dict):
+            return CompanyProfile(symbol=symbol)
+        try:
+            return CompanyProfile(**{
+                k: v for k, v in entry.items() if not str(k).startswith("_")
+            })
+        except TypeError:
+            return CompanyProfile(symbol=symbol)
+
     def get_many(self, symbols, *, allow_fetch: bool = True) -> dict[str, CompanyProfile]:
         return {
             s: self.get(s, allow_fetch=allow_fetch)

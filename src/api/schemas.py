@@ -307,6 +307,20 @@ class OrdersResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# /company/{symbol} — cached identity for the chart header
+# ---------------------------------------------------------------------------
+
+class CompanyIdentityResponse(BaseModel):
+    """Cached company name for one ticker. `name` is None when the on-disk
+    profile cache has no identity for this symbol — never invented, and
+    this path never fetches. `error` is only set when the cache itself
+    could not be read."""
+    symbol: str
+    name: str | None = None
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # /prices/{symbol}
 # ---------------------------------------------------------------------------
 

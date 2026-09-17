@@ -135,6 +135,35 @@ def test_store_returns_bare_profile_when_fetch_is_not_allowed(tmp_path):
     assert profile == CompanyProfile(symbol="CCJ")
 
 
+def test_peek_cached_returns_a_stale_name_without_fetching(tmp_path):
+    """Mission Control still wants the name when the fetch TTL has lapsed.
+
+    `get(..., allow_fetch=False)` drops a stale cache entry; peek keeps it
+    so the chart header can say Cameco rather than inventing nothing and
+    showing a bare ticker.
+    """
+    cache = tmp_path / "profiles.json"
+    cache.write_text(json.dumps({"CCJ": {
+        **CAMECO.as_dict(), "_fetched_at": time.time() - 40 * 86400,
+    }}))
+    store = CompanyProfileStore(cache_path=str(cache))
+
+    with patch.object(CompanyProfileStore, "_fetch") as fetch:
+        profile = store.peek_cached("ccj")
+
+    fetch.assert_not_called()
+    assert profile.name == "Cameco Corporation"
+
+
+def test_peek_cached_degrades_to_no_name_when_the_cache_has_nothing(tmp_path):
+    store = CompanyProfileStore(cache_path=str(tmp_path / "profiles.json"))
+    with patch.object(CompanyProfileStore, "_fetch") as fetch:
+        profile = store.peek_cached("ZZZZ")
+    fetch.assert_not_called()
+    assert profile == CompanyProfile(symbol="ZZZZ")
+    assert profile.name is None
+
+
 def test_store_degrades_silently_when_yfinance_raises(tmp_path):
     """The documented contract: every path degrades to None, nothing raises."""
     store = CompanyProfileStore(cache_path=str(tmp_path / "profiles.json"))
