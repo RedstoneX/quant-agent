@@ -1150,3 +1150,38 @@ def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
     # No leading/trailing/double blank line in the synthetic summary either.
     assert not msg.startswith("\n") and not msg.endswith("\n")
     assert "\n\n\n" not in msg
+
+
+def test_signals_list_never_drops_an_analyzed_symbol(tmp_path, monkeypatch):
+    """Regression: a live message once read '5 analyzed' but listed only 4
+    bullets, silently dropping the 5th (SOXX) — the old per-tick renderer
+    capped the bullet list at 4 while the header count stayed uncapped.
+    Every analyzed symbol must appear, however many there are."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-five-signals"
+    symbols = ["SOXX", "NVDA", "AMD", "AVGO", "QCOM"]
+    for sym in symbols:
+        _evidence(
+            db, run, "tech_analyst", "analysis",
+            {"symbol": sym, "rating": "neutral", "conviction": "low",
+             "reasoning": f"{sym}: no clean setup."},
+            symbol=sym,
+        )
+    _evidence(
+        db, run, "execution", "execution_skip",
+        {"symbol": "NVDA", "reason": "insufficient_cash", "detail": "n/a"},
+        symbol="NVDA",
+    )
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # not the top-of-hour tick
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": 1.0, "daily_return_pct": 0.01,
+        "intraday_scan": {
+            "status": "intraday_no_trades", "run_id": run,
+            "candidates": symbols, "orders": [],
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 2.0)
+    assert msg is not None
+    assert "🔎 Signals: 5 analyzed" in msg
+    for sym in symbols:
+        assert f"   • {sym}:" in msg, f"{sym} missing from the signals list"

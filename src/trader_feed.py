@@ -398,24 +398,29 @@ def _signal_rows(
     snap: dict[str, Any], candidates: list[str] | None = None,
 ) -> list[dict]:
     """The tech rows a signals listing renders as bullets — filtered to
-    `candidates` when given, priority-ordered, capped at 4 — shared by
-    `_append_signals` (the live per-run listing) and the hourly desk-check
-    summary so both name exactly the symbols they actually show, never more
-    and never a second, divergent ordering.
+    `candidates` when given, priority-ordered — shared by `_append_signals`
+    (the live per-run listing) and the hourly desk-check summary so both
+    name exactly the symbols they actually show, never more and never a
+    second, divergent ordering.
+
+    Uncapped (2026-09-17): this used to cut off at 4 rows while the header
+    line right above it ("N analyzed") kept the true count — a live
+    message read "5 analyzed" and then listed only 4, silently dropping
+    the 5th (SOXX). The header must never claim more than the bullets
+    beneath it actually show.
     """
     tech = [row for row in (snap.get("tech") or []) if isinstance(row, dict)]
     if candidates:
         wanted = {str(symbol).upper() for symbol in candidates}
         tech = [row for row in tech if str(row.get("symbol", "")).upper() in wanted]
     priority = {"strong_buy": 0, "strong_sell": 0, "buy": 1, "sell": 1, "neutral": 2}
-    ordered = sorted(
+    return sorted(
         tech,
         key=lambda row: (
             priority.get(str(row.get("rating", "")).lower(), 3),
             str(row.get("symbol", "")),
         ),
     )
-    return ordered[:4]
 
 
 def _signal_row_line(row: dict) -> str:
@@ -1109,7 +1114,10 @@ def _format_hourly_desk_check(result: dict, nested: dict | None, elapsed: float)
                 str(row.get("symbol", "")),
             ),
         )
-        for row in ordered[:8]:
+        # Uncapped, same reasoning as `_signal_rows`: the header just above
+        # states the real count — the bullets below it must match, not
+        # silently truncate to a smaller number.
+        for row in ordered:
             lines.append(_signal_row_line(row))
 
     if hour_rows:
