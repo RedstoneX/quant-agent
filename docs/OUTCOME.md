@@ -255,6 +255,58 @@ ships — heal, re-ask the seat, and if it still cannot produce the field,
 refuse that name with a durable reason. That refuse is last-resort, not the
 product.
 
+## Prompt text is code that can rot
+
+**Found twice live, 2026-09-17.** The desk's own rules are asserted in prose
+inside the model prompts. Nothing ties that prose to the code it describes,
+and nothing notices when the behaviour changes underneath it. Two live
+instances were found the same day: a rule cited to the owner by number whose
+text says the opposite of what it was cited for, and a reviewer exemption
+decided off a classification the rest of the path disagrees with.
+
+Treat prompt text as code. A rule stated in a prompt needs the same thing a
+constant needs: something mechanical that fails when the prose and the
+behaviour disagree. Rewording a prompt is a behaviour change, not
+documentation.
+
+## A finding with no owner and no due date will be lost
+
+**Measured, 2026-09-17.** An audit that produces an inventory rather than
+items does not get worked. The ~30 unsourced trade-governing numbers were
+catalogued on 2026-09-11 and filed as "inventory, not an item" with a note
+saying "never re-audit". Nothing was assigned, nothing had a date, and all
+thirty were still live and still governing trades a week later.
+
+The rule: an audit ends in numbered board items, or in a mechanical check
+that fails the build. A finding with no mechanical surface is a finding that
+will be lost. This is the same lesson as the status board itself — everything
+mechanically enforced holds; everything relying on someone remembering slips.
+
+## Prove a path has succeeded once before optimising it
+
+**Measured, 2026-09-17.** Six separate passes optimised the TIMING of the
+live-fill websocket, which had never authenticated once in any session since
+it was built. A 100% failure rate is not a race condition. Before any work to
+make a path faster or more reliable, prove it has succeeded at least once.
+
+The adversary review missed it for a related reason: it was briefed on the
+timing question and answered only the claim as filed, so the existence
+question was never asked. **Brief the adversary with the existence question,
+not just the design question.**
+
+## Verify the single load-bearing claim of every agent report
+
+**Standing rule, reinforced 2026-09-17.** Roughly one agent report in three
+contains something that falls apart under checking. On 2026-09-17 two claims
+reached the owner unchecked and both were wrong: "the status board is
+effectively full" (it was 30,700 of 100,000 bytes) and "147 websocket
+failures today" (about 45 — the 147 counted log lines, several per failure).
+
+Check the one assertion the conclusion rests on, cheaply and adversarially,
+before it reaches the owner. If a report says tests pass, check the count. If
+it says X is the cause, confirm X produces the symptom. If it says something
+never worked, find the counter-example first.
+
 ## There is no such thing as a quiet market
 
 Across a universe of a hundred-plus names, something is always moving. **"It

@@ -309,3 +309,79 @@ decision at all.
 **Recommendation —** Keep the never-blank path. Keep the drop-the-name patch labelled temporary. Do not treat skip-and-continue as the product.
 
 
+
+## item 79
+
+**Plain language —** The desk has a guard against a typo in a price — a "fat finger" check that refuses anything more than 20% away from the market. It is being applied to the stop-loss price as well as the buy price, and on 17 September it threw away a perfectly good short on FLNC after the desk had already paid for the whole analysis. FLNC moves about 9.6% on a normal day, so a flat 20% cap forbids any stop wider than about two normal days — a volatility question answered with a made-up number.
+**Example —** A name that swings 10% a day needs a stop further away than a name that swings 1%. One flat percentage cannot serve both.
+**Recommendation —** Apply the typo guard only to the price we are buying or selling at, which is where a typo lands. Do not swap 20% for another invented number. Separately, when a refusal is shown to you it must print the name's normal daily range beside the percentage, or a correct refusal reads like a bug.
+
+## item 86
+
+**Plain language —** The live feed that tells the desk instantly when an order has filled has never once worked. The trading process deliberately holds a fake key; a local helper swaps in the real one for ordinary requests, but the live feed does not go through that helper — it dials the broker directly and offers the fake key. Two separate things block a quick fix: the library the desk uses cannot be pointed at that helper at all, and the broker checks the key inside the conversation rather than in the connection header, which the helper cannot reach.
+**Example —** Five rounds of work were spent making this path faster before anyone checked whether it had ever worked.
+**Nothing is at risk —** Orders are placed over the ordinary connection, which works, and fills are detected by asking the broker every few seconds instead. The feed is now switched off. The only loss is a few seconds of speed. Today's failure count was about 45, not the 147 first quoted — that figure counted log lines, several per failure.
+**The decision — yours, and nobody builds any of it without you.** Five options, best fit first: (1) have the machine hold the key in an encrypted store — **this turns out NOT to be possible on this machine** (the service cannot read the decryption key, there is no security chip, and the installed system software lacks the feature); an earlier answer of "encrypted and tied to the machine" was wrong. (2) A small local relay that holds the real key and rewrites the login message: the only option that keeps the key out of the trading process, but it is custom credential-handling code, which this project has previously refused. (3) Get the helper taught to do this properly, upstream: correct, does not exist, slow. (4) Make the library able to use the helper: does not fix the login problem on its own. (5) Leave the feed off and keep asking the broker — no credential change at all, costs a few seconds of fill latency, and stops about 150 error lines a day.
+**Recommendation —** Option 5 today, since it is already in place and costs almost nothing. What remains achievable for protecting the key on this machine is file-permission protection, not encryption.
+
+## item 87
+
+**Plain language —** When the book gets too big relative to the account, the desk automatically trims it. That is now the only thing on the desk that sells by itself. Nobody has ever checked whether it cancels the protective stop-losses first in order to free the shares — and if it cancels them and then fails to sell, the holdings are left with no protection at all. That exact flaw is why the older "big loss today" liquidation was deleted on 14 September.
+**Recommendation —** Audit it before changing anything. Find out what it actually does, then decide.
+
+## item 88
+
+**Plain language —** Inside the code, a stop price of exactly zero is the agreed way of saying "there is no stop". So if a bad number ever arrives as zero, the desk does not refuse the trade — it quietly removes the protection instead. The path that opens new trades has been checked and passes nothing rather than zero, so no live position depends on this today. The paths that resume, sweep and repair positions have not been checked.
+**Recommendation —** Trace the unchecked paths, then make a zero or missing stop a refusal, never a silent unprotected position.
+
+## item 89
+
+**Plain language —** An audit on 17 September of everything the desk sends you found nineteen defects. Six of them can mislead you into a decision. Thirteen are clarity problems — the message is correct but hard or impossible to act on. You are choosing which get fixed.
+**The six that can mislead you —**
+  1. You are told you hold a name that was sold that same morning.
+  2. A message asserts every thesis is intact, and then lists three that are missing.
+  3. "Thesis unavailable" is shown for any position held overnight. The reason IS in the records; the lookup only searches today.
+  4. A rule is cited to you by number, and the rule at that number says the opposite of what it is cited for.
+  5. Raw internal error text is passed through to you word for word.
+  6. A whole trade plan was discarded over two tenths of a percentage point, and no message was sent at all.
+**The thirteen clarity defects —** bare ticker symbols with no company name after the twelfth name in a list; blocked trades explained in jargon and prices rather than in words; a missing broker reason on a rejection; internal status codes shown as-is; percentages with no denominator, so you cannot tell percent of what; a reward-to-risk figure with no unit; detail truncated mid-sentence; a "TRADED" header on a run that only sold; a "data degraded" warning that names internal components; run identifiers; and an unscaled risk rating.
+**Recommendation —** Fix the six first; they are the ones that can cost money. The thirteen are worth doing but nothing turns on them.
+
+## item 90
+
+**Plain language —** About thirty numbers that govern real trades were never read off anything — they were chosen because they sounded sensible. They were catalogued on 11 September and then filed as "an inventory, not a job", with a note saying never to re-audit. Nothing was assigned, nothing had a date, and a week later all thirty were still live. There is no mechanical check of any kind that would catch the next one.
+**Recommendation —** Two halves. Read each number off the instrument it is meant to describe. And build a check that fails the build the next time an unsourced trading number is added, so this cannot happen again by filing.
+
+## item 91
+
+**Plain language —** The desk counts how long it has held something in calendar days, but the rules that read that number expect trading days. A weekend therefore makes a holding look two days older than it is, against every rule about how long a trade should take.
+
+## item 92
+
+**Plain language —** The "we have lost too much today" alarm compares today's loss against how much the book would normally move. If a holding's normal movement cannot be measured, that holding is left out of the sum — so the book looks calmer than it is and the alarm trips earlier than it was designed to.
+**Correction you should have —** This alarm does NOT sell anything. The selling version was deleted on 14 September and replaced with a halt: it stops new risk, cancels resting entry orders, checks every holding still has its stop, and alerts. An earlier answer saying it sells everything was read off an out-of-date comment in the code and was wrong.
+**Recommendation —** Treat a holding whose movement cannot be measured as normally volatile, rather than dropping it. That needs no new number.
+
+## item 93
+
+**Plain language —** The file that records what has gone wrong and been fixed is merged automatically when two sessions edit it at once. Eleven entries written since 2 September use the wrong heading style, so the merge tool cannot see them, and branches collide over nothing.
+**Recommendation —** Fix it with the tool's own machinery and add a check. Never by hand — hand-editing that file is how live items were once deleted.
+
+## item 94
+
+**Plain language —** The live machine's copy of the code is carrying dashboard files that were never committed. That is drift: what is running is not exactly what is recorded.
+
+## item 95
+
+**Plain language — your decision.** The account can borrow. Today the portfolio manager is not even shown that, which is a separate defect. Once it is shown, the question is whether it may PLAN to spend borrowed money. Borrowing costs about 6.25% a year on the borrowed balance, so anything bought with it has to beat 6.25% just to break even, not zero.
+**Recommendation —** None until you rule. Nobody builds it either way.
+
+## item 96
+
+**Plain language — your decision.** The risk manager can approve a sale whose stated reason is provably false against the desk's own records — nothing checks the reason before the sale goes through.
+**Recommendation —** None until you rule.
+
+## item 97
+
+**Plain language — your decision.** The desk judges whether a trade is moving too slowly against a holding period the model simply states rather than reads off anything. That is the kind of unverifiable number the desk has already banned from sizing trades; whether it may stay in this one test is your call.
+**Recommendation —** None until you rule.
