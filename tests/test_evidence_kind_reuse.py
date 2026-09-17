@@ -3,25 +3,27 @@
 Owner 2026-09-16. PR #430 same-session GOOD reuse must not regress.
 No refresh timer. No item-20 seat-count. Blank/LOST is never research.
 """
-from src.evidence_kind import (
-    DECISION_LOST,
-    DECISION_REFETCH,
-    DECISION_REREAD_LIVE,
-    DECISION_REUSE,
-    QUALITY_GOOD,
-    QUALITY_LOST,
-    STATUS_CARRIED_FROM_MORNING,
-    STATUS_CHOSE_NOT_TO_REFETCH,
-    STATUS_REMEMBERED,
-    chart_reuse,
-    covered_news_headlines,
-    earnings_reuse,
-    insider_reuse,
-    macro_reuse,
-    newer_material_wire,
-    news_reuse,
-    payload_quality,
-)
+    from src.evidence_kind import (
+        DECISION_LOST,
+        DECISION_REFETCH,
+        DECISION_REREAD_LIVE,
+        DECISION_REUSE,
+        QUALITY_GOOD,
+        QUALITY_LOST,
+        STATUS_CARRIED_FROM_MORNING,
+        STATUS_CHOSE_NOT_TO_REFETCH,
+        STATUS_REMEMBERED,
+        chart_reuse,
+        covered_news_headlines,
+        earnings_reuse,
+        headline_mentions_symbols,
+        insider_reuse,
+        macro_reuse,
+        newer_material_wire,
+        news_reuse,
+        payload_quality,
+        same_session_from_date,
+    )
 from src import evidence_gate
 
 
@@ -132,3 +134,14 @@ def test_covered_headlines_read_model_or_dict():
     assert "Apple beats" in covered_news_headlines(
         {"stock_news": {"AAPL": [{"headline": "Apple beats"}]}}
     )
+    assert headline_mentions_symbols("AAPL guidance cut after close", ["AAPL"]) is True
+    assert headline_mentions_symbols("Fed holds rates after the close", ["AAPL"]) is False
+    assert headline_mentions_symbols("Apple beats", []) is False
+
+
+def test_undated_is_not_same_session():
+    from src.trading_calendar import et_today
+    assert same_session_from_date(str(et_today())) is True
+    assert same_session_from_date(None) is False
+    assert same_session_from_date("") is False
+    assert same_session_from_date("yesterday") is False

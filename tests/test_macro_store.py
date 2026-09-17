@@ -131,6 +131,40 @@ def test_macro_store_regime_change_observable_across_days(tmp_path):
     )
 
 
+def test_series_prints_are_persisted_and_detect_value_change(tmp_path):
+    from src.data.macro_store import (
+        MacroStore, series_prints_changed, series_prints_from_summary,
+    )
+
+    summary = {
+        "vix": {"current": 16.2, "trend": "flat"},
+        "inflation": {"core_cpi_yoy": 3.1, "headline_cpi_yoy": 2.9},
+    }
+    prints = series_prints_from_summary(summary)
+    assert "vix.current" not in prints["values"]
+    assert prints["values"]["inflation.core_cpi_yoy"] == 3.1
+    assert prints["values"]["inflation.headline_cpi_yoy"] == 2.9
+    assert "vix.trend" not in prints["values"]
+
+    store = MacroStore(data_dir=str(tmp_path / "macro"))
+    store.save_last_state(
+        {"regime": "risk-on", "confidence": "high", "equity_outlook": "bullish",
+         "summary": "x", "position_guidance": {"target_invested_pct": 80,
+         "cash_recommendation_pct": 20, "reasoning": "x"}},
+        series_prints=prints,
+    )
+    loaded = store.load_last_state()
+    assert loaded["series_prints"]["values"]["inflation.core_cpi_yoy"] == 3.1
+
+    live = series_prints_from_summary({
+        "vix": {"current": 16.2},
+        "inflation": {"core_cpi_yoy": 3.4},
+    })
+    assert series_prints_changed(prints, live) is True
+    assert series_prints_changed(prints, prints) is False
+    assert series_prints_changed({}, live) is False
+
+
 def test_macro_analyst_prompt_renders_first_run_banner_when_no_prior_state():
     """When MacroStore.load_last_state() returns None, build_user_message
     must render the 'No prior state on file (first run)' banner so the

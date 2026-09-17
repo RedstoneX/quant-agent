@@ -416,6 +416,26 @@ def test_refresh_deduplicates_accession_and_uses_descriptive_header(tmp_path, mo
     assert "QAMC/1.0" in provider.session.get.call_args.kwargs["headers"]["User-Agent"]
 
 
+def test_peek_accessions_discovers_without_downloading_submissions(tmp_path, monkeypatch):
+    provider = SECForm4Provider(data_dir=str(tmp_path), max_filings_per_refresh=5)
+    provider.manifest_path.write_text(json.dumps({
+        "processed_accessions": ["0000000001-26-000001"],
+    }))
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: {"1045810": {"NVDA": "Nasdaq"}})
+    monkeypatch.setattr(provider, "_discover", lambda *_: [{
+        "accession": "0000000002-26-000001", "form": "4", "cik": "1045810",
+    }])
+    provider.session.get = Mock(side_effect=AssertionError("peek must not download"))
+
+    known = provider.known_accessions()
+    assert known == {"0000000001-26-000001"}
+    unscoped = provider.peek_accessions()
+    assert unscoped == known
+    peeked = provider.peek_accessions(symbols=["NVDA"])
+    assert peeked == {"0000000001-26-000001", "0000000002-26-000001"}
+    provider.session.get.assert_not_called()
+
+
 def test_analyst_rejects_direction_incompatible_stance(tmp_path):
     analyst = object.__new__(SmartMoneyAnalystAgent)
     analyst.synthesis_cache_path = tmp_path / "cache.json"

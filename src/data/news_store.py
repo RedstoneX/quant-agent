@@ -119,6 +119,24 @@ class NewsStore:
         path = self._today_dir() / "raw_headlines.json"
         _atomic_write(path, json.dumps(headlines, indent=2, ensure_ascii=False))
 
+    def load_raw_headlines(self, session_date: str | None = None) -> list[dict]:
+        """RSS titles saved when today's report was written. Empty if absent.
+
+        Mechanical wire-expiry compares against these titles, not the
+        analyst's rewritten headlines — those two strings are not the
+        same ID.
+        """
+        day = session_date or str(et_today())
+        path = self.data_dir / str(day) / "raw_headlines.json"
+        if not path.exists():
+            return []
+        try:
+            payload = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to load raw headlines %s: %s", path, e)
+            return []
+        return payload if isinstance(payload, list) else []
+
     def recent_state_changes(
         self,
         lookback_days: int = ACTIVE_STATE_CHANGE_WINDOW_DAYS,

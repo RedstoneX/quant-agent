@@ -131,8 +131,21 @@ def _pipeline(macro=None, news=None):
     obj._macro_regime_or_print_changed = (
         TradingPipeline._macro_regime_or_print_changed.__get__(obj)
     )
+    obj._macro_history_regime_changed = (
+        TradingPipeline._macro_history_regime_changed.__get__(obj)
+    )
+    obj._macro_series_prints_changed = (
+        TradingPipeline._macro_series_prints_changed.__get__(obj)
+    )
+    obj._live_macro_series_prints = (
+        TradingPipeline._live_macro_series_prints.__get__(obj)
+    )
     obj._news_has_newer_material_wire = (
         TradingPipeline._news_has_newer_material_wire.__get__(obj)
+    )
+    obj._peek_news_headlines = TradingPipeline._peek_news_headlines.__get__(obj)
+    obj._watched_research_symbols = (
+        TradingPipeline._watched_research_symbols.__get__(obj)
     )
     return obj
 
@@ -219,12 +232,19 @@ def test_news_round_trips_from_its_stored_dump():
     assert carried.payload.market_sentiment == "bullish"
 
 
-def test_undated_macro_is_carried_rather_than_discarded():
-    """A stored state with no date field predates the date stamping. Refusing
-    it would silently re-blindfold every tick until the next morning write."""
+def test_undated_macro_is_not_same_session():
+    """An undated snapshot cannot claim same-session reuse.
+
+    It may still be remembered across days when the regime/print has not
+    honestly changed — refusing the payload entirely would invent churn
+    from a missing date stamp. Holding-discipline still cannot treat it
+    as proof about today.
+    """
     carried = _pipeline(macro=dict(MACRO))._carry_forward_macro()
-    assert carried.status == "carried_from_morning"
+    assert carried.payload is not None
     assert carried.payload["regime"] == "risk-on"
+    assert carried.same_session is False
+    assert carried.status == "remembered"
 
 
 # --------------------------------------------------------------------------

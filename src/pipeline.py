@@ -96,7 +96,8 @@ class CarryForward:
     `payload` is the stored object when a reusable answer exists; otherwise
     None. `status` is the data_status word the caller must write — never
     inferred from payload truthiness. `same_session` is True only when the
-    stored answer is from today's session — holding-discipline uses that
+    stored answer is from today's session and carries a trustworthy date —
+    an undated snapshot is not same-session. Holding-discipline uses that
     to refuse treating a cross-day remembered regime as proof about today.
     """
 
@@ -12909,10 +12910,12 @@ class TradingPipeline:
             return self._intraday_opportunity_scan_body(ctx)
 
     def _macro_regime_or_print_changed(self, state: dict) -> bool:
-        """True only when a later snapshot actually changed the regime.
+        """True when a later snapshot actually changed the regime or a FRED print.
 
         Calendar age is not expiry — macro is reusable across days until a
         real regime/print change. A failed detector is not a change.
+        Print change is a change in the actual series values/observation
+        dates, not a change in the regime label string.
         """
         if not isinstance(state, dict):
             return False
@@ -12920,13 +12923,28 @@ class TradingPipeline:
         if not stored_regime:
             return False
         try:
-            history = self.macro_store.load_history(days=2) or []
+            if self._macro_history_regime_changed(state, stored_regime):
+                return True
+        except Exception:  # noqa: BLE001 — failed detector is not a change
+            pass
+        try:
+            if self._macro_series_prints_changed(state):
+                return True
         except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    def _macro_history_regime_changed(self, state: dict, stored_regime: str) -> bool:
+        """True when a newer dated history snapshot carries a different regime."""
+        store = getattr(self, "macro_store", None)
+        load = getattr(store, "load_history", None)
+        if not callable(load):
             return False
-        if not history:
+        history = load(days=2) or []
+        if not isinstance(history, list) or not history:
             return False
-        latest = history[-1] if isinstance(history[-1], dict) else None
-        if not latest:
+        latest = history[-1]
+        if not isinstance(latest, dict):
             return False
         latest_regime = str(latest.get("regime") or "").strip()
         latest_date = str(latest.get("date") or "").strip()[:10]
@@ -12935,18 +12953,254 @@ class TradingPipeline:
             return True
         return False
 
-    def _news_has_newer_material_wire(self, report) -> bool:
-        """Best-effort mechanical headline compare. Failed fetch ≠ supersede."""
-        from src.evidence_kind import covered_news_headlines, newer_material_wire
-        covered = covered_news_headlines(report)
-        peek = getattr(self, "_peek_news_headlines", None)
-        if not callable(peek):
-            return False
+    def _live_macro_series_prints(self) -> dict | None:
+        """Fetch current FRED prints. None on a failed or missing provider.
+
+        Restores ``last_coverage`` / ``_run_freshness`` afterwards —
+        ``get_macro_summary`` mutates both, and this peek must not overwrite
+        the morning side-channel a later reader still needs.
+        """
+        from src.data.macro_store import series_prints_from_summary
+        provider = getattr(self, "macro", None)
+        getter = getattr(provider, "get_macro_summary", None)
+        if not callable(getter):
+            return None
+        had_coverage = hasattr(provider, "last_coverage")
+        had_freshness = hasattr(provider, "_run_freshness")
+        previous_coverage = getattr(provider, "last_coverage", None)
+        previous_freshness = getattr(provider, "_run_freshness", None)
+        summary = None
+        freshness = None
         try:
-            fetched = peek(report) or []
+            try:
+                summary = getter()
+                freshness = getattr(provider, "_run_freshness", None)
+            except Exception:  # noqa: BLE001 — failed fetch ≠ print change
+                return None
+            if not isinstance(summary, dict) or not summary:
+                return None
+            return series_prints_from_summary(summary, freshness=freshness)
+        finally:
+            if had_coverage:
+                provider.last_coverage = previous_coverage
+            if had_freshness:
+                provider._run_freshness = previous_freshness
+
+    def _macro_series_prints_changed(self, state: dict) -> bool:
+        """True when live FRED prints differ from the stored fingerprint.
+
+        A snapshot that never recorded prints cannot claim a change —
+        that would expire every pre-fingerprint last_state and invent
+        churn. Failed live fetch is not a change.
+        """
+        from src.data.macro_store import series_prints_changed
+        stored = state.get("series_prints")
+        if not isinstance(stored, dict) or not (
+            stored.get("values") or stored.get("observations")
+        ):
+            return False
+        live = self._live_macro_series_prints()
+        if not live:
+            return False
+        return series_prints_changed(stored, live)
+
+    def _watched_research_symbols(self, ctx=None, report=None) -> list[str]:
+        """Tickers this desk is actually watching. Empty if none are known.
+
+        Form 4 / news peeks must not scan the whole listed market or treat
+        an unrelated wire as a change to remembered research.
+        """
+        out: set[str] = set()
+        trading = getattr(getattr(self, "config", None), "trading", None)
+        for raw in getattr(trading, "universe", None) or []:
+            text = str(raw or "").strip().upper()
+            if text:
+                out.add(text)
+        stock_news = getattr(report, "stock_news", None) if report is not None else None
+        if isinstance(report, dict):
+            stock_news = report.get("stock_news")
+        if isinstance(stock_news, dict):
+            for raw in stock_news:
+                text = str(raw or "").strip().upper()
+                if text:
+                    out.add(text)
+        if ctx is not None:
+            for finding in getattr(ctx, "smart_money_findings", None) or []:
+                symbol = getattr(finding, "symbol", None)
+                if symbol is None and isinstance(finding, dict):
+                    symbol = finding.get("symbol")
+                text = str(symbol or "").strip().upper()
+                if text:
+                    out.add(text)
+        return sorted(out)
+
+    def _peek_news_headlines(self, report) -> list[str]:
+        """Live RSS titles for mechanical wire-expiry. Failed fetch → []."""
+        provider = getattr(self, "news_provider", None)
+        fetch = getattr(provider, "fetch_news", None)
+        if not callable(fetch):
+            return []
+        symbols = self._watched_research_symbols(report=report)
+        try:
+            items, _coverage = fetch(symbols=symbols or None)
+        except TypeError:
+            try:
+                items, _coverage = fetch()
+            except Exception:  # noqa: BLE001
+                return []
+        except Exception:  # noqa: BLE001 — failed fetch ≠ supersede
+            return []
+        titles: list[str] = []
+        for item in items or []:
+            title = getattr(item, "title", None)
+            if title is None and isinstance(item, dict):
+                title = item.get("title") or item.get("headline")
+            text = str(title or "").strip()
+            if text:
+                titles.append(text)
+        return titles
+
+    def _news_has_newer_material_wire(self, report) -> bool:
+        """Best-effort mechanical headline compare. Failed fetch ≠ supersede.
+
+        Only a new title that names a watched ticker is a wire change.
+        A sliding 24h RSS window always grows unrelated headlines; treating
+        those as expiry would freeze the midday tick, which cannot re-pay
+        the news seat.
+        """
+        from src.evidence_kind import (
+            covered_news_headlines,
+            headline_mentions_symbols,
+            newer_material_wire,
+        )
+        covered = set(covered_news_headlines(report))
+        load_raw = getattr(getattr(self, "news_store", None), "load_raw_headlines", None)
+        if callable(load_raw):
+            try:
+                for item in load_raw() or []:
+                    if not isinstance(item, dict):
+                        continue
+                    text = str(item.get("title") or item.get("headline") or "").strip()
+                    if text:
+                        covered.add(text)
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            fetched = self._peek_news_headlines(report) or []
         except Exception:  # noqa: BLE001
             return False
-        return newer_material_wire(covered, fetched)
+        watched = self._watched_research_symbols(report=report)
+        if not watched:
+            return False
+        named = [title for title in fetched if headline_mentions_symbols(title, watched)]
+        return newer_material_wire(frozenset(covered), named)
+
+    def _peek_new_form4_accessions(self, ctx=None, symbols=None) -> set[str]:
+        """Currently visible Form 4 accessions for names we watch."""
+        provider = getattr(self, "smart_money_provider", None)
+        peek = getattr(provider, "peek_form4_accessions", None)
+        if not callable(peek):
+            peek = getattr(provider, "peek_accessions", None)
+        if not callable(peek):
+            return set()
+        if symbols is None:
+            symbols = self._watched_research_symbols(ctx=ctx)
+        try:
+            try:
+                found = peek(symbols)
+            except TypeError:
+                found = peek()
+            return {str(a).strip() for a in (found or []) if str(a).strip()}
+        except Exception:  # noqa: BLE001 — failed peek ≠ new filing
+            return set()
+
+    def _form4_known_accessions(self) -> set[str]:
+        """Accessions already processed or cached. No network."""
+        out: set[str] = set()
+        provider = getattr(self, "smart_money_provider", None)
+        providers = getattr(provider, "providers", None)
+        if not isinstance(providers, (list, tuple)):
+            providers = [provider] if provider is not None else []
+        for item in providers:
+            known = getattr(item, "known_accessions", None)
+            if not callable(known):
+                continue
+            try:
+                out.update(str(a).strip() for a in (known() or []) if str(a).strip())
+            except Exception:  # noqa: BLE001
+                continue
+        return out
+
+    def _findings_from_specialist_evidence(self) -> list:
+        """Most recent smart-money findings from specialist_evidence. [] if none."""
+        from src.models import SmartMoneyFinding
+        db = getattr(self, "db", None)
+        execute = getattr(db, "execute", None)
+        if not callable(execute):
+            return []
+        try:
+            row = execute(
+                "SELECT run_id FROM specialist_evidence "
+                "WHERE agent_name = ? AND kind IN ('finding', 'scan_summary') "
+                "ORDER BY id DESC LIMIT 1",
+                ("smart_money_analyst",),
+            ).fetchone()
+        except Exception:  # noqa: BLE001
+            return []
+        if not row:
+            return []
+        try:
+            run_id = row["run_id"] if hasattr(row, "keys") else row[0]
+        except Exception:  # noqa: BLE001
+            return []
+        if not isinstance(run_id, str) or not run_id.strip():
+            return []
+        try:
+            rows = execute(
+                "SELECT evidence_json FROM specialist_evidence "
+                "WHERE run_id = ? AND agent_name = ? AND kind = ? "
+                "ORDER BY id",
+                (run_id, "smart_money_analyst", "finding"),
+            ).fetchall()
+        except Exception:  # noqa: BLE001
+            return []
+        findings: list = []
+        for item in rows or []:
+            try:
+                raw = item["evidence_json"] if hasattr(item, "keys") else item[0]
+            except Exception:  # noqa: BLE001
+                continue
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            try:
+                findings.append(SmartMoneyFinding.model_validate_json(raw))
+            except Exception:  # noqa: BLE001 — skip unreadable rows
+                continue
+        return findings
+
+    def _load_remembered_insider_findings(self, ctx) -> tuple[list, set[str]]:
+        """Remembered Form 4 findings plus the accessions already seen.
+
+        Findings come from this tick if already populated, else from
+        specialist_evidence. Accessions are the cached/processed set so a
+        non-material filing already seen cannot look 'new'.
+        """
+        findings: list = list(getattr(ctx, "smart_money_findings", None) or [])
+        if not findings:
+            findings = self._findings_from_specialist_evidence()
+        accessions = set(self._form4_known_accessions())
+        for finding in findings:
+            observations = getattr(finding, "observations", None)
+            if observations is None and isinstance(finding, dict):
+                observations = finding.get("observations")
+            for obs in observations or []:
+                acc = getattr(obs, "accession_number", None)
+                if acc is None and isinstance(obs, dict):
+                    acc = obs.get("accession_number")
+                text = str(acc or "").strip()
+                if text:
+                    accessions.add(text)
+        return findings, accessions
 
     def _carry_forward_macro(self) -> CarryForward:
         """Remembered macro regime, keyed by kind+expiry event.
@@ -12959,9 +13213,10 @@ class TradingPipeline:
         PM still refuses a chain-less dict via `_macro_analysis_as_dict`.
         Holding-discipline must read `.same_session`, not payload
         truthiness, so a cross-day remember cannot falsify today's exit
-        claim.
+        claim. An undated snapshot is not same-session — that claim
+        needs a trustworthy date.
         """
-        from src.evidence_kind import macro_reuse
+        from src.evidence_kind import macro_reuse, same_session_from_date
         from src.seat_heal import coerce_macro_shape
         try:
             state = self.macro_store.load_last_state() or None
@@ -12971,7 +13226,7 @@ class TradingPipeline:
         if not state:
             return CarryForward(None, "carry_forward_empty", same_session=False)
         stored_date = str(state.get("date") or state.get("as_of") or "").strip()[:10]
-        same_session = (not stored_date) or stored_date == str(et_today())
+        same_session = same_session_from_date(stored_date)
         # A regime snapshot is reusable research for holding-discipline and
         # kind-reuse. Full MacroAnalysis validation is the PM path
         # (`_macro_analysis_as_dict`) — requiring a chain here turned a
@@ -12996,23 +13251,28 @@ class TradingPipeline:
         Parse failure is lost, never reused as research.
         """
         from src.evidence_kind import news_reuse
+        from src.evidence_kind import same_session_from_date
+        from src.util.time import et_today
         try:
             report = self.news_store.load_daily_report()
             if not report:
-                return CarryForward(None, "carry_forward_empty", same_session=True)
+                return CarryForward(None, "carry_forward_empty", same_session=False)
             from src.models import NewsIntelligenceReport
             payload = NewsIntelligenceReport(**report)
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: news carry-forward failed: %s", e)
-            return CarryForward(None, "carry_forward_failed", same_session=True)
+            return CarryForward(None, "carry_forward_failed", same_session=False)
+        # load_daily_report only reads today's dated directory. That path
+        # is the trustworthy timestamp; an undated narrative field is not.
+        same_session = same_session_from_date(str(et_today()))
         verdict = news_reuse(
             payload,
-            same_session=True,
+            same_session=same_session,
             newer_material_wire=self._news_has_newer_material_wire(payload),
         )
         if not verdict.usable:
-            return CarryForward(None, verdict.status, same_session=True)
-        return CarryForward(payload, verdict.status, same_session=True)
+            return CarryForward(None, verdict.status, same_session=same_session)
+        return CarryForward(payload, verdict.status, same_session=same_session)
 
     def _carry_forward_earnings(self, ctx: RunContext) -> CarryForward:
         """Remembered earnings write-ups until the next report / 8-K.
@@ -13062,36 +13322,48 @@ class TradingPipeline:
             return CarryForward(results, status, same_session=True)
         return CarryForward(results, status, same_session=True)
 
+    def _insider_same_session(self, findings) -> bool:
+        """True only when a finding carries a trustworthy date equal to today.
+
+        An undated filing read cannot claim same-session reuse. Cross-day
+        remember still applies — Form 4 is reusable until a new accession.
+        """
+        from src.evidence_kind import same_session_from_date
+        for finding in findings or []:
+            raw = finding if isinstance(finding, dict) else None
+            for key in ("as_of", "date", "session_date", "analyzed_on"):
+                value = getattr(finding, key, None)
+                if value is None and raw is not None:
+                    value = raw.get(key)
+                if same_session_from_date(value):
+                    return True
+        return False
+
     def _carry_forward_insider(self, ctx: RunContext) -> CarryForward:
         """Remembered Form 4 findings; refresh only when a NEW filing appears."""
         from src.evidence_kind import insider_reuse
         findings: list = []
         accessions: set[str] = set()
         try:
-            loader = getattr(self, "_load_remembered_insider_findings", None)
-            if callable(loader):
-                findings, accessions = loader(ctx)
-            else:
-                findings = list(getattr(ctx, "smart_money_findings", None) or [])
+            findings, accessions = self._load_remembered_insider_findings(ctx)
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: insider remember failed: %s", e)
-            return CarryForward(None, "carry_forward_failed", same_session=True)
+            return CarryForward(None, "carry_forward_failed", same_session=False)
+        same_session = self._insider_same_session(findings)
         new_form4 = False
-        peek = getattr(self, "_peek_new_form4_accessions", None)
-        if callable(peek):
-            try:
-                incoming = set(peek() or [])
-                new_form4 = bool(incoming - set(accessions))
-            except Exception:  # noqa: BLE001
-                new_form4 = False
+        try:
+            incoming = set(self._peek_new_form4_accessions(ctx=ctx) or [])
+            new_form4 = bool(incoming - set(accessions))
+        except Exception:  # noqa: BLE001
+            new_form4 = False
         verdict = insider_reuse(
             findings if findings else [],
-            same_session=True,
+            same_session=same_session,
             new_form4=new_form4,
         )
         if verdict.decision == "refetch":
-            return CarryForward(findings, "expired", same_session=True)
-        return CarryForward(findings, verdict.status, same_session=True)
+            return CarryForward(findings, "expired", same_session=same_session)
+        return CarryForward(findings, verdict.status, same_session=same_session)
 
     def _record_heal(self, ctx: RunContext, result, *, alert: bool) -> None:
         """Durable heal log. Pages only on attempted-and-failed / cap-block."""

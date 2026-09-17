@@ -304,7 +304,18 @@ This file records what is accepted and true **now**. Git history preserves imple
   Technical on the same paid batch so grounding can see it. Missing Tech
   is a producing-step defect, not a drop-the-name product. Macro regime is
   reusable across days until a real
-  regime/print change; a failed parse is not a regime. Earnings write-ups
+  regime/print change; a failed parse is not a regime. Print change is a
+  change in statistical FRED prints (CPI, unemployment, claims) or their
+  observation dates, not a daily quote reprint (VIX, treasuries) and not
+  only the regime label string. An undated snapshot is not same-session —
+  that claim needs a trustworthy date; a GOOD undated regime can still be
+  remembered across days until a real change. News expires when a live
+  RSS peek shows a name-relevant headline the remembered report/raw titles
+  do not already cover. Form 4 expires when EDGAR lists an accession for a
+  watched name the cache has not already processed. Failed peeks/fetches
+  and a last_state that never recorded prints are not a change. The print
+  peek restores the morning `last_coverage` side-channel.
+  Earnings write-ups
   and Form 4 filings are remembered until the next report/8-K or a new
   filing. Blank/LOST is never research. Missing seats self-heal
   (mechanical first, then at most one paid retry inside cost caps); heal

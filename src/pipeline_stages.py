@@ -3313,7 +3313,14 @@ class MorningResearchStage:
             )
             if analysis:
                 try:
-                    self.macro_store.save_last_state(analysis.model_dump())
+                    from src.data.macro_store import series_prints_from_summary
+                    self.macro_store.save_last_state(
+                        analysis.model_dump(),
+                        series_prints=series_prints_from_summary(
+                            macro_summary,
+                            freshness=getattr(self.macro, "_run_freshness", None),
+                        ),
+                    )
                 except Exception as e:
                     logger.warning("Failed to persist macro last state: %s", e)
             return (
