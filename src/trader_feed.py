@@ -16,10 +16,16 @@ from pathlib import Path
 from typing import Any
 
 from src.notifier import (
+    _actionable_coverage_gaps,
     _append_company_identities,
     _clip_text,
     _DB_PATH as _NOTIFIER_DB_PATH,
+    _fmt_signed_money,
+    _new_block,
+    _new_section,
+    _seal_section,
     format_session_result as _base_format_session_result,
+    humanize_status,
 )
 from src.trading_calendar import et_now
 
@@ -77,16 +83,7 @@ def format_session_result(
 
     try:
         if mode == "intra_check":
-            nested = result.get("intraday_scan")
-            if isinstance(nested, dict):
-                nested_status = str(nested.get("status") or "")
-                if nested_status in _INTRADAY_SILENT_STATUSES:
-                    return _base_format_session_result(
-                        mode, result, elapsed_seconds, error=None,
-                    )
-                return _format_intraday(result, nested, elapsed_seconds)
-            # Preserves the existing policy: ordinary ~30-minute OK ticks are silent.
-            return _base_format_session_result(mode, result, elapsed_seconds, error=None)
+            return _format_intra_check(result, elapsed_seconds)
 
         if mode in ("midday", "close"):
             return _format_position_review(mode, result, elapsed_seconds)
@@ -323,17 +320,30 @@ def extract_alert_symbols(run_id: str | None, result: dict | None) -> list[str]:
     return symbols[:10]
 
 
-def _append_identities(lines: list[str], run_id: str | None, result: dict | None) -> None:
+def _append_identities(
+    lines: list[str],
+    run_id: str | None,
+    result: dict | None,
+    extra_symbols: list[str] | None = None,
+) -> None:
     """`who:` block for the rich trader-feed formatters below — the same
     `extract_alert_symbols` source already used to decide which tickers get
-    a tap-through link, fed into `src.notifier._append_company_identities`
-    (the ONE place that turns symbols into identity text; see its
-    docstring). Deliberately called LAST by every formatter below, after
-    the footer: `TelegramNotifier._build_payload`'s length-budget fallback
-    truncates from the tail of the message when it must, so whatever is
-    appended last is the first thing a length-pressured alert drops — and
-    identity lines are the least important content here, never the order
-    list, the PM/risk rationale, or the footer.
+    a tap-through link, plus (2026-09-17) `extra_symbols` — the symbols a
+    formatter's "🔎 Signals" section is about to show as bullets, via
+    `_signal_symbols`. A no-trade intraday tick has no order/trade/skip
+    evidence for `extract_alert_symbols` to find, so before this its
+    analyzed-but-not-traded candidates (e.g. "VST", "AVGO") got no identity
+    line at all — the operator saw a bare ticker with no idea which company
+    it was. Both lists feed the SAME `src.notifier._append_company_identities`
+    call (the ONE place that turns symbols into identity text; see its
+    docstring — do not add a second lookup, extend the symbol list instead),
+    which already dedupes, so a symbol present in both never renders twice.
+    Deliberately called LAST by every formatter below, after the footer:
+    `TelegramNotifier._build_payload`'s length-budget fallback truncates
+    from the tail of the message when it must, so whatever is appended last
+    is the first thing a length-pressured alert drops — and identity lines
+    are the least important content here, never the order list, the PM/risk
+    rationale, or the footer.
 
     Wrapped locally (not left to the `format_session_result` dispatcher's
     own try/except) because that outer handler's fallback on any exception
@@ -342,7 +352,12 @@ def _append_identities(lines: list[str], run_id: str | None, result: dict | None
     must cost only the `who:` block.
     """
     try:
-        _append_company_identities(lines, extract_alert_symbols(run_id, result))
+        symbols = extract_alert_symbols(run_id, result)
+        for sym in extra_symbols or []:
+            sym = str(sym or "").strip().upper()
+            if sym and sym not in symbols:
+                symbols.append(sym)
+        _append_company_identities(lines, symbols)
     except Exception as exc:  # noqa: BLE001 — identities are a garnish, never worth the alert
         logger.warning("trader-feed: company identities failed: %s", exc)
 
@@ -379,6 +394,64 @@ def _append_book(lines: list[str], snap: dict[str, Any]) -> None:
     lines.append(text)
 
 
+def _signal_rows(
+    snap: dict[str, Any], candidates: list[str] | None = None,
+) -> list[dict]:
+    """The tech rows a signals listing renders as bullets — filtered to
+    `candidates` when given, priority-ordered — shared by `_append_signals`
+    (the live per-run listing) and the hourly desk-check summary so both
+    name exactly the symbols they actually show, never more and never a
+    second, divergent ordering.
+
+    Uncapped (2026-09-17): this used to cut off at 4 rows while the header
+    line right above it ("N analyzed") kept the true count — a live
+    message read "5 analyzed" and then listed only 4, silently dropping
+    the 5th (SOXX). The header must never claim more than the bullets
+    beneath it actually show.
+    """
+    tech = [row for row in (snap.get("tech") or []) if isinstance(row, dict)]
+    if candidates:
+        wanted = {str(symbol).upper() for symbol in candidates}
+        tech = [row for row in tech if str(row.get("symbol", "")).upper() in wanted]
+    priority = {"strong_buy": 0, "strong_sell": 0, "buy": 1, "sell": 1, "neutral": 2}
+    return sorted(
+        tech,
+        key=lambda row: (
+            priority.get(str(row.get("rating", "")).lower(), 3),
+            str(row.get("symbol", "")),
+        ),
+    )
+
+
+def _signal_row_line(row: dict) -> str:
+    """One '   • SYM: RATING/conviction · R/R x.xx — reason' bullet, the
+    one place that renders a tech-analysis row this way — shared by
+    `_append_signals` and the hourly desk-check summary."""
+    sym = str(row.get("symbol", "?")).upper()
+    rating = str(row.get("rating", "?")).upper()
+    conviction = str(row.get("conviction", "?")).lower()
+    rr = row.get("risk_reward")
+    rr_text = f" · R/R {rr:g}" if isinstance(rr, (int, float)) else ""
+    reason = _clip(row.get("reasoning"), 420)
+    text = f"   • {sym}: {rating}/{conviction}{rr_text}"
+    if reason:
+        text += f" — {reason}"
+    return text
+
+
+def _signal_symbols(snap: dict[str, Any], candidates: list[str] | None = None) -> list[str]:
+    """Upper-cased symbols the signals section actually renders as bullets
+    — fed into `_append_identities` so the `who:` block can name them too,
+    without a second CompanyProfileStore lookup anywhere (see
+    `src.notifier._append_company_identities`'s docstring: it must stay the
+    ONLY place that turns a symbol list into identity text)."""
+    return [
+        str(row.get("symbol", "")).upper()
+        for row in _signal_rows(snap, candidates)
+        if row.get("symbol")
+    ]
+
+
 def _append_signals(
     lines: list[str],
     snap: dict[str, Any],
@@ -398,25 +471,8 @@ def _append_signals(
         if str(row.get("rating", "")).lower() not in ("", "neutral")
     ]
     lines.append(f"🔎 Signals: {len(tech)} analyzed · {len(actionable)} actionable")
-    priority = {"strong_buy": 0, "strong_sell": 0, "buy": 1, "sell": 1, "neutral": 2}
-    ordered = sorted(
-        tech,
-        key=lambda row: (
-            priority.get(str(row.get("rating", "")).lower(), 3),
-            str(row.get("symbol", "")),
-        ),
-    )
-    for row in ordered[:4]:
-        sym = str(row.get("symbol", "?")).upper()
-        rating = str(row.get("rating", "?")).upper()
-        conviction = str(row.get("conviction", "?")).lower()
-        rr = row.get("risk_reward")
-        rr_text = f" · R/R {rr:g}" if isinstance(rr, (int, float)) else ""
-        reason = _clip(row.get("reasoning"), 420)
-        text = f"   • {sym}: {rating}/{conviction}{rr_text}"
-        if reason:
-            text += f" — {reason}"
-        lines.append(text)
+    for row in _signal_rows(snap, candidates):
+        lines.append(_signal_row_line(row))
 
 
 def _append_pm(lines: list[str], snap: dict[str, Any]) -> None:
@@ -451,11 +507,16 @@ def _append_pm(lines: list[str], snap: dict[str, Any]) -> None:
     elif targets:
         lines.append(f"🧠 PM: {len(targets)} target(s), no constructed order evidence")
 
+    # Labelled "PM view (this check)" rather than a bare "View:" — this text
+    # is the PM's own prose verbatim (never reworded here) and on an
+    # intraday tick it can say something like "no trades today", which read
+    # as a bare "View:" is easy to mistake for the whole day's verdict
+    # rather than what it actually is: this one check's reasoning.
     portfolio_view = reasoning.get("portfolio_view") if isinstance(reasoning, dict) else None
     if portfolio_view:
-        lines.append(f"   View: {_clip(portfolio_view, 550)}")
+        lines.append(f"   PM view (this check): {_clip(portfolio_view, 550)}")
     elif pm_summary and str(pm_summary).lower() != "no trades":
-        lines.append(f"   View: {_clip(pm_summary, 550)}")
+        lines.append(f"   PM view (this check): {_clip(pm_summary, 550)}")
 
 
 def _append_risk(lines: list[str], snap: dict[str, Any]) -> None:
@@ -576,15 +637,21 @@ def _append_no_trade_reason(
         lines.append("⏸️ NO TRADE — no market-risk order was submitted; detailed PM evidence unavailable")
 
 
-def _append_footer(lines: list[str], run_id: str | None, snap: dict[str, Any], elapsed: float) -> None:
+def _append_footer(lines: list[str], snap: dict[str, Any], elapsed: float) -> None:
+    """Duration and AI spend only — the owner-facing footer. Used to also
+    print `run {run_id}` and the raw provider-request count ("LLM
+    $0.10/2 provider requests"); both are engineering detail with no
+    action attached to it on a phone alert, so 2026-09-17 dropped them.
+    The run_id is still available wherever it actually matters (DB lookups,
+    `send()`'s `link_url`/`symbols` args) — nothing depends on it being
+    IN this printed text; only its presence in the rendered message
+    changed.
+    """
     bits: list[str] = []
-    if run_id and run_id != "?":
-        bits.append(f"run {run_id}")
     cost = snap.get("cost")
-    calls = int(snap.get("calls") or 0)
     if isinstance(cost, (int, float)):
         cost_text = f"${cost:.4f}" if cost < 0.01 else f"${cost:.2f}"
-        bits.append(f"LLM {cost_text}/{calls} provider request{'s' if calls != 1 else ''}")
+        bits.append(f"AI cost {cost_text}")
     bits.append(_fmt_elapsed(elapsed))
     lines.append("🧾 " + " · ".join(bits))
 
@@ -619,9 +686,12 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     run_id = result.get("run_id")
     snap = _read_run(run_id)
     status = str(result.get("status", "unknown"))
-    lines = [f"{_status_emoji(status)} {mode.upper()} · {et_now().strftime('%H:%M ET')}", f"Status: {status}"]
+    lines = [
+        f"{_status_emoji(status)} {mode.upper()} · {et_now().strftime('%H:%M ET')}",
+        f"Status: {humanize_status(status)}",
+    ]
 
-    _append_coverage_gaps(lines, result)
+    _new_block(lines, _append_coverage_gaps, result)
 
     data_status = result.get("data_status") or {}
     if isinstance(data_status, dict):
@@ -631,16 +701,16 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
             if evidence_gate.counts_as_degraded(value)
         ]
         if degraded:
-            lines.append(f"⚠️ Data degraded: {', '.join(sorted(degraded))}")
+            _new_section(lines, f"⚠️ Data degraded: {', '.join(sorted(degraded))}")
 
-    _append_market(lines, snap)
-    _append_book(lines, snap)
-    _append_signals(lines, snap)
-    _append_pm(lines, snap)
-    _append_risk(lines, snap)
-    _append_gate_and_execution(lines, result, snap)
-    _append_footer(lines, run_id, snap, elapsed)
-    _append_identities(lines, run_id, result)
+    _new_block(lines, _append_market, snap)
+    _new_block(lines, _append_book, snap)
+    _new_block(lines, _append_signals, snap)
+    _new_block(lines, _append_pm, snap, may_glue=True)
+    _new_block(lines, _append_risk, snap)
+    _new_block(lines, _append_gate_and_execution, result, snap)
+    _new_block(lines, _append_footer, snap, elapsed)
+    _new_block(lines, _append_identities, run_id, result, _signal_symbols(snap))
     return "\n".join(lines)
 
 
@@ -649,140 +719,422 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     snap = _read_run(run_id)
     status = str(result.get("status", "unknown"))
     review = result.get("review") if isinstance(result.get("review"), dict) else {}
-    lines = [f"{_status_emoji(status)} {mode.upper()} REVIEW · {et_now().strftime('%H:%M ET')}", f"Status: {status}"]
+    lines = [
+        f"{_status_emoji(status)} {mode.upper()} REVIEW · {et_now().strftime('%H:%M ET')}",
+        f"Status: {humanize_status(status)}",
+    ]
 
-    if status == "emergency_sold":
-        # Historical runs only — nothing emits this any more (item 32).
-        lines.append("🚨 DAILY-LOSS CIRCUIT BREAKER — autonomous liquidation triggered")
-    if status == "daily_loss_halted":
-        lines.append(
-            "🛑 DAILY-LOSS CIRCUIT BREAKER — NEW RISK HALTED. Nothing sold; "
-            "every position kept."
-        )
-        unprotected = result.get("unprotected_at_halt") or []
-        if unprotected:
+    def _render_halt_banner(lines: list[str]) -> None:
+        if status == "emergency_sold":
+            # Historical runs only — nothing emits this any more (item 32).
+            lines.append("🚨 DAILY-LOSS CIRCUIT BREAKER — autonomous liquidation triggered")
+        if status == "daily_loss_halted":
             lines.append(
-                "⚠️ NOT verifiably stop-covered at the halt: "
-                + ", ".join(str(s) for s in unprotected[:8])
+                "🛑 DAILY-LOSS CIRCUIT BREAKER — NEW RISK HALTED. Nothing sold; "
+                "every position kept."
             )
+            unprotected = result.get("unprotected_at_halt") or []
+            if unprotected:
+                lines.append(
+                    "⚠️ NOT verifiably stop-covered at the halt: "
+                    + ", ".join(str(s) for s in unprotected[:8])
+                )
 
-    _append_coverage_gaps(lines, result)
+    _new_block(lines, _render_halt_banner)
+    _new_block(lines, _append_coverage_gaps, result)
 
     positions = result.get("positions")
     risk_level = review.get("risk_level")
-    bits = []
-    if positions is not None:
-        bits.append(f"{positions} position(s)")
-    if risk_level:
-        bits.append(f"risk {risk_level}")
-    if bits:
-        lines.append("📍 Review: " + " · ".join(bits))
 
-    overall = _clip(review.get("overall_assessment"), 650)
-    if overall:
-        lines.append(f"🧠 Reviewer: {overall}")
+    def _render_review_summary(lines: list[str]) -> None:
+        bits = []
+        if positions is not None:
+            bits.append(f"{positions} position(s)")
+        if risk_level:
+            bits.append(f"risk {risk_level}")
+        if bits:
+            lines.append("📍 Review: " + " · ".join(bits))
+
+        overall = _clip(review.get("overall_assessment"), 650)
+        if overall:
+            lines.append(f"🧠 Reviewer: {overall}")
+
+    _new_block(lines, _render_review_summary)
 
     actions = [row for row in (review.get("actions") or []) if isinstance(row, dict)]
     actionable = [row for row in actions if str(row.get("action", "")).upper() != "HOLD"]
     holds = [row for row in actions if str(row.get("action", "")).upper() == "HOLD"]
-    if actions:
-        lines.append(f"🎯 Decisions: {len(actionable)} action(s) · {len(holds)} hold(s)")
-        for row in actionable[:5]:
-            action = str(row.get("action", "?")).upper()
-            symbol = str(row.get("symbol", "?")).upper()
-            stop = _number(row.get("new_stop_price"))
-            stop_text = f" → stop ${stop:,.2f}" if stop is not None else ""
-            reason = _clip(row.get("reason"), 420)
-            text = f"   • {action} {symbol}{stop_text}"
-            if reason:
-                text += f" — {reason}"
-            lines.append(text)
-        for row in holds[:2]:
-            symbol = str(row.get("symbol", "?")).upper()
-            reason = _clip(row.get("reason"), 420)
-            text = f"   • HOLD {symbol}"
-            if reason:
-                text += f" — {reason}"
-            lines.append(text)
 
-    _append_book(lines, snap)
-    _append_gate_and_execution(lines, result, snap, explain_no_trade=False)
-    _, real = _execution_rows(snap)
-    if not real:
-        if actions and holds and not actionable:
-            lines.append("⏸️ NO ACTION — reviewer explicitly held the book")
-        elif not actions and positions == 0:
-            lines.append("⏸️ NO ACTION — no market-risk positions required review")
-        elif not actions and status == "reviewed":
-            lines.append("⏸️ NO ACTION — review completed with no broker action")
+    def _render_decisions(lines: list[str]) -> None:
+        if actions:
+            lines.append(f"🎯 Decisions: {len(actionable)} action(s) · {len(holds)} hold(s)")
+            for row in actionable[:5]:
+                action = str(row.get("action", "?")).upper()
+                symbol = str(row.get("symbol", "?")).upper()
+                stop = _number(row.get("new_stop_price"))
+                stop_text = f" → stop ${stop:,.2f}" if stop is not None else ""
+                reason = _clip(row.get("reason"), 420)
+                text = f"   • {action} {symbol}{stop_text}"
+                if reason:
+                    text += f" — {reason}"
+                lines.append(text)
+            for row in holds[:2]:
+                symbol = str(row.get("symbol", "?")).upper()
+                reason = _clip(row.get("reason"), 420)
+                text = f"   • HOLD {symbol}"
+                if reason:
+                    text += f" — {reason}"
+                lines.append(text)
 
-    _append_footer(lines, run_id, snap, elapsed)
-    _append_identities(lines, run_id, result)
+    _new_block(lines, _render_decisions)
+
+    _new_block(lines, _append_book, snap)
+
+    def _render_gate_and_outcome(lines: list[str]) -> None:
+        _append_gate_and_execution(lines, result, snap, explain_no_trade=False)
+        _, real = _execution_rows(snap)
+        if not real:
+            if actions and holds and not actionable:
+                lines.append("⏸️ NO ACTION — reviewer explicitly held the book")
+            elif not actions and positions == 0:
+                lines.append("⏸️ NO ACTION — no market-risk positions required review")
+            elif not actions and status == "reviewed":
+                lines.append("⏸️ NO ACTION — review completed with no broker action")
+
+    _new_block(lines, _render_gate_and_outcome)
+    _new_block(lines, _append_footer, snap, elapsed)
+    _new_block(lines, _append_identities, run_id, result)
     return "\n".join(lines)
+
+
+def _fmt_pnl_line(label: str, pnl: float | None, ret: float | None) -> str:
+    """'📈 Session P&L: +$12.34 (+0.10%)' — shared by the per-tick intraday
+    formatter and the hourly desk-check summary."""
+    pnl_text = _fmt_signed_money(pnl) if pnl is not None else "n/a"
+    ret_text = f"{ret:+.2f}%" if ret is not None else "n/a"
+    return f"{label} {pnl_text} ({ret_text})"
 
 
 def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     run_id = nested.get("run_id") or outer.get("run_id")
     snap = _read_run(run_id)
     status = str(nested.get("status", "unknown"))
-    lines = [f"⚡ INTRADAY OPPORTUNITY · {et_now().strftime('%H:%M ET')}", f"Status: {status}"]
-    if status == "paid_analysis_suspended":
-        lines.append(
-            "🛑 SUSPENDED: paid opportunity discovery is suspended by the "
-            "cost circuit; the deterministic intraday loss check completed "
-            "normally."
-        )
-        if nested.get("error"):
-            lines.append(f"Trigger: {_clip(nested.get('error'), 900)}")
-    elif status == "intraday_analysis_error":
-        lines.append(
-            f"🛑 FAILED: PM analysis failed "
-            f"({nested.get('failure_status') or 'unknown'}); this was not "
-            "a deliberate no-trade decision."
-        )
-        if nested.get("error"):
-            lines.append(f"Error: {_clip(nested.get('error'), 900)}")
-    elif status == "evidence_gate_skip":
-        lost = nested.get("lost_seats") or []
-        seats = ", ".join(str(s) for s in lost) or "a research seat"
-        lines.append(
-            f"🟡 DECISION SKIPPED: {seats} never returned an answer, so this "
-            "tick declined to decide rather than guess. Nothing was traded "
-            "and the Portfolio Manager was not paid for."
-        )
-        if nested.get("reason"):
-            lines.append(_clip(nested.get("reason"), 900))
-    elif status == "intraday_scan_crashed":
-        # Operator-honesty fix: this used to be indistinguishable from a
-        # healthy tick that ran and found nothing — the scan raised, the
-        # caller swallowed the exception and set scan_result to None, and no
-        # `intraday_scan` key ever reached this formatter. Now the crash
-        # attaches a dict with this status, so it renders through the same
-        # nested path `paid_analysis_suspended` / `intraday_analysis_error`
-        # already use, instead of silently reading as "Status: ok".
-        lines.append(
-            f"🛑 CRASHED: intraday opportunity scan crashed "
-            f"({nested.get('error_type') or 'unknown'}); the deterministic "
-            "intraday loss check above completed normally."
-        )
-        if nested.get("error"):
-            lines.append(f"Error: {_clip(nested.get('error'), 900)}")
+    lines = [
+        f"⚡ INTRADAY OPPORTUNITY · {et_now().strftime('%H:%M ET')}",
+        f"Status: {humanize_status(status)}",
+    ]
+
+    def _render_status_banner(lines: list[str]) -> None:
+        if status == "paid_analysis_suspended":
+            lines.append(
+                "🛑 SUSPENDED: paid opportunity discovery is suspended by the "
+                "cost circuit; the deterministic intraday loss check completed "
+                "normally."
+            )
+            if nested.get("error"):
+                lines.append(f"Trigger: {_clip(nested.get('error'), 900)}")
+        elif status == "intraday_analysis_error":
+            lines.append(
+                f"🛑 FAILED: PM analysis failed "
+                f"({nested.get('failure_status') or 'unknown'}); this was not "
+                "a deliberate no-trade decision."
+            )
+            if nested.get("error"):
+                lines.append(f"Error: {_clip(nested.get('error'), 900)}")
+        elif status == "evidence_gate_skip":
+            lost = nested.get("lost_seats") or []
+            seats = ", ".join(str(s) for s in lost) or "a research seat"
+            lines.append(
+                f"🟡 DECISION SKIPPED: {seats} never returned an answer, so this "
+                "tick declined to decide rather than guess. Nothing was traded "
+                "and the Portfolio Manager was not paid for."
+            )
+            if nested.get("reason"):
+                lines.append(_clip(nested.get("reason"), 900))
+        elif status == "intraday_scan_crashed":
+            # Operator-honesty fix: this used to be indistinguishable from a
+            # healthy tick that ran and found nothing — the scan raised, the
+            # caller swallowed the exception and set scan_result to None, and no
+            # `intraday_scan` key ever reached this formatter. Now the crash
+            # attaches a dict with this status, so it renders through the same
+            # nested path `paid_analysis_suspended` / `intraday_analysis_error`
+            # already use, instead of silently reading as "Status: ok".
+            lines.append(
+                f"🛑 CRASHED: intraday opportunity scan crashed "
+                f"({nested.get('error_type') or 'unknown'}); the deterministic "
+                "intraday loss check above completed normally."
+            )
+            if nested.get("error"):
+                lines.append(f"Error: {_clip(nested.get('error'), 900)}")
+
+    _new_block(lines, _render_status_banner)
 
     pnl = _number(outer.get("daily_pnl"))
     ret = _number(outer.get("daily_return_pct"))
     if pnl is not None or ret is not None:
-        pnl_text = f"${pnl:+,.2f}" if pnl is not None else "n/a"
-        ret_text = f"{ret:+.2f}%" if ret is not None else "n/a"
-        lines.append(f"📈 Session P&L: {pnl_text} ({ret_text})")
+        _new_section(lines, _fmt_pnl_line("📈 Session P&L:", pnl, ret))
 
     candidates = [str(symbol).upper() for symbol in (nested.get("candidates") or []) if symbol]
-    _append_signals(lines, snap, candidates=candidates)
-    _append_pm(lines, snap)
-    _append_risk(lines, snap)
-    _append_gate_and_execution(lines, nested, snap)
-    _append_footer(lines, run_id, snap, elapsed)
+    _new_block(lines, _append_signals, snap, candidates=candidates)
+    _new_block(lines, _append_pm, snap, may_glue=True)
+    _new_block(lines, _append_risk, snap)
+    _new_block(lines, _append_gate_and_execution, nested, snap)
+    _new_block(lines, _append_footer, snap, elapsed)
     # `nested`, not `outer`: on the intraday path the traded-order evidence
     # (and the run_id it's keyed by) lives in the `intraday_scan` sub-dict —
     # same source `_append_gate_and_execution` above already reads.
-    _append_identities(lines, run_id, nested)
+    _new_block(lines, _append_identities, run_id, nested, _signal_symbols(snap, candidates))
+    return "\n".join(lines)
+
+
+# === intra_check cadence (2026-09-17) ===
+#
+# Owner requirement: "I want messages every hour. I want oversight and
+# transparency of what is being done." Ticks still run every 30 minutes,
+# unchanged — but a tick with nothing actionable (no order, trade, skip,
+# fill, stop/coverage problem, or error) sends NO message at all, same as
+# before AND now including the ":30 INTRADAY OPPORTUNITY ... NO TRADE"
+# message, which used to always send. Silence on a quiet half-hour is fine;
+# silence for a whole clock hour is not. The top-of-hour tick (":00", plus
+# the 9:30 session-open tick, which is the first tick of the day and has no
+# ":00" before it) is the guaranteed pulse: it ALWAYS sends one message,
+# built from DB records covering the last ~hour — including the :30 tick's
+# analysis, which ran under a different run_id than this tick's own — so
+# the owner never goes more than a clock hour without a message, even on a
+# fully quiet stretch. Anything actionable still sends immediately at any
+# tick, exactly as before; if that already happened this hour, the
+# top-of-hour tick still sends its own summary, as a second message body.
+_HOUR_WINDOW_MINUTES = 70  # 60 minutes + a buffer for scheduler jitter
+
+
+def _is_hourly_checkpoint(now=None) -> bool:
+    """True at the tick that owes this trading hour its guaranteed message.
+
+    The :00 tick owns every ordinary hour. The 9:30 session-open tick is
+    the exception: it is the first tick of the day, so there is no :00
+    tick before it to have covered the 9:00-9:30 gap (during which the
+    market was closed anyway) — 9:30 stands in for it.
+    """
+    now = now or et_now()
+    return now.minute == 0 or (now.hour == 9 and now.minute == 30)
+
+
+def _intraday_tick_actionable(result: dict, nested: dict | None, snap: dict[str, Any]) -> bool:
+    """Whether THIS intra_check tick has something the owner needs to see
+    now, rather than folded into the next top-of-hour summary — an order,
+    a trade, an execution skip, a stop-coverage problem, or a genuine
+    error/interruption in paid analysis. Read-only classification; a
+    mis-read here costs at most one message's timing, never a trading
+    decision.
+
+    `skips` is read from `snap` (the same `_read_run` DB snapshot every
+    other renderer here uses), not from `nested["execution_skips"]` — the
+    intraday scan's own result dict never sets that key (checked against
+    `_intraday_opportunity_scan_body` in src/pipeline.py: it returns only
+    status/candidates/orders/run_id), so a skip would otherwise never be
+    seen as actionable here.
+    """
+    if _actionable_coverage_gaps(result.get("stop_coverage_gaps")):
+        return True
+    if not isinstance(nested, dict):
+        return False
+    status = str(nested.get("status") or "")
+    if status in (
+        "intraday_executed", "intraday_analysis_error",
+        "intraday_scan_crashed", "paid_analysis_suspended",
+        "evidence_gate_skip",
+    ):
+        return True
+    if status == "intraday_no_trades":
+        # PM/risk reached a real decision point with nothing to execute —
+        # actionable only if execution actually had something to skip
+        # (insufficient cash, etc.); a clean "nothing to do" is quiet.
+        return bool(snap.get("skips"))
+    return False  # disabled / lock_contended / no_opportunity — quiet
+
+
+def _format_intra_check(result: dict, elapsed_seconds: float) -> str | None:
+    nested = result.get("intraday_scan")
+    run_id = (nested.get("run_id") if isinstance(nested, dict) else None) or result.get("run_id")
+    snap = _read_run(run_id)
+    actionable = _intraday_tick_actionable(result, nested, snap)
+
+    own_message: str | None = None
+    if actionable:
+        nested_status = str(nested.get("status") or "") if isinstance(nested, dict) else ""
+        if isinstance(nested, dict) and nested_status not in _INTRADAY_SILENT_STATUSES:
+            own_message = _format_intraday(result, nested, elapsed_seconds)
+        else:
+            # Actionable for a reason `_format_intraday` doesn't render
+            # (an outer-level stop-coverage gap while the scan itself was
+            # disabled/contended/found nothing) — the base formatter's own
+            # `_append_intra_check_body` already renders that banner.
+            own_message = _base_format_session_result(
+                "intra_check", result, elapsed_seconds, error=None,
+            )
+
+    if not _is_hourly_checkpoint():
+        return own_message  # None here means: quiet tick, no send.
+
+    summary = _format_hourly_desk_check(result, nested, elapsed_seconds)
+    if own_message:
+        return own_message + "\n\n" + summary
+    return summary
+
+
+def _movers_scanned_text(nested: dict | None) -> str:
+    """Honest one-line account of whether the paid intraday scan even ran
+    this tick — 'no arbitrary numbers': there is no mover COUNT to report
+    for the common no-opportunity/disabled/contended outcomes (the
+    pipeline's own status dicts don't carry one), so this says what is
+    actually known instead of fabricating a figure.
+    """
+    if not isinstance(nested, dict):
+        return "not run this tick"
+    status = str(nested.get("status") or "")
+    if status == "intraday_scan_no_opportunity":
+        return "ran, no qualifying movers"
+    if status == "intraday_scan_disabled":
+        return "disabled"
+    if status == "intraday_scan_lock_contended":
+        return "skipped (lock contended)"
+    return "ran this tick"
+
+
+def _read_hour_evidence(hour_window_minutes: int = _HOUR_WINDOW_MINUTES) -> list[dict]:
+    """Every tech-analyst analysis logged in roughly the last hour, read by
+    TIME rather than by this tick's own `run_id` — the top-of-hour summary
+    has to include the :30 tick's analysis too, and that ran under a
+    different run_id. One row per symbol (most recent), so a symbol
+    analyzed at both ticks (cooldown normally prevents this) is not shown
+    twice. Read-only, fail-soft: any DB problem yields an empty list rather
+    than blocking the guaranteed hourly message.
+    """
+    rows: dict[str, dict] = {}
+    if not Path(_DB_PATH).exists():
+        return []
+    conn = None
+    try:
+        uri = f"file:{Path(_DB_PATH).resolve()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=1.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=1000")
+        for row in conn.execute(
+            "SELECT symbol, evidence_json FROM specialist_evidence "
+            "WHERE agent_name = 'tech_analyst' AND kind = 'analysis' "
+            "AND timestamp >= datetime('now', ?) ORDER BY timestamp",
+            (f"-{hour_window_minutes} minutes",),
+        ).fetchall():
+            try:
+                data = json.loads(row["evidence_json"] or "{}")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            symbol = str(data.get("symbol") or row["symbol"] or "").upper()
+            if symbol:
+                rows[symbol] = data
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hourly desk check: evidence read failed: %s", exc)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+    return list(rows.values())
+
+
+def _read_hour_trade_count(hour_window_minutes: int = _HOUR_WINDOW_MINUTES) -> int:
+    """Count of real (non-HOLD) broker trades in roughly the last hour —
+    read-only, fail-soft: any DB problem reads as 0 rather than blocking
+    the guaranteed hourly message (a real trade still sent its own
+    immediate message regardless of this count)."""
+    if not Path(_DB_PATH).exists():
+        return 0
+    conn = None
+    try:
+        uri = f"file:{Path(_DB_PATH).resolve()}?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=1.0)
+        conn.execute("PRAGMA busy_timeout=1000")
+        row = conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE timestamp >= datetime('now', ?) "
+            "AND UPPER(action) != 'HOLD'",
+            (f"-{hour_window_minutes} minutes",),
+        ).fetchone()
+        return int(row[0]) if row else 0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hourly desk check: trade count read failed: %s", exc)
+        return 0
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _format_hourly_desk_check(result: dict, nested: dict | None, elapsed: float) -> str:
+    """The guaranteed top-of-hour message: what happened across BOTH ticks
+    of the last hour, in plain English, even when neither one had anything
+    that needed the owner's attention on its own.
+    """
+    run_id = result.get("run_id")
+    snap = _read_run(run_id)
+    lines = [f"🕐 DESK CHECK · {et_now().strftime('%H:%M ET')}", "Covering the last hour"]
+
+    trade_count = _read_hour_trade_count()
+    if trade_count == 0:
+        _new_section(lines, "⏸️ No action this hour")
+    else:
+        _new_section(
+            lines,
+            f"⚡ {trade_count} order(s) this hour — see the alert(s) already sent",
+        )
+
+    pnl = _number(result.get("daily_pnl"))
+    ret = _number(result.get("daily_return_pct"))
+    if pnl is not None or ret is not None:
+        _new_section(lines, _fmt_pnl_line("📈 Session P&L:", pnl, ret))
+
+    positions = [row for row in (snap.get("positions") or []) if isinstance(row, dict)]
+    risk_positions = [
+        row for row in positions
+        if str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS
+    ]
+    _new_section(lines, f"💼 Positions held: {len(risk_positions)}")
+
+    hour_rows = _read_hour_evidence()
+
+    def _render_hour_signals(lines: list[str]) -> None:
+        lines.append(f"🔎 Signals this hour: {len(hour_rows)} analyzed")
+        priority = {"strong_buy": 0, "strong_sell": 0, "buy": 1, "sell": 1, "neutral": 2}
+        ordered = sorted(
+            hour_rows,
+            key=lambda row: (
+                priority.get(str(row.get("rating", "")).lower(), 3),
+                str(row.get("symbol", "")),
+            ),
+        )
+        # Uncapped, same reasoning as `_signal_rows`: the header just above
+        # states the real count — the bullets below it must match, not
+        # silently truncate to a smaller number.
+        for row in ordered:
+            lines.append(_signal_row_line(row))
+
+    if hour_rows:
+        _new_block(lines, _render_hour_signals)
+    else:
+        _new_section(lines, f"🔎 Movers scanned: {_movers_scanned_text(nested)}")
+
+    _cov_start = len(lines)
+    _append_coverage_gaps(lines, result)
+    _cov_added = len(lines) > _cov_start
+    _seal_section(lines, _cov_start)
+    if not _cov_added:
+        _new_section(lines, "🛡️ Stop coverage: OK")
+
+    _new_block(lines, _append_footer, snap, elapsed)
+    hour_symbols = [
+        str(row.get("symbol", "")).upper() for row in hour_rows if row.get("symbol")
+    ]
+    _new_block(lines, _append_identities, run_id, result, hour_symbols)
     return "\n".join(lines)

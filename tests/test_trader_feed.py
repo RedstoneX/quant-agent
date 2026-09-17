@@ -1,11 +1,26 @@
 import html
 import json
 import sqlite3
+from datetime import datetime
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from src import trader_feed
 from src.data.company import CompanyProfile, CompanyProfileStore
 from src.notifier import TelegramNotifier
+
+_ET = ZoneInfo("America/New_York")
+# A deliberately NOT-top-of-hour, NOT-9:30 instant — `trader_feed._is_hourly_
+# checkpoint` fires on minute==0 (or 9:30), and without pinning the clock a
+# quiet-tick "no message" assertion is flaky once an hour in real time. Any
+# test asserting `msg is None` for intra_check must pin the clock with this.
+_QUIET_TICK_TIME = datetime(2026, 9, 17, 10, 15, tzinfo=_ET)
+# A top-of-hour instant, for the hourly-desk-check tests.
+_TOP_OF_HOUR_TIME = datetime(2026, 9, 17, 14, 0, tzinfo=_ET)
+
+
+def _pin_clock(monkeypatch, when: datetime) -> None:
+    monkeypatch.setattr(trader_feed, "et_now", lambda: when)
 
 
 def _make_db(tmp_path, monkeypatch):
@@ -165,7 +180,11 @@ def test_morning_feed_surfaces_market_signal_pm_risk_cash_and_execution(tmp_path
     assert "🛡️ Risk: APPROVED" in msg
     assert "T-bill cash release" in msg
     assert "BUY SQQQ" in msg and "filled" in msg
-    assert "LLM $0.01/2 provider requests" in msg
+    # 2026-09-17: the footer dropped run_id and the raw provider-request
+    # count (engineering detail) — kept: duration and a plain AI cost figure.
+    assert "AI cost $0.01" in msg
+    assert "provider request" not in msg
+    assert f"run {run}" not in msg
 
 
 def test_morning_hold_explains_no_trade_in_investment_terms(tmp_path, monkeypatch):
@@ -274,6 +293,17 @@ def test_intraday_scan_result_is_not_hidden_behind_outer_ok(tmp_path, monkeypatc
         {"approved": True, "reason_category": "clean", "scale_all_buys": 1.0,
          "reasoning": "No action to veto."},
     )
+    # 2026-09-17 cadence change: a quiet "intraday_no_trades" tick (nothing
+    # actionable at all) no longer sends its own message — it is folded
+    # into the top-of-hour summary instead. Give this tick a real execution
+    # skip so it stays actionable and this test keeps guarding its original
+    # regression: the nested `intraday_scan` result must render, never get
+    # masked by the outer "ok" status.
+    _evidence(
+        db, run, "execution", "execution_skip",
+        {"symbol": "SDS", "reason": "insufficient_cash", "detail": "n/a"},
+        symbol="SDS",
+    )
     outer = {
         "status": "ok", "run_id": run, "daily_pnl": -42.0, "daily_return_pct": -0.42,
         "positions": 0,
@@ -294,6 +324,7 @@ def test_intraday_no_new_activity_statuses_remain_silent(tmp_path, monkeypatch):
     Telegram feed must stay exactly as quiet about them as it was when they
     left no key — none of the three needs an operator's attention."""
     _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # not the top-of-hour tick
     for status in (
         "intraday_scan_disabled", "intraday_scan_lock_contended",
         "intraday_scan_no_opportunity",
@@ -330,6 +361,7 @@ def test_intraday_evidence_gate_skip_is_not_silent(tmp_path, monkeypatch):
 
 def test_normal_intraday_ok_tick_remains_silent(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # not the top-of-hour tick
     msg = trader_feed.format_session_result(
         "intra_check",
         {"status": "ok", "run_id": "intra_check-quiet", "daily_pnl": 10.0},
@@ -396,7 +428,7 @@ def test_early_close_uses_established_formatter_not_trader_review(tmp_path, monk
         {"status": "early_close", "run_id": "close-early", "positions": 0, "orders": []},
         1.0,
     )
-    assert "status: early_close" in msg
+    assert "status: Early close" in msg  # humanize_status("early_close")
     assert "CLOSE REVIEW" not in msg
 
 
@@ -913,3 +945,243 @@ def test_extract_alert_symbols_direct_call_includes_review_actions(tmp_path, mon
         ]},
     }
     assert trader_feed.extract_alert_symbols(run, result) == ["AAPL", "MSFT", "NVDA"]
+
+
+# === 2026-09-17: section spacing, plain status, signed money, trimmed
+# footer, PM-view label, analyzed-signal identities, intra_check cadence ===
+
+VISTRA = CompanyProfile(symbol="VST", name="Vistra Corp", industry="Utilities")
+
+
+def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypatch):
+    """Reproduces the example from the readability complaint end to end:
+    an intraday tick that analyzed a few names and found nothing to trade
+    (here, execution had a real skip, so the tick is actionable and sends
+    its own message immediately — the exact "found nothing to trade but a
+    decision WAS in play" case the original wall-of-text example came
+    from). Checks every readability change at once against the real
+    formatter output — blank lines between sections, no double/leading/
+    trailing blank line, plain-English status, signed money, a trimmed
+    footer, the "PM view (this check)" label, and a company name for an
+    analyzed (not just traded) signal."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-readability"
+    _evidence(
+        db, run, "tech_analyst", "analysis",
+        {"symbol": "VST", "rating": "buy", "conviction": "low", "risk_reward": 1.83,
+         "reasoning": "Momentum continuation but extended near-term."},
+        symbol="VST",
+    )
+    _evidence(
+        db, run, "tech_analyst", "analysis",
+        {"symbol": "AVGO", "rating": "neutral", "conviction": "low",
+         "reasoning": "No clean setup."},
+        symbol="AVGO",
+    )
+    _evidence(db, run, "portfolio_manager", "reasoning", {"portfolio_view": "No trades today."})
+    _evidence(
+        db, run, "execution", "execution_skip",
+        {"symbol": "VST", "reason": "insufficient_cash", "detail": "funding sale pending"},
+        symbol="VST",
+    )
+    _agent_log(db, run, "portfolio_manager", "no trades", cost=0.10)
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": 0.13, "daily_return_pct": 0.001,
+        "intraday_scan": {
+            "status": "intraday_no_trades", "run_id": run,
+            "candidates": ["VST", "AVGO"], "orders": [],
+        },
+    }
+    with patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=True: {"VST": VISTRA},
+    ):
+        # Not the top-of-hour tick — isolates `_format_intraday`'s own
+        # rendering from the separate hourly-digest message.
+        _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+        msg = trader_feed.format_session_result("intra_check", outer, 1.1)
+
+    assert msg is not None
+
+    # --- plain status, not the raw code ---
+    assert "Status: No trade" in msg
+    assert "intraday_no_trades" not in msg
+
+    # --- signed money, sign before '$', true minus for negatives ---
+    assert "+$0.13" in msg
+
+    # --- PM view label, PM's own text untouched ---
+    assert "PM view (this check): No trades today." in msg
+    assert "View: No trades today." not in msg  # old bare label is gone
+
+    # --- footer: duration + plain AI cost, no run_id, no raw call count ---
+    assert "AI cost $0.10" in msg
+    assert "provider request" not in msg
+    assert f"run {run}" not in msg
+
+    # --- company identity for an ANALYZED (not traded) signal ---
+    assert "who:" in msg
+    assert "VST — Vistra Corp · Utilities" in msg
+
+    # --- section spacing: blank lines between sections, bullets stay tight,
+    # no double blank, no leading/trailing blank line ---
+    lines = msg.split("\n")
+    assert lines[0].strip() != "" and lines[-1].strip() != ""
+    assert "\n\n\n" not in msg
+    # The two signal bullets are one section — no blank line between them.
+    signals_idx = next(i for i, l in enumerate(lines) if l.startswith("🔎 Signals"))
+    assert lines[signals_idx + 1].startswith("   • ")
+    assert lines[signals_idx + 2].startswith("   • ")
+    assert not lines[signals_idx + 3].startswith("   • ")  # exactly two bullets
+    # But there IS a blank line separating the header block from the P&L
+    # line, and the signals block from the footer.
+    pnl_idx = next(i for i, l in enumerate(lines) if l.startswith("📈 Session P&L"))
+    assert lines[pnl_idx - 1] == ""
+    footer_idx = next(i for i, l in enumerate(lines) if l.startswith("🧾"))
+    assert lines[footer_idx - 1] == ""
+
+
+def test_mission_control_link_has_exactly_one_blank_line_before_it():
+    """The section-spacing change must not touch `TelegramNotifier`'s own
+    link append — still exactly one blank line before the Mission Control
+    anchor, per `_build_payload`."""
+    notifier = TelegramNotifier(
+        token="t", chat_id="c", mission_control_url="https://mc.example/run/1",
+    )
+    payload = notifier._build_payload("⚪ intra_check · body\n\nsecond section")
+    assert payload["text"].endswith(
+        '\n\n<a href="https://mc.example/run/1">🔗 Open Mission Control</a>'
+    )
+    assert "\n\n\n" not in payload["text"]
+
+
+def test_quiet_intraday_no_trades_tick_sends_nothing(tmp_path, monkeypatch):
+    """The core cadence change: a :30 tick that analyzed candidates and
+    genuinely found nothing to do — no order, no skip, no coverage problem
+    — sends NO message at all any more (it used to always send the
+    'INTRADAY OPPORTUNITY ... NO TRADE' message). It is folded into the
+    next top-of-hour summary instead."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-quiet-half-hour"
+    _evidence(
+        db, run, "tech_analyst", "analysis",
+        {"symbol": "AVGO", "rating": "neutral", "conviction": "low",
+         "reasoning": "No clean setup."},
+        symbol="AVGO",
+    )
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # NOT the top-of-hour tick
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": 3.0, "daily_return_pct": 0.01,
+        "intraday_scan": {
+            "status": "intraday_no_trades", "run_id": run,
+            "candidates": ["AVGO"], "orders": [],
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 2.0)
+    assert msg is None
+
+
+def test_actionable_intraday_tick_sends_immediately_at_any_time(tmp_path, monkeypatch):
+    """Anything actionable — here, a real execution skip on a :30 tick —
+    still sends its own message right away, exactly as before, regardless
+    of the clock/cadence change."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-actionable-half-hour"
+    _evidence(
+        db, run, "tech_analyst", "analysis",
+        {"symbol": "AMD", "rating": "buy", "conviction": "medium", "risk_reward": 1.5,
+         "reasoning": "Breakout above resistance."},
+        symbol="AMD",
+    )
+    _evidence(
+        db, run, "execution", "execution_skip",
+        {"symbol": "AMD", "reason": "insufficient_cash", "detail": "funding sale pending"},
+        symbol="AMD",
+    )
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # NOT the top-of-hour tick
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": -1.0, "daily_return_pct": -0.01,
+        "intraday_scan": {
+            "status": "intraday_no_trades", "run_id": run,
+            "candidates": ["AMD"], "orders": [],
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 3.0)
+    assert msg is not None
+    assert "⚡ INTRADAY OPPORTUNITY" in msg
+    assert "insufficient_cash" in msg
+    # A half-hour tick is not the hourly checkpoint — no desk-check banner.
+    assert "🕐 DESK CHECK" not in msg
+
+
+def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
+    tmp_path, monkeypatch,
+):
+    """The guaranteed hourly pulse: the :00 tick itself is quiet (no
+    candidates moved this tick), but the :30 tick earlier in the hour DID
+    analyze a symbol under a DIFFERENT run_id — the hourly summary must
+    still surface it, built from DB records rather than this tick's own
+    (empty) run.
+    """
+    db = _make_db(tmp_path, monkeypatch)
+    half_hour_run = "run-half-hour-earlier"
+    _evidence(
+        db, half_hour_run, "tech_analyst", "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
+         "reasoning": "Range-bound, no signal."},
+        symbol="CEG",
+    )
+    top_of_hour_run = "run-top-of-hour"
+    _pin_clock(monkeypatch, _TOP_OF_HOUR_TIME)
+    outer = {
+        "status": "ok", "run_id": top_of_hour_run,
+        "daily_pnl": 5.5, "daily_return_pct": 0.02,
+        # No `intraday_scan` key at all — this tick's own scan did not run
+        # (e.g. nothing moved enough to qualify).
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 1.5)
+
+    assert msg is not None
+    assert "🕐 DESK CHECK" in msg
+    assert "No action this hour" in msg
+    assert "CEG" in msg  # the earlier :30 tick's signal, different run_id
+    assert "+$5.50" in msg
+    assert "who:" in msg or "CEG" in msg
+    # No leading/trailing/double blank line in the synthetic summary either.
+    assert not msg.startswith("\n") and not msg.endswith("\n")
+    assert "\n\n\n" not in msg
+
+
+def test_signals_list_never_drops_an_analyzed_symbol(tmp_path, monkeypatch):
+    """Regression: a live message once read '5 analyzed' but listed only 4
+    bullets, silently dropping the 5th (SOXX) — the old per-tick renderer
+    capped the bullet list at 4 while the header count stayed uncapped.
+    Every analyzed symbol must appear, however many there are."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-five-signals"
+    symbols = ["SOXX", "NVDA", "AMD", "AVGO", "QCOM"]
+    for sym in symbols:
+        _evidence(
+            db, run, "tech_analyst", "analysis",
+            {"symbol": sym, "rating": "neutral", "conviction": "low",
+             "reasoning": f"{sym}: no clean setup."},
+            symbol=sym,
+        )
+    _evidence(
+        db, run, "execution", "execution_skip",
+        {"symbol": "NVDA", "reason": "insufficient_cash", "detail": "n/a"},
+        symbol="NVDA",
+    )
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # not the top-of-hour tick
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": 1.0, "daily_return_pct": 0.01,
+        "intraday_scan": {
+            "status": "intraday_no_trades", "run_id": run,
+            "candidates": symbols, "orders": [],
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 2.0)
+    assert msg is not None
+    assert "🔎 Signals: 5 analyzed" in msg
+    for sym in symbols:
+        assert f"   • {sym}:" in msg, f"{sym} missing from the signals list"
