@@ -920,10 +920,16 @@ risk:
   # a model consistently far from the chart is a finding about the seat.
   target_divergence_warn_pct: 25.0
   require_stop_loss: true
-  # Cash-only by default. Flip to true to allow margin — BUYs can then spend
-  # beyond available cash. When false (default) the risk engine hard-blocks
-  # any BUY that would drive cash negative, and the PM + midday prompts get
-  # a mandatory de-lever directive when cash is already negative.
+  # Cash-only is the pydantic CLASS default (`false`), not what this desk
+  # runs — see `allow_margin: true` below. Set this back to `false` to
+  # return to cash-only: BUYs are then capped at available cash, the risk
+  # engine hard-blocks any BUY that would drive cash negative, and the PM +
+  # midday prompts get a mandatory de-lever directive when cash is already
+  # negative. With margin ENABLED (the current value), BUYs can spend
+  # beyond available cash up to the §11.2 gross-exposure ladder's ceiling
+  # (see `max_gross_exposure_x` below and `_entry_deployment_budget` in
+  # `src/pipeline_stages.py`), and the PM/midday prompts disclose that
+  # ladder headroom instead of the de-lever mandate.
   # ENABLED 2026-09-02, owner ratified: "change to two x. We're pushing it.
   # This is important. Remember, it's still paper trading. We're not even in
   # beta yet." Deliberately flipped only AFTER the gross-exposure ceiling and

@@ -1354,9 +1354,17 @@ class TradingPipeline:
         can never exceed equity and never creates leverage.
 
         This is a PLANNING figure for PM / RM / the pre-trade gate. It is
-        not authoritative for execution: ExecutionStage still re-reads raw
-        broker `cash` after the funding sale and skips any BUY that cash
-        does not actually cover. See `CashSweeper.fund_buys`.
+        not authoritative for execution, and — stale since the 2026-09-02
+        margin flip — it is no longer true that execution "skips any BUY
+        that cash does not actually cover": ExecutionStage still re-reads
+        raw broker `cash` after the funding sale, but with `allow_margin`
+        true a BUY may draw beyond that raw cash, bounded by the §11.2
+        gross-exposure ladder's headroom, not by this figure (see
+        `_entry_deployment_budget` in `src/pipeline_stages.py`). With
+        `allow_margin` false the old description still holds: cash is the
+        hard ceiling. Either way, this function itself never reads
+        `buying_power` / `regt_buying_power` — see above — that boundary is
+        unrelated to and unmoved by the ladder. See `CashSweeper.fund_buys`.
 
         The arithmetic itself lives in `src.quantities.deployable_cash` —
         one definition, shared with Mission Control's "Deployable" tile,
