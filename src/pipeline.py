@@ -222,15 +222,6 @@ HARD_BLOCK_RULES = {
     # It is a hard gate now. `apply_drawdown_scale` halves BUYs before this
     # filter runs, so a violation here means a BUY reached the engine unscaled.
     "drawdown_buy_cap",
-    # D9 (Stage 3, shorts). Hard blocks on opening/adding a short; a COVER
-    # is exempted before either rule can fire (src/risk/rules.py).
-    "max_single_short_pct",
-    # Renamed from max_short_gross_pct (2026-08-30) — now hard blocks any
-    # BEARISH order (a SHORT of an ordinary name, or a BUY of an inverse
-    # ETF SH/SDS/PSQ/SQQQ), not only `action == "SHORT"`. A SHORT of an
-    # inverse ETF is a BULLISH bet and is correctly excluded
-    # (src/risk/rules.py).
-    "max_gross_bearish_pct",
     # Spec §11.2 (owner-ratified 2026-09-01). Gross exposure — long market
     # value plus absolute short market value — may not exceed the ladder-
     # resolved multiple of equity. There was NO gross-exposure ceiling in
@@ -590,8 +581,8 @@ def _classify_coverage_gap(*, held: float, covered: float) -> tuple[str, float]:
 # behavioural: `tests/test_risk_prompt_limits_live.py` asserts that a value a
 # seat's standing sheet SHOWS is the value these objects CARRY. Parsing the
 # source text of a keyword list could only ever prove a kwarg name was typed,
-# not that the setting reached the object — `max_gross_bearish_pct=20.0`
-# hard-coded would have satisfied it.
+# not that the setting reached the object — a limit hard-coded at its current
+# value would have satisfied it.
 #
 # NOTHING ELSE CHANGED IN THE MOVE. Both bodies are the code that ran inline.
 # ---------------------------------------------------------------------------
@@ -680,8 +671,6 @@ def build_risk_config(config) -> RiskConfig:
             # it lets a legal 0 through, which `_risk_number` does not.
             **_threaded_risk_settings(
                 getattr(config, "risk", None),
-                "max_single_short_pct",
-                "max_gross_bearish_pct",
                 "min_position_risk_pct",
                 "max_portfolio_risk_pct",
                 # Rendered into the Portfolio Manager's sheet by the same
@@ -756,10 +745,8 @@ def build_constructor_config(config, risk_engine_config):
                 getattr(getattr(config, "cash_sweep", None), "min_order_usd", None),
                 500.0,
             ),
-            # Stage 3 (shorts) — same "size under the hard block" pattern as
-            # max_position_pct just above, mirrored for the short-specific
-            # ceiling and its sizing haircut.
-            max_single_short_pct=_risk_setting("max_single_short_pct", 10.0),
+            # Stage 3 (shorts) — the sizing haircut. A short's single-name
+            # ceiling is `max_position_pct` above, the same as a long's.
             short_gap_risk_multiple=_risk_setting("short_gap_risk_multiple", 1.5),
             # Spec §11.2 — same "size under the hard block" pattern again.
             # `max_gross_exposure` is in HARD_BLOCK_RULES, so an entry that
@@ -2154,15 +2141,6 @@ class TradingPipeline:
         pending_sector_investment: dict[tuple[str, str], float] = {}
         pending_symbol_investment: dict[str, float] = {}
         pending_cash_outflow = 0.0
-        # D9 (Stage 3): running total of gross BEARISH notional already
-        # allowed earlier in this batch — a SHORT of an ordinary name, or a
-        # BUY of an inverse ETF, but NOT a SHORT of an inverse ETF (that is
-        # a bullish bet, not a bearish one; see the signed accumulation
-        # below) — so `max_gross_bearish_pct` sees two bearish orders in
-        # the same run rather than checking each against only the
-        # pre-existing book. Renamed from pending_short_gross_investment
-        # (2026-08-30) alongside the ceiling itself.
-        pending_gross_bearish_investment = 0.0
         # Spec §11.2: running total of GROSS notional (direction-agnostic,
         # leverage-adjusted) already allowed earlier in this batch. Without
         # it two entries in one run would each be measured against only the
@@ -2275,7 +2253,6 @@ class TradingPipeline:
                 cash=effective_cash,
                 pending_cash_outflow=pending_cash_outflow,
                 in_drawdown=in_drawdown,
-                pending_gross_bearish_investment=pending_gross_bearish_investment,
                 # Spec §11.2 — the execution half of the gross ceiling. The
                 # sweep vehicle has already been split out of `positions`
                 # above, so `cash_park_symbol` here is belt-and-braces for
@@ -2326,22 +2303,10 @@ class TradingPipeline:
                 # Cash outflow is raw $ notional — leverage/direction don't
                 # change the brokerage cash the BUY consumes. Inverse/
                 # leveraged ETFs still cost their sticker price in cash.
-                # Unlike the gross-bearish accumulator just below, this is
-                # unconditional on direction — a SHORT of any symbol never
+                # A SHORT of any symbol never
                 # spends this settled-cash pool (RiskRuleEngine.check), a
                 # BUY of any symbol always does.
                 pending_cash_outflow += raw_investment
-            # Gross BEARISH accumulator: keyed off the SIGN of
-            # `signed_investment`, not off `decision.action` or `is_short`.
-            # Shorting an ordinary name and buying an inverse ETF both push
-            # `signed_investment` negative and both count. The quadrant
-            # this mirrors: SHORTING an inverse ETF (e.g. SHORT SQQQ) is a
-            # BULLISH bet (SQQQ falls when the index it inverts rises), so
-            # it pushes `signed_investment` POSITIVE and must NOT count,
-            # even though it is mechanically a SHORT — matches the signed
-            # gate in RiskRuleEngine.check.
-            if signed_investment < 0:
-                pending_gross_bearish_investment += abs(signed_investment)
             # Spec §11.2: gross is direction-agnostic — a BUY and a SHORT of
             # the same size consume the same ceiling. `gross_investment` is
             # already the leverage-adjusted unsigned magnitude.

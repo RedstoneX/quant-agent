@@ -199,7 +199,7 @@ STOP_REFUSAL_BUDGET_EXHAUSTED = "risk_budget_exhausted"
 #: scrape ever catching up to a sentence.
 STOP_REFUSAL_AGREEMENT_NET = "agreement_net_at_or_below_zero"
 #: Board item 10 (2026-09-14). `_build_buy`/`_build_short` already LOG when
-#: the risk-budget-per-trade cap or the single-name/single-short ceiling
+#: the risk-budget-per-trade cap or the single-name ceiling
 #: shrinks a request ("alloc capped by risk budget" / "... by the single-
 #: name ceiling"), but neither message contains rejected/refused/skipped, so
 #: the regex never matches them. When one of those caps (or the sector dial
@@ -434,13 +434,6 @@ class ConstructorConfig:
     # second, divergent notion of "too small to bother"; pipeline.py wires it
     # from that setting.
     min_order_usd: float = 500.0
-    # Stage 3 (shorts). Mirrors `max_position_pct` for a short's single-name
-    # ceiling — deliberately HALF of it (see src/config.py for why) — so
-    # `_build_short` sizes UNDER the risk engine's hard block instead of
-    # proposing an order the engine will drop outright. Keep in sync with
-    # `risk.max_single_short_pct` — pipeline.py wires them from the same
-    # setting, the same way it already does for `max_position_pct`.
-    max_single_short_pct: float = 10.0
     # Stage 3 (shorts). SIZING ONLY (never applied to stop placement — see
     # `_widen_stop_past_noise`): a short's risk-per-share is multiplied by
     # this before it is converted to a weight, so the same risk allocation
@@ -3341,26 +3334,25 @@ class PortfolioConstructor:
                 )
                 allocation_pct = alloc_cap_by_risk
 
-        # D9: single-short ceiling — deliberately HALF of the long
-        # single-name ceiling (see ConstructorConfig.max_single_short_pct).
+        # Single-name ceiling — the SAME `max_position_pct` a long uses
+        # (owner decision 2026-09-17: shorts carry the same limits as longs).
         # Mirrors _build_buy's max_position_pct clamp so the constructor
         # sizes UNDER the risk engine's hard block instead of proposing an
         # order the engine will drop outright.
         current_short_gross_pct = abs(current_pct)  # already gross-scaled, <= 0
-        name_headroom_pct = (self.cfg.max_single_short_pct - current_short_gross_pct) / gross_mul
+        name_headroom_pct = (self.cfg.max_position_pct - current_short_gross_pct) / gross_mul
         if allocation_pct > name_headroom_pct:
             logger.info(
-                "Constructor: SHORT %s alloc capped by the single-short "
-                "ceiling (delta %.2f%% → %.2f%%; %.1f%% max short, %.2f%% "
+                "Constructor: SHORT %s alloc capped by the single-name "
+                "ceiling (delta %.2f%% → %.2f%%; %.1f%% max position, %.2f%% "
                 "already held)",
                 target.symbol, allocation_pct, max(0.0, name_headroom_pct),
-                self.cfg.max_single_short_pct, current_short_gross_pct,
+                self.cfg.max_position_pct, current_short_gross_pct,
             )
             cap_note += (
                 f" [constructor: size capped to {max(0.0, name_headroom_pct):.2f}% "
-                f"by the {self.cfg.max_single_short_pct:.0f}% single-short "
-                f"ceiling — deliberately tighter than the long single-name "
-                f"ceiling. "
+                f"by the {self.cfg.max_position_pct:.0f}% single-name "
+                f"ceiling (the same one a long uses). "
                 f"Deterministic, not PM inconsistency]"
             )
             allocation_pct = name_headroom_pct
@@ -3394,7 +3386,7 @@ class PortfolioConstructor:
             self._note_refusal(
                 target.symbol, target.direction, STOP_REFUSAL_SIZED_TO_ZERO,
                 (cap_note.strip() or (
-                    "the position sizing chain (risk budget, single-short "
+                    "the position sizing chain (risk budget, single-name "
                     "ceiling, sector crowding) left nothing to round to "
                     "above zero"
                 )),

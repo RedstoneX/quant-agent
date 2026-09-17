@@ -150,7 +150,7 @@ def test_format_session_result_daily_error_surfaces_reason():
         3.0,
     )
     assert msg is not None
-    assert "🛑 FAILED: daily" in msg and "status: error" in msg
+    assert "🛑 FAILED: daily" in msg and "status: Error" in msg  # humanize_status
     assert "no data from portfolio_history" in msg
     assert "📊" not in msg   # rows/filename line skipped when absent
 
@@ -179,7 +179,7 @@ def test_format_session_result_daily_skipped_notifies():
         3.0,
     )
     assert msg is not None
-    assert "status: skipped" in msg and "42 rows" in msg
+    assert "status: Skipped" in msg and "42 rows" in msg  # humanize_status
 
 
 def test_build_daily_csv_filters_nan_spy(monkeypatch):

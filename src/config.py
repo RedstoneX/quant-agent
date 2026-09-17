@@ -441,7 +441,7 @@ class ExecutionConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _reject_deleted_repeg_keys(cls, data):
-        # Same pattern as `RiskConfig._reject_renamed_short_gross_key`:
+        # Same pattern as `RiskConfig._reject_removed_short_cap_keys`:
         # BaseModel's default `extra="ignore"` would let a settings.yaml still
         # carrying the deleted key load silently, and an operator would
         # believe a ladder length they set was in force. Fail loudly.
@@ -886,8 +886,7 @@ class RiskConfig(BaseModel):
     # Gross exposure = long market value + ABSOLUTE short market value,
     # measured against equity. Before this setting existed the codebase had
     # NO gross-exposure ceiling of any kind: `max_portfolio_risk_pct` bounds
-    # AT-RISK capital (the sum of stop distances) and `max_gross_bearish_pct`
-    # bounds the bearish side only. Nothing stopped the book reaching the
+    # AT-RISK capital (the sum of stop distances), not exposure. Nothing stopped the book reaching the
     # broker's full 4x. Adding this is a TIGHTENING, not a loosening.
     #
     # 2.0x is the owner's deliberate paper-account learning setting, taken
@@ -914,36 +913,13 @@ class RiskConfig(BaseModel):
     # ~55% at 1.5x.
     maintenance_margin_pct: float = Field(default=25.0, gt=0, lt=100)
     # --- Stage 3 (shorts) -----------------------------------------------
-    # Set to HALF of `max_position_pct` when both were chosen (20 -> 10):
-    # a long's loss is bounded at -100% of the position, a short's is not,
-    # so the per-name concentration budget for one short was made tighter
-    # than for one long. That "half" relationship is now HISTORICAL, not
-    # live — `max_position_pct` moved 20 -> 100 on 2026-09-04 and 100 -> 33
-    # on 2026-09-11 (a survival ceiling against single-name gap risk; see
-    # `risk.max_position_pct` in config/settings.yaml for the derivation),
-    # and this was NOT scaled with it on either occasion: shorts were never
-    # in scope for either change, and moving short concentration risk
-    # without its own review would be exactly the kind of unreviewed change
-    # this desk's process forbids. At 33 the long ceiling is now 3.3x this
-    # one rather than 2x, so 10 is TIGHTER than the old half-relationship
-    # would give (16.5) — the safe direction, and left alone deliberately.
-    # 10 stands on its own justification (unbounded short loss) until a
-    # separate pass re-examines it. Both caps below are HARD BLOCKS in the
-    # deterministic risk engine (src/risk/rules.py) on opening/adding a
-    # short — never on a COVER, which mirrors the existing exits-fail-open
-    # asymmetry.
-    max_single_short_pct: float = Field(default=10.0, gt=0, le=100)
-    # The largest total gross BEARISH exposure across the whole book, as a
-    # percent of equity — true shorts (qty < 0) plus LONG positions in an
-    # inverse/leveraged ETF (SH, SDS, PSQ, SQQQ; see `_ETF_LEVERAGE` in
-    # `src/risk/rules.py`), since holding one of those long is bearish
-    # exposure too. Renamed from `max_short_gross_pct` (2026-08-30): the old
-    # name summed only true shorts, leaving an inverse-ETF long invisible to
-    # it — the desk could sit at the full short ceiling AND hold a full
-    # inverse-ETF position at once and be materially more bearish than
-    # either limit intended. The rename reflects what the ceiling actually
-    # measures now, not just what enforces it.
-    max_gross_bearish_pct: float = Field(default=20.0, gt=0, le=200)
+    # Shorts carry the SAME limits as longs (owner decision 2026-09-17).
+    # There is deliberately no short-specific concentration or gross-bearish
+    # cap: the former `max_single_short_pct` (10) and `max_gross_bearish_pct`
+    # (20) were unsourced numbers. One short is capped by `max_position_pct`
+    # exactly as one long is (src/risk/rules.py), and the book either way is
+    # bounded by `max_gross_exposure_x` and `max_total_position_pct`. Both
+    # removed keys are rejected loudly by `_reject_removed_short_cap_keys`.
     # Sizing-only haircut (never applied to stop placement) on a short's
     # risk-per-share. A short gaps through its stop upward with no bound —
     # equal nominal risk is not equal real risk — so the same risk
@@ -1069,7 +1045,7 @@ class RiskConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _reject_deleted_agreement_ceiling_key(cls, data):
-        # Same pattern as `_reject_renamed_short_gross_key` below and
+        # Same pattern as `_reject_removed_short_cap_keys` below and
         # `ExecutionConfig._reject_deleted_repeg_keys`: BaseModel's default
         # `extra="ignore"` would let a stale deployment's settings.yaml keep
         # the key and load silently, and an operator would believe a sizing
@@ -1087,23 +1063,32 @@ class RiskConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_renamed_short_gross_key(cls, data):
-        # `max_short_gross_pct` was renamed to `max_gross_bearish_pct`
-        # (2026-08-30) when the ceiling was widened to also count LONG
-        # inverse-ETF positions, not just true shorts — the meaning of the
-        # setting genuinely changed, so a name that still said "short" would
-        # be a lie. BaseModel's default `extra="ignore"` would let a
-        # settings.yaml still carrying the old key load silently, quietly
-        # dropping whatever value an operator set and falling back to the
-        # 20.0 default — exactly the doc-versus-behaviour drift this rename
-        # exists to stop. Fail loudly instead (same pattern as
-        # `LLMCostCircuitConfig._reject_renamed_free_failure_key`).
-        if isinstance(data, dict) and "max_short_gross_pct" in data:
-            raise ValueError(
-                "risk.max_short_gross_pct has been renamed to "
-                "risk.max_gross_bearish_pct -- update the settings file "
-                "(no alias is provided)"
-            )
+    def _reject_removed_short_cap_keys(cls, data):
+        # Owner decision 2026-09-17: shorts carry the same limits as longs.
+        # `max_single_short_pct` and `max_gross_bearish_pct` (and the latter's
+        # pre-2026-08-30 name `max_short_gross_pct`) no longer exist. Same
+        # pattern and reason as the validators around it: `extra="ignore"`
+        # would let a settings.yaml still carrying one load silently, and an
+        # operator would believe a short cap was in force when nothing reads
+        # it. There is no replacement key — `max_position_pct` now governs a
+        # short exactly as it governs a long.
+        if isinstance(data, dict):
+            stale = [
+                k for k in (
+                    "max_single_short_pct",
+                    "max_gross_bearish_pct",
+                    "max_short_gross_pct",
+                )
+                if k in data
+            ]
+            if stale:
+                raise ValueError(
+                    f"risk.{', risk.'.join(stale)} removed 2026-09-17: shorts "
+                    "carry the same limits as longs (risk.max_position_pct, "
+                    "risk.max_gross_exposure_x, risk.max_total_position_pct). "
+                    "Delete the key from the settings file; there is no "
+                    "replacement key."
+                )
         return data
 
     @model_validator(mode="before")

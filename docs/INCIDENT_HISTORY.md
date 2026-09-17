@@ -10877,3 +10877,23 @@ position is still left unchanged, but it is now recorded as "trim could not be
 sized — no usable live stop", not as a market-data fault, so the owner is no
 longer paged to check a feed that was working, and the log no longer calls
 the trim a BUY.
+
+## 2026-09-17 — shorts carry the same limits as longs (owner decision)
+
+Owner decision: "Shorts can have the same [limits] as longs." The desk is to
+be fully invested long or short, and the two short-only caps were unsourced
+numbers. `risk.max_single_short_pct` (10) was set as half the old long cap
+and its own comment said it stood "until its own review";
+`risk.max_gross_bearish_pct` (20) had no source either. Longs had no
+equivalent total cap.
+
+**What changed.** Both keys are deleted, and a settings file still carrying
+one (or the older `max_short_gross_pct`) now fails to load. A short's
+single-name cap is `max_position_pct`, the same setting and the same
+hard-block rule name as a long, so the two cannot drift apart. Book exposure
+either way stays bounded by `max_gross_exposure_x` and
+`max_total_position_pct`. The PM and RM prompts no longer state short caps.
+
+**Kept.** `short_gap_risk_multiple` (1.5) sizing haircut, the borrow gate,
+the mandatory stop above entry, COVER never blocked, the kill switch and the
+drawdown ladder.

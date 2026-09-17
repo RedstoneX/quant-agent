@@ -673,7 +673,7 @@ def test_the_execution_gate_falls_back_to_the_configured_cap():
 
 def test_a_short_consumes_the_ceiling_exactly_like_a_long():
     """Gross is direction-agnostic. A short is not free leverage."""
-    engine = RiskRuleEngine(_risk_config(max_single_short_pct=100))
+    engine = RiskRuleEngine(_risk_config(max_position_pct=100))
     positions = [_position("NVDA", qty=190.0, current_price=100.0)]
     short = TradeDecision(
         action="SHORT", symbol="TSLA", allocation_pct=30.0,

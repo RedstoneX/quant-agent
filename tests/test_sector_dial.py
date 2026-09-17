@@ -391,7 +391,7 @@ def test_the_pair_trade_stays_legal_long_the_leader_short_the_laggard():
     # Caps chosen so the two legs SUMMED (10 + 10 = 20) would sit past the
     # absolute ceiling and the second leg would be refused outright under
     # gross summing. Split by side, each leg is 10 against a 15 target and
-    # neither is touched. 10% per leg is also the `max_single_short_pct`
+    # neither is touched. 10% per leg is under the `max_position_pct`
     # ceiling, so the short is not silently clamped by an unrelated rule.
     constructor = PortfolioConstructor(ConstructorConfig(
         max_sector_pct=15.0, max_sector_hard_pct=18.0, min_order_usd=500.0,
@@ -744,13 +744,12 @@ def test_the_gate_lets_the_pair_trade_through():
     configures, and gross summing would refuse the second leg. Split by side,
     each is one 35% position under a 40% target.
 
-    The unrelated per-name and short-book ceilings are lifted here on purpose:
+    The unrelated per-name ceiling is lifted here on purpose:
     they are separate controls with their own tests, and leaving them binding
     would let this test pass or fail for a reason that is not the sector split.
     """
     engine = _engine(
-        max_position_pct=50.0, max_single_short_pct=50.0,
-        max_gross_bearish_pct=100.0,
+        max_position_pct=50.0,
     )
     with patch("src.execution.broker._get_sector", return_value="Technology"):
         long_leg = engine.check(
@@ -771,8 +770,7 @@ def test_the_gate_lets_the_pair_trade_through():
 
 def test_an_inverse_etf_long_counts_as_LONG_side_exposure():
     """Spec §12.2 splits by POSITION SIDE, not by bullish/bearish thesis. A
-    long position in an inverse ETF is long-side exposure in its sector; the
-    separate `max_gross_bearish_pct` cap answers the directional question."""
+    long position in an inverse ETF is long-side exposure in its sector."""
     held = Position(
         symbol="SQQQ", qty=100, avg_entry=100.0, current_price=100.0,
         market_value=10_000.0, unrealized_pnl=0.0, sector="Broad",

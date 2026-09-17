@@ -171,6 +171,123 @@ def _clip_text(text: str, max_chars: int, marker: str = " …") -> str:
     return window.rstrip() + marker
 
 
+def _seal_section(lines: list[str], start: int, *, may_glue: bool = False) -> None:
+    """Insert one blank line before `lines[start:]` to set it apart from
+    whatever precedes it — unless there is nothing to separate from yet
+    (`start == 0`, still the first content), the new block turned out to be
+    empty, or (`may_glue=True`) its first line is an indented continuation
+    (bullets and sub-lines like "   * ..." / "   View: ..." throughout this
+    module and src/trader_feed.py).
+
+    `may_glue` defaults False — a new block always gets its own section —
+    because most callers' output never starts indented, so the default is
+    "always separate", not "guess from the text". Pass `may_glue=True` only
+    for a block whose SHAPE depends on the data: `src/trader_feed.py`'s PM
+    section sometimes renders its own "🧠 PM/Constructor:" heading and
+    sometimes, when there is nothing to decide, renders only a "   View:"
+    line continuing whatever came before it (normally the signals list) —
+    that one has to be told to glue when it turns out to be a continuation.
+
+    The one place both this module and src/trader_feed.py insert a section
+    break, replacing what used to be ad-hoc `lines.append("")` calls
+    scattered through each formatter — and the reason a message never ends
+    up with a double blank line (a block that added nothing never gets a
+    break inserted before it) or a leading one (nothing precedes the first
+    section, so `start == 0` short-circuits).
+    """
+    if len(lines) <= start or start == 0:
+        return
+    if may_glue and lines[start].startswith("   "):
+        return
+    lines.insert(start, "")
+
+
+def _new_section(lines: list[str], *new_lines: str, may_glue: bool = False) -> None:
+    """Append `new_lines` as their own visual section — see `_seal_section`
+    for the exact rule. No-op when `new_lines` is empty, so a caller can
+    always call this unconditionally instead of guarding with `if text:`."""
+    if not new_lines:
+        return
+    start = len(lines)
+    lines.extend(new_lines)
+    _seal_section(lines, start, may_glue=may_glue)
+
+
+def _new_block(lines: list[str], render, *args, may_glue: bool = False, **kwargs) -> None:
+    """Call `render(lines, *args, **kwargs)` — which appends its own block
+    of zero or more lines in place via loops/conditionals rather than
+    returning a ready list — then seal it off from whatever precedes it;
+    see `_seal_section`. For the many `_append_*` helpers below and in
+    src/trader_feed.py built that way.
+    """
+    start = len(lines)
+    render(lines, *args, **kwargs)
+    _seal_section(lines, start, may_glue=may_glue)
+
+
+_STATUS_LABELS: dict[str, str] = {
+    "ok": "OK",
+    "executed": "Traded",
+    "intraday_executed": "Traded",
+    "analyzed": "Analyzed",
+    "reviewed": "Reviewed, no action",
+    "preprocessed": "Preprocessed",
+    "reflected": "Reflected",
+    "sent": "Sent",
+    "no_trades": "No trade",
+    "intraday_no_trades": "No trade",
+    "no_data": "No data",
+    "nothing_new": "Nothing new",
+    "market_holiday": "Market holiday",
+    "early_close": "Early close",
+    "rejected": "Risk rejected the plan",
+    "hard_risk_block": "Blocked by risk rules",
+    "symbol_block": "Blocked by risk rules",
+    "buys_unfunded": "Could not fund the trade",
+    "failed": "Failed",
+    "analysis_error": "Analysis error",
+    "intraday_analysis_error": "Analysis error",
+    "broker_error": "Broker error",
+    "fetch_error": "Data fetch error",
+    "emergency_sold": "Emergency sell (historical)",
+    "daily_loss_halted": "Daily-loss halt",
+    "kill_switch_halted": "Halted (kill switch)",
+    "paid_analysis_suspended": "Paid analysis suspended",
+    "evidence_gate_skip": "Skipped — incomplete data",
+    "intraday_scan_crashed": "Scan crashed",
+    "intraday_scan_disabled": "Scan disabled",
+    "intraday_scan_lock_contended": "Scan delayed (busy)",
+    "intraday_scan_no_opportunity": "No movers found",
+    "digest_only": "Partially completed",
+    "skipped": "Skipped",
+    "scheduler_exited": "Scheduler exited",
+    "unknown": "Unknown",
+}
+
+
+def humanize_status(status: str) -> str:
+    """Plain-English rendering of an internal status code for the owner-
+    facing header line — e.g. "intraday_no_trades" -> "No trade". Falls
+    back to a humanised form of the raw code (underscores to spaces,
+    capitalised first letter) for any status not in the table above, so an
+    unmapped status is still readable rather than raw `snake_case`, never
+    raising and never silently dropping the information."""
+    status = str(status or "")
+    label = _STATUS_LABELS.get(status)
+    if label:
+        return label
+    text = status.replace("_", " ").strip()
+    return (text[:1].upper() + text[1:]) if text else "Unknown"
+
+
+def _fmt_signed_money(value: float) -> str:
+    """'+$12.34' / '−$12.34' — sign BEFORE the '$', and a true minus
+    sign (U+2212) for negative amounts rather than Python's default
+    '$+12.34' / '$-12.34', which reads oddly on a phone."""
+    sign = "+" if value >= 0 else "−"
+    return f"{sign}${abs(value):,.2f}"
+
+
 # === Per-symbol tap-through links ===
 #
 # EXTERNAL FALLBACK, not a Mission Control deep link. As of this writing the
@@ -812,63 +929,69 @@ def format_session_result(
     severity_prefix = "FAILED: " if emoji == "🛑" else ""
     lines: list[str] = [
         f"{emoji} {severity_prefix}{mode}  ({timestamp})",
-        f"status: {status}",
+        f"status: {humanize_status(status)}",
         f"run_id: {run_id}",
     ]
 
-    # Per-session LLM cost (looked up from agent_logs by run_id). Shows
-    # for every mode that ran agents — operator wants to see the
-    # dollar spend alongside the orders. Returns None silently if no
-    # DB or no rows; we omit the line rather than render "$?.??" mid
-    # success-message noise.
+    # Per-session LLM cost (looked up from agent_logs by run_id), the
+    # day-to-date spend, and (morning/once only) the prepaid balance and
+    # margin-interest lines — one "cost info" section, kept tight against
+    # itself and separated from the header above and the body below.
+    #
+    # Per-session cost: shows for every mode that ran agents — operator
+    # wants to see the dollar spend alongside the orders. Returns None
+    # silently if no DB or no rows; the line is omitted rather than render
+    # "$?.??" mid success-message noise.
+    #
+    # Day-to-date: shown on every session that spent money, because that is
+    # when "how close am I" to the self-imposed brake is actually being
+    # asked. Distinct from the balance line below, which is real money.
+    #
+    # OpenRouter balance (morning/once only): owner request 2026-08-31 — he
+    # wants to see the balance falling rather than discover it empty.
+    # OpenRouter is PREPAID; on 2026-08-31 the account was down to $7.10,
+    # about seven clean trading days, and nothing in the system said so.
+    # Morning-only because it changes slowly and repeating it on every
+    # session would train the operator to skim past it.
+    cost_block: list[str] = []
     cost_line = _session_cost_line(run_id)
     if cost_line:
-        lines.append(cost_line)
-
-    # Prepaid OpenRouter balance, once a day, on the morning message only.
-    # Owner request 2026-08-31: he wants to see the balance falling rather
-    # than discover it empty. OpenRouter is PREPAID — when the credit runs
-    # out the desk stops mid-session, at whatever moment the money ends. On
-    # 2026-08-31 the account was down to $7.10, about seven clean trading
-    # days, and nothing in the system would have said so.
-    # Morning only: it changes slowly, and repeating it on every session
-    # would train the operator to skim past it.
-    # Day-to-date against the self-imposed brake. Shown on every session that
-    # spent money, because that is when "how close am I" is actually being
-    # asked. Distinct from the balance line below, which is real money.
+        cost_block.append(cost_line)
     day_line = _day_cost_line()
     if day_line and cost_line:
-        lines.append(day_line)
-
+        cost_block.append(day_line)
     if mode in ("morning", "once"):
         balance_line = _openrouter_balance_line()
         if balance_line:
-            lines.append(balance_line)
-        lines.extend(_margin_interest_lines())
+            cost_block.append(balance_line)
+        cost_block.extend(_margin_interest_lines())
+    _new_section(lines, *cost_block)
 
     # === Mode-specific body ===
     if mode in ("morning", "midday", "close", "once"):
-        _append_trade_session_body(lines, result)
+        _new_block(lines, _append_trade_session_body, result)
     elif mode == "evening":
-        _append_evening_body(lines, result)
+        _new_block(lines, _append_evening_body, result)
     elif mode == "earnings_preprocess":
-        _append_earnings_body(lines, result)
+        _new_block(lines, _append_earnings_body, result)
     elif mode == "intra_check":
-        _append_intra_check_body(lines, result)
+        _new_block(lines, _append_intra_check_body, result)
     elif mode == "meta":
-        _append_meta_body(lines, result)
+        _new_block(lines, _append_meta_body, result)
     elif mode == "daily":
         # Only error / skipped reach here ("sent" is silenced above).
         # Surface the failure reason — a bare '🛑 FAILED: status error' is
         # undebuggable from a phone.
+        daily_block: list[str] = []
         filename = result.get("filename", "")
         if filename:
-            lines.append(f"📊 {result.get('rows', '?')} rows → {filename}")
+            daily_block.append(f"📊 {result.get('rows', '?')} rows → {filename}")
         err = result.get("error")
         if err:
-            lines.append(f"error: {err}")
+            daily_block.append(f"error: {err}")
+        _new_section(lines, *daily_block)
 
-    lines.append(f"elapsed: {elapsed_str}")
+    _new_section(lines, f"elapsed: {elapsed_str}")
     return "\n".join(lines)
 
 
@@ -1127,8 +1250,9 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
     # day, so the operator could not tell "PM chose to sit out" from "PM
     # never spoke". Rendered first: it reframes everything below it.
     status = str(result.get("status", ""))
+    failure_block: list[str] = []
     if status == "paid_analysis_suspended":
-        lines.append(
+        failure_block.append(
             "🛑 SUSPENDED: paid LLM analysis is halted by the mandatory cost "
             "circuit. Broker protection and deterministic safety work "
             "remain active."
@@ -1138,86 +1262,92 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
             # 900, not 300 — this is the deterministic cost-circuit
             # breaker's trigger detail, often a multi-clause sentence
             # (which ceiling, current spend, provider) worth reading in full.
-            lines.append(f"trigger: {_clip_text(str(err), 900)}")
+            failure_block.append(f"trigger: {_clip_text(str(err), 900)}")
     elif status.startswith("pm_") or status == "analysis_error":
-        lines.append(
+        failure_block.append(
             f"🛑 FAILED: PM decision failed ({status}) — no decisions were "
             "made; this is NOT a deliberate hold and the full paid stack "
             "will not auto-repeat"
         )
         err = result.get("error")
         if err:
-            lines.append(f"error: {_clip_text(str(err), 900)}")
+            failure_block.append(f"error: {_clip_text(str(err), 900)}")
+    _new_section(lines, *failure_block)
 
     # System-health first: a naked long is more urgent than the order list.
-    _append_coverage_gap_banner(lines, result)
-    _append_leverage_line(lines, result)
+    _new_block(lines, _append_coverage_gap_banner, result)
+    _new_block(lines, _append_leverage_line, result)
     orders = result.get("orders") or []
 
-    # FORCE_DELEVER / EMERGENCY_SELL / EMERGENCY_COVER banner — these
-    # actions mean the autonomous loop intervened automatically.
-    # force_delever fires when cash < -$1 (margin disabled) and
-    # biggest-loser-first sells until cash >= 0. emergency_sell fires from
-    # intra_check's / midday's flash-crash protection closing a long;
-    # emergency_cover is the same circuit breaker covering a SHORT (a
-    # distinct action name — not "emergency_sell" — because it's a BUY,
-    # and reusing the SELL name here would also have to be reused in
-    # db.py's realized-P&L FIFO lot matching, which assumes a "sell-family"
-    # action closes a long against open BUY lots; a short has no BUY lot to
-    # match against). All three look identical to a routine order on the
-    # wire otherwise — operator's most important "system intervened"
-    # signal would be invisible without this banner. Prepended before the
-    # order list so it's the first thing read.
-    forced = [
-        o for o in orders
-        if isinstance(o, dict) and str(o.get("action", "")).upper() in (
-            "FORCE_DELEVER", "EMERGENCY_SELL", "EMERGENCY_COVER",
-        )
-    ]
-    if forced:
-        actions = sorted({str(o.get("action", "")).upper() for o in forced})
-        symbols = sorted({str(o.get("symbol", "?")) for o in forced})
-        lines.append(
-            f"🚨 AUTONOMOUS INTERVENTION ({', '.join(actions)}): "
-            f"{len(forced)} order(s) on {', '.join(symbols)}"
-        )
+    def _render_orders(lines: list[str]) -> None:
+        # FORCE_DELEVER / EMERGENCY_SELL / EMERGENCY_COVER banner — these
+        # actions mean the autonomous loop intervened automatically.
+        # force_delever fires when cash < -$1 (margin disabled) and
+        # biggest-loser-first sells until cash >= 0. emergency_sell fires
+        # from intra_check's / midday's flash-crash protection closing a
+        # long; emergency_cover is the same circuit breaker covering a
+        # SHORT (a distinct action name — not "emergency_sell" — because
+        # it's a BUY, and reusing the SELL name here would also have to be
+        # reused in db.py's realized-P&L FIFO lot matching, which assumes a
+        # "sell-family" action closes a long against open BUY lots; a short
+        # has no BUY lot to match against). All three look identical to a
+        # routine order on the wire otherwise — operator's most important
+        # "system intervened" signal would be invisible without this
+        # banner. Kept glued to the order list right below it (same
+        # section) rather than gapped off, since it's an annotation of
+        # exactly those orders, not a separate topic.
+        forced = [
+            o for o in orders
+            if isinstance(o, dict) and str(o.get("action", "")).upper() in (
+                "FORCE_DELEVER", "EMERGENCY_SELL", "EMERGENCY_COVER",
+            )
+        ]
+        if forced:
+            actions = sorted({str(o.get("action", "")).upper() for o in forced})
+            symbols = sorted({str(o.get("symbol", "?")) for o in forced})
+            lines.append(
+                f"🚨 AUTONOMOUS INTERVENTION ({', '.join(actions)}): "
+                f"{len(forced)} order(s) on {', '.join(symbols)}"
+            )
 
-    if orders:
-        buys = [o for o in orders if _order_side(o) == "buy"]
-        sells = [o for o in orders if _order_side(o) == "sell"]
-        lines.append(f"orders: {len(orders)}  (BUY {len(buys)} / SELL {len(sells)})")
-        # Show every order on its own line — operator wants to know what
-        # was actually traded, not just a count. SELLs first (closing
-        # context), then BUYs (opening context). 10-per-side cap is a
-        # safety against unusual sessions; 99% of days are <10 each
-        # and the full list fits in one Telegram message (4096 char limit).
-        for o in sells[:10]:
-            # Tag forced sells inline so operator can spot the specific
-            # symbol that triggered the intervention banner above.
-            action = str(o.get("action", "")).upper() if isinstance(o, dict) else ""
-            label = "  SELL  "
-            if action == "FORCE_DELEVER":
-                label = "  🚨FORCE"
-            elif action == "EMERGENCY_SELL":
-                label = "  🚨EMER "
-            lines.append(f"{label}{_order_summary(o)}")
-        for o in buys[:10]:
-            # EMERGENCY_COVER is a forced BUY (covering a short) — tag it
-            # the same way the sells loop above tags a forced SELL, so the
-            # operator can spot it without cross-referencing the banner.
-            action = str(o.get("action", "")).upper() if isinstance(o, dict) else ""
-            label = "  BUY   "
-            if action == "EMERGENCY_COVER":
-                label = "  🚨EMER "
-            lines.append(f"{label}{_order_summary(o)}")
-        omitted = max(0, len(buys) - 10) + max(0, len(sells) - 10)
-        if omitted:
-            lines.append(f"  (+{omitted} more — see audit log)")
-        _append_company_identities(
-            lines, [o.get("symbol") for o in orders if isinstance(o, dict)],
-        )
-    else:
-        lines.append("orders: 0")
+        if orders:
+            buys = [o for o in orders if _order_side(o) == "buy"]
+            sells = [o for o in orders if _order_side(o) == "sell"]
+            lines.append(f"orders: {len(orders)}  (BUY {len(buys)} / SELL {len(sells)})")
+            # Show every order on its own line — operator wants to know what
+            # was actually traded, not just a count. SELLs first (closing
+            # context), then BUYs (opening context). 10-per-side cap is a
+            # safety against unusual sessions; 99% of days are <10 each
+            # and the full list fits in one Telegram message (4096 char limit).
+            for o in sells[:10]:
+                # Tag forced sells inline so operator can spot the specific
+                # symbol that triggered the intervention banner above.
+                action = str(o.get("action", "")).upper() if isinstance(o, dict) else ""
+                label = "  SELL  "
+                if action == "FORCE_DELEVER":
+                    label = "  🚨FORCE"
+                elif action == "EMERGENCY_SELL":
+                    label = "  🚨EMER "
+                lines.append(f"{label}{_order_summary(o)}")
+            for o in buys[:10]:
+                # EMERGENCY_COVER is a forced BUY (covering a short) — tag it
+                # the same way the sells loop above tags a forced SELL, so the
+                # operator can spot it without cross-referencing the banner.
+                action = str(o.get("action", "")).upper() if isinstance(o, dict) else ""
+                label = "  BUY   "
+                if action == "EMERGENCY_COVER":
+                    label = "  🚨EMER "
+                lines.append(f"{label}{_order_summary(o)}")
+            omitted = max(0, len(buys) - 10) + max(0, len(sells) - 10)
+            if omitted:
+                lines.append(f"  (+{omitted} more — see audit log)")
+            _append_company_identities(
+                lines, [o.get("symbol") for o in orders if isinstance(o, dict)],
+            )
+        else:
+            lines.append("orders: 0")
+
+    _new_block(lines, _render_orders)
 
     from src import evidence_gate
     data_status = result.get("data_status") or {}
@@ -1226,74 +1356,77 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
         if evidence_gate.counts_as_degraded(v)
     ]
     if degraded:
-        lines.append(f"⚠️ degraded: {', '.join(sorted(degraded))}")
+        _new_section(lines, f"⚠️ degraded: {', '.join(sorted(degraded))}")
 
 
 def _append_evening_body(lines: list[str], result: dict) -> None:
     # === Escalation banners (first thing read, before Daily P&L) ===
     analysis = result.get("analysis")
 
-    # (0) Dead-man's check: a market-day session that left zero agent_logs
-    # today silently never ran (disabled timer, stuck lock, half-day window
-    # math). morning missing is unambiguous → 🛑; midday/close can be
-    # legitimately skipped on some early-close days → softer ⚠️.
-    missing = result.get("missing_sessions")
-    if isinstance(missing, list) and missing:
-        # Prefix match: the sharpened probes emit decorated entries like
-        # "morning (PM plan never risk-reviewed — checkpoint unconsumed)" —
-        # they carry the diagnosis and must hit the hard banner too.
-        hard = [m for m in missing
-                if m == "morning" or str(m).startswith("morning (")]
-        for m in hard:
-            detail = m if m != "morning" else (
-                "morning — no agent activity logged; check the timer/scheduler"
-            )
-            lines.append(f"🛑 INCOMPLETE: MORNING SESSION TODAY — {detail}")
-        soft = [m for m in missing if m not in hard]
-        if soft:
-            lines.append(f"⚠️ no activity logged today for: {', '.join(soft)}")
+    def _render_escalation_banners(lines: list[str]) -> None:
+        # (0) Dead-man's check: a market-day session that left zero agent_logs
+        # today silently never ran (disabled timer, stuck lock, half-day window
+        # math). morning missing is unambiguous → 🛑; midday/close can be
+        # legitimately skipped on some early-close days → softer ⚠️.
+        missing = result.get("missing_sessions")
+        if isinstance(missing, list) and missing:
+            # Prefix match: the sharpened probes emit decorated entries like
+            # "morning (PM plan never risk-reviewed — checkpoint unconsumed)" —
+            # they carry the diagnosis and must hit the hard banner too.
+            hard = [m for m in missing
+                    if m == "morning" or str(m).startswith("morning (")]
+            for m in hard:
+                detail = m if m != "morning" else (
+                    "morning — no agent activity logged; check the timer/scheduler"
+                )
+                lines.append(f"🛑 INCOMPLETE: MORNING SESSION TODAY — {detail}")
+            soft = [m for m in missing if m not in hard]
+            if soft:
+                lines.append(f"⚠️ no activity logged today for: {', '.join(soft)}")
 
-    # (0b) Broker-truth stop-coverage gap (last check before overnight).
-    _append_coverage_gap_banner(lines, result)
+        # (0b) Broker-truth stop-coverage gap (last check before overnight).
+        _append_coverage_gap_banner(lines, result)
 
-    # (1) LLM-graded escalation — evening's contract maps thesis_trajectory=
-    # broken / macro_warning_ignored loss patterns to risk_rating >= elevated.
-    risk_for_banner = _attr_or_key(analysis, "risk_rating")
-    if isinstance(risk_for_banner, str) and risk_for_banner.lower() in ("elevated", "high"):
-        lines.append(f"🚨 OPERATOR ATTENTION — risk_rating={risk_for_banner}")
+        # (1) LLM-graded escalation — evening's contract maps thesis_trajectory=
+        # broken / macro_warning_ignored loss patterns to risk_rating >= elevated.
+        risk_for_banner = _attr_or_key(analysis, "risk_rating")
+        if isinstance(risk_for_banner, str) and risk_for_banner.lower() in ("elevated", "high"):
+            lines.append(f"🚨 OPERATOR ATTENTION — risk_rating={risk_for_banner}")
 
-    # (2) DETERMINISTIC escalation — does NOT depend on the LLM correctly
-    # grading its own day (under-rating is exactly the failure you most want
-    # caught). If today's loss is within 80% of the hard daily-loss circuit-
-    # breaker limit, raise the banner regardless of risk_rating. Mirrors the
-    # trading path's two-layer (hard rule OR LLM) philosophy — the observability
-    # path should escalate on facts too, not just on model judgment.
-    # Use the SAME basis the headline shows: prefer the 4pm close-to-close P&L
-    # (esc_pnl=pnl_4pm, baseline=prior official close = equity_close - pnl_4pm)
-    # so the alert evaluates the number the operator actually sees. Fall back to
-    # the real-time diff when the 4pm figures aren't available. Without this, a
-    # day that recovered after-hours could hide a material 4pm loss from the
-    # alert (or vice-versa).
-    esc_pnl = result.get("pnl_4pm")
-    esc_close = result.get("equity_close")
-    if esc_pnl is not None and isinstance(esc_close, (int, float)):
-        esc_base = esc_close - esc_pnl
-    else:
-        esc_pnl = result.get("daily_pnl")
-        esc_tv = result.get("total_value")
-        esc_base = (esc_tv - esc_pnl) if (
-            isinstance(esc_pnl, (int, float)) and isinstance(esc_tv, (int, float))
-        ) else None
-    dl_limit = result.get("max_daily_loss_pct")
-    if (isinstance(esc_pnl, (int, float)) and isinstance(esc_base, (int, float))
-            and isinstance(dl_limit, (int, float)) and dl_limit > 0
-            and esc_pnl < 0 and esc_base > 0):
-        loss_pct = abs(esc_pnl / esc_base * 100)
-        if loss_pct >= 0.8 * dl_limit:
-            lines.append(
-                f"🚨 DETERMINISTIC ALERT — daily loss {loss_pct:.2f}% is "
-                f"≥80% of the {dl_limit:.0f}% circuit-breaker limit"
-            )
+        # (2) DETERMINISTIC escalation — does NOT depend on the LLM correctly
+        # grading its own day (under-rating is exactly the failure you most want
+        # caught). If today's loss is within 80% of the hard daily-loss circuit-
+        # breaker limit, raise the banner regardless of risk_rating. Mirrors the
+        # trading path's two-layer (hard rule OR LLM) philosophy — the observability
+        # path should escalate on facts too, not just on model judgment.
+        # Use the SAME basis the headline shows: prefer the 4pm close-to-close P&L
+        # (esc_pnl=pnl_4pm, baseline=prior official close = equity_close - pnl_4pm)
+        # so the alert evaluates the number the operator actually sees. Fall back to
+        # the real-time diff when the 4pm figures aren't available. Without this, a
+        # day that recovered after-hours could hide a material 4pm loss from the
+        # alert (or vice-versa).
+        esc_pnl = result.get("pnl_4pm")
+        esc_close = result.get("equity_close")
+        if esc_pnl is not None and isinstance(esc_close, (int, float)):
+            esc_base = esc_close - esc_pnl
+        else:
+            esc_pnl = result.get("daily_pnl")
+            esc_tv = result.get("total_value")
+            esc_base = (esc_tv - esc_pnl) if (
+                isinstance(esc_pnl, (int, float)) and isinstance(esc_tv, (int, float))
+            ) else None
+        dl_limit = result.get("max_daily_loss_pct")
+        if (isinstance(esc_pnl, (int, float)) and isinstance(esc_base, (int, float))
+                and isinstance(dl_limit, (int, float)) and dl_limit > 0
+                and esc_pnl < 0 and esc_base > 0):
+            loss_pct = abs(esc_pnl / esc_base * 100)
+            if loss_pct >= 0.8 * dl_limit:
+                lines.append(
+                    f"🚨 DETERMINISTIC ALERT — daily loss {loss_pct:.2f}% is "
+                    f"≥80% of the {dl_limit:.0f}% circuit-breaker limit"
+                )
+
+    _new_block(lines, _render_escalation_banners)
 
     # Daily P&L summary — the headline of the evening push. Operator wants to
     # know "did I make money today" without grepping logs.
@@ -1309,8 +1442,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
     pnl_4pm = result.get("pnl_4pm")
     equity_close = result.get("equity_close")
 
-    def _fmt_pnl(v: float) -> str:
-        return f"+${v:,.2f}" if v >= 0 else f"-${abs(v):,.2f}"
+    _fmt_pnl = _fmt_signed_money
 
     # Phase 6 (§6.3b) — the SAME day's P&L expressed against capital
     # actually at risk, not just against total equity. "Risk capital" here
@@ -1339,6 +1471,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
         risk_str = f"+{risk_pct:.2f}%" if pnl >= 0 else f"{risk_pct:.2f}%"
         lines.append(f"   vs risk capital: {risk_str}  (${risk_capital:,.2f} at risk)")
 
+    _pnl_start = len(lines)
     if pnl_4pm is not None and equity_close is not None:
         # baseline = prior official close = equity_close - pnl_4pm.
         baseline = equity_close - pnl_4pm
@@ -1364,6 +1497,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
         lines.append(f"💰 Daily P&L: {_fmt_pnl(daily_pnl)} ({ret_str})")
         lines.append(f"   Equity: ${total_value:,.2f}")
         _append_risk_capital_line(daily_pnl)
+    _seal_section(lines, _pnl_start)
 
     # Suggested actions — surfaced HIGH in the message (right after the
     # headline P&L) so the tail-clip truncation in send() can never eat
@@ -1372,6 +1506,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
     # Only shown when risk_rating is elevated/high. (The P&L history
     # text table that used to follow was replaced by the daily CSV
     # export — PR #99.)
+    _actions_start = len(lines)
     risk_for_actions = _attr_or_key(analysis, "risk_rating")
     if isinstance(risk_for_actions, str) and risk_for_actions.lower() in ("elevated", "high"):
         actions = _attr_or_key(analysis, "suggested_actions") or []
@@ -1385,12 +1520,14 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
                 # heavy accumulation volume, add on any weakness..." was
                 # being cut off mid-sentence at 200 chars with no ellipsis.
                 lines.append(f"   • {_clip_text(act, 500)}")
+    _seal_section(lines, _actions_start)
 
     # Position snapshot: total invested + cash + top winners/losers.
     # Helper queries the live DB so this works regardless of how the
     # evening result dict is constructed.
-    _append_position_snapshot(lines, total_value)
+    _new_block(lines, _append_position_snapshot, total_value)
 
+    _tomorrow_start = len(lines)
     analysis = result.get("analysis")
     risk = _attr_or_key(analysis, "risk_rating")
     bias = _attr_or_key(analysis, "tomorrow_bias")
@@ -1407,6 +1544,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
     outlook = _attr_or_key(analysis, "tomorrow_outlook") or ""
     if outlook:
         lines.append(f"   {_clip_text(outlook, 1000)}")
+    _seal_section(lines, _tomorrow_start)
 
     # Auto-meta piggyback (Round 2 enabled this; Round 6 adds the
     # dry-run staging hint). When today is the last trading day of a
@@ -1414,6 +1552,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
     # stuffs the result into `result['auto_meta']`. Surface dry-run
     # proposals so the operator knows to review proposed_edits.json
     # before next quarter.
+    _meta_start = len(lines)
     auto_meta = result.get("auto_meta")
     if isinstance(auto_meta, dict):
         # audit round 2 (#15/#19): the producer
@@ -1474,6 +1613,7 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
                 f"prompt-editor report missing — check logs"
             )
         # status='skipped' (not quarter-end) → no line, normal evening.
+    _seal_section(lines, _meta_start)
 
 
 def _session_cost_line(run_id: str | None) -> str | None:
@@ -1772,7 +1912,7 @@ def _append_position_snapshot(lines: list[str], total_value: float | None) -> No
     def _row_line(r: tuple) -> str:
         sym, qty, avg, curr, mv, pnl = r
         pct = ((curr / avg - 1) * 100) if avg else 0
-        sign = "+" if pnl >= 0 else "-"
+        sign = "+" if pnl >= 0 else "−"
         return f"   {sym:<6} {sign}${abs(pnl):>8,.0f}  ({pct:+.1f}%)"
 
     # r[5] is positions.unrealized_pnl. SQLite allows NULL on that

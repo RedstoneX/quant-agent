@@ -578,7 +578,7 @@ def test_format_morning_executed_shows_orders_and_status():
     msg = format_session_result("morning", result, 12.3)
     assert msg is not None
     assert "🟢 morning" in msg
-    assert "status: executed" in msg
+    assert "status: Traded" in msg  # humanize_status("executed")
     assert "run_id: run-abc12345" in msg
     assert "BUY 1 / SELL 1" in msg
     assert "NVDA" in msg
@@ -831,7 +831,7 @@ def test_format_evening_return_pct_na_when_prior_equity_nonpositive():
     assert msg is not None
     # Assert on the Daily P&L line specifically rather than bare "n/a"
     # (other message sections could legitimately contain that text).
-    assert "💰 Daily P&L: -$500.00 (n/a)" in msg, msg
+    assert "💰 Daily P&L: −$500.00 (n/a)" in msg, msg
 
 
 def test_format_evening_shows_negative_daily_pnl():
@@ -843,7 +843,7 @@ def test_format_evening_shows_negative_daily_pnl():
     msg = format_session_result("evening", result, 30.0)
     assert msg is not None
     assert "💰 Daily P&L" in msg
-    assert "-$373.46" in msg
+    assert "−$373.46" in msg  # true minus sign, not a hyphen
     assert "-0.35%" in msg
 
 
@@ -1298,7 +1298,10 @@ def test_format_unknown_status_uses_neutral_emoji():
     result = {"status": "some_new_status_we_havent_seen", "run_id": "x"}
     msg = format_session_result("morning", result, 1.0)
     assert msg is not None
-    assert "some_new_status_we_havent_seen" in msg
+    # humanize_status() has no table entry for this status, so it falls
+    # back to a humanised form of the raw code rather than the exact
+    # snake_case string — still readable, never a crash.
+    assert "Some new status we havent seen" in msg
 
 
 def test_format_non_dict_result_does_not_crash():
@@ -1532,7 +1535,7 @@ def test_format_evening_uses_true_4pm_pnl_not_offset_day():
         "analysis": {"risk_rating": "low"},
     }
     msg = format_session_result("evening", result, 10.0)
-    assert "💰 Daily P&L: -$500.00" in msg
+    assert "💰 Daily P&L: −$500.00" in msg
     assert "4pm close" in msg
     assert "$100,500.00" in msg
     assert "+$1,200" not in msg                 # must not leak the real-time figure
@@ -1563,7 +1566,7 @@ def test_format_evening_4pm_path_when_equity_close_zero():
         "analysis": {"risk_rating": "low"},
     }
     msg = format_session_result("evening", result, 10.0)
-    assert "💰 Daily P&L: -$100.00" in msg
+    assert "💰 Daily P&L: −$100.00" in msg
     assert "4pm close" in msg                              # took the 4pm path
     assert "   Equity: $0.00" in msg
 

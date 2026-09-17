@@ -945,8 +945,7 @@ risk:
   # Gross exposure = long market value + ABSOLUTE short market value, as a
   # MULTIPLE of equity. Before this setting there was no gross-exposure cap
   # in the codebase at all — max_portfolio_risk_pct bounds capital AT RISK
-  # (the sum of stop distances), not exposure, and max_gross_bearish_pct
-  # bounds only the bearish side. Nothing stopped the book reaching the
+  # (the sum of stop distances), not exposure. Nothing stopped the book reaching the
   # broker's full 4x. This is a NEW CEILING, i.e. a tightening.
   #
   # It is enforced in two places, both deterministic Python and never as an
@@ -979,23 +978,13 @@ risk:
   # 25 is Alpaca's standard equity requirement; at 2.0x it reads ~33%.
   maintenance_margin_pct: 25
   # --- Stage 3 (shorts) -------------------------------------------------
-  # Was set to half of max_position_pct (20 -> 10) when both were chosen; a
-  # short's loss is unbounded while a long's is capped at -100%, so one
-  # short's concentration budget was made tighter. HISTORICAL relationship
-  # only, not live: `max_position_pct` moved 20 -> 100 on 2026-09-04 and
-  # 100 -> 33 on 2026-09-11, and shorts were out of scope for both changes.
-  # At 33 this cap is now roughly a THIRD of the long ceiling rather than a
-  # half — i.e. tighter than the old relationship would give (16.5), which
-  # is the safe direction. 10 stands on the unbounded-loss justification
-  # alone until its own review. Hard block on opening/adding a short; never blocks a COVER.
-  max_single_short_pct: 10
-  # Largest total gross BEARISH exposure across the book, as % of equity —
-  # true shorts plus LONG positions in an inverse/leveraged ETF (SH, SDS,
-  # PSQ, SQQQ), since holding one of those long is bearish exposure too.
-  # Renamed from max_short_gross_pct (2026-08-30) when the ceiling was
-  # widened to see inverse-ETF longs, not just true shorts. Hard block on
-  # opening/adding a short or buying an inverse ETF; never blocks a COVER.
-  max_gross_bearish_pct: 20
+  # Shorts carry the SAME limits as longs (owner decision 2026-09-17: "Shorts
+  # can have the same [limits] as longs"). The former max_single_short_pct
+  # (10) and max_gross_bearish_pct (20) were unsourced numbers and were
+  # removed: one short is capped by max_position_pct exactly as one long is,
+  # and total exposure either way is bounded by max_gross_exposure_x and
+  # max_total_position_pct. The haircut below is the one extra short
+  # protection the owner kept.
   # Sizing-only haircut (never stop placement) on a short's risk-per-share:
   # a short can gap through its stop with unbounded loss, so equal nominal
   # risk must not buy equal real risk. Range (1.0, 3.0].

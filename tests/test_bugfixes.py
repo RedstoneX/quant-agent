@@ -1222,13 +1222,6 @@ def test_hedge_nets_out_for_total_exposure():
         max_daily_loss_pct=3,
         max_sector_pct=90,  # high to not interfere
         require_stop_loss=True,
-        # This test is about rule 2 (net exposure hedge-cancellation), not
-        # the gross BEARISH ceiling (2026-08-30) — high to not interfere.
-        # SQQQ 10% raw * 3x gross = 30% gross bearish on its own, which
-        # would otherwise hard-block this BUY before net exposure is ever
-        # computed (that block is the whole point of the ceiling elsewhere;
-        # tests/test_gross_bearish_exposure.py covers it directly).
-        max_gross_bearish_pct=90,
     ))
     # SQQQ 10% raw * -3 = -30% signed (short Nasdaq via inverse 3x)
     # SPY  25% raw * +1 = +25% signed (long S&P)
@@ -2104,5 +2097,8 @@ def test_main_live_mode_graceful_scheduler_exit_notifies_clearly(monkeypatch):
 
     main_mod.main()
 
-    assert any("scheduler_exited" in m for m in sent)
+    # 2026-09-17: the status header is now plain English
+    # (humanize_status("scheduler_exited") == "Scheduler exited"), not the
+    # raw snake_case code — check the readable label rather than the code.
+    assert any("Scheduler exited" in m for m in sent)
     assert not any("non-dict" in m for m in sent)
