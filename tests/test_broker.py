@@ -1596,19 +1596,194 @@ def test_submit_order_rejects_outlier_limit_price(mock_tc_cls):
 
 
 @patch("src.execution.broker.TradingClient")
-def test_submit_order_rejects_outlier_stop_price(mock_tc_cls):
+def test_submit_order_deviation_band_no_longer_applies_to_the_stop(mock_tc_cls):
+    """REPLACES `test_submit_order_rejects_outlier_stop_price` (2026-09-17).
+
+    That test pinned the 20% deviation band against the STOP. It was
+    deleted, not weakened, and this is the argument.
+
+    A flat percentage band is measured in the wrong units for a stop. A
+    stop's distance from entry is a volatility distance; the same 20%
+    permits 20 ATRs on a $500 name with a 1% ATR and refuses normal
+    structure on a $7 name with a 10% ATR (FLNC, 2026-09-17 — see
+    `test_flnc_wide_stop_on_a_volatile_name_is_not_refused`).
+
+    It also only ever caught the SAFE direction. Sizing is risk-based
+    (`src/pipeline_stages.py::_qty_by_risk_budget`: `risk_per_share =
+    abs(entry - stop)`, `qty = risk_dollars / risk_per_share`), so a WIDER
+    stop makes the position SMALLER. The $0.01 stop below is the extreme
+    case and it is self-limiting: risk-per-share is ~the whole share price,
+    so the quantity collapses to the risk budget divided by the price and
+    the worst case — the stock to zero — loses exactly the risk budget
+    that was authorised. The dangerous error is a too-TIGHT stop, which
+    inflates size, and a deviation band never caught that at all because a
+    tight stop sits close to the reference by definition.
+
+    What the stop is protected by instead: finiteness and side here (see
+    the tests below), plus the constructor's ATR-measured width rules
+    (`_widen_stop_past_noise`) and the wrong-side geometry refusal in
+    `_qty_by_risk_budget`. No replacement percentage is invented.
+    """
     mock_client = MagicMock()
+    submitted = MagicMock()
+    submitted.id = "ord-1"
+    submitted.status = "accepted"
+    submitted.symbol = "NVDA"
+    mock_client.submit_order.return_value = submitted
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
-    # Stop at $0.01 (data glitch) against $300 reference — should reject
     result = broker.submit_order(
         symbol="NVDA", qty=10, side="buy",
         limit_price=300.0, stop_loss_price=0.01,
         reference_price=300.0,
     )
+    assert result["status"] == "accepted"
+    mock_client.submit_order.assert_called_once()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_flnc_wide_stop_on_a_volatile_name_is_not_refused(mock_tc_cls):
+    """Regression case, production 2026-09-17 17:05:30.
+
+    A risk-manager-approved SELL_SHORT FLNC — entry $7.785, stop $9.66,
+    correct side, R/R 1.51:1, the constructor's own reading logged as "stop
+    width 2.50 x ATR, touch probability 20.7%" — was rejected by the
+    fat-finger guard at 24.1% deviation, AFTER every analyst,
+    portfolio-manager and risk-manager call had been billed. FLNC's
+    measured ATR(14) that session was $0.75 on a $7.785 price (9.6%), so
+    the flat 20% band banned any stop wider than ~2.1x the stock's own
+    ordinary daily range.
+    """
+    mock_client = MagicMock()
+    submitted = MagicMock()
+    submitted.id = "ord-1"
+    submitted.status = "accepted"
+    submitted.symbol = "FLNC"
+    mock_client.submit_order.return_value = submitted
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    result = broker.submit_order(
+        symbol="FLNC", qty=65, side="sell_short",
+        limit_price=7.75, stop_loss_price=9.66,
+        reference_price=7.785, atr=0.75,
+    )
+    assert result["status"] == "accepted"
+    mock_client.submit_order.assert_called_once()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_submit_order_still_rejects_a_fat_finger_entry_price(mock_tc_cls):
+    """The guard's real job is intact: the price we TRANSACT AT is checked.
+
+    The $0.01-quote-on-a-$300-stock case is what makes qty sizing nonsense
+    (budget / $0.01 = 100x the expected shares), and it is still refused.
+    """
+    mock_client = MagicMock()
+    mock_tc_cls.return_value = mock_client
+
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+    result = broker.submit_order(
+        symbol="NVDA", qty=10, side="buy",
+        limit_price=0.01, stop_loss_price=285.0,
+        reference_price=300.0,
+    )
     assert result["status"] == "rejected_outlier"
+    assert result["id"] is None
     mock_client.submit_order.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_submit_order_rejects_a_wrong_side_stop(mock_tc_cls):
+    """A stop on the wrong side of the entry protects nothing.
+
+    Both entry sides. This repeats the constructor's own
+    `STOP_REFUSAL_WRONG_SIDE` at the last deterministic gate before the
+    broker, because Invariant 2 requires the final authority to fail
+    closed. It is an inequality, not a threshold — no number is chosen.
+    """
+    mock_client = MagicMock()
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    # A long whose stop sits ABOVE its entry.
+    long_result = broker.submit_order(
+        symbol="NVDA", qty=10, side="buy",
+        limit_price=300.0, stop_loss_price=305.0, reference_price=300.0,
+    )
+    assert long_result["status"] == "rejected_bad_stop"
+    assert long_result["id"] is None
+
+    # A short whose stop sits BELOW its entry.
+    short_result = broker.submit_order(
+        symbol="FLNC", qty=65, side="sell_short",
+        limit_price=7.75, stop_loss_price=7.00, reference_price=7.785,
+    )
+    assert short_result["status"] == "rejected_bad_stop"
+    assert short_result["id"] is None
+
+    mock_client.submit_order.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_submit_order_rejects_a_non_finite_stop(mock_tc_cls):
+    """A NaN/Inf stop is REFUSED, not silently dropped.
+
+    `_quantize_price` maps NaN/Inf to None, so before this change a
+    non-finite stop made `use_stop` False and the entry was submitted with
+    NO protective stop at all — the worst possible outcome of a bad
+    number, and silent. Finiteness is now captured before quantization.
+    """
+    mock_client = MagicMock()
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        result = broker.submit_order(
+            symbol="NVDA", qty=10, side="buy",
+            limit_price=300.0, stop_loss_price=bad, reference_price=300.0,
+        )
+        assert result["status"] == "rejected_bad_stop", bad
+        assert result["id"] is None
+
+    mock_client.submit_order.assert_not_called()
+
+
+@patch("src.execution.broker.TradingClient")
+def test_fat_finger_refusal_message_carries_the_names_own_range(mock_tc_cls):
+    """The owner reads a bare percentage as a bug.
+
+    "24% from price $7.79" is not judgeable on its own. The message must
+    put the stock's OWN measured daily range next to it, from the ATR the
+    desk already computed — never a fetched or invented number.
+    """
+    mock_client = MagicMock()
+    mock_tc_cls.return_value = mock_client
+    broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
+
+    # FLNC's real measured session values: price $7.785, ATR(14) $0.75.
+    result = broker.submit_order(
+        symbol="FLNC", qty=65, side="sell_short",
+        limit_price=4.96, reference_price=7.785, atr=0.75,
+    )
+    assert result["status"] == "rejected_outlier"
+    detail = result["detail"]
+    assert detail == (
+        "limit price $4.96 is 36% from price $7.79 — FLNC normally moves "
+        "about $0.75 (10%) in a day"
+    )
+    # Plain words only: no field names, no jargon, no "ATR".
+    for jargon in ("atr", "limit_price", "deviat", "reference"):
+        assert jargon not in detail.lower()
+
+    # No ATR on hand (resume/sweep lanes carry no analysis) — the range
+    # clause is OMITTED, never filled with an invented number.
+    bare = broker.submit_order(
+        symbol="FLNC", qty=65, side="sell_short",
+        limit_price=4.96, reference_price=7.785,
+    )
+    assert bare["detail"] == "limit price $4.96 is 36% from price $7.79"
 
 
 @patch("src.execution.broker.TradingClient")
