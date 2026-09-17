@@ -268,6 +268,7 @@ def test_scan_never_ran_because_disabled_stays_healthy_and_silent(tmp_path, monk
     assert result["intraday_scan"] == {
         "status": "intraday_scan_disabled", "run_id": result["run_id"],
     }
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
 
 
@@ -289,6 +290,7 @@ def test_scan_never_ran_because_process_lock_held_stays_healthy_and_silent(
     assert result["intraday_scan"] == {
         "status": "intraday_scan_lock_contended", "run_id": result["run_id"],
     }
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
 
 
@@ -307,6 +309,7 @@ def test_scan_never_ran_because_another_session_active_stays_healthy_and_silent(
     assert nested["status"] == "intraday_scan_open_overlap"
     assert nested["waited_for"] == "morning"
     assert nested["run_id"] == result["run_id"]
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
     assert "INTRADAY OPPORTUNITY" not in (trader_feed.format_session_result(
         "intra_check", result, 5.0,
@@ -335,6 +338,7 @@ def test_open_tick_keeps_deterministic_risk_without_paid_hunt_or_intraday_telegr
     p.tech_analyst.analyze_batch.assert_not_called()
     assert result["status"] == "ok"
     assert result["intraday_scan"]["status"] == "intraday_scan_open_tick"
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     msg = trader_feed.format_session_result("intra_check", result, 5.0)
     assert msg is None
     assert "INTRADAY OPPORTUNITY" not in (msg or "")
@@ -353,6 +357,7 @@ def test_midday_lock_still_held_at_window_end_is_contended_not_open_overlap(
     assert result["status"] == "ok"
     nested = result["intraday_scan"]
     assert nested["status"] == "intraday_scan_lock_contended"
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
 
 

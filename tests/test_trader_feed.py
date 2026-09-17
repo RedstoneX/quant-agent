@@ -347,7 +347,8 @@ def test_open_overlap_leftover_is_not_intraday_opportunity_telegram(
     after morning released. Open-overlap must not use that header even
     when movers were named. A later true scan that did not overlap the
     open still may."""
-    _make_db(tmp_path, monkeypatch)
+    db = _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     leftover = {
         "status": "ok", "run_id": "intra_check-open", "daily_pnl": 10.0,
         "intraday_scan": {
@@ -366,6 +367,11 @@ def test_open_overlap_leftover_is_not_intraday_opportunity_telegram(
             "candidates": ["NVDA"], "orders": [],
         },
     }
+    _evidence(
+        db, "intra_check-later", "execution", "execution_skip",
+        {"symbol": "NVDA", "reason": "insufficient_cash", "detail": "n/a"},
+        symbol="NVDA",
+    )
     later_msg = trader_feed.format_session_result("intra_check", later, 12.0)
     assert later_msg is not None
     assert "⚡ INTRADAY OPPORTUNITY" in later_msg
@@ -377,6 +383,7 @@ def test_schedule_law_skips_are_not_intraday_opportunity_telegram(
     """Open tick, morning-not-done, and before-first-intraday must never
     wear the INTRADAY OPPORTUNITY header. A later true scan still may."""
     _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     for status in (
         "intraday_scan_open_tick",
         "intraday_scan_morning_not_done",

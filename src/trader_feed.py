@@ -955,7 +955,7 @@ def _intraday_tick_actionable(result: dict, nested: dict | None, snap: dict[str,
         # actionable only if execution actually had something to skip
         # (insufficient cash, etc.); a clean "nothing to do" is quiet.
         return bool(snap.get("skips"))
-    return False  # disabled / lock_contended / no_opportunity — quiet
+    return False  # disabled / lock / open-tick / morning-not-done / no_opportunity — quiet
 
 
 def _format_intra_check(result: dict, elapsed_seconds: float) -> str | None:
@@ -1003,6 +1003,11 @@ def _movers_scanned_text(nested: dict | None) -> str:
         return "disabled"
     if status == "intraday_scan_lock_contended":
         return "skipped (lock contended)"
+    if status in (
+        "intraday_scan_open_overlap", "intraday_scan_open_tick",
+        "intraday_scan_morning_not_done", "intraday_scan_before_first_intraday",
+    ):
+        return "skipped (still the open / morning continuation)"
     return "ran this tick"
 
 
