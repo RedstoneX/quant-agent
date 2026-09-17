@@ -45,6 +45,7 @@ Parallelism is an efficiency tool, not an agent-count target.
 - Do not force or manufacture trades, or weaken safeguards to increase activity.
 - Do not create paper-only trading semantics — no code path that behaves differently "because it's paper."
 - No new daemon/service/database/proxy/security/credential/orchestration architecture, and no paid alternative-data dependency, without separate explicit approval.
+- **Missing required data anywhere end-to-end is a defect in the step that should have produced it (owner 2026-09-17).** Find why. Fix that step so it actually produces the data. Never invent the missing value. Never make skip/drop/ignore-and-continue the permanent product. A drop-the-name quarantine is temporary until the producing step fills. Current instance: blank "I'll sell if" (`docs/WORK.md` item 78). The rule is not limited to that field.
 
 ## Execution discipline
 
@@ -118,6 +119,7 @@ Use dedicated branches/PRs for substantive work. Do not force-push or push imple
 - The system already sends marketable limit orders, which is a market order with a bounded worst case. No change needed.
 - Documentation is the source of truth. Wrong documentation is corrected on sight without asking.
 - Rehearsal alerts are suppressed rather than routed to a second Telegram bot.
+- Missing required data is a defect in the producing step. Never invent. Never make skip/drop/ignore-and-continue the permanent product. (owner 2026-09-17)
 
 ## Document authority
 

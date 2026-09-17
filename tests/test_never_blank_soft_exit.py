@@ -269,3 +269,16 @@ def test_blank_open_target_is_refused_before_the_constructor():
     )
     assert "MRVL" in _dropped_since_proposal(plan)
 
+
+def test_owner_missing_data_rule_forbids_skip_as_the_product():
+    """Owner 2026-09-17: skip/drop/ignore is not the permanent product.
+    Isolate stays labelled TEMPORARY. The producing step must fill."""
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[1]
+    agents = (repo / "AGENTS.md").read_text()
+    assert "Never make skip/drop/ignore-and-continue the permanent product" in agents
+    work = (repo / "docs" / "WORK.md").read_text()
+    assert "**78." in work and "TEMPORARY" in work
+    outcome = (repo / "docs" / "OUTCOME.md").read_text()
+    assert "Missing data is a defect in the step that should have produced it" in outcome
+

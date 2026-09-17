@@ -2686,10 +2686,12 @@ def _targets_admitted_to_book(targets) -> tuple[list, list[str]]:
     """Open/add names still missing a real falsifier never reach the constructor.
 
     Permanent never-blank path: heal + one paid retry already ran on the
-    PM seat. Remaining blanks are refused here so they do not consume
-    risk budget or become tickets. Targets stay on the proposal so Risk
-    is told why the narrative names a symbol that is not in the list.
-    Never invents a falsifier or catalyst string.
+    PM seat so it actually produces the field. Remaining blanks are
+    refused here so they do not consume risk budget or become tickets.
+    That refuse is last-resort after the producing step was asked, not
+    skip-and-continue as the product (owner 2026-09-17). Targets stay on
+    the proposal so Risk is told why the narrative names a symbol that
+    is not in the list. Never invents a falsifier or catalyst string.
     """
     admitted: list = []
     refused: list[str] = []
@@ -2719,9 +2721,10 @@ def _record_soft_exit_missing_after_retry(
 def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[str]:
     """Refuse BUY/SHORT names still missing a real falsifier after heal+retry.
 
-    TEMPORARY last-resort (#432 isolate-name). The permanent product is
-    schema + prompt + mechanical heal + one paid seat retry, then refuse
-    before construct_orders. This filter does not invent a
+    TEMPORARY last-resort (#432 isolate-name). Owner 2026-09-17: skip/drop
+    is not the product — the producing step must fill. The permanent path
+    is schema + prompt + mechanical heal + one paid seat retry, then
+    refuse before construct_orders. This filter does not invent a
     thesis_invalid_if or catalyst string. It does not delete the target
     — Risk must still be told the name was proposed and refused. Delete
     this isolate when a live session proves no actionable name arrives

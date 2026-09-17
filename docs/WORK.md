@@ -6,6 +6,8 @@
 
 **STANDING PRINCIPLE — NO ARBITRARY NUMBERS, EVER.** Every trade constant comes from real data, a cited source, or the instrument itself — never a flat count, round % or a number that "sounds prudent". **Approval does not make a flat number non-arbitrary.** Mark unmeasured numbers provisional, never settled.
 
+**STANDING PRINCIPLE — MISSING DATA IS A DEFECT IN THE PRODUCING STEP (owner 2026-09-17).** Find why a required field is blank and fix that step so it actually produces the data. Never invent. Never make skip/drop/ignore-and-continue the product. A drop-the-name quarantine is temporary. Item 78 is the current instance; the rule is not limited to it. Fuller statement: `docs/OUTCOME.md`.
+
 **This file holds only open work.** Finished work is written up in `docs/INCIDENT_HISTORY.md` (append-only, never trimmed, each entry opening with one plain-language line) and then deleted here, together with its `## item N` block in `docs/BOARD_NOTES.md` and its number added to the retired line. `tests/test_status_board.py` fails if this file grows, passes 100,000 bytes, or loses an item number without retiring it. Ratified architecture decisions go in `docs/QAMC_REMEDIATION_SPEC.md` as a numbered phase, not here.
 
 ## DECISIONS PENDING — CI FAILS WHEN ONE GOES OVERDUE
@@ -143,13 +145,11 @@ In progress 2026-09-14: standard technical sell rules (cited defaults, no tuning
 
 **76. PM-input shape — the one open piece is whether the PM uses its new macro-audit channel — OPEN, moved out of the PM TEST GATE 2026-09-14 (was gate item 7).**
 
-The volume/shape redesign is done (`docs/INCIDENT_HISTORY.md`, 2026-09-13 "item 18d / PM gate item 7"; 2026-09-14 "item 18e"). The PM output schema now has `reasoning_chain.macro_audit`; across 56 archived `portfolio_manager` calls, 27 carried macro's full `reasoning_chain` under an instruction to audit it and zero responses used it — no evidence it works, not proof it cannot (archive ends 2026-09-02). Settles with: a before/after benchmark run. Do NOT reopen as a size problem — Technical Analysis and Independent Source Agreement are bounded and scale with candidate count.
+Write-up: `docs/INCIDENT_HISTORY.md`, 2026-09-13/14. Settles with a before/after benchmark of whether the PM uses `reasoning_chain.macro_audit`. Do NOT reopen as a size problem.
 
-**77. Model selection: analyst seats re-tested, PM seat is the next open question — pointer, 2026-09-14.**
+**77. Model selection: analyst seats re-tested, PM seat is the next open question — pointer, 2026-09-14.** Detail: `docs/architecture/MODEL_ROUTING_POLICY.md` ("2026-09-14 analyst seat re-test"). Next: PM model test after a fresh practice day, then risk_manager/position_reviewer, then restart.
 
-Results, faults fixed and the decision: `docs/architecture/MODEL_ROUTING_POLICY.md` ("2026-09-14 analyst seat re-test"). Next: fresh PM practice day from analyst output, then PM model test, then risk_manager/position_reviewer, then restart the paused desk.
-
-**78. Isolating a blank "I'll sell if" name is TEMPORARY — DEFECT (patch).** The 2026-09-16 isolate is quarantine, not the product. Permanent: real falsifier required on actionable Tech and non-zero targets before the book; heal (null is not a delete) + one paid retry; still blank → refuse that name, reason `soft-exit missing after retry`. Never invent the sentence. Catalyst stays optional except the dated unmeasurable-range exception. Delete the isolate when a live session proves no tradeable name arrives blank.
+**78. Isolating a blank "I'll sell if" name is TEMPORARY — DEFECT (patch).** Instance of the missing-data standing principle. Permanent: Tech and PM actually produce a real falsifier on actionable ratings and non-zero targets; heal + one paid retry; still blank → refuse before the book, reason `soft-exit missing after retry`. Never invent. Catalyst stays optional except the dated unmeasurable-range exception. Delete the isolate when a live session proves never-blank.
 
 **Retired item numbers — never reuse.** 0, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 60, 61, 62, 66, 68, 69, 71, 72, 73 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Gate item 7 was moved, not closed: it is item 76. Item 60 (exit-refusal coherence) was closed 2026-09-16. Item 71 (stop write-back) was closed 2026-09-16. Item 72 (benchmark fixture) was filed and closed 2026-09-14. Item 73 (short stop-repair) was closed 2026-09-15. The two schemes are separate — 1, 3 and 4 are live in this queue while retired in the gate, and 20 is live here; 67, 90, 101 and 200 never existed. Item 38's follow-up survives as item 52, whose residue is item 63. Item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file. Next free number is 79.
 

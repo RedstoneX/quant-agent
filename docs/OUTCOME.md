@@ -232,6 +232,29 @@ build a proposal: insufficient data"* must be a first-class, recordable
 answer at every seat. A schema that has no way to say "I don't know" is
 asking to be lied to.
 
+## Missing data is a defect in the step that should have produced it
+
+**Owner standing rule, 2026-09-17. Broader than any one field.** If a
+required piece of data is missing anywhere end-to-end in the desk process,
+the root cause is that the step that should have produced it did not. Find
+why. Fix that step so it actually produces the data. Never invent the
+missing value. Never make skip / drop / ignore-and-continue the permanent
+product.
+
+A quarantine that drops one name so the rest of the book can trade is a
+patch. It stays labelled temporary until the producing step fills. The
+current instance is a blank "I'll sell if". The rule is not limited to that
+field.
+
+This is the same bias as the unverifiable-number rule above, applied to
+absence: a seat that cannot say the thing, and a pipeline that then skips
+the blank, selects for silent omission the same way a required unverifiable
+number selects for invention. Both are forbidden. *"I don't know"* remains
+a first-class, recordable answer. Skipping the name is not how that answer
+ships — heal, re-ask the seat, and if it still cannot produce the field,
+refuse that name with a durable reason. That refuse is last-resort, not the
+product.
+
 ## There is no such thing as a quiet market
 
 Across a universe of a hundred-plus names, something is always moving. **"It

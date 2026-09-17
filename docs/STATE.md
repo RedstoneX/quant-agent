@@ -1,6 +1,6 @@
 # QAMC Current State
 
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 This file records what is accepted and true **now**. Git history preserves implementation detail; do not turn this file into a changelog.
 
@@ -9,6 +9,7 @@ This file records what is accepted and true **now**. Git history preserves imple
 - **QAMC / Mission Control** is the whole product/system. **Dashboard** is the browser/iPad read-side UI.
 - QAMC is an autonomous AI-assisted Alpaca trading system whose **currently authorized execution environment is Alpaca Paper**. Live-broker order submission is not authorized.
 - Paper vs live is an execution-environment boundary, not a separate trading architecture.
+- **Owner 2026-09-17:** missing required data anywhere end-to-end is a defect in the step that should have produced it. Never invent the missing value. Never make skip/drop/ignore-and-continue the permanent product. Isolate-empty-name (item 78) is temporary quarantine, not the product.
 - Decision chain remains: **Specialists → Portfolio Manager → AI Risk Manager → deterministic Python risk/execution → broker**.
 - **FIXED 2026-08-27 (PR #108) — the exit path now follows this chain.**
   `run_position_review` (`src/pipeline.py`, midday and close) previously called
