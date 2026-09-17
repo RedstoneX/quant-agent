@@ -6950,13 +6950,14 @@ class ExecutionStage:
                     order_status = str((order or {}).get("status") or "")
                     order_detail = (order or {}).get("detail")
                     if order_status == "rejected_outlier":
+                        # The plain-word fact only (e.g. "stop $9.66 is 24%
+                        # from price $7.79", from broker.py's
+                        # _PLAIN_PRICE_LABELS) — WHO blocked it ("desk
+                        # safety check, not the broker") is the Telegram
+                        # formatter's job (src/trader_feed.py's
+                        # `_SKIP_WHO_LABELS`), not repeated here.
                         skip_reason = "fat_finger_guard"
-                        skip_detail = (
-                            "QAMC's own price-sanity check blocked this before "
-                            f"it reached the broker: {order_detail}" if order_detail
-                            else "QAMC's own price-sanity check blocked this "
-                            "before it reached the broker"
-                        )
+                        skip_detail = order_detail or "price is too far from the market price"
                     elif order_status == "kill_switch_halted":
                         skip_reason = "kill_switch_halted"
                         skip_detail = order_detail or (

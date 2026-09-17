@@ -26,6 +26,14 @@ from src.models import Position, _ALLOWED_SECTORS, _SECTOR_ALIASES
 
 logger = logging.getLogger(__name__)
 
+# Plain-English names for the fat-finger guard's owner-facing "detail"
+# text below — never the raw field name a log/audit trail would use.
+_PLAIN_PRICE_LABELS = {
+    "limit_price": "limit price",
+    "stop_loss_price": "stop",
+    "take_profit_price": "target price",
+}
+
 # Alpaca allows one `trade_updates` websocket per account. Each fill wait
 # used to construct its own TradingStream; a second handshake while the
 # first socket was still registered is HTTP 429, and older alpaca-py
@@ -3008,11 +3016,16 @@ class AlpacaBroker:
                         # price-sanity check, before this order ever reached
                         # the broker — instead of a generic "broker
                         # rejected", which used to read as if the broker had
-                        # refused a perfectly sane order.
+                        # refused a perfectly sane order. Plain words, not
+                        # the internal field name/precision the log line
+                        # above carries (owner-facing text, not a log):
+                        # "stop $9.66 is 24% from price $7.79", never
+                        # "stop_loss_price=$9.6600 deviates 24.1% from
+                        # reference $7.79 (likely ... hallucinated)".
                         "detail": (
-                            f"{label}=${candidate:.4f} deviates {deviation * 100:.1f}% "
-                            f"from reference ${reference_price:.2f} (likely a data "
-                            "glitch or a hallucinated price)"
+                            f"{_PLAIN_PRICE_LABELS.get(label, label)} "
+                            f"${candidate:,.2f} is {deviation * 100:.0f}% "
+                            f"from price ${reference_price:,.2f}"
                         ),
                     }
 

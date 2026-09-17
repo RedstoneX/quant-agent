@@ -201,29 +201,32 @@ def _all_symbols(*groups: Any) -> list[str]:
 # Plain-English "who actually stopped it" for an execution-skip `reason`
 # code (src/pipeline_stages.py's `_record_execution_skip` call sites) — the
 # operator asked to be told desk safety check / risk manager / broker /
-# not-filled-in-time, not an internal snake_case reason code. Risk-manager
+# not-filled-in-time, not an internal snake_case reason code, and the desk
+# guards must say so explicitly — the whole point of this wording is that
+# it is NOT the broker. Each value is a complete phrase ready to sit before
+# a colon (`_append_blocked` renders "{who}: {reason}"). Risk-manager
 # refusals and "not filled in time" are classified separately (they don't
 # come through `execution_skips` — see `_blocked_rows`).
 _SKIP_WHO_LABELS: dict[str, str] = {
-    "fat_finger_guard": "Desk safety check",
-    "kill_switch_halted": "Desk safety check (kill switch)",
-    "broker_rejected": "Broker",
-    "daily_loss_recheck": "Desk safety check (daily-loss breaker)",
-    "insufficient_cash": "Desk (insufficient cash)",
-    "below_min_notional": "Desk (order too small)",
-    "no_price": "Desk (no verifiable price)",
-    "stale_entry": "Desk (price moved since the decision)",
-    "qty_zero": "Desk (sizing rounds to zero)",
-    "latency_window": "Desk (too slow — latency)",
-    "slippage_gated": "Desk (price ran past the slippage limit)",
-    "borrow_gate": "Desk (short not available to borrow)",
-    "short_add_blocked": "Desk (adding to a short isn't supported)",
-    "rotation_room_not_freed": "Desk (no rotation room freed)",
+    "fat_finger_guard": "Blocked by desk safety check (not the broker)",
+    "kill_switch_halted": "Blocked by desk safety check — kill switch (not the broker)",
+    "broker_rejected": "Blocked by the broker",
+    "daily_loss_recheck": "Blocked by desk safety check — daily-loss breaker",
+    "insufficient_cash": "Blocked by the desk — insufficient cash",
+    "below_min_notional": "Blocked by the desk — order too small",
+    "no_price": "Blocked by the desk — no verifiable price",
+    "stale_entry": "Blocked by the desk — price moved since the decision",
+    "qty_zero": "Blocked by the desk — sizing rounds to zero",
+    "latency_window": "Blocked by the desk — too slow (latency)",
+    "slippage_gated": "Blocked by the desk — price ran past the slippage limit",
+    "borrow_gate": "Blocked by the desk — short not available to borrow",
+    "short_add_blocked": "Blocked by the desk — adding to a short isn't supported",
+    "rotation_room_not_freed": "Blocked by the desk — no rotation room freed",
 }
 
 
 def _skip_who(reason: str) -> str:
-    return _SKIP_WHO_LABELS.get(str(reason or ""), "Desk")
+    return _SKIP_WHO_LABELS.get(str(reason or ""), "Blocked by the desk")
 
 
 def _decision_action_for(symbol: str, snap: dict[str, Any]) -> str:
@@ -322,7 +325,7 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
             rows.append({
                 "symbol": symbol,
                 "action": _decision_action_for(symbol, snap),
-                "who": "Risk manager",
+                "who": "Blocked by risk manager",
                 "reason": row.get("reason") or "refused without a stated reason",
             })
             seen.add(symbol)
@@ -1064,6 +1067,14 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
         f"{_status_emoji(status)} {mode.upper()} REVIEW · "
         f"{et_now().strftime('%H:%M ET')} · {outcome}"
     ]
+
+    # NEW LAYOUT item 2 applies here too — only when the review's own
+    # result dict actually carries it (a midday/close run doesn't always;
+    # an absent P&L is omitted, never invented as "n/a" or a blank line).
+    pnl = _number(result.get("daily_pnl"))
+    ret = _number(result.get("daily_return_pct"))
+    if pnl is not None or ret is not None:
+        _new_section(lines, _fmt_pnl_line("📈 Session P&L:", pnl, ret))
 
     def _render_halt_banner(lines: list[str]) -> None:
         if status == "emergency_sold":

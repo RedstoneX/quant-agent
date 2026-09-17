@@ -1041,7 +1041,7 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     # AVGO looked at and passed (neutral) ---
     assert "<b>❌ BLOCKED / FAILED</b>" in msg
     assert "VST (Vistra Corp)" in msg
-    assert "Desk (insufficient cash): funding sale pending" in msg
+    assert "Blocked by the desk — insufficient cash: funding sale pending" in msg
     assert "<b>👀 LOOKED AT, NO TRADE</b>" in msg
     assert "AVGO NEUTRAL/low — PM passed" in msg
 
@@ -1281,13 +1281,13 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     _evidence(
         db, run, "portfolio_manager", "proposed_order",
         {"action": "BUY", "symbol": "AMD", "allocation_pct": 19.81,
-         "stop_loss": 520.00, "reasoning": "Breakout confirmation, cleanest expression in the book."},
+         "stop_loss": 493.24, "reasoning": "Breakout confirmation, cleanest expression in the book."},
         symbol="AMD",
     )
     _evidence(
         db, run, "portfolio_manager", "proposed_order",
-        {"action": "SELL", "symbol": "FLNC", "allocation_pct": 3.46,
-         "stop_loss": 8.20, "reasoning": "Short expression of storage-sector weakness."},
+        {"action": "SHORT", "symbol": "FLNC", "allocation_pct": 3.46,
+         "stop_loss": 9.66, "reasoning": "Short expression of storage-sector weakness."},
         symbol="FLNC",
     )
     _evidence(
@@ -1300,16 +1300,17 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     _trade(db, run, "AMD", "BUY", qty=1.7662, price=551.20, status="submitted")
     # FLNC: the pending row a submit attempt always writes first — this one
     # never went live (see the execution_skip below for WHY).
-    _trade(db, run, "FLNC", "SELL", qty=43, price=7.75, status="submit_failed")
+    _trade(db, run, "FLNC", "SHORT", qty=43, price=7.75, status="submit_failed")
 
     # The real defect: FLNC's own price-sanity check (fat-finger guard)
     # blocked it BEFORE the broker ever saw the order — reason code
-    # 'fat_finger_guard', not 'broker_rejected'.
+    # 'fat_finger_guard', not 'broker_rejected', and the DETAIL is plain
+    # words (src/execution/broker.py's `_PLAIN_PRICE_LABELS`), never the
+    # internal field name/precision a log line carries.
     _evidence(
         db, run, "execution", "execution_skip",
         {"symbol": "FLNC", "reason": "fat_finger_guard",
-         "detail": "QAMC's own price-sanity check blocked this before it reached the "
-                   "broker: stop_loss_price=$9.6600 deviates 24.1% from reference $7.79"},
+         "detail": "stop $9.66 is 24% from price $7.79"},
         symbol="FLNC",
     )
     _agent_log(db, run, "portfolio_manager", "2 changes", cost=0.21)
@@ -1358,12 +1359,17 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     assert "BUY AMD (Advanced Micro Devices)" in done_section
     assert "placed, waiting to fill" in done_section
     assert "filled" not in done_section.replace("waiting to fill", "")
-    assert "stop $520.00" in done_section
+    assert "stop $493.24" in done_section
 
-    # --- FLNC: BLOCKED/FAILED, blamed on the DESK, not the broker ---
+    # --- FLNC: SHORT (not SELL), BLOCKED/FAILED, blamed on the DESK, not
+    # the broker, in plain words (no internal field name, no "hallucinated") ---
     blocked_section = msg[blocked_idx:looked_idx]
-    assert "FLNC (Fluence Energy)" in blocked_section
-    assert "Desk safety check" in blocked_section
+    assert "SHORT FLNC (Fluence Energy)" in blocked_section
+    assert "SELL FLNC" not in blocked_section
+    assert "Blocked by desk safety check (not the broker)" in blocked_section
+    assert "stop $9.66 is 24% from price $7.79" in blocked_section
+    assert "stop_loss_price" not in blocked_section
+    assert "hallucinat" not in blocked_section.lower()
     # The old defect: this used to read "broker rejected" — must not any more.
     assert "broker rejected" not in blocked_section.lower()
     assert "broker_rejected" not in blocked_section.lower()
