@@ -359,3 +359,56 @@ def test_repair_stop_coverage_refuses_to_guess_direction():
             uncovered_qty=10.0,
         )
     broker._submit_protective_stop_retrying.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Price provenance (2026-09-17)
+#
+# The wrong-side test above decides whether putting a stop back would fire it
+# instantly — i.e. sell the position at market. It is only as good as the
+# price it runs against, and the price reader used to throw away both the
+# trade time and whether a trade happened at all: yesterday's last print on a
+# thin name, and an unconfirmed quote midpoint, arrived looking exactly like
+# a live price. Against a stale number the wrong-side test can read "safe"
+# while today's real price is already through the stop.
+# ---------------------------------------------------------------------------
+
+def _stamped(price, *, source="last_trade", is_today=True, is_today_print=True):
+    from src.execution.broker import LivePrice
+
+    return LivePrice(
+        price=price, source=source, trade_at=None,
+        is_today=is_today, is_today_print=is_today_print,
+    )
+
+
+def test_repair_uses_a_today_trade_print_when_one_is_available():
+    p = _pipeline()
+    p.broker.get_latest_price_stamped.return_value = _stamped(165.0)
+    p.broker._submit_protective_stop_retrying.return_value = {"id": "stop-1"}
+    gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is True
+    assert p.broker._submit_protective_stop_retrying.call_args.kwargs["stop_price"] == 158.75
+
+
+def test_repair_refuses_a_price_that_is_not_from_today():
+    """A stop placed off a prior session's print could fire immediately. The
+    gap stays flagged for the next sweep — the same outcome this belt already
+    produces for every other unverifiable input."""
+    p = _pipeline()
+    p.broker.get_latest_price_stamped.return_value = _stamped(
+        165.0, is_today=False, is_today_print=False,
+    )
+    gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is not True
+    p.broker._submit_protective_stop_retrying.assert_not_called()
+
+
+def test_repair_refuses_a_quote_midpoint_because_the_tape_never_traded_there():
+    p = _pipeline()
+    p.broker.get_latest_price_stamped.return_value = _stamped(
+        165.0, source="quote_mid", is_today=True, is_today_print=False,
+    )
+    gaps = p._reconcile_stop_coverage()
+    assert len(gaps) == 1 and gaps[0]["repaired"] is not True
+    p.broker._submit_protective_stop_retrying.assert_not_called()

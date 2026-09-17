@@ -142,6 +142,41 @@ _ALPACA_STREAM_AUTH_DEADLINE_S = _ALPACA_STREAM_RECONNECT_MAX_S
 
 
 @dataclass(frozen=True)
+class LivePrice:
+    """A price WITH the provenance needed to decide whether to trust it.
+
+    `get_latest_price` answers "what is it worth" but throws away how it
+    knew: a real trade print, or a quote the tape has not confirmed. It also
+    never looked at WHEN the trade happened, so a thinly-traded name that
+    last printed yesterday, or any read outside market hours, came back
+    looking exactly like a live price. Callers that place or move real orders
+    need the difference; the reporting callers do not, which is why
+    `get_latest_price` keeps its old shape and this is additive.
+
+    `source` is one of `last_trade`, `quote_mid`, `quote_ask`, `quote_bid`.
+
+    Two freshness answers, because two kinds of caller need different
+    strictness and collapsing them into one flag would either block ordinary
+    trading or wave through yesterday's price:
+      - `is_today` — the provider stamped this value with the current ET
+        date, whether it is a trade or a quote. A live quote mid-session is
+        a legitimate fill reference; yesterday's anything is not.
+      - `is_today_print` — additionally a REAL trade print. Only this proves
+        the tape actually traded there, which is what deciding where a stop
+        belongs requires.
+    An unstamped or naive timestamp fails visible rather than passing as
+    live — the same rule `src.trading_calendar.live_price_is_today` already
+    applies to research snapshots.
+    """
+
+    price: float
+    source: str
+    trade_at: object | None
+    is_today: bool
+    is_today_print: bool
+
+
+@dataclass(frozen=True)
 class TradeStreamWarmup:
     """Result of starting the kept trade_updates socket (handshake may still be in flight)."""
 
@@ -1988,7 +2023,15 @@ class AlpacaBroker:
             return min(buy_stops)
         return None
 
-    def get_latest_price(self, symbol: str) -> float | None:
+    def get_latest_price_stamped(self, symbol: str) -> "LivePrice | None":
+        """Latest price for `symbol` with its source and freshness attached.
+
+        Order of preference is unchanged from `get_latest_price`: a real
+        trade print first, then the quote midpoint, then a single side. What
+        is new is that the answer says which one it was and whether the trade
+        print is from today's ET date, so a caller about to place or move an
+        order can refuse a stale number instead of silently acting on it.
+        """
         try:
             if self._data_client is None:
                 from alpaca.data.historical.stock import StockHistoricalDataClient
@@ -2006,7 +2049,14 @@ class AlpacaBroker:
             trade = self._extract_symbol_payload(trade_data, alpaca_symbol)
             trade_price = float(getattr(trade, "price", 0) or 0)
             if trade_price > 0:
-                return trade_price
+                trade_at = getattr(trade, "timestamp", None)
+                from src.trading_calendar import live_price_is_today
+
+                fresh = bool(live_price_is_today(trade_at))
+                return LivePrice(
+                    price=trade_price, source="last_trade", trade_at=trade_at,
+                    is_today=fresh, is_today_print=fresh,
+                )
 
             quote_data = self._data_client.get_stock_latest_quote(
                 StockLatestQuoteRequest(symbol_or_symbols=alpaca_symbol)
@@ -2014,16 +2064,41 @@ class AlpacaBroker:
             quote = self._extract_symbol_payload(quote_data, alpaca_symbol)
             ask_price = float(getattr(quote, "ask_price", 0) or 0)
             bid_price = float(getattr(quote, "bid_price", 0) or 0)
+            quote_at = getattr(quote, "timestamp", None)
+            from src.trading_calendar import live_price_is_today
+
+            quote_today = bool(live_price_is_today(quote_at))
             if ask_price > 0 and bid_price > 0:
-                return (ask_price + bid_price) / 2
+                return LivePrice(
+                    price=(ask_price + bid_price) / 2, source="quote_mid",
+                    trade_at=quote_at, is_today=quote_today, is_today_print=False,
+                )
             if ask_price > 0:
-                return ask_price
+                return LivePrice(
+                    price=ask_price, source="quote_ask", trade_at=quote_at,
+                    is_today=quote_today, is_today_print=False,
+                )
             if bid_price > 0:
-                return bid_price
+                return LivePrice(
+                    price=bid_price, source="quote_bid", trade_at=quote_at,
+                    is_today=quote_today, is_today_print=False,
+                )
         except Exception as exc:
             logger.warning("Failed to fetch latest price for %s: %s", symbol, exc)
 
         return None
+
+    def get_latest_price(self, symbol: str) -> float | None:
+        """Latest price as a bare number — unchanged behaviour.
+
+        Reporting and grading callers ("how far has this moved since we sold
+        it") do not care where the number came from, and they already degrade
+        to a last close when it is missing. They keep this. Anything that
+        places or moves an order should call `get_latest_price_stamped` and
+        check `is_today_print`.
+        """
+        stamped = self.get_latest_price_stamped(symbol)
+        return stamped.price if stamped is not None else None
 
     def get_latest_quote(self, symbol: str) -> dict[str, float | None]:
         """Return the current bid/ask without inventing a side of the book.

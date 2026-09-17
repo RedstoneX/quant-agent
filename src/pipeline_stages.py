@@ -772,13 +772,7 @@ def _pin_approved_entry_ceilings(pipeline, ctx, buy_decisions) -> None:
         symbol = getattr(decision, "symbol", None)
         if not symbol:
             continue
-        live = None
-        getter = getattr(getattr(pipeline, "broker", None), "get_latest_price", None)
-        if callable(getter):
-            try:
-                live = getter(symbol)
-            except Exception:  # noqa: BLE001
-                live = None
+        live = _today_order_price(pipeline, symbol)
         ref = live if isinstance(live, (int, float)) and live > 0 else None
         if ref is None:
             entry = getattr(decision, "entry_price", None)
@@ -828,9 +822,46 @@ def _warm_trade_updates(pipeline, ctx) -> None:
         ctx.desk_latency_stall = True
 
 
-def _live_fill_price(pipeline, symbol) -> float | None:
-    """Live last for a fill. Never a daily bar close (owner 2026-09-16)."""
-    getter = getattr(getattr(pipeline, "broker", None), "get_latest_price", None)
+def _today_order_price(pipeline, symbol) -> float | None:
+    """A price from TODAY that an order may be placed against, or None.
+
+    Never a daily bar close (owner 2026-09-16), and now never a price the
+    provider stamped with an earlier date either. A live quote mid-session is
+    a legitimate fill reference, so quotes are allowed — what is refused is
+    yesterday's last print on a thin name, or any value whose timestamp
+    cannot be read. Unknown freshness returns None, which the callers already
+    treat as "no verifiable live price" and skip, rather than pricing an
+    order off it.
+    """
+    broker = getattr(pipeline, "broker", None)
+    stamped_getter = getattr(broker, "get_latest_price_stamped", None)
+    stamped = None
+    if callable(stamped_getter):
+        try:
+            from src.execution.broker import LivePrice
+
+            candidate = stamped_getter(symbol)
+            # isinstance, not truthiness — ~58 tests build the pipeline with
+            # a MagicMock broker whose auto-attributes answer every call. A
+            # MagicMock must never read as "this price is from today", and
+            # must not read as "no price" either, so it falls through to the
+            # bare getter below unchanged.
+            if isinstance(candidate, LivePrice):
+                stamped = candidate
+        except Exception:  # noqa: BLE001
+            return None
+    if stamped is not None:
+        if not (stamped.price > 0):
+            return None
+        if not stamped.is_today:
+            logger.warning(
+                "%s live price $%.2f is not stamped today (source %s) — not "
+                "pricing an order against it",
+                symbol, stamped.price, stamped.source,
+            )
+            return None
+        return float(stamped.price)
+    getter = getattr(broker, "get_latest_price", None)
     if not callable(getter):
         return None
     try:
@@ -840,6 +871,11 @@ def _live_fill_price(pipeline, symbol) -> float | None:
     if isinstance(live, (int, float)) and live > 0:
         return float(live)
     return None
+
+
+def _live_fill_price(pipeline, symbol) -> float | None:
+    """Back-compat alias for `_today_order_price`."""
+    return _today_order_price(pipeline, symbol)
 
 
 def _repeg_settings(pipeline) -> tuple[float, float] | None:
