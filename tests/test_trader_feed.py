@@ -395,6 +395,11 @@ def test_midday_review_surfaces_actions_and_holds(tmp_path, monkeypatch):
 
 def test_midday_without_structured_review_is_not_mislabelled_as_pm_failure(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
+    # Pinned to a morning ET instant: the header's own 12-hour "AM" marker
+    # must not collide with the "PM" substring this test checks for — that
+    # substring means Portfolio Manager, not the header's time-of-day
+    # designator (an unpinned clock made this flaky in the PM hours).
+    _pin_clock(monkeypatch, datetime(2026, 9, 17, 11, 0, tzinfo=_ET))
     msg = trader_feed.format_session_result(
         "midday",
         {"status": "reviewed", "run_id": "midday-empty", "positions": 0,
@@ -1071,6 +1076,75 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     assert lines[footer_idx - 1] == ""
 
 
+def test_every_formatter_header_uses_a_12_hour_clock(tmp_path, monkeypatch):
+    """Owner ratified 2026-09-17: no 24-hour clock anywhere in a Telegram
+    message. Checks all four header-producing paths at a genuinely
+    ambiguous instant (13:05 ET — "13:05" under the old %H:%M format,
+    "1:05 PM" under the new one) so a regression back to 24-hour can't
+    hide behind an AM hour that looks the same either way."""
+    db = _make_db(tmp_path, monkeypatch)
+    when = datetime(2026, 9, 17, 13, 5, tzinfo=_ET)
+    _pin_clock(monkeypatch, when)
+
+    morning_msg = trader_feed.format_session_result(
+        "morning", {"status": "executed", "run_id": "run-clock-morning", "orders": []}, 1.0,
+    )
+    midday_msg = trader_feed.format_session_result(
+        "midday",
+        {"status": "reviewed", "run_id": "run-clock-midday", "positions": 0,
+         "orders": [], "review": None},
+        1.0,
+    )
+    # Called directly (not through format_session_result's cadence
+    # gating) — this test is about the header format, not the quiet-tick
+    # rules a non-top-of-hour, non-actionable instant would otherwise
+    # collapse to `None` on.
+    intraday_msg = trader_feed._format_intraday(
+        {"run_id": "run-clock-intra"},
+        {
+            "status": "intraday_no_trades", "run_id": "run-clock-intra",
+            "candidates": [], "orders": [],
+        },
+        1.0,
+    )
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO agent_logs(agent_name, run_id, output_summary, cost_usd) VALUES (?, ?, ?, ?)",
+                 ("x", "run-clock-hour", "x", 0.0))
+    conn.commit()
+    conn.close()
+    hourly_msg = trader_feed._format_hourly_desk_check(
+        {"run_id": "run-clock-hour", "daily_pnl": None}, None, 1.0,
+    )
+
+    for msg in (morning_msg, midday_msg, intraday_msg, hourly_msg):
+        assert msg is not None
+        header = msg.splitlines()[0]
+        assert "1:05 PM ET" in header, header
+        assert "13:05" not in header, header
+
+
+def test_base_formatter_header_timestamp_is_also_12_hour(monkeypatch):
+    """The base (non-trader-feed) formatter's own header timestamp — used
+    for market_holiday/broker_error/analysis_error/kill_switch_halted and
+    every other status trader_feed.py routes straight through — must use
+    the same 12-hour clock, not just the rich formatters."""
+    # notifier.py's base `format_session_result` imports `et_now` LOCALLY
+    # inside the function body (`from src.trading_calendar import
+    # et_now`), fetched fresh on every call — unlike trader_feed.py's
+    # module-level import, patching `src.notifier.et_now` would do
+    # nothing here. Patch the source it actually re-imports from.
+    import src.trading_calendar as _trading_calendar
+    monkeypatch.setattr(
+        _trading_calendar, "et_now", lambda: datetime(2026, 9, 17, 13, 5, tzinfo=_ET),
+    )
+    msg = trader_feed.format_session_result(
+        "morning", {"status": "market_holiday"}, 1.0,
+    )
+    assert msg is not None
+    assert "1:05 PM ET" in msg
+    assert "13:05" not in msg
+
+
 def test_mission_control_link_has_exactly_one_blank_line_before_it():
     """The section-spacing change must not touch `TelegramNotifier`'s own
     link append — still exactly one blank line before the Mission Control
@@ -1337,7 +1411,8 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
 
     # --- header: ONE outcome word, computed (one done, one blocked) ---
     header = msg.splitlines()[0]
-    assert header.startswith("⚡ INTRADAY OPPORTUNITY · 13:05 ET")
+    # 12-hour clock, no 24-hour time anywhere (owner ratified 2026-09-17).
+    assert header.startswith("⚡ INTRADAY OPPORTUNITY · 1:05 PM ET")
     assert header.endswith("PARTIAL")
 
     # --- section placement: DONE, then BLOCKED, then LOOKED AT, then

@@ -25,6 +25,7 @@ from src.notifier import (
     _new_section,
     _seal_section,
     company_name,
+    fmt_time_12h,
     format_session_result as _base_format_session_result,
     TelegramNotifier,
 )
@@ -1003,7 +1004,7 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     )
 
     outcome = _outcome_word(status, len(done_rows), len(blocked_rows))
-    lines = [f"{_status_emoji(status)} {mode.upper()} · {et_now().strftime('%H:%M ET')} · {outcome}"]
+    lines = [f"{_status_emoji(status)} {mode.upper()} · {fmt_time_12h(et_now())} · {outcome}"]
 
     _new_block(lines, _append_coverage_gaps, result)
 
@@ -1065,7 +1066,7 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     outcome = _outcome_word(status, len(done_rows), len(blocked_rows))
     lines = [
         f"{_status_emoji(status)} {mode.upper()} REVIEW · "
-        f"{et_now().strftime('%H:%M ET')} · {outcome}"
+        f"{fmt_time_12h(et_now())} · {outcome}"
     ]
 
     # NEW LAYOUT item 2 applies here too — only when the review's own
@@ -1191,7 +1192,7 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     )
 
     outcome = _outcome_word(status, len(done_rows), len(blocked_rows))
-    lines = [f"⚡ INTRADAY OPPORTUNITY · {et_now().strftime('%H:%M ET')} · {outcome}"]
+    lines = [f"⚡ INTRADAY OPPORTUNITY · {fmt_time_12h(et_now())} · {outcome}"]
 
     def _render_status_banner(lines: list[str]) -> None:
         if status == "paid_analysis_suspended":
@@ -1455,7 +1456,7 @@ def _format_hourly_desk_check(result: dict, nested: dict | None, elapsed: float)
     trade_count = _read_hour_trade_count()
     outcome = "TRADED" if trade_count else "NO CHANGE"
     lines = [
-        f"🕐 DESK CHECK · {et_now().strftime('%H:%M ET')} · {outcome}",
+        f"🕐 DESK CHECK · {fmt_time_12h(et_now())} · {outcome}",
         "Covering the last hour",
     ]
 
