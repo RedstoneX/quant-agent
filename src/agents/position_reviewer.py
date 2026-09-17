@@ -557,8 +557,50 @@ class PositionReviewerAgent(BaseAgent):
                 f"weakest-conviction position(s) to restore cash ≥ 0. Do NOT "
                 f"TRAIL_STOP when the real problem is over-leverage.\n"
             )
-        else:
+        elif not allow_margin:
             margin_section = ""
+        else:
+            # Margin is enabled. Mirrors `PortfolioManagerAgent.build_user_
+            # message` (same 2026-09-17 CRM-incident fix): never let this
+            # seat assume cash is the spending limit either — it decides
+            # whether to hold or cut existing positions twice a day on
+            # exactly the same false "no margin" premise the PM prompt had.
+            # `margin_headroom_usd` / `margin_ladder_multiple` /
+            # `margin_ladder_rung` are threaded in from the SAME §11.2
+            # computation execution's submit loop uses
+            # (`_entry_deployment_budget` / `_session_gross_ceiling` in
+            # `src/pipeline_stages.py`) — never a second formula.
+            # `margin_ladder_backed=False` means that computation could not
+            # resolve this session, and the section says so rather than
+            # guessing a figure.
+            headroom_usd = kwargs.get("margin_headroom_usd")
+            ladder_multiple = kwargs.get("margin_ladder_multiple")
+            ladder_rung = kwargs.get("margin_ladder_rung")
+            ladder_backed = bool(kwargs.get("margin_ladder_backed", False))
+            if (
+                ladder_backed
+                and isinstance(headroom_usd, (int, float))
+                and isinstance(ladder_multiple, (int, float))
+            ):
+                margin_section = (
+                    "### Margin Capacity (margin is ENABLED)\n"
+                    f"This account may run gross exposure up to "
+                    f"{ladder_multiple:.2f}x equity (the §11.2 de-levering "
+                    f"ladder's current ceiling, rung {ladder_rung}) — NOT "
+                    f"just up to available cash.\n"
+                    f"Ladder headroom remaining this session: "
+                    f"${headroom_usd:,.2f}. This is the same figure "
+                    f"execution sizes new entries against — not a separate "
+                    f"estimate.\n"
+                )
+            else:
+                margin_section = (
+                    "### Margin Policy\n"
+                    "Margin is ENABLED for this account, but this session's "
+                    "ladder headroom could not be resolved for this prompt. "
+                    "Do NOT read the Cash figure below as the spending "
+                    "limit — treat the ladder as unknown, not as zero.\n"
+                )
 
         if system_action_lines:
             system_actions_section = (
@@ -648,6 +690,15 @@ class PositionReviewerAgent(BaseAgent):
                 "do not assume a trajectory you have not measured.\n"
             )
 
+        # 2026-09-17 fix (mirrors PortfolioManagerAgent): this used to
+        # hardcode "no margin" regardless of `allow_margin`. Cash is still
+        # raw cash — real, can go negative — but it is not the spending
+        # limit when margin is enabled, so the label must not claim the
+        # account has none. See Margin Capacity / Margin Policy above.
+        cash_status = (
+            "deployable this session, no margin" if not allow_margin
+            else "raw cash — see Margin Capacity above for what may still be spent"
+        )
         return f"""## Position Review — {session_label}
 
 {margin_section}
@@ -658,7 +709,7 @@ class PositionReviewerAgent(BaseAgent):
 
 ### Account
 - Total Value: ${total_value:,.2f}
-- Cash: ${cash_balance:,.2f} ({cash_pct}, deployable this session, no margin){reserve_line}
+- Cash: ${cash_balance:,.2f} ({cash_pct}, {cash_status}){reserve_line}
 
 ### Open Positions
 {positions_text}
@@ -706,7 +757,16 @@ schema."""
                yesterday_insights: dict | None = None,
                recent_performance: dict | None = None,
                already_trimmed_today: set[str] | None = None,
-               allow_margin: bool = True) -> tuple[PositionReview | None, "AgentResult"]:
+               allow_margin: bool = True,
+               # §11.2 ladder headroom, threaded from the SAME computation
+               # execution's submit loop uses (`_entry_deployment_budget` /
+               # `_session_gross_ceiling` in `src/pipeline_stages.py`) so
+               # the Margin Capacity section never derives its own number.
+               margin_headroom_usd: float | None = None,
+               margin_ladder_backed: bool = False,
+               margin_ladder_multiple: float | None = None,
+               margin_ladder_rung: str | None = None,
+               ) -> tuple[PositionReview | None, "AgentResult"]:
         result = self.run(
             positions=positions,
             macro_summary=macro_summary,
@@ -730,6 +790,10 @@ schema."""
             recent_performance=recent_performance or {},
             already_trimmed_today=already_trimmed_today or set(),
             allow_margin=allow_margin,
+            margin_headroom_usd=margin_headroom_usd,
+            margin_ladder_backed=margin_ladder_backed,
+            margin_ladder_multiple=margin_ladder_multiple,
+            margin_ladder_rung=margin_ladder_rung,
         )
         parsed = result.parse_json()
         if parsed is None:

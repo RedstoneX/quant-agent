@@ -10993,7 +10993,43 @@ either way stays bounded by `max_gross_exposure_x` and
 the mandatory stop above entry, COVER never blocked, the kill switch and the
 drawdown ladder.
 
-## 2026-09-17 — a 20% price band was applied to the stop, and it killed an approved short
+## 2026-09-17 — six timers on one tick; two stop-coverage repairs raced
+
+All six session timers (`quant-agent-{morning,midday,close,intra_check,
+evening,earnings_preprocess}.timer`) carried `OnCalendar=*:0/30`, so every
+one fired in the same second, every half hour. Measured consequences the
+same day: morning and intra_check could race at 09:30 (ordering between two
+timers firing in the same second is not guaranteed); and at 17:00:42 UTC
+midday's own stop-coverage reconcile and intra_check's own stop-coverage
+reconcile ran ~90ms apart — harmless because nothing needed repairing that
+tick, but the same timing with a real gap present is how a repair placing a
+stop collides with a session cancelling one to sell.
+
+**What changed.** `quant-agent-intra_check.timer` moved to `OnCalendar=*:15,
+45` — still a 30-minute cadence, inside the same 09:30-16:00 ET window, just
+off the tick every other session shares. intra_check's exemptions in
+`run_if_et_window.sh` (no once-per-day guard, no cross-mode session lock)
+are unchanged. Separately, `src.coverage_watchdog.check_coverage` (the
+standalone every-30-minute coverage-sweep unit and the 06:15 heartbeat —
+never a live session's own repair) now defers its repair pass whenever
+`src.execution.scale_in.trading_session_lock_held()` is true: a session
+holding that lock already runs the identical repair
+(`TradingPipeline._reconcile_stop_coverage`) itself, near the start of its
+own run, so the tick that defers is not a tick that goes unprotected. The
+gap is still read and still reported/alerted on; only the ADD is deferred.
+
+**Not changed.** `quant-agent-coverage-sweep.timer` stays on `*:0/30` — it
+is not part of `run_if_et_window.sh`'s window/lock machinery, and the new
+`trading_session_lock_held()` gate handles its collision with
+morning/midday/close/evening/earnings_preprocess directly. It does not see
+`intra_check` (deliberately exempt from that lock), but intra_check no
+longer shares its tick after the schedule move, so that pairing is closed
+by timing instead. The separate, pre-existing race where a crashed morning
+run leaves no completion stamp (so the desk treats morning as finished at
+09:30 and the first paid intraday look can start at 10:00 while morning is
+still retrying) is untouched by either change.
+
+### 2026-09-17 — a 20% price band was applied to the stop, and it killed an approved short
 
 **In plain words:** the desk has a fat-finger guard — it refuses an order
 whose price is more than 20% away from the live quote, so a broken feed or a

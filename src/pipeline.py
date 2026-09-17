@@ -1354,9 +1354,17 @@ class TradingPipeline:
         can never exceed equity and never creates leverage.
 
         This is a PLANNING figure for PM / RM / the pre-trade gate. It is
-        not authoritative for execution: ExecutionStage still re-reads raw
-        broker `cash` after the funding sale and skips any BUY that cash
-        does not actually cover. See `CashSweeper.fund_buys`.
+        not authoritative for execution, and — stale since the 2026-09-02
+        margin flip — it is no longer true that execution "skips any BUY
+        that cash does not actually cover": ExecutionStage still re-reads
+        raw broker `cash` after the funding sale, but with `allow_margin`
+        true a BUY may draw beyond that raw cash, bounded by the §11.2
+        gross-exposure ladder's headroom, not by this figure (see
+        `_entry_deployment_budget` in `src/pipeline_stages.py`). With
+        `allow_margin` false the old description still holds: cash is the
+        hard ceiling. Either way, this function itself never reads
+        `buying_power` / `regt_buying_power` — see above — that boundary is
+        unrelated to and unmoved by the ladder. See `CashSweeper.fund_buys`.
 
         The arithmetic itself lives in `src.quantities.deployable_cash` —
         one definition, shared with Mission Control's "Deployable" tile,
@@ -12108,10 +12116,51 @@ class TradingPipeline:
             trade_grade_summary = self._build_trade_grade_summary(lookback_days=14)
             # Same-day trim discipline — feeds the prompt + the executor.
             # See _symbols_already_trimmed_today for the AMZN-2026-05-04 origin.
-            already_trimmed_today = self._symbols_already_trimmed_today()
+            #
+            # 2026-09-17 XOM incident: _symbols_already_trimmed_today reads
+            # today's trade rows with no notion of what is still held — a
+            # symbol that was fully SOLD (not merely trimmed) this morning
+            # comes back exactly like one that still has shares open. The
+            # prompt section this feeds tells the LLM to render a HOLD
+            # decision for every name in the set ("HOLD them at this
+            # session unless..."), so a fully-closed name that never
+            # appears in `review_positions` (broker truth, fetched above)
+            # still got a fabricated action out of the model — 7 actions
+            # returned against 6 real broker positions. Intersect with the
+            # symbols actually being reviewed right here, at the one place
+            # both sets are in scope, so a sold-out name can never reach
+            # the reviewer's prompt or its action list again.
+            already_trimmed_today = self._symbols_already_trimmed_today() & {
+                p.symbol for p in review_positions
+            }
 
             yesterday_insights = self.db.get_latest_insights(before_date=session_date_key())
             recent_performance = self._compute_recent_performance(last_equity)
+
+            # Margin capacity for the reviewer prompt — WORDING ONLY, mirrors
+            # the same fix threaded into the PM prompt (`DecisionStage.run`
+            # in `src/pipeline_stages.py`). Reuses the EXACT §11.2
+            # computation execution's submit loop sizes entries against
+            # (`_entry_deployment_budget`, which itself resolves the ladder
+            # via `_session_gross_ceiling`) — never a second formula. Book
+            # state here (positions/equity/held-gross) has not changed since
+            # ctx was built above, so this is the same headroom execution
+            # will see for this session's entries.
+            from src.pipeline_stages import (
+                _entry_deployment_budget, _session_gross_ceiling,
+            )
+            margin_headroom_usd, margin_ladder_backed, _margin_headroom_note = (
+                _entry_deployment_budget(
+                    self, ctx, review_positions, total_value, review_cash,
+                )
+            )
+            _margin_ceiling = _session_gross_ceiling(self, ctx)
+            margin_ladder_multiple = (
+                _margin_ceiling.ceiling_x if _margin_ceiling is not None else None
+            )
+            margin_ladder_rung = (
+                _margin_ceiling.rung if _margin_ceiling is not None else None
+            )
 
             try:
                 review, md_result = self.position_reviewer.review(
@@ -12137,6 +12186,10 @@ class TradingPipeline:
                     recent_performance=recent_performance,
                     already_trimmed_today=already_trimmed_today,
                     allow_margin=bool(getattr(self.config.risk, "allow_margin", False)),
+                    margin_headroom_usd=margin_headroom_usd,
+                    margin_ladder_backed=margin_ladder_backed,
+                    margin_ladder_multiple=margin_ladder_multiple,
+                    margin_ladder_rung=margin_ladder_rung,
                 )
             except PaidAnalysisSuspended as exc:
                 self._reconcile_fills()
@@ -12522,6 +12575,27 @@ class TradingPipeline:
             self._reconcile_stop_out_fills(run_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("intra stop-out reconcile failed (non-fatal): %s", exc)
+
+        # 2026-09-17 AMD incident: AMD filled at $549.11 but the trades
+        # table still read 'submitted' half an hour later. The stop-coverage
+        # and stop-out reconcilers just above only watch protective/broker-
+        # initiated exits — neither one asks the broker about the fate of an
+        # order THIS pipeline submitted (a BUY/SELL/REDUCE/etc still marked
+        # 'submitted' in the trades table). `run_morning` and the midday/
+        # close review both call `_reconcile_fills` for exactly that reason;
+        # this tick — the one that runs every ~30 minutes and is therefore
+        # the tightest window available to close that gap between sessions
+        # — never did. The live fill-notification websocket never
+        # authenticates on this host (placeholder credential, frozen pending
+        # an owner decision — see broker.py), so in production this always
+        # resolves through `_reconcile_fills`'s own bounded REST lookup
+        # (`broker.get_order_fill_info`), never the socket. Unscoped
+        # (no run_id) so a still-'submitted' row from ANY earlier session
+        # today is picked up, not just ones this tick itself created.
+        try:
+            self._reconcile_fills()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("intra fill reconcile failed (non-fatal): %s", exc)
 
         try:
             account = self.broker.get_account()
