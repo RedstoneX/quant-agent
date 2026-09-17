@@ -22,7 +22,19 @@ what would catch it next time.
 
 ---
 
-### 2026-09-17 — the desk held back cash because macro said 80%, and parked the rest in T-bills; the owner ruled fully invested
+### 2026-09-17 — two jobs at once each opened the broker's live-fill socket, so neither could log in, and a dead socket made a stop wait longer than asking the broker
+
+**In plain words:** the broker lets the desk keep one live connection that reports fills the instant they happen. The morning job and the midday job are separate programs. Each opened its own connection. The broker rejected the extras, the login loop stormed, and a protective stop could sit waiting on a dead connection for longer than it would have taken to just ask the broker once a second.
+
+**Cause.** The desk already kept one socket inside a single program. That lock does not exist between programs. Starting the socket during the review so login overlaps the wait was not ownership of the account slot. Reading leftover fill messages on that socket was not ownership either. Lengthening the login retry was not the fix.
+
+**Fix.** One program on the box holds a file lock for the account. That program may open the socket. Any other program uses that program's socket if it is the same process, or asks the broker over REST with the same time limit it always had — it does not open a second connection. A dead or unauthenticated socket falls to REST for whatever time is left, not for a second full wait on top.
+
+**What this does not change.** Chase stays off. The login retry curve is still the broker library's own. No prices are invented. Paper only.
+
+**What would catch it next time.** A test that a second process cannot open a competing socket while the lock is held; a test that the other process REST-polls with a bounded wait; a test that a stop/fill wait on a dead stream is no longer than the REST path.
+
+---
 
 **In plain words:** the macro seat was setting how much of the account should be invested, and on 17 September it said 80%. The trade-picking seat then skipped a clean CRM buy purely to stay near that number, and the risk seat had a standing prompt to shrink every buy when the book ran above it. Whatever cash was left was swept into a T-bill fund. You said: *"I want 100% invested. I don't want anything sitting in T-bills or any other positions that just yield interest."*
 

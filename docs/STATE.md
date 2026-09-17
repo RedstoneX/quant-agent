@@ -307,7 +307,12 @@ This file records what is accepted and true **now**. Git history preserves imple
   failure and a spend-cap block page the owner. Empty or failed morning
   carry-forward still refuses before the Portfolio Manager. Desk-caused
   stall after Risk is a defect, not "a little late." Handshake starts
-  during Risk so auth is not serial after approval. Submit uses the
+  during Risk so auth is not serial after approval. Alpaca allows one
+  `trade_updates` socket per account: one desk process owns it via a
+  cross-process lease; other processes attach to that process's hub or
+  REST-poll with a wait no longer than the REST path — they never open a
+  second socket. Lengthening auth backoff is not the ownership fix.
+  Submit uses the
   already-coded fund/auth budgets; overrun is `latency_window` even if
   the tape is still inside the pinned ceiling. One in-ceiling catch-up
   is a safety net only. `execution.repeg_enabled` stays false.

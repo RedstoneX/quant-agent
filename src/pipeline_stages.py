@@ -687,8 +687,20 @@ def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
     """
     budget = 0.0
     if not _trade_updates_already_started(pipeline):
-        from src.execution.broker import _ALPACA_STREAM_AUTH_DEADLINE_S
-        budget += float(_ALPACA_STREAM_AUTH_DEADLINE_S)
+        contended = getattr(
+            getattr(pipeline, "broker", None),
+            "trade_updates_lease_contended",
+            None,
+        )
+        lease_held_elsewhere = False
+        if callable(contended):
+            try:
+                lease_held_elsewhere = contended() is True
+            except Exception:  # noqa: BLE001
+                lease_held_elsewhere = False
+        if not lease_held_elsewhere:
+            from src.execution.broker import _ALPACA_STREAM_AUTH_DEADLINE_S
+            budget += float(_ALPACA_STREAM_AUTH_DEADLINE_S)
     if will_fund:
         from src.execution.cash_sweep import (
             _FUND_CASH_SETTLE_TIMEOUT_S,

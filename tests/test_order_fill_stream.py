@@ -9,6 +9,10 @@ stream for exactly this. This suite proves the new dispatch logic without
 any real network I/O, using a fake `TradingStream` double.
 """
 import asyncio
+import fcntl
+import inspect
+import subprocess
+import sys
 import threading
 import time
 from unittest.mock import patch, MagicMock
@@ -625,4 +629,205 @@ def test_dead_hub_falls_to_rest_polling_not_one_snapshot(mock_stream_cls):
         assert broker.client.get_order_by_id.called
     finally:
         broker.stop_trade_updates()
+
+
+# ---------- account-wide lease (cross-process ownership) ----------
+#
+# A threading.Lock cannot stop morning + intra (separate systemd jobs)
+# from each opening a trade_updates socket. The owner is an advisory
+# flock. Frame-drain of hub._last_status is not this. Lengthening auth
+# backoff is not this. Repegs stay off.
+
+
+_HOLD_LEASE_SCRIPT = """
+import fcntl, sys, time
+from pathlib import Path
+path, ready, done = sys.argv[1], sys.argv[2], sys.argv[3]
+fh = open(path, "a+")
+fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+Path(ready).write_text("ready")
+deadline = time.monotonic() + 30
+while not Path(done).exists() and time.monotonic() < deadline:
+    time.sleep(0.05)
+"""
+
+
+def _broker_with_lease(lease_path):
+    with patch("src.execution.broker.TradingClient"):
+        return AlpacaBroker(
+            api_key="k", secret_key="s", paper=True,
+            trade_updates_lease_path=str(lease_path),
+        )
+
+
+@patch("src.execution.broker.TradingStream")
+def test_second_process_cannot_open_competing_socket_while_lease_held(
+    mock_stream_cls, tmp_path,
+):
+    """Pin: while another process holds the account lease, this process
+    must not construct a TradingStream at all."""
+    lease_path = tmp_path / ".trade_updates.lock"
+    ready = tmp_path / "ready"
+    done = tmp_path / "done"
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLD_LEASE_SCRIPT,
+         str(lease_path), str(ready), str(done)],
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert ready.exists(), "second process never acquired the lease"
+        mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+            *a, hang=True, **k,
+        )
+        broker = _broker_with_lease(lease_path)
+        try:
+            warmup = broker.start_trade_updates()
+            assert warmup.ready is False
+            assert broker.trade_updates_started() is False
+            assert mock_stream_cls.call_count == 0
+        finally:
+            broker.stop_trade_updates()
+    finally:
+        done.write_text("done")
+        holder.wait(timeout=5)
+
+
+@patch("src.execution.broker.TradingStream")
+def test_consumer_uses_rest_when_lease_held_by_another_process(
+    mock_stream_cls, tmp_path,
+):
+    """Pin: a fill wait that does not own the lease REST-polls with the
+    caller's timeout and never opens a socket."""
+    lease_path = tmp_path / ".trade_updates.lock"
+    lease_path.parent.mkdir(parents=True, exist_ok=True)
+    holder = open(lease_path, "a+")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+            *a, hang=True, **k,
+        )
+        broker = _broker_with_lease(lease_path)
+        broker.client.get_order_by_id.return_value = MagicMock(status="filled")
+        t0 = time.monotonic()
+        status = broker.wait_for_order_terminal(
+            "order-1", timeout_seconds=0.4, poll_interval=0.0,
+        )
+        elapsed = time.monotonic() - t0
+        assert status == "filled"
+        assert mock_stream_cls.call_count == 0
+        assert broker.client.get_order_by_id.called
+        assert elapsed < 2.0
+    finally:
+        holder.close()
+
+
+@patch("src.execution.broker.TradingStream")
+def test_fill_wait_on_unauthed_hub_does_not_exceed_rest_timeout(mock_stream_cls):
+    """Pin: remaining auth budget is not added on top of the fill wait.
+    Protective stops use this same wait_for_order_terminal path."""
+    class NeverAuth(_FakeTradingStream):
+        async def _start_ws(self):
+            await asyncio.sleep(60)
+
+    mock_stream_cls.side_effect = lambda *a, **k: NeverAuth(
+        *a, hang=True, **k,
+    )
+    broker = _broker()
+    broker.client.get_order_by_id.return_value = MagicMock(status="filled")
+    try:
+        broker.start_trade_updates()
+        timeout = 0.4
+        t0 = time.monotonic()
+        status = broker.wait_for_order_terminal(
+            "order-1", timeout_seconds=timeout, poll_interval=0.0,
+        )
+        elapsed = time.monotonic() - t0
+        assert status == "filled"
+        assert elapsed < timeout + 1.5, (
+            f"unauthed hub wait {elapsed:.2f}s exceeded REST ceiling "
+            f"{timeout}s — auth leftover was stacked on the fill wait"
+        )
+        assert elapsed < 5.0, "must not sit out the 30s reconnect-max"
+    finally:
+        broker.stop_trade_updates()
+
+
+@patch("src.execution.broker.TradingStream")
+def test_silent_authed_hub_rest_polls_within_the_rest_interval(mock_stream_cls):
+    """alpaca-py reconnects inside run() without killing the thread. A
+    live-but-silent hub must not hide a fill longer than REST would."""
+    class AuthedHang(_FakeTradingStream):
+        async def _start_ws(self):
+            return
+
+        def run(self):
+            super().run()
+
+    mock_stream_cls.side_effect = lambda *a, **k: AuthedHang(
+        *a, hang=True, **k,
+    )
+    broker = _broker()
+    filled = MagicMock(status="filled")
+    broker.client.get_order_by_id.return_value = filled
+    try:
+        broker.start_trade_updates()
+        # Let the hub handshake mark authed.
+        deadline = time.monotonic() + 2.0
+        while not broker.trade_updates_authed() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        t0 = time.monotonic()
+        status = broker.wait_for_order_terminal(
+            "order-1", timeout_seconds=0.8, poll_interval=0.2,
+        )
+        elapsed = time.monotonic() - t0
+        assert status == "filled"
+        assert elapsed < 0.8 + 1.5
+        assert broker.client.get_order_by_id.called
+    finally:
+        broker.stop_trade_updates()
+    """A hang with no auth hook waits the caller's timeout then one REST
+    snapshot — not a second full polling window stacked on the first."""
+    mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
+        *a, hang=True, **k,
+    )
+    broker = _broker()
+    broker.client.get_order_by_id.return_value = MagicMock(status="new")
+    timeout = 0.4
+    t0 = time.monotonic()
+    status = broker.wait_for_order_terminal(
+        "order-1", timeout_seconds=timeout, poll_interval=0.2,
+    )
+    elapsed = time.monotonic() - t0
+    assert status == "new"
+    assert elapsed < timeout + 1.5
+    # At least the last-known-status read. A dead one-shot may then REST
+    # the remainder; it must not stack a second full window.
+    assert broker.client.get_order_by_id.call_count >= 1
+    assert elapsed < 2.0
+
+
+def test_protective_fill_wait_is_the_bounded_terminal_wait():
+    """place_entry_protection has no private stream wait. Its fill wait
+    is wait_for_order_terminal, so the REST ceiling applies to stops."""
+    src = inspect.getsource(AlpacaBroker.place_entry_protection)
+    assert "wait_for_order_terminal" in src
+    assert "TradingStream(" not in src
+    assert "_wait_for_order_status_via_stream_locked" not in src
+
+
+def test_frame_drain_is_not_the_ownership_fix():
+    """_last_status lets a same-process waiter see an already-seen fill.
+    The account owner is the lease, not that dict."""
+    from src.execution import broker as broker_mod
+    start_src = inspect.getsource(broker_mod.AlpacaBroker.start_trade_updates)
+    wait_src = inspect.getsource(
+        broker_mod.AlpacaBroker._wait_for_order_status_via_stream,
+    )
+    assert "_acquire_trade_updates_slot" in start_src
+    assert "_acquire_trade_updates_slot" in wait_src
+    assert "_TradeUpdatesLease" in inspect.getsource(broker_mod)
+    assert "fcntl.flock" in inspect.getsource(broker_mod._TradeUpdatesLease)
+    assert "_wait_for_first_event" not in inspect.getsource(broker_mod)
 
