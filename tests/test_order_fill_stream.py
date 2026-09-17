@@ -755,7 +755,38 @@ def test_fill_wait_on_unauthed_hub_does_not_exceed_rest_timeout(mock_stream_cls)
 
 
 @patch("src.execution.broker.TradingStream")
-def test_unusable_stream_does_not_stack_a_second_rest_window(mock_stream_cls):
+def test_silent_authed_hub_rest_polls_within_the_rest_interval(mock_stream_cls):
+    """alpaca-py reconnects inside run() without killing the thread. A
+    live-but-silent hub must not hide a fill longer than REST would."""
+    class AuthedHang(_FakeTradingStream):
+        async def _start_ws(self):
+            return
+
+        def run(self):
+            super().run()
+
+    mock_stream_cls.side_effect = lambda *a, **k: AuthedHang(
+        *a, hang=True, **k,
+    )
+    broker = _broker()
+    filled = MagicMock(status="filled")
+    broker.client.get_order_by_id.return_value = filled
+    try:
+        broker.start_trade_updates()
+        # Let the hub handshake mark authed.
+        deadline = time.monotonic() + 2.0
+        while not broker.trade_updates_authed() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        t0 = time.monotonic()
+        status = broker.wait_for_order_terminal(
+            "order-1", timeout_seconds=0.8, poll_interval=0.2,
+        )
+        elapsed = time.monotonic() - t0
+        assert status == "filled"
+        assert elapsed < 0.8 + 1.5
+        assert broker.client.get_order_by_id.called
+    finally:
+        broker.stop_trade_updates()
     """A hang with no auth hook waits the caller's timeout then one REST
     snapshot — not a second full polling window stacked on the first."""
     mock_stream_cls.side_effect = lambda *a, **k: _FakeTradingStream(
@@ -771,8 +802,10 @@ def test_unusable_stream_does_not_stack_a_second_rest_window(mock_stream_cls):
     elapsed = time.monotonic() - t0
     assert status == "new"
     assert elapsed < timeout + 1.5
-    # One last-known-status read, not a second 0.4s poll loop.
-    assert broker.client.get_order_by_id.call_count == 1
+    # At least the last-known-status read. A dead one-shot may then REST
+    # the remainder; it must not stack a second full window.
+    assert broker.client.get_order_by_id.call_count >= 1
+    assert elapsed < 2.0
 
 
 def test_protective_fill_wait_is_the_bounded_terminal_wait():
@@ -796,4 +829,5 @@ def test_frame_drain_is_not_the_ownership_fix():
     assert "_acquire_trade_updates_slot" in wait_src
     assert "_TradeUpdatesLease" in inspect.getsource(broker_mod)
     assert "fcntl.flock" in inspect.getsource(broker_mod._TradeUpdatesLease)
+    assert "_wait_for_first_event" not in inspect.getsource(broker_mod)
 
