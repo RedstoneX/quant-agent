@@ -13245,6 +13245,38 @@ class TradingPipeline:
                 alert = bool(attempted)
                 self._record_heal(ctx, result, alert=alert)
 
+    def _intraday_held_tech_symbols(self, ctx: RunContext) -> list[str]:
+        """Investable holdings that need current-run Technical on this scan.
+
+        Morning's Tech pre-filter already includes every held name
+        (`_has_actionable_signal_fn`). The intraday scan used to send only
+        names that moved past the threshold, so a quiet hold the PM can
+        still increase had no current-run Technical: grounding failed the
+        whole paid decision (`pm_grounding_error`, "increase lacks a
+        current-run Technical analysis"). Missing specialist data is a
+        defect in the producing step — this list is that step. Cash-park
+        vehicles have no thesis and stay out.
+        """
+        parked: set[str] = set()
+        sweeper = self._sweeper()
+        investable = list(ctx.positions or [])
+        if sweeper is not None:
+            investable, _parked = sweeper.split_positions(investable)
+        retired = self._retired_cash_park_symbol()
+        if isinstance(retired, str) and retired.strip():
+            parked.add(retired.strip().upper())
+        seen: set[str] = set()
+        out: list[str] = []
+        for pos in investable:
+            if not getattr(pos, "qty", 0):
+                continue
+            symbol = str(getattr(pos, "symbol", "") or "").strip().upper()
+            if not symbol or symbol in seen or symbol in parked:
+                continue
+            seen.add(symbol)
+            out.append(symbol)
+        return out
+
     def _intraday_scan_mover_candidates(
         self, ctx: RunContext,
     ) -> tuple[list[tuple[str, float]], dict]:
@@ -13311,16 +13343,19 @@ class TradingPipeline:
         Runs on the existing intra_check cadence — no new systemd timer,
         no full morning research stack. One cheap bulk current-session
         snapshot call flags symbols that moved materially since the last
-        close; only those (capped, cooldown-deduped against repeat churn)
-        get real daily bars/indicators and a real tech_analyst call, then
-        the SAME DecisionStage -> RiskStage -> ExecutionStage chain
-        morning uses — no separate/duplicated decision logic, so PM's
-        sizing rules, RM's veto authority and the deterministic gate all
-        apply exactly as they do in the morning run. Bullish AND bearish
-        setups both surface: the universe already includes the approved
-        inverse ETFs (SH/SDS/PSQ/SQQQ), so a broad-market decline shows up
-        as a qualifying move in those symbols the same way a rally shows
-        up in a long candidate — no separate bearish code path needed.
+        close; those movers (capped, cooldown-deduped against repeat churn)
+        PLUS currently held investable names get real daily bars/indicators
+        and a real tech_analyst call. Held names join the batch so an
+        increase on a quiet hold has current-run Technical and can ground;
+        they do not consume the mover cap or the mover cooldown. Then the
+        SAME DecisionStage -> RiskStage -> ExecutionStage chain morning
+        uses — no separate/duplicated decision logic, so PM's sizing rules,
+        RM's veto authority and the deterministic gate all apply exactly
+        as they do in the morning run. Bullish AND bearish setups both
+        surface: the universe already includes the approved inverse ETFs
+        (SH/SDS/PSQ/SQQQ), so a broad-market decline shows up as a
+        qualifying move in those symbols the same way a rally shows up in
+        a long candidate — no separate bearish code path needed.
 
         Returns a status dict at every early-exit point — never a bare
         None (2026-08-31 visibility fix; see `_run_intraday_opportunity_scan`
@@ -13414,9 +13449,25 @@ class TradingPipeline:
         if not symbols:
             return {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
 
+        # Produce Technical for quiet holds on the same paid call. Discovery
+        # stays mover-capped; coverage for names the PM can increase does
+        # not compete with that cap and does not consume mover cooldown.
+        # Dropping an ungrounded hold is not the product for missing Tech.
+        held_for_tech = [
+            s for s in self._intraday_held_tech_symbols(ctx)
+            if s not in {x.upper() for x in symbols}
+        ]
+        if held_for_tech:
+            logger.info(
+                "Intraday scan: producing Technical for %d held name(s) "
+                "the mover list did not cover: %s",
+                len(held_for_tech), held_for_tech,
+            )
+        tech_symbols = list(symbols) + held_for_tech
+
         symbols_data = []
         symbols_bars: dict[str, list] = {}
-        for symbol in symbols:
+        for symbol in tech_symbols:
             try:
                 bars = self.market.get_ohlcv(symbol, self.config.trading.lookback_days)
             except Exception as e:  # noqa: BLE001
@@ -13451,15 +13502,17 @@ class TradingPipeline:
         except Exception as e:  # noqa: BLE001
             logger.warning("Intraday scan: tech store load failed: %s", e)
 
-        # Truthful current-session evidence for exactly the candidates being
+        # Truthful current-session evidence for exactly the names being
         # analyzed (2026-08-19): the scan detects on live prices, so Tech
         # must see those same live prices — not just daily bars ending at
         # yesterday's close, which is what triggered the scan being
         # invisible to the analyst that had to judge it. Rendered by
         # `build_user_message` as an explicit INCOMPLETE-session block,
-        # never as a completed daily bar.
+        # never as a completed daily bar. Held names already in the
+        # universe snapshot are included; a hold outside that snapshot
+        # still gets bars, just no live-session block.
         intraday_context = {
-            s: snapshots[s] for s in symbols if s in snapshots
+            s: snapshots[s] for s in tech_symbols if s in snapshots
         }
         self._require_paid_analysis("intraday_tech_analyst")
         analyses_map, ta_result = self.tech_analyst.analyze_batch(

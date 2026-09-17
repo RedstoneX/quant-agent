@@ -299,7 +299,11 @@ This file records what is accepted and true **now**. Git history preserves imple
   when that kind expired or was never good. News expires on a newer
   material wire or when the session ends — no second fitted clock. Chart
   always re-reads live price at submit; a daily bar close is not a fill
-  reference. Macro regime is reusable across days until a real
+  reference. **Intraday Tech covers held names, not just ≥threshold
+  movers:** a quiet hold the PM can still increase gets current-run
+  Technical on the same paid batch so grounding can see it. Missing Tech
+  is a producing-step defect, not a drop-the-name product. Macro regime is
+  reusable across days until a real
   regime/print change; a failed parse is not a regime. Earnings write-ups
   and Form 4 filings are remembered until the next report/8-K or a new
   filing. Blank/LOST is never research. Missing seats self-heal

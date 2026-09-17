@@ -1170,9 +1170,11 @@ class IntradayScanConfig(BaseModel):
     not generate a new trade. This adds a bounded, cheap trigger onto the
     EXISTING intra_check cadence — no new systemd timer, no full research
     stack rerun: one bulk current-session snapshot call flags symbols that
-    moved materially since the last close; only THOSE few symbols (capped)
-    get real daily bars/indicators and a real tech_analyst call, then the
-    SAME DecisionStage -> RiskStage -> ExecutionStage chain morning uses.
+    moved materially since the last close; those movers (capped) PLUS
+    currently held investable names get real daily bars/indicators and a
+    real tech_analyst call, then the SAME DecisionStage -> RiskStage ->
+    ExecutionStage chain morning uses. Held names are coverage so an
+    increase on a quiet hold can ground; they do not consume the mover cap.
     """
     enabled: bool = False
     """Master switch. False = intra_check's existing loss-protection-only
@@ -1191,9 +1193,10 @@ class IntradayScanConfig(BaseModel):
     30-minute tick while a move is still developing."""
 
     max_candidates_per_scan: int = Field(default=5, ge=1, le=20)
-    """Hard cap on how many symbols get a real tech_analyst call in one
-    tick — keeps this a bounded, occasional check, not a high-frequency
-    system, even on a broad-market move day when many symbols qualify."""
+    """Hard cap on how many MOVER symbols get a real tech_analyst call in
+    one tick — keeps discovery bounded even on a broad-market move day.
+    Held names are added on top of this cap so quiet holds still receive
+    current-run Technical; they are coverage, not extra discovery."""
 
 
 class SmartMoneyConfig(BaseModel):

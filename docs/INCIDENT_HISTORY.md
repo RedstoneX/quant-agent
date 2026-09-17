@@ -22,6 +22,35 @@ what would catch it next time.
 
 ---
 
+### 2026-09-17 — the midday scan charted only the stocks that jumped, so adding to a quiet holding could throw out the whole plan
+
+**In plain words:** every half hour the desk looks for stocks that have moved a lot and asks the chart seat about those. The trade-picking seat still sees every stock you already own. If it asked to add to a quiet holding — one that had not jumped 3% — the safety check said "there is no chart from this run" and threw away the whole plan, including any new idea that was fully researched. Paying for the decision and then binning it is waste. Dropping the quiet name and keeping the rest would have been skip-and-continue, which is not the product when the missing thing is research the desk should have produced.
+
+**Cause.** The midday chart batch was built from the mover list only. Morning already charts every holding. Midday and morning are separate programs, and the forensic store of those morning charts is not on the trading path, so the midday run could not honestly reuse them as "this run's Technical." Keep-versus-add was already being read off current risk (`_target_intent`, earlier the same day) and was not the remaining hole: a genuine add on a quiet hold still had no chart.
+
+**Fix.** When the midday scan pays for charts because something moved, it also charts the stocks you already own, on the same call. They do not use up the mover slot cap and they do not start the mover cooldown. A quiet day with nothing moving still does not fire a chart call just because you hold names. If a chart still does not come back for a hold, an add is refused — that is fail-closed remainder, not drop-the-name as the product.
+
+**What this does not change.** Fabricating evidence still fails the whole decision. Keep-versus-add is still current risk. Spend caps are untouched. The morning-open research path is untouched.
+
+**What would catch it next time.** A test that a quiet holding is in the midday chart batch next to a mover; a test that holdings do not eat the mover cap; a test that a quiet book with no movers does not pay for charts; a test that an add on a hold grounds once that chart exists, and is still refused if it does not.
+
+**Counts since 2026-09-15.** `agent_logs` / production DB are not on this engineering VM (`qamc` user absent). The one written-up case is `intra_check-44594a05` (15:02 UTC 2026-09-17), first misread as an increase then as the wrong polarity — already closed as the trim classifier and polarity follow-ups. On OVH, grep for wasted paid PM calls:
+
+```
+sqlite3 /home/qamc/quant-agent/data/quant_agent.db \
+  "SELECT COUNT(*), ROUND(SUM(COALESCE(cost_usd,0)), 6)
+   FROM agent_logs
+   WHERE agent_name = 'portfolio_manager'
+     AND timestamp >= '2026-09-15'
+     AND (status = 'pm_grounding_error'
+          OR output_summary LIKE '%pm_grounding_error%'
+          OR output_summary LIKE '%increase lacks a current-run Technical%');"
+```
+
+Do not invent a count from this checkout.
+
+---
+
 ### 2026-09-17 — two jobs at once each opened the broker's live-fill socket, so neither could log in, and a dead socket made a stop wait longer than asking the broker
 
 **In plain words:** the broker lets the desk keep one live connection that reports fills the instant they happen. The morning job and the midday job are separate programs. Each opened its own connection. The broker rejected the extras, the login loop stormed, and a protective stop could sit waiting on a dead connection for longer than it would have taken to just ask the broker once a second.
@@ -10905,6 +10934,14 @@ position is still left unchanged, but it is now recorded as "trim could not be
 sized — no usable live stop", not as a market-data fault, so the owner is no
 longer paged to check a feed that was working, and the log no longer calls
 the trim a BUY.
+
+**Third follow-up, same day — quiet holds now get a chart.** The remaining
+hole was not the trim classifier: a genuine add on a name the scan had not
+charted still failed grounding and still voided the whole paid decision.
+The midday scan now produces Technical for held names on the same call as
+the movers. Dropping the ungrounded name is not the product. Write-up at
+the top of this file, 2026-09-17, "the midday scan charted only the stocks
+that jumped".
 
 ## 2026-09-17 — shorts carry the same limits as longs (owner decision)
 
