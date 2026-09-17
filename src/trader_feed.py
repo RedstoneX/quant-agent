@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -1281,17 +1282,95 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
 # top-of-hour tick still sends its own summary, as a second message body.
 _HOUR_WINDOW_MINUTES = 70  # 60 minutes + a buffer for scheduler jitter
 
+# 2026-09-17 regression, fixed same night: PR #454 moved intra_check's own
+# systemd timer off the shared `*:0/30` tick onto `*:15,45` (to stop it
+# firing in the same wall-clock second as morning/midday/close/evening —
+# see scripts/systemd/quant-agent-intra_check.timer for the full story),
+# but `_is_hourly_checkpoint` below still hard-coded `minute == 0` as "the
+# top of the hour". intra_check is the ONLY session that runs this check
+# (it is the one that ticks all day, 09:30-16:00 ET) and it no longer ever
+# lands on minute 0 — so the owner's guaranteed once-per-hour message
+# silently stopped firing on a quiet day. Never caught because nothing
+# tied the checkpoint minute to the timer's actual cadence.
+#
+# Fix: the "top of the hour" is not minute 0, it is whatever minute
+# intra_check's OWN timer first fires on each hour — read from the unit
+# file itself (scripts/systemd/quant-agent-intra_check.timer) rather than
+# duplicated here as a second hard-coded number, so the next cadence move
+# carries the guarantee with it instead of quietly breaking it again. See
+# tests/test_trader_feed.py::test_hourly_checkpoint_minute_matches_intra_check_timer_cadence
+# for the guard that fails the build if this ever falls out of sync with
+# the unit file.
+_INTRA_CHECK_TIMER_PATH = (
+    Path(__file__).resolve().parent.parent / "scripts" / "systemd" / "quant-agent-intra_check.timer"
+)
+
+# A bare `*:MM` or `*:MM,MM,...` OnCalendar spec — the only form intra_check's
+# timer has ever used and the only form this parses. Anything else (a day
+# restriction, a `/` step syntax, a full calendar expression, ...) is a
+# cadence change this code cannot safely interpret, and it must say so
+# loudly rather than guess.
+_ONCALENDAR_PER_HOUR_RE = re.compile(r"\*:(\d{1,2}(?:,\d{1,2})*)")
+
+
+def _intra_check_tick_minutes() -> tuple[int, ...]:
+    """The minutes-past-the-hour intra_check actually fires on, read from
+    its own systemd timer unit. Raises rather than guessing if the file is
+    missing or its `OnCalendar=` line isn't the simple per-hour form this
+    understands — a silent fallback here is exactly the class of bug this
+    function exists to prevent.
+    """
+    try:
+        text = _INTRA_CHECK_TIMER_PATH.read_text()
+    except OSError as exc:
+        raise RuntimeError(
+            f"cannot read intra_check's own timer unit at "
+            f"{_INTRA_CHECK_TIMER_PATH} to derive the hourly-checkpoint "
+            f"minute: {exc}"
+        ) from exc
+
+    spec = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("OnCalendar="):
+            spec = line[len("OnCalendar="):].strip()
+            break
+    if spec is None:
+        raise RuntimeError(
+            f"{_INTRA_CHECK_TIMER_PATH} has no OnCalendar= line; cannot "
+            "derive the hourly-checkpoint minute"
+        )
+
+    match = _ONCALENDAR_PER_HOUR_RE.fullmatch(spec)
+    if not match:
+        raise RuntimeError(
+            f"{_INTRA_CHECK_TIMER_PATH}: OnCalendar={spec!r} is not a "
+            "simple '*:MM' / '*:MM,MM' per-hour cadence — "
+            "_is_hourly_checkpoint doesn't know how to read this and won't "
+            "guess. Update the parsing deliberately if the cadence syntax "
+            "has genuinely changed."
+        )
+    return tuple(sorted({int(m) for m in match.group(1).split(",")}))
+
+
+def _hourly_checkpoint_minute() -> int:
+    """The minute-past-the-hour that owes the clock hour its guaranteed
+    message: the FIRST tick intra_check makes each hour, under whatever
+    cadence its timer is actually running."""
+    return _intra_check_tick_minutes()[0]
+
 
 def _is_hourly_checkpoint(now=None) -> bool:
     """True at the tick that owes this trading hour its guaranteed message.
 
-    The :00 tick owns every ordinary hour. The 9:30 session-open tick is
-    the exception: it is the first tick of the day, so there is no :00
-    tick before it to have covered the 9:00-9:30 gap (during which the
-    market was closed anyway) — 9:30 stands in for it.
+    The first tick of each hour (see `_hourly_checkpoint_minute`) owns
+    that hour. The 9:30 session-open tick is the exception: it is the
+    first tick of the day, so there is no earlier tick this hour to have
+    covered the 9:00-9:30 gap (during which the market was closed anyway)
+    — 9:30 stands in for it.
     """
     now = now or et_now()
-    return now.minute == 0 or (now.hour == 9 and now.minute == 30)
+    return now.minute == _hourly_checkpoint_minute() or (now.hour == 9 and now.minute == 30)
 
 
 def _intraday_tick_actionable(result: dict, nested: dict | None, snap: dict[str, Any]) -> bool:
