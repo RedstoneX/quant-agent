@@ -299,6 +299,8 @@ chmod 600 .env
   - `meta`: silent on `not_quarter_end`; notifies on actual reflection runs.
   - Any session that raises an exception: always notifies, regardless of mode policy.
 
+  **Asking for the desk status on demand.** `python scripts/desk_status.py` sends one DESK CHECK message built by the *same* trader-feed formatter the scheduled top-of-hour message uses, from live broker equity and positions — read-only: no order, no model call, no database write, no session lock or once-per-day stamp, and `--dry-run` prints the message instead of sending it. The stop-coverage audit and the movers scan only run inside a scheduled session, so on demand they render "not available" with the reason rather than "OK".
+
   **Proving the channel still works.** `scripts/telegram_test.py` answers this on demand; `scripts/alert_heartbeat.py` answers it on a schedule and records the answer — see [Proving the alert channel is alive](#proving-the-alert-channel-is-alive).
 
 ### Production deployment
