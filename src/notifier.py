@@ -288,6 +288,20 @@ def _fmt_signed_money(value: float) -> str:
     return f"{sign}${abs(value):,.2f}"
 
 
+def fmt_time_12h(dt) -> str:
+    """'1:05 PM ET' — 12-hour clock, no leading zero, AM/PM, ET suffix.
+
+    Owner ratified 2026-09-17: no 24-hour clock anywhere in a Telegram
+    message — every header and any timestamp inside a message body or
+    DETAILS block uses this, never a bare `strftime('%H:%M')`.
+    `strftime('%-I:%M %p')` (no leading zero) is a glibc-only extension —
+    computed manually here instead so this doesn't silently regress on a
+    non-glibc platform."""
+    hour12 = dt.hour % 12 or 12
+    ampm = "AM" if dt.hour < 12 else "PM"
+    return f"{hour12}:{dt.minute:02d} {ampm} ET"
+
+
 # === Per-symbol tap-through links ===
 #
 # EXTERNAL FALLBACK, not a Mission Control deep link. As of this writing the
@@ -359,6 +373,64 @@ def _linkify_symbols(escaped_text: str, symbols: list[str] | None) -> str:
         return f'<a href="{url}">{sym}</a>'
 
     return pattern.sub(_wrap, escaped_text)
+
+
+# === Structural markup (2026-09-17 scan-first redesign) ===
+#
+# src/trader_feed.py's formatters build their PLAIN text with a fixed, small
+# set of literal HTML tags embedded in it — `<b>section header</b>` and
+# `<blockquote expandable>...</blockquote>` around the collapsed DETAILS
+# block (see its module docstring; Telegram Bot API HTML style,
+# https://core.telegram.org/bots/api#html-style, documents both). `send()`
+# still must `html.escape()` the REST of the text — PM/risk prose is full of
+# '&', tickers can carry other punctuation, and an unescaped '<'/'>' from an
+# LLM would either corrupt the message or get it rejected outright. Naively
+# escaping the whole string would mangle the very tags this module just
+# wrote. `_escape_with_markup` is the fix: swap the fixed tags out for
+# placeholders no caller-controlled text can produce, escape everything
+# else exactly as before, then swap the tags back in. A ticker, PM
+# rationale, or any other field can never inject a tag this way — only
+# these four fixed strings are ever restored.
+_MARKUP_PLACEHOLDERS: tuple[tuple[str, str], ...] = (
+    ("<b>", ""),
+    ("</b>", ""),
+    ("<blockquote expandable>", ""),
+    ("</blockquote>", ""),
+)
+
+
+def _escape_with_markup(text: str) -> str:
+    """`html.escape(text)` while preserving the fixed structural tags in
+    `_MARKUP_PLACEHOLDERS` — see the block comment above."""
+    working = text
+    for tag, placeholder in _MARKUP_PLACEHOLDERS:
+        working = working.replace(tag, placeholder)
+    escaped = html.escape(working)
+    for tag, placeholder in _MARKUP_PLACEHOLDERS:
+        escaped = escaped.replace(placeholder, tag)
+    return escaped
+
+
+def _close_open_markup(body: str) -> str:
+    """After the LAST-RESORT emergency truncation in `_build_payload`
+    (`_clip_text` only avoids splitting a *word* or an HTML *entity* — it
+    knows nothing about `<b>`/`<blockquote expandable>`), guarantee `body`
+    carries no dangling partial tag and no unterminated structural tag.
+    Telegram rejects the ENTIRE message ("can't parse entities") over one
+    broken tag, which would be strictly worse than the plain-text
+    truncation this replaces. The formatters themselves size DETAILS to
+    fit before this ever runs (see `trader_feed._wrap_details`); this is
+    only the safety net for the aggregate still somehow running long.
+    """
+    last_lt = body.rfind("<")
+    last_gt = body.rfind(">")
+    if last_lt > last_gt:
+        body = body[:last_lt]
+    if body.count("<blockquote expandable>") > body.count("</blockquote>"):
+        body += "</blockquote>"
+    if body.count("<b>") > body.count("</b>"):
+        body += "</b>"
+    return body
 
 
 class TelegramNotifier:
@@ -448,6 +520,7 @@ class TelegramNotifier:
         link_url: str | None = None,
         link_label: str | None = None,
         symbols: list[str] | None = None,
+        preserve_structural_markup: bool = False,
     ) -> bool:
         """Fire-and-forget send. Returns True on success.
 
@@ -467,6 +540,16 @@ class TelegramNotifier:
         - Any HTTP / network / Telegram-side error is logged and
           swallowed: trading must never fail because a notifier is
           unreachable.
+        - `preserve_structural_markup=False` (default): `text` is fully
+          escaped — the historical, safe contract every existing caller
+          relies on (cost-circuit alerts, `send_owner_alert`, scripts/*,
+          none of which ever intend a literal '<' as a tag). Pass True
+          ONLY for text built by src/trader_feed.py's formatters, which
+          embed a fixed, small set of literal structural tags (`<b>`,
+          `<blockquote expandable>`) on purpose — see
+          `_escape_with_markup`'s docstring. This is opt-in, per call, not
+          a global default, so a coincidental literal "<b>" in some other
+          alert's free text is still rendered as visible text, not markup.
         """
         if not self.enabled:
             return False
@@ -490,7 +573,10 @@ class TelegramNotifier:
             )
             return False
 
-        payload = self._build_payload(text, link_url, link_label, symbols)
+        payload = self._build_payload(
+            text, link_url, link_label, symbols,
+            preserve_structural_markup=preserve_structural_markup,
+        )
 
         try:
             response = requests.post(
@@ -518,6 +604,7 @@ class TelegramNotifier:
         link_url: str | None = None,
         link_label: str | None = None,
         symbols: list[str] | None = None,
+        preserve_structural_markup: bool = False,
     ) -> dict[str, Any]:
         """The exact JSON body `send()` puts on the wire.
 
@@ -535,7 +622,17 @@ class TelegramNotifier:
         # Escaping BEFORE the length check matters too: an unescaped '&'
         # costs 5 chars once escaped ('&amp;'), so measuring the pre-escape
         # length risks shipping something past Telegram's real 4096 cap.
-        escaped = html.escape(text)
+        # `_escape_with_markup`, not a bare `html.escape`, ONLY when the
+        # caller opted in (`preserve_structural_markup=True` — see
+        # `send()`'s docstring): src/trader_feed.py embeds a fixed, small
+        # set of literal structural tags (`<b>`, `<blockquote expandable>`)
+        # in its plain text on purpose; no other caller does, and every
+        # other caller must keep the historical "always fully escape"
+        # contract.
+        escaped = (
+            _escape_with_markup(text) if preserve_structural_markup
+            else html.escape(text)
+        )
 
         resolved_url = link_url if link_url is not None else self.mission_control_url
         link_html = ""
@@ -570,7 +667,7 @@ class TelegramNotifier:
             # safety net for the rare aggregate message still oversized
             # after every field-level clip below already ran — not the
             # primary fix, which is raising those per-field limits.
-            body = _clip_text(escaped, budget, marker="\n[...truncated]")
+            body = _close_open_markup(_clip_text(escaped, budget, marker="\n[...truncated]"))
         else:
             body = escaped
         final_text = body + link_html
@@ -855,7 +952,8 @@ def format_session_result(
     """
     from src.trading_calendar import et_now
 
-    timestamp = et_now().strftime("%Y-%m-%d %H:%M ET")
+    _now = et_now()
+    timestamp = f"{_now.strftime('%Y-%m-%d')} {fmt_time_12h(_now)}"
     elapsed_str = _fmt_elapsed(elapsed_seconds)
 
     if error is not None:
@@ -1189,6 +1287,61 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
         )
 
 
+_MAX_LOOKED_UP_COMPANIES = 12
+
+
+def _dedupe_symbols(symbols: list) -> list[str]:
+    seen: list[str] = []
+    for raw in symbols or []:
+        symbol = str(raw or "").strip().upper()
+        if symbol and symbol not in seen:
+            seen.append(symbol)
+    return seen
+
+
+def _lookup_company_profiles(symbols: list) -> dict[str, Any]:
+    """symbol -> CompanyProfile for every symbol the cache already knows.
+
+    The ONE place that calls `CompanyProfileStore` for a trader-facing
+    alert — `_append_company_identities` below (the base formatter's own
+    "who:" block) and `company_name()` (src/trader_feed.py's inline
+    "TICKER (Company)" annotations) both build on this instead of each
+    keeping its own dedupe/cap/fetch logic; do not add a second lookup,
+    call this with a symbol list instead.
+
+    `allow_fetch=False` is not an optimisation, it is the contract: an
+    operator alert must never sit waiting on a network call. By the time an
+    alert goes out the PM path has already warmed the cache for exactly
+    these symbols, so this is a dictionary lookup. Symbols the cache does
+    not know come back absent rather than blocking or inventing a name.
+    """
+    seen = _dedupe_symbols(symbols)
+    if not seen:
+        return {}
+    try:
+        from src.data.company import CompanyProfileStore
+        return CompanyProfileStore().get_many(seen[:_MAX_LOOKED_UP_COMPANIES], allow_fetch=False)
+    except Exception as e:  # noqa: BLE001 — never lose an alert over prose
+        logger.warning("notifier: company profiles unavailable: %s", e)
+        return {}
+
+
+def company_name(symbol: str, profiles: dict[str, Any] | None = None) -> str | None:
+    """The one company name for `symbol`, or None if the cache doesn't have
+    it. Pass a pre-fetched `profiles` dict (from `_lookup_company_profiles`,
+    fetched once for every symbol a message is about to render) when
+    annotating several symbols in one message, so each render is one cache
+    read, not N — see src/trader_feed.py's inline "TICKER (Company)" use.
+    """
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return None
+    if profiles is None:
+        profiles = _lookup_company_profiles([sym])
+    profile = profiles.get(sym)
+    return getattr(profile, "name", None) if profile is not None else None
+
+
 def _append_company_identities(lines: list[str], symbols: list) -> None:
     """One line per relevant symbol: who the company is.
 
@@ -1199,35 +1352,23 @@ def _append_company_identities(lines: list[str], symbols: list) -> None:
     push the order list itself out of view.
 
     `symbols` is a plain, already-resolved ticker list — deduplication and
-    upper-casing still happen here so every caller (the base formatter's own
-    order list, and `src/trader_feed.py`'s richer per-mode formatters, via
-    `extract_alert_symbols`) can hand this a raw, unfiltered sequence.
-    Deliberately the ONLY place that turns a symbol list into identity text
-    — do not duplicate this lookup elsewhere; give it a symbol list instead.
-
-    `allow_fetch=False` is not an optimisation, it is the contract: an
-    operator alert must never sit waiting on a network call. By the time an
-    alert goes out the PM path has already warmed the cache for exactly
-    these symbols, so this is a dictionary lookup. Symbols the cache does
-    not know are silently skipped rather than rendered as unknowns.
+    upper-casing happen in `_lookup_company_profiles`, so every caller (the
+    base formatter's own order list, and src/trader_feed.py's richer
+    per-mode formatters, via `extract_alert_symbols`) can hand this a raw,
+    unfiltered sequence. Deliberately the ONLY place that turns a symbol
+    list into "who:"-style identity text — do not duplicate this lookup
+    elsewhere; give it a symbol list instead. (src/trader_feed.py no longer
+    calls this — see its own inline "TICKER (Company)" annotations, which
+    share the same `_lookup_company_profiles` lookup via `company_name()`.)
     """
-    seen: list[str] = []
-    for raw in symbols or []:
-        symbol = str(raw or "").strip().upper()
-        if symbol and symbol not in seen:
-            seen.append(symbol)
+    seen = _dedupe_symbols(symbols)
     if not seen:
         return
-    try:
-        from src.data.company import CompanyProfileStore
-        profiles = CompanyProfileStore().get_many(
-            seen[:12], allow_fetch=False,
-        )
-    except Exception as e:  # noqa: BLE001 — never lose an alert over prose
-        logger.warning("notifier: company profiles unavailable: %s", e)
+    profiles = _lookup_company_profiles(seen)
+    if not profiles:
         return
     identities = []
-    for symbol in seen[:12]:
+    for symbol in seen[:_MAX_LOOKED_UP_COMPANIES]:
         profile = profiles.get(symbol)
         if profile is None:
             continue

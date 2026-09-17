@@ -28,6 +28,14 @@ from src.models import Position, _ALLOWED_SECTORS, _SECTOR_ALIASES
 
 logger = logging.getLogger(__name__)
 
+# Plain-English names for the fat-finger guard's owner-facing "detail"
+# text below — never the raw field name a log/audit trail would use.
+_PLAIN_PRICE_LABELS = {
+    "limit_price": "limit price",
+    "stop_loss_price": "stop",
+    "take_profit_price": "target price",
+}
+
 # Alpaca allows one `trade_updates` websocket per account. Each fill wait
 # used to construct its own TradingStream; a second handshake while the
 # first socket was still registered is HTTP 429, and older alpaca-py
@@ -3304,6 +3312,8 @@ class AlpacaBroker:
             return {
                 "id": None, "status": "kill_switch_halted",
                 "symbol": _internal_symbol(symbol),
+                "detail": "the trading kill switch is active — every order "
+                          "is halted until the file is removed",
             }
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         internal_symbol = _internal_symbol(symbol)
@@ -3338,7 +3348,26 @@ class AlpacaBroker:
                         "Order REJECTED (likely data glitch or LLM hallucination).",
                         side.upper(), symbol, label, candidate, deviation * 100, reference_price,
                     )
-                    return {"id": None, "status": "rejected_outlier", "symbol": internal_symbol}
+                    return {
+                        "id": None, "status": "rejected_outlier", "symbol": internal_symbol,
+                        # Surfaced downstream (src/pipeline_stages.py's
+                        # execution-skip record, then the Telegram alert) so
+                        # the operator reads the REAL blocker — QAMC's own
+                        # price-sanity check, before this order ever reached
+                        # the broker — instead of a generic "broker
+                        # rejected", which used to read as if the broker had
+                        # refused a perfectly sane order. Plain words, not
+                        # the internal field name/precision the log line
+                        # above carries (owner-facing text, not a log):
+                        # "stop $9.66 is 24% from price $7.79", never
+                        # "stop_loss_price=$9.6600 deviates 24.1% from
+                        # reference $7.79 (likely ... hallucinated)".
+                        "detail": (
+                            f"{_PLAIN_PRICE_LABELS.get(label, label)} "
+                            f"${candidate:,.2f} is {deviation * 100:.0f}% "
+                            f"from price ${reference_price:,.2f}"
+                        ),
+                    }
 
         # Protective stop for a BUY is placed as a SEPARATE GTC stop-limit
         # AFTER the entry fills — NOT as an OTO leg.

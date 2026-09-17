@@ -2085,3 +2085,76 @@ def test_macro_release_overdue_status_fires_a_standalone_alert():
     assert fired is True
     body = alert.call_args.args[0]
     assert "macro=release_overdue" in body
+
+
+# === 2026-09-17 scan-first redesign: structural markup survives escaping ===
+#
+# src/trader_feed.py's formatters embed a fixed, small set of literal HTML
+# tags (`<b>`, `<blockquote expandable>`) in otherwise plain text. `send()`
+# still must `html.escape()` everything else — PM/risk free text is full of
+# '&', tickers can carry punctuation, and an unescaped '<'/'>' from that
+# free text must not corrupt the message or get it silently rendered as
+# real markup. `preserve_structural_markup=True` is the opt-in that lets
+# ONLY those four fixed strings survive; everything else, including a
+# stray '<'/'>'/'&' the caller never intended as a tag, is still escaped.
+
+def test_preserved_markup_survives_while_surrounding_text_is_escaped():
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    text = (
+        "<b>✅ DONE</b>\n"
+        "   • SHORT FLNC (Fluence Energy) — Blocked by desk safety check "
+        "(not the broker): stop $9.66 is 24% from price $7.79\n"
+        "<b>DETAILS</b>\n"
+        "<blockquote expandable>AT&T's <thesis> was 'strong' & 24% > 20%</blockquote>"
+    )
+    payload = notifier._build_payload(text, preserve_structural_markup=True)
+    body = payload["text"]
+
+    # The four fixed structural tags survive verbatim — real Telegram
+    # markup, not escaped text.
+    assert "<b>✅ DONE</b>" in body
+    assert "<b>DETAILS</b>" in body
+    assert body.count("<blockquote expandable>") == 1
+    assert body.count("</blockquote>") == 1
+
+    # Everything else inside/around them is still escaped — a stray '<',
+    # '>', or '&' in free text can never inject markup of its own.
+    assert "AT&amp;T&#x27;s &lt;thesis&gt;" in body
+    assert "&#x27;strong&#x27;" in body
+    assert "& 24" not in body  # the bare '&' before "24%" must be escaped
+    assert "&amp; 24" in body
+    assert "24% &gt; 20%" in body
+    assert "<thesis>" not in body
+
+
+def test_preserve_structural_markup_defaults_to_full_escaping():
+    """Every OTHER `send()`/`_build_payload()` caller (cost-circuit alerts,
+    `send_owner_alert`, scripts/*) must keep the historical "always fully
+    escape" contract — a coincidental literal '<b>' in free text renders as
+    visible text, never as markup, unless the caller opts in."""
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    payload = notifier._build_payload("hello <b>world</b> & co")
+    assert payload["text"] == "hello &lt;b&gt;world&lt;/b&gt; &amp; co"
+
+
+def test_send_with_preserve_structural_markup_ships_the_tag_on_the_wire():
+    """End-to-end through `send()` (not `_build_payload` directly) — the
+    real path src/trader_feed.py's callers use (main.py, src/scheduler.py,
+    both pass `preserve_structural_markup=True`)."""
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, raise_for_status=lambda: None)
+        assert notifier.send(
+            "<b>hi</b> & bye", preserve_structural_markup=True,
+        ) is True
+    body = mock_post.call_args.kwargs["json"]["text"]
+    assert body == "<b>hi</b> &amp; bye"
+
+
+def test_send_without_the_flag_still_fully_escapes_a_literal_tag():
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, raise_for_status=lambda: None)
+        assert notifier.send("<b>hi</b> & bye") is True
+    body = mock_post.call_args.kwargs["json"]["text"]
+    assert body == "&lt;b&gt;hi&lt;/b&gt; &amp; bye"

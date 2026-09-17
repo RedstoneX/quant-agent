@@ -219,7 +219,14 @@ class TradingScheduler:
                             logger.warning(
                                 "[%s] extract_alert_symbols failed in _run_safe: %s", name, exc,
                             )
-                        self.notifier.send(message, symbols=symbols)
+                        # preserve_structural_markup=True: `message` is
+                        # `format_session_result`'s output
+                        # (src/trader_feed.py), which embeds literal
+                        # <b>/<blockquote expandable> tags on purpose — see
+                        # TelegramNotifier.send()'s docstring.
+                        self.notifier.send(
+                            message, symbols=symbols, preserve_structural_markup=True,
+                        )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "[%s] notifier failed in _run_safe: %s", name, exc,

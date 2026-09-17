@@ -7003,25 +7003,58 @@ class ExecutionStage:
                     raise
 
                 if not pipeline._order_accepted(order, decision.symbol, entry_side):
-                    # Broker explicitly rejected (status != accepted/filled).
-                    # Mark the pending row failed so it doesn't poison
+                    # `order["status"]` distinguishes WHO actually stopped
+                    # this — our own pre-flight guards return a status
+                    # before the order ever reaches the broker
+                    # (rejected_outlier=fat-finger guard, kill_switch_halted)
+                    # and both come back with no `id`, same as a real
+                    # broker-side rejection. Collapsing all three into one
+                    # "broker rejected" skip reason (pre-2026-09-17) read as
+                    # if the broker had refused a sane order every time,
+                    # when it was usually QAMC's own desk safety check
+                    # blocking a bad price before the broker ever saw it
+                    # (operator-reported, 2026-09-17: a fat-finger-guard
+                    # rejection alerted as "broker rejected short"). Mark
+                    # the pending row failed so it doesn't poison
                     # calibration as a "submitted" trade we never tracked.
-                    # Distinct from the submit-raised case: here we KNOW
-                    # the broker rejected, so there's no orphan to sweep.
+                    # Distinct from the submit-raised case above: here we
+                    # KNOW the order did not go live, so there's no orphan
+                    # to sweep.
                     from src.execution.scale_in import restore_after_failed_add
                     restore_after_failed_add(
                         pipeline.broker, pipeline.db, add_prep, decision.symbol,
                     )
                     pipeline.db.mark_trade_submit_failed(pending_row_id)
+                    order_status = str((order or {}).get("status") or "")
+                    order_detail = (order or {}).get("detail")
+                    if order_status == "rejected_outlier":
+                        # The plain-word fact only (e.g. "stop $9.66 is 24%
+                        # from price $7.79", from broker.py's
+                        # _PLAIN_PRICE_LABELS) — WHO blocked it ("desk
+                        # safety check, not the broker") is the Telegram
+                        # formatter's job (src/trader_feed.py's
+                        # `_SKIP_WHO_LABELS`), not repeated here.
+                        skip_reason = "fat_finger_guard"
+                        skip_detail = order_detail or "price is too far from the market price"
+                    elif order_status == "kill_switch_halted":
+                        skip_reason = "kill_switch_halted"
+                        skip_detail = order_detail or (
+                            "the trading kill switch is active"
+                        )
+                    else:
+                        skip_reason = "broker_rejected"
+                        skip_detail = (
+                            f"broker rejected {decision.action.lower()} "
+                            f"{_fmt_shares(qty)} @ "
+                            f"{'limit $%.2f' % limit_price if limit_price else 'market'}"
+                            + (f" (status={order_status})" if order_status else "")
+                        )
                     _record_pipeline_event(
                         pipeline, ctx, decision.symbol, "order", "rejected",
-                        "broker_rejected", trade_row_id=pending_row_id, qty=qty,
+                        skip_reason, trade_row_id=pending_row_id, qty=qty,
                     )
                     _record_execution_skip(
-                        pipeline, ctx, decision.symbol, "broker_rejected",
-                        f"broker rejected {decision.action.lower()} "
-                        f"{_fmt_shares(qty)} @ "
-                        f"{'limit $%.2f' % limit_price if limit_price else 'market'}",
+                        pipeline, ctx, decision.symbol, skip_reason, skip_detail,
                     )
                     continue
 

@@ -147,8 +147,13 @@ def test_run_safe_notifies_on_completed_session(mock_pipeline_cls, mock_fmt):
     mock_fmt.assert_called_once()
     # symbols=[] — extract_alert_symbols runs for real here (not mocked);
     # {"status": "executed"} has no run_id/orders/gaps to pull a symbol
-    # from, so it legitimately comes back empty.
-    scheduler.notifier.send.assert_called_once_with("MSG", symbols=[])
+    # from, so it legitimately comes back empty. preserve_structural_markup
+    # =True: this message is format_session_result's (src/trader_feed.py)
+    # output, which embeds literal <b>/<blockquote expandable> tags on
+    # purpose — see TelegramNotifier.send()'s docstring.
+    scheduler.notifier.send.assert_called_once_with(
+        "MSG", symbols=[], preserve_structural_markup=True,
+    )
 
 
 @patch("src.scheduler.format_session_result", return_value="FAILED morning")
@@ -170,7 +175,9 @@ def test_run_safe_notifies_on_raised_session(mock_pipeline_cls, mock_fmt):
     assert mock_fmt.call_args.kwargs.get("error") is not None
     # symbols=[] — a raised session has no `result` dict to pull a symbol
     # from (extract_alert_symbols runs for real here, not mocked).
-    scheduler.notifier.send.assert_called_once_with("FAILED morning", symbols=[])
+    scheduler.notifier.send.assert_called_once_with(
+        "FAILED morning", symbols=[], preserve_structural_markup=True,
+    )
 
 
 @patch("src.scheduler.format_session_result")
