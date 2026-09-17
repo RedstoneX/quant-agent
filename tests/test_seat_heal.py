@@ -305,6 +305,51 @@ def test_pipeline_does_not_pay_economist_to_invent_regime_on_incomplete_fred():
     assert ctx.macro_analysis is None
 
 
+def test_pipeline_mechanical_fred_heal_then_pays_economist_only_if_complete():
+    """Lost series are re-asked (mechanical). The economist is paid only
+    after coverage is complete — never to invent a regime on holes."""
+    from unittest.mock import MagicMock
+    from src.data.macro import MacroCoverage, SeriesFailure
+    from src.models import MacroAnalysis, MacroPositionGuidance, MacroReasoningChain
+    from src.pipeline import TradingPipeline
+    from src.pipeline_context import RunContext
+
+    chain = MacroReasoningChain(
+        volatility_analysis="vix ok", yield_curve_analysis="curve ok",
+        monetary_policy_analysis="fed ok", inflation_labor_credit="cpi ok",
+        cross_signal_synthesis="together ok", sector_implications="tech ow",
+    )
+    analysis = MacroAnalysis(
+        reasoning_chain=chain, regime="risk-on", confidence="medium",
+        equity_outlook="bullish",
+        position_guidance=MacroPositionGuidance(
+            target_invested_pct=70, cash_recommendation_pct=30,
+            reasoning="stay invested",
+        ),
+        summary="risk on",
+    )
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.db = MagicMock()
+    p.macro = MagicMock()
+    p.macro.last_coverage = MacroCoverage(configured=15, succeeded=15, failed=[])
+    p.macro.get_macro_summary.return_value = {"vix": {"current": 18}}
+    p.macro_analyst = MagicMock()
+    p.macro_analyst.analyze.return_value = (analysis, MagicMock())
+    p._require_paid_analysis = MagicMock()
+    p._record_heal = MagicMock()
+    ctx = RunContext.start("morning")
+    ctx.data_status = {"macro": "provider_error"}
+    ctx.macro_summary = {"vix": {"current": 18}}
+    ctx.macro_coverage = MacroCoverage(
+        configured=15, succeeded=8,
+        failed=[SeriesFailure(series_id="ICSA", reason="fetch_deadline_exceeded")],
+    )
+    TradingPipeline._heal_lost_research_seats(p, ctx)
+    p.macro.get_macro_summary.assert_called_once()
+    p.macro_analyst.analyze.assert_called_once()
+    assert ctx.data_status["macro"] == "ok"
+
+
 def test_remembered_good_is_not_a_heal_target():
     """A validating snapshot is usable without a paid call. A chain-less
     trim is not 'remembered good' — that is the fail-closed test above."""

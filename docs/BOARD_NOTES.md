@@ -155,8 +155,11 @@ and the desk refuses to decide, spends nothing, says so, and waits.
 
 **Today (2026-09-17) —** the economics feed came back with holes at the
 open (eight of fifteen numbers) and the desk still produced a regime to
-size off. That is now stopped. Missing required numbers means the
-economics seat did not answer. The desk will not invent the missing
+size off. That is now stopped. Missing required numbers are asked for
+once more; if they still do not arrive, the economics seat did not
+answer. A missing open print on the tape is the same kind of failure —
+the technical seat is lost until today's print is actually read, not
+marked "less sure" and used anyway. The desk will not invent the missing
 prints, and it will not decide on a thinner story. This is still not a
 ruling on how many usable reads is enough; that question is still yours.
 

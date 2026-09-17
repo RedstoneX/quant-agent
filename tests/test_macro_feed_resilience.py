@@ -256,6 +256,52 @@ def test_parallel_prefetch_attempts_every_series_inside_a_serial_impossible_dead
     )
 
 
+@patch("src.data.macro.Fred")
+def test_failed_series_are_retried_once_inside_the_same_deadline(mock_fred_cls):
+    """Producing-step heal: a series that timed out on the first try is
+    asked for once more. No invented value. No longer ceiling."""
+    mock = MagicMock()
+    attempts: dict[str, int] = {}
+
+    def _side_effect(series_id, **kw):
+        attempts[series_id] = attempts.get(series_id, 0) + 1
+        if series_id == "ICSA" and attempts[series_id] == 1:
+            raise TimeoutError("The read operation timed out")
+        return _series([1.0, 1.1, 1.2])
+
+    mock.get_series.side_effect = _side_effect
+    mock_fred_cls.return_value = mock
+    provider = MacroDataProvider(
+        api_key="test-key", max_retries=0, total_fetch_deadline_s=90.0,
+    )
+    provider.get_macro_summary()
+    assert attempts["ICSA"] == 2
+    assert provider.last_coverage.status == "ok"
+    assert provider.last_coverage.failed == []
+    assert provider.last_coverage.configured == 15
+    assert provider.last_coverage.succeeded == 15
+
+
+@patch("src.data.macro.Fred")
+def test_series_that_fail_the_retry_stay_named_and_are_not_invented(mock_fred_cls):
+    mock = MagicMock()
+
+    def _side_effect(series_id, **kw):
+        if series_id == "ICSA":
+            raise TimeoutError("The read operation timed out")
+        return _series([1.0, 1.1, 1.2])
+
+    mock.get_series.side_effect = _side_effect
+    mock_fred_cls.return_value = mock
+    provider = MacroDataProvider(
+        api_key="test-key", max_retries=0, total_fetch_deadline_s=90.0,
+    )
+    summary = provider.get_macro_summary()
+    assert provider.last_coverage.status == "partial"
+    assert [f.series_id for f in provider.last_coverage.failed] == ["ICSA"]
+    assert summary["jobless_claims"]["current"] is None
+
+
 @patch("fredapi.fred.urlopen")
 def test_fred_fetch_passes_per_request_timeout_to_urlopen(mock_urlopen):
     """Parallel prefetch cannot share socket.getdefaulttimeout(). Each

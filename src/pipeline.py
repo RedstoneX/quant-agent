@@ -2770,7 +2770,7 @@ class TradingPipeline:
           explicit STALE label, never silently replaced by yesterday.
         Never raises.
         """
-        from src.trading_calendar import in_regular_session, live_price_is_today
+        from src.trading_calendar import in_regular_session
 
         symbols = [s for s in (symbols or []) if s]
         if not symbols or not in_regular_session():
@@ -2785,27 +2785,53 @@ class TradingPipeline:
         stale: list[str] = []
         for sym in symbols:
             snap = snapshots.get(sym) or {}
-            last = snap.get("last_price")
-            if not isinstance(last, (int, float)) or last <= 0:
+            classified = self._classify_live_snapshot(sym, snap)
+            out[sym] = classified
+            reason = classified.get("live_unavailable")
+            if reason == "no live trade price returned":
                 missing.append(sym)
-                out[sym] = {"live_unavailable": "no live trade price returned"}
-                continue
-            if not live_price_is_today(snap.get("last_trade_at")):
+            elif reason:
                 stale.append(sym)
-                out[sym] = {
-                    "live_unavailable": "last trade is not from today's session",
-                }
-                continue
-            out[sym] = dict(snap)
+        retry_syms = missing + stale
+        if retry_syms:
+            # One producing-step re-read of the open print. Same feed,
+            # no invented price, names kept.
+            try:
+                retried = self.broker.get_intraday_snapshots(retry_syms) or {}
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "live session context: open-print re-read failed: %s", exc,
+                )
+                retried = {}
+            missing, stale = [], []
+            for sym in retry_syms:
+                classified = self._classify_live_snapshot(sym, retried.get(sym) or {})
+                out[sym] = classified
+                reason = classified.get("live_unavailable")
+                if reason == "no live trade price returned":
+                    missing.append(sym)
+                elif reason:
+                    stale.append(sym)
         if missing or stale:
             logger.warning(
                 "live session context: in-session price unavailable for %d/%d "
-                "symbol(s) (no price: %s; not today: %s) — labelled STALE in "
-                "the Tech prompt, not replaced by the last close",
+                "symbol(s) after open-print re-read (no price: %s; not today: %s) "
+                "— labelled STALE in the Tech prompt, not replaced by the last close",
                 len(missing) + len(stale), len(symbols),
                 missing[:10], stale[:10],
             )
         return out
+
+    @staticmethod
+    def _classify_live_snapshot(symbol: str, snap: dict) -> dict:
+        from src.trading_calendar import live_price_is_today
+
+        last = snap.get("last_price")
+        if not isinstance(last, (int, float)) or last <= 0:
+            return {"live_unavailable": "no live trade price returned"}
+        if not live_price_is_today(snap.get("last_trade_at")):
+            return {"live_unavailable": "last trade is not from today's session"}
+        return dict(snap)
 
     # Statuses Alpaca uses for terminal/non-terminal orders. Kept as a
     # class attribute so tests can introspect the exact set the
@@ -13146,10 +13172,10 @@ class TradingPipeline:
         # No inputs → would invent the seat. Do not consume the retry.
         if seat == "macro" and not (ctx.macro_summary or {}):
             return False
-        # Incomplete FRED is a producing-step fail (2026-09-17). A paid
-        # retry here would call the economist on the same holes morning
-        # already refused to invent a regime from, then stamp the seat
-        # 'ok'. Heal cannot fill missing series; do not consume the retry.
+        # Incomplete FRED is a producing-step fail (2026-09-17). Heal the
+        # SERIES (mechanical re-fetch) first; a paid economist call on the
+        # same holes would invent a regime. Do not consume the LLM retry
+        # until coverage is complete.
         if seat == "macro":
             coverage = getattr(ctx, "macro_coverage", None)
             if coverage is not None and not getattr(coverage, "complete", False):
@@ -13162,7 +13188,10 @@ class TradingPipeline:
             if not (isinstance(news_text, str) and news_text.strip()):
                 return False
         if seat == "tech":
-            return False
+            if getattr(ctx, "tech_live_unavailable_symbols", None):
+                return False
+            if not (getattr(ctx, "symbols_bars", None) or {}):
+                return False
         try:
             require(agent_name)
         except PaidAnalysisSuspended as exc:
@@ -13180,6 +13209,44 @@ class TradingPipeline:
         try:
             if seat == "macro":
                 analysis, _raw = analyze(ctx.macro_summary)
+            elif seat == "tech":
+                from src.data.technical import compute_indicators
+
+                symbols_data = []
+                for sym, bars in (ctx.symbols_bars or {}).items():
+                    if not bars:
+                        continue
+                    try:
+                        indicators = compute_indicators(sym, bars)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    symbols_data.append({
+                        "symbol": sym, "bars": bars, "indicators": indicators,
+                    })
+                if not symbols_data:
+                    raise RuntimeError("tech heal: no bars to re-read structure")
+                live_fn = getattr(self, "_live_session_context", None)
+                live = live_fn([s["symbol"] for s in symbols_data]) if callable(live_fn) else {}
+                live = live or {}
+                analyses_map, _raw = analyze(
+                    symbols_data,
+                    prior_ratings={},
+                    valuations=getattr(ctx, "valuations", None) or {},
+                    intraday_context=live,
+                )
+                resolved = [
+                    a for a in (analyses_map or {}).values() if a is not None
+                ]
+                still = [
+                    s["symbol"] for s in symbols_data
+                    if (live.get(s["symbol"]) or {}).get("live_unavailable")
+                ]
+                ctx.tech_live_unavailable_symbols = still
+                if still or not resolved:
+                    analysis = None
+                else:
+                    ctx.analyses = resolved
+                    analysis = resolved[0]
             else:
                 analysis, _raw = analyze(getattr(ctx, "heal_news_text", ""))
         except Exception as exc:  # noqa: BLE001
@@ -13205,6 +13272,8 @@ class TradingPipeline:
             ctx.macro_analysis = payload
         elif seat == "news":
             ctx.news_intel = analysis
+        elif seat == "tech":
+            pass
         status = dict(ctx.data_status or {})
         status[seat] = "ok"
         ctx.data_status = status
@@ -13219,6 +13288,45 @@ class TradingPipeline:
         )
         return True
 
+    def _mechanical_refetch_macro_series(self, ctx: RunContext) -> bool:
+        """One FRED re-fetch for lost series. Does not call the economist.
+
+        Does not invent values. Does not extend the per-call deadline.
+        Bounded: at most once per run.
+        """
+        if getattr(ctx, "macro_series_heal_used", False):
+            return False
+        ctx.macro_series_heal_used = True
+        provider = getattr(self, "macro", None)
+        getter = getattr(provider, "get_macro_summary", None)
+        if not callable(getter):
+            return False
+        try:
+            summary = getter()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("macro series heal: FRED re-fetch failed: %s", exc)
+            return False
+        ctx.macro_summary = summary
+        ctx.macro_coverage = getattr(provider, "last_coverage", None)
+        coverage = ctx.macro_coverage
+        return bool(coverage is not None and getattr(coverage, "complete", False))
+
+    def _mechanical_reread_tech_live(self, ctx: RunContext) -> bool:
+        """One re-read of open prints for names still STALE. No invented price."""
+        unavailable = list(getattr(ctx, "tech_live_unavailable_symbols", None) or [])
+        if not unavailable:
+            return True
+        live_fn = getattr(self, "_live_session_context", None)
+        if not callable(live_fn):
+            return False
+        live = live_fn(unavailable) or {}
+        still = [
+            s for s in unavailable
+            if (live.get(s) or {}).get("live_unavailable")
+        ]
+        ctx.tech_live_unavailable_symbols = still
+        return not still
+
     def _heal_lost_research_seats(self, ctx: RunContext) -> None:
         """After carry-forward: log lost seats. Don't page empty-store gaps
         (the evidence gate already pages those). Attempt a paid retry only
@@ -13232,7 +13340,19 @@ class TradingPipeline:
             # Empty store: nothing to heal. Gate skip is the owner page.
             if status == "carry_forward_empty":
                 continue
-            attempted = self._try_one_paid_research_retry(ctx, seat)
+            attempted = False
+            if seat == "macro":
+                coverage = getattr(ctx, "macro_coverage", None)
+                if coverage is not None and not getattr(coverage, "complete", False):
+                    if self._mechanical_refetch_macro_series(ctx):
+                        attempted = self._try_one_paid_research_retry(ctx, seat)
+                else:
+                    attempted = self._try_one_paid_research_retry(ctx, seat)
+            elif seat == "tech":
+                if self._mechanical_reread_tech_live(ctx):
+                    attempted = self._try_one_paid_research_retry(ctx, seat)
+            else:
+                attempted = self._try_one_paid_research_retry(ctx, seat)
             still = (ctx.data_status or {}).get(seat)
             if evidence_gate.STATUS_CATEGORY.get(still) == evidence_gate.CATEGORY_LOST:
                 result = HealResult(

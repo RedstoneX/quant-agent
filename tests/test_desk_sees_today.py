@@ -198,6 +198,24 @@ def test_live_session_context_in_session_live_missing_and_stale(monkeypatch, cap
     assert "price unavailable" in caplog.text
 
 
+def test_live_session_context_rereads_open_print_once(monkeypatch):
+    """09:30 first snapshot can still be yesterday; one re-read must land
+    today's print. Do not invent a price and do not drop the name."""
+    now = ORCL_OPEN.replace(minute=31)
+    monkeypatch.setattr("src.trading_calendar.et_now", lambda: now)
+    from src.pipeline import TradingPipeline
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.broker = MagicMock()
+    p.broker.get_intraday_snapshots.side_effect = [
+        {"ORCL": {"last_price": 161.79, "last_trade_at": datetime(2026, 9, 9, 15, 59, tzinfo=ET)}},
+        {"ORCL": {"last_price": ORCL_LIVE, "last_trade_at": now, "session_open": ORCL_LIVE}},
+    ]
+    out = p._live_session_context(["ORCL"])
+    assert out["ORCL"]["last_price"] == ORCL_LIVE
+    assert "live_unavailable" not in out["ORCL"]
+    assert p.broker.get_intraday_snapshots.call_count == 2
+
+
 def test_live_session_context_broker_failure_marks_every_symbol_stale(monkeypatch):
     monkeypatch.setattr("src.trading_calendar.et_now", lambda: ORCL_OPEN)
     p = _pipeline({})

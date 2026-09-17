@@ -3843,19 +3843,6 @@ class MorningResearchStage:
                     )
                 else:
                     data_status["tech"] = "ok"
-                stale_live = [
-                    a.symbol for a in analyses
-                    if a.symbol in (ctx.tech_live_unavailable_symbols or [])
-                ]
-                if data_status["tech"] == "ok" and stale_live:
-                    data_status["tech"] = "low_confidence"
-                    logger.warning(
-                        "Tech batch fully resolved but %d/%d analyzed "
-                        "symbol(s) have no today live price at open "
-                        "(STALE, no open print): %s",
-                        len(stale_live), len(analyses),
-                        ", ".join(stale_live),
-                    )
             elif analyses:
                 data_status["tech"] = "partial"
                 logger.warning(
@@ -3868,6 +3855,22 @@ class MorningResearchStage:
                 logger.error(
                     "Tech batch: all %d submitted symbol(s) failed even after retry",
                     len(analyses_map),
+                )
+            stale_live = [
+                a.symbol for a in analyses
+                if a.symbol in (ctx.tech_live_unavailable_symbols or [])
+            ]
+            if stale_live and data_status.get("tech") not in ("empty", "failed"):
+                # Missing open print is a producing-step fail, not a
+                # confidence stain. low_confidence is the model's own
+                # lean; STALE tape is lost until the print feed works.
+                data_status["tech"] = "provider_error"
+                logger.error(
+                    "Tech batch: %d/%d analyzed symbol(s) have no "
+                    "today live price at open after a re-read — seat "
+                    "LOST, not low_confidence: %s",
+                    len(stale_live), len(analyses),
+                    ", ".join(stale_live),
                 )
             if ta_result:
                 self.db.insert_agent_log(

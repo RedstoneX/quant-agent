@@ -594,6 +594,9 @@ def test_exhausted_auth_budget_falls_to_rest_without_waiting_again(mock_stream_c
         assert status == "filled"
         assert broker._last_stream_warmup is not None
         assert broker._last_stream_warmup.handshake_failed is True
+        assert broker._last_stream_warmup.rest_fallback
+        assert "temporary REST" in broker._last_stream_warmup.rest_fallback
+        assert "Not REST-only" in broker._last_stream_warmup.rest_fallback
         assert mock_stream_cls.call_count == 1
     finally:
         broker.stop_trade_updates()

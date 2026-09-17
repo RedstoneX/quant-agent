@@ -746,15 +746,70 @@ class MacroDataProvider:
                 sema.release()
         return self._cache_series(series_id, series)
 
-    def _prefetch_configured_series(self) -> None:
-        """Attempt every configured series inside the shared deadline.
+    def _uncache_failed_series(self) -> list[str]:
+        """Drop failed series so one bounded retry can actually re-ask FRED.
+
+        Coverage counters for those IDs are unwound; the retry re-notes
+        them. Does not invent values and does not extend the deadline.
+        """
+        with self._state_lock:
+            ids = [f.series_id for f in self._run_failed]
+            n = len(ids)
+            self._run_failed = []
+            self._run_configured = max(0, self._run_configured - n)
+            for sid in ids:
+                self._series_result_cache.pop(sid, None)
+                self._run_freshness.pop(sid, None)
+                self._series_info_cache.pop(sid, None)
+        return ids
+
+    def _retry_failed_series_once(self) -> None:
+        """One re-ask of series that failed the first prefetch.
+
+        Measured 2026-09-17: the miss was serial starvation, not a need
+        for a longer ceiling. Retry lives inside the remaining budget.
+        If the budget is already gone, the named failures stay.
+        """
+        if not self._run_failed:
+            return
+        remaining = (
+            self._deadline - time.monotonic()
+            if self._deadline is not None
+            else self.request_timeout_s
+        )
+        # A retry is one real HTTP attempt, not a leftover sliver after
+        # the ceiling is spent. Do not invent a longer deadline.
+        if remaining < self.request_timeout_s:
+            logger.warning(
+                "FRED series still missing after prefetch and not enough "
+                "budget left for a real retry — durable named fail: %s",
+                ", ".join(f.series_id for f in self._run_failed),
+            )
+            return
+        ids = self._uncache_failed_series()
+        if not ids:
+            return
+        wanted = set(ids)
+        jobs = [
+            (sid, kw) for sid, kw in _configured_observation_jobs()
+            if sid in wanted
+        ]
+        logger.warning(
+            "FRED retrying %d failed series once inside remaining "
+            "deadline (not a longer ceiling): %s",
+            len(jobs), ", ".join(ids),
+        )
+        self._prefetch_configured_series(jobs)
+
+    def _prefetch_configured_series(self, jobs: list[tuple[str, dict]] | None = None) -> None:
+        """Attempt the given FRED jobs (default: every configured series).
 
         Serial fetch was the 2026-09-17 defect: the first eight
         observation+metadata calls ate 90s and the last seven were skipped
         with `fetch_deadline_exceeded` without an attempt. Independent
         FRED series run concurrently here so each one gets a real try.
         """
-        jobs = _configured_observation_jobs()
+        jobs = list(jobs) if jobs is not None else _configured_observation_jobs()
         if not jobs:
             return
         # Concurrent enough that every series can still START inside the
@@ -1279,7 +1334,9 @@ class MacroDataProvider:
         Resets the per-call resilience state (fetch deadline, coverage
         counters, observation cache) FIRST, prefetches every configured
         series in parallel so later series cannot be skipped solely because
-        earlier ones were slow, then assembles the payload from cache.
+        earlier ones were slow, retries any still-missing series once inside
+        the remaining deadline (not a longer ceiling), then assembles the
+        payload from cache.
         Snapshots coverage into `self.last_coverage` (a MacroCoverage) —
         the pipeline reads that side channel right after calling this
         method to set data_status["macro"]/thread coverage into the
@@ -1298,6 +1355,7 @@ class MacroDataProvider:
         self._series_result_cache = {}
         try:
             self._prefetch_configured_series()
+            self._retry_failed_series_once()
             summary = {
                 "vix": self.get_vix(),
                 "treasury": self.get_treasury_yields(),

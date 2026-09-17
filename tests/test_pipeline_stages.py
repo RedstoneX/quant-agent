@@ -2007,8 +2007,8 @@ def test_morning_research_stage_tech_stale_live_price_is_not_high_confidence(
     mock_compute_indicators,
 ):
     """2026-09-17 open: 8/104 live prices STALE with no open print, and
-    tech still resolved. A fully parsed batch with no today print is not
-    'ok' — the producing step missed the open, so confidence is low."""
+    tech still resolved. A missing open print is a producing-step fail —
+    the seat is LOST, not a low_confidence stain."""
     mock_compute_indicators.return_value = MagicMock()
 
     from src.models import TechAnalysisResult, TechReasoningChain
@@ -2039,7 +2039,9 @@ def test_morning_research_stage_tech_stale_live_price_is_not_high_confidence(
     result_ctx = stage.run(ctx)
 
     assert {a.symbol for a in result_ctx.analyses} == {"AAPL", "MSFT"}
-    assert result_ctx.data_status["tech"] == "low_confidence"
+    assert result_ctx.data_status["tech"] == "provider_error"
+    assert result_ctx.data_status["tech"] != "low_confidence"
+    assert result_ctx.data_status["tech"] != "ok"
     assert "AAPL" in result_ctx.tech_live_unavailable_symbols
 
 

@@ -55,6 +55,15 @@ class TradeStreamWarmup:
     ready: bool
     handshake_failed: bool
     retried: bool
+    # Named when REST polling is used because the websocket is not yet the
+    # product for this wait. Empty when the stream is the wait path.
+    rest_fallback: str | None = None
+
+
+_TEMPORARY_REST_SAFETY = (
+    "temporary REST safety net; trade_updates auth through Risk→submit is "
+    "the product (root-fix: drain non-auth handshake frames). Not REST-only."
+)
 
 
 class _HubWaiter:
@@ -167,11 +176,12 @@ class _TradeUpdatesHub:
             if remaining_auth <= 0:
                 logger.warning(
                     "trade_updates websocket did not authenticate within the "
-                    "encoded %.1fs budget (started at hub open) — REST for %s",
-                    _ALPACA_STREAM_AUTH_DEADLINE_S, oid,
+                    "encoded %.1fs budget (started at hub open) — %s order=%s",
+                    _ALPACA_STREAM_AUTH_DEADLINE_S, _TEMPORARY_REST_SAFETY, oid,
                 )
                 self._broker._last_stream_warmup = TradeStreamWarmup(
                     ready=False, handshake_failed=True, retried=True,
+                    rest_fallback=_TEMPORARY_REST_SAFETY,
                 )
                 return None, False
             try:
@@ -181,11 +191,12 @@ class _TradeUpdatesHub:
             if not self.authed():
                 logger.warning(
                     "trade_updates websocket did not authenticate within "
-                    "remaining %.1fs — REST for %s",
-                    remaining_auth, oid,
+                    "remaining %.1fs — %s order=%s",
+                    remaining_auth, _TEMPORARY_REST_SAFETY, oid,
                 )
                 self._broker._last_stream_warmup = TradeStreamWarmup(
                     ready=False, handshake_failed=True, retried=True,
+                    rest_fallback=_TEMPORARY_REST_SAFETY,
                 )
                 return None, False
 
@@ -2788,8 +2799,8 @@ class AlpacaBroker:
             if connected:
                 return self._get_order_status_once(order_id)
             logger.warning(
-                "order-status stream unavailable for %s — falling back to "
-                "REST polling for exchange acknowledgement", order_id,
+                "order-status stream unavailable for %s — %s",
+                order_id, _TEMPORARY_REST_SAFETY,
             )
         return self._wait_for_order_status_via_polling(
             order_id, timeout_seconds, poll_interval, stop_states=stop_states,
@@ -2843,8 +2854,8 @@ class AlpacaBroker:
             if connected:
                 return self._get_order_status_once(order_id)
             logger.warning(
-                "order-fill stream unavailable for %s — falling back to REST polling",
-                order_id,
+                "order-fill stream unavailable for %s — %s",
+                order_id, _TEMPORARY_REST_SAFETY,
             )
         return self._wait_for_order_terminal_via_polling(
             order_id, timeout_seconds, poll_interval,
@@ -2922,8 +2933,8 @@ class AlpacaBroker:
         # the one-connection slot (that is the 429 storm).
         if not _TRADE_UPDATES_STREAM_LOCK.acquire(blocking=False):
             logger.info(
-                "trade_updates stream already in use — REST polling for %s",
-                order_id,
+                "trade_updates stream already in use — %s order=%s",
+                _TEMPORARY_REST_SAFETY, order_id,
             )
             return None, False
 
@@ -2992,11 +3003,12 @@ class AlpacaBroker:
             if not authed and not connected.is_set():
                 logger.warning(
                     "trade_updates websocket did not authenticate within %.1fs — "
-                    "falling back to REST for %s",
-                    auth_deadline, order_id,
+                    "%s order=%s",
+                    auth_deadline, _TEMPORARY_REST_SAFETY, order_id,
                 )
                 self._last_stream_warmup = TradeStreamWarmup(
                     ready=False, handshake_failed=True, retried=True,
+                    rest_fallback=_TEMPORARY_REST_SAFETY,
                 )
                 try:
                     stream.stop()
