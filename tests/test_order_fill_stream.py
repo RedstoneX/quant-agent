@@ -82,7 +82,14 @@ class _FakeTradingStream:
 
 def _broker():
     with patch("src.execution.broker.TradingClient"):
-        return AlpacaBroker(api_key="k", secret_key="s", paper=True)
+        return AlpacaBroker(
+            api_key="k", secret_key="s", paper=True,
+            # These tests exercise the websocket machinery itself, which is
+            # dormant in production since 2026-09-17. ON here so the whole
+            # file doubles as the proof that flipping the flag back restores
+            # the old behaviour exactly.
+            fill_stream_enabled=True,
+        )
 
 
 # ---------- the fast path: a real terminal event for OUR order ----------
@@ -657,6 +664,7 @@ def _broker_with_lease(lease_path):
         return AlpacaBroker(
             api_key="k", secret_key="s", paper=True,
             trade_updates_lease_path=str(lease_path),
+            fill_stream_enabled=True,
         )
 
 

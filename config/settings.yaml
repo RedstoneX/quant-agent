@@ -355,6 +355,33 @@ execution:
   # trading day while it holds. Read-only; it never places an order.
   fractional_enabled: true
   fractional_share_decimals: 4
+  # Live `trade_updates` websocket fill feed. OFF — owner decision
+  # 2026-09-17. Fills are confirmed by the bounded REST fallback, which is
+  # what has actually confirmed every fill since the socket was built on
+  # 2026-09-10: the socket has never once authenticated on this host.
+  #
+  # Two independent blockers were confirmed before this switch existed, so
+  # nothing in this repo could have made it work:
+  #   * the trading process holds PLACEHOLDER Alpaca credentials; a local
+  #     credential-injecting proxy substitutes the real key on outbound
+  #     REST (hence working order placement) but the websocket does not go
+  #     through that proxy, and the installed `alpaca-py` stream uses
+  #     `websockets.legacy`, which has no proxy support at all;
+  #   * Alpaca authenticates the stream with an in-band websocket MESSAGE,
+  #     not a handshake header, and the gateway injects headers only.
+  #
+  # Leaving it on cost a bounded slice of every fill window on a handshake
+  # that could never succeed, plus ~150 auth-failure log lines a day that
+  # the owner never saw. With it off the desk never opens the socket,
+  # never takes the account-wide lease and never runs the reconnect loop.
+  # No timeout, poll interval or ceiling changes — fill waits take the
+  # same REST polling path `use_stream=False` has always taken.
+  #
+  # The websocket code is DORMANT, not deleted. The owner deferred the
+  # credential decision; if the process is ever given real Alpaca
+  # credentials directly, flipping this to true is the only change needed
+  # and restores the pre-2026-09-17 behaviour exactly.
+  fill_stream_enabled: false
 
 risk:
   # Single-name NOTIONAL ceiling — a concentration/liquidity backstop, not

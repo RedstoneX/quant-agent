@@ -6,7 +6,9 @@ never by silently refusing the add.
 
     1. Snapshot the protective sell and persist a WAL recovery row.
     2. Cancel it.
-    3. Confirm the cancel via `trade_updates` / broker status — do not assume.
+    3. Confirm the cancel via the broker's own order status — do not assume.
+       (Was `trade_updates` first; that socket is off since 2026-09-17, so
+       this is the bounded REST wait. Same call, same window.)
     4. Submit the BUY add.
     5. On any fill (including partial): place ONE protective sell covering
        the broker's FULL position quantity at the existing protection level
@@ -139,7 +141,11 @@ def intended_specs(cancelled: list[dict], intended_stop: float) -> list[dict]:
 
 
 def confirm_protective_cancels(broker: Any, specs: list[dict]) -> tuple[bool, str]:
-    """Wait until each cancelled stop is terminal via trade_updates / REST.
+    """Wait until each cancelled stop is terminal, via `wait_for_order_terminal`.
+
+    That is bounded REST polling since `execution.fill_stream_enabled` was
+    switched off (2026-09-17); it was the websocket first before that. The
+    wait itself is unchanged either way.
 
     Returns ``(True, "")`` only when every spec with an id reached a
     cancelled-like terminal state. A fill aborts the add: the stop did its

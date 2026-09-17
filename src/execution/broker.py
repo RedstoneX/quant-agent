@@ -1013,9 +1013,20 @@ class AlpacaBroker:
     #: reads None rather than raising; `_kill_switch_active` already treats
     #: None as "no switch configured", i.e. inert.
     _kill_switch_path: "Path | None" = None
+    #: Live `trade_updates` websocket feed. Declared here, FALSE, for the
+    #: same reason as `_kill_switch_path` above: an instance built without
+    #: __init__ must read the safe value rather than raise. Fail-closed
+    #: direction is OFF — a construction site that never threads the flag
+    #: through (the read-only broker in src/api/broker_reads.py, the
+    #: heartbeat, one-off scripts, isolated unit tests) must not be able to
+    #: open the account's single socket by omission. See
+    #: `ExecutionConfig.fill_stream_enabled` for WHY it is off in
+    #: production; src/pipeline.py is the only site that passes it.
+    _fill_stream_enabled: bool = False
     def __init__(self, api_key: str, secret_key: str, paper: bool = True,
                  kill_switch_path: str | None = None,
-                 trade_updates_lease_path: str | None = None):
+                 trade_updates_lease_path: str | None = None,
+                 fill_stream_enabled: bool = False):
         self.api_key = api_key
         self.secret_key = secret_key
         self._paper = paper
@@ -1068,6 +1079,8 @@ class AlpacaBroker:
         )
         self._trade_slot_held = False
         self._trade_lease_contended = False
+        self._fill_stream_enabled = bool(fill_stream_enabled)
+        self._fill_stream_off_logged = False
 
     def _kill_switch_active(self) -> bool:
         """Guard 1: True once ops has halted the desk by `touch`-ing the
@@ -2834,6 +2847,38 @@ class AlpacaBroker:
             except RuntimeError:
                 pass
 
+    def fill_stream_enabled(self) -> bool:
+        """True when the desk is allowed to open the `trade_updates` socket.
+
+        Public because the submit-window budget needs it: `src/pipeline_stages.py`
+        adds the handshake budget only when a handshake can actually happen.
+        """
+        return bool(getattr(self, "_fill_stream_enabled", False))
+
+    def _fill_stream_off_warmup(self) -> TradeStreamWarmup:
+        """The warmup an intentionally-disabled socket reports.
+
+        `handshake_failed` and `retried` are both FALSE on purpose. They are
+        what `_start_trade_updates_early` / `_warm_trade_updates` /
+        `_adopt_stream_stall` read to set `ctx.desk_latency_stall` — i.e. "the
+        desk lost time to a broken socket". A socket that was never opened
+        because the owner switched it off cost no time and is not a stall, so
+        reporting a failure here would rebuild the exact noise this switch
+        removes, just in a different field.
+        """
+        if not self._fill_stream_off_logged:
+            # Once per process, at INFO — ops still needs to be able to see
+            # WHY fills are REST-confirmed. This deliberately replaces the
+            # ~150 auth-failure WARNINGs a day, and must never become a
+            # per-order line.
+            logger.info(
+                "trade_updates websocket disabled by configuration "
+                "(execution.fill_stream_enabled) — fills are confirmed by "
+                "the bounded REST path; no socket, no lease, no reconnect loop",
+            )
+            self._fill_stream_off_logged = True
+        return TradeStreamWarmup(ready=False, handshake_failed=False, retried=False)
+
     def ensure_trade_updates(self) -> TradeStreamWarmup:
         """Start (or reuse) the kept trade_updates socket. Does not wait for auth.
 
@@ -2886,7 +2931,14 @@ class AlpacaBroker:
 
         No-op reuse when this process already owns a live hub. Refuses to
         open a socket when another process holds the account lease.
+
+        Refuses outright, before the lease is even attempted, when
+        `execution.fill_stream_enabled` is off — see that flag for why.
         """
+        if not self.fill_stream_enabled():
+            warmup = self._fill_stream_off_warmup()
+            self._last_stream_warmup = warmup
+            return warmup
         if TradingStream is None:
             warmup = TradeStreamWarmup(
                 ready=False, handshake_failed=True, retried=False,
@@ -2983,8 +3035,13 @@ class AlpacaBroker:
         A live-but-silent hub (alpaca-py reconnecting inside `run()`) is
         sliced at the REST poll interval so a fill cannot hide longer than
         the REST path would have taken to see it.
+
+        `execution.fill_stream_enabled` off takes the SAME branch as an
+        explicit `use_stream=False` — deliberately the identical code path,
+        not a parallel one, so the configuration change cannot alter a
+        bounded wait. Same timeout, same poll interval, same ceiling.
         """
-        if not use_stream:
+        if not use_stream or not self.fill_stream_enabled():
             return self._wait_for_order_status_via_polling(
                 order_id, timeout_seconds, poll_interval,
                 stop_states=stop_states,
@@ -3183,6 +3240,13 @@ class AlpacaBroker:
         Auth leftover is not added on top. A dead hub does not sit out a
         second full window before REST.
         """
+        # Belt and braces with `_wait_for_order_status`'s own gate: this is
+        # the ONLY function that can construct a TradingStream or take the
+        # account lease for a fill wait, so the "never opens a socket"
+        # guarantee is enforced here too and does not depend on every
+        # caller routing through the wrapper above.
+        if not self.fill_stream_enabled():
+            return None, False
         if TradingStream is None:
             return None, False
 
@@ -3941,6 +4005,28 @@ class AlpacaBroker:
                 ) or status
             except Exception:  # noqa: BLE001
                 pass
+            if (status or "").lower() not in self._TERMINAL_ORDER_STATES:
+                # Fill confirmation has genuinely DEGRADED: the bounded
+                # window closed, the cancel-and-recheck closed too, and the
+                # broker still has not said what happened to a live order.
+                # The desk proceeds on filled_qty=0 below — the safe
+                # assumption, possibly a wrong one — so the owner has to be
+                # told, not just the log. This is NOT "the websocket is
+                # off": it is reachable identically with the socket on, and
+                # is exactly the outcome the REST path is supposed to
+                # prevent. See src/notifier.py's fill-confirmation block.
+                try:
+                    from src.notifier import alert_order_outcome_unconfirmed
+                    alert_order_outcome_unconfirmed(
+                        symbol, order_id,
+                        waited_seconds=_ENTRY_FILL_TIMEOUT_S,
+                        last_status=(status or "").lower() or None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "entry protection: unconfirmed-outcome alert for %s "
+                        "could not be sent: %s", symbol, exc,
+                    )
 
         try:
             info = self.get_order_fill_info(order_id) or {}

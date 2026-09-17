@@ -321,8 +321,16 @@ This file records what is accepted and true **now**. Git history preserves imple
   (mechanical first, then at most one paid retry inside cost caps); heal
   failure and a spend-cap block page the owner. Empty or failed morning
   carry-forward still refuses before the Portfolio Manager. Desk-caused
-  stall after Risk is a defect, not "a little late." Handshake starts
-  during Risk so auth is not serial after approval. Alpaca allows one
+  stall after Risk is a defect, not "a little late." **Fills are confirmed
+  by the bounded REST path; the live `trade_updates` websocket is OFF
+  (owner, 2026-09-17, `execution.fill_stream_enabled`) — it never
+  authenticated on this host, and two confirmed blockers mean no code
+  change could make it. No socket, no lease, no reconnect loop, no
+  handshake before submit; REST timeouts and poll intervals unchanged. The
+  code is dormant, not deleted. Fill confirmation actually degrading now
+  pages the owner; the socket being off never does.** The rest of this
+  paragraph is what flipping the flag back on restores: handshake starts
+  during Risk so auth is not serial after approval; Alpaca allows one
   `trade_updates` socket per account: one desk process owns it via a
   cross-process lease; other processes attach to that process's hub or
   REST-poll with a wait no longer than the REST path — they never open a

@@ -22,6 +22,22 @@ what would catch it next time.
 
 ---
 
+### 2026-09-17 — the live fill feed never once worked, and nobody was told
+
+**In plain words:** when the desk places an order it needs to know whether it actually bought anything. It was built in September to be told the instant a trade happens, over a live connection to the broker. That connection has never worked — not once, in any session, since the day it was built. Everything kept running because the desk also asks the broker over and over the ordinary way, and that has always worked, so no trade was missed and no money was lost. What was lost was a few seconds of every order's waiting time spent on a connection that could never open, and about a hundred and fifty error lines a day in a log the owner does not read.
+
+**Cause.** Two separate, independent reasons, either of which alone is fatal, and neither of which anything in this repository could fix. First, the trading process is not given the real broker keys; it holds placeholders, and a local helper swaps in the real key on ordinary web requests on the way out. That is why placing orders works. The live connection does not go through that helper, and the broker library the desk uses is built on an old networking component that cannot be pointed at one. Second, the broker does not check the key when the connection opens — it checks it in a message sent afterwards, and the local helper only ever rewrites the opening. So even a newer library would have connected and then been refused.
+
+**Decision.** The owner switched the feed off. Fills are confirmed the ordinary way, which is what has actually been confirming them all along. The switch is configuration, not a code change, and flipping it back restores the old behaviour exactly — the code was deliberately left in place, dormant, because the question of whether this process should be given real broker keys was explicitly deferred and is still open.
+
+**What was ruled out.** Any attempt to make the connection authenticate. Both blockers were confirmed before the switch was written, so retrying, reconnecting differently, waiting longer or lengthening the handshake budget were all fixing the wrong thing. Deleting the code was also rejected — the credential decision may revive it, and deleting it would mean rebuilding it from memory.
+
+**The real failure, and it is not the websocket.** A broken thing kept a good fallback, so it looked fine from the outside for a week. That is the hardest kind of breakage to notice, and it is why the switch-off shipped with an alert. The alert fires when fill confirmation genuinely degrades — an order the desk could not get a straight answer about before its window closed, or the half-hourly check finding the desk's own record of what it holds disagreeing with the broker's, with no sale to explain the difference. Both used to reach a log line and nothing else. Neither has anything to do with the feed being off: the feed being off is now the intended setup and deliberately never alerts, because moving a hundred and fifty daily error lines into Telegram would be worse than leaving them in the log.
+
+**What would catch it next time.** Checks that with the feed off no connection is opened and the account's connection slot is never claimed, that the ordinary confirmation path is byte-for-byte the one it always was, that flipping the switch back restores the old path, that an unconfirmed order and a records mismatch each page the owner, and that the feed being off cannot page him. The broader habit: a vendor recommending a mechanism is a reason to build it, never evidence that it runs in this deployment.
+
+---
+
 ### 2026-09-17 — a limit order that never filled turned out to be the market doing its job, not the desk being slow
 
 **In plain words:** about one in eleven trade ideas ended with the order sitting at the broker, the price drifting away before it filled, and the order getting cancelled with the opportunity gone. That looked like a defect worth chasing. Measured against 68 real proposals, it happened 6 times (9%), and every one of those was the market itself walking away from a still-open limit price — not the desk being late.

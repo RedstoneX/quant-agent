@@ -1135,6 +1135,11 @@ class TradingPipeline:
             paper=config.alpaca.paper,
             kill_switch_path=str(self._kill_switch_path),
             trade_updates_lease_path=str(trade_updates_lease_path),
+            # OFF since 2026-09-17 (owner). The only site that threads this
+            # through — see `ExecutionConfig.fill_stream_enabled` for the two
+            # confirmed blockers, and why the REST fill path is the real
+            # mechanism rather than a fallback.
+            fill_stream_enabled=config.execution.fill_stream_enabled,
         )
         # Wire the broker as yfinance's fallback so a yfinance outage doesn't
         # blackout the technical analyst. Alpaca's daily bars cover the same
@@ -5074,6 +5079,24 @@ class TradingPipeline:
                     ledger_qty=ledger_open, broker_qty=held,
                     lookback_days=lookback_days,
                 )
+                # PAGE the owner. Until 2026-09-17 this wrote an ERROR line
+                # and an evidence flag and nothing else, which is the same
+                # silence that let the 2026-08-28 ONDS/CCJ stop-outs sit
+                # unnoticed for a trading day. The desk's record and the
+                # broker's record disagree and no sale explains it: that is
+                # fill confirmation having failed somewhere upstream, and it
+                # is the owner's P&L that is wrong because of it.
+                try:
+                    from src.notifier import alert_records_disagree_with_broker
+                    alert_records_disagree_with_broker(
+                        symbol, desk_qty=ledger_open, broker_qty=held,
+                        lookback_days=lookback_days,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "stop-out reconcile: records-disagree alert for %s "
+                        "could not be sent: %s", symbol, exc,
+                    )
                 results.append({
                     "symbol": symbol, "ledger_qty": ledger_open,
                     "broker_qty": held, "matched": False, "recorded": 0,
