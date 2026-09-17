@@ -245,8 +245,8 @@ export function DataTable<T extends object>({
   }, [reorderable, dragColumnId]);
 
   return (
-    <div className="max-w-full overflow-x-auto rounded-lg ring-1 ring-border">
-      <Table className={compact ? "text-xs" : "text-sm"} style={resizable ? { width: "100%", tableLayout: "fixed" } : undefined}>
+    <div className="max-w-full min-w-0 overflow-x-hidden rounded-lg ring-1 ring-border">
+      <Table className={`${compact ? "text-xs" : "text-sm"} overflow-x-hidden`} style={resizable ? { width: "100%", tableLayout: "fixed" } : undefined}>
         <TableHead>
           {table.getHeaderGroups().map((group) => (
             <TableRow key={group.id}>
@@ -352,7 +352,7 @@ export function DataTable<T extends object>({
               {row.getVisibleCells().map((cell) => (
                 <TableCell
                   key={cell.id}
-                  className={`font-mono tabular-nums px-2 py-2 ${resizable ? "overflow-hidden" : "whitespace-nowrap"}`}
+                  className={`font-mono tabular-nums px-2 py-2 ${resizable ? "overflow-hidden truncate" : "whitespace-nowrap"}`}
                   style={resizable ? { width: cell.column.getSize(), minWidth: 8 } : undefined}
                 >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}

@@ -142,7 +142,7 @@ export function HoldingsStrip({
             {error && !everLoaded ? `Positions read failed: ${error}` : "No open positions."}
           </div>
         ) : (
-          <div className="mt-1 grid w-full min-w-0 grid-cols-1 justify-items-start gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="holdings-wrap mt-1">
             {holdingsOrder(positions).map((position) => (
               <HoldingChip key={position.symbol} position={position} onSelect={onSelectSymbol} />
             ))}

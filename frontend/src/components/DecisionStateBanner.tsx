@@ -53,6 +53,7 @@ export function DecisionStateBanner({
   error,
   updatedAt,
   compact = false,
+  variant = "page",
 }: {
   funnel: RunFunnelResponse | null;
   /** Recent trades (any run) — filtered here to this funnel's run_id, same
@@ -63,12 +64,15 @@ export function DecisionStateBanner({
   loading: boolean;
   error: string | null;
   updatedAt: Date | null;
-  /* Compact chrome (App.tsx's chrome-collapse control): the verdict is
-   * far too important to hide, so it is not hidden — it is re-rendered as
-   * one dense line (state label + why, stale marker preserved) instead of
-   * a three-line Callout with its own padding and run-id row. */
+  /* Compact chrome (iPad header, or the Sessions Dockview pane): the
+   * verdict is far too important to hide, so it is not hidden — it is
+   * re-rendered as one dense line (state label + why, stale marker
+   * preserved) instead of a three-line Callout with its own padding and
+   * run-id row. */
   compact?: boolean;
+  variant?: "page" | "panel";
 }) {
+  const isPanel = variant === "panel";
   if (!funnel) {
     if (loading) return null;
     if (!error) {
@@ -78,19 +82,19 @@ export function DecisionStateBanner({
       // look intentional" principle.
       if (compact) {
         return (
-          <div className="mx-3 mt-2 rounded-lg border border-border bg-panel-alt px-3 py-1.5 text-[length:var(--fs-meta)] text-dim">
+          <div className={`${isPanel ? "" : "mx-3 mt-2 "}rounded-lg border border-border bg-panel-alt px-3 py-1.5 text-[length:var(--fs-meta)] text-dim`}>
             No decision yet — no sessions recorded yet today.
           </div>
         );
       }
       return (
-        <Callout title="No decision yet" color="slate" className="mx-3 mt-2 !bg-panel-alt !ring-border">
+        <Callout title="No decision yet" color="slate" className={`${isPanel ? "" : "mx-3 mt-2 "}!bg-panel-alt !ring-border`}>
           No sessions recorded yet today.
         </Callout>
       );
     }
     return (
-      <Callout title="Decision unavailable" color="rose" className="mx-3 mt-2 !bg-panel-alt">
+      <Callout title="Decision unavailable" color="rose" className={`${isPanel ? "" : "mx-3 mt-2 "}!bg-panel-alt`}>
         Could not load the selected decision: {error}
       </Callout>
     );
@@ -105,7 +109,7 @@ export function DecisionStateBanner({
 
   if (compact) {
     return (
-      <div className="mx-3 mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-lg border border-border bg-panel-alt px-3 py-1.5">
+      <div className={`${isPanel ? "" : "mx-3 mt-2 "}flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 overflow-x-hidden rounded-lg border border-border bg-panel-alt px-3 py-1.5`}>
         <Badge color={tone} size="xs">
           {label}
         </Badge>
@@ -121,7 +125,7 @@ export function DecisionStateBanner({
   }
 
   return (
-    <Callout title={label} color={tone} className="mx-3 mt-2 !bg-panel-alt !ring-border">
+    <Callout title={label} color={tone} className={`${isPanel ? "" : "mx-3 mt-2 "}!bg-panel-alt !ring-border`}>
       {stale && (
         <div className="mb-1.5 flex items-center gap-2 text-warn text-xs font-semibold">
           <Badge color="amber" size="xs">stale</Badge>

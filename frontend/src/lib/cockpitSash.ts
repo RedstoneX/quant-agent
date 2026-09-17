@@ -1,11 +1,12 @@
 /** Chart-vs-bottoms sash helpers for the desktop cockpit.
 
 The dockview split between the chart row and Positions/Orders is a real
-library sash. Other vertical sashes (Holdings above the chart, stacked
-rearrangements) stay native — this module only models the bottoms sash,
-where past the Positions/Orders floor the workspace box itself has to
-grow. Extra height used to reset on reload, so a drag that "took" would
-snap back. Growth is persisted next to the layout blob.
+library sash. Other vertical sashes (the top Account/Holdings/Sessions
+row above the chart, stacked rearrangements) stay native — this module
+only models the bottoms sash, where past the Positions/Orders floor the
+workspace box itself has to grow. Extra height used to reset on reload,
+so a drag that "took" would snap back. Growth is persisted next to the
+layout blob.
 
 Two-way: dragging that sash down shrinks bottoms until the floor then
 grows the page; dragging it up returns page height first, then borrows
@@ -13,8 +14,8 @@ from the chart to grow bottoms. Native dockview alone could only steal
 from the row under the chart, and once that row was on its floor an
 upward drag was swallowed. */
 
-export const COCKPIT_LAYOUT_KEY = "qamc.dockview.cockpit.v8";
-export const COCKPIT_GROWTH_KEY = "qamc.dockview.cockpit.v8.growth";
+export const COCKPIT_LAYOUT_KEY = "qamc.dockview.cockpit.v9";
+export const COCKPIT_GROWTH_KEY = "qamc.dockview.cockpit.v9.growth";
 /** Same floor `buildDefaultLayout` sets as Positions/Orders minimumHeight. */
 export const BOTTOMS_FLOOR_PX = 260;
 /** Chart row floor so a sash above the candles cannot crush the stage. */

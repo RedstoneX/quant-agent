@@ -271,8 +271,7 @@ const steps = [
   }],
   ["02-desktop-positions-liquidity", { width: 1600, height: 1000 }, "populated", async (page) => {
     // Positions is the primary leftmost/active-by-default dockview pane.
-    // Liquidity lives in the compact NLV line by default (deployable cash)
-    // and in the full header strip behind "Show full header".
+    // Liquidity lives in the Account Dockview panel with NLV.
     await page.getByRole("tab", { name: "Positions" }).click();
   }],
   ["03-desktop-candidate-lifecycle", { width: 1600, height: 1000 }, "populated", async (page) => {
@@ -314,8 +313,10 @@ const steps = [
 
 const hierarchyOnly = process.argv.includes("--hierarchy");
 const locksOnly = process.argv.includes("--locks");
+const fullPanelsOnly = process.argv.includes("--full-panels");
 const hierarchyDir = resolve(process.env.QAMC_HIERARCHY_OUTPUT || "../docs/visual/pr-444/hierarchy");
 const locksDir = resolve(process.env.QAMC_LOCKS_OUTPUT || "../docs/visual/pr-444");
+const fullPanelsDir = resolve(process.env.QAMC_FULL_PANELS_OUTPUT || "../docs/visual/pr-444/full-panels");
 
 async function dragVerticalSash(page, index, dy) {
   const sashes = page.locator(".dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash");
@@ -353,6 +354,45 @@ async function dragVerticalSash(page, index, dy) {
       fire("pointerup", document, y + dy);
     },
     { index, dy },
+  );
+}
+
+async function dragHorizontalSash(page, index, dx) {
+  const sashes = page.locator(".dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash");
+  await sashes.nth(index).waitFor();
+  await page.evaluate(
+    ({ index, dx }) => {
+      const sash = document.querySelectorAll(
+        ".dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash",
+      )[index];
+      if (!sash) throw new Error(`no horizontal sash ${index}`);
+      const box = sash.getBoundingClientRect();
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      const fire = (type, target, clientX) => {
+        target.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX,
+            clientY: y,
+            button: 0,
+            buttons: type === "pointerup" ? 0 : 1,
+            pointerId: 1,
+            pointerType: "mouse",
+            view: window,
+          }),
+        );
+      };
+      fire("pointerdown", sash, x);
+      const steps = 8;
+      for (let i = 1; i <= steps; i += 1) {
+        fire("pointermove", document, x + (dx * i) / steps);
+      }
+      fire("pointerup", document, x + dx);
+    },
+    { index, dx },
   );
 }
 
@@ -398,8 +438,43 @@ const lockSteps = [
   }],
 ];
 
+const fullPanelSteps = [
+  ["a-full-cockpit-panels", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await page.getByRole("tab", { name: "Account" }).waitFor();
+    await page.getByRole("tab", { name: "Sessions" }).waitFor();
+    await page.getByRole("tab", { name: "Chart" }).waitFor();
+    await page.getByRole("tab", { name: "Positions" }).waitFor();
+    await page.getByRole("tab", { name: "Orders" }).waitFor();
+    await page.getByText("Net liquidation value").waitFor();
+    await page.getByText("Apple Inc.").waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+    await page.getByText("Live $", { exact: false }).waitFor();
+  }],
+  ["b-resize-h-and-v", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByText("Live $", { exact: false }).waitFor();
+    await dragVerticalSash(page, 0, 70);
+    await dragHorizontalSash(page, 0, 120);
+    await page.getByText("Live $", { exact: false }).waitFor();
+  }],
+  ["c-no-horizontal-slider", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await page.getByRole("tab", { name: "Orders" }).click();
+    await page.getByText("Stop", { exact: true }).waitFor();
+    await page.getByText("Target", { exact: true }).waitFor();
+    await page.getByText("Limit", { exact: true }).waitFor();
+  }],
+  ["d-browser-narrow-reflow", { width: 1280, height: 800 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await page.getByRole("tab", { name: "Account" }).waitFor();
+    await page.getByRole("tab", { name: "Sessions" }).waitFor();
+    await page.getByText("Apple Inc.").waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+  }],
+];
+
 const results = [];
-if (!hierarchyOnly && !locksOnly) {
+if (!hierarchyOnly && !locksOnly && !fullPanelsOnly) {
   for (const [name, viewport, scenario, interact] of steps) {
     const result = await shot(name, viewport, scenario, interact);
     results.push(result);
@@ -422,6 +497,14 @@ if (locksOnly) {
     console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
   }
 }
+if (fullPanelsOnly) {
+  await mkdir(fullPanelsDir, { recursive: true });
+  for (const [name, viewport, scenario, interact] of fullPanelSteps) {
+    const result = await shot(name, viewport, scenario, interact, fullPanelsDir);
+    results.push(result);
+    console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+  }
+}
 
 await browser.close();
 
@@ -436,5 +519,5 @@ if (failed.length) {
   }
   process.exitCode = 1;
 } else {
-  console.log(`screenshots: ${locksOnly ? locksDir : hierarchyOnly ? hierarchyDir : output}`);
+  console.log(`screenshots: ${fullPanelsOnly ? fullPanelsDir : locksOnly ? locksDir : hierarchyOnly ? hierarchyDir : output}`);
 }

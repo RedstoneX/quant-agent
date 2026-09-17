@@ -66,6 +66,7 @@ export function TodaySessionsStrip({
   onSelect,
   onFollowLatest,
   onSelectTrade,
+  variant = "page",
 }: {
   runs: RunSummary[];
   funnels: Record<string, RunFunnelResponse | null | undefined>;
@@ -77,7 +78,9 @@ export function TodaySessionsStrip({
   onSelect: (runId: string) => void;
   onFollowLatest: () => void;
   onSelectTrade: (trade: TradeItem) => void;
+  variant?: "page" | "panel";
 }) {
+  const isPanel = variant === "panel";
   // Item 8 (cockpit trader rework): eleven chips with text truncated
   // mid-word was a job log, not trading information, permanently occupying
   // a band of the primary screen. Collapsed to one summary line by
@@ -88,8 +91,8 @@ export function TodaySessionsStrip({
   const [expanded, setExpanded] = useState(false);
 
   if (runs.length === 0) {
-    if (loading) return <Text className="mx-3 mt-3">Loading today&rsquo;s sessions&hellip;</Text>;
-    if (error) return <Text className="mx-3 mt-3 text-neg">Could not load today&rsquo;s sessions: {error}</Text>;
+    if (loading) return <Text className={isPanel ? "" : "mx-3 mt-3"}>Loading today&rsquo;s sessions&hellip;</Text>;
+    if (error) return <Text className={isPanel ? "text-neg" : "mx-3 mt-3 text-neg"}>Could not load today&rsquo;s sessions: {error}</Text>;
     return null;
   }
 
@@ -121,7 +124,7 @@ export function TodaySessionsStrip({
   return (
     /* Compact default: one sessions line (count + selected-run verdict)
        rather than a second decision banner competing with the chart. */
-    <section className="mx-3 mt-1" aria-label="Today’s sessions">
+    <section className={isPanel ? "min-w-0 overflow-x-hidden" : "mx-3 mt-1 min-w-0 overflow-x-hidden"} aria-label="Today’s sessions">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -150,11 +153,11 @@ export function TodaySessionsStrip({
             )}
           </div>
           <TabGroup index={activeIndex} onIndexChange={(index) => onSelect(sorted[index].run_id)}>
-            <TabList variant="solid" color="cyan" className="max-w-full overflow-x-auto rounded-lg bg-panel-alt p-1 ring-1 ring-border">
+            <TabList variant="solid" color="cyan" className="flex max-w-full flex-wrap gap-y-1.5 overflow-x-hidden rounded-lg bg-panel-alt p-1 ring-1 ring-border">
               {sorted.map((run) => {
                 const funnel = funnels[run.run_id];
                 return (
-                  <Tab key={run.run_id} className="gap-2 whitespace-nowrap px-3 py-2">
+                  <Tab key={run.run_id} className="gap-2 px-3 py-2">
                     <span className="font-semibold uppercase">{sessionLabel(run.session_prefix)}</span>
                     <span className="font-mono text-dim">{fmtTime(run.first_timestamp)}</span>
                     {funnel ? (
@@ -180,10 +183,9 @@ export function TodaySessionsStrip({
             {executedTrades.length === 0 ? (
               <Text>No executed trades in this selected session.</Text>
             ) : (
-              <div className="overflow-x-auto">
-                <div className="min-w-[620px]">
-                  <div className="grid grid-cols-[1.1fr_.8fr_.8fr_.8fr_1fr_1fr] gap-2 border-b border-border px-2 pb-1 text-[0.65rem] font-semibold uppercase tracking-wide text-dim">
-                    <span>Symbol</span><span>Side</span><span>Qty</span><span>Fill</span><span>Status</span><span>Time</span>
+              <div className="min-w-0 overflow-x-hidden">
+                  <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,.8fr)_minmax(0,.8fr)_minmax(0,.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 border-b border-border px-2 pb-1 text-[0.65rem] font-semibold uppercase tracking-wide text-dim">
+                    <span className="truncate">Symbol</span><span className="truncate">Side</span><span className="truncate">Qty</span><span className="truncate">Fill</span><span className="truncate">Status</span><span className="truncate">Time</span>
                   </div>
                   {executedTrades.map((trade) => {
                     const side = trade.action.replace(/^SWEEP_/, "");
@@ -192,19 +194,18 @@ export function TodaySessionsStrip({
                         key={trade.id}
                         type="button"
                         onClick={() => onSelectTrade(trade)}
-                        className="grid w-full grid-cols-[1.1fr_.8fr_.8fr_.8fr_1fr_1fr] gap-2 rounded px-2 py-1.5 text-left text-[0.75rem] hover:bg-accent/10 focus:outline-none focus:ring-2 focus:ring-accent/60"
+                        className="grid w-full min-w-0 grid-cols-[minmax(0,1.1fr)_minmax(0,.8fr)_minmax(0,.8fr)_minmax(0,.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 rounded px-2 py-1.5 text-left text-[0.75rem] hover:bg-accent/10 focus:outline-none focus:ring-2 focus:ring-accent/60"
                         aria-label={`Chart ${trade.symbol} ${side} execution`}
                       >
-                        <span className="font-bold text-accent">{trade.symbol}</span>
-                        <span className={side === "BUY" ? "font-semibold text-pos" : "font-semibold text-neg"}>{side}</span>
-                        <span className="font-mono">{fmtNum(trade.fill_qty ?? trade.qty)}</span>
-                        <span className="font-mono">{fmtMoney(trade.fill_price ?? trade.price)}</span>
-                        <span className="uppercase text-dim">{trade.fill_status || "executed"}</span>
-                        <span className="font-mono text-dim">{fmtTime(trade.timestamp)}</span>
+                        <span className="truncate font-bold text-accent">{trade.symbol}</span>
+                        <span className={`truncate ${side === "BUY" ? "font-semibold text-pos" : "font-semibold text-neg"}`}>{side}</span>
+                        <span className="truncate font-mono">{fmtNum(trade.fill_qty ?? trade.qty)}</span>
+                        <span className="truncate font-mono">{fmtMoney(trade.fill_price ?? trade.price)}</span>
+                        <span className="truncate uppercase text-dim">{trade.fill_status || "executed"}</span>
+                        <span className="truncate font-mono text-dim">{fmtTime(trade.timestamp)}</span>
                       </button>
                     );
                   })}
-                </div>
               </div>
             )}
           </div>

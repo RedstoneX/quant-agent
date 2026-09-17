@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BOTTOMS_FLOOR_PX,
   CHART_FLOOR_PX,
+  COCKPIT_LAYOUT_KEY,
   nextBottomsSashState,
   nextSashGrowth,
   sashSitsBetween,
@@ -69,5 +70,11 @@ describe("sashSitsBetween", () => {
 
   it("rejects a sash that belongs to a split above the lower group", () => {
     expect(sashSitsBetween(200, 396, 404)).toBe(false);
+  });
+});
+
+describe("layout persistence key", () => {
+  it("bumps the cockpit layout key so Account and Sessions panels load as the default", () => {
+    expect(COCKPIT_LAYOUT_KEY).toBe("qamc.dockview.cockpit.v9");
   });
 });

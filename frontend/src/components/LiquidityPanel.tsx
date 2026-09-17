@@ -11,11 +11,10 @@ import { fmtMoneyCompact } from "../lib/format";
  * liquidity, raw cash, SGOV parked, deployable, reserve, directional
  * risk) — several of them just sums of the others, occupying a full panel
  * of prime real estate for numbers a trader reads once and never again.
- * Condensed to the single compact row it actually needs to be, and moved
- * out of the workspace tab strip into the header's secondary chrome
- * (App.tsx, directly under HeroBand) alongside the other portfolio
- * abstractions item 6 demotes. Same read-only account.liquidity data as
- * before, no new fetch. */
+ * Condensed to the single compact row it actually needs to be. On
+ * desktop it lives in the Account Dockview panel with NLV; on iPad it
+ * remains header chrome under HeroBand. Same read-only account.liquidity
+ * data as before, no new fetch. */
 
 function Stat({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
@@ -30,14 +29,17 @@ export function LiquidityStrip({
   account,
   accountError,
   positions,
+  variant = "page",
 }: {
   account: AccountResponse | null;
   accountError?: string | null;
   positions: PositionItem[];
+  variant?: "page" | "panel";
 }) {
+  const isPanel = variant === "panel";
   if (!account) {
     return (
-      <div className="mx-3 mt-1.5 text-[length:var(--fs-meta)] text-dim">
+      <div className={`${isPanel ? "" : "mx-3 mt-1.5 "}text-[length:var(--fs-meta)] text-dim`}>
         {accountError ? `Liquidity unavailable: ${accountError}` : "Loading liquidity…"}
       </div>
     );
@@ -49,14 +51,14 @@ export function LiquidityStrip({
     .reduce((total, position) => total + Math.abs(position.market_value || 0), 0);
 
   if (!liq) {
-    return <div className="mx-3 mt-1.5 text-[length:var(--fs-meta)] text-dim">Liquidity breakdown unavailable.</div>;
+    return <div className={`${isPanel ? "" : "mx-3 mt-1.5 "}text-[length:var(--fs-meta)] text-dim`}>Liquidity breakdown unavailable.</div>;
   }
 
   return (
     /* Vertical-space reallocation pass, 2026-09-11: mt-1.5 -> mt-1, same
        low-risk inter-section trim as the other stacked chrome sections. */
     <div
-      className="mx-3 mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-border bg-panel-alt px-3 py-1.5"
+      className={`${isPanel ? "mt-1 " : "mx-3 mt-1 "}flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 overflow-x-hidden rounded-lg border border-border bg-panel-alt px-3 py-1.5`}
       aria-label="Liquidity"
     >
       <Text className="uppercase tracking-wide">Liquidity</Text>

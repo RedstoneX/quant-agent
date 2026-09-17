@@ -44,8 +44,9 @@ describe("HoldingsStrip", () => {
       }),
     );
     render(<HoldingsStrip positions={positions} error={null} updatedAt={new Date("2026-08-25T18:30:00Z")} />);
-    const grid = screen.getByLabelText("Holdings").querySelector(".grid");
-    expect(grid?.className).toContain("xl:grid-cols-4");
+    const grid = screen.getByLabelText("Holdings").querySelector(".holdings-wrap");
+    expect(grid).not.toBeNull();
+    expect(grid?.className).toContain("holdings-wrap");
     expect(grid?.className).not.toContain("overflow-x-auto");
     expect(screen.getByLabelText("Holdings").className).toContain("overflow-x-hidden");
   });
@@ -62,10 +63,10 @@ describe("HoldingsStrip", () => {
         compact
       />,
     );
-    expect(screen.getByLabelText("Holdings").querySelector(".grid")).toBeNull();
+    expect(screen.getByLabelText("Holdings").querySelector(".holdings-wrap")).toBeNull();
     expect(screen.getByText("5 open")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Holdings/ }));
-    expect(screen.getByLabelText("Holdings").querySelector(".grid")?.className).toContain("xl:grid-cols-4");
+    expect(screen.getByLabelText("Holdings").querySelector(".holdings-wrap")).not.toBeNull();
   });
 
   it("always shows the wrap grid inside a Dockview panel", () => {
@@ -81,7 +82,7 @@ describe("HoldingsStrip", () => {
         variant="panel"
       />,
     );
-    expect(screen.getByLabelText("Holdings").querySelector(".grid")?.className).toContain("xl:grid-cols-4");
+    expect(screen.getByLabelText("Holdings").querySelector(".holdings-wrap")).not.toBeNull();
     expect(screen.queryByRole("button", { name: /Holdings/ })).toBeNull();
   });
 });

@@ -199,7 +199,7 @@ export function CandidateRail({
           </Grid>
 
           <TabGroup index={activeFilterIndex} onIndexChange={(index) => setFilter(FILTERS[index].key)}>
-            <TabList variant="solid" color="cyan" className="max-w-full overflow-x-auto bg-panel-alt p-1 ring-1 ring-border">
+            <TabList variant="solid" color="cyan" className="flex max-w-full flex-wrap gap-y-1.5 overflow-x-hidden bg-panel-alt p-1 ring-1 ring-border">
               {FILTERS.map((item) => {
                 const count = item.key === "all" ? total : buckets[item.key].length;
                 return (

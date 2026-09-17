@@ -51,9 +51,10 @@ function ViewNav({
 }: {
   view: View;
   onChange: (v: View) => void;
-  /* Right-aligned slot (App.tsx's chrome-collapse control on the cockpit
+  /* Right-aligned slot (iPad/phone chrome-collapse on the cockpit
    * view) — kept generic rather than a cockpit-specific prop so this bar
-   * stays reusable for any future per-view control. */
+   * stays reusable for any future per-view control. Desktop cockpit has
+   * no header-collapse control: NLV/sessions live in Dockview. */
   trailing?: ReactNode;
 }) {
   return (
@@ -223,16 +224,13 @@ export default function App() {
   // row below claims a fixed viewport-bounded height so it's a real
   // "answer at a glance" workstation rather than an unboundedly tall page
   // — but the height BUDGET for that row is "100vh minus everything above
-  // it," and everything above it (TopStrip + ViewNav + HeroBand +
-  // TodaySessionsStrip + DecisionStateBanner) is genuinely variable height:
-  // TodaySessionsStrip renders null with zero sessions, DecisionStateBanner
-  // wraps to 1-2 lines depending on content, a stale-data warning row can
-  // appear/disappear. A single hardcoded constant drifts every time one of
-  // those rows changes shape — exactly how the previous "150px" constant
-  // went stale (real measured chrome was 423px, not 150px). Measuring it
-  // live via ResizeObserver and writing it to the --chrome-h CSS custom
-  // property (see styles/index.css's :root) keeps the row's declared
-  // height honest without forcing a React re-render on every resize tick.
+  // it." On desktop that chrome is TopStrip + ViewNav only (NLV, liquidity,
+  // sessions and the decision banner live in Dockview). On iPad the header
+  // strips still sit above the tabbed panes and are genuinely variable
+  // height. Measuring it live via ResizeObserver and writing it to the
+  // --chrome-h CSS custom property (see styles/index.css's :root) keeps
+  // the row's declared height honest without forcing a React re-render on
+  // every resize tick.
   const chromeRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = chromeRef.current;
@@ -314,14 +312,11 @@ export default function App() {
   // question on arrival is "what do I hold," not "what did the scanner
   // find."
   const [mobilePane, setMobilePane] = useState<MobilePane>("positions");
-  // Defaults compact: the price chart is the primary "answer at a glance"
-  // surface and was reported cramped. HeroBand/TodaySessionsStrip/
-  // DecisionStateBanner each already ship a `collapsed`/`compact` mode
-  // (dense line instead of full cards/table) purpose-built to reclaim this
-  // exact vertical space — see their own comments. Nothing here is
-  // unreachable when collapsed: the same facts are still shown, just
-  // denser, and the toggle below switches back to the full layout on
-  // demand.
+  // iPad/phone only: the price chart is the primary surface and was
+  // reported cramped. HeroBand/TodaySessionsStrip/DecisionStateBanner
+  // each already ship a `collapsed`/`compact` mode (dense line instead of
+  // full cards/table). Desktop no longer uses this — those sections are
+  // Dockview panels the operator resizes directly.
   const [chromeCompact, setChromeCompact] = useState(true);
 
   const { state: modalState, value: modalActions } = useModalState();
@@ -571,17 +566,18 @@ export default function App() {
   return (
     <ModalProvider value={modalActions}>
       {/* Fix 1: chromeRef wraps exactly the header stack whose real height
-          drives the primary row's viewport budget below (TopStrip through
-          DecisionStateBanner) — see the ResizeObserver effect above. A bare
-          div with no padding/border/margin is transparent to layout and
-          does not interfere with TopStrip's own `sticky` positioning. */}
+          drives the primary row's viewport budget below (TopStrip + ViewNav
+          on desktop; plus the iPad header strips when those render) — see
+          the ResizeObserver effect above. A bare div with no
+          padding/border/margin is transparent to layout and does not
+          interfere with TopStrip's own `sticky` positioning. */}
       <div ref={chromeRef}>
         <TopStrip account={account} accountError={accountError} health={health} updatedAt={updatedAt} />
         <ViewNav
           view={view}
           onChange={setView}
           trailing={
-            view === "cockpit" ? (
+            view === "cockpit" && !isDesktop ? (
               <button
                 type="button"
                 onClick={() => setChromeCompact((v) => !v)}
@@ -594,7 +590,7 @@ export default function App() {
           }
         />
 
-        {view === "cockpit" && (
+        {view === "cockpit" && !isDesktop && (
           <>
             {/* Item 6 (cockpit trader rework): holdings and P&L lead —
                 the first question a trader asks on arrival — with the
@@ -602,21 +598,16 @@ export default function App() {
                 demoted below as compact, secondary chrome. Reuses the same
                 broker-marked positions state HeroBand/PositionsPanel
                 already render; a click charts the symbol in place, no
-                modal (item 2/3 — see chartPositionSymbol). */}
-            {!isDesktop && (
-              <HoldingsStrip
-                positions={positions}
-                error={positionsError}
-                updatedAt={positionsUpdatedAt}
-                onSelectSymbol={chartPositionSymbol}
-                compact={chromeCompact}
-              />
-            )}
+                modal (item 2/3 — see chartPositionSymbol). Desktop folds
+                these into Dockview panels instead. */}
+            <HoldingsStrip
+              positions={positions}
+              error={positionsError}
+              updatedAt={positionsUpdatedAt}
+              onSelectSymbol={chartPositionSymbol}
+              compact={chromeCompact}
+            />
             <HeroBand account={account} accountError={accountError} positions={positions} regime={latestRegime} collapsed={chromeCompact} />
-            {/* Liquidity and the decision banner stay available behind
-                "Show full header". Compact default folds deployable cash
-                into the NLV line and the selected-run verdict onto
-                Sessions so this stack cannot out-height the chart. */}
             {!chromeCompact && (
               <LiquidityStrip account={account} accountError={accountError} positions={positions} />
             )}
@@ -659,6 +650,9 @@ export default function App() {
                 onChartInteraction: markChartInteraction,
                 previousChartSymbol: previousChartSymbolRef.current,
                 onGoBackSymbol: goBackToPreviousSymbol,
+                todaysRuns, todaysFunnels, todaysTrades, selectedRunId, autoFollow,
+                onSelectSession: selectSession, onFollowLatest: followPrimarySession,
+                onSelectTrade: selectSessionTrade, regime: latestRegime,
               }}>
                 <DesktopCockpitWorkspace />
               </CockpitWorkspaceProvider>

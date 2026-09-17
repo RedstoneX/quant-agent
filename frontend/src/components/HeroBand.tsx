@@ -84,6 +84,7 @@ export function HeroBand({
   positions,
   regime,
   collapsed = false,
+  variant = "page",
 }: {
   account: AccountResponse | null;
   accountError: string | null;
@@ -91,16 +92,17 @@ export function HeroBand({
   /** Last known regime reading across today's runs, with its age — see
    * App.tsx's `latestRegime`. Null on a day with no regime evidence yet. */
   regime: { macro: MacroBroaderContext; asOf: string | null } | null;
-  /* Item 6 (cockpit trader rework): this is now the SECONDARY, compact
-   * portfolio-abstractions band — Holdings lives in a Dockview panel on
-   * desktop (and a header strip on iPad). Collapsed is the default; nothing here is
-   * unreachable when collapsed, the same facts are still shown, just
-   * denser, and "Show full header" switches back to the full cards. */
+  /* Item 6 (cockpit trader rework): on iPad this is still compact header
+   * chrome (Holdings is a header strip there). On desktop the same facts
+   * live in the Account Dockview panel — collapsed is unused there; the
+   * panel itself is what the operator resizes. */
   collapsed?: boolean;
+  variant?: "page" | "panel";
 }) {
+  const isPanel = variant === "panel";
   if (!account) {
     return (
-      <Card className="mx-3 mt-1 !w-auto !bg-panel !p-2 !ring-border text-center">
+      <Card className={`${isPanel ? "" : "mx-3 mt-1 "}!w-auto !bg-panel !p-2 !ring-border text-center`}>
         <Text>{accountError ? `Account unavailable: ${accountError}` : "Loading account…"}</Text>
       </Card>
     );
@@ -132,7 +134,7 @@ export function HeroBand({
 
   if (collapsed) {
     return (
-      <div className="mx-3 mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg border border-border bg-panel px-3 py-1">
+      <div className={`${isPanel ? "" : "mx-3 mt-1 "}flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 overflow-x-hidden rounded-lg border border-border bg-panel px-3 py-1`}>
         <span className="flex items-baseline gap-2">
           <span className="label-xs">NLV</span>
           <span className="font-mono text-[length:var(--fs-stat)] font-semibold tabular-nums text-ink">
@@ -194,7 +196,7 @@ export function HeroBand({
        sections (HoldingsStrip/LiquidityPanel/TodaySessionsStrip/
        DecisionStateBanner) — internal mt-3 spacing inside this component
        is untouched. */
-    <div className={`mx-3 mt-2 grid grid-cols-1 gap-3 ${regime?.macro.regime ? "lg:grid-cols-[1.2fr_1fr_1fr]" : "lg:grid-cols-[1.2fr_1fr]"}`}>
+    <div className={`${isPanel ? "min-w-0 overflow-x-hidden " : "mx-3 mt-2 "}grid grid-cols-1 gap-3 ${isPanel ? "" : regime?.macro.regime ? "lg:grid-cols-[1.2fr_1fr_1fr]" : "lg:grid-cols-[1.2fr_1fr]"}`}>
       <Card
         decoration="top"
         decorationColor={accountError ? "amber" : "cyan"}

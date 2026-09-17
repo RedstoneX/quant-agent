@@ -9,6 +9,10 @@ import { PriceChartPanel } from "./PriceChartPanel";
 import { ChartSymbolBar } from "./ChartSymbolBar";
 import { PositionsPanel } from "./PositionsPanel";
 import { HoldingsStrip } from "./HoldingsStrip";
+import { HeroBand } from "./HeroBand";
+import { LiquidityStrip } from "./LiquidityPanel";
+import { TodaySessionsStrip } from "./TodaySessionsStrip";
+import { DecisionStateBanner } from "./DecisionStateBanner";
 import {
   BOTTOMS_FLOOR_PX,
   CHART_FLOOR_PX,
@@ -50,7 +54,7 @@ import { Panel, StateMessage } from "./ui/Panel";
 // compatibility — it is not placed by default any more.
 function WorkspaceSlotPane() {
   return (
-    <div className="h-full overflow-y-auto p-2">
+    <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2">
       <Panel title="Workspace">
         <StateMessage
           hero
@@ -69,7 +73,7 @@ function WorkspaceSlotPane() {
 function PositionsPane() {
   const state = useSupportWorkspace();
   return (
-    <div className="h-full overflow-y-auto p-2">
+    <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2">
       <PositionsPanel
         positions={state.positions}
         error={state.positionsError}
@@ -96,9 +100,60 @@ function HoldingsPane() {
   );
 }
 
+function AccountPane() {
+  const support = useSupportWorkspace();
+  const cockpit = useCockpitWorkspace();
+  return (
+    <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2">
+      <HeroBand
+        account={support.account}
+        accountError={support.accountError}
+        positions={support.positions}
+        regime={cockpit.regime}
+        variant="panel"
+      />
+      <LiquidityStrip
+        account={support.account}
+        accountError={support.accountError}
+        positions={support.positions}
+        variant="panel"
+      />
+    </div>
+  );
+}
+
+function SessionsPane() {
+  const cockpit = useCockpitWorkspace();
+  return (
+    <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2">
+      <TodaySessionsStrip
+        runs={cockpit.todaysRuns}
+        funnels={cockpit.todaysFunnels}
+        trades={cockpit.todaysTrades}
+        loading={cockpit.loading}
+        error={cockpit.error}
+        selectedRunId={cockpit.selectedRunId}
+        autoFollow={cockpit.autoFollow}
+        onSelect={cockpit.onSelectSession}
+        onFollowLatest={cockpit.onFollowLatest}
+        onSelectTrade={cockpit.onSelectTrade}
+        variant="panel"
+      />
+      <DecisionStateBanner
+        funnel={cockpit.funnel}
+        trades={cockpit.todaysTrades}
+        loading={cockpit.loading}
+        error={cockpit.error}
+        updatedAt={cockpit.updatedAt}
+        variant="panel"
+      />
+    </div>
+  );
+}
+
 function CandidatesPane() {
   const state = useCockpitWorkspace();
-  return <div className="h-full overflow-y-auto p-2"><CandidateRail funnel={state.funnel} loading={state.loading} error={state.error} updatedAt={state.updatedAt} selectedSymbol={state.chartSymbol} onSelectSymbol={state.onSelectSymbol} /></div>;
+  return <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2"><CandidateRail funnel={state.funnel} loading={state.loading} error={state.error} updatedAt={state.updatedAt} selectedSymbol={state.chartSymbol} onSelectSymbol={state.onSelectSymbol} /></div>;
 }
 
 // Above the candles: company name + ticker + Lifecycle. Holding figures
@@ -144,16 +199,16 @@ function ChartPane() {
 
 function OrdersPane() {
   const state = useSupportWorkspace();
-  return <div className="h-full overflow-y-auto p-2"><OrdersPanel orders={state.orders} error={state.ordersError} loading={state.ordersLoading} status={state.orderStatus} onStatusChange={state.onOrderStatusChange} onInspect={state.onInspectOrder} onSelectSymbol={state.onSelectPositionSymbol} trades={state.trades} /></div>;
+  return <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2"><OrdersPanel orders={state.orders} error={state.ordersError} loading={state.ordersLoading} status={state.orderStatus} onStatusChange={state.onOrderStatusChange} onInspect={state.onInspectOrder} onSelectSymbol={state.onSelectPositionSymbol} trades={state.trades} /></div>;
 }
 
 function TradesPane() {
   const state = useSupportWorkspace();
-  return <div className="h-full overflow-y-auto p-2"><TradesPanel trades={state.trades} error={state.tradesError} loading={state.tradesLoading} onInspect={state.onInspectTrade} onSelectSymbol={state.onSelectPositionSymbol} /></div>;
+  return <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2"><TradesPanel trades={state.trades} error={state.tradesError} loading={state.tradesLoading} onInspect={state.onInspectTrade} onSelectSymbol={state.onSelectPositionSymbol} /></div>;
 }
 
-function RunsPane() { const state = useSupportWorkspace(); return <div className="h-full overflow-y-auto p-2"><RunsPanel runs={state.runs} error={state.runsError} loading={state.runsLoading} /></div>; }
-function BiasPane() { return <div className="h-full overflow-y-auto p-2"><DirectionalBiasPanel /></div>; }
+function RunsPane() { const state = useSupportWorkspace(); return <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2"><RunsPanel runs={state.runs} error={state.runsError} loading={state.runsLoading} /></div>; }
+function BiasPane() { return <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2"><DirectionalBiasPanel /></div>; }
 // Was wired to a callback that conditionally opened the candidate-detail
 // modal depending on which session happened to be selected in the
 // Sessions strip — unrelated to the missed-opportunity row being clicked
@@ -161,7 +216,7 @@ function BiasPane() { return <div className="h-full overflow-y-auto p-2"><Direct
 // explanation. Routed to the same modal-free callback PositionsPane uses
 // above: chart the symbol, open nothing (governing principle, App.tsx's
 // chartPositionSymbol).
-function MissedPane() { const state = useSupportWorkspace(); return <div className="h-full overflow-y-auto p-2"><MissedOpportunitiesPanel onSelectSymbol={state.onSelectPositionSymbol} /></div>; }
+function MissedPane() { const state = useSupportWorkspace(); return <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2"><MissedOpportunitiesPanel onSelectSymbol={state.onSelectPositionSymbol} /></div>; }
 
 // Item 13 (cockpit trader rework): System and Search — named by the owner
 // as "not trading" — used to each be their own top-level tab in this
@@ -171,7 +226,7 @@ function MissedPane() { const state = useSupportWorkspace(); return <div classNa
 function DiagnosticsPane() {
   const state = useSupportWorkspace();
   return (
-    <div className="h-full overflow-y-auto p-2 flex flex-col gap-3">
+    <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2 flex flex-col gap-3">
       <HealthPanel health={state.health} error={state.healthError} />
       <SearchPanel onSelectSymbol={state.onSelectPositionSymbol} />
     </div>
@@ -181,6 +236,8 @@ function DiagnosticsPane() {
 const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
   positions: PositionsPane,
   holdings: HoldingsPane,
+  account: AccountPane,
+  sessions: SessionsPane,
   candidates: CandidatesPane,
   chart: ChartPane,
   orders: OrdersPane,
@@ -192,6 +249,11 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   workspaceSlot: WorkspaceSlotPane,
 };
 
+// Bumped v8 -> v9 (owner lock): remaining page chrome — NLV/performance,
+// liquidity, sessions, decision banner — leaves the header and becomes
+// Dockview panels (Account, Sessions) beside Holdings above the chart.
+// v8 blobs would keep those sections as fixed top-of-page strips.
+//
 // Bumped v7 -> v8 (owner lock): Holdings leaves the fixed header and
 // becomes a Dockview panel above the chart — movable, dockable, resizable
 // like Positions/Orders. The chart-vs-bottoms sash is two-way (borrow from
@@ -267,15 +329,32 @@ function buildDefaultLayout(api: DockviewApi) {
     api.addPanel({ id, component: id, title, position: { referencePanel: "chart", direction: "within" }, inactive: true });
   }
 
-  // Holdings as its own row above the chart — a real Dockview panel, not
-  // header chrome — so the operator can move/dock/resize it and so the
-  // sash above the candles can steal from Holdings instead of only from
-  // Positions/Orders below. Short default so the chart stays the stage.
+  // Top row: Holdings | Account | Sessions — real Dockview panels, not
+  // header chrome — so the operator can move/dock/resize them H and V
+  // like Positions/Orders. Short default so the chart stays the stage.
   api.addPanel({
     id: "holdings",
     component: "holdings",
     title: "Holdings",
     position: { referencePanel: "chart", direction: "above" },
+    initialHeight: HOLDINGS_DEFAULT_PX,
+    minimumHeight: HOLDINGS_FLOOR_PX,
+    minimumWidth: 80,
+  });
+  api.addPanel({
+    id: "account",
+    component: "account",
+    title: "Account",
+    position: { referencePanel: "holdings", direction: "right" },
+    initialHeight: HOLDINGS_DEFAULT_PX,
+    minimumHeight: HOLDINGS_FLOOR_PX,
+    minimumWidth: 80,
+  });
+  api.addPanel({
+    id: "sessions",
+    component: "sessions",
+    title: "Sessions",
+    position: { referencePanel: "account", direction: "right" },
     initialHeight: HOLDINGS_DEFAULT_PX,
     minimumHeight: HOLDINGS_FLOOR_PX,
     minimumWidth: 80,
@@ -468,7 +547,7 @@ export function DesktopCockpitWorkspace() {
   }, []);
 
   // Capture-phase pointerdown on the chart-vs-Positions sash only. Native
-  // dockview keeps the Holdings-vs-chart sash (and any other vertical
+  // dockview keeps the top-row-vs-chart sash (and any other vertical
   // split). This handler is two-way: up borrows from the chart to grow
   // bottoms, down shrinks bottoms to the floor then grows the page. Extra
   // page height is written on the wrapper DOM during the gesture so
@@ -515,8 +594,9 @@ export function DesktopCockpitWorkspace() {
       const sashBox = sash.getBoundingClientRect();
       const chartBox = chartEl.getBoundingClientRect();
       const bottomsBox = bottomsEl.getBoundingClientRect();
-      // Only the chart-vs-Positions sash. The Holdings-vs-chart sash
-      // above stays native dockview so it can borrow from the row above.
+      // Only the chart-vs-Positions sash. The top-row-vs-chart sash
+      // (Holdings/Account/Sessions above) stays native dockview so it
+      // can borrow from the row above.
       if (!sashSitsBetween((sashBox.top + sashBox.bottom) / 2, chartBox.bottom, bottomsBox.top)) return;
       e.stopPropagation();
       e.preventDefault();
