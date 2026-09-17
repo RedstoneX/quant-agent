@@ -339,21 +339,40 @@ def missing_stated_falsifier(value: str | None) -> bool:
     """True when there is no checkable 'I'll sell if' string.
 
     Empty, whitespace, and the recordable don't-know token `unknown` are
-    all missing. Neutral Tech may omit; an actionable rating and a
-    non-zero target may not enter the ticket book in this state.
+    all missing. Neutral Tech may omit; an actionable rating and an
+    open/increase target may not enter the ticket book in this state.
+    A reduction or close may omit the field — that omit does not make
+    PM thesis free text a sell warrant.
     """
     return not stated_soft_exit(value)
 
 
-def open_target_missing_falsifier(target) -> bool:
-    """Non-zero (open/add) target with no real thesis_invalid_if.
+def open_target_missing_falsifier(target, *, intent: str | None = None) -> bool:
+    """Open/increase target with no real thesis_invalid_if.
 
-    A close (`risk_allocation_pct` / `target_weight_pct` == 0) may omit
-    the falsifier. Catalyst is not this check — it stays optional except
-    the dated unmeasurable-range exception already gated in Python.
+    Falsifier is required only for opens and increases. Reductions and
+    closes may omit it; a blank-falsifier size-down is not a soft-exit
+    — the constructor may only build SELL/COVER when a mechanical
+    size-down vs the live book is checkable, and that warrant is the
+    named trigger. PM thesis free text explains; it cannot create the
+    sell. Never invents a string. Catalyst is not this check — it
+    stays optional except the dated unmeasurable-range exception
+    already gated in Python.
+
+    `intent` is `"buy"` / `"short"` / `"sell"` from
+    `PortfolioManagerAgent._target_intent` (current size/risk vs the
+    proposed target). A `"sell"` — a trim to a lower non-zero size, or
+    a full close — is exempt. When `intent` is omitted, only a full
+    close (`is_close`) is exempt: callers that can classify from the
+    live book must pass intent so a non-zero trim is not treated as an
+    open.
     """
     if target is None:
         return False
+    if intent is not None:
+        if intent not in ("buy", "short"):
+            return False
+        return missing_stated_falsifier(getattr(target, "thesis_invalid_if", None))
     is_close = getattr(target, "is_close", None)
     if callable(is_close):
         if target.is_close:
@@ -2044,11 +2063,15 @@ class TargetPosition(LLMOutputModel):
 
     @property
     def missing_open_falsifier(self) -> bool:
-        """Open/add intent with no real thesis_invalid_if.
+        """Open/increase intent with no real thesis_invalid_if.
 
-        Enforced at the ticket book (heal + one paid retry, then refuse),
-        not as a ValidationError — stored historical rows with an empty
-        field must still parse. Catalyst stays optional here.
+        Target-only view: a full close is exempt; a non-zero trim is
+        not classified here because that needs the live book. The
+        ticket-book gate classifies via `_target_intent` and passes
+        `intent` so reductions are admitted. Enforced at the ticket
+        book (heal + one paid retry, then refuse), not as a
+        ValidationError — stored historical rows with an empty field
+        must still parse. Catalyst stays optional here.
         """
         return open_target_missing_falsifier(self)
 

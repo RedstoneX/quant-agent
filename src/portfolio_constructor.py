@@ -48,6 +48,124 @@ from src.risk.constants import reward_risk_floor_applies
 
 logger = logging.getLogger(__name__)
 
+# Python-stamped named trigger for a funding-trim / size-down. Checkable
+# from the same live-book weight (and risk, when passed) the constructor
+# used. PM thesis free text explains; it cannot create the sell. Do NOT
+# add this phrase to pipeline._HARD_TRIGGER_KEYWORDS — a midday LLM
+# could emit it with nothing behind it (correlation-breach lesson,
+# 2026-09-13). Descriptive categorisation in storage is separate.
+MECHANICAL_SIZE_DOWN_TRIGGER = "mechanical size-down vs live book"
+
+
+def format_mechanical_size_down_reason(
+    *,
+    current_weight_pct: float,
+    target_weight_pct: float,
+    current_risk_pct: float | None = None,
+    target_risk_pct: float | None = None,
+) -> str:
+    """Named trigger stamped from live-book numbers, never from PM prose."""
+    parts = [
+        f"{MECHANICAL_SIZE_DOWN_TRIGGER}: "
+        f"weight {current_weight_pct:.2f}% → {target_weight_pct:.2f}%"
+    ]
+    if (
+        current_risk_pct is not None
+        and target_risk_pct is not None
+        and math.isfinite(current_risk_pct)
+        and math.isfinite(target_risk_pct)
+    ):
+        parts.append(f"risk {current_risk_pct:.2f}% → {target_risk_pct:.2f}%")
+    return "; ".join(parts)
+
+
+def cites_mechanical_size_down(reason: str | None) -> bool:
+    return MECHANICAL_SIZE_DOWN_TRIGGER in (reason or "")
+
+
+def is_soft_exit_reduction(decision) -> bool:
+    """True when a SELL/COVER's named trigger is thesis/falsifier free text.
+
+    A funding-trim whose reasoning starts with the Python mechanical
+    size-down warrant is not a soft-exit.
+    """
+    action = getattr(decision, "action", None)
+    if action not in ("SELL", "COVER"):
+        return False
+    reason = getattr(decision, "reasoning", None) or ""
+    return not reason.startswith(MECHANICAL_SIZE_DOWN_TRIGGER)
+
+
+def _size_down_checkable(
+    current_pct: float, target_pct: float, *, long_side: bool,
+) -> bool:
+    if not math.isfinite(current_pct) or not math.isfinite(target_pct):
+        return False
+    if long_side:
+        return current_pct > 0 and target_pct < current_pct
+    return current_pct < 0 and target_pct > current_pct
+
+
+def _lookup_existing_risk(
+    existing_risk_pct: dict[str, float] | None, symbol: str,
+) -> float | None:
+    if not existing_risk_pct:
+        return None
+    if symbol in existing_risk_pct:
+        val = existing_risk_pct[symbol]
+    else:
+        val = existing_risk_pct.get(str(symbol).upper())
+    if val is None:
+        return None
+    try:
+        parsed = float(val)
+    except (TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _named_reduction_trigger(
+    target: TargetPosition,
+    current_pct: float,
+    target_pct: float,
+    *,
+    long_side: bool,
+    current_risk_pct: float | None = None,
+) -> tuple[str, str] | None:
+    """(reasoning, falsifier) for a SELL/COVER, or None if no desk warrant.
+
+    A stated thesis_invalid_if is a checkable soft-exit warrant; reasoning
+    then keeps the existing thesis + parenthetical so a Python-authored
+    close reason already on the target is preserved. With a blank
+    falsifier, PM thesis cannot create the sell: only a live-book
+    size-down (weight, and risk when known) is stamped as the named
+    trigger. Never invents a falsifier.
+    """
+    falsifier = stated_soft_exit(target.thesis_invalid_if)
+    thesis = (target.thesis or "").strip()
+    if falsifier:
+        reasoning = thesis
+        reasoning += f" (thesis_invalid_if: {falsifier})"
+        return reasoning, falsifier
+    if not _size_down_checkable(current_pct, target_pct, long_side=long_side):
+        logger.warning(
+            "Constructor: %s %s skipped — blank thesis_invalid_if and "
+            "size-down vs live book is not checkable (current_pct=%s "
+            "target_pct=%s); PM thesis cannot create the sell",
+            "SELL" if long_side else "COVER", target.symbol,
+            current_pct, target_pct,
+        )
+        return None
+    trigger = format_mechanical_size_down_reason(
+        current_weight_pct=current_pct,
+        target_weight_pct=target_pct,
+        current_risk_pct=current_risk_pct,
+        target_risk_pct=target.risk_allocation_pct,
+    )
+    if thesis:
+        trigger = f"{trigger} (PM explanation: {thesis[:200]})"
+    return trigger, ""
+
 
 class _DropReasonCapture(logging.Handler):
     """Funnel-queue item 2 (2026-09-03): the census
@@ -1045,6 +1163,9 @@ class PortfolioConstructor:
                     # Trim or close a LONG.
                     sell_decision = self._build_sell(
                         target, positions_by_sym.get(sym), current_pct, signed_target,
+                        current_risk_pct=_lookup_existing_risk(
+                            existing_risk_pct, sym,
+                        ),
                     )
                     if sell_decision is not None:
                         sells.append(sell_decision)
@@ -1069,6 +1190,9 @@ class PortfolioConstructor:
                     # Cover (reduce/close) a SHORT.
                     cover_decision = self._build_cover(
                         target, positions_by_sym.get(sym), current_pct, signed_target,
+                        current_risk_pct=_lookup_existing_risk(
+                            existing_risk_pct, sym,
+                        ),
                     )
                     if cover_decision is not None:
                         buys.append(cover_decision)
@@ -2902,6 +3026,7 @@ class PortfolioConstructor:
         position: Position | None,
         current_pct: float,
         target_pct: float,
+        current_risk_pct: float | None = None,
     ) -> TradeDecision | None:
         if position is None or position.qty <= 0:
             return None
@@ -2921,6 +3046,13 @@ class PortfolioConstructor:
                 target.symbol, current_pct, position.market_value,
             )
             return None
+        named = _named_reduction_trigger(
+            target, current_pct, target_pct, long_side=True,
+            current_risk_pct=current_risk_pct,
+        )
+        if named is None:
+            return None
+        reasoning, falsifier = named
         if target_pct == 0:
             # Full close
             alloc = 100.0
@@ -2929,10 +3061,6 @@ class PortfolioConstructor:
             # fraction to sell = (current - target) / current
             fraction = (current_pct - target_pct) / current_pct
             alloc = max(1.0, min(99.0, round(fraction * 100, 1)))
-        reasoning = target.thesis
-        falsifier = stated_soft_exit(target.thesis_invalid_if)
-        if falsifier:
-            reasoning += f" (thesis_invalid_if: {falsifier})"
         # SELLs don't need live entry/stop/target — execution uses market price
         return TradeDecision(
             action="SELL",
@@ -2944,6 +3072,7 @@ class PortfolioConstructor:
             reasoning=reasoning[:500],
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
+            # Blank-falsifier funding-trims leave this None — never invent.
             thesis_invalid_if=falsifier or None,
         )
 
@@ -2953,6 +3082,7 @@ class PortfolioConstructor:
         position: Position | None,
         current_pct: float,
         target_pct: float,
+        current_risk_pct: float | None = None,
     ) -> TradeDecision | None:
         """D1/D3 (Stage 3): the SELL-side twin, for reducing/closing a short.
 
@@ -2973,6 +3103,13 @@ class PortfolioConstructor:
                 target.symbol, current_pct, position.market_value,
             )
             return None
+        named = _named_reduction_trigger(
+            target, current_pct, target_pct, long_side=False,
+            current_risk_pct=current_risk_pct,
+        )
+        if named is None:
+            return None
+        reasoning, falsifier = named
         if target_pct == 0:
             # Full cover
             alloc = 100.0
@@ -2980,10 +3117,6 @@ class PortfolioConstructor:
             # Partial: buy back enough to land on target_pct.
             fraction = (current_pct - target_pct) / current_pct
             alloc = max(1.0, min(99.0, round(fraction * 100, 1)))
-        reasoning = target.thesis
-        falsifier = stated_soft_exit(target.thesis_invalid_if)
-        if falsifier:
-            reasoning += f" (thesis_invalid_if: {falsifier})"
         # COVERs don't need live entry/stop/target — execution uses market price
         return TradeDecision(
             action="COVER",
@@ -2995,6 +3128,7 @@ class PortfolioConstructor:
             reasoning=reasoning[:500],
             # Real, untruncated field alongside the embedded-in-reasoning
             # text above — see TradeDecision.thesis_invalid_if.
+            # Blank-falsifier funding-trims leave this None — never invent.
             thesis_invalid_if=falsifier or None,
         )
 

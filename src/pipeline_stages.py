@@ -1400,6 +1400,9 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
         # fault is checked FIRST: it is not a judgement at all.
         drain_refusals = getattr(constructor, "drain_refusals", None)
         refusals = dict(drain_refusals() if callable(drain_refusals) else {})
+        existing_risk_pct, _ = _book_risk_inputs(
+            ctx, getattr(ctx, "total_value", 0.0) or 0.0,
+        )
         for sym in dropped:
             fault = faults.get(sym)
             if fault:
@@ -1425,9 +1428,17 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
                 ),
                 None,
             )
-            if target is not None and open_target_missing_falsifier(target):
-                # Already recorded as SOFT_EXIT_MISSING_AFTER_RETRY before
-                # the constructor ran. Do not re-file as a generic drop.
+            if target is not None and _target_increase_missing_falsifier(
+                target,
+                positions=getattr(ctx, "positions", None),
+                total_value=getattr(ctx, "total_value", 0.0) or 0.0,
+                existing_risk_pct=existing_risk_pct,
+            ):
+                # Already recorded as SOFT_EXIT_MISSING_AFTER_RETRY
+                # before the constructor ran. Do not re-file as a
+                # generic drop. A checkable size-down with a blank
+                # falsifier is NOT this skip — it was admitted so the
+                # constructor can stamp a mechanical warrant.
                 continue
             # Falls back to a generic label only if a future refactor adds
             # a new drop path the capture's log-message pattern doesn't
@@ -2654,21 +2665,63 @@ def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
     )
 
 
-def _targets_admitted_to_book(targets) -> tuple[list, list[str]]:
-    """Open/add names still missing a real falsifier never reach the constructor.
+def _target_increase_missing_falsifier(
+    target, *, positions=None, total_value: float = 0.0,
+    existing_risk_pct=None,
+) -> bool:
+    """True iff this target is an open/increase still missing a real falsifier.
+
+    Classification reuses `PortfolioManagerAgent._target_intent` (current
+    size/risk vs the proposed target). Reductions and closes are never
+    this check — a blank `thesis_invalid_if` on a checkable size-down
+    is not a missing open falsifier. The constructor still must name a
+    mechanical live-book warrant rather than PM thesis; that is not
+    this function. Fail-safe matches `_target_intent`: unknown current
+    risk is treated as an increase, the stricter gate. Never invents a
+    string.
+    """
+    held = {
+        str(getattr(p, "symbol", "")).upper(): p
+        for p in list(positions or [])
+        if getattr(p, "symbol", None)
+    }
+    intent = PortfolioManagerAgent._target_intent(
+        target, held, total_value, existing_risk_pct=existing_risk_pct,
+    )
+    return open_target_missing_falsifier(target, intent=intent)
+
+
+def _targets_admitted_to_book(
+    targets, *, positions=None, total_value: float = 0.0,
+    existing_risk_pct=None,
+) -> tuple[list, list[str]]:
+    """Open/increase names still missing a real falsifier never reach the constructor.
 
     Permanent never-blank path: heal + one paid retry already ran on the
-    PM seat so it actually produces the field. Remaining blanks are
-    refused here so they do not consume risk budget or become tickets.
-    That refuse is last-resort after the producing step was asked, not
-    skip-and-continue as the product (owner 2026-09-17). Targets stay on
-    the proposal so Risk is told why the narrative names a symbol that
-    is not in the list. Never invents a falsifier or catalyst string.
+    PM seat so it actually produces the field. Remaining blanks on
+    opens/increases are refused here so they do not consume risk budget
+    or become tickets. Reductions and closes with a blank
+    `thesis_invalid_if` are admitted only when `_target_intent`
+    classifies a checkable size-down vs the live book (risk/weight).
+    Those are not soft-exits: the constructor stamps a mechanical
+    size-down warrant as the named trigger. PM thesis free text cannot
+    create the sell. Classification reuses `_target_intent`.
+    That label can disagree with the constructor's order side when a
+    lower risk request meets a tighter stop (more shares). The RiskStage
+    isolate still drops any constructed BUY/SHORT whose falsifier is
+    blank, so a mis-labelled add cannot be ticketed. That refuse is
+    last-resort after the producing step was asked, not skip-and-continue
+    as the product (owner 2026-09-17). Targets stay on the proposal so
+    Risk is told why the narrative names a symbol that is not in the
+    list. Never invents a falsifier or catalyst string.
     """
     admitted: list = []
     refused: list[str] = []
     for target in list(targets or []):
-        if open_target_missing_falsifier(target):
+        if _target_increase_missing_falsifier(
+            target, positions=positions, total_value=total_value,
+            existing_risk_pct=existing_risk_pct,
+        ):
             refused.append(str(target.symbol).upper())
         else:
             admitted.append(target)
@@ -2703,15 +2756,25 @@ def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[
     blank.
 
     Catches empty AND `unknown` on BUY/SHORT — omitted empty is missing,
-    not "the analyst had nothing to say". Neutrals and closes are not
-    this filter.
+    not "the analyst had nothing to say". Neutrals, reductions and closes
+    are not this filter. A constructed BUY/SHORT with a blank falsifier
+    is still dropped even when `_target_intent` labelled the target a
+    reduction (risk-down / weight-up from a tighter stop).
     """
     if portfolio_decision is None:
         return []
+    existing_risk_pct, _ = _book_risk_inputs(
+        ctx, getattr(ctx, "total_value", 0.0) or 0.0,
+    )
     missing_symbols = {
         str(target.symbol).upper()
         for target in list(getattr(portfolio_decision, "targets", None) or [])
-        if open_target_missing_falsifier(target)
+        if _target_increase_missing_falsifier(
+            target,
+            positions=getattr(ctx, "positions", None),
+            total_value=getattr(ctx, "total_value", 0.0) or 0.0,
+            existing_risk_pct=existing_risk_pct,
+        )
     }
     isolated: list[str] = []
     kept = []
@@ -4643,6 +4706,9 @@ class DecisionStage:
         )
         book_targets, refused_soft_exit = _targets_admitted_to_book(
             portfolio_decision.targets,
+            positions=positions,
+            total_value=total_value,
+            existing_risk_pct=existing_risk_pct,
         )
         for symbol in refused_soft_exit:
             _record_soft_exit_missing_after_retry(pipeline, ctx, symbol)

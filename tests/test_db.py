@@ -1097,6 +1097,7 @@ def test_exit_reason_category_take_profit_gated_on_confirmed_fill(db):
     ("macro regime flip to risk-off", "macro_regime_shift"),
     ("daily loss circuit breaker tripped", "risk_management_hard_stop"),
     ("stopped out per broker fill", "broker_stop_fill"),
+    ("mechanical size-down vs live book: weight 3.35% → 1.76%", "mechanical_size_down"),
     ("feels stretched, taking some off", "uncategorised"),
 ])
 def test_exit_reason_category_derived_from_hard_trigger_vocabulary(db, reasoning, expected):
