@@ -30,9 +30,11 @@ what would catch it next time.
 
 **Change.** The invested target is now a fixed 100% of equity, not a macro output. Macro still says which way to lean and which sectors. The risk seat's check now only speaks when the book is well under fully invested, and never asks for buys or shorts to be shrunk for being "above target". The T-bill sweep is switched off. Any T-bill fund still held is sold whole into cash at the start of the next market-hours session, so it cannot linger as an unprotected holding nothing is designed to sell.
 
-**What this does not change.** Stops, per-trade risk, the drawdown ladder and the short-selling limits are untouched. The drawdown ladder can still force the book below fully invested (0.5x at worse than -20%), and that is deliberate. The 1% cash reserve setting is only read by the retired sweep and a dashboard figure; nothing enforces it as a floor.
+**What this does not change.** Stops, per-trade risk, the drawdown ladder and the short-selling limits are untouched. The drawdown ladder can still force the book below fully invested (0.5x at worse than -20%), and that is deliberate.
 
 **What would catch it next time.** Tests that the risk advisory never asks for a scale-down above target, that a legacy macro target cannot move the invested target, and that a held T-bill fund is released with the sweep off.
+
+**2026-09-17 follow-up.** The "well under" threshold above had shipped as a flat 15 percentage points with no source, against the owner's standing no-arbitrary-numbers rule. It now reuses the sweep's own 1% cash reserve setting (`cash_sweep.reserve_pct`, fees/slippage buffer) as the tolerance — the only cash slice already sourced and owner-accepted — so the advisory fires whenever the book is short of fully invested by more than that reserve, and that setting is no longer read only by the retired sweep and a dashboard figure.
 
 ---
 

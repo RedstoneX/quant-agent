@@ -1363,7 +1363,9 @@ def test_macro_position_guidance_no_longer_carries_an_invested_number():
 # === Agent-coordination refactor (2026-04-17 follow-up) ===
 
 def test_deployment_gap_emits_advisory_violation():
-    """When projected invested is > 15pp UNDER the fully-invested mandate, a non-blocking violation is emitted."""
+    """When projected invested is UNDER the fully-invested mandate by more
+    than the cash-reserve band (`cash_sweep.reserve_pct`), a non-blocking
+    violation is emitted."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40, max_total_position_pct=90,
@@ -1387,21 +1389,23 @@ def test_deployment_gap_emits_advisory_violation():
 
 
 def test_deployment_gap_skipped_when_within_tolerance():
+    """`pipeline.config` is unset (bare `__new__`), so the band falls back
+    to `CashSweepConfig`'s own declared `reserve_pct` default (1.0)."""
     pipeline = TradingPipeline.__new__(TradingPipeline)
     pipeline.risk_engine = RiskRuleEngine(RiskConfig(
         max_position_pct=40, max_total_position_pct=90,
         max_daily_loss_pct=3, max_sector_pct=90, require_stop_loss=True,
     ))
     from src.models import Position
-    held = [Position(symbol="SPY", qty=180, avg_entry=500, current_price=500,
-                     market_value=90_000, unrealized_pnl=0.0,
+    held = [Position(symbol="SPY", qty=199, avg_entry=500, current_price=500,
+                     market_value=99_500, unrealized_pnl=0.0,
                      unrealized_intraday_pnl=0.0, sector="Broad")]
     with patch("src.pipeline._get_sector", return_value="Broad"), patch(
         "src.execution.broker._get_sector", return_value="Broad"
     ):
         _, violations, _ = pipeline._filter_hard_risk_decisions(
             [], positions=held, total_value=100000, daily_pnl=0,
-            invested_target_pct=100,  # 90% vs 100% = -10pp, under 15pp tolerance
+            invested_target_pct=100,  # 99.5% vs 100% = -0.5pp, under the reserve band
         )
     assert not any(v.rule == "deployment_gap" for v in violations)
 

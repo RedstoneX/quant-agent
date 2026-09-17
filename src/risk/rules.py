@@ -1536,6 +1536,30 @@ def gross_exposure(positions, *, cash_park_symbol: str | None = None) -> float:
 DESK_INVESTED_TARGET_PCT = 100.0
 
 
+def deployment_gap_band_pct(config) -> float:
+    """The tolerance band for the `deployment_gap` advisory.
+
+    Previously a flat 15pp with no source (owner rule: no arbitrary
+    numbers). The only cash slice the desk has actually sourced and the
+    owner accepted is the sweep reserve (`cash_sweep.reserve_pct` —
+    deliberately-parked cash for fees/slippage, see `CashSweepConfig`).
+    Reusing it means a book short of 100% by no more than the reserve is
+    exactly at the fully-invested mandate, not "under" it; a book short by
+    more than the reserve has real idle cash and the advisory should say
+    so. No new constant — this tracks whatever the owner sets there.
+
+    `config` is the pipeline's top-level config (or None — several ~58
+    tests build `TradingPipeline` via `__new__` without one); a missing
+    `cash_sweep` block falls back to `CashSweepConfig`'s own declared
+    default rather than a number invented here.
+    """
+    from src.config import CashSweepConfig
+    pct = getattr(getattr(config, "cash_sweep", None), "reserve_pct", None)
+    if pct is None:
+        pct = CashSweepConfig.model_fields["reserve_pct"].get_default()
+    return float(pct)
+
+
 @dataclass(frozen=True)
 class BookExposure:
     """One book, measured three ways that can no longer drift apart.

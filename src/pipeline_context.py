@@ -355,6 +355,13 @@ class PMFacts:
     # when there was no book to measure.
     invested_target_pct: float | None = None
     deployment_gap_pp: float | None = None  # invested - target (negative = under)
+    # Tolerance band for the ⚠️ section below: the desk's own sourced cash
+    # reserve (`cash_sweep.reserve_pct`), not an invented number — see
+    # `src.risk.rules.deployment_gap_band_pct`. None only when the pipeline
+    # never set it (e.g. a bare `PMFacts()` in a test); render() then falls
+    # back to `CashSweepConfig`'s own declared default rather than a number
+    # invented here.
+    deployment_gap_band_pct: float | None = None
 
     # Phase 2 / audit §1.3-§1.4: the book's actual risk, computed in Python.
     # `heat` carries per-position at-risk dollars, open risk, the release flag
@@ -545,7 +552,11 @@ class PMFacts:
         # No OVER branch: there is no macro target left to be above, and a
         # book past 100% (margin) is governed by the enforced gross ceiling,
         # not by a prompt nudge to trim.
-        if self.deployment_gap_pp >= -15:
+        band = self.deployment_gap_band_pct
+        if band is None:
+            from src.config import CashSweepConfig
+            band = CashSweepConfig.model_fields["reserve_pct"].get_default()
+        if self.deployment_gap_pp >= -band:
             return (
                 f"\n\n### Deployment vs Fully-Invested Mandate"
                 f"\n- invested={self.invested_pct:.1f}% vs mandate="
