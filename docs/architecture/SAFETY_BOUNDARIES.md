@@ -71,6 +71,19 @@
   one symbol at a time with confirmed cancel and full-qty restore. Short adds
   stay blocked: scale-in is the long path. Missing short stops are repaired
   separately (item 73, closed). Verified by `tests/test_scale_in.py`.
+- **One `trade_updates` socket per Alpaca account** (2026-09-17): Alpaca
+  allows a single trading-stream connection per account. Morning, intra and
+  other systemd jobs are separate processes; a process-local lock cannot
+  stop them each opening a socket (auth storms / failed to authenticate at
+  the open). One desk process owns the account slot via an advisory flock
+  beside the DB. Other processes attach to that process's kept hub when they
+  share it, otherwise they REST-poll. They never open a second socket.
+  Protective fill waits use `wait_for_order_terminal`; a dead or unowned
+  stream falls to REST for the remaining window, not a stacked second
+  timeout and not a wait longer than the REST path. Frame-drain of already-
+  seen statuses is a same-process attach aid, not ownership. Auth backoff
+  is unchanged (alpaca-py reconnect max). Repegs stay off. Verified by
+  `tests/test_order_fill_stream.py`.
 - **Stop-level archive (2026-09-16):** `trades.stop_loss` on the opening
   BUY/SHORT row is written back when an in-code path changes the live stop
   (replace/trail funnel, coverage repair, scale-in rearm, ex-div shift,

@@ -1111,27 +1111,34 @@ class TradingPipeline:
         if not kill_switch_path.is_absolute():
             kill_switch_path = Path(__file__).resolve().parent.parent / kill_switch_path
         self._kill_switch_path = kill_switch_path
-        self.broker = AlpacaBroker(
-            api_key=config.api_keys.alpaca_key,
-            secret_key=config.api_keys.alpaca_secret,
-            paper=config.alpaca.paper,
-            kill_switch_path=str(self._kill_switch_path),
-        )
-        # Wire the broker as yfinance's fallback so a yfinance outage doesn't
-        # blackout the technical analyst. Alpaca's daily bars cover the same
-        # universe we trade on, so fallback coverage is effectively 100%.
-        self.market.set_fallback_bars(self.broker.get_bars)
         raw_storage_db_path = config.storage.db_path
         if raw_storage_db_path == ":memory:":
             # ``:memory:`` is a SQLite sentinel, not a relative filename.
             # Rewriting it under the repository creates a persistent DB and
             # lets otherwise-isolated tests/processes contaminate one another.
             self._storage_db_path = raw_storage_db_path
+            # No on-disk DB to sit beside. Cwd-relative keeps hermetic
+            # tests from flocking the production checkout.
+            trade_updates_lease_path = Path("data") / ".trade_updates.lock"
         else:
             storage_db_path = Path(raw_storage_db_path)
             if not storage_db_path.is_absolute():
                 storage_db_path = Path(__file__).resolve().parent.parent / storage_db_path
             self._storage_db_path = str(storage_db_path)
+            trade_updates_lease_path = (
+                Path(self._storage_db_path).parent / ".trade_updates.lock"
+            )
+        self.broker = AlpacaBroker(
+            api_key=config.api_keys.alpaca_key,
+            secret_key=config.api_keys.alpaca_secret,
+            paper=config.alpaca.paper,
+            kill_switch_path=str(self._kill_switch_path),
+            trade_updates_lease_path=str(trade_updates_lease_path),
+        )
+        # Wire the broker as yfinance's fallback so a yfinance outage doesn't
+        # blackout the technical analyst. Alpaca's daily bars cover the same
+        # universe we trade on, so fallback coverage is effectively 100%.
+        self.market.set_fallback_bars(self.broker.get_bars)
         self.db = Database(self._storage_db_path)
         self.db.initialize()
         if BaseAgent._allow_unmetered_for_tests:

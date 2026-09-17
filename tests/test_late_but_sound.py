@@ -45,9 +45,17 @@ def test_ensure_trade_updates_does_not_open_a_throwaway_socket():
     assert "thread.start" not in src
     start_src = inspect.getsource(broker_mod.AlpacaBroker.start_trade_updates)
     assert "_TradeUpdatesHub" in start_src
+    assert "_acquire_trade_updates_slot" in start_src
     assert _ALPACA_STREAM_AUTH_DEADLINE_S == _ALPACA_STREAM_RECONNECT_MAX_S
     assert _ALPACA_STREAM_AUTH_DEADLINE_S <= 30.0
     assert "stop()" not in src
+
+
+def test_pipeline_owns_the_account_lease_beside_the_db():
+    from src.pipeline import TradingPipeline
+    src = inspect.getsource(TradingPipeline.__init__)
+    assert "trade_updates_lease_path" in src
+    assert ".trade_updates.lock" in src
 
 
 def test_risk_starts_trade_updates_before_review():

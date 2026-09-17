@@ -1,6 +1,8 @@
 import asyncio
+import fcntl
 import logging
 import math
+import os
 import random
 import re
 import threading
@@ -30,8 +32,92 @@ logger = logging.getLogger(__name__)
 # used to construct its own TradingStream; a second handshake while the
 # first socket was still registered is HTTP 429, and older alpaca-py
 # `_run_forever` loops retried that handshake every 10ms (alpacahq/alpaca-py
-# #740). One lock for the process so only one stream is connecting/running.
+# #740). A threading.Lock serializes waiters inside one process. Morning
+# and intra (and other) systemd jobs are separate processes; the account
+# slot is an advisory flock (`_TradeUpdatesLease`) so only one desk
+# process may open the socket. Anyone else attaches to that process's
+# hub or REST-polls — never a second handshake.
 _TRADE_UPDATES_STREAM_LOCK = threading.Lock()
+
+
+def _default_trade_updates_lease_path() -> Path:
+    """Cwd-relative so an isolated test cwd cannot flock production data/.
+
+    TradingPipeline passes the absolute path next to the DB — the same
+    convention as `.intraday_scan.lock`. The constraint is the Alpaca
+    account, not the database; the file sits beside the DB because that
+    directory is already the desk's on-box coordination point.
+    """
+    return Path("data") / ".trade_updates.lock"
+
+
+class _TradeUpdatesLease:
+    """Account-wide exclusive right to open Alpaca's trade_updates websocket.
+
+    flock is released when the fd closes, including process death, so a
+    killed job cannot wedge the slot. The pid written into the file is
+    diagnostic only — ownership is the lock, not the text. Not a new
+    service, not IPC, not a second trading-memory system.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self._fh = None
+
+    def acquire(self, *, blocking: bool = False) -> bool:
+        if self._fh is not None:
+            return True
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fh = open(self.path, "a+")
+        except Exception:
+            logger.warning(
+                "trade_updates lease: could not open %s — refusing to open a socket",
+                self.path, exc_info=True,
+            )
+            return False
+        flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+        try:
+            fcntl.flock(fh.fileno(), flags)
+        except BlockingIOError:
+            fh.close()
+            return False
+        except Exception:
+            logger.warning(
+                "trade_updates lease: flock failed on %s — refusing to open a socket",
+                self.path, exc_info=True,
+            )
+            try:
+                fh.close()
+            except Exception:
+                pass
+            return False
+        try:
+            fh.seek(0)
+            fh.truncate()
+            fh.write(f"{os.getpid()}\n")
+            fh.flush()
+        except Exception:
+            pass
+        self._fh = fh
+        return True
+
+    def release(self) -> None:
+        fh = self._fh
+        self._fh = None
+        if fh is None:
+            return
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        try:
+            fh.close()
+        except Exception:
+            pass
+
+    def held(self) -> bool:
+        return self._fh is not None
 
 # Fallback reconnect bounds, used only when the installed TradingStream
 # does not expose `_reconnect_min_backoff` / `_reconnect_max_backoff`.
@@ -39,6 +125,30 @@ _TRADE_UPDATES_STREAM_LOCK = threading.Lock()
 # on versions that shipped `reconnect_delay`), not a desk-invented constant.
 _ALPACA_STREAM_RECONNECT_MIN_S = 1.0
 _ALPACA_STREAM_RECONNECT_MAX_S = 30.0
+
+def _wait_for_first_event(*events: threading.Event, timeout: float) -> bool:
+    """True if any event is set before `timeout`. Wakes on the first one.
+
+    threading.Event waits on one object. Fill-wait needs "the fill arrived
+    OR the stream thread died" without adding a second clock. Watcher
+    threads are daemons and die with the process.
+    """
+    timeout = max(0.0, float(timeout))
+    for ev in events:
+        if ev.is_set():
+            return True
+    if timeout == 0.0:
+        return False
+    gate = threading.Event()
+
+    def _watch(ev: threading.Event) -> None:
+        ev.wait()
+        gate.set()
+
+    for ev in events:
+        threading.Thread(target=_watch, args=(ev,), daemon=True).start()
+    return gate.wait(timeout=timeout)
+
 
 # Handshake ceiling for trade_updates auth. Reuses alpaca-py's own reconnect
 # max so we do not invent a second clock. Auth must not consume a fill /
@@ -74,6 +184,13 @@ class _TradeUpdatesHub:
     auth overlaps the review; fill waits attach here instead of opening
     a second socket. Auth budget starts at `started_mono` and uses
     alpaca-py's reconnect max — not a second fitted clock.
+
+    Cross-process ownership is the account lease on the broker, not this
+    object. Frame-drain of `_last_status` is a same-process attach aid,
+    not the ownership fix. A wait on this hub is bounded by the caller's
+    timeout (the REST path's ceiling) — auth leftover is not added on
+    top, and a dead thread falls to REST instead of sitting out the
+    window.
     """
 
     def __init__(self, broker: "AlpacaBroker"):
@@ -89,6 +206,7 @@ class _TradeUpdatesHub:
         self.handshake_hook = False
         self._run_error: list[Exception] = []
         self._stopped = False
+        self._dead = threading.Event()
 
     def start(self) -> None:
         stream = TradingStream(
@@ -131,6 +249,12 @@ class _TradeUpdatesHub:
                 stream.run()
             except Exception as exc:
                 self._run_error.append(exc)
+            finally:
+                self._dead.set()
+                with self._waiters_lock:
+                    for bucket in self._waiters.values():
+                        for waiter in bucket:
+                            waiter.event.set()
 
         self._thread = threading.Thread(
             target=_run, name="trade-updates-hub", daemon=True,
@@ -141,6 +265,7 @@ class _TradeUpdatesHub:
         thread = self._thread
         return (
             not self._stopped
+            and not self._dead.is_set()
             and thread is not None
             and thread.is_alive()
         )
@@ -159,33 +284,49 @@ class _TradeUpdatesHub:
     def wait(
         self, order_id: str, timeout_seconds: float, *,
         stop_states: frozenset,
+        poll_interval: float = 1.0,
     ) -> tuple[str | None, bool]:
         oid = str(order_id)
+        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+        # Liveness cadence is the REST path's own poll interval — not a
+        # second clock. poll_interval<=0 waits the remaining window in
+        # one shot (the tests that drive REST with a zero sleep).
+        interval = (
+            float(poll_interval)
+            if poll_interval and float(poll_interval) > 0
+            else None
+        )
+
+        def _mark_auth_failed() -> None:
+            self._broker._last_stream_warmup = TradeStreamWarmup(
+                ready=False, handshake_failed=True, retried=True,
+            )
+
         if self.handshake_hook and not self.authed():
             remaining_auth = self.auth_remaining_s()
-            if remaining_auth <= 0:
+            remaining_wait = deadline - time.monotonic()
+            if remaining_auth <= 0 or remaining_wait <= 0:
                 logger.warning(
                     "trade_updates websocket did not authenticate within the "
                     "encoded %.1fs budget (started at hub open) — REST for %s",
                     _ALPACA_STREAM_AUTH_DEADLINE_S, oid,
                 )
-                self._broker._last_stream_warmup = TradeStreamWarmup(
-                    ready=False, handshake_failed=True, retried=True,
-                )
+                _mark_auth_failed()
                 return None, False
             try:
-                self._authed.wait(timeout=remaining_auth)
+                _wait_for_first_event(
+                    self._authed, self._dead,
+                    timeout=min(remaining_auth, remaining_wait),
+                )
             except Exception:
                 pass
             if not self.authed():
                 logger.warning(
                     "trade_updates websocket did not authenticate within "
-                    "remaining %.1fs — REST for %s",
-                    remaining_auth, oid,
+                    "the wait ceiling — REST for %s",
+                    oid,
                 )
-                self._broker._last_stream_warmup = TradeStreamWarmup(
-                    ready=False, handshake_failed=True, retried=True,
-                )
+                _mark_auth_failed()
                 return None, False
 
         waiter = _HubWaiter(stop_states)
@@ -195,7 +336,16 @@ class _TradeUpdatesHub:
                 return last, True
             self._waiters.setdefault(oid, []).append(waiter)
         try:
-            waiter.event.wait(timeout=max(0.0, float(timeout_seconds)))
+            while waiter.status is None:
+                if not self.is_alive():
+                    break
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                slice_s = left if interval is None else min(left, interval)
+                _wait_for_first_event(
+                    waiter.event, self._dead, timeout=slice_s,
+                )
         finally:
             with self._waiters_lock:
                 bucket = self._waiters.get(oid, [])
@@ -213,6 +363,11 @@ class _TradeUpdatesHub:
 
     def stop(self) -> None:
         self._stopped = True
+        self._dead.set()
+        with self._waiters_lock:
+            for bucket in self._waiters.values():
+                for waiter in bucket:
+                    waiter.event.set()
         stream = self._stream
         if stream is not None:
             try:
@@ -784,7 +939,8 @@ class AlpacaBroker:
     #: None as "no switch configured", i.e. inert.
     _kill_switch_path: "Path | None" = None
     def __init__(self, api_key: str, secret_key: str, paper: bool = True,
-                 kill_switch_path: str | None = None):
+                 kill_switch_path: str | None = None,
+                 trade_updates_lease_path: str | None = None):
         self.api_key = api_key
         self.secret_key = secret_key
         self._paper = paper
@@ -830,6 +986,12 @@ class AlpacaBroker:
         self._last_stream_warmup: TradeStreamWarmup | None = None
         self._trade_hub: _TradeUpdatesHub | None = None
         self._trade_hub_lock = threading.Lock()
+        self._trade_lease = _TradeUpdatesLease(
+            Path(trade_updates_lease_path)
+            if trade_updates_lease_path
+            else _default_trade_updates_lease_path()
+        )
+        self._trade_slot_held = False
 
     def _kill_switch_active(self) -> bool:
         """Guard 1: True once ops has halted the desk by `touch`-ing the
@@ -2526,6 +2688,36 @@ class AlpacaBroker:
     #: filled order (see `_repeg_entry_order`'s partial-fill guard).
     _ORDER_REPLACEABLE_STATES = frozenset({"new"})
 
+    def _acquire_trade_updates_slot(self) -> bool:
+        """Non-blocking owner of the account-wide trade_updates socket.
+
+        In-process threading lock plus the cross-process flock. Either
+        failing means someone already owns the Alpaca slot — the caller
+        must REST, not handshake.
+        """
+        if self._trade_slot_held:
+            return True
+        if not _TRADE_UPDATES_STREAM_LOCK.acquire(blocking=False):
+            return False
+        if not self._trade_lease.acquire(blocking=False):
+            try:
+                _TRADE_UPDATES_STREAM_LOCK.release()
+            except RuntimeError:
+                pass
+            return False
+        self._trade_slot_held = True
+        return True
+
+    def _release_trade_updates_slot(self) -> None:
+        held = self._trade_slot_held
+        self._trade_slot_held = False
+        self._trade_lease.release()
+        if held:
+            try:
+                _TRADE_UPDATES_STREAM_LOCK.release()
+            except RuntimeError:
+                pass
+
     def ensure_trade_updates(self) -> TradeStreamWarmup:
         """Start (or reuse) the kept trade_updates socket. Does not wait for auth.
 
@@ -2570,7 +2762,11 @@ class AlpacaBroker:
         )
 
     def start_trade_updates(self) -> TradeStreamWarmup:
-        """Open the kept trade_updates socket without blocking on handshake."""
+        """Open the kept trade_updates socket without blocking on handshake.
+
+        No-op reuse when this process already owns a live hub. Refuses to
+        open a socket when another process holds the account lease.
+        """
         if TradingStream is None:
             warmup = TradeStreamWarmup(
                 ready=False, handshake_failed=True, retried=False,
@@ -2589,11 +2785,12 @@ class AlpacaBroker:
                 except Exception:
                     pass
                 self._trade_hub = None
-                try:
-                    _TRADE_UPDATES_STREAM_LOCK.release()
-                except RuntimeError:
-                    pass
-            if not _TRADE_UPDATES_STREAM_LOCK.acquire(blocking=False):
+                self._release_trade_updates_slot()
+            if not self._acquire_trade_updates_slot():
+                logger.info(
+                    "trade_updates lease held by another process — "
+                    "not opening a competing socket",
+                )
                 warmup = TradeStreamWarmup(
                     ready=False, handshake_failed=False, retried=False,
                 )
@@ -2605,10 +2802,7 @@ class AlpacaBroker:
                 self._trade_hub = hub
             except Exception as exc:
                 logger.warning("trade_updates hub failed to start: %s", exc)
-                try:
-                    _TRADE_UPDATES_STREAM_LOCK.release()
-                except RuntimeError:
-                    pass
+                self._release_trade_updates_slot()
                 warmup = TradeStreamWarmup(
                     ready=False, handshake_failed=True, retried=False,
                 )
@@ -2619,20 +2813,16 @@ class AlpacaBroker:
             return warmup
 
     def stop_trade_updates(self) -> None:
-        """Tear down the kept trade_updates socket. Idempotent."""
+        """Tear down the kept trade_updates socket and release the lease."""
         with self._trade_hub_lock:
             hub = self._trade_hub
             self._trade_hub = None
-            if hub is None:
-                return
-            try:
-                hub.stop()
-            except Exception:
-                pass
-            try:
-                _TRADE_UPDATES_STREAM_LOCK.release()
-            except RuntimeError:
-                pass
+            if hub is not None:
+                try:
+                    hub.stop()
+                except Exception:
+                    pass
+            self._release_trade_updates_slot()
 
     def wait_for_order_at_exchange(
         self,
@@ -2665,16 +2855,24 @@ class AlpacaBroker:
             | frozenset({"partially_filled"})
         )
         if use_stream:
+            started = time.monotonic()
             status, connected = self._wait_for_order_status_via_stream(
                 order_id, timeout_seconds, stop_states=stop_states,
+                poll_interval=poll_interval,
             )
             if status is not None:
                 return status
+            remaining = float(timeout_seconds) - (time.monotonic() - started)
             if connected:
                 return self._get_order_status_once(order_id)
             logger.warning(
                 "order-status stream unavailable for %s — falling back to "
                 "REST polling for exchange acknowledgement", order_id,
+            )
+            if remaining <= 0:
+                return self._get_order_status_once(order_id)
+            return self._wait_for_order_status_via_polling(
+                order_id, remaining, poll_interval, stop_states=stop_states,
             )
         return self._wait_for_order_status_via_polling(
             order_id, timeout_seconds, poll_interval, stop_states=stop_states,
@@ -2720,16 +2918,23 @@ class AlpacaBroker:
         real network I/O.
         """
         if use_stream:
+            started = time.monotonic()
             status, connected = self._wait_for_order_terminal_via_stream(
-                order_id, timeout_seconds,
+                order_id, timeout_seconds, poll_interval=poll_interval,
             )
             if status is not None:
                 return status
+            remaining = float(timeout_seconds) - (time.monotonic() - started)
             if connected:
                 return self._get_order_status_once(order_id)
             logger.warning(
                 "order-fill stream unavailable for %s — falling back to REST polling",
                 order_id,
+            )
+            if remaining <= 0:
+                return self._get_order_status_once(order_id)
+            return self._wait_for_order_terminal_via_polling(
+                order_id, remaining, poll_interval,
             )
         return self._wait_for_order_terminal_via_polling(
             order_id, timeout_seconds, poll_interval,
@@ -2749,6 +2954,7 @@ class AlpacaBroker:
 
     def _wait_for_order_terminal_via_stream(
         self, order_id: str, timeout_seconds: float,
+        poll_interval: float = 1.0,
     ) -> tuple[str | None, bool]:
         """Terminal-state wait on the websocket. See
         `_wait_for_order_status_via_stream` — this is that method with the
@@ -2757,11 +2963,13 @@ class AlpacaBroker:
         address it directly."""
         return self._wait_for_order_status_via_stream(
             order_id, timeout_seconds, stop_states=self._ORDER_TERMINAL_STATES,
+            poll_interval=poll_interval,
         )
 
     def _wait_for_order_status_via_stream(
         self, order_id: str, timeout_seconds: float, *,
         stop_states: frozenset,
+        poll_interval: float = 1.0,
     ) -> tuple[str | None, bool]:
         """Block until Alpaca's `trade_updates` websocket reports an event
         for `order_id` whose status is in `stop_states`, or `timeout_seconds`
@@ -2786,12 +2994,18 @@ class AlpacaBroker:
         recommend for order-fill notification instead of polling) on a
         background thread via its public `run()`/`stop()` API. Handshake
         retries are guarded (`_install_trading_stream_reconnect_guard`) so
-        an HTTP 429 cannot tight-loop; only one stream is live at a time
-        (`_TRADE_UPDATES_STREAM_LOCK`) because Alpaca allows one
-        `trade_updates` connection per account. A second concurrent wait
-        falls through to REST polling rather than opening another socket.
-        Never raises: any failure here is reported as `(None, False)` so the
-        caller's fallback path is the only thing that can fail loudly.
+        an HTTP 429 cannot tight-loop. Only the process that holds the
+        account-wide lease may open a socket (`_TradeUpdatesLease` plus
+        `_TRADE_UPDATES_STREAM_LOCK`). A second process, or a second
+        concurrent wait that lost the slot, falls through to REST polling
+        rather than opening another socket. Same-process fill waits attach
+        to the kept hub. Never raises: any failure here is reported as
+        `(None, False)` so the caller's fallback path is the only thing
+        that can fail loudly.
+
+        The wait itself is the caller's timeout — the REST path's ceiling.
+        Auth leftover is not added on top. A dead hub does not sit out a
+        second full window before REST.
         """
         if TradingStream is None:
             return None, False
@@ -2800,12 +3014,29 @@ class AlpacaBroker:
         if hub is not None and hub.is_alive():
             return hub.wait(
                 order_id, timeout_seconds, stop_states=stop_states,
+                poll_interval=poll_interval,
             )
+
+        # A kept hub that died still owns the account slot until
+        # stop_trade_updates releases it. Do not handshake a second socket
+        # into that slot — REST for this wait.
+        if hub is not None or getattr(self, "_trade_slot_held", False):
+            logger.info(
+                "trade_updates hub unusable — REST polling for %s",
+                order_id,
+            )
+            return None, False
 
         # Non-blocking: fill monitoring continues on REST for the waiter
         # that lost the race, instead of stacking a second websocket onto
         # the one-connection slot (that is the 429 storm).
-        if not _TRADE_UPDATES_STREAM_LOCK.acquire(blocking=False):
+        if not self._acquire_trade_updates_slot():
+            hub = getattr(self, "_trade_hub", None)
+            if hub is not None and hub.is_alive():
+                return hub.wait(
+                    order_id, timeout_seconds, stop_states=stop_states,
+                    poll_interval=poll_interval,
+                )
             logger.info(
                 "trade_updates stream already in use — REST polling for %s",
                 order_id,
@@ -2817,7 +3048,7 @@ class AlpacaBroker:
                 order_id, timeout_seconds, stop_states=stop_states,
             )
         finally:
-            _TRADE_UPDATES_STREAM_LOCK.release()
+            self._release_trade_updates_slot()
 
     def _wait_for_order_status_via_stream_locked(
         self, order_id: str, timeout_seconds: float, *,
@@ -2855,30 +3086,37 @@ class AlpacaBroker:
             logger.warning("order-fill stream subscribe failed: %s", exc)
             return None, False
 
+        finished = threading.Event()
+
         def _run() -> None:
             try:
                 stream.run()
             except Exception as exc:
                 run_error.append(exc)
+            finally:
+                finished.set()
 
         thread = threading.Thread(
             target=_run, name=f"order-fill-stream-{order_id}", daemon=True,
         )
         started = time.monotonic()
+        deadline = started + max(0.0, float(timeout_seconds))
         thread.start()
         handshake_hook = callable(getattr(stream, "_start_ws", None))
         if handshake_hook:
-            auth_deadline = min(_ALPACA_STREAM_AUTH_DEADLINE_S, max(0.1, float(timeout_seconds)))
-            authed = False
-            try:
-                authed = bool(stream._qamc_authed.wait(timeout=auth_deadline))
-            except Exception:
-                authed = False
-            if not authed and not connected.is_set():
+            auth_left = min(
+                _ALPACA_STREAM_AUTH_DEADLINE_S,
+                max(0.0, deadline - time.monotonic()),
+            )
+            _wait_for_first_event(
+                stream._qamc_authed, connected, finished, timeout=auth_left,
+            )
+            authed = bool(stream._qamc_authed.is_set() or connected.is_set())
+            if not authed:
                 logger.warning(
                     "trade_updates websocket did not authenticate within %.1fs — "
                     "falling back to REST for %s",
-                    auth_deadline, order_id,
+                    auth_left, order_id,
                 )
                 self._last_stream_warmup = TradeStreamWarmup(
                     ready=False, handshake_failed=True, retried=True,
@@ -2889,10 +3127,8 @@ class AlpacaBroker:
                     pass
                 thread.join(timeout=2.0)
                 return None, False
-            remaining = max(0.1, float(timeout_seconds) - (time.monotonic() - started))
-        else:
-            remaining = float(timeout_seconds)
-        matched.wait(timeout=remaining)
+        remaining = max(0.0, deadline - time.monotonic())
+        _wait_for_first_event(matched, finished, timeout=remaining)
         try:
             stream.stop()
         except Exception:
