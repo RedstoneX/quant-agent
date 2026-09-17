@@ -643,7 +643,27 @@ def check_coverage(
     # alert must describe the book as it stands after this run, not before.
     repairs: list[RepairOutcome] = []
     market_open, market_reason = session_is_open(broker, moment)
-    if gaps and market_open and last_buy is not None:
+    # This function is the STANDALONE path (the every-30-minutes
+    # coverage-sweep unit, or the 06:15 heartbeat) — never the repair a live
+    # session runs on itself. `run_if_et_window.sh`'s cross-mode session
+    # lock (morning/midday/close/evening/earnings_preprocess) already
+    # serializes those sessions against EACH OTHER, but this unit is a
+    # separate systemd timer with its own process and was never a party to
+    # that lock, so it could place a stop at the exact instant a live
+    # session was cancelling one to sell (docs/INCIDENT_HISTORY.md,
+    # 2026-09-17: both fired on the same shared `*:0/30` tick and ran their
+    # coverage reconcile ~90ms apart). Deferring here loses nothing: a
+    # session that holds the lock runs this SAME repair
+    # (`TradingPipeline._reconcile_stop_coverage`) itself, near the very
+    # start of its own run, so the gap this tick skips is one this tick did
+    # not need to fill. `trading_session_lock_held()` never sees
+    # `intra_check` — that mode is deliberately exempt from the lock (the
+    # flash-crash breaker) — but intra_check no longer shares this unit's
+    # tick after the 2026-09-17 schedule split, so that pairing is closed
+    # by timing rather than by this check.
+    from src.execution.scale_in import trading_session_lock_held
+    session_active = trading_session_lock_held()
+    if gaps and market_open and last_buy is not None and not session_active:
         repairs = replace_missing_stops(
             broker, gaps, last_buy=last_buy, sweep_symbol=sweep_symbol,
             db=db,
@@ -657,6 +677,13 @@ def check_coverage(
                 gaps = refreshed
             else:
                 broker_error = broker_error or refresh_error
+    elif gaps and market_open and last_buy is not None and session_active:
+        market_reason = (
+            f"{market_reason}, but a trading session currently holds the "
+            "lock, so this tick defers the repair to that session's own "
+            "coverage reconcile rather than risk placing a stop the "
+            "session is in the middle of cancelling"
+        )
     elif gaps and market_open and last_buy is None:
         market_reason = (
             f"{market_reason}, but no recorded-stop lookup was supplied, so "
