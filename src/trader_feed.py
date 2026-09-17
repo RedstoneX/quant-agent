@@ -1447,18 +1447,38 @@ def _read_hour_trade_count(hour_window_minutes: int = _HOUR_WINDOW_MINUTES) -> i
                 pass
 
 
-def _format_hourly_desk_check(result: dict, nested: dict | None, elapsed: float) -> str:
+def _format_hourly_desk_check(
+    result: dict,
+    nested: dict | None,
+    elapsed: float,
+    *,
+    snap: dict[str, Any] | None = None,
+    trade_count: int | None = None,
+    period_line: str = "Covering the last hour",
+    coverage_text: str | None = None,
+    scanned_text: str | None = None,
+) -> str:
     """The guaranteed top-of-hour message: what happened across BOTH ticks
     of the last hour, in plain English, even when neither one had anything
     that needed the owner's attention on its own.
+
+    Every keyword argument defaults to exactly what the scheduled
+    top-of-hour path has always done; they exist so the on-demand desk
+    status (`format_desk_status` below, `scripts/desk_status.py`) can drive
+    this same formatter from live broker truth and — crucially — say
+    "not available" for the two fields an on-demand read genuinely cannot
+    know, rather than borrowing a scheduled tick's answer or printing a
+    reassuring zero.
     """
     run_id = result.get("run_id")
-    snap = _read_run(run_id)
-    trade_count = _read_hour_trade_count()
+    if snap is None:
+        snap = _read_run(run_id)
+    if trade_count is None:
+        trade_count = _read_hour_trade_count()
     outcome = "TRADED" if trade_count else "NO CHANGE"
     lines = [
         f"🕐 DESK CHECK · {fmt_time_12h(et_now())} · {outcome}",
-        "Covering the last hour",
+        period_line,
     ]
 
     if trade_count == 0:
@@ -1492,7 +1512,7 @@ def _format_hourly_desk_check(result: dict, nested: dict | None, elapsed: float)
     _cov_added = len(lines) > _cov_start
     _seal_section(lines, _cov_start)
     if not _cov_added:
-        _new_section(lines, "🛡️ Stop coverage: OK")
+        _new_section(lines, coverage_text or "🛡️ Stop coverage: OK")
 
     def _render_hour_signals(lines: list[str]) -> None:
         lines.append(f"🔎 Signals this hour: {len(hour_rows)} analyzed")
@@ -1517,8 +1537,116 @@ def _format_hourly_desk_check(result: dict, nested: dict | None, elapsed: float)
     if hour_rows:
         _new_block(detail_lines, _render_hour_signals)
     else:
-        _new_section(detail_lines, f"🔎 Movers scanned: {_movers_scanned_text(nested)}")
+        _new_section(
+            detail_lines,
+            f"🔎 Movers scanned: {scanned_text or _movers_scanned_text(nested)}",
+        )
     _wrap_details(lines, detail_lines)
 
     _new_block(lines, _append_footer, snap, elapsed)
     return "\n".join(lines)
+
+
+# === on-demand desk status (2026-09-17) ===
+#
+# Owner request: "send me the desk status now", at any time, without
+# running a trading session. This deliberately holds NO message format of
+# its own — it assembles read-only inputs and hands them to
+# `_format_hourly_desk_check` above, the same function the scheduled
+# top-of-hour message uses. Every future change to that formatter
+# (wording, P&L line, sections) reaches this command with no edit here.
+#
+# Read-only, in the strong sense: it places and cancels nothing, calls no
+# model, writes nothing to the database, and takes no session lock or
+# once-per-day stamp. The scheduled sessions are unaffected by it.
+_ON_DEMAND_PERIOD_LINE = "Covering the last hour · status requested on demand"
+# Stop coverage is audited (and auto-repaired) by the scheduled sessions,
+# which is a WRITING action — this command must not run it. So the answer
+# is genuinely unknown here and says so, rather than printing the
+# reassuring "OK" that the scheduled path prints when it has actually
+# looked.
+_ON_DEMAND_COVERAGE_TEXT = (
+    "🛡️ Stop coverage: not available — the coverage audit runs with the "
+    "scheduled sessions, not on demand"
+)
+_ON_DEMAND_SCANNED_TEXT = (
+    "not available — the movers scan runs with the scheduled sessions, "
+    "not on demand"
+)
+
+
+def _position_rows_from_broker(positions: Any) -> list[dict[str, Any]]:
+    """Broker `Position` objects (or plain dicts) → the same row shape
+    `_read_run` puts in `snapshot["positions"]`, so the shared formatter
+    cannot tell the difference. Shorts (negative qty) are kept, matching
+    that query's `qty != 0`."""
+    rows: list[dict[str, Any]] = []
+    for position in positions or []:
+        def _get(field: str) -> Any:
+            if isinstance(position, dict):
+                return position.get(field)
+            return getattr(position, field, None)
+
+        qty = _number(_get("qty"))
+        if qty is None or qty == 0:
+            continue
+        rows.append(
+            {
+                "symbol": str(_get("symbol") or "").upper(),
+                "qty": qty,
+                "avg_entry": _number(_get("avg_entry")),
+                "current_price": _number(_get("current_price")),
+                "market_value": _number(_get("market_value")),
+                "unrealized_pnl": _number(_get("unrealized_pnl")),
+            }
+        )
+    rows.sort(key=lambda row: abs(row.get("market_value") or 0.0), reverse=True)
+    return rows
+
+
+def format_desk_status(
+    account: dict[str, Any],
+    positions: Any,
+    elapsed_seconds: float = 0.0,
+    *,
+    trade_count: int | None = None,
+) -> str:
+    """One desk-status message from live broker truth, rendered by the
+    shared top-of-hour formatter.
+
+    `account` is `AlpacaBroker.get_account()`'s dict and `positions` is
+    `AlpacaBroker.get_positions()`'s list — both read-only broker calls.
+    Raises nothing of its own; the caller decides what a broker failure
+    means (see `scripts/desk_status.py`, which refuses to send at all
+    rather than send a message with a fabricated P&L).
+    """
+    total_value = _number(account.get("portfolio_value"))
+    last_equity = _number(account.get("last_equity"))
+    daily_pnl = None
+    daily_return_pct = None
+    if total_value is not None and last_equity is not None:
+        daily_pnl = total_value - last_equity
+        if last_equity > 0:
+            daily_return_pct = daily_pnl / last_equity * 100
+
+    result = {
+        "status": "ok",
+        "daily_pnl": daily_pnl,
+        "daily_return_pct": daily_return_pct,
+        # No coverage audit was run, so there is no gap list — NOT an
+        # empty list meaning "no gaps found". `coverage_text` below is what
+        # the reader actually sees.
+        "run_id": None,
+    }
+    snap = _empty_snapshot()
+    snap["positions"] = _position_rows_from_broker(positions)
+    return _format_hourly_desk_check(
+        result,
+        None,
+        elapsed_seconds,
+        snap=snap,
+        trade_count=trade_count,
+        period_line=_ON_DEMAND_PERIOD_LINE,
+        coverage_text=_ON_DEMAND_COVERAGE_TEXT,
+        scanned_text=_ON_DEMAND_SCANNED_TEXT,
+    )
