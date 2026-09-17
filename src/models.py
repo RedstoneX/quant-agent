@@ -1281,7 +1281,7 @@ class TradeDecision(LLMOutputModel):
     # single-name ceiling in `_plan_risk_targets`. This is the closest
     # cheaply-available approximation of "what was really used to size the
     # order" — a further downstream notional clamp in `_build_buy`/
-    # `_build_short` (the single-name / single-short weight ceiling) can
+    # `_build_short` (the single-name weight ceiling) can
     # still shrink the FINAL position below what this figure implies; that
     # last clamp is not re-derived into a third number here. None when no
     # risk-based plan exists for this symbol (legacy notional target).

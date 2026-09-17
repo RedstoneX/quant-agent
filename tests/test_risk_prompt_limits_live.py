@@ -100,8 +100,6 @@ WIRED_SETTINGS = (
     "effective_max_daily_loss_pct",
     "max_position_risk_pct",
     "min_position_risk_pct",
-    "max_single_short_pct",
-    "max_gross_bearish_pct",
 )
 
 #: Settings the Portfolio Manager's sheet states. PM SIZES under these where
@@ -115,8 +113,6 @@ PM_WIRED_SETTINGS = (
     "max_cluster_risk_share_pct",
     "max_sector_pct",
     "max_gross_exposure_x",
-    "max_single_short_pct",
-    "max_gross_bearish_pct",
     "short_gap_risk_multiple",
 )
 
@@ -290,8 +286,8 @@ def test_the_check_catches_the_shape_that_actually_happened():
     in place and a SECOND, hand-typed ceiling is added beside it. This is what
     commit e1c639a2 did, and it is not the same as deleting a placeholder."""
     regressed = _sheet().replace(
-        "deliberately tighter than the long single-name ceiling "
-        "`max_position_pct`",
+        "single-name cap and gross/net exposure ceilings as a BUY",
+        "single-name cap and gross/net exposure ceilings as a BUY, "
         "tighter than the 33% long single-name ceiling",
     )
     assert regressed != _sheet(), "fixture text no longer present in the sheet"
@@ -303,8 +299,8 @@ def test_adjacency_alone_would_have_missed_the_originating_bug():
     sufficient. If this test starts failing because adjacency got stronger,
     that is good news — delete the test and say so in the docstring."""
     regressed = _sheet().replace(
-        "deliberately tighter than the long single-name ceiling "
-        "`max_position_pct`",
+        "single-name cap and gross/net exposure ceilings as a BUY",
+        "single-name cap and gross/net exposure ceilings as a BUY, "
         "tighter than the 33% long single-name ceiling",
     )
     assert _hand_typed_limits(regressed) == [], (
@@ -327,12 +323,12 @@ def test_build_check_catches_a_hand_typed_limit():
     """The regression the check exists for: a placeholder swapped back to a
     literal. Uses the exact shape of the 2026-09-13 drift."""
     regressed = _sheet().replace(
-        "`max_single_short_pct` ({{risk.max_single_short_pct}}%",
-        "`max_single_short_pct` (10%",
+        "`max_position_pct` ({{risk.max_position_pct}}%",
+        "`max_position_pct` (10%",
     )
     assert regressed != _sheet(), "fixture text no longer present in the sheet"
     findings = _hand_typed_limits(regressed)
-    assert any("max_single_short_pct" in f for f in findings)
+    assert any("max_position_pct" in f for f in findings)
 
 
 def test_build_check_does_not_fire_on_example_arithmetic():
@@ -408,9 +404,10 @@ def test_each_wired_limit_renders_its_live_value():
     # PHRASE that carried the defect, not on the digits.
     assert "33% long single-name ceiling" not in rendered
     assert f"`max_position_pct={raw['max_position_pct']:g}`" in rendered
+    # Owner decision 2026-09-17: the short cap IS the long cap.
     assert (
-        "deliberately tighter than the long single-name ceiling "
-        "`max_position_pct`"
+        f"same `max_position_pct` ({raw['max_position_pct']:g}%) "
+        "single-name cap"
     ) in rendered
 
 
@@ -424,13 +421,14 @@ def test_changing_the_setting_changes_what_the_reviewer_is_shown():
     assert f"`max_position_pct={cfg.max_position_pct:g}`" not in after
 
 
-def test_short_cap_and_gross_bearish_track_their_settings():
-    cfg = _live_risk_config().model_copy(update={
-        "max_single_short_pct": 7.0, "max_gross_bearish_pct": 13.0,
-    })
+def test_short_cap_tracks_the_long_single_name_setting():
+    """Owner decision 2026-09-17: a short's single-name cap IS
+    `max_position_pct` — the sheet must render that one setting for it."""
+    cfg = _live_risk_config().model_copy(update={"max_position_pct": 41.0})
     rendered = render_prompt_limits(_sheet(), cfg)
-    assert "`max_single_short_pct` (7%" in rendered
-    assert "`max_gross_bearish_pct` (13% of book" in rendered
+    assert "same `max_position_pct` (41%) single-name cap" in rendered
+    assert "max_single_short_pct" not in rendered
+    assert "max_gross_bearish_pct" not in rendered
 
 
 def test_per_trade_risk_budget_is_the_ratified_unit_not_the_old_half_percent():
@@ -546,7 +544,7 @@ def test_settings_file_without_a_risk_block_fails_loudly(tmp_path: Path):
 # WHY THIS IS A BEHAVIOURAL CHECK AND NOT A SOURCE SCAN. The first version of
 # these tests regex-scanned `src/pipeline.py` for `^\s*([a-z_]+)=` inside the
 # `RiskConfig(` call, which proved only that a KEYWORD NAME was typed there.
-# `max_gross_bearish_pct=20.0`, hard-coded, would have satisfied it — the very
+# a limit hard-coded at its current value would have satisfied it — the very
 # defect the test claims to exclude. So instead: move the setting, rebuild the
 # enforcing object through the pipeline's OWN builder, and see whether the
 # object moved with it.

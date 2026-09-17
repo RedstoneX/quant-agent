@@ -18,6 +18,8 @@ order submission, and the protection-failure escalation).
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from src.config import RiskConfig
 from src.models import (
     Position,
@@ -822,11 +824,11 @@ def test_short_gap_risk_haircut_produces_a_strictly_smaller_position_than_a_long
 
 
 # ==========================================================================
-# 8. D9 — the two short exposure caps, hard blocks, never on a COVER
+# 8. Shorts carry the SAME limits as longs (owner decision 2026-09-17)
 # ==========================================================================
 
 def test_single_short_cap_hard_blocks_opening_too_large_a_short():
-    engine = RiskRuleEngine(_cfg(max_single_short_pct=10.0))
+    engine = RiskRuleEngine(_cfg(max_position_pct=10.0))
     decision = TradeDecision(
         action="SHORT", symbol="XYZ", allocation_pct=15.0,  # 15% > 10% cap
         entry_price=100.0, stop_loss=110.0, take_profit=80.0, reasoning="t",
@@ -835,34 +837,61 @@ def test_single_short_cap_hard_blocks_opening_too_large_a_short():
         decision=decision, positions=[], total_value=100_000, daily_pnl=0.0,
     )
     rules = {v.rule for v in violations}
-    assert "max_single_short_pct" in rules
+    assert "max_position_pct" in rules
 
 
-def test_gross_short_cap_hard_blocks_a_second_short_pushing_the_book_over():
-    engine = RiskRuleEngine(_cfg(max_gross_bearish_pct=20.0, max_single_short_pct=10.0))
+def test_a_short_is_capped_exactly_where_an_equivalent_long_is():
+    """Owner decision 2026-09-17: one limit, both directions. A short and a
+    long of the same size against the same held position size trip the same
+    rule at the same boundary — no tighter short-specific cap."""
+    cap = 33.0
+    engine = RiskRuleEngine(_cfg(max_position_pct=cap, max_total_position_pct=100.0))
+
+    def _rules(action, held_qty, alloc):
+        d = TradeDecision(
+            action=action, symbol="XYZ", allocation_pct=alloc,
+            entry_price=100.0,
+            stop_loss=110.0 if action == "SHORT" else 90.0,
+            take_profit=80.0 if action == "SHORT" else 120.0, reasoning="t",
+        )
+        return {v.rule for v in engine.check(
+            decision=d, positions=[_pos("XYZ", qty=held_qty, entry=100, price=100)],
+            total_value=100_000, daily_pnl=0.0,
+        )}
+
+    # 20% held + 13% new = exactly the cap: both pass.
+    assert "max_position_pct" not in _rules("BUY", 200, 13.0)
+    assert "max_position_pct" not in _rules("SHORT", -200, 13.0)
+    # 20% held + 14% new = one point over: both are blocked by the same rule.
+    assert "max_position_pct" in _rules("BUY", 200, 14.0)
+    assert "max_position_pct" in _rules("SHORT", -200, 14.0)
+
+
+def test_many_shorts_are_not_blocked_by_a_separate_bearish_book_cap():
+    """The former 20% gross-bearish cap is gone: a book already 60% short
+    may add another short within the long-side limits."""
+    engine = RiskRuleEngine(_cfg(
+        max_position_pct=33.0, max_total_position_pct=100.0,
+        max_sector_pct=100.0,  # sector crowding is a separate control
+    ))
     positions = [
-        _pos("AAA", qty=-90, entry=100, price=100),   # -$9,000 = 9%
-        _pos("BBB", qty=-95, entry=100, price=100),   # -$9,500 = 9.5%
+        _pos("AAA", qty=-300, entry=100, price=100),   # -30%
+        _pos("BBB", qty=-300, entry=100, price=100),   # -30%
     ]
     decision = TradeDecision(
-        action="SHORT", symbol="CCC", allocation_pct=3.0,  # +3% -> 21.5% total
+        action="SHORT", symbol="CCC", allocation_pct=10.0,
         entry_price=100.0, stop_loss=110.0, take_profit=80.0, reasoning="t",
     )
     violations = engine.check(
         decision=decision, positions=positions, total_value=100_000, daily_pnl=0.0,
     )
-    rules = {v.rule for v in violations}
-    assert "max_gross_bearish_pct" in rules
-    assert "max_single_short_pct" not in rules, (
-        "this decision alone (3%) must not trip the single-short cap — only "
-        "the book-wide gross cap should fire"
-    )
+    assert violations == []
 
 
-def test_neither_short_cap_blocks_a_cover():
-    """D9 explicitly: neither cap may ever block a COVER, even reducing a
-    position that is ALREADY over both ceilings."""
-    engine = RiskRuleEngine(_cfg(max_single_short_pct=10.0, max_gross_bearish_pct=20.0))
+def test_no_cap_blocks_a_cover():
+    """No cap may ever block a COVER, even reducing a position that is
+    ALREADY over the single-name ceiling."""
+    engine = RiskRuleEngine(_cfg(max_position_pct=10.0))
     positions = [_pos("XYZ", qty=-250, entry=100, price=100)]  # -$25,000 = 25%
     decision = TradeDecision(
         action="COVER", symbol="XYZ", allocation_pct=50.0,
@@ -872,6 +901,20 @@ def test_neither_short_cap_blocks_a_cover():
         decision=decision, positions=positions, total_value=100_000, daily_pnl=0.0,
     )
     assert violations == []
+
+
+@pytest.mark.parametrize("key", [
+    "max_single_short_pct", "max_gross_bearish_pct", "max_short_gross_pct",
+])
+def test_removed_short_cap_keys_raise_a_clear_error(key):
+    """A settings file still carrying a removed short cap must fail loudly,
+    not load silently with the operator believing the cap is in force."""
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError) as exc_info:
+        _cfg(**{key: 10.0})
+    message = str(exc_info.value)
+    assert key in message
+    assert "same limits as longs" in message
 
 
 # ==========================================================================
