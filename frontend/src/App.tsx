@@ -603,13 +603,15 @@ export default function App() {
                 broker-marked positions state HeroBand/PositionsPanel
                 already render; a click charts the symbol in place, no
                 modal (item 2/3 — see chartPositionSymbol). */}
-            <HoldingsStrip
-              positions={positions}
-              error={positionsError}
-              updatedAt={positionsUpdatedAt}
-              onSelectSymbol={chartPositionSymbol}
-              compact={chromeCompact}
-            />
+            {!isDesktop && (
+              <HoldingsStrip
+                positions={positions}
+                error={positionsError}
+                updatedAt={positionsUpdatedAt}
+                onSelectSymbol={chartPositionSymbol}
+                compact={chromeCompact}
+              />
+            )}
             <HeroBand account={account} accountError={accountError} positions={positions} regime={latestRegime} collapsed={chromeCompact} />
             {/* Liquidity and the decision banner stay available behind
                 "Show full header". Compact default folds deployable cash

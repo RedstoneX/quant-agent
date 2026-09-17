@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "visual:acceptance": "node scripts/dashboard-visual-acceptance.mjs",
-    "visual:hierarchy": "node scripts/dashboard-visual-acceptance.mjs --hierarchy"
+    "visual:hierarchy": "node scripts/dashboard-visual-acceptance.mjs --hierarchy",
+    "visual:locks": "node scripts/dashboard-visual-acceptance.mjs --locks"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

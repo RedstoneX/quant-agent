@@ -92,8 +92,8 @@ export function HeroBand({
    * App.tsx's `latestRegime`. Null on a day with no regime evidence yet. */
   regime: { macro: MacroBroaderContext; asOf: string | null } | null;
   /* Item 6 (cockpit trader rework): this is now the SECONDARY, compact
-   * portfolio-abstractions band — Holdings (App.tsx's HoldingsStrip) leads
-   * the header instead. Collapsed is the default; nothing here is
+   * portfolio-abstractions band — Holdings lives in a Dockview panel on
+   * desktop (and a header strip on iPad). Collapsed is the default; nothing here is
    * unreachable when collapsed, the same facts are still shown, just
    * denser, and "Show full header" switches back to the full cards. */
   collapsed?: boolean;

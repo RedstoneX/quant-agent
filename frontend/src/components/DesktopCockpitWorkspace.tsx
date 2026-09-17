@@ -8,13 +8,17 @@ import { CandidateRail } from "./CandidateRail";
 import { PriceChartPanel } from "./PriceChartPanel";
 import { ChartSymbolBar } from "./ChartSymbolBar";
 import { PositionsPanel } from "./PositionsPanel";
+import { HoldingsStrip } from "./HoldingsStrip";
 import {
   BOTTOMS_FLOOR_PX,
+  CHART_FLOOR_PX,
   COCKPIT_LAYOUT_KEY,
+  HOLDINGS_DEFAULT_PX,
+  HOLDINGS_FLOOR_PX,
   clearPersistedGrowth,
-  growthOwnsDrag,
-  nextSashGrowth,
+  nextBottomsSashState,
   readPersistedGrowth,
+  sashSitsBetween,
   writePersistedGrowth,
 } from "../lib/cockpitSash";
 import { OrdersPanel } from "./OrdersPanel";
@@ -72,6 +76,21 @@ function PositionsPane() {
         loading={state.positionsLoading}
         updatedAt={state.positionsUpdatedAt}
         onSelectSymbol={state.onSelectPositionSymbol}
+      />
+    </div>
+  );
+}
+
+function HoldingsPane() {
+  const state = useSupportWorkspace();
+  return (
+    <div className="h-full min-w-0 overflow-x-hidden overflow-y-auto p-2">
+      <HoldingsStrip
+        positions={state.positions}
+        error={state.positionsError}
+        updatedAt={state.positionsUpdatedAt}
+        onSelectSymbol={state.onSelectPositionSymbol}
+        variant="panel"
       />
     </div>
   );
@@ -161,6 +180,7 @@ function DiagnosticsPane() {
 
 const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
   positions: PositionsPane,
+  holdings: HoldingsPane,
   candidates: CandidatesPane,
   chart: ChartPane,
   orders: OrdersPane,
@@ -172,6 +192,12 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   workspaceSlot: WorkspaceSlotPane,
 };
 
+// Bumped v7 -> v8 (owner lock): Holdings leaves the fixed header and
+// becomes a Dockview panel above the chart — movable, dockable, resizable
+// like Positions/Orders. The chart-vs-bottoms sash is two-way (borrow from
+// the row above or the row below, then grow the page only after the
+// bottoms floor). v7 blobs would keep Holdings out of the workspace.
+//
 // Bumped v6 -> v7 (hierarchy pass): default bottoms height drops from
 // the 340 "header + 5 rows" start to the 260 floor so the chart row is
 // the largest region on first load / Reset layout. v6 blobs would
@@ -232,7 +258,7 @@ function buildDefaultLayout(api: DockviewApi) {
   // minimumWidth is dockview's floor for a column, kept low so a panel
   // can still be dragged beside the chart at a normal desktop width
   // rather than only when the window is extra-wide.
-  api.addPanel({ id: "chart", component: "chart", title: "Chart", minimumWidth: 80 });
+  api.addPanel({ id: "chart", component: "chart", title: "Chart", minimumWidth: 80, minimumHeight: CHART_FLOOR_PX });
   // The non-trading analysis panels ride along as background tabs on the
   // chart group (unchanged from before this pass) rather than moving to
   // the bottom row — they pair conceptually with "studying a symbol/run",
@@ -240,6 +266,20 @@ function buildDefaultLayout(api: DockviewApi) {
   for (const [id, title] of [["missed", "Missed"], ["runs", "Runs"], ["bias", "Directional Bias"], ["diagnostics", "Diagnostics"]]) {
     api.addPanel({ id, component: id, title, position: { referencePanel: "chart", direction: "within" }, inactive: true });
   }
+
+  // Holdings as its own row above the chart — a real Dockview panel, not
+  // header chrome — so the operator can move/dock/resize it and so the
+  // sash above the candles can steal from Holdings instead of only from
+  // Positions/Orders below. Short default so the chart stays the stage.
+  api.addPanel({
+    id: "holdings",
+    component: "holdings",
+    title: "Holdings",
+    position: { referencePanel: "chart", direction: "above" },
+    initialHeight: HOLDINGS_DEFAULT_PX,
+    minimumHeight: HOLDINGS_FLOOR_PX,
+    minimumWidth: 80,
+  });
 
   // Bottom row: Positions (left) | Orders (right) — a real second row
   // (direction: "below"), not more tabs folded into the chart group, so
@@ -398,7 +438,12 @@ export function DesktopCockpitWorkspace() {
   useEffect(() => {
     applyGrowth(growth);
   }, [applyGrowth, growth]);
-  const dragRef = useRef<{ startY: number; startGrowth: number } | null>(null);
+  const dragRef = useRef<{
+    startY: number;
+    startGrowth: number;
+    startChartH: number;
+    startBottomsH: number;
+  } | null>(null);
 
   const reset = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
@@ -422,11 +467,12 @@ export function DesktopCockpitWorkspace() {
     });
   }, []);
 
-  // Native listeners: dockview creates/destroys sash nodes itself, so
-  // there is no React node of ours to attach to. Capture-phase pointerdown
-  // so we can take over when the bottoms row is on its floor (native
-  // dockview then has nothing left to give) without fighting its own
-  // pointerdown handler on the same sash.
+  // Capture-phase pointerdown on the chart-vs-Positions sash only. Native
+  // dockview keeps the Holdings-vs-chart sash (and any other vertical
+  // split). This handler is two-way: up borrows from the chart to grow
+  // bottoms, down shrinks bottoms to the floor then grows the page. Extra
+  // page height is written on the wrapper DOM during the gesture so
+  // mouse-up cannot snap the sash back.
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
@@ -434,17 +480,19 @@ export function DesktopCockpitWorkspace() {
     const onPointerMove = (e: PointerEvent) => {
       const drag = dragRef.current;
       if (!drag) return;
-      const next = nextSashGrowth(drag.startGrowth, drag.startY, e.clientY);
-      const delta = next - growthRef.current;
+      const chartGroup = apiRef.current?.getPanel("chart")?.group;
+      const bottomsGroup = apiRef.current?.getPanel("positions")?.group;
+      if (!chartGroup || !bottomsGroup) return;
+      const next = nextBottomsSashState(
+        { growth: drag.startGrowth, chartH: drag.startChartH, bottomsH: drag.startBottomsH },
+        e.clientY - drag.startY,
+      );
       // Height goes on the DOM node immediately. Pushing it through React
       // state mid-drag re-renders the box at the *previous* growth and
       // dockview's ResizeObserver then snaps the sash back on mouse-up.
-      applyGrowth(next);
-      if (delta === 0) return;
-      const chartGroup = apiRef.current?.getPanel("chart")?.group;
-      if (chartGroup) {
-        chartGroup.api.setSize({ height: Math.max(80, (chartGroup.api.height ?? 0) + delta) });
-      }
+      applyGrowth(next.growth);
+      chartGroup.api.setSize({ height: Math.max(CHART_FLOOR_PX, next.chartH) });
+      bottomsGroup.api.setSize({ height: Math.max(BOTTOMS_FLOOR_PX, next.bottomsH) });
     };
     const onPointerUp = () => {
       dragRef.current = null;
@@ -459,11 +507,25 @@ export function DesktopCockpitWorkspace() {
         ".dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash"
       );
       if (!sash) return;
-      const bottomsHeight = apiRef.current?.getPanel("positions")?.group?.api.height ?? 0;
-      if (!growthOwnsDrag(growthRef.current, bottomsHeight)) return;
+      const chartGroup = apiRef.current?.getPanel("chart")?.group as { element?: HTMLElement; api: { height?: number } } | undefined;
+      const bottomsGroup = apiRef.current?.getPanel("positions")?.group as { element?: HTMLElement; api: { height?: number } } | undefined;
+      const chartEl = chartGroup?.element;
+      const bottomsEl = bottomsGroup?.element;
+      if (!chartEl || !bottomsEl) return;
+      const sashBox = sash.getBoundingClientRect();
+      const chartBox = chartEl.getBoundingClientRect();
+      const bottomsBox = bottomsEl.getBoundingClientRect();
+      // Only the chart-vs-Positions sash. The Holdings-vs-chart sash
+      // above stays native dockview so it can borrow from the row above.
+      if (!sashSitsBetween((sashBox.top + sashBox.bottom) / 2, chartBox.bottom, bottomsBox.top)) return;
       e.stopPropagation();
       e.preventDefault();
-      dragRef.current = { startY: e.clientY, startGrowth: growthRef.current };
+      dragRef.current = {
+        startY: e.clientY,
+        startGrowth: growthRef.current,
+        startChartH: chartGroup?.api.height ?? CHART_FLOOR_PX,
+        startBottomsH: bottomsGroup?.api.height ?? BOTTOMS_FLOOR_PX,
+      };
       document.addEventListener("pointermove", onPointerMove);
       document.addEventListener("pointerup", onPointerUp, { once: true });
     };

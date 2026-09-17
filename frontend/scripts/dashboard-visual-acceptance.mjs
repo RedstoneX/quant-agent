@@ -313,7 +313,23 @@ const steps = [
 ];
 
 const hierarchyOnly = process.argv.includes("--hierarchy");
+const locksOnly = process.argv.includes("--locks");
 const hierarchyDir = resolve(process.env.QAMC_HIERARCHY_OUTPUT || "../docs/visual/pr-444/hierarchy");
+const locksDir = resolve(process.env.QAMC_LOCKS_OUTPUT || "../docs/visual/pr-444");
+
+async function dragVerticalSash(page, index, dy) {
+  const sashes = page.locator(".dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash");
+  await sashes.nth(index).waitFor();
+  const box = await sashes.nth(index).boundingBox();
+  if (!box) throw new Error(`no bounding box for vertical sash ${index}`);
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y + dy, { steps: 12 });
+  await page.mouse.up();
+}
+
 const hierarchySteps = [
   ["a-chart-dominant-desktop", { width: 1600, height: 1000 }, "populated", async (page) => {
     await page.getByText("Apple Inc.").waitFor();
@@ -321,7 +337,7 @@ const hierarchySteps = [
     await page.getByText("Live $", { exact: false }).waitFor();
   }],
   ["b-holdings-wrap-four", { width: 1600, height: 1000 }, "populated", async (page) => {
-    await page.getByRole("button", { name: /Holdings/ }).click();
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
     await page.getByRole("button", { name: "Chart AAPL" }).waitFor();
     await page.getByRole("button", { name: "Chart SGOV" }).waitFor();
     await page.getByText("ENTRY", { exact: false }).waitFor();
@@ -335,8 +351,27 @@ const hierarchySteps = [
   }],
 ];
 
+const lockSteps = [
+  ["a-holdings-movable-panel", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await page.getByRole("button", { name: "Chart AAPL" }).waitFor();
+    await page.getByRole("button", { name: "Chart SGOV" }).waitFor();
+    await page.getByText("Apple Inc.").waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+  }],
+  ["b-resize-from-above", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+    await dragVerticalSash(page, 0, 80);
+  }],
+  ["b-resize-from-below", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+    await dragVerticalSash(page, 1, -70);
+  }],
+];
+
 const results = [];
-if (!hierarchyOnly) {
+if (!hierarchyOnly && !locksOnly) {
   for (const [name, viewport, scenario, interact] of steps) {
     const result = await shot(name, viewport, scenario, interact);
     results.push(result);
@@ -347,6 +382,14 @@ if (hierarchyOnly) {
   await mkdir(hierarchyDir, { recursive: true });
   for (const [name, viewport, scenario, interact] of hierarchySteps) {
     const result = await shot(name, viewport, scenario, interact, hierarchyDir);
+    results.push(result);
+    console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+  }
+}
+if (locksOnly) {
+  await mkdir(locksDir, { recursive: true });
+  for (const [name, viewport, scenario, interact] of lockSteps) {
+    const result = await shot(name, viewport, scenario, interact, locksDir);
     results.push(result);
     console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
   }
@@ -365,5 +408,5 @@ if (failed.length) {
   }
   process.exitCode = 1;
 } else {
-  console.log(`screenshots: ${hierarchyOnly ? hierarchyDir : output}`);
+  console.log(`screenshots: ${locksOnly ? locksDir : hierarchyOnly ? hierarchyDir : output}`);
 }

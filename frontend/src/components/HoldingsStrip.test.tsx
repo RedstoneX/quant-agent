@@ -67,4 +67,21 @@ describe("HoldingsStrip", () => {
     fireEvent.click(screen.getByRole("button", { name: /Holdings/ }));
     expect(screen.getByLabelText("Holdings").querySelector(".grid")?.className).toContain("xl:grid-cols-4");
   });
+
+  it("always shows the wrap grid inside a Dockview panel", () => {
+    const positions = ["AAPL", "RSG", "NOK", "AMD", "MRVL"].map((symbol, index) =>
+      position({ symbol, market_value: 1000 - index }),
+    );
+    render(
+      <HoldingsStrip
+        positions={positions}
+        error={null}
+        updatedAt={new Date("2026-08-25T18:30:00Z")}
+        compact
+        variant="panel"
+      />,
+    );
+    expect(screen.getByLabelText("Holdings").querySelector(".grid")?.className).toContain("xl:grid-cols-4");
+    expect(screen.queryByRole("button", { name: /Holdings/ })).toBeNull();
+  });
 });

@@ -7,9 +7,10 @@ import { fmtMoney, fmtNum, fmtPct, pnlClass } from "../lib/format";
  * asks on arrival, answered in an always-visible strip rather than behind
  * a workspace tab. Cards keep their existing content and stay about this
  * size; they wrap at four per row on a normal desktop (fewer on a
- * narrower window) instead of sliding sideways. Compact chrome (the
- * cockpit default) collapses this to a count/P&L line so the chart owns
- * the screen; expanding restores the wrap grid. PositionsPanel remains
+ * narrower window) instead of sliding sideways. On desktop this lives in
+ * a Dockview panel the operator can move, dock and resize; on iPad/phone
+ * it stays a header strip that compact chrome collapses to a count/P&L
+ * line. PositionsPanel remains
  * the full, sortable, column-complete view (now its own dockable panel);
  * this is the glance. Every figure here is the same broker-marked
  * PositionItem data that panel renders — no separate fetch, no
@@ -75,20 +76,23 @@ export function HoldingsStrip({
   updatedAt,
   onSelectSymbol,
   compact = false,
+  variant = "page",
 }: {
   positions: PositionItem[];
   error?: string | null;
   updatedAt?: Date | null;
   onSelectSymbol?: (symbol: string) => void;
-  /* Compact cockpit chrome: one summary line so the chart owns the
-   * viewport. Cards keep their size and still wrap at four per row
-   * when this strip is expanded — they just are not the default stage. */
+  /* iPad/phone header: one summary line until expanded. Desktop Dockview
+   * uses variant="panel" and always shows the wrap grid — the panel itself
+   * is what the operator resizes. */
   compact?: boolean;
+  variant?: "page" | "panel";
 }) {
-  const [expanded, setExpanded] = useState(!compact);
+  const isPanel = variant === "panel";
+  const [expanded, setExpanded] = useState(isPanel || !compact);
   useEffect(() => {
-    setExpanded(!compact);
-  }, [compact]);
+    setExpanded(isPanel || !compact);
+  }, [compact, isPanel]);
 
   const directional = positions.filter((p) => !p.is_cash_equivalent);
   const unrealized = directional.reduce((sum, p) => sum + (p.unrealized_pnl || 0), 0);
@@ -113,8 +117,11 @@ export function HoldingsStrip({
   );
 
   return (
-    <section className="mx-3 mt-1 min-w-0 overflow-x-hidden" aria-label="Holdings">
-      {compact ? (
+    <section
+      className={isPanel ? "min-w-0 overflow-x-hidden" : "mx-3 mt-1 min-w-0 overflow-x-hidden"}
+      aria-label="Holdings"
+    >
+      {compact && !isPanel ? (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
