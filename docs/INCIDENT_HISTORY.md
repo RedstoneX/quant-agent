@@ -22,6 +22,22 @@ what would catch it next time.
 
 ---
 
+### 2026-09-17 — the desk could place an order off a price from a day it wasn't trading
+
+**In plain words:** one function answers "what is this worth right now". It asked the broker for the most recent trade and took the answer without ever looking at *when* that trade happened, so on a thinly traded name it could hand back yesterday's price. If there was no trade at all it quietly averaged the buy and sell quotes and returned that, looking exactly the same. Three things that place or move real orders relied on it: the job that puts a missing stop-loss back, the pin that caps what an entry may pay, and the reference a fill is checked against.
+
+**Cause.** Not a regression — original plumbing. The 2026-09-14 fix gave the *research* side the rule that a price must be from today or be labelled stale. The *order* side was never given the same rule, and nothing in between could tell the difference, because the price came back as a bare number with no provenance attached.
+
+**Why it matters most on the stop job.** That job refuses to re-place a stop that would fire the instant it lands — it compares the recorded stop against the live price. Run that comparison against a stale price and it can read "safe" while today's real price is already through the stop, which turns a janitor into an unintended market exit.
+
+**Fix.** The reader now returns the price together with where it came from and two separate freshness answers, because two kinds of caller need different strictness. Stamped-today covers a trade *or* a quote — a live quote mid-session is a legitimate reference for a limit, yesterday's anything is not. A today *print* additionally means the tape really traded there, which is what deciding where a stop belongs requires. An unstamped timestamp fails visible rather than passing as live, the same rule already applied to research snapshots. Stop repair now needs a today print and otherwise leaves the gap flagged for the next sweep, which is what it already does with every other unverifiable input and which the coverage alert already reports. The order path needs today's data and otherwise falls back to the entry the manager and risk reviewer actually approved. Reporting callers — "how far has this moved since we sold it" — keep the bare number and their own last-close fallback; nothing about them changed.
+
+**What was ruled out.** Blocking on a missing print everywhere. Refusing to re-place a stop leaves a position unprotected, so the strict rule is applied only where a wrong price produces a wrong *order*, and the fallback is always a number a human already approved rather than a guess.
+
+**What would catch it next time.** Checks that yesterday's print is not reported as today's, that a quote is never reported as a trade, that a missing timestamp reads as not-today, that the stop job refuses both a stale price and a quote midpoint, and that the entry cap falls back to the approved entry instead of a stale price.
+
+---
+
 ### 2026-09-17 — research reuse said it would expire, then never looked
 
 **In plain words:** the desk was supposed to reuse this morning's research until something real changed — a new headline, a new insider filing, a new economics print — and pay again only then. The expiry checks were wired to helpers that did not exist, so expiry never ran. Economics expiry also compared only the regime name, so a new CPI print under the same "risk-on" label would have been treated as unchanged. A snapshot with no date was treated as "from this session".
