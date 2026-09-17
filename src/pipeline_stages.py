@@ -676,6 +676,22 @@ def _trade_updates_already_started(pipeline) -> bool:
         return False
 
 
+def _fill_stream_enabled(pipeline) -> bool:
+    """Whether the desk may open the `trade_updates` socket at all.
+
+    Defaults TRUE when the broker predates the switch (a test double with no
+    such method), so this helper cannot silently remove a budget from a
+    broker that really does handshake.
+    """
+    enabled = getattr(getattr(pipeline, "broker", None), "fill_stream_enabled", None)
+    if not callable(enabled):
+        return True
+    try:
+        return enabled() is not False
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
     """Programmed waits still ahead of submit. Not a fitted clock.
 
@@ -684,9 +700,16 @@ def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
     own ceiling; they must not be added as leftover slack on the submit
     path after fund_buys has already returned. Call this AFTER funding
     with will_fund=False.
+
+    Auth is also omitted when the socket is switched off entirely
+    (`execution.fill_stream_enabled`, off since 2026-09-17): there is no
+    handshake ahead of submit, so counting one would leave a stale 30s of
+    slack in a window that is supposed to be the sum of the waits actually
+    programmed. This widens nothing and tightens no existing timeout — it
+    stops claiming a wait that cannot happen.
     """
     budget = 0.0
-    if not _trade_updates_already_started(pipeline):
+    if _fill_stream_enabled(pipeline) and not _trade_updates_already_started(pipeline):
         contended = getattr(
             getattr(pipeline, "broker", None),
             "trade_updates_lease_contended",

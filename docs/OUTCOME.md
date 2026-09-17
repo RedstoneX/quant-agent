@@ -339,6 +339,36 @@ shipped shape of this: try the real-time mechanism first, fall back to the
 old polling behavior only on a genuine connection failure, never silently
 lose the old reliability guarantee while gaining the new speed one.
 
+**AND THEN THE MECHANISM DID NOT WORK — the part that matters most
+(2026-09-17).** The websocket described above has never once authenticated
+on this host, in any session, since it was built on 2026-09-10. Every fill
+the desk has ever confirmed was confirmed by the REST polling path this
+section demotes. Two independent blockers were confirmed before the
+switch-off, so this was never a tuning problem: the trading process holds
+placeholder Alpaca credentials that a local injecting proxy substitutes on
+outbound REST only, and the installed `alpaca-py` stream is built on
+`websockets.legacy`, which has no proxy support at all; separately, Alpaca
+authenticates the stream with an in-band websocket MESSAGE rather than a
+handshake header, which a header-injecting gateway cannot supply either.
+The socket is therefore OFF by configuration
+(`execution.fill_stream_enabled`) and the REST path is the mechanism, not
+the fallback. The code is dormant, not deleted — the owner deferred the
+credential decision that would revive it.
+
+**The lesson this adds to the one above, and it is the sharper of the two:
+the API's documented mechanism is the right answer only once it is
+observed working in YOUR deployment.** "The vendor recommends this" is a
+reason to build it; it is not evidence that it runs. The failure was
+invisible for a week because the fallback was good — the desk kept trading
+correctly while logging ~150 auth failures a day that nobody read, and the
+only cost was a bounded slice of every fill window spent on a handshake
+that could never complete. A degraded path that still works is the hardest
+kind of breakage to notice, so the fix shipped an ALERT on fill
+confirmation actually degrading (an unconfirmed order outcome, or the
+desk's records disagreeing with the broker's), and deliberately NOT on the
+socket being off — that is now the intended configuration, and paging on
+it would just move the noise into Telegram.
+
 ## Execution-environment principle
 
 Paper and live operation share one trading architecture. No agent, portfolio-construction, risk, position-management, reflection or Dashboard semantics should become easier, looser, or materially different merely because the current broker account is Paper.

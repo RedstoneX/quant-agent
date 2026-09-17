@@ -63,15 +63,37 @@
   broker will not work a BUY against a resting SELL stop on the same name).
   Between confirmed cancel and post-fill rearm the position is unprotected.
   Mitigations, not elimination: a write-ahead recovery row is persisted
-  before cancel; cancel is confirmed via `trade_updates` / broker status
-  before the BUY is sent; rearm sizes to the broker's full position, not the
+  before cancel; cancel is confirmed against the broker's own order status
+  before the BUY is sent (bounded REST polling — see the fill-confirmation
+  boundary below); rearm sizes to the broker's full position, not the
   add's fill; trail / coverage repair / the coverage watchdog skip a name
   mid-sequence; a failed rearm pages the owner. This is the same cancel-to-
   free-shares shape that made the old whole-book daily breaker dangerous, but
   one symbol at a time with confirmed cancel and full-qty restore. Short adds
   stay blocked: scale-in is the long path. Missing short stops are repaired
   separately (item 73, closed). Verified by `tests/test_scale_in.py`.
-- **One `trade_updates` socket per Alpaca account** (2026-09-17): Alpaca
+- **Fills are confirmed by bounded REST polling; the live websocket is OFF**
+  (owner decision 2026-09-17, `execution.fill_stream_enabled: false`): the
+  `trade_updates` socket has never authenticated on this host since it was
+  built on 2026-09-10, and two independent confirmed blockers mean no code
+  or config change could make it (the process holds placeholder credentials
+  that a local proxy substitutes on REST only, and the installed
+  `alpaca-py` stream uses `websockets.legacy`, which has no proxy support;
+  Alpaca also authenticates in-band by MESSAGE, not by handshake header,
+  which a header-injecting gateway cannot supply). With the flag off the
+  desk never opens the socket, never takes the account lease and never runs
+  the reconnect loop; every fill wait takes the REST polling path with its
+  existing timeouts, poll intervals and ceilings unchanged. The websocket
+  code is dormant, not deleted — the credential decision is deferred, and
+  flipping the flag restores the behaviour below exactly. The boundary that
+  replaced the socket's silence: fill confirmation actually DEGRADING pages
+  the owner (an order whose outcome the bounded window could not confirm,
+  or a reconciliation finding the desk's record and the broker's
+  disagreeing with no sale to explain it). The socket being off never
+  pages. Verified by `tests/test_fill_stream_switch.py`.
+- **One `trade_updates` socket per Alpaca account** (2026-09-17, DORMANT
+  while the flag above is off — this is the behaviour flipping it back on
+  restores): Alpaca
   allows a single trading-stream connection per account. Morning, intra and
   other systemd jobs are separate processes; a process-local lock cannot
   stop them each opening a socket (auth storms / failed to authenticate at
