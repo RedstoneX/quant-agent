@@ -267,6 +267,7 @@ const steps = [
   ["01-desktop-cockpit-populated", { width: 1600, height: 1000 }, "populated", async (page) => {
     await page.getByText("Apple Inc.").waitFor();
     await page.getByText("position 12", { exact: false }).waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
   }],
   ["02-desktop-positions-liquidity", { width: 1600, height: 1000 }, "populated", async (page) => {
     // Positions is the primary leftmost/active-by-default dockview pane.
