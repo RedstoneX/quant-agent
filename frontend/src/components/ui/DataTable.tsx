@@ -264,7 +264,7 @@ export function DataTable<T extends object>({
                   // cell now.
                   onPointerDown={reorderable ? beginHeaderPointerTracking(header.column.id) : undefined}
                 >
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex min-w-0 items-center gap-1.5">
                     {reorderable && (
                       <span
                         className={`pointer-events-none select-none text-border ${
@@ -294,7 +294,7 @@ export function DataTable<T extends object>({
                           }
                           header.column.getToggleSortingHandler()?.(event);
                         }}
-                        className="flex-1 text-left uppercase tracking-wide"
+                        className="min-w-0 flex-1 overflow-hidden text-left uppercase tracking-wide"
                       >
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         {{ asc: " ↑", desc: " ↓" }[header.column.getIsSorted() as string] ?? ""}

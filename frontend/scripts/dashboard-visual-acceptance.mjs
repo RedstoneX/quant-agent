@@ -163,6 +163,7 @@ async function installRoutes(page, scenario = "populated") {
       return json(route, { date: "2026-08-25", has_data: true, daily_pnl: account.history.at(-1), reflection: { date: "2026-08-25", tomorrow_outlook: "Selective", lessons: "Respect grounded passes.", suggested_actions: null, risk_rating: "medium", tomorrow_bias: "neutral", tomorrow_conviction: "medium", tomorrow_key_risks: "Concentration", sell_decisions_assessment: null, sell_grades_json: null, buy_grades_json: null, missed_opportunities_json: JSON.stringify([{ symbol: "NVDA", move_pct: 4.2, miss_category: "late_signal", lesson: "Wait for confirmed entry." }, { symbol: "TSLA", move_pct: -3.1, miss_category: "risk_disciplined", lesson: "Pass was correct." }]), timestamp: "2026-08-25T20:00:00Z" }, runs: [runSummary], trades: [trade, exitTrade], candidates: ["AAPL", "MSFT"] });
     }
     if (path.startsWith("/prices/")) return json(route, { symbol: decodeURIComponent(path.split("/").at(-1)), timeframe: url.searchParams.get("timeframe") || "1d", bars, error: null });
+    if (path.startsWith("/events/")) return json(route, { symbol: decodeURIComponent(path.split("/").at(-1)), dividends: [], earnings: [], error: null });
     if (path === "/quotes") return json(route, { quotes: [{ symbol: "AAPL", last_price: 226.2, prev_close: 224.1, session_open: 224.5, session_high: 227.0, session_low: 223.8 }, { symbol: "SPY", last_price: 655, prev_close: 652, session_open: 653, session_high: 656, session_low: 651 }], as_of: "2026-08-25T18:30:00Z", source: "alpaca_market_data", error: null });
     if (path === "/search") return json(route, { query: "", trades: [], agent_logs: [] });
     return route.continue();
@@ -262,6 +263,7 @@ const steps = [
   }],
   ["03-desktop-candidate-lifecycle", { width: 1600, height: 1000 }, "populated", async (page) => {
     await page.getByRole("button", { name: /Lifecycle/ }).click();
+    await page.getByText("PM proposed BUY", { exact: false }).first().waitFor();
     const lifecycle = page.getByText("Persisted lifecycle", { exact: false });
     await lifecycle.waitFor();
     await lifecycle.scrollIntoViewIfNeeded();

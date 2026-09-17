@@ -216,12 +216,13 @@ export function tradeMarkers(
 }
 
 /* "Where am I versus the market" — the trader's own average entry for the
- * charted symbol, drawn as a labelled horizontal line with its live
- * unrealized P&L. Sourced from the same broker-marked PositionItem the
- * Positions panel and the holdings strip render; never inferred from the
- * bar data. Returns null when the symbol is not held (or the entry price
- * is missing/zero), in which case nothing is drawn at all — an absent
- * position must never produce a line at 0.
+ * charted symbol, drawn as a labelled horizontal line. Color still follows
+ * live P&L (green up, red down); the dollar figure itself is not repeated
+ * in the label — it already lives on Positions and the holdings strip.
+ * Sourced from the same broker-marked PositionItem those panels render;
+ * never inferred from the bar data. Returns null when the symbol is not
+ * held (or the entry price is missing/zero), in which case nothing is
+ * drawn at all — an absent position must never produce a line at 0.
  *
  * Cash-parking rows (SGOV) are included deliberately: if the operator
  * charts the sweep instrument, its real average entry is still the honest
@@ -237,14 +238,13 @@ export function entryPriceLine(
   const price = position.avg_entry;
   if (price == null || !Number.isFinite(price) || price <= 0) return null;
   const pnl = position.unrealized_pnl;
-  const pnlText = pnl == null || !Number.isFinite(pnl) ? "" : ` · ${pnl >= 0 ? "+" : ""}${fmtMoney(pnl)}`;
   return {
     price,
     // Market truth keeps the market-truth palette: green when the
     // position is up, red when it is down (never the cyan system accent,
     // which is reserved for chrome — see styles/index.css's token grammar).
     color: (pnl ?? 0) < 0 ? colors.red : colors.green,
-    title: `ENTRY ${fmtNum(position.qty)} @ ${fmtMoney(price)}${pnlText}`,
+    title: `ENTRY ${fmtNum(position.qty)} @ ${fmtMoney(price)}`,
   };
 }
 
@@ -1303,9 +1303,6 @@ export function PriceChartPanel({
         { hour: "2-digit", minute: "2-digit" }
       )
     : null;
-  // The operator's own position in the charted symbol, echoed as qty @
-  // entry next to the live quote. Unrealized P&L is not repeated here —
-  // it already lives on Positions and the holdings strip.
   // Bottom range-slider geometry — the full loaded series (0..bars.length)
   // is the track's domain; the window is the chart's own visible logical
   // range clamped into that domain, expressed as percentages so the CSS
@@ -1330,6 +1327,8 @@ export function PriceChartPanel({
           return { leftPct, widthPct: Math.min(widthPct, 100 - leftPct) };
         })()
       : null;
+  // qty @ entry next to the live quote. Unrealized P&L is not repeated
+  // here — it already lives on Positions and the holdings strip.
   const heldPosition = symbol ? positions.find((item) => item.symbol === symbol) : undefined;
   const positionLine = heldPosition
     ? ` · position ${fmtNum(heldPosition.qty)} @ ${fmtMoney(heldPosition.avg_entry)}`
