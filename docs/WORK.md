@@ -54,8 +54,6 @@ The PM model test means nothing until everything feeding the PM is clean; this g
 
 ---
 
-**3. Accepted by the broker, never filled, cancelled — 6 of 68 (9%). WORKING AS INTENDED.** Tape walking away from a still-open limit, repeg off. Repeg stays off (owner, 2026-09-12).
-
 **17. Backup alert channel — OWNER DECISION, deferred, no due date.** No notification channel exists beyond Telegram, so an alert that cannot reach Telegram reaches nobody. Deferred by the owner 2026-09-03. Recommendation: `docs/BOARD_NOTES.md` ("item 17"). Everything else here shipped.
 
 **18. 70% of the PM's prompt was earnings-filing prose, not a conclusion — MEASURED 2026-09-02, PARTIALLY FIXED, core cause MERGED 2026-09-04 (PR #252), real follow-ons below.**
@@ -157,7 +155,7 @@ The PM briefing shows only the cash balance, with "no margin" hardcoded beside i
 **Trading is NOT harmed:** REST order placement works and fill detection falls back to polling. **The failure is currently SILENT to the owner:** the per-episode alert was part of stopped work.
 **The process lesson this item carries.** Five passes (#287, #420, #431, #432, #447, plus the still-open #435) optimised the TIMING of a path that had never once succeeded. A 100% failure rate is not a race condition: before any work to make a path faster or more reliable, prove it has succeeded at least once. The adversary was briefed on the timing question and answered only the claim as filed, so the existence question was never asked — brief the adversary with the existence question, not just the design question.
 
-**Retired item numbers — never reuse.** 0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 60, 61, 62, 66, 68, 69, 71, 72, 73 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Gate item 7 was moved, not closed: it is item 76. The two schemes are separate — 3 is live in this queue while retired in the gate, and 20 is live here; 67, 90, 101 and 200 never existed. Item 38's follow-up survives as item 52, whose residue is item 63. Item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file. Items 79-86 were filed 2026-09-17: the carry-over list, the buying-power defect and the websocket owner decision. Next free number is 87.
+**Retired item numbers — never reuse.** 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 54, 57, 58, 59, 60, 61, 62, 66, 68, 69, 71, 72, 73 in this queue, and 1, 2, 3, 4, 5, 6, 7, 8 in the PM test gate, were deleted once written up in `docs/INCIDENT_HISTORY.md`. Gate item 7 was moved, not closed: it is item 76. The two schemes are separate — 3 is now retired in BOTH, and 20 is live here; 67, 90, 101 and 200 never existed. Item 38's follow-up survives as item 52, whose residue is item 63. Item 53's overnight fractional-share gap is a STANDING BROKER LIMITATION, not an open item — do not re-file. Items 79-86 were filed 2026-09-17: the carry-over list, the buying-power defect and the websocket owner decision. Next free number is 87.
 
 ## Evidence-only follow-ups — reopen only on concrete production evidence
 

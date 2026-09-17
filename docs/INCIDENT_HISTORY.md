@@ -22,6 +22,18 @@ what would catch it next time.
 
 ---
 
+### 2026-09-17 — a limit order that never filled turned out to be the market doing its job, not the desk being slow
+
+**In plain words:** about one in eleven trade ideas ended with the order sitting at the broker, the price drifting away before it filled, and the order getting cancelled with the opportunity gone. That looked like a defect worth chasing. Measured against 68 real proposals, it happened 6 times (9%), and every one of those was the market itself walking away from a still-open limit price — not the desk being late.
+
+**Cause.** A separate, real lateness problem existed alongside it: the broker connection used to spend minutes authenticating *after* a trade was already approved, and names still inside the approved price were sometimes lost to that stall. That is now fixed — the connection opens while the reviewer is still working, so the wait no longer stacks on after approval — and it is a distinct cause from an order simply going unfilled because the tape moved.
+
+**What was ruled out.** Re-pegging the order to chase the market after it moves away. The owner decided (2026-09-12) that chasing a worse price is not something this desk should do; a cancelled, unfilled order in a market that moved is the system working as intended, not a bug to patch with a repeg.
+
+**What would catch it next time.** The known-time-budget behaviour already in place: a step that genuinely needs time (such as confirming a funding sale) has that time budgeted explicitly, and if the budget is gone the desk refuses the ticket honestly as "the window closing" rather than sending a stale limit or chasing the price.
+
+---
+
 ### 2026-09-17 — the desk could place an order off a price from a day it wasn't trading
 
 **In plain words:** one function answers "what is this worth right now". It asked the broker for the most recent trade and took the answer without ever looking at *when* that trade happened, so on a thinly traded name it could hand back yesterday's price. If there was no trade at all it quietly averaged the buy and sell quotes and returned that, looking exactly the same. Three things that place or move real orders relied on it: the job that puts a missing stop-loss back, the pin that caps what an entry may pay, and the reference a fill is checked against.
