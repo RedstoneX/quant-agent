@@ -25,6 +25,7 @@ import { buildCandidateGraph } from "./agentflow/buildGraph";
 import { buildCandidateStages, furthestReachedStage } from "./funnelShared";
 import { LifecycleTimeline } from "./LifecycleTimeline";
 import { TradeTable } from "./TradesPanel";
+import { summarizeDecision } from "./DecisionSummaryLine";
 export { buildCandidateStages, furthestReachedStage, skipText } from "./funnelShared";
 
 function TechCard({ tech }: { tech: TechAnalysisResult | null }) {
@@ -547,6 +548,10 @@ export function CandidateDetailModal({
       {detail && stages && (
         <div>
           <OutcomeBanner detail={detail} stages={stages} executed={executed} />
+          {funnel && (() => {
+            const text = summarizeDecision(detail, funnel);
+            return text ? <p className="mb-3 text-[length:var(--fs-meta)] text-ink">{text}</p> : null;
+          })()}
 
           {/* Specialist identity/direction/confidence now lives in the
               agent-topology graph inside "Decision flow" below (real

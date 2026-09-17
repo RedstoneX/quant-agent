@@ -58,6 +58,7 @@ from src.api.deps import (
 )
 from src.api.schemas import (
     AccountResponse,
+    CompanyIdentityResponse,
     DailyPnlPoint,
     ExposureBreakdown,
     HealthResponse,
@@ -85,6 +86,7 @@ from src.api.schemas import (
 # breach the Stage 2 isolation invariant `tests/test_api_isolation.py` /
 # `tests/test_api_safety.py` enforce for this router.
 from src.data.market import MarketDataProvider
+from src.data.company import CompanyProfileStore
 
 _MAX_QUOTE_SYMBOLS = 25
 
@@ -621,3 +623,28 @@ def get_symbol_events(
         )
     except Exception as exc:
         return SymbolEventsResponse(symbol=symbol, error=str(exc))
+
+
+def _peek_company(symbol: str):
+    """Cache-only identity. Isolated so tests can stub the disk read
+    without constructing a store. Never fetches."""
+    return CompanyProfileStore().peek_cached(symbol)
+
+
+@router.get("/company/{symbol}", response_model=CompanyIdentityResponse)
+def get_company_identity(symbol: str) -> CompanyIdentityResponse:
+    """Cached company name for the cockpit chart header.
+
+    Reads `data/company_profiles.json` only. A missing name is `null`,
+    never a guessed title. This path does not call yfinance.
+    """
+    try:
+        symbol = symbol.strip().upper()
+        if not symbol:
+            return CompanyIdentityResponse(symbol="", name=None, error="empty symbol")
+        profile = _peek_company(symbol)
+        return CompanyIdentityResponse(symbol=profile.symbol, name=profile.name)
+    except Exception as exc:
+        return CompanyIdentityResponse(
+            symbol=symbol.strip().upper(), name=None, error=str(exc)
+        )

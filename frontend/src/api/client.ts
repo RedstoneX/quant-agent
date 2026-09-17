@@ -210,6 +210,12 @@ export interface OrdersResponse {
   error: string | null;
 }
 
+export interface CompanyIdentity {
+  symbol: string;
+  name: string | null;
+  error: string | null;
+}
+
 export interface TradeItem {
   id: number;
   symbol: string;
@@ -944,6 +950,8 @@ export const api = {
   positions: () => getJSON<PositionsResponse>("/positions"),
   orders: (status: "open" | "closed" | "all" = "open") =>
     getJSON<OrdersResponse>(`/orders?status=${status}`),
+  company: (symbol: string) =>
+    getJSON<CompanyIdentity>(`/company/${encodeURIComponent(symbol)}`),
   trades: (limit = 30) => getJSON<TradesResponse>(`/trades?limit=${limit}`),
   positionHistory: (positionId: string) =>
     getJSON<PositionHistoryResponse>(`/positions/${encodeURIComponent(positionId)}/history`),

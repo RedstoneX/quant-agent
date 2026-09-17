@@ -94,6 +94,7 @@ describe("TodaySessionsStrip selected-session executions", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Chart MRVL BUY execution" }));
     expect(onSelectTrade).toHaveBeenCalledWith(mrvl);
+    expect(screen.getByLabelText("Today’s sessions").className).toContain("overflow-x-hidden");
   });
 
   it("summarizes session count, last session time, no-trade count and fill count in the collapsed line", () => {

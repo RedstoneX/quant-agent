@@ -76,6 +76,11 @@ const account = {
 const positions = [
   { symbol: "AAPL", qty: 12, avg_entry: 221.45, current_price: 226.2, market_value: 2714.4, unrealized_pnl: 57, unrealized_intraday_pnl: 34, sector: "Technology", is_cash_equivalent: false, direction: "long" },
   { symbol: "SQQQ", qty: 40, avg_entry: 31.2, current_price: 30.8, market_value: 1232, unrealized_pnl: -16, unrealized_intraday_pnl: -9, sector: "Inverse ETF", is_cash_equivalent: false, direction: "bearish_hedge" },
+  { symbol: "MSFT", qty: 8, avg_entry: 410.2, current_price: 412.1, market_value: 3296.8, unrealized_pnl: 15.2, unrealized_intraday_pnl: 6, sector: "Technology", is_cash_equivalent: false, direction: "long" },
+  { symbol: "NVDA", qty: 5, avg_entry: 118.4, current_price: 121.0, market_value: 605, unrealized_pnl: 13, unrealized_intraday_pnl: 4, sector: "Technology", is_cash_equivalent: false, direction: "long" },
+  { symbol: "AMD", qty: 20, avg_entry: 155.1, current_price: 152.4, market_value: 3048, unrealized_pnl: -54, unrealized_intraday_pnl: -12, sector: "Technology", is_cash_equivalent: false, direction: "long" },
+  { symbol: "TSLA", qty: 6, avg_entry: 240.0, current_price: 238.5, market_value: 1431, unrealized_pnl: -9, unrealized_intraday_pnl: -3, sector: "Consumer", is_cash_equivalent: false, direction: "long" },
+  { symbol: "AMZN", qty: 4, avg_entry: 180.0, current_price: 182.5, market_value: 730, unrealized_pnl: 10, unrealized_intraday_pnl: 2, sector: "Consumer", is_cash_equivalent: false, direction: "long" },
   { symbol: "SGOV", qty: 259, avg_entry: 100.2, current_price: 100.39, market_value: 26001, unrealized_pnl: 49, unrealized_intraday_pnl: 3, sector: "Cash equivalent", is_cash_equivalent: true, direction: "cash_equivalent" },
 ];
 const orders = [
@@ -127,6 +132,9 @@ async function installRoutes(page, scenario = "populated") {
     if (path === "/account") return json(route, scenario === "error" ? { ...account, error: "broker snapshot unavailable" } : account);
     if (path === "/positions") return json(route, { positions: scenario === "empty" || scenario === "error" ? [] : positions, error: scenario === "error" ? "position snapshot unavailable" : null });
     if (path === "/orders") return json(route, { orders: scenario === "empty" || scenario === "error" ? [] : orders, error: scenario === "error" ? "order snapshot unavailable" : null });
+    if (path === "/company/AAPL") return json(route, { symbol: "AAPL", name: "Apple Inc.", error: null });
+    if (path === "/company/MSFT") return json(route, { symbol: "MSFT", name: "Microsoft Corporation", error: null });
+    if (path.startsWith("/company/")) return json(route, { symbol: path.split("/").at(-1), name: null, error: null });
     if (path === "/trades") return json(route, { trades: scenario === "empty" || scenario === "error" ? [] : [exitTrade, trade], count: scenario === "empty" || scenario === "error" ? 0 : 2 });
     if (path === "/health") {
       const base = { available: true, daily_cost_usd: .42, daily_limit_usd: 1.5, active_quota_holds: [] };
@@ -160,6 +168,7 @@ async function installRoutes(page, scenario = "populated") {
       return json(route, { date: "2026-08-25", has_data: true, daily_pnl: account.history.at(-1), reflection: { date: "2026-08-25", tomorrow_outlook: "Selective", lessons: "Respect grounded passes.", suggested_actions: null, risk_rating: "medium", tomorrow_bias: "neutral", tomorrow_conviction: "medium", tomorrow_key_risks: "Concentration", sell_decisions_assessment: null, sell_grades_json: null, buy_grades_json: null, missed_opportunities_json: JSON.stringify([{ symbol: "NVDA", move_pct: 4.2, miss_category: "late_signal", lesson: "Wait for confirmed entry." }, { symbol: "TSLA", move_pct: -3.1, miss_category: "risk_disciplined", lesson: "Pass was correct." }]), timestamp: "2026-08-25T20:00:00Z" }, runs: [runSummary], trades: [trade, exitTrade], candidates: ["AAPL", "MSFT"] });
     }
     if (path.startsWith("/prices/")) return json(route, { symbol: decodeURIComponent(path.split("/").at(-1)), timeframe: url.searchParams.get("timeframe") || "1d", bars, error: null });
+    if (path.startsWith("/events/")) return json(route, { symbol: decodeURIComponent(path.split("/").at(-1)), dividends: [], earnings: [], error: null });
     if (path === "/quotes") return json(route, { quotes: [{ symbol: "AAPL", last_price: 226.2, prev_close: 224.1, session_open: 224.5, session_high: 227.0, session_low: 223.8 }, { symbol: "SPY", last_price: 655, prev_close: 652, session_open: 653, session_high: 656, session_low: 651 }], as_of: "2026-08-25T18:30:00Z", source: "alpaca_market_data", error: null });
     if (path === "/search") return json(route, { query: "", trades: [], agent_logs: [] });
     return route.continue();
@@ -206,9 +215,10 @@ async function openDiagnostics(page) {
   await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
 }
 
-async function shot(name, viewport, scenario = "populated", interact) {
+async function shot(name, viewport, scenario = "populated", interact, destDir) {
   const stepErrors = [];
   let context;
+  const outDir = destDir || (Number(name.slice(0, 2)) >= 8 ? researchOutput : output);
   try {
     context = await browser.newContext({ viewport, colorScheme: "dark" });
     const page = await context.newPage();
@@ -219,7 +229,7 @@ async function shot(name, viewport, scenario = "populated", interact) {
     await page.goto(baseUrl, { waitUntil: "networkidle" });
     await page.getByText("QAMC Mission Control", { exact: false }).first().waitFor();
     if (interact) await interact(page);
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(800);
     const overflow = await page.evaluate(() => {
       if (document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1) return null;
       const offenders = [...document.querySelectorAll("body *")]
@@ -229,9 +239,17 @@ async function shot(name, viewport, scenario = "populated", interact) {
       return offenders.join(" | ");
     });
     if (overflow) stepErrors.push(`${name}: document has horizontal overflow (${overflow})`);
-    await page.screenshot({ path: resolve(Number(name.slice(0, 2)) >= 8 ? researchOutput : output, `${name}.png`), fullPage: true });
+    await page.screenshot({ path: resolve(outDir, `${name}.png`), fullPage: true });
   } catch (err) {
     stepErrors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+    try {
+      const page = context?.pages()[0];
+      if (page) {
+        await page.screenshot({ path: resolve(outDir, `${name}.png`), fullPage: true });
+      }
+    } catch {
+      /* failure shot is evidence, not required */
+    }
   } finally {
     if (context) await context.close().catch(() => {});
   }
@@ -246,19 +264,19 @@ async function shot(name, viewport, scenario = "populated", interact) {
 // browser.newContext(), and results are collected for a summary at the
 // end; the process still exits non-zero if anything failed.
 const steps = [
-  ["01-desktop-cockpit-populated", { width: 1600, height: 1000 }],
+  ["01-desktop-cockpit-populated", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByText("Apple Inc.").waitFor();
+    await page.getByText("position 12", { exact: false }).waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+  }],
   ["02-desktop-positions-liquidity", { width: 1600, height: 1000 }, "populated", async (page) => {
-    // Positions & Liquidity moved: Positions is now the primary
-    // leftmost/active-by-default dockview pane (item 1 of the cockpit
-    // trader rework) and Liquidity is a compact row that's always visible
-    // in the header, not a tab either of them ever needs to be clicked
-    // into. Explicitly activating the Positions tab keeps this step
-    // meaningful (proves the tab is reachable and renders) rather than
-    // deleting the interaction outright.
+    // Positions is the primary leftmost/active-by-default dockview pane.
+    // Liquidity lives in the Account Dockview panel with NLV.
     await page.getByRole("tab", { name: "Positions" }).click();
   }],
   ["03-desktop-candidate-lifecycle", { width: 1600, height: 1000 }, "populated", async (page) => {
     await page.getByRole("button", { name: /Lifecycle/ }).click();
+    await page.getByText("PM proposed BUY", { exact: false }).first().waitFor();
     const lifecycle = page.getByText("Persisted lifecycle", { exact: false });
     await lifecycle.waitFor();
     await lifecycle.scrollIntoViewIfNeeded();
@@ -293,11 +311,209 @@ const steps = [
   ["19-desktop-system-circuit-unavailable", { width: 1600, height: 1000 }, "unavailable", async (page) => { await page.getByText("paid-analysis safety circuit unavailable", { exact: true }).waitFor(); await openDiagnostics(page); await page.getByText("unavailable", { exact: true }).last().waitFor(); }],
 ];
 
+const hierarchyOnly = process.argv.includes("--hierarchy");
+const locksOnly = process.argv.includes("--locks");
+const fullPanelsOnly = process.argv.includes("--full-panels");
+const hierarchyDir = resolve(process.env.QAMC_HIERARCHY_OUTPUT || "../docs/visual/pr-444/hierarchy");
+const locksDir = resolve(process.env.QAMC_LOCKS_OUTPUT || "../docs/visual/pr-444");
+const fullPanelsDir = resolve(process.env.QAMC_FULL_PANELS_OUTPUT || "../docs/visual/pr-444/full-panels");
+
+async function dragVerticalSash(page, index, dy) {
+  const sashes = page.locator(".dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash");
+  await sashes.nth(index).waitFor();
+  await page.evaluate(
+    ({ index, dy }) => {
+      const sash = document.querySelectorAll(
+        ".dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash",
+      )[index];
+      if (!sash) throw new Error(`no vertical sash ${index}`);
+      const box = sash.getBoundingClientRect();
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      const fire = (type, target, clientY) => {
+        target.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: x,
+            clientY,
+            button: 0,
+            buttons: type === "pointerup" ? 0 : 1,
+            pointerId: 1,
+            pointerType: "mouse",
+            view: window,
+          }),
+        );
+      };
+      fire("pointerdown", sash, y);
+      const steps = 8;
+      for (let i = 1; i <= steps; i += 1) {
+        fire("pointermove", document, y + (dy * i) / steps);
+      }
+      fire("pointerup", document, y + dy);
+    },
+    { index, dy },
+  );
+}
+
+async function dragHorizontalSash(page, index, dx) {
+  const sashes = page.locator(".dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash");
+  await sashes.nth(index).waitFor();
+  await page.evaluate(
+    ({ index, dx }) => {
+      const sash = document.querySelectorAll(
+        ".dv-split-view-container.dv-horizontal > .dv-sash-container > .dv-sash",
+      )[index];
+      if (!sash) throw new Error(`no horizontal sash ${index}`);
+      const box = sash.getBoundingClientRect();
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      const fire = (type, target, clientX) => {
+        target.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX,
+            clientY: y,
+            button: 0,
+            buttons: type === "pointerup" ? 0 : 1,
+            pointerId: 1,
+            pointerType: "mouse",
+            view: window,
+          }),
+        );
+      };
+      fire("pointerdown", sash, x);
+      const steps = 8;
+      for (let i = 1; i <= steps; i += 1) {
+        fire("pointermove", document, x + (dx * i) / steps);
+      }
+      fire("pointerup", document, x + dx);
+    },
+    { index, dx },
+  );
+}
+
+const hierarchySteps = [
+  ["a-chart-dominant-desktop", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByText("Apple Inc.").waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+    await page.getByText("Live $", { exact: false }).waitFor();
+  }],
+  ["b-holdings-wrap-four", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await page.getByRole("button", { name: "Chart AAPL" }).waitFor();
+    await page.getByRole("button", { name: "Chart SGOV" }).waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+  }],
+  ["c-orders-stop-target", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+    await page.getByRole("tab", { name: "Orders" }).click();
+    await page.getByText("Stop", { exact: true }).waitFor();
+    await page.getByText("Target", { exact: true }).waitFor();
+    await page.getByText("Limit", { exact: true }).waitFor();
+  }],
+];
+
+const lockSteps = [
+  ["a-holdings-movable-panel", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await page.getByRole("button", { name: "Chart AAPL" }).waitFor();
+    await page.getByRole("button", { name: "Chart SGOV" }).waitFor();
+    await page.getByText("Apple Inc.").waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+    await page.getByText("Live $", { exact: false }).waitFor();
+  }],
+  ["b-resize-from-above", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await page.getByText("ENTRY", { exact: false }).waitFor();
+    await dragVerticalSash(page, 0, 80);
+  }],
+  ["b-resize-from-below", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByText("Live $", { exact: false }).waitFor();
+    await dragVerticalSash(page, 1, -120);
+    await page.getByText("Live $", { exact: false }).waitFor();
+  }],
+];
+
+async function waitForChartStage(page) {
+  await page.getByText("Apple Inc.").waitFor();
+  await page.waitForFunction(() => {
+    const canvases = [...document.querySelectorAll("canvas")];
+    return canvases.some((canvas) => {
+      const box = canvas.getBoundingClientRect();
+      return box.width > 120 && box.height > 80;
+    });
+  });
+  await page.getByText("ENTRY", { exact: false }).waitFor();
+  await page.getByText("Live $", { exact: false }).waitFor();
+}
+
+const fullPanelSteps = [
+  ["a-full-cockpit-panels", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await page.getByRole("tab", { name: "Account" }).waitFor();
+    await page.getByRole("tab", { name: "Sessions" }).waitFor();
+    await page.getByRole("tab", { name: "Chart" }).waitFor();
+    await page.getByRole("tab", { name: "Positions" }).waitFor();
+    await page.getByRole("tab", { name: "Orders" }).waitFor();
+    await page.getByText("Net liquidation value").waitFor();
+    await waitForChartStage(page);
+  }],
+  ["b-resize-h-and-v", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await waitForChartStage(page);
+    await dragVerticalSash(page, 0, 70);
+    await dragHorizontalSash(page, 0, 120);
+    await waitForChartStage(page);
+  }],
+  ["c-no-horizontal-slider", { width: 1600, height: 1000 }, "populated", async (page) => {
+    await waitForChartStage(page);
+    await page.getByRole("tab", { name: "Orders" }).click();
+    await page.getByText("Stop", { exact: true }).waitFor();
+    await page.getByText("Target", { exact: true }).waitFor();
+    await page.getByText("Limit", { exact: true }).waitFor();
+  }],
+  ["d-browser-narrow-reflow", { width: 1280, height: 800 }, "populated", async (page) => {
+    await page.getByRole("tab", { name: "Holdings" }).waitFor();
+    await page.getByRole("tab", { name: "Account" }).waitFor();
+    await page.getByRole("tab", { name: "Sessions" }).waitFor();
+    await waitForChartStage(page);
+  }],
+];
+
 const results = [];
-for (const [name, viewport, scenario, interact] of steps) {
-  const result = await shot(name, viewport, scenario, interact);
-  results.push(result);
-  console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+if (!hierarchyOnly && !locksOnly && !fullPanelsOnly) {
+  for (const [name, viewport, scenario, interact] of steps) {
+    const result = await shot(name, viewport, scenario, interact);
+    results.push(result);
+    console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+  }
+}
+if (hierarchyOnly) {
+  await mkdir(hierarchyDir, { recursive: true });
+  for (const [name, viewport, scenario, interact] of hierarchySteps) {
+    const result = await shot(name, viewport, scenario, interact, hierarchyDir);
+    results.push(result);
+    console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+  }
+}
+if (locksOnly) {
+  await mkdir(locksDir, { recursive: true });
+  for (const [name, viewport, scenario, interact] of lockSteps) {
+    const result = await shot(name, viewport, scenario, interact, locksDir);
+    results.push(result);
+    console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+  }
+}
+if (fullPanelsOnly) {
+  await mkdir(fullPanelsDir, { recursive: true });
+  for (const [name, viewport, scenario, interact] of fullPanelSteps) {
+    const result = await shot(name, viewport, scenario, interact, fullPanelsDir);
+    results.push(result);
+    console.log(`${result.ok ? "PASS" : "FAIL"}  ${name}`);
+  }
 }
 
 await browser.close();
@@ -313,5 +529,5 @@ if (failed.length) {
   }
   process.exitCode = 1;
 } else {
-  console.log(`screenshots: ${output}`);
+  console.log(`screenshots: ${fullPanelsOnly ? fullPanelsDir : locksOnly ? locksDir : hierarchyOnly ? hierarchyDir : output}`);
 }

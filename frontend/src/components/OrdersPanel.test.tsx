@@ -77,6 +77,42 @@ describe("OrdersPanel symbol click vs row inspect", () => {
     expect(onSelectSymbol).not.toHaveBeenCalled();
   });
 
+  it("keeps Stop and Target on the blotter from the order and the recorded take-profit", () => {
+    render(
+      <OrdersPanel
+        orders={[order({ order_type: "stop", side: "sell", stop_price: 218.4, filled_qty: 0, filled_avg_price: null, status: "accepted" })]}
+        error={null}
+        loading={false}
+        status="open"
+        onStatusChange={vi.fn()}
+        trades={[
+          {
+            id: 11,
+            symbol: "MRVL",
+            action: "BUY",
+            qty: 10,
+            price: 101.25,
+            reasoning: null,
+            run_id: "run-1",
+            decision_id: "d1",
+            broker_order_id: "order-entry",
+            fill_status: "filled",
+            fill_qty: 10,
+            fill_price: 101.25,
+            timestamp: "2026-08-28 13:35:00",
+            stop_loss: 218.4,
+            take_profit: 232,
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByText("Stop")).toBeTruthy();
+    expect(screen.getByText("Target")).toBeTruthy();
+    expect(screen.getByText("$218.40")).toBeTruthy();
+    expect(screen.getByText("$232.00")).toBeTruthy();
+  });
+
   it("renders the symbol as plain text, not a dead button, when onSelectSymbol is absent", () => {
     render(
       <OrdersPanel

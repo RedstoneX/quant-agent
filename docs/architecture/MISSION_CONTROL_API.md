@@ -163,6 +163,13 @@ chart's fixed-row markers, via `MarketDataProvider.get_price_chart_events`
 adjustment and risk prompts use, whose contracts this does not touch.
 Empty `dividends`/`earnings` lists are a normal result, not an error.
 
+`GET /company/{symbol}` (`CompanyIdentityResponse`): the cached company
+name for the cockpit chart header. Reads `data/company_profiles.json`
+only — the same store the desk already keeps for PM/Telegram identity.
+`name` is `null` when that cache has no identity for the ticker; this
+path never fetches yfinance and never invents a title. `error` is only
+set when the cache itself could not be read.
+
 ## Mission Control data-truth / run-history / decision-explainability tranche (2026-08-21)
 
 Operator-authorized, bounded read-side correctness tranche. Additive

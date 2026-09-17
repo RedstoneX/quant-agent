@@ -98,6 +98,7 @@ export function SupportTabs({
             onStatusChange={onOrderStatusChange}
             onInspect={onInspectOrder}
             onSelectSymbol={onSelectPositionSymbol}
+            trades={trades}
           />
           <TradesPanel trades={trades} error={tradesError} loading={tradesLoading} onInspect={onInspectTrade} onSelectSymbol={onSelectPositionSymbol} />
         </div>

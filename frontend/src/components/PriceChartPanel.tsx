@@ -217,11 +217,12 @@ export function tradeMarkers(
 
 /* "Where am I versus the market" — the trader's own average entry for the
  * charted symbol, drawn as a labelled horizontal line with its live
- * unrealized P&L. Sourced from the same broker-marked PositionItem the
- * Positions panel and the holdings strip render; never inferred from the
- * bar data. Returns null when the symbol is not held (or the entry price
- * is missing/zero), in which case nothing is drawn at all — an absent
- * position must never produce a line at 0.
+ * unrealized P&L. That dollar figure belongs on the chart line and on
+ * Positions; it must not also sit in the identity row above the candles.
+ * Sourced from the same broker-marked PositionItem those panels render;
+ * never inferred from the bar data. Returns null when the symbol is not
+ * held (or the entry price is missing/zero), in which case nothing is
+ * drawn at all — an absent position must never produce a line at 0.
  *
  * Cash-parking rows (SGOV) are included deliberately: if the operator
  * charts the sweep instrument, its real average entry is still the honest
@@ -1303,9 +1304,6 @@ export function PriceChartPanel({
         { hour: "2-digit", minute: "2-digit" }
       )
     : null;
-  // The operator's own position in the charted symbol, echoed in the panel
-  // subtitle as well as on the chart's entry line — the line label is
-  // small and sits against the price scale; this is the readable version.
   // Bottom range-slider geometry — the full loaded series (0..bars.length)
   // is the track's domain; the window is the chart's own visible logical
   // range clamped into that domain, expressed as percentages so the CSS
@@ -1330,11 +1328,11 @@ export function PriceChartPanel({
           return { leftPct, widthPct: Math.min(widthPct, 100 - leftPct) };
         })()
       : null;
+  // qty @ entry next to the live quote. Unrealized P&L stays on the
+  // ENTRY overlay and on Positions, not in this subtitle.
   const heldPosition = symbol ? positions.find((item) => item.symbol === symbol) : undefined;
   const positionLine = heldPosition
-    ? ` · position ${fmtNum(heldPosition.qty)} @ ${fmtMoney(heldPosition.avg_entry)} · ${
-        (heldPosition.unrealized_pnl ?? 0) >= 0 ? "+" : ""
-      }${fmtMoney(heldPosition.unrealized_pnl)} unrealized`
+    ? ` · position ${fmtNum(heldPosition.qty)} @ ${fmtMoney(heldPosition.avg_entry)}`
     : "";
   const quoteLine = !symbol
     ? undefined
@@ -1355,6 +1353,9 @@ export function PriceChartPanel({
   return (
     <Panel
       title={symbol ? `Price — ${symbol}` : "Price chart"}
+      hideTitle
+      dense
+      flush
       status={status}
       subtitle={quoteLine ? `${quoteLine}${positionLine}` : positionLine || undefined}
       actions={

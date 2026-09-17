@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import { RunFunnelResponse, TradeItem } from "../api/client";
+import { MacroBroaderContext, RunFunnelResponse, RunSummary, TradeItem } from "../api/client";
 
 export interface CockpitWorkspaceState {
   funnel: RunFunnelResponse | null;
@@ -19,6 +19,18 @@ export interface CockpitWorkspaceState {
    * nothing to go back to. See App.tsx's chartSymbol wrapper. */
   previousChartSymbol?: string | null;
   onGoBackSymbol?: () => void;
+  /** Today's sessions + the last-known regime — Account and Sessions
+   * Dockview panes read these. Mobile still renders the same strips from
+   * App.tsx; desktop no longer keeps them as page chrome. */
+  todaysRuns: RunSummary[];
+  todaysFunnels: Record<string, RunFunnelResponse | null>;
+  todaysTrades: TradeItem[];
+  selectedRunId: string | null;
+  autoFollow: boolean;
+  onSelectSession: (runId: string) => void;
+  onFollowLatest: () => void;
+  onSelectTrade: (trade: TradeItem) => void;
+  regime: { macro: MacroBroaderContext; asOf: string | null } | null;
 }
 
 const CockpitWorkspaceContext = createContext<CockpitWorkspaceState | null>(null);
