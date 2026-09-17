@@ -329,6 +329,8 @@ def test_intraday_no_new_activity_statuses_remain_silent(tmp_path, monkeypatch):
     for status in (
         "intraday_scan_disabled", "intraday_scan_lock_contended",
         "intraday_scan_no_opportunity", "intraday_scan_open_overlap",
+        "intraday_scan_open_tick", "intraday_scan_morning_not_done",
+        "intraday_scan_before_first_intraday",
     ):
         outer = {
             "status": "ok", "run_id": "intra_check-quiet", "daily_pnl": 10.0,
@@ -367,6 +369,31 @@ def test_open_overlap_leftover_is_not_intraday_opportunity_telegram(
     later_msg = trader_feed.format_session_result("intra_check", later, 12.0)
     assert later_msg is not None
     assert "⚡ INTRADAY OPPORTUNITY" in later_msg
+
+
+def test_schedule_law_skips_are_not_intraday_opportunity_telegram(
+    tmp_path, monkeypatch,
+):
+    """Open tick, morning-not-done, and before-first-intraday must never
+    wear the INTRADAY OPPORTUNITY header. A later true scan still may."""
+    _make_db(tmp_path, monkeypatch)
+    for status in (
+        "intraday_scan_open_tick",
+        "intraday_scan_morning_not_done",
+        "intraday_scan_before_first_intraday",
+    ):
+        outer = {
+            "status": "ok", "run_id": "intra_check-open", "daily_pnl": 10.0,
+            "intraday_scan": {
+                "status": status,
+                "run_id": "intra_check-open",
+                "movers": ["NVDA"],
+                "reason": status,
+            },
+        }
+        msg = trader_feed.format_session_result("intra_check", outer, 7.0)
+        assert msg is None, f"{status} must stay silent"
+        assert "INTRADAY OPPORTUNITY" not in (msg or "")
 
 
 def test_intraday_evidence_gate_skip_is_not_silent(tmp_path, monkeypatch):

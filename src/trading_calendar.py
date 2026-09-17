@@ -55,6 +55,62 @@ SESSION_WINDOWS: dict[str, tuple[int, int]] = {
 REGULAR_SESSION_OPEN_MIN = 570   # 09:30 ET
 REGULAR_SESSION_CLOSE_MIN = 960  # 16:00 ET
 
+# Existing intra_check fire step — the same 30 used by
+# `TradingScheduler._build_intra_check_trigger` (`range(lo, hi+1, 30)`) and
+# `scripts/systemd/quant-agent-intra_check.timer` (`OnCalendar=*:0/30`).
+# This is the cadence already on the box, not a pad invented after 09:30.
+INTRA_CHECK_TICK_MINUTES = 30
+
+
+def intra_check_tick_minutes() -> int:
+    """Existing intra_check cadence in minutes (not a post-open pad)."""
+    return INTRA_CHECK_TICK_MINUTES
+
+
+def intra_tick_minute(when: datetime | None = None) -> int | None:
+    """Cadence fire that owns `when` inside the intra_check ET window.
+
+    Floors to ``SESSION_WINDOWS['intra_check']`` start + N times the
+    existing tick. A 09:37 leftover of the 09:30 fire still belongs to
+    minute 570 (the shared open with morning). None outside the window.
+    """
+    now = when if when is not None else et_now()
+    lo, hi = SESSION_WINDOWS["intra_check"]
+    minute = _minute_of_day(now)
+    if minute < lo or minute > hi:
+        return None
+    step = INTRA_CHECK_TICK_MINUTES
+    return lo + ((minute - lo) // step) * step
+
+
+def is_open_session_intra_tick(when: datetime | None = None) -> bool:
+    """True when this intra_check fire is the 09:30 open morning also owns.
+
+    Morning and intra_check share ``SESSION_WINDOWS`` start (570). That
+    shared open tick is the paid open, not a separate INTRADAY look —
+    including leftover minutes until the next existing cadence fire.
+    """
+    tick = intra_tick_minute(when)
+    if tick is None:
+        return False
+    morning_start, _morning_end = SESSION_WINDOWS["morning"]
+    return tick == morning_start
+
+
+def first_paid_intraday_tick_after(morning_finished: datetime) -> int | None:
+    """First existing intra_check cadence minute strictly after morning ended.
+
+    Derived from ``SESSION_WINDOWS['intra_check']`` plus
+    ``INTRA_CHECK_TICK_MINUTES``. Not ``09:30 + pad``. None when no later
+    fire remains in the window.
+    """
+    lo, hi = SESSION_WINDOWS["intra_check"]
+    finished = _minute_of_day(morning_finished)
+    for tick in range(lo, hi + 1, INTRA_CHECK_TICK_MINUTES):
+        if tick > finished:
+            return tick
+    return None
+
 
 def et_now() -> datetime:
     """Current instant as a timezone-aware datetime in US/Eastern."""

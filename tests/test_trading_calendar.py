@@ -11,13 +11,17 @@ import pytest
 
 from src.trading_calendar import (
     ET,
+    INTRA_CHECK_TICK_MINUTES,
     SESSION_WINDOWS,
     UTC,
     et_now,
     et_today,
+    first_paid_intraday_tick_after,
     format_window,
     in_session_window,
+    intra_tick_minute,
     is_last_business_day_of_quarter,
+    is_open_session_intra_tick,
     is_weekday,
     quarter_label,
     quarter_of,
@@ -218,3 +222,33 @@ def test_util_time_shim_still_re_exports():
     # naive UTC input round-trips through both paths
     dt = datetime(2026, 4, 17, 21, 0)
     assert shim_to_et(dt) == to_et(dt)
+
+
+def test_intra_check_tick_is_existing_cadence_not_a_pad():
+    """30 minutes is the scheduler/systemd fire step already on the box,
+    not a delay invented after 09:30."""
+    morning_start, _ = SESSION_WINDOWS["morning"]
+    intra_start, intra_end = SESSION_WINDOWS["intra_check"]
+    assert morning_start == intra_start == 570
+    assert INTRA_CHECK_TICK_MINUTES == 30
+    friday = datetime(2026, 4, 17, 9, 30, tzinfo=ET)
+    leftover = datetime(2026, 4, 17, 9, 37, tzinfo=ET)
+    ten = datetime(2026, 4, 17, 10, 0, tzinfo=ET)
+    assert intra_tick_minute(friday) == 570
+    assert intra_tick_minute(leftover) == 570
+    assert intra_tick_minute(ten) == 600
+    assert is_open_session_intra_tick(friday) is True
+    assert is_open_session_intra_tick(leftover) is True
+    assert is_open_session_intra_tick(ten) is False
+    done_0936 = datetime(2026, 4, 17, 9, 36, tzinfo=ET)
+    done_1005 = datetime(2026, 4, 17, 10, 5, tzinfo=ET)
+    assert first_paid_intraday_tick_after(done_0936) == 600  # 10:00
+    assert first_paid_intraday_tick_after(done_1005) == 630  # 10:30
+    assert first_paid_intraday_tick_after(
+        datetime(2026, 4, 17, 16, 0, tzinfo=ET),
+    ) is None
+    # Cadence fires must be exactly the existing range, not 09:30+pad.
+    ticks = list(range(intra_start, intra_end + 1, INTRA_CHECK_TICK_MINUTES))
+    assert ticks[0] == 570
+    assert ticks[1] == 600
+    assert 585 not in ticks  # 09:45 would be an invented pad

@@ -57,7 +57,9 @@ from unittest.mock import MagicMock, patch
 from src import trader_feed
 from src.config import IntradayScanConfig
 from src.pipeline import TradingPipeline
-from tests.test_intraday_scan import _ta_result, _todays_macro_state, _todays_news_dump
+from tests.test_intraday_scan import (
+    _mark_true_intraday, _intraday_et, _ta_result, _todays_macro_state, _todays_news_dump,
+)
 from tests.test_trader_feed import _make_db, _pin_clock, _QUIET_TICK_TIME, _TOP_OF_HOUR_TIME
 
 
@@ -113,7 +115,7 @@ def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
     p._is_trading_day = MagicMock(return_value=True)
     p.risk_engine = MagicMock()
     p.risk_engine.check_daily_loss.return_value = None
-    return p
+    return _mark_true_intraday(p)
 
 
 def _rehearsal_collect(result: dict):
@@ -311,6 +313,33 @@ def test_scan_never_ran_because_another_session_active_stays_healthy_and_silent(
     ) or "")
 
 
+def test_open_tick_keeps_deterministic_risk_without_paid_hunt_or_intraday_telegram(
+    tmp_path, monkeypatch,
+):
+    """Joint schedule law: 09:30 paid open is morning. intra_check still
+    runs stops/coverage/daily-loss; it does not buy a second hunt or
+    label INTRADAY OPPORTUNITY."""
+    _make_db(tmp_path, monkeypatch)
+    p = _pipeline(enabled=True)
+    p._scan_when = _intraday_et(9, 30)
+    p._last_morning_completed_at = _intraday_et(9, 31)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": {"last_price": 110.0, "prev_close": 100.0},
+    }
+
+    result = p.run_intra_check()
+
+    p._reconcile_stop_coverage.assert_called_once()
+    p._reconcile_orphan_pending_submits.assert_called_once()
+    p.risk_engine.check_daily_loss.assert_called_once()
+    p.tech_analyst.analyze_batch.assert_not_called()
+    assert result["status"] == "ok"
+    assert result["intraday_scan"]["status"] == "intraday_scan_open_tick"
+    msg = trader_feed.format_session_result("intra_check", result, 5.0)
+    assert msg is None
+    assert "INTRADAY OPPORTUNITY" not in (msg or "")
+
+
 def test_midday_lock_still_held_at_window_end_is_contended_not_open_overlap(
     tmp_path, monkeypatch,
 ):
@@ -372,6 +401,8 @@ def test_disabled_lock_and_no_opportunity_all_classify_as_healthy():
     for status in (
         "intraday_scan_disabled", "intraday_scan_lock_contended",
         "intraday_scan_no_opportunity", "intraday_scan_open_overlap",
+        "intraday_scan_open_tick", "intraday_scan_morning_not_done",
+        "intraday_scan_before_first_intraday",
     ):
         result = {
             "status": "ok", "run_id": "r-health",
@@ -528,6 +559,8 @@ def test_the_three_no_new_activity_statuses_are_in_the_rigs_vocabulary():
     for status in (
         "intraday_scan_disabled", "intraday_scan_lock_contended",
         "intraday_scan_no_opportunity", "intraday_scan_open_overlap",
+        "intraday_scan_open_tick", "intraday_scan_morning_not_done",
+        "intraday_scan_before_first_intraday",
     ):
         assert status in STATUS_PLAIN
         assert STATUS_PLAIN[status]
@@ -547,5 +580,7 @@ def test_the_three_no_new_activity_statuses_are_in_the_verdicts_healthy_set():
     for status in (
         "intraday_scan_disabled", "intraday_scan_lock_contended",
         "intraday_scan_no_opportunity", "intraday_scan_open_overlap",
+        "intraday_scan_open_tick", "intraday_scan_morning_not_done",
+        "intraday_scan_before_first_intraday",
     ):
         assert status in healthy_block, f"{status} must be in _verdict's healthy set"

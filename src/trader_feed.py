@@ -53,14 +53,18 @@ _BASE_ONLY_STATUSES = frozenset(
 # the Telegram feed on purpose — same as the old no-key ticks, per the
 # "ordinary ~30-minute OK ticks are silent" policy below — because nothing
 # about them needs an operator's attention: disabled-by-config and
-# lock-contention are routine scheduling noise, open-overlap is leftover of
-# the morning session (not a separate INTRADAY), and "no opportunity" means
-# the scan ran and correctly found nothing. Only a real candidate engaged
-# on a tick that did not overlap the open (intraday_no_trades/intraday_executed)
-# or a genuine problem (crashed/suspended/analysis_error) is worth a message.
+# lock-contention are routine scheduling noise; open-tick / morning-not-done
+# / before-first-intraday / open-overlap are still the open or morning
+# continuation (never a separate INTRADAY); and "no opportunity" means the
+# scan ran and correctly found nothing. Only a real candidate engaged on a
+# tick that is a true INTRADAY look
+# (intraday_no_trades/intraday_executed) or a genuine problem
+# (crashed/suspended/analysis_error) is worth a message.
 _INTRADAY_SILENT_STATUSES = frozenset({
     "intraday_scan_disabled", "intraday_scan_lock_contended",
     "intraday_scan_no_opportunity", "intraday_scan_open_overlap",
+    "intraday_scan_open_tick", "intraday_scan_morning_not_done",
+    "intraday_scan_before_first_intraday",
 })
 
 

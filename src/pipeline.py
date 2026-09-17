@@ -12732,6 +12732,113 @@ class TradingPipeline:
         remaining_min = end - _minute_of_day(now)
         return max(0.0, remaining_min * 60.0)
 
+    def _last_morning_marker_path(self) -> Path:
+        """Wrapper once-per-day marker: ``last-morning`` under the cache dir."""
+        import os
+
+        override = os.environ.get("LAST_RUN_DIR_OVERRIDE")
+        root = Path(override) if override else Path.home() / ".cache" / "quant-agent"
+        return root / "last-morning"
+
+    def _scan_clock(self, when=None):
+        """ET clock for the paid-intraday schedule gate. Tests inject ``_scan_when``."""
+        if when is not None:
+            return when
+        injected = getattr(self, "_scan_when", None)
+        if injected is not None:
+            return injected
+        return et_now()
+
+    def _morning_completed_today(self, when=None):
+        """When today's morning session actually finished, or None.
+
+        Reads the wrapper's ``last-morning`` marker (ET date + unix written
+        on successful exit — finish time, not start). Tests inject
+        ``_last_morning_completed_at`` (a datetime, or False for not done).
+        """
+        from datetime import datetime, timezone
+
+        from src.trading_calendar import ET
+
+        injected = getattr(self, "_last_morning_completed_at", None)
+        if injected is False:
+            return None
+        if isinstance(injected, datetime):
+            return injected
+
+        path = self._last_morning_marker_path()
+        try:
+            text = path.read_text().strip()
+        except OSError:
+            return None
+        if not text:
+            return None
+        parts = text.split()
+        date_s = parts[0]
+        clock = self._scan_clock(when)
+        if date_s != session_date_key(clock):
+            return None
+        if len(parts) < 2 or not parts[1].isdigit():
+            return None
+        return datetime.fromtimestamp(int(parts[1]), tz=timezone.utc).astimezone(ET)
+
+    def _paid_intraday_schedule_skip(
+        self, ctx: RunContext, movers: list[str], when=None,
+    ) -> dict | None:
+        """Skip paid discovery until the first true INTRADAY cadence.
+
+        Joint schedule law: 09:30 paid open is morning only. The first
+        paid INTRADAY look is the next existing half-hour fire after
+        morning's once-day marker (finish unix + SESSION_WINDOWS), not
+        the same 09:30 tick waiting then hunting. Deterministic
+        risk/coverage already ran on this intra_check; they are not
+        gated here.
+        """
+        from src.trading_calendar import (
+            first_paid_intraday_tick_after,
+            intra_tick_minute,
+            is_open_session_intra_tick,
+        )
+
+        clock = self._scan_clock(when)
+        if is_open_session_intra_tick(clock):
+            return self._intraday_schedule_skip(
+                ctx, movers,
+                status="intraday_scan_open_tick",
+                reason=(
+                    "paid discovery skipped: this intra_check fire is the "
+                    "09:30 open tick (shared SESSION_WINDOWS start with "
+                    "morning); morning owns the paid open; "
+                    f"movers={','.join(movers) if movers else 'none'}"
+                ),
+            )
+        completed = self._morning_completed_today(clock)
+        if completed is None:
+            return self._intraday_schedule_skip(
+                ctx, movers,
+                status="intraday_scan_morning_not_done",
+                reason=(
+                    "paid discovery skipped: morning has not released "
+                    "today's once-day marker; first true INTRADAY is the "
+                    "next half-hour fire after that finish; "
+                    f"movers={','.join(movers) if movers else 'none'}"
+                ),
+            )
+        tick = intra_tick_minute(clock)
+        first = first_paid_intraday_tick_after(completed)
+        if tick is None or first is None or tick < first:
+            return self._intraday_schedule_skip(
+                ctx, movers,
+                status="intraday_scan_before_first_intraday",
+                reason=(
+                    "paid discovery skipped: this fire is still before the "
+                    "next existing half-hour tick after morning finished; "
+                    f"tick={tick} first_paid={first}; "
+                    f"movers={','.join(movers) if movers else 'none'}"
+                ),
+            )
+        return None
+
     def _await_paid_scan_slot(self, run_id: str) -> bool:
         """Wait for midday/close to finish rather than skip the tick.
 
@@ -12936,10 +13043,18 @@ class TradingPipeline:
             `_intraday_scan_process_lock`) or a midday/close wrapper that
             still holds the owner lock at the end of this tick's wait
             (`_await_paid_scan_slot`).
-          - "intraday_scan_open_overlap": this tick overlapped morning,
-            which is the open session — paid discovery is not a
-            separate INTRADAY pass on the leftover lock-wait (see
-            `_intraday_open_overlap_skip`).
+          - "intraday_scan_open_tick": this fire is the shared 09:30
+            open with morning (SESSION_WINDOWS start 570, including a
+            09:37 leftover of that same cadence). Morning owns the
+            paid open (see `_paid_intraday_schedule_skip`).
+          - "intraday_scan_morning_not_done": today's last-morning
+            once-day marker is not written yet.
+          - "intraday_scan_before_first_intraday": morning has finished
+            but this fire is still before the next existing half-hour
+            cadence after that finish.
+          - "intraday_scan_open_overlap": morning still owns the
+            wrapper — leftover of the open, not a separate INTRADAY
+            pass (see `_intraday_open_overlap_skip`).
           - "intraday_scan_no_opportunity": the scan ran and found nothing
             worth escalating (see `_intraday_opportunity_scan_body`'s
             early-return points).
@@ -13465,15 +13580,31 @@ class TradingPipeline:
             reason=reason, event="intraday_scan_lock_contended",
         )
 
+    def _intraday_schedule_skip(
+        self, ctx: RunContext, movers: list[str], *,
+        status: str, reason: str,
+    ) -> dict:
+        """Named skip: this fire is not yet a true paid INTRADAY look."""
+        skip = self._intraday_named_scan_skip(
+            ctx, movers, status=status, reason=reason, event=status,
+        )
+        return {
+            "status": status,
+            "run_id": skip["run_id"],
+            "reason": skip["reason"],
+            "movers": skip["movers"],
+        }
+
     def _intraday_open_overlap_skip(self, ctx: RunContext, movers: list[str]) -> dict:
-        """This tick overlapped morning — still the open, not midday.
+        """Morning still owns the wrapper — still the open, not midday.
 
         intra_check and morning share SESSION_WINDOWS start (09:30 ET).
         Waiting for morning then running paid discovery as INTRADAY
         OPPORTUNITY double-taps the open (measured 09:37 leftover).
-        Morning is the open path. First true INTRADAY is a later tick
-        that starts after morning has already released, not this
-        leftover. No minute cutoff is invented.
+        The schedule gate already refuses the open tick and any fire
+        before the next cadence after last-morning; this is the
+        remaining race where last-morning is written but the lock is
+        not released yet. No minute cutoff is invented.
         """
         named = ",".join(movers) if movers else "none"
         reason = (
@@ -13512,9 +13643,13 @@ class TradingPipeline:
 
         Returns a status dict at every early-exit point — never a bare
         None (2026-08-31 visibility fix; see `_run_intraday_opportunity_scan`
-        for the full rationale). "intraday_scan_open_overlap" when this
-        tick overlapped morning (the open) — leftover paid discovery is
-        not a separate INTRADAY session; "intraday_scan_lock_contended"
+        for the full rationale). Schedule-law skips
+        (``intraday_scan_open_tick`` / ``intraday_scan_morning_not_done`` /
+        ``intraday_scan_before_first_intraday``) when this fire is still
+        the open or is not yet the next existing half-hour after morning
+        finished. "intraday_scan_open_overlap" when morning still holds
+        the wrapper after that gate; leftover paid discovery is not a
+        separate INTRADAY session. "intraday_scan_lock_contended"
         when `_await_paid_scan_slot` cannot free a midday/close owner
         lock before this tick's calendar window ends;
         "intraday_scan_no_opportunity" for every other early return (no
@@ -13533,12 +13668,18 @@ class TradingPipeline:
         cfg = self.config.intraday_scan
 
         # Identify movers first (cheap snapshot) so a morning/midday owner
-        # lock cannot vanish the names. Then: morning overlap is leftover
-        # of the open — skip paid INTRADAY rather than wait-then-double-tap.
-        # Midday/close still wait. If that lock is still held at window
-        # end, skip with a durable reason that names the movers.
+        # lock cannot vanish the names. Schedule law next: the 09:30 fire
+        # is morning's paid open, not INTRADAY, and the first paid
+        # INTRADAY is the next existing cadence after last-morning —
+        # never wait-then-hunt on the open tick. Then: morning lock is
+        # leftover of the open (skip, do not wait). Midday/close still
+        # wait. If that lock is still held at window end, skip with a
+        # durable reason that names the movers.
         candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
         mover_names = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
+        schedule_skip = self._paid_intraday_schedule_skip(ctx, mover_names)
+        if schedule_skip is not None:
+            return schedule_skip
         if self._await_paid_scan_slot(ctx.run_id):
             if getattr(self, "_paid_scan_waited_for", None) == "morning":
                 return self._intraday_open_overlap_skip(ctx, mover_names)

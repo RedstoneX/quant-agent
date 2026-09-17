@@ -229,10 +229,27 @@ STATUS_PLAIN = {
     ),
     "intraday_scan_open_overlap": (
         "The intra-session check's opportunity scan did not run as a "
-        "separate intraday pass because this tick overlapped the morning "
-        "open session. Morning is the open path; the next tick that "
-        "starts after morning has already finished is the first true "
-        "intraday look."
+        "separate intraday pass because morning still owned the open "
+        "session. Morning is the open path; the first true intraday look "
+        "is the next existing half-hour fire after morning has finished."
+    ),
+    "intraday_scan_open_tick": (
+        "The intra-session check's opportunity scan did not run a paid "
+        "look because this fire is the 09:30 open tick, which morning "
+        "owns. The risk check still ran; the first true intraday paid "
+        "look is the next half-hour fire after morning finishes."
+    ),
+    "intraday_scan_morning_not_done": (
+        "The intra-session check's opportunity scan did not run a paid "
+        "look because this morning's open session has not finished yet. "
+        "The risk check still ran; it will look for new trades on the "
+        "next half-hour fire after morning completes."
+    ),
+    "intraday_scan_before_first_intraday": (
+        "The intra-session check's opportunity scan did not run a paid "
+        "look because morning has finished but this fire is still before "
+        "the next existing half-hour tick after that finish. The risk "
+        "check still ran."
     ),
     "intraday_scan_no_opportunity": (
         "The intra-session check's opportunity scan ran and found nothing "
@@ -1276,12 +1293,14 @@ def _verdict(report: RehearsalReport) -> str:
     # from result["intraday_scan"]["status"] in collect() — see the
     # STATUS_PLAIN comment and the nested extraction logic for details.
     # "intraday_scan_disabled" / "intraday_scan_lock_contended" /
-    # "intraday_scan_open_overlap" / "intraday_scan_no_opportunity"
-    # (2026-08-31, open-overlap 2026-09-17) are the opportunity scan's
+    # "intraday_scan_open_overlap" / "intraday_scan_open_tick" /
+    # "intraday_scan_morning_not_done" / "intraday_scan_before_first_intraday" /
+    # "intraday_scan_no_opportunity"
+    # (2026-08-31, schedule-law 2026-09-17) are the opportunity scan's
     # everyday no-new-activity outcomes — off in config, another
-    # scan/session already using the window, leftover of the open, or ran
-    # and found nothing — and belong here for the same reason: none of
-    # them is a failure.
+    # scan/session already using the window, still the open / not yet the
+    # first true intraday fire, or ran and found nothing — and belong
+    # here for the same reason: none of them is a failure.
     # "intraday_scan_crashed" is deliberately excluded — see its STATUS_PLAIN
     # entry. See the matching STATUS_PLAIN entries above for how each was
     # confirmed against src/pipeline.py and against production's own
@@ -1290,7 +1309,9 @@ def _verdict(report: RehearsalReport) -> str:
         "executed", "no_orders", "no_trades", "market_holiday", "early_close",
         "reviewed", "ok", "analyzed", "intraday_no_trades", "intraday_executed",
         "intraday_scan_disabled", "intraday_scan_lock_contended",
-        "intraday_scan_open_overlap", "intraday_scan_no_opportunity",
+        "intraday_scan_open_overlap", "intraday_scan_open_tick",
+        "intraday_scan_morning_not_done", "intraday_scan_before_first_intraday",
+        "intraday_scan_no_opportunity",
         "nothing_new", "preprocessed",
     }
     return "PASS" if report.status in healthy else "FAIL"

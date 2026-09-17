@@ -770,3 +770,18 @@ def test_the_unit_drift_wrapper_sources_env_and_is_executable():
     assert wrapper.is_file()
     assert 'source "${PROJECT_ROOT}/.env"' in wrapper.read_text()
     assert wrapper.stat().st_mode & stat.S_IXUSR
+
+
+def test_merge_and_deploy_syncs_systemd_units_not_api_only():
+    """API-only restart left timers drifted from the checkout. Deploy must
+    copy scripts/systemd/* and daemon-reload, the same recipe unit-drift
+    already tells the operator to run by hand."""
+    script = (SCRIPTS_DIR / "merge_and_deploy.sh").read_text()
+    assert "cp" in script
+    assert 'scripts/systemd/*' in script or 'scripts/systemd/"*' in script
+    assert "daemon-reload" in script
+    assert "restarting ${API_UNIT}" in script or "quant-agent-api.service" in script
+    # The unit copy must happen in deploy(), not only as a comment.
+    deploy_fn = script.split("deploy() {", 1)[1].split("\n}", 1)[0]
+    assert "scripts/systemd" in deploy_fn
+    assert "daemon-reload" in deploy_fn

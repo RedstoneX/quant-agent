@@ -8,7 +8,7 @@ from src.config import AppConfig
 from src.notifier import TelegramNotifier
 from src.pipeline import TradingPipeline
 from src.trader_feed import format_session_result
-from src.trading_calendar import ET, SESSION_WINDOWS
+from src.trading_calendar import ET, INTRA_CHECK_TICK_MINUTES, SESSION_WINDOWS
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,8 @@ class TradingScheduler:
 
     @staticmethod
     def _build_intra_check_trigger() -> OrTrigger:
-        """OrTrigger covering exactly SESSION_WINDOWS['intra_check'] every 30 min.
+        """OrTrigger covering exactly SESSION_WINDOWS['intra_check'] on the
+        existing intra_check cadence (INTRA_CHECK_TICK_MINUTES).
 
         For 09:30-16:00 ET that yields 09:30, 10:00, ..., 15:30, 16:00
         (14 ticks). Sourced programmatically from SESSION_WINDOWS so any
@@ -53,7 +54,7 @@ class TradingScheduler:
         """
         lo_min, hi_min = SESSION_WINDOWS["intra_check"]  # minutes-since-midnight
         triggers: list[CronTrigger] = []
-        for tick_min in range(lo_min, hi_min + 1, 30):
+        for tick_min in range(lo_min, hi_min + 1, INTRA_CHECK_TICK_MINUTES):
             triggers.append(
                 CronTrigger(
                     hour=tick_min // 60,
@@ -90,8 +91,8 @@ class TradingScheduler:
             id="morning_run",
         )
 
-        # Stateless flash-crash circuit breaker — fires every 30-min tick
-        # during the canonical SESSION_WINDOWS["intra_check"] window
+        # Stateless flash-crash circuit breaker — fires on the existing
+        # intra_check cadence during SESSION_WINDOWS["intra_check"]
         # (09:30-16:00 ET, inclusive). schedule.intra_check is intentionally
         # ignored — the config's TIME field is meaningless for a multi-tick
         # job and the window must stay aligned with src/trading_calendar.py

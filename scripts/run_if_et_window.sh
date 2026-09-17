@@ -259,7 +259,11 @@ if "$TIMEOUT" --kill-after=30 1200 "$PYTHON" main.py --mode "$MODE"; then
     # intra_check is intentionally guard-less (see last-run guard block above) —
     # we don't write the marker for it, so the next 30-min tick can fire freely.
     if [[ "$MODE" != "intra_check" ]]; then
-        echo "${ET_DATE} ${NOW_UNIX}" > "$LAST_FILE"
+        # Finish unix, not start: paid INTRADAY is the next existing
+        # half-hour fire AFTER morning completed. NOW_UNIX at the top of
+        # this script is when the wrapper began. Tests pin the stamp via
+        # NOW_UNIX_OVERRIDE; production writes date +%s at this success.
+        echo "${ET_DATE} ${NOW_UNIX_OVERRIDE:-$(date +%s)}" > "$LAST_FILE"
     fi
     # audit round 2 (#43): do NOT success-ping for intra_check. All six
     # modes share one HEALTHCHECKS_URL, and intra_check's ~14 OK ticks/day

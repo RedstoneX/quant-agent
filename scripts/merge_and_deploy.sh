@@ -34,6 +34,19 @@ deploy() {
   # confusing "you are not currently on a branch", which is its own small trap.
   echo "==> checking out origin/main (detached, as production always runs)"
   sudo -n git -C "${DEPLOY_ROOT}" checkout --detach origin/main
+  echo "==> syncing systemd user units from the checkout"
+  # API-only restart left timers/services drifted from the repo — that
+  # drift is the defect. Deploy is checkout + unit cp + daemon-reload +
+  # API restart, the same recipe check_unit_drift already tells the
+  # operator to run.
+  sudo -n -u qamc env \
+    XDG_RUNTIME_DIR="/run/user/${QAMC_UID}" \
+    DEPLOY_ROOT="${DEPLOY_ROOT}" \
+    bash -c 'set -euo pipefail
+      mkdir -p "$HOME/.config/systemd/user"
+      cp "$DEPLOY_ROOT"/scripts/systemd/* "$HOME/.config/systemd/user/"
+      systemctl --user daemon-reload
+    '
   echo "==> restarting ${API_UNIT}"
   sudo -n -u qamc "XDG_RUNTIME_DIR=/run/user/${QAMC_UID}" \
     systemctl --user restart "${API_UNIT}"

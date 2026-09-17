@@ -23,6 +23,7 @@ wiring into `run_intra_check`:
      own fail-closed concurrency guard.
 """
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -34,7 +35,7 @@ from src.cost_circuit import PaidAnalysisSuspended
 from src.models import MacroNarrative, NewsIntelligenceReport, TechAnalysisResult, TechReasoningChain
 from src.pipeline import TradingPipeline
 from src.pipeline_context import RunContext
-from src.trading_calendar import et_today
+from src.trading_calendar import ET, et_today
 
 
 def _ta_result(symbol, rating="buy"):
@@ -96,6 +97,29 @@ def _todays_news_dump():
     ).model_dump()
 
 
+def _mark_true_intraday(pipeline, scan_hour=10, scan_minute=30,
+                       morning_hour=9, morning_minute=36):
+    """Default fixture clock: a real INTRADAY fire after morning finished.
+
+    Production uses wall-clock ET plus last-morning. Tests that mean
+    'the scan should run' must not depend on CI's wall clock landing
+    inside the 09:30 open tick.
+    """
+    day = et_today()
+    pipeline._scan_when = datetime(
+        day.year, day.month, day.day, scan_hour, scan_minute, tzinfo=ET,
+    )
+    pipeline._last_morning_completed_at = datetime(
+        day.year, day.month, day.day, morning_hour, morning_minute, tzinfo=ET,
+    )
+    return pipeline
+
+
+def _intraday_et(hour, minute):
+    day = et_today()
+    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=ET)
+
+
 def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
                        move_threshold_pct=3.0, cooldown_hours=3.0,
                        max_candidates=5, cooldown_rows=None, db_path=None):
@@ -134,7 +158,7 @@ def _intraday_pipeline(universe=("SPY", "SQQQ", "AAPL"), enabled=True,
     pipeline.decision_stage = MagicMock()
     pipeline.risk_stage = MagicMock()
     pipeline.execution_stage = MagicMock()
-    return pipeline
+    return _mark_true_intraday(pipeline)
 
 
 def _snapshot(last, prev):
@@ -559,6 +583,161 @@ def test_morning_lock_release_does_not_fire_separate_intraday(
 
     assert result["status"] == "intraday_scan_open_overlap"
     p.tech_analyst.analyze_batch.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_open_tick_never_runs_paid_intraday_discovery(mock_compute_indicators):
+    """09:30 is morning's paid open even if last-morning is already written
+    and the wrapper lock is free. Same-tick wait-then-hunt is the defect."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._scan_when = _intraday_et(9, 30)
+    p._last_morning_completed_at = _intraday_et(9, 31)
+    p._blocking_owner_session = MagicMock(return_value=None)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+
+    ctx = RunContext.start("intra_check")
+    with patch("time.sleep") as slept:
+        result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "intraday_scan_open_tick"
+    assert "AAPL" in result["reason"]
+    assert "09:30" in result["reason"]
+    p.tech_analyst.analyze_batch.assert_not_called()
+    p.decision_stage.run.assert_not_called()
+    slept.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_open_tick_leftover_at_0937_is_still_the_open(mock_compute_indicators):
+    """Measured 09:37 leftover is the same 09:30 cadence fire, not INTRADAY."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._scan_when = _intraday_et(9, 37)
+    p._last_morning_completed_at = _intraday_et(9, 36)
+    p._blocking_owner_session = MagicMock(return_value=None)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+
+    ctx = RunContext.start("intra_check")
+    result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "intraday_scan_open_tick"
+    p.tech_analyst.analyze_batch.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_no_last_morning_skips_paid_intraday_even_off_the_open_tick(
+    mock_compute_indicators,
+):
+    """10:00 with morning still unfinished is not a true INTRADAY look."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._scan_when = _intraday_et(10, 0)
+    p._last_morning_completed_at = False
+    p._blocking_owner_session = MagicMock(return_value=None)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+
+    ctx = RunContext.start("intra_check")
+    result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "intraday_scan_morning_not_done"
+    p.tech_analyst.analyze_batch.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_first_paid_intraday_is_next_cadence_after_morning_finished(
+    mock_compute_indicators,
+):
+    """last-morning 09:36 → 10:00 is the first existing fire after finish.
+    That 30-minute step is the cadence already on the box, not a pad."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._scan_when = _intraday_et(10, 0)
+    p._last_morning_completed_at = _intraday_et(9, 36)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.tech_analyst.analyze_batch.return_value = ({}, None)
+
+    ctx = RunContext.start("intra_check")
+    p._run_intraday_opportunity_scan(ctx)
+
+    p.tech_analyst.analyze_batch.assert_called_once()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_morning_finished_after_1000_skips_1000_allows_1030(
+    mock_compute_indicators,
+):
+    """last-morning 10:05: the 10:00 fire is not strictly after finish;
+    10:30 is. Same-tick wait-then-run of the 10:00 fire is banned."""
+    mock_compute_indicators.return_value = MagicMock()
+    skipper = _intraday_pipeline(universe=["AAPL"])
+    skipper._scan_when = _intraday_et(10, 0)
+    skipper._last_morning_completed_at = _intraday_et(10, 5)
+    skipper.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+
+    ctx = RunContext.start("intra_check")
+    skipped = skipper._run_intraday_opportunity_scan(ctx)
+    assert skipped["status"] == "intraday_scan_before_first_intraday"
+    skipper.tech_analyst.analyze_batch.assert_not_called()
+
+    runner = _intraday_pipeline(universe=["AAPL"])
+    runner._scan_when = _intraday_et(10, 30)
+    runner._last_morning_completed_at = _intraday_et(10, 5)
+    runner.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    runner.tech_analyst.analyze_batch.return_value = ({}, None)
+    runner._run_intraday_opportunity_scan(ctx)
+    runner.tech_analyst.analyze_batch.assert_called_once()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_last_morning_marker_file_drives_first_paid_tick(
+    mock_compute_indicators, tmp_path, monkeypatch,
+):
+    """Production reads the wrapper's last-morning finish unix, not a pad."""
+    from datetime import timezone
+
+    mock_compute_indicators.return_value = MagicMock()
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    monkeypatch.setenv("LAST_RUN_DIR_OVERRIDE", str(cache))
+    day = et_today().isoformat()
+    finished = _intraday_et(9, 36)
+    unix = int(finished.astimezone(timezone.utc).timestamp())
+    (cache / "last-morning").write_text(f"{day} {unix}\n")
+
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._last_morning_completed_at = None  # force file read
+    p._scan_when = _intraday_et(10, 0)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.tech_analyst.analyze_batch.return_value = ({}, None)
+
+    ctx = RunContext.start("intra_check")
+    p._run_intraday_opportunity_scan(ctx)
+    p.tech_analyst.analyze_batch.assert_called_once()
+
+    p2 = _intraday_pipeline(universe=["AAPL"])
+    p2._last_morning_completed_at = None
+    p2._scan_when = _intraday_et(9, 37)
+    p2.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    skipped = p2._run_intraday_opportunity_scan(ctx)
+    assert skipped["status"] == "intraday_scan_open_tick"
+    p2.tech_analyst.analyze_batch.assert_not_called()
 
 
 @patch("src.pipeline.compute_indicators")

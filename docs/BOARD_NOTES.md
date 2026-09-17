@@ -164,8 +164,11 @@ prints, and it will not decide on a thinner story. This is still not a
 ruling on how many usable reads is enough; that question is still yours.
 The seven-minute-later "intraday opportunity" message was also wrong:
 that was still the open, not midday. Morning is the open look. The
-leftover risk tick no longer sends a second opportunity pass under the
-wrong name.
+09:30 risk tick still runs through the open — stops, coverage, the
+daily-loss brake — but it does not buy a second opportunity pass, and
+it does not wait for morning to finish and then shout INTRADAY. First
+true paid look after the open is the next half-hour fire after morning
+is actually done.
 
 **Why there is no number in it —** you said the minimum bar is a risk
 judgement and not an agent's to invent, and that stands: nothing published

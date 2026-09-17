@@ -508,3 +508,15 @@ def test_wrapper_pings_healthchecks_on_success_and_fail(tmp_path):
     env2 |= {"HEALTHCHECKS_URL": "https://hc-ping.example/uuid-1"}
     _run(env2)
     assert "https://hc-ping.example/uuid-1/fail" in (second / "curl.log").read_text()
+
+
+def test_last_run_marker_records_finish_unix_not_wrapper_start():
+    """Paid INTRADAY is the next cadence after morning finished. The
+    once-day marker must stamp success time, not the unix captured when
+    the wrapper began."""
+    script = Path(__file__).resolve().parents[1] / "scripts" / "run_if_et_window.sh"
+    text = script.read_text()
+    write_site = text.split('if [[ "$MODE" != "intra_check" ]]; then')[1]
+    stamp = write_site.split("> \"$LAST_FILE\"", 1)[0]
+    assert "NOW_UNIX_OVERRIDE:-$(date +%s)" in stamp
+    assert "${NOW_UNIX}" not in stamp
