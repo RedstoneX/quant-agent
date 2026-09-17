@@ -227,6 +227,13 @@ STATUS_PLAIN = {
         "because another scan or trading session already had this window — "
         "it will simply try again on the next tick."
     ),
+    "intraday_scan_open_overlap": (
+        "The intra-session check's opportunity scan did not run as a "
+        "separate intraday pass because this tick overlapped the morning "
+        "open session. Morning is the open path; the next tick that "
+        "starts after morning has already finished is the first true "
+        "intraday look."
+    ),
     "intraday_scan_no_opportunity": (
         "The intra-session check's opportunity scan ran and found nothing "
         "worth acting on this tick."
@@ -1269,10 +1276,12 @@ def _verdict(report: RehearsalReport) -> str:
     # from result["intraday_scan"]["status"] in collect() — see the
     # STATUS_PLAIN comment and the nested extraction logic for details.
     # "intraday_scan_disabled" / "intraday_scan_lock_contended" /
-    # "intraday_scan_no_opportunity" (2026-08-31) are the same opportunity
-    # scan's three everyday no-new-activity outcomes — off in config, another
-    # scan/session already using the window, or ran and found nothing — and
-    # belong here for the same reason: none of them is a failure.
+    # "intraday_scan_open_overlap" / "intraday_scan_no_opportunity"
+    # (2026-08-31, open-overlap 2026-09-17) are the opportunity scan's
+    # everyday no-new-activity outcomes — off in config, another
+    # scan/session already using the window, leftover of the open, or ran
+    # and found nothing — and belong here for the same reason: none of
+    # them is a failure.
     # "intraday_scan_crashed" is deliberately excluded — see its STATUS_PLAIN
     # entry. See the matching STATUS_PLAIN entries above for how each was
     # confirmed against src/pipeline.py and against production's own
@@ -1281,6 +1290,7 @@ def _verdict(report: RehearsalReport) -> str:
         "executed", "no_orders", "no_trades", "market_holiday", "early_close",
         "reviewed", "ok", "analyzed", "intraday_no_trades", "intraday_executed",
         "intraday_scan_disabled", "intraday_scan_lock_contended",
-        "intraday_scan_no_opportunity", "nothing_new", "preprocessed",
+        "intraday_scan_open_overlap", "intraday_scan_no_opportunity",
+        "nothing_new", "preprocessed",
     }
     return "PASS" if report.status in healthy else "FAIL"

@@ -47,19 +47,20 @@ _BASE_ONLY_STATUSES = frozenset(
     }
 )
 # 2026-08-31 visibility fix (src/pipeline.py's `_run_intraday_opportunity_scan`
-# / `_intraday_opportunity_scan_body`): these three now attach an explicit
+# / `_intraday_opportunity_scan_body`): these now attach an explicit
 # `result["intraday_scan"]["status"]` dict where a "never engaged a real
 # candidate" tick used to leave no `intraday_scan` key at all. They stay off
 # the Telegram feed on purpose — same as the old no-key ticks, per the
 # "ordinary ~30-minute OK ticks are silent" policy below — because nothing
 # about them needs an operator's attention: disabled-by-config and
-# lock-contention are routine scheduling noise, and "no opportunity" means
+# lock-contention are routine scheduling noise, open-overlap is leftover of
+# the morning session (not a separate INTRADAY), and "no opportunity" means
 # the scan ran and correctly found nothing. Only a real candidate engaged
-# (intraday_no_trades/intraday_executed) or a genuine problem (crashed/
-# suspended/analysis_error) is worth a message.
+# on a tick that did not overlap the open (intraday_no_trades/intraday_executed)
+# or a genuine problem (crashed/suspended/analysis_error) is worth a message.
 _INTRADAY_SILENT_STATUSES = frozenset({
     "intraday_scan_disabled", "intraday_scan_lock_contended",
-    "intraday_scan_no_opportunity",
+    "intraday_scan_no_opportunity", "intraday_scan_open_overlap",
 })
 
 

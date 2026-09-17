@@ -320,14 +320,15 @@ def test_intraday_scan_result_is_not_hidden_behind_outer_ok(tmp_path, monkeypatc
 def test_intraday_no_new_activity_statuses_remain_silent(tmp_path, monkeypatch):
     """2026-08-31 visibility fix: disabled / lock-contended / no-opportunity
     now attach a real `intraday_scan` dict (previously no key at all) so the
-    rehearsal rig and DB-backed evidence can tell them apart. The live
-    Telegram feed must stay exactly as quiet about them as it was when they
-    left no key — none of the three needs an operator's attention."""
+    rehearsal rig and DB-backed evidence can tell them apart. Open-overlap
+    (2026-09-17) is leftover of the morning session, not a separate
+    INTRADAY. The live Telegram feed must stay exactly as quiet about them
+    as it was when they left no key."""
     _make_db(tmp_path, monkeypatch)
     _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # not the top-of-hour tick
     for status in (
         "intraday_scan_disabled", "intraday_scan_lock_contended",
-        "intraday_scan_no_opportunity",
+        "intraday_scan_no_opportunity", "intraday_scan_open_overlap",
     ):
         outer = {
             "status": "ok", "run_id": "intra_check-quiet", "daily_pnl": 10.0,
@@ -335,6 +336,37 @@ def test_intraday_no_new_activity_statuses_remain_silent(tmp_path, monkeypatch):
         }
         msg = trader_feed.format_session_result("intra_check", outer, 4.0)
         assert msg is None, f"{status} must stay silent on the trader feed"
+
+
+def test_open_overlap_leftover_is_not_intraday_opportunity_telegram(
+    tmp_path, monkeypatch,
+):
+    """Measured 2026-09-17: a 09:37 leftover labelled INTRADAY OPPORTUNITY
+    after morning released. Open-overlap must not use that header even
+    when movers were named. A later true scan that did not overlap the
+    open still may."""
+    _make_db(tmp_path, monkeypatch)
+    leftover = {
+        "status": "ok", "run_id": "intra_check-open", "daily_pnl": 10.0,
+        "intraday_scan": {
+            "status": "intraday_scan_open_overlap",
+            "run_id": "intra_check-open",
+            "movers": ["NVDA"],
+            "reason": "overlapped morning",
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", leftover, 7.0)
+    assert msg is None
+    later = {
+        "status": "ok", "run_id": "intra_check-later", "daily_pnl": 10.0,
+        "intraday_scan": {
+            "status": "intraday_no_trades", "run_id": "intra_check-later",
+            "candidates": ["NVDA"], "orders": [],
+        },
+    }
+    later_msg = trader_feed.format_session_result("intra_check", later, 12.0)
+    assert later_msg is not None
+    assert "⚡ INTRADAY OPPORTUNITY" in later_msg
 
 
 def test_intraday_evidence_gate_skip_is_not_silent(tmp_path, monkeypatch):

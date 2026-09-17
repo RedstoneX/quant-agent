@@ -162,6 +162,10 @@ the technical seat is lost until today's print is actually read, not
 marked "less sure" and used anyway. The desk will not invent the missing
 prints, and it will not decide on a thinner story. This is still not a
 ruling on how many usable reads is enough; that question is still yours.
+The seven-minute-later "intraday opportunity" message was also wrong:
+that was still the open, not midday. Morning is the open look. The
+leftover risk tick no longer sends a second opportunity pass under the
+wrong name.
 
 **Why there is no number in it —** you said the minimum bar is a risk
 judgement and not an agent's to invent, and that stands: nothing published

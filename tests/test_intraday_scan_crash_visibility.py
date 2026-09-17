@@ -301,14 +301,29 @@ def test_scan_never_ran_because_another_session_active_stays_healthy_and_silent(
     result = p.run_intra_check()
 
     assert result["status"] == "ok"
-    # Same status as literal process-lock contention above — both are
-    # "something else already owns this window" from the caller's
-    # perspective, one via the advisory flock, one via the owner lock
-    # still held at the end of this tick's wait. The owner-lock skip
-    # additionally names movers so they do not vanish silently.
+    nested = result["intraday_scan"]
+    assert nested["status"] == "intraday_scan_open_overlap"
+    assert nested["waited_for"] == "morning"
+    assert nested["run_id"] == result["run_id"]
+    assert trader_feed.format_session_result("intra_check", result, 5.0) is None
+    assert "INTRADAY OPPORTUNITY" not in (trader_feed.format_session_result(
+        "intra_check", result, 5.0,
+    ) or "")
+
+
+def test_midday_lock_still_held_at_window_end_is_contended_not_open_overlap(
+    tmp_path, monkeypatch,
+):
+    _make_db(tmp_path, monkeypatch)
+    p = _pipeline(enabled=True)
+    p._blocking_owner_session = MagicMock(return_value="midday")
+    p._intra_window_remaining_s = MagicMock(return_value=0.0)
+
+    result = p.run_intra_check()
+
+    assert result["status"] == "ok"
     nested = result["intraday_scan"]
     assert nested["status"] == "intraday_scan_lock_contended"
-    assert nested["run_id"] == result["run_id"]
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
 
 
@@ -356,7 +371,7 @@ def test_disabled_lock_and_no_opportunity_all_classify_as_healthy():
 
     for status in (
         "intraday_scan_disabled", "intraday_scan_lock_contended",
-        "intraday_scan_no_opportunity",
+        "intraday_scan_no_opportunity", "intraday_scan_open_overlap",
     ):
         result = {
             "status": "ok", "run_id": "r-health",
@@ -512,7 +527,7 @@ def test_the_three_no_new_activity_statuses_are_in_the_rigs_vocabulary():
 
     for status in (
         "intraday_scan_disabled", "intraday_scan_lock_contended",
-        "intraday_scan_no_opportunity",
+        "intraday_scan_no_opportunity", "intraday_scan_open_overlap",
     ):
         assert status in STATUS_PLAIN
         assert STATUS_PLAIN[status]
@@ -531,6 +546,6 @@ def test_the_three_no_new_activity_statuses_are_in_the_verdicts_healthy_set():
     healthy_block = src[healthy_line_start: src.index("}", healthy_line_start)]
     for status in (
         "intraday_scan_disabled", "intraday_scan_lock_contended",
-        "intraday_scan_no_opportunity",
+        "intraday_scan_no_opportunity", "intraday_scan_open_overlap",
     ):
         assert status in healthy_block, f"{status} must be in _verdict's healthy set"

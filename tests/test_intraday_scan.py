@@ -486,12 +486,12 @@ def test_run_intra_check_scan_crash_does_not_fail_the_tick():
 
 @patch("src.pipeline.compute_indicators")
 def test_scan_skips_when_owner_lock_still_held_at_window_end(mock_compute_indicators):
-    """Wait, don't skip on a live morning — but if the calendar window is
+    """Wait, don't skip on a live midday — but if the calendar window is
     already over, paid discovery cannot run this tick. Movers are named
     on the skip so they do not vanish silently."""
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["AAPL"])
-    p._blocking_owner_session = MagicMock(return_value="morning")
+    p._blocking_owner_session = MagicMock(return_value="midday")
     p._intra_window_remaining_s = MagicMock(return_value=0.0)
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
@@ -509,13 +509,66 @@ def test_scan_skips_when_owner_lock_still_held_at_window_end(mock_compute_indica
 
 
 @patch("src.pipeline.compute_indicators")
-def test_scan_waits_then_runs_when_owner_lock_releases(mock_compute_indicators):
-    """The 09:30/13:00 ticks skipped paid discovery because morning/midday
-    held the owner lock. Wait for that process to finish instead of
-    sleeping until the next 30-minute fire."""
+def test_morning_lock_is_open_overlap_not_separate_intraday(mock_compute_indicators):
+    """Measured 2026-09-17: intra_check waited on morning then ran
+    09:36–09:37 as INTRADAY OPPORTUNITY / intraday_no_trades. That is
+    still the open, not midday. Morning owning the wrapper is leftover
+    of the open path — skip paid discovery, do not wait-then-double-tap.
+    No minute cutoff is invented; the signal is the morning owner."""
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["AAPL"])
-    p._blocking_owner_session = MagicMock(side_effect=["morning", "morning", None])
+    p._blocking_owner_session = MagicMock(return_value="morning")
+    p._intra_window_remaining_s = MagicMock(return_value=60.0)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+
+    ctx = RunContext.start("intra_check")
+    with patch("time.sleep") as slept:
+        result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "intraday_scan_open_overlap"
+    assert result["waited_for"] == "morning"
+    assert result["movers"] == ["AAPL"]
+    assert "AAPL" in result["reason"]
+    assert "open" in result["reason"].lower()
+    p.tech_analyst.analyze_batch.assert_not_called()
+    p.decision_stage.run.assert_not_called()
+    slept.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_morning_lock_release_does_not_fire_separate_intraday(
+    mock_compute_indicators,
+):
+    """Even if the owner file flips from morning to free mid-tick, this
+    leftover is still the open. The previous wait-then-run path is what
+    labelled 09:37 INTRADAY. First true INTRADAY is a later tick that
+    starts with morning already finished (lock free, no wait)."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._blocking_owner_session = MagicMock(side_effect=["morning", None])
+    p._intra_window_remaining_s = MagicMock(return_value=60.0)
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+
+    ctx = RunContext.start("intra_check")
+    with patch("time.sleep"):
+        result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "intraday_scan_open_overlap"
+    p.tech_analyst.analyze_batch.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_scan_waits_then_runs_when_midday_owner_lock_releases(mock_compute_indicators):
+    """Midday is already after the open. Wait for that process to finish
+    instead of sleeping until the next 30-minute fire, then run as a
+    real intraday look."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._blocking_owner_session = MagicMock(side_effect=["midday", "midday", None])
     p._intra_window_remaining_s = MagicMock(return_value=60.0)
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
@@ -527,7 +580,6 @@ def test_scan_waits_then_runs_when_owner_lock_releases(mock_compute_indicators):
         p._run_intraday_opportunity_scan(ctx)
 
     p.tech_analyst.analyze_batch.assert_called_once()
-    # Post-wait refresh so we do not size against the pre-fill snapshot.
     p.broker.get_account.assert_called()
     p.broker.get_positions.assert_called()
 

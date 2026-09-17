@@ -238,6 +238,8 @@ def _status_literals(func: ast.FunctionDef) -> set[str]:
 _PIPELINE_SESSION_FUNCTIONS = (
     "run_morning", "run_position_review", "run_intra_check",
     "_run_intraday_opportunity_scan", "_intraday_opportunity_scan_body",
+    "_intraday_open_overlap_skip", "_intraday_paid_scan_skip",
+    "_intraday_named_scan_skip",
     "run_evening", "run_earnings_preprocess",
 )
 

@@ -12693,8 +12693,11 @@ class TradingPipeline:
         Returns the other session's mode when it is alive, ``"unreadable"``
         when the owner file exists but cannot be trusted (fail closed), or
         None when paid discovery may run. ``intra_check`` never blocks
-        itself. A dead pid or a vanished file is None — morning that
-        already finished must not sleep the 09:30 scan until 10:00.
+        itself. A dead pid or a vanished file is None. Morning still
+        owning the wrapper is the open session, not a separate
+        intraday — paid discovery on that leftover tick is skipped
+        (see ``_await_paid_scan_slot``), not waited-out and labelled
+        INTRADAY. A finished morning is not an in-flight lock.
         """
         import os
         import time as _time
@@ -12730,16 +12733,25 @@ class TradingPipeline:
         return max(0.0, remaining_min * 60.0)
 
     def _await_paid_scan_slot(self, run_id: str) -> bool:
-        """Wait for morning/midday/close to finish rather than skip the tick.
+        """Wait for midday/close to finish rather than skip the tick.
 
-        Returns True when paid discovery must still be skipped (lock still
-        held at window end, or owner file unreadable). Returns False when
-        the slot is free.
+        Morning is the open session (SESSION_WINDOWS start 09:30, shared
+        with this tick). An intra_check that sees morning still owning
+        the wrapper is leftover of the open — not a separate midday
+        scan. Skip paid discovery immediately instead of waiting for
+        morning to finish and then firing INTRADAY OPPORTUNITY at
+        09:37. Midday/close already sit after the open; those still
+        wait, then run.
+
+        Returns True when paid discovery must still be skipped (morning
+        overlap, lock still held at window end, or owner file
+        unreadable). Returns False when the slot is free.
         """
         import time as _time
 
         first = True
         self._paid_scan_waited = False
+        self._paid_scan_waited_for = None
         while True:
             blocking = self._blocking_owner_session()
             if blocking is None:
@@ -12757,14 +12769,27 @@ class TradingPipeline:
                     "skipping paid discovery fail-closed",
                 )
                 return True
+            if blocking == "morning":
+                # Open leftover: this tick overlapped the open owner.
+                # Do not wait-then-run as a separate INTRADAY session.
+                self._paid_scan_waited = True
+                self._paid_scan_waited_for = "morning"
+                logger.info(
+                    "Intraday scan: morning still owns the open session; "
+                    "this tick is leftover of the open, not a separate "
+                    "intraday — skipping paid discovery",
+                )
+                return True
             remaining = self._intra_window_remaining_s()
             if remaining <= 0:
+                self._paid_scan_waited_for = blocking
                 logger.info(
                     "Intraday scan: %s still holds the owner lock at window "
                     "end; paid discovery cannot run this tick", blocking,
                 )
                 return True
             if first:
+                self._paid_scan_waited_for = blocking
                 logger.info(
                     "Intraday scan: wrapper reports active %s session; waiting "
                     "for it to finish instead of skipping this tick", blocking,
@@ -12908,9 +12933,13 @@ class TradingPipeline:
           - "intraday_scan_disabled": the feature is off in config.
           - "intraday_scan_lock_contended": another scan already owns this
             window — either this process's own advisory flock (see
-            `_intraday_scan_process_lock`) or a morning/midday/close
-            wrapper that still holds the owner lock at the end of this
-            tick's wait (`_await_paid_scan_slot`).
+            `_intraday_scan_process_lock`) or a midday/close wrapper that
+            still holds the owner lock at the end of this tick's wait
+            (`_await_paid_scan_slot`).
+          - "intraday_scan_open_overlap": this tick overlapped morning,
+            which is the open session — paid discovery is not a
+            separate INTRADAY pass on the leftover lock-wait (see
+            `_intraday_open_overlap_skip`).
           - "intraday_scan_no_opportunity": the scan ran and found nothing
             worth escalating (see `_intraday_opportunity_scan_body`'s
             early-return points).
@@ -13400,19 +13429,17 @@ class TradingPipeline:
         candidates.sort(key=lambda t: -t[1])
         return candidates, snapshots
 
-    def _intraday_paid_scan_skip(self, ctx: RunContext, movers: list[str]) -> dict:
-        """Durable skip: lock still held, movers named, no silent drop."""
-        blocking = self._blocking_owner_session() or "owner_lock"
-        named = ",".join(movers) if movers else "none"
-        reason = (
-            f"paid discovery skipped: {blocking} still held; movers={named}"
-        )
+    def _intraday_named_scan_skip(
+        self, ctx: RunContext, movers: list[str], *,
+        status: str, reason: str, event: str,
+    ) -> dict:
+        """Durable skip: movers named, no silent drop."""
         logger.warning("Intraday scan: %s", reason)
         for symbol in movers:
             try:
                 _record_pipeline_event(
                     self, ctx, symbol, "opportunity", "skipped",
-                    "intraday_scan_lock_contended", detail=reason,
+                    event, detail=reason,
                 )
             except Exception:  # noqa: BLE001
                 logger.warning(
@@ -13420,10 +13447,50 @@ class TradingPipeline:
                     symbol, exc_info=True,
                 )
         return {
-            "status": "intraday_scan_lock_contended",
+            "status": status,
             "run_id": ctx.run_id,
             "reason": reason,
             "movers": list(movers),
+        }
+
+    def _intraday_paid_scan_skip(self, ctx: RunContext, movers: list[str]) -> dict:
+        """Durable skip: lock still held, movers named, no silent drop."""
+        blocking = self._blocking_owner_session() or "owner_lock"
+        named = ",".join(movers) if movers else "none"
+        reason = (
+            f"paid discovery skipped: {blocking} still held; movers={named}"
+        )
+        return self._intraday_named_scan_skip(
+            ctx, movers, status="intraday_scan_lock_contended",
+            reason=reason, event="intraday_scan_lock_contended",
+        )
+
+    def _intraday_open_overlap_skip(self, ctx: RunContext, movers: list[str]) -> dict:
+        """This tick overlapped morning — still the open, not midday.
+
+        intra_check and morning share SESSION_WINDOWS start (09:30 ET).
+        Waiting for morning then running paid discovery as INTRADAY
+        OPPORTUNITY double-taps the open (measured 09:37 leftover).
+        Morning is the open path. First true INTRADAY is a later tick
+        that starts after morning has already released, not this
+        leftover. No minute cutoff is invented.
+        """
+        named = ",".join(movers) if movers else "none"
+        reason = (
+            "paid discovery skipped: this intra_check tick overlapped "
+            f"morning (the open session), not a separate intraday; "
+            f"movers={named}"
+        )
+        skip = self._intraday_named_scan_skip(
+            ctx, movers, status="intraday_scan_open_overlap",
+            reason=reason, event="intraday_scan_open_overlap",
+        )
+        return {
+            "status": "intraday_scan_open_overlap",
+            "run_id": skip["run_id"],
+            "reason": skip["reason"],
+            "movers": skip["movers"],
+            "waited_for": "morning",
         }
 
     def _intraday_opportunity_scan_body(self, ctx: RunContext) -> dict:
@@ -13445,10 +13512,12 @@ class TradingPipeline:
 
         Returns a status dict at every early-exit point — never a bare
         None (2026-08-31 visibility fix; see `_run_intraday_opportunity_scan`
-        for the full rationale).         "intraday_scan_lock_contended" when
-        `_await_paid_scan_slot` cannot free the owner lock before this
-        tick's calendar window ends; "intraday_scan_no_opportunity" for
-        every other early return (no
+        for the full rationale). "intraday_scan_open_overlap" when this
+        tick overlapped morning (the open) — leftover paid discovery is
+        not a separate INTRADAY session; "intraday_scan_lock_contended"
+        when `_await_paid_scan_slot` cannot free a midday/close owner
+        lock before this tick's calendar window ends;
+        "intraday_scan_no_opportunity" for every other early return (no
         snapshots, no qualifying moves, no ledgerable symbols, no usable
         bars, no usable tech analysis). Past that point, a real result dict
         mirroring the shape callers of run_morning already expect
@@ -13464,15 +13533,23 @@ class TradingPipeline:
         cfg = self.config.intraday_scan
 
         # Identify movers first (cheap snapshot) so a morning/midday owner
-        # lock cannot vanish paid discovery. Then wait. If the lock is
-        # still held at window end, skip with a durable reason that names
-        # the movers — never sleep the scan away, never drop them silently.
+        # lock cannot vanish the names. Then: morning overlap is leftover
+        # of the open — skip paid INTRADAY rather than wait-then-double-tap.
+        # Midday/close still wait. If that lock is still held at window
+        # end, skip with a durable reason that names the movers.
         candidates, snapshots = self._intraday_scan_mover_candidates(ctx)
         mover_names = [s for s, _ in candidates[: cfg.max_candidates_per_scan]]
         if self._await_paid_scan_slot(ctx.run_id):
+            if getattr(self, "_paid_scan_waited_for", None) == "morning":
+                return self._intraday_open_overlap_skip(ctx, mover_names)
             return self._intraday_paid_scan_skip(ctx, mover_names)
-        # The 09:30/13:00 wait must not size against the pre-fill snapshot
-        # taken before morning finished. Refresh after the lock releases.
+        if (
+            getattr(self, "_paid_scan_waited", False)
+            and getattr(self, "_paid_scan_waited_for", None) == "morning"
+        ):
+            return self._intraday_open_overlap_skip(ctx, mover_names)
+        # A midday/close wait must not size against the pre-fill snapshot
+        # taken before that session finished. Refresh after the lock releases.
         if getattr(self, "_paid_scan_waited", False):
             try:
                 account, positions, _ = self._refresh_account_state()
