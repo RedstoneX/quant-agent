@@ -115,12 +115,43 @@ def repair_stop_coverage(
             "gap flagged for manual review", symbol, opening,
         )
         return False
+    # The wrong-side test below decides whether putting this stop back would
+    # fire it instantly — i.e. sell the position at market. That test is only
+    # as good as the price it runs against, and a price with no trade time on
+    # it can be yesterday's last print on a thin name, or a quote the tape
+    # never confirmed. Against a stale number the test can read "safe" while
+    # today's real price is already through the stop, and the repair becomes
+    # an unintended market exit. So a repair requires a trade print stamped
+    # today; anything else leaves the gap flagged for the next sweep, which
+    # is the same outcome this function already produces for every other
+    # unverifiable input.
+    stamped = None
     try:
-        price = broker.get_latest_price(symbol)
+        from src.execution.broker import LivePrice
+
+        getter = getattr(broker, "get_latest_price_stamped", None)
+        if callable(getter):
+            candidate = getter(symbol)
+            # isinstance, not truthiness: most tests drive this with a
+            # MagicMock broker whose auto-attributes are callable and whose
+            # return value is another MagicMock. Only a real reading is
+            # allowed to carry the freshness verdict; anything else falls
+            # back to the bare price exactly as before.
+            if isinstance(candidate, LivePrice):
+                stamped = candidate
+        price = stamped.price if stamped is not None else broker.get_latest_price(symbol)
     except Exception as exc:  # noqa: BLE001
         logger.warning("coverage repair: price lookup failed for %s: %s", symbol, exc)
         return False
     if not (isinstance(price, (int, float)) and price > 0 and math.isfinite(price)):
+        return False
+    if stamped is not None and not stamped.is_today_print:
+        logger.warning(
+            "coverage repair: %s has no trade print from today (price $%.2f came "
+            "from %s) — a stop placed off an unconfirmed price could fire "
+            "immediately. Leaving the gap flagged for the next sweep.",
+            symbol, price, stamped.source,
+        )
         return False
     # Long sell-stop must sit strictly below the tape; short buy-stop must
     # sit strictly above it. The wrong-side test is the one that would turn
