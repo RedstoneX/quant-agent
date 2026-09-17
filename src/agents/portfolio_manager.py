@@ -12,7 +12,7 @@ from src.models import (
     AnalystVerdict, EarningsAnalysis, MacroAnalysis, NewsIntelligenceReport,
     PortfolioDecision, Position, TargetPosition, TechAnalysisResult,
     SmartMoneyFinding, news_verdict_for_symbol, normalize_sector_stance,
-    parse_telemetry,
+    open_target_missing_falsifier, parse_telemetry,
 )
 from src.data.news_store import ACTIVE_STATE_CHANGE_WINDOW_DAYS
 from src.quantities import collapse_stances
@@ -2111,7 +2111,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     result, "pm_schema_error",
                     f"all {parsed_target_count} emitted targets were invalid",
                 )
-            decision, result = self._fill_missing_open_falsifiers(decision, result)
+            decision, result = self._fill_missing_open_falsifiers(
+                decision, result, positions=positions, total_value=total_value,
+                existing_risk_pct=existing_risk_pct,
+            )
             # §9.3 — drop any target that OPENS/INCREASES exposure while
             # carrying an unadjudicated seat conflict, before grounding is
             # even checked. This is a per-target prune, not an error: it
@@ -2209,7 +2212,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                             f"all {repaired_target_count} repaired targets were invalid",
                         )
                     decision, repaired = self._fill_missing_open_falsifiers(
-                        decision, repaired,
+                        decision, repaired, positions=positions,
+                        total_value=total_value,
+                        existing_risk_pct=existing_risk_pct,
                     )
                     # §9.3 — same per-target conflict prune as the
                     # first-attempt path, applied before grounding here too.
@@ -2930,14 +2935,19 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         parsed["targets"] = valid
         return parsed
 
-    def _fill_missing_open_falsifiers(self, decision, result):
+    def _fill_missing_open_falsifiers(
+        self, decision, result, *, positions=None, total_value: float = 0.0,
+        existing_risk_pct=None,
+    ):
         """One paid retry to fill a missing thesis_invalid_if. Never invents.
 
         Mechanical heal already restored a stated string the null-wipe
         dropped. This asks the seat to actually write the falsifier on
-        open/add names that still have empty/`unknown`. Catalyst is not
-        filled here. If the retry still leaves a name blank, the book-entry
-        refuse records `soft-exit missing after retry`.
+        open/increase names that still have empty/`unknown`. Reductions
+        and closes are not asked — a blank field must not spend a retry
+        on a size drop. Catalyst is not filled here. If the retry still
+        leaves an open name blank, the book-entry refuse records
+        `soft-exit missing after retry`.
         """
         from src.cost_circuit import PaidAnalysisSuspended
         from src.seat_heal import merge_retry_falsifiers
@@ -2946,9 +2956,19 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             return decision, result
         if getattr(self, "_soft_exit_retry_used", False):
             return decision, result
+        held = {
+            str(getattr(p, "symbol", "")).upper(): p
+            for p in list(positions or [])
+            if getattr(p, "symbol", None)
+        }
         missing = [
             t.symbol for t in list(getattr(decision, "targets", None) or [])
-            if getattr(t, "missing_open_falsifier", False)
+            if open_target_missing_falsifier(
+                t,
+                intent=self._target_intent(
+                    t, held, total_value, existing_risk_pct=existing_risk_pct,
+                ),
+            )
         ]
         if not missing:
             return decision, result
@@ -2962,7 +2982,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         self._soft_exit_retry_used = True
         coda = (
             "\n\n## SOFT-EXIT COMPLETION REQUIRED — NOT A RE-DECISION\n"
-            "These open/add targets are missing a real thesis_invalid_if "
+            "These open/increase targets are missing a real thesis_invalid_if "
             "(I'll sell if). Fill ONLY that field on the named symbols with "
             "one concrete observable. Do NOT invent a catalyst unless you are "
             "citing a dated Active News State Change for the unmeasurable-"
