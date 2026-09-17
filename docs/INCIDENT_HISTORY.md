@@ -22,6 +22,72 @@ what would catch it next time.
 
 ---
 
+### 2026-09-17 — the desk could never have been told its own fills
+
+**In plain words:** the desk places orders through a service that quietly swaps
+in the real trading password on the way out, so ordering works even though the
+desk itself only holds a fake one. But the separate live feed that tells it
+"your order just filled" does not go through that service and has to present the
+password itself. It was presenting the fake one. That feed has never once worked,
+and could not have.
+
+**Cause.** Two independent blockers, either of which alone is fatal. The broker
+authenticates that feed with a message sent *inside* the connection, not with a
+header on the way in — and the swap-in service only rewrites headers, so there
+was nothing for it to rewrite. Separately, the library the feed is built on is an
+older implementation that cannot be routed through that service at all. So the
+feed could not be fixed by pointing it at the same plumbing everything else uses.
+
+**Why it went unnoticed for so long.** Because the ordering path kept working. A
+fake password that still places orders looks exactly like a healthy desk from
+the outside, and nothing said at startup which password the process was actually
+holding. Eight days passed, and five separate attempts went into tuning *when*
+the feed connected — optimising the timing of a handshake that was never going
+to succeed with the credential it was presenting. Every one of those attempts
+was reasoning about the wrong layer, and nothing in the system was positioned to
+say so.
+
+**Fix.** Since the feed must hold the real password, it is now delivered to the
+process as a locked-down file handed over by the system at startup, instead of
+sitting in the plain-text settings file with everything else. It never enters the
+process's environment, so it is not visible in the places a running process
+normally leaks its settings, and it is not in the code checkout, so no deploy can
+move or expose it. The fake password stays exactly where it is and is simply
+outranked. Every start now says, in the log, where each trading credential came
+from and how long it is — never what it is — and shouts in its own Telegram
+message if it is holding an obvious stand-in.
+
+**What was ruled out.** Encrypting the credential at rest, which was the
+original intent. The desk's services run under the unprivileged account's own
+service manager, and unlocking an encrypted credential requires reading a
+system file only the administrator can read, so the service dies before the
+application starts. There is also no security chip on this machine to fall back
+on. This was reproduced with a fake value rather than assumed. The result is a
+credential protected by file permissions, not by cryptography — a real
+improvement on a shared plain-text file, but a smaller one than intended, and it
+is recorded as such rather than overstated. Encryption becomes possible only if
+the services are moved to the administrator's service manager, which is a
+separate decision. Also ruled out: reviving the custom credential proxy that was
+rejected earlier — nothing here adds one.
+
+**Also ruled out: guessing whether a credential is real from its shape.** The
+broker does not publish what its keys look like, so any length or prefix rule
+would be a number invented to look careful, and would start rejecting genuine
+keys the day the broker changed its format. The check instead fires only on
+positive evidence someone typed a stand-in. It therefore cannot catch a
+wrong-but-plausible key, which is stated openly rather than papered over.
+
+**What would catch it next time.** The startup line naming the source and length
+of each trading credential, and the alert on a stand-in, both of which would have
+fired on day one of the eight. But the real lesson is narrower: a credential is
+not proven by anything the desk says about itself. The acceptance test for this
+change is a single observation that the broker *accepted* the credential on the
+live feed — a statement made by the other side. The feed stays switched off until
+that observation exists. Nobody demanded that existence proof for eight days, and
+that, not the credential, is what actually failed.
+
+---
+
 ### 2026-09-17 — the desk could place an order off a price from a day it wasn't trading
 
 **In plain words:** one function answers "what is this worth right now". It asked the broker for the most recent trade and took the answer without ever looking at *when* that trade happened, so on a thinly traded name it could hand back yesterday's price. If there was no trade at all it quietly averaged the buy and sell quotes and returned that, looking exactly the same. Three things that place or move real orders relied on it: the job that puts a missing stop-loss back, the pin that caps what an entry may pay, and the reference a fill is checked against.
