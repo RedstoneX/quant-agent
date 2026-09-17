@@ -232,6 +232,13 @@ STOP_REFUSAL_GROSS_EXPOSURE_CEILING = "gross_exposure_ceiling_refused"
 #: anything for the regex to see. Named and filed rather than left mute:
 #: this is not a judgement on the idea, only on its size.
 CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA = "delta_below_min_trade_weight"
+#: 2026-09-17 (intra_check-44594a05). A risk-based TRIM of a held name this
+#: session did not analyse is sized from the position's live broker stop
+#: (see `_held_trim_entry_and_stop`). When there is no usable live stop the
+#: trim cannot be sized, and the position is left unchanged. That is NOT a
+#: market-data fault — the price feed is fine — so it is filed under its own
+#: name instead of `analysis_missing`, which pages the owner to check the feed.
+TRIM_REFUSAL_NO_USABLE_LIVE_STOP = "trim_without_analysis_has_no_usable_live_stop"
 #: Board item 10, second pass (2026-09-14). The five fixes above closed every
 #: path that reached `_record_constructor_drops` as the literal "no matching
 #: constructor log line captured". They did NOT make every drop path
@@ -343,6 +350,9 @@ class RiskPlan:
     entry_price: float | None
     stop_price: float | None
     note: str = ""
+    #: True when this plan is a trim of a held, unanalysed name sized from its
+    #: live broker stop. Such a plan may only REDUCE the position.
+    sized_from_live_stop: bool = False
 
 
 @dataclass
@@ -720,7 +730,7 @@ class PortfolioConstructor:
 
     def _note_refusal(
         self, symbol: str, direction: str, refusal: str, detail: str,
-        *, only_if_unrecorded: bool = False,
+        *, only_if_unrecorded: bool = False, action: str | None = None,
     ) -> None:
         """Record and log one NAMED trade refusal. Never raises.
 
@@ -753,7 +763,7 @@ class PortfolioConstructor:
             pass
         logger.warning(
             "Constructor: %s %s refused [%s] — %s",
-            "SHORT" if str(direction).lower() == "short" else "BUY",
+            action or ("SHORT" if str(direction).lower() == "short" else "BUY"),
             symbol, refusal, detail,
         )
 
@@ -831,6 +841,7 @@ class PortfolioConstructor:
         stale_sources: dict[str, frozenset[str]] | None = None,
         gross_ceiling=None,
         ranking: Sequence[str] | None = None,
+        live_stops: dict[str, float] | None = None,
     ) -> list[TradeDecision]:
         """Produce the order list that moves the book from current → target state.
 
@@ -878,6 +889,12 @@ class PortfolioConstructor:
         gross ceiling's de-lever is authored in the session preamble, before
         any agent runs, so it cannot depend on a model returning a book.
 
+        `live_stops`: {symbol: live broker stop} for held positions — the
+        same stops the heat roll-up behind `existing_risk_pct` is computed
+        from. Used ONLY to size a risk-based trim of a held name that has no
+        analysis this session (`_held_trim_entry_and_stop`). Omitted, such a
+        trim is refused by name and the position is left unchanged.
+
         `ranking`: retired board item 49, owner decision 2026-09-12 (`docs/INCIDENT_HISTORY.md`, 2026-09-14). The
         session's candidate order, BEST FIRST — the caller passes the symbols
         of `PortfolioManagerAgent.last_candidate_ranking`, i.e. exactly the
@@ -909,6 +926,7 @@ class PortfolioConstructor:
             evidence_registry=evidence_registry,
             stale_sources=stale_sources,
             ranking=ranking,
+            live_stops=live_stops,
         )
 
         # Spec §10.3. Held GROSS exposure per sector, carried through the
@@ -961,6 +979,25 @@ class PortfolioConstructor:
                     sym, current_pct, signed_target,
                 )
                 signed_target = 0.0
+
+            plan_for_sym = (
+                risk_plan.get(sym) if target.risk_allocation_pct is not None else None
+            )
+            if (
+                plan_for_sym is not None and plan_for_sym.sized_from_live_stop
+                and abs(signed_target) > abs(current_pct)
+            ):
+                # A trim sized from the live stop may only reduce. At its live
+                # stop this position already carries no more than the risk
+                # asked for, so there is nothing to sell — and with no
+                # analysis there is no basis to buy. Hold it as it is.
+                logger.info(
+                    "Constructor: %s trim needs no order — at its live stop "
+                    "($%.2f) the position already risks no more than the "
+                    "%.2f%% asked for; left unchanged.",
+                    sym, plan_for_sym.stop_price or 0.0, plan_for_sym.risk_pct,
+                )
+                signed_target = current_pct
 
             delta_pct = signed_target - current_pct
 
@@ -1135,6 +1172,7 @@ class PortfolioConstructor:
         evidence_registry: dict[str, dict[str, str]] | None = None,
         stale_sources: dict[str, frozenset[str]] | None = None,
         ranking: Sequence[str] | None = None,
+        live_stops: dict[str, float] | None = None,
     ) -> dict[str, RiskPlan]:
         """Turn risk-based targets into notional weights, under the budget.
 
@@ -1177,6 +1215,7 @@ class PortfolioConstructor:
         # delta loop in `construct_orders` applies the sign from
         # `target.direction`.
         directions: dict[str, str] = {}
+        live_stop_trims: set[str] = set()
         requests: list[RiskRequest] = []
         closes: set[str] = set()
         # §9.4 dissent. Since 2026-09-02 it IS subtracted (the refusal reads
@@ -1218,9 +1257,28 @@ class PortfolioConstructor:
                 # name; it goes to the exit builder, not to nowhere.
                 continue
             analysis = analyses_by_sym.get(sym)
-            entry, stop = self._resolve_entry_and_stop(
-                target, analysis, price_map.get(sym), regime=regime,
+            held_pct = current_weights.get(sym, 0.0)
+            held_same_side = (
+                held_pct < 0 if target.direction == "short" else held_pct > 0
             )
+            if analysis is None and held_same_side:
+                # A held name the session did not analyse (an intraday scan
+                # analyses movers only). There is nothing to derive a new
+                # stop from, but the position already HAS one at the broker:
+                # size the trim from that, and never let it grow the position.
+                entry, stop = self._held_trim_entry_and_stop(
+                    target, price_map.get(sym), (live_stops or {}).get(sym.upper()),
+                )
+                if entry is None or stop is None:
+                    # drop-reason: delegated — `_held_trim_entry_and_stop`
+                    # files TRIM_REFUSAL_NO_USABLE_LIVE_STOP before returning
+                    # (None, None). The position is left unchanged.
+                    continue
+                live_stop_trims.add(sym)
+            else:
+                entry, stop = self._resolve_entry_and_stop(
+                    target, analysis, price_map.get(sym), regime=regime,
+                )
             if entry is None or stop is None:
                 # drop-reason: delegated. `_resolve_entry_and_stop` has
                 # already filed the fault or the named refusal for this
@@ -1467,8 +1525,54 @@ class PortfolioConstructor:
                 entry_price=entry,
                 stop_price=stop,
                 note=note,
+                sized_from_live_stop=sym in live_stop_trims,
             )
         return plans
+
+    def _held_trim_entry_and_stop(
+        self, target: TargetPosition, market_price: float | None,
+        live_stop: float | None,
+    ) -> tuple[float | None, float | None]:
+        """(current price, live broker stop) for a trim of an unanalysed
+        holding, or (None, None) after filing a named refusal.
+
+        §2.1's own formula, applied to the position as it stands: shares to
+        keep = equity x target risk / |price - live stop|. The stop must sit on
+        the losing side of the price (below for a long, above for a short) —
+        otherwise it bounds no loss and cannot size anything.
+        """
+        import math as _math
+        sym = target.symbol
+        is_short = target.direction == "short"
+        action = "COVER" if is_short else "SELL"
+        price = float(market_price) if market_price else 0.0
+        stop = float(live_stop) if live_stop else 0.0
+        usable = (
+            _math.isfinite(price) and _math.isfinite(stop) and price > 0
+            and stop > 0 and (stop > price if is_short else stop < price)
+        )
+        if usable:
+            return (price, stop)
+        if not stop:
+            why = "it has no live stop order at the broker"
+        elif not price:
+            why = "there is no current price for it"
+        else:
+            why = (
+                f"its live stop (${stop:,.2f}) is not "
+                f"{'above' if is_short else 'below'} the current price "
+                f"(${price:,.2f}), so it bounds no loss"
+            )
+        self._note_refusal(
+            sym, target.direction, TRIM_REFUSAL_NO_USABLE_LIVE_STOP,
+            f"the PM asked to trim {sym} to {target.risk_allocation_pct:.2f}% "
+            f"risk. {sym} was not analysed this session, so the trim can only "
+            f"be sized from the position's own stop, and {why}. The position "
+            f"is left unchanged. This is not a market data fault.",
+            action=action,
+        )
+        # drop-reason: filed just above (TRIM_REFUSAL_NO_USABLE_LIVE_STOP).
+        return (None, None)
 
     def _derive_target(
         self,

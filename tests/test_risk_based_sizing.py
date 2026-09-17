@@ -1983,3 +1983,73 @@ def test_drop_capture_regex_does_not_match_the_defect_class_this_pr_fixes():
             f"silent — re-check whether the fix at that call site is still "
             f"needed: {message!r}"
         )
+
+
+# --------------------------------------------------------------------------
+# 2026-09-17, intra_check-44594a05: a trim of a held name the intraday scan
+# did not analyse is sized from the position's LIVE broker stop.
+# Live figures from that run: equity $9,694.25; AAPL 9.763 sh at $332.96,
+# live stop $315.85, 1.91% equity at risk; PM asked AAPL 1.0%, NET 1.75%.
+# --------------------------------------------------------------------------
+
+_REAL_EQUITY = 9_694.25
+_AAPL_QTY, _AAPL_PX, _AAPL_STOP = 9.763, 332.96, 315.85
+# avg entry implied by the 1.91% budget risk shown to the PM
+_AAPL_ENTRY = _AAPL_STOP + 0.0191 * _REAL_EQUITY / _AAPL_QTY
+
+
+def _real_plan(live_stops):
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("AAPL", 1.0), _risk_target("NET", 1.75)],
+        positions=[_pos("AAPL", _AAPL_QTY, _AAPL_ENTRY, _AAPL_PX)],
+        analyses=[_analysis("NET", entry=100, stop=90, target=140)],
+        total_value=_REAL_EQUITY,
+        price_map={"AAPL": _AAPL_PX, "NET": 100.0},
+        existing_risk_pct={"AAPL": 1.91}, clusters=[],
+        live_stops=live_stops,
+    )
+    return constructor, decisions
+
+
+def test_real_intra_check_plan_sells_aapl_sized_from_its_live_stop_and_buys_net():
+    constructor, decisions = _real_plan({"AAPL": _AAPL_STOP})
+    by_symbol = {d.symbol: d for d in decisions}
+    assert by_symbol["NET"].action == "BUY"
+    sell = by_symbol["AAPL"]
+    assert sell.action == "SELL"
+    # shares to keep = equity x 1.0% / (price - live stop)
+    keep = _REAL_EQUITY * 0.01 / (_AAPL_PX - _AAPL_STOP)
+    shares_sold = sell.allocation_pct / 100 * _AAPL_QTY
+    assert abs(shares_sold - (_AAPL_QTY - keep)) < 0.01   # ~4.10 of 9.763
+    assert "AAPL" not in constructor.last_data_faults
+
+
+def test_trim_without_live_stop_is_refused_by_name_not_as_a_data_fault(caplog):
+    constructor, decisions = _real_plan(None)
+    assert [(d.action, d.symbol) for d in decisions] == [("BUY", "NET")]
+    assert "AAPL" not in constructor.last_data_faults
+    refusal = constructor.last_refusals["AAPL"]
+    assert refusal["refusal"] == "trim_without_analysis_has_no_usable_live_stop"
+    assert "not a market data fault" in refusal["detail"]
+    assert not any("BUY AAPL" in r.getMessage() for r in caplog.records)
+
+
+def test_trim_with_live_stop_on_wrong_side_is_refused_by_name():
+    constructor, _ = _real_plan({"AAPL": _AAPL_PX + 1})
+    assert constructor.last_refusals["AAPL"]["refusal"] == (
+        "trim_without_analysis_has_no_usable_live_stop"
+    )
+
+
+def test_trim_sized_from_live_stop_never_grows_the_position():
+    """3.0% requested vs ~1.72% open risk at the live stop: no BUY, a HOLD."""
+    constructor = PortfolioConstructor()
+    decisions = constructor.construct_orders(
+        targets=[_risk_target("AAPL", 3.0)],
+        positions=[_pos("AAPL", _AAPL_QTY, _AAPL_ENTRY, _AAPL_PX)],
+        analyses=[], total_value=_REAL_EQUITY,
+        price_map={"AAPL": _AAPL_PX}, existing_risk_pct={"AAPL": 1.91},
+        clusters=[], live_stops={"AAPL": _AAPL_STOP},
+    )
+    assert [d.action for d in decisions if d.symbol == "AAPL"] == ["HOLD"]

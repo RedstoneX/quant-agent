@@ -213,6 +213,25 @@ def _book_risk_inputs(ctx, total_value: float):
 
 
 
+def _live_stops_from_heat(ctx) -> dict[str, float] | None:
+    """{symbol: live broker stop} from the PM facts' heat roll-up, or None.
+
+    The stops behind `_book_risk_inputs`' per-symbol risk, so a trim sized
+    from them is sized against the very risk figure the PM was shown.
+    """
+    heat = getattr(getattr(ctx, "facts", None), "heat", None)
+    if heat is None:
+        return None
+    try:
+        return {
+            row.symbol.upper(): row.stop
+            for row in heat.per_position if row.protected and row.stop
+        }
+    except Exception as e:  # noqa: BLE001 — never fail the session on this
+        logger.warning("constructor: live stop map failed: %s", e)
+        return None
+
+
 #: Sentinel written into `pending_repegs.new_order_id` BEFORE the replace
 #: PATCH goes out, and overwritten with the real id when the broker answers.
 #: A row still carrying it at session start means the process died inside the
@@ -4648,6 +4667,9 @@ class DecisionStage:
             price_map=price_map,
             existing_risk_pct=existing_risk_pct,
             clusters=risk_clusters,
+            # Live broker stops from the same heat roll-up as
+            # `existing_risk_pct`: sizes a trim of a held, unanalysed name.
+            live_stops=_live_stops_from_heat(ctx),
             # The tape the stop has to survive. Widening a stop past the noise
             # band is not a fixed number of ATRs — a risk-off market swings
             # wider for the same ATR reading than a trending one.
