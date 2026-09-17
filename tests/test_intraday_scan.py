@@ -31,7 +31,7 @@ import pytest
 
 from src.config import IntradayScanConfig
 from src.cost_circuit import PaidAnalysisSuspended
-from src.models import MacroNarrative, NewsIntelligenceReport, TechAnalysisResult, TechReasoningChain
+from src.models import MacroNarrative, NewsIntelligenceReport, Position, TechAnalysisResult, TechReasoningChain
 from src.pipeline import TradingPipeline
 from src.pipeline_context import RunContext
 from src.trading_calendar import et_today
@@ -353,12 +353,128 @@ def test_non_intra_check_trades_do_not_count_toward_cooldown(mock_compute_indica
     p.tech_analyst.analyze_batch.assert_called_once()
 
 
+def _held_position(symbol: str) -> Position:
+    return Position(
+        symbol=symbol, qty=10.0, avg_entry=100.0, current_price=100.2,
+        market_value=1_002.0, unrealized_pnl=2.0, sector="Technology",
+    )
+
+
+# ---------- held names join the Tech batch (produce Tech, don't drop) ----------
+
+@patch("src.pipeline.compute_indicators")
+def test_held_quiet_name_joins_intraday_tech_batch(mock_compute_indicators):
+    """A name we already hold, even if it did not move 3%, must be in the
+    paid Tech batch. Otherwise an increase on that hold fails
+    'lacks a current-run Technical analysis' and voids the whole PM
+    decision after the paid call. Missing Tech is a producing-step
+    defect; this is that step."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["SPY", "AAPL", "MSFT"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "SPY": _snapshot(last=500.0, prev=499.0),       # 0.2% — below threshold
+        "AAPL": _snapshot(last=110.0, prev=100.0),      # 10% — qualifies as mover
+        "MSFT": _snapshot(last=100.2, prev=100.0),      # 0.2% — quiet hold
+    }
+    mover = _ta_result("AAPL", rating="buy")
+    held = _ta_result("MSFT", rating="buy")
+    p.tech_analyst.analyze_batch.return_value = (
+        {"AAPL": mover, "MSFT": held},
+        MagicMock(user_message="m", raw_text="{}", tokens_used=1,
+                  input_tokens=1, output_tokens=1, cost_usd=0.0, model="t"),
+    )
+    p.decision_stage.run.side_effect = lambda ctx: setattr(
+        ctx, "portfolio_decision",
+        SimpleNamespace(decisions=[SimpleNamespace(action="BUY", symbol="AAPL")]),
+    )
+    p.risk_stage.run.return_value = None
+    p.execution_stage.run.return_value = []
+
+    ctx = RunContext.start("intra_check")
+    ctx.positions = [_held_position("MSFT")]
+    result = p._run_intraday_opportunity_scan(ctx)
+
+    submitted = [
+        s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]
+    ]
+    assert "AAPL" in submitted
+    assert "MSFT" in submitted
+    assert "SPY" not in submitted
+    assert result["candidates"] == ["AAPL"], "quiet holds are coverage, not movers"
+    assert {a.symbol for a in ctx.analyses} == {"AAPL", "MSFT"}
+    ledgered = [
+        call.kwargs["symbol"]
+        for call in p.db.record_intraday_evaluation.call_args_list
+    ]
+    assert "MSFT" not in ledgered, "hold coverage must not consume mover cooldown"
+
+
+@patch("src.pipeline.compute_indicators")
+def test_holds_do_not_consume_mover_candidate_cap(mock_compute_indicators):
+    """Discovery stays capped; held-name coverage is added on top."""
+    mock_compute_indicators.return_value = MagicMock()
+    universe = [f"SYM{i}" for i in range(10)] + ["MSFT"]
+    p = _intraday_pipeline(universe=universe, max_candidates=2, move_threshold_pct=3.0)
+    snaps = {
+        sym: _snapshot(last=100.0 + i, prev=100.0) for i, sym in enumerate(universe[:-1])
+    }
+    snaps["MSFT"] = _snapshot(last=100.2, prev=100.0)
+    p.broker.get_intraday_snapshots.return_value = snaps
+    p.tech_analyst.analyze_batch.return_value = ({}, None)
+
+    ctx = RunContext.start("intra_check")
+    ctx.positions = [_held_position("MSFT")]
+    p._run_intraday_opportunity_scan(ctx)
+
+    submitted = {
+        s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]
+    }
+    assert submitted == {"SYM9", "SYM8", "MSFT"}
+
+
+@patch("src.pipeline.compute_indicators")
+def test_quiet_book_without_movers_does_not_pay_tech_just_for_holds(
+    mock_compute_indicators,
+):
+    """Holds do not themselves trigger a paid scan. No movers → no Tech call.
+    Midday/close review still owns the quiet book."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["MSFT"], move_threshold_pct=3.0)
+    p.broker.get_intraday_snapshots.return_value = {
+        "MSFT": _snapshot(last=100.2, prev=100.0),  # 0.2% — below threshold
+    }
+    ctx = RunContext.start("intra_check")
+    ctx.positions = [_held_position("MSFT")]
+    result = p._run_intraday_opportunity_scan(ctx)
+    assert result == {"status": "intraday_scan_no_opportunity", "run_id": ctx.run_id}
+    p.tech_analyst.analyze_batch.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_held_mover_is_not_submitted_twice(mock_compute_indicators):
+    """A hold that also cleared the move threshold is one Tech name, not two."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+    p.tech_analyst.analyze_batch.return_value = ({}, None)
+    ctx = RunContext.start("intra_check")
+    ctx.positions = [_held_position("AAPL")]
+    p._run_intraday_opportunity_scan(ctx)
+    submitted = [
+        s["symbol"] for s in p.tech_analyst.analyze_batch.call_args.args[0]
+    ]
+    assert submitted == ["AAPL"]
+
+
 # ---------- bounded cost ----------
 
 @patch("src.pipeline.compute_indicators")
 def test_candidates_capped_at_max_per_scan(mock_compute_indicators):
-    """Even on a broad market-wide move day, only the top N (by move size)
-    candidates get a real tech_analyst call — bounded, not high-frequency."""
+    """Even on a broad market-wide move day, only the top N movers (by
+    move size) are selected for discovery — bounded, not high-frequency.
+    Held-name coverage is a separate list and is tested elsewhere."""
     mock_compute_indicators.return_value = MagicMock()
     universe = [f"SYM{i}" for i in range(10)]
     p = _intraday_pipeline(universe=universe, max_candidates=2, move_threshold_pct=3.0)

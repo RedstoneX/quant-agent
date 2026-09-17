@@ -2410,6 +2410,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                         f"{symbol}: increase is outside the configured universe and "
                         "the deterministic temporary-admission allowlist"
                     )
+                # Current-run Technical is a hard gate on increases. Missing
+                # Tech is a producing-step defect (the intraday scan must
+                # include held names in the paid batch), not a reason to
+                # drop the name here and keep the rest of the book.
                 if symbol not in {analysis.symbol.upper() for analysis in analyses}:
                     errors.append(
                         f"{symbol}: increase lacks a current-run Technical analysis"

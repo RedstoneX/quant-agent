@@ -606,6 +606,7 @@ def test_invariant_intraday_scan_adds_no_shorting_or_margin_path():
         inspect.getsource(_TP._run_intraday_opportunity_scan)
         + inspect.getsource(_TP._intraday_opportunity_scan_body)
         + inspect.getsource(_TP._intraday_scan_mover_candidates)
+        + inspect.getsource(_TP._intraday_held_tech_symbols)
     )
     for forbidden in ("sell_short", "short_sell", "allow_margin", "SHORT"):
         assert forbidden not in src, f"intraday scan must not reference {forbidden}"

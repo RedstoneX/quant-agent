@@ -1386,10 +1386,13 @@ class PortfolioConstructor:
                 held_pct < 0 if target.direction == "short" else held_pct > 0
             )
             if analysis is None and held_same_side:
-                # A held name the session did not analyse (an intraday scan
-                # analyses movers only). There is nothing to derive a new
-                # stop from, but the position already HAS one at the broker:
-                # size the trim from that, and never let it grow the position.
+                # A held name this session still has no Technical for (Tech
+                # unresolved after retry, or a path that never asked). The
+                # intraday scan now produces Technical for holds; this
+                # branch is the remainder, not the product. There is
+                # nothing to derive a new stop from, but the position
+                # already HAS one at the broker: size the trim from that,
+                # and never let it grow the position.
                 entry, stop = self._held_trim_entry_and_stop(
                     target, price_map.get(sym), (live_stops or {}).get(sym.upper()),
                 )

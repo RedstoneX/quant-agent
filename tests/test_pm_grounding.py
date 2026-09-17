@@ -622,6 +622,8 @@ def _risk_target(symbol: str, risk: float, direction: str = "long"):
 
 
 def test_risk_target_below_current_risk_is_a_trim():
+    """Keep-vs-add is `_target_intent` reading current stop-based risk
+    (shipped #436). Do not reinvent a second classifier."""
     held = {"AAPL": _held_long("AAPL")}
     assert PortfolioManagerAgent._target_intent(
         _risk_target("AAPL", 1.0), held, 100_000,
@@ -663,6 +665,10 @@ def test_risk_target_is_never_a_trim_for_a_name_not_held_or_held_other_side():
 
 
 def test_genuine_increase_on_unanalysed_holding_still_rejected():
+    """Fail-closed remainder: if this run still has no Technical for a
+    hold, an increase is refused. Dropping the name is not the product —
+    the scan must produce Tech. This pins the gate that remains when
+    production still failed."""
     decision = PortfolioDecision.model_validate({
         "reasoning_chain": {
             "macro_filter": "m", "news_check": "n", "earnings_check": "e",
@@ -678,6 +684,33 @@ def test_genuine_increase_on_unanalysed_holding_still_rejected():
         total_value=100_000, existing_risk_pct={"AAPL": 1.91},
     )
     assert any("lacks a current-run Technical analysis" in e for e in errors)
+
+
+def test_increase_on_held_name_grounds_once_current_run_tech_exists():
+    """Keep-vs-add is `_target_intent` (current risk, #436) — a request at
+    or above current risk is an increase. Once Technical is in this run's
+    analyses, that increase grounds. Producing Tech is the product."""
+    target = dict(_trim_and_open_targets()[0], risk_allocation_pct=2.5)
+    target["provenance"] = [{
+        "source": "technical", "observed_stance": "buy",
+        "relationship": "supports", "evidence": "current-run chart",
+    }]
+    decision = PortfolioDecision.model_validate({
+        "reasoning_chain": {
+            "macro_filter": "m", "news_check": "n", "earnings_check": "e",
+            "signal_conflicts": "s", "sizing_logic": "z",
+            "portfolio_balance": "b", "cash_target": "c",
+        },
+        "targets": [target],
+        "portfolio_view": "increase a hold that now has Tech",
+    })
+    errors = PortfolioManagerAgent.validate_grounding(
+        decision, analyses=[_analysis("AAPL", "buy")],
+        positions=[_held_long("AAPL")], news_intel=None,
+        earnings_analyses=[], macro_analysis=None,
+        total_value=100_000, existing_risk_pct={"AAPL": 1.91},
+    )
+    assert errors == []
 
 
 # The REAL plan from intra_check-44594a05, stances as recorded in the PM
