@@ -1299,6 +1299,123 @@ def test_a_missing_backlog_or_heading_flags_nothing(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# the OUTFLOW half of "docs/WORK.md holds only open work"
+#
+# `test_no_board_item_disappears_without_being_retired` and
+# `test_work_md_stays_under_a_hundred_thousand_bytes` mechanically stop the
+# file from GROWING without being pruned. Neither one notices a single item
+# that has quietly finished and simply never been moved out — the file can
+# sit at its cap forever with finished items still occupying the space they
+# should have given back. `find_finished_items_still_on_board` is the other
+# half: it reads each item's own status the same way the renderer does
+# (`status_tail`, cross-references to other items stripped, negations
+# honoured) and fails when an item's own words say it is done.
+# ---------------------------------------------------------------------------
+
+def _board_notes(tmp_path, text=""):
+    p = tmp_path / "BOARD_NOTES.md"
+    p.write_text(text)
+    return p
+
+
+def test_a_synthetic_finished_item_trips_the_check(tmp_path):
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. A made-up bug — 3 of 68 (4%). FIXED 2026-09-04 (PR #999).**\n"
+    )
+    notes = _board_notes(tmp_path)
+    flagged = sb.find_finished_items_still_on_board(work, notes)
+    assert len(flagged) == 1
+    assert "item 9" in flagged[0]
+    # The message must tell a reader the whole procedure, not just that
+    # something is wrong — this is the one check nobody will know how to
+    # act on without being told.
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "BOARD_NOTES.md",
+                 "retired"):
+        assert step in flagged[0]
+
+
+def test_a_partially_fixed_item_with_open_follow_ons_does_not_trip_it(tmp_path):
+    """Item 18's real shape: a closure word (MERGED) sits in the same tail as
+    a word admitting real work remains (PARTIALLY). Must stay open."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. Big finding — MEASURED 2026-09-02, PARTIALLY FIXED, core cause "
+        "MERGED 2026-09-04 (PR #252), real follow-ons below.**\n\n"
+        "Still open: a real remaining piece of work.\n"
+    )
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(work, notes) == []
+
+
+def test_a_deferred_owner_decision_does_not_trip_it(tmp_path):
+    """Item 17's real shape: no due date, explicitly deferred. A closure
+    word never appears, but this pins the paused/deferred exemption too."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. Backup alert channel — OWNER DECISION, deferred, no due "
+        "date.**\n"
+    )
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(work, notes) == []
+
+
+def test_working_as_intended_trips_it_like_a_closure_word(tmp_path):
+    """The owner's own concrete example (item 3): "WORKING AS INTENDED" with
+    no remaining follow-on is a settled conclusion, not open work, even
+    though it uses none of the FIXED/MERGED/SHIPPED vocabulary."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. Something investigated — 6 of 68 (9%). WORKING AS "
+        "INTENDED.**\n\n"
+        "A settled explanation with nothing left outstanding.\n"
+    )
+    notes = _board_notes(tmp_path)
+    flagged = sb.find_finished_items_still_on_board(work, notes)
+    assert len(flagged) == 1
+    assert "item 9" in flagged[0]
+
+
+def test_a_bare_open_marker_suppresses_a_stray_closure_word_in_the_tail(tmp_path):
+    """The real false positive this check was designed around: item 80's
+    tail uses "shipped" to describe the KIND of stop a rule is about
+    ("every shipped stop"), not this item's own state, and separately
+    declares itself "OPEN" in the very same tail. The literal OPEN must
+    win."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. Stop provenance — every shipped stop must trace to a level. "
+        "OPEN; the refusal path is contested, filed 2026-09-17.**\n"
+    )
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(work, notes) == []
+
+
+def test_a_missing_backlog_flags_nothing_for_the_finished_check(tmp_path):
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(
+        tmp_path / "nope.md", notes) == []
+
+
+def test_the_real_backlog_has_no_finished_item_still_on_the_board():
+    """The real docs/WORK.md and docs/BOARD_NOTES.md, not a fixture. This is
+    the check itself: it must find nothing once the cleanup pass in this
+    same change has moved out every item its own words call finished."""
+    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    notes = Path(__file__).resolve().parents[1] / "docs" / "BOARD_NOTES.md"
+    flagged = sb.find_finished_items_still_on_board(work, notes)
+    assert not flagged, (
+        "docs/WORK.md has item(s) that declare themselves finished in their "
+        "own status but are still on the board:\n  " + "\n  ".join(flagged)
+    )
+
+
+# ---------------------------------------------------------------------------
 # the PM test gate: "garbage in, garbage out" as its own board section
 #
 # The owner's own repeated framing: the PM model-choice test cannot mean
@@ -2477,10 +2594,17 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
         assert by_rank[rank].in_hand_state == "decided, not yet built", rank
     for rank in (20, 39):
         assert by_rank[rank].bucket == "in_hand", rank
+    # Item 3 used to be pinned here as the "no_action" case (WORKING AS
+    # INTENDED, no follow-on). It was written up in
+    # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md once
+    # `find_finished_items_still_on_board` existed to catch a finished item
+    # sitting on the board — the parser behaviour it used to pin here lives
+    # on as a synthetic fixture in
+    # `test_a_cause_that_is_by_design_is_listed_but_never_queued`.
+    assert 3 not in by_rank
     # Checked and by design. Funnel item 8 (stop on the wrong side of
     # entry) joined the retired list on 2026-09-15: written up
     # 2026-09-02/03 as not a defect, then deleted from the queue.
-    assert by_rank[3].bucket == "no_action"
     assert 8 not in by_rank
     # Items 48 and 50 used to be pinned here as the "RESOLVED but never
     # struck through" case. Both have since been written up in

@@ -110,12 +110,6 @@ this line, one heading per item.
 **Recommendation —** Nothing to approve. Clear the gate first. A recommendation to spend roughly $5 and settle it was put to you on 2026-09-13 and withdrawn the same day for this reason.
 
 
-## item 3
-
-**Plain language —** Sometimes an order sits with the broker but the price moves away before it fills, so the desk cancels it rather than chase a worse price. That is working as designed when the market itself walked away. It is not working as designed when the desk was simply late after the trade was already approved. Lateness is a defect, not "a little late." The connection to the broker now opens while the reviewer is still working, so that wait is not stacked on after approval. Steps that genuinely need time (confirming a funding sale) have that time written in as a known budget. If that budget is gone, the desk refuses the ticket honestly as the window closing rather than sending a stale limit, even if the price still looks acceptable. One catch-up inside the already-approved price exists only as a safety net, not as the way the desk is supposed to work. Chasing a worse price stays off.
-**Example —** About one in eleven trade ideas end this way: the limit order waits, the stock drifts off the target price, and the order is cancelled unfilled, with the opportunity gone. A different failure, seen the same morning the later scan reused the morning research: after the reviewer said yes, the broker connection spent minutes authenticating, and names that were still inside the approved price were lost to that stall. That connection now starts during the review. If the known budget is gone, the skip is named as the window closing, not as the market being too expensive.
-
-
 ## item 17
 
 **Plain language —** If the desk's own record-keeping breaks, a safety switch can shut down all further AI-based decisions completely, and it stays off until a person manually clears it — working as intended. The real problem, observed live, was that the alert meant to warn someone about it also failed to send, so the desk could sit switched off for a full day or a weekend with nobody aware, looking exactly like an ordinary quiet market.
