@@ -2371,7 +2371,9 @@ class TradingPipeline:
         # enabled) is not a reason to scale anything down — leverage is
         # already capped, and enforced, by the §11.2 gross ceiling.
         if invested_target_pct is not None and total_value > 0:
-            from src.risk.rules import book_exposure, RiskViolation
+            from src.risk.rules import (
+                book_exposure, deployment_gap_band_pct, RiskViolation,
+            )
             # Read through `book_exposure` — the SAME function that produces
             # PM's `invested_pct`. Before this, the two seats were judged
             # against one target using two definitions with opposite signs
@@ -2388,12 +2390,16 @@ class TradingPipeline:
             )
             projected_invested_pct = projected.deployed_pct
             deviation = projected_invested_pct - invested_target_pct
-            # RC3 (the 15pp band is unchanged): an UNDER-deployed book is the
-            # drag this advisory exists to surface. The OVER branch that told
-            # RM to "consider scale_all_buys" was deleted with the mandate —
-            # there is no macro target left to be above, and scaling entries
-            # down leaves exactly the idle cash the owner ruled out.
-            if deviation < -15:
+            # The band is the desk's own sourced cash reserve
+            # (`cash_sweep.reserve_pct`), not an invented number — see
+            # `deployment_gap_band_pct`. An UNDER-deployed book beyond that
+            # reserve is the drag this advisory exists to surface. The OVER
+            # branch that told RM to "consider scale_all_buys" was deleted
+            # with the mandate — there is no macro target left to be above,
+            # and scaling entries down leaves exactly the idle cash the
+            # owner ruled out.
+            band = deployment_gap_band_pct(getattr(self, "config", None))
+            if deviation < -band:
                 remaining_violations.append(RiskViolation(
                     rule="deployment_gap",
                     message=(
@@ -7875,11 +7881,14 @@ class TradingPipeline:
         # face. The target is the owner's fixed fully-invested mandate
         # (2026-09-17), not a macro output — macro no longer sets or lowers
         # it. Only rendered when there is a book to measure.
-        from src.risk.rules import DESK_INVESTED_TARGET_PCT
+        from src.risk.rules import DESK_INVESTED_TARGET_PCT, deployment_gap_band_pct
         if total_value > 0:
             f.invested_target_pct = DESK_INVESTED_TARGET_PCT
             f.deployment_gap_pp = round(
                 f.invested_pct - DESK_INVESTED_TARGET_PCT, 1,
+            )
+            f.deployment_gap_band_pct = deployment_gap_band_pct(
+                getattr(self, "config", None)
             )
 
         # Audit §1.3/§1.4 — the book's real risk, and each position's

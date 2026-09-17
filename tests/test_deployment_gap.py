@@ -6,8 +6,9 @@ averaged 39% and declined monotonically while every layer shaved sizes
 independently. Nothing reconciled the compound. Two fixes, still in force:
 
   1. PMFacts carries invested_target_pct + deployment_gap_pp and renders a
-     ⚠️ DEPLOYMENT GAP section (>15pp under) that the PM prompt requires be
-     answered in the cash_target step.
+     ⚠️ DEPLOYMENT GAP section (more than the cash-reserve band under —
+     `cash_sweep.reserve_pct`, see `src.risk.rules.deployment_gap_band_pct`)
+     that the PM prompt requires be answered in the cash_target step.
   2. The `deployment_gap` advisory must NOT tell RM to scale_all_buys down.
 
 Since 2026-09-17 the target is the fixed 100% mandate
@@ -15,7 +16,7 @@ Since 2026-09-17 the target is the fixed 100% mandate
 no longer ANY branch that asks for a scale-down for being above target.
 """
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.models import Position, TradeDecision
 from src.pipeline import TradingPipeline
@@ -41,10 +42,12 @@ def test_pm_facts_render_deployment_gap_when_under():
 
 
 def test_pm_facts_render_near_mandate_still_asks_for_residual_cash_reason():
+    """-0.5pp is inside the default cash-reserve band (`reserve_pct`=1.0,
+    unset here so PMFacts falls back to CashSweepConfig's own default)."""
     f = PMFacts()
-    f.invested_pct = 96.0
+    f.invested_pct = 99.5
     f.invested_target_pct = 100.0
-    f.deployment_gap_pp = -4.0
+    f.deployment_gap_pp = -0.5
     out = f.render()
     assert "Deployment vs Fully-Invested Mandate" in out
     assert "cash_target" in out
@@ -132,24 +135,34 @@ def test_advisory_never_scales_down_for_being_above_target():
                       entry_price=100.0, stop_loss=90.0,
                       take_profit=130.0, reasoning="x"),
     ]
-    for target in (DESK_INVESTED_TARGET_PCT, 50.0):
-        _, violations, _ = pipeline._filter_hard_risk_decisions(
-            list(decisions), positions, total_value=100_000.0, daily_pnl=0.0,
-            baseline=100_000.0, invested_target_pct=target, cash=100_000.0,
-        )
-        assert not [v for v in violations if v.rule == "deployment_gap"], target
-        assert not any("scale_all_buys" in v.message for v in violations), target
+    # AAPL is put in a different sector than the held NVDA (Technology) so
+    # the unrelated sector-crowding gate doesn't hard-block the BUY and mask
+    # what this test is actually about — the deployment-gap advisory.
+    with patch("src.pipeline._get_sector", return_value="Other"), patch(
+        "src.execution.broker._get_sector", return_value="Other"
+    ):
+        for target in (DESK_INVESTED_TARGET_PCT, 50.0):
+            _, violations, _ = pipeline._filter_hard_risk_decisions(
+                list(decisions), positions, total_value=100_000.0, daily_pnl=0.0,
+                baseline=100_000.0, invested_target_pct=target, cash=100_000.0,
+            )
+            assert not [v for v in violations if v.rule == "deployment_gap"], target
+            assert not any("scale_all_buys" in v.message for v in violations), target
 
 
 def test_within_band_below_mandate_is_quiet():
+    """`pipeline` (built via `_engine_pipeline()`) carries no `.config`, so
+    the band falls back to `CashSweepConfig`'s own declared `reserve_pct`
+    default (1.0) — the desk's sourced cash reserve, not an invented
+    number. 99.3% invested is within that reserve of the 100% mandate."""
     pipeline = _engine_pipeline()
     positions = [Position(symbol="NVDA", qty=100, avg_entry=800,
-                          current_price=900, market_value=90_000,
+                          current_price=993, market_value=99_300,
                           unrealized_pnl=10_000, unrealized_intraday_pnl=0.0,
                           sector="Technology")]
     _, violations, _ = pipeline._filter_hard_risk_decisions(
         [], positions, total_value=100_000.0, daily_pnl=0.0,
         baseline=100_000.0, invested_target_pct=DESK_INVESTED_TARGET_PCT,
-        cash=10_000.0,
+        cash=700.0,
     )
     assert not [v for v in violations if v.rule == "deployment_gap"]
