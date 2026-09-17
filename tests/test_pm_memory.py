@@ -990,7 +990,8 @@ def _tech_buy_analyses():
             support_levels=[95], resistance_levels=[110],
             setup_type="range", expected_horizon_sessions=10,
             reasoning="test", reasoning_chain=_trc,
-        )
+        thesis_invalid_if="closes below support",
+    )
         for sym in ("NVDA", "AMD", "AAPL")
     ]
 

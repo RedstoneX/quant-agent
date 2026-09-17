@@ -144,6 +144,7 @@ def _analysis(
         setup_type="range", expected_horizon_sessions=10,
         reasoning="validated production-like trend and momentum evidence",
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -624,7 +625,8 @@ def test_real_map_end_to_end_with_portfolio_constructors_own_derivation():
             computed_levels=computed_levels, atr_14=(100.0 - 95.0) / 3.5,
             setup_type="range", expected_horizon_sessions=60,
             reasoning="test", reasoning_chain=_tech_rc(),
-        )
+        thesis_invalid_if="closes below support",
+    )
 
     overstated = _structured("NVDA", model_target=150.0, computed_levels=[95.0, 103.0])
     understated = _structured("GEV", model_target=104.0, computed_levels=[95.0, 108.0])
@@ -1049,6 +1051,7 @@ def _subfloor_analysis(symbol: str = "AAA") -> TechAnalysisResult:
         atr_14=(100.0 - 95.0) / 3.5, setup_type="range",
         expected_horizon_sessions=60, reasoning="test",
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -1230,6 +1233,7 @@ def test_an_ordinary_built_order_does_not_carry_the_exception():
         atr_14=(100.0 - 95.0) / 3.5, setup_type="range",
         expected_horizon_sessions=60, reasoning="test",
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
     target = TargetPosition(
         symbol="GEV", conviction="medium", direction="long", thesis="t",

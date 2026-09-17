@@ -210,6 +210,7 @@ def _buy(symbol: str) -> TradeDecision:
     return TradeDecision(
         action="BUY", symbol=symbol, allocation_pct=6.0, entry_price=24.00,
         stop_loss=22.50, take_profit=28.55, reasoning="unrelated breakout",
+        thesis_invalid_if="closes below support",
     )
 
 

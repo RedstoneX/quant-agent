@@ -114,7 +114,7 @@ def test_magicmock_config_reads_as_disabled():
 def _buy(symbol="AAPL", alloc=10.0):
     return TradeDecision(action="BUY", symbol=symbol, allocation_pct=alloc,
                          entry_price=100.0, stop_loss=95.0, take_profit=120.0,
-                         reasoning="test")
+                         reasoning="test", thesis_invalid_if="closes below support")
 
 
 def test_filter_does_not_itself_credit_parked_value_as_cash():

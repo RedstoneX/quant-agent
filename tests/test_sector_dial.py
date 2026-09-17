@@ -76,6 +76,7 @@ def _analysis(symbol: str, entry: float, stop: float, target: float) -> TechAnal
         atr_14=abs(entry - stop) / 3.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -306,6 +307,7 @@ def _short_analysis(symbol: str = "XOM") -> TechAnalysisResult:
         atr_14=5.0 / 3.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 

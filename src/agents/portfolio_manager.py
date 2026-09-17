@@ -2046,6 +2046,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # a candidate the one shared funnel has already refused.
                constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
                ) -> tuple[PortfolioDecision | None, "AgentResult"]:
+        # One fill retry per decide() call — the agent is long-lived across
+        # morning/midday/close. A morning miss must not spend the close's
+        # shot, and a spent flag must not skip a later session.
+        self._soft_exit_retry_used = False
         result = self.run(
             analyses=analyses,
             positions=positions,
@@ -2137,6 +2141,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     result, "pm_schema_error",
                     f"all {parsed_target_count} emitted targets were invalid",
                 )
+            decision, result = self._fill_missing_open_falsifiers(decision, result)
             # §9.3 — drop any target that OPENS/INCREASES exposure while
             # carrying an unadjudicated seat conflict, before grounding is
             # even checked. This is a per-target prune, not an error: it
@@ -2230,6 +2235,9 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                             repaired, "pm_schema_error",
                             f"all {repaired_target_count} repaired targets were invalid",
                         )
+                    decision, repaired = self._fill_missing_open_falsifiers(
+                        decision, repaired,
+                    )
                     # §9.3 — same per-target conflict prune as the
                     # first-attempt path, applied before grounding here too.
                     decision = self._drop_unadjudicated_conflicts(
@@ -3066,6 +3074,87 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             valid.append(item)
         parsed["targets"] = valid
         return parsed
+
+    def _fill_missing_open_falsifiers(self, decision, result):
+        """One paid retry to fill a missing thesis_invalid_if. Never invents.
+
+        Mechanical heal already restored a stated string the null-wipe
+        dropped. This asks the seat to actually write the falsifier on
+        open/add names that still have empty/`unknown`. Catalyst is not
+        filled here. If the retry still leaves a name blank, the book-entry
+        refuse records `soft-exit missing after retry`.
+        """
+        from src.cost_circuit import PaidAnalysisSuspended
+        from src.seat_heal import merge_retry_falsifiers
+
+        if decision is None:
+            return decision, result
+        if getattr(self, "_soft_exit_retry_used", False):
+            return decision, result
+        missing = [
+            t.symbol for t in list(getattr(decision, "targets", None) or [])
+            if getattr(t, "missing_open_falsifier", False)
+        ]
+        if not missing:
+            return decision, result
+        user_message = getattr(result, "user_message", None) or ""
+        if not str(user_message).strip():
+            logger.warning(
+                "Open target(s) missing thesis_invalid_if (%s) — no user "
+                "message to replay for a fill retry", missing,
+            )
+            return decision, result
+        self._soft_exit_retry_used = True
+        coda = (
+            "\n\n## SOFT-EXIT COMPLETION REQUIRED — NOT A RE-DECISION\n"
+            "These open/add targets are missing a real thesis_invalid_if "
+            "(I'll sell if). Fill ONLY that field on the named symbols with "
+            "one concrete observable. Do NOT invent a catalyst unless you are "
+            "citing a dated Active News State Change for the unmeasurable-"
+            "range exception. Do NOT change symbol, direction, conviction, "
+            "thesis, risk_allocation_pct, target_weight_pct, or "
+            "suggested_stop_price. Do NOT add or remove targets. If you "
+            "cannot state a real falsifier, leave that name's "
+            "thesis_invalid_if empty — Python will refuse that name; do not "
+            "invent text.\n"
+            f"Symbols: {', '.join(missing)}\n"
+            "Respond ONLY with the complete JSON object.\n"
+        )
+        try:
+            retried = self._execute(
+                str(user_message) + coda, retry_kind="soft_exit_fill",
+                optional_retry=True,
+            )
+        except PaidAnalysisSuspended as exc:
+            logger.warning(
+                "Soft-exit fill retry blocked by spend cap for %s: %s",
+                missing, exc,
+            )
+            return decision, result
+        except Exception as exc:
+            logger.warning(
+                "Soft-exit fill retry failed for %s: %s", missing, exc,
+            )
+            return decision, result
+        reparsed = retried.parse_json() if retried is not None else None
+        retry_targets = []
+        if isinstance(reparsed, dict) and isinstance(reparsed.get("targets"), list):
+            retry_targets = reparsed["targets"]
+        merged, filled = merge_retry_falsifiers(
+            list(decision.targets), retry_targets,
+        )
+        if filled:
+            decision.targets = merged
+            logger.info(
+                "Soft-exit fill retry stated thesis_invalid_if for %s — "
+                "not invented", filled,
+            )
+        else:
+            logger.warning(
+                "Soft-exit fill retry did not produce a stated falsifier "
+                "for %s", missing,
+            )
+        return decision, retried
 
     _DECISION_FIELDS = ("targets",)
 

@@ -58,6 +58,45 @@ def test_restore_overwrites_unknown_with_the_stated_string_not_an_invention():
     assert set(restored) == {"catalyst", "thesis_invalid_if"}
 
 
+def test_merge_retry_falsifiers_copies_stated_only_never_invents():
+    from src.seat_heal import merge_retry_falsifiers
+
+    original = [
+        {"symbol": "AAPL", "risk_allocation_pct": 1.0, "thesis_invalid_if": ""},
+        {"symbol": "MSFT", "risk_allocation_pct": 1.0,
+         "thesis_invalid_if": "closes below 400"},
+        {"symbol": "NVDA", "risk_allocation_pct": 0.0, "thesis_invalid_if": ""},
+    ]
+    retry = [
+        {"symbol": "AAPL", "risk_allocation_pct": 9.0,
+         "thesis_invalid_if": "daily close below 191.5",
+         "catalyst": "invented 8-K"},
+        {"symbol": "MSFT", "thesis_invalid_if": "retry must not overwrite"},
+        {"symbol": "NVDA", "thesis_invalid_if": "close needs no fill"},
+    ]
+    merged, filled = merge_retry_falsifiers(original, retry)
+    by_sym = {t["symbol"]: t for t in merged}
+    assert by_sym["AAPL"]["thesis_invalid_if"] == "daily close below 191.5"
+    assert by_sym["AAPL"]["risk_allocation_pct"] == 1.0
+    assert "catalyst" not in by_sym["AAPL"] or by_sym["AAPL"].get("catalyst") != "invented 8-K"
+    assert by_sym["MSFT"]["thesis_invalid_if"] == "closes below 400"
+    assert by_sym["NVDA"]["thesis_invalid_if"] == ""
+    assert filled == ["AAPL"]
+
+
+def test_merge_retry_falsifiers_does_not_invent_when_retry_also_blank():
+    from src.seat_heal import merge_retry_falsifiers
+
+    original = [{"symbol": "MRVL", "risk_allocation_pct": 1.0, "thesis_invalid_if": "unknown"}]
+    merged, filled = merge_retry_falsifiers(
+        original,
+        [{"symbol": "MRVL", "thesis_invalid_if": ""},
+         {"symbol": "MRVL", "thesis_invalid_if": "unknown"}],
+    )
+    assert merged[0]["thesis_invalid_if"] == "unknown"
+    assert filled == []
+
+
 def test_macro_parse_failure_names_missing_chain_and_does_not_invent_one():
     payload = {
         "regime": "risk-on",

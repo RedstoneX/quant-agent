@@ -190,6 +190,7 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     mock_ta.analyze_batch.return_value = (
         {"SPY": spy_analysis}, _agent_result(_ACTUAL_FAILOVER_MODEL),
@@ -202,7 +203,7 @@ def test_morning_session_persists_actual_model_for_all_five_agents(
             reasoning_chain=_pm_rc(),
             targets=[TargetPosition(
                 symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="",
+                thesis="Buy", thesis_invalid_if="closes below support",
             )],
             portfolio_view="Bullish",
         ),
@@ -332,6 +333,7 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
     mock_ta.analyze_batch.return_value = (
         {"SPY": spy_analysis}, _agent_result(_ACTUAL_FAILOVER_MODEL),
@@ -344,7 +346,7 @@ def test_morning_session_decision_id_correlates_pm_rm_and_trade(
             reasoning_chain=_pm_rc(),
             targets=[TargetPosition(
                 symbol="SPY", target_weight_pct=10.0, conviction="high",
-                thesis="Buy", thesis_invalid_if="",
+                thesis="Buy", thesis_invalid_if="closes below support",
             )],
             portfolio_view="Bullish",
         ),

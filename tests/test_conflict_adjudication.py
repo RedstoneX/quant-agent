@@ -37,6 +37,7 @@ def _analysis(symbol: str, rating: str = "buy") -> TechAnalysisResult:
         setup_type="range", expected_horizon_sessions=10,
         reasoning="validated production-like trend and momentum evidence",
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 

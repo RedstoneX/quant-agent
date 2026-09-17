@@ -53,6 +53,7 @@ def _analysis(symbol: str, entry: float = 100.0, stop: float = 95.0,
         computed_levels=[stop, target], atr_14=(entry - stop) / 3.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning="test", reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 

@@ -119,10 +119,13 @@ def _merge_agent_results(first: AgentResult, second: AgentResult) -> AgentResult
 class TechAnalystAgent(BaseAgent):
     # NOT set: this agent's top-level response is a JSON ARRAY of
     # TechAnalysisResult (one per symbol), not a single object — OpenAI/
-    # OpenRouter strict structured-output schemas require an object root,
-    # so declaring TechAnalysisResult here would ask the model for a shape
-    # that doesn't match what this agent actually parses. Left unformatted;
-    # see the reasoning-uniformity PR report.
+    # OpenRouter strict structured-output schemas require an object root.
+    # TechAnalysisResult also carries Python-set free-form maps
+    # (`computed_level_touches`) that cannot be strictified. Never-blank
+    # enforcement is the after-validator (actionable ratings require a
+    # real thesis_invalid_if) plus the existing one-shot missing-symbol
+    # retry; a wrapper result_model would not express "required iff not
+    # neutral".
     result_model = None
 
     @property

@@ -49,7 +49,7 @@ def _decision(targets: list[str], dropped: list[str]) -> SimpleNamespace:
     return SimpleNamespace(
         targets=[
             TargetPosition(symbol=s, target_weight_pct=5.0, conviction="high",
-                           thesis="t")
+                           thesis="t", thesis_invalid_if="closes below support")
             for s in targets
         ],
         constructor_dropped=list(dropped),

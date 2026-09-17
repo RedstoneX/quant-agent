@@ -87,6 +87,7 @@ def _tech_analysis() -> TechAnalysisResult:
         setup_type="range", expected_horizon_sessions=60,
         reasoning="Bullish",
         reasoning_chain=_trc(),
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -95,7 +96,7 @@ def _pm_decision() -> PortfolioDecision:
         reasoning_chain=_pm_rc(),
         targets=[TargetPosition(
             symbol="SPY", target_weight_pct=10.0, conviction="high",
-            thesis="Buy", thesis_invalid_if="",
+            thesis="Buy", thesis_invalid_if="closes below support",
         )],
         portfolio_view="Bullish",
     )

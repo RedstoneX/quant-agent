@@ -26,6 +26,7 @@ def _analysis(symbol: str, rating: str = "buy") -> TechAnalysisResult:
             trend="daily trend", momentum="momentum", volatility="ATR",
             volume="volume", support_resistance="levels",
         ),
+        thesis_invalid_if="closes below support",
     )
 
 

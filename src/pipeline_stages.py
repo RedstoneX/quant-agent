@@ -54,7 +54,8 @@ from src.data.event_calendar import (
 from src.data.technical import compute_indicators
 from src.models import (
     NewsIntelligenceReport, Nomination, TechAnalysisResult, TechnicalIndicators,
-    parse_telemetry, reward_to_risk, soft_exit_unknown_after_heal,
+    missing_stated_falsifier, open_target_missing_falsifier,
+    parse_telemetry, reward_to_risk, SOFT_EXIT_MISSING_AFTER_RETRY,
 )
 from src.nominations import select_nominations
 from src.portfolio_constructor import (
@@ -1303,6 +1304,11 @@ def _dropped_since_proposal(portfolio_decision) -> list[str]:
     "the narrative below argues for a name that is not in the list above,
     and that is expected."
 
+    Earlier refusals that removed a target itself (never-blank soft-exit
+    before the constructor) are kept: union with the existing drop list
+    so a name refused before tickets were built is not silently deleted
+    from what Risk is told.
+
     WHY THIS IS A FUNCTION AND NOT A LINE
     --------------------------------------
     It used to be computed once, immediately after `construct_orders`, and
@@ -1320,10 +1326,17 @@ def _dropped_since_proposal(portfolio_decision) -> list[str]:
     as kept: the symbol survived, it just is not being traded today.
     """
     kept = {d.symbol.upper() for d in portfolio_decision.decisions}
-    return [
+    dropped = [
         t.symbol.upper() for t in portfolio_decision.targets
         if t.symbol.upper() not in kept
     ]
+    seen = set(dropped)
+    for symbol in (getattr(portfolio_decision, "constructor_dropped", None) or []):
+        upper = str(symbol).upper()
+        if upper and upper not in kept and upper not in seen:
+            dropped.append(upper)
+            seen.add(upper)
+    return dropped
 
 
 def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, dict]:
@@ -1386,6 +1399,17 @@ def _record_constructor_drops(pipeline, ctx, portfolio_decision) -> dict[str, di
                     refusal=refusal.get("refusal", ""),
                     detail=refusal.get("detail", ""), targeted=True,
                 )
+                continue
+            target = next(
+                (
+                    t for t in list(getattr(portfolio_decision, "targets", None) or [])
+                    if str(t.symbol).upper() == sym
+                ),
+                None,
+            )
+            if target is not None and open_target_missing_falsifier(target):
+                # Already recorded as SOFT_EXIT_MISSING_AFTER_RETRY before
+                # the constructor ran. Do not re-file as a generic drop.
                 continue
             # Falls back to a generic label only if a future refactor adds
             # a new drop path the capture's log-message pattern doesn't
@@ -2658,41 +2682,79 @@ def _record_pipeline_event(pipeline, ctx, symbol: str | None, stage: str,
     )
 
 
-def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[str]:
-    """Refuse BUY/SHORT names still carrying don't-know after heal.
+def _targets_admitted_to_book(targets) -> tuple[list, list[str]]:
+    """Open/add names still missing a real falsifier never reach the constructor.
 
-    Null must not delete a stated falsifier; heal already restored one when
-    the raw output had it. A name that is still `unknown` is refused HERE,
-    before Risk, so one empty field cannot veto the rest of the plan.
-    Does not invent a thesis_invalid_if or catalyst string. Omitted empty
-    (neutral Tech, legacy constructors) is a different state and is not
+    Permanent never-blank path: heal + one paid retry already ran on the
+    PM seat. Remaining blanks are refused here so they do not consume
+    risk budget or become tickets. Targets stay on the proposal so Risk
+    is told why the narrative names a symbol that is not in the list.
+    Never invents a falsifier or catalyst string.
+    """
+    admitted: list = []
+    refused: list[str] = []
+    for target in list(targets or []):
+        if open_target_missing_falsifier(target):
+            refused.append(str(target.symbol).upper())
+        else:
+            admitted.append(target)
+    return admitted, refused
+
+
+def _record_soft_exit_missing_after_retry(
+    pipeline, ctx, symbol: str, *, action: str | None = None,
+) -> None:
+    _record_pipeline_event(
+        pipeline, ctx, symbol, "deterministic_gate",
+        "blocked", SOFT_EXIT_MISSING_AFTER_RETRY,
+        detail=(
+            "thesis_invalid_if still empty or unknown after "
+            "mechanical heal and one paid retry; refusing this "
+            "name before the book. No falsifier was invented."
+        ),
+        **({"action": action} if action else {}),
+    )
+
+
+def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[str]:
+    """Refuse BUY/SHORT names still missing a real falsifier after heal+retry.
+
+    TEMPORARY last-resort (#432 isolate-name). The permanent product is
+    schema + prompt + mechanical heal + one paid seat retry, then refuse
+    before construct_orders. This filter does not invent a
+    thesis_invalid_if or catalyst string. It does not delete the target
+    — Risk must still be told the name was proposed and refused. Delete
+    this isolate when a live session proves no actionable name arrives
+    blank.
+
+    Catches empty AND `unknown` on BUY/SHORT — omitted empty is missing,
+    not "the analyst had nothing to say". Neutrals and closes are not
     this filter.
     """
     if portfolio_decision is None:
         return []
-    unknown_symbols = {
+    missing_symbols = {
         str(target.symbol).upper()
         for target in list(getattr(portfolio_decision, "targets", None) or [])
-        if soft_exit_unknown_after_heal(getattr(target, "thesis_invalid_if", None))
+        if open_target_missing_falsifier(target)
     }
     isolated: list[str] = []
     kept = []
     for decision in list(getattr(portfolio_decision, "decisions", None) or []):
         symbol = str(decision.symbol).upper()
-        unknown_here = (
-            symbol in unknown_symbols
-            or soft_exit_unknown_after_heal(getattr(decision, "thesis_invalid_if", None))
+        missing_here = (
+            symbol in missing_symbols
+            or (
+                decision.action in ("BUY", "SHORT")
+                and missing_stated_falsifier(
+                    getattr(decision, "thesis_invalid_if", None)
+                )
+            )
         )
-        if decision.action in ("BUY", "SHORT") and unknown_here:
+        if decision.action in ("BUY", "SHORT") and missing_here:
             isolated.append(symbol)
-            _record_pipeline_event(
-                pipeline, ctx, decision.symbol, "deterministic_gate",
-                "blocked", "empty_soft_exit",
-                detail=(
-                    "thesis_invalid_if empty after heal; isolating this name "
-                    "before Risk so one empty falsifier cannot veto the plan"
-                ),
-                action=decision.action,
+            _record_soft_exit_missing_after_retry(
+                pipeline, ctx, decision.symbol, action=decision.action,
             )
             continue
         kept.append(decision)
@@ -2700,15 +2762,10 @@ def _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision) -> list[
         return []
     unique = list(dict.fromkeys(isolated))
     logger.warning(
-        "Isolating %d BUY/SHORT name(s) with no stated falsifier before Risk: %s",
-        len(unique), unique,
+        "Refusing %d BUY/SHORT name(s) %s: %s",
+        len(unique), SOFT_EXIT_MISSING_AFTER_RETRY, unique,
     )
     portfolio_decision.decisions = kept
-    drop = set(unique)
-    portfolio_decision.targets = [
-        target for target in list(getattr(portfolio_decision, "targets", None) or [])
-        if str(target.symbol).upper() not in drop
-    ]
     existing = list(getattr(portfolio_decision, "constructor_dropped", None) or [])
     for symbol in unique:
         if symbol not in existing:
@@ -4625,8 +4682,26 @@ class DecisionStage:
             pipeline, ctx, evidence_registry,
             [t.symbol for t in portfolio_decision.targets],
         )
+        book_targets, refused_soft_exit = _targets_admitted_to_book(
+            portfolio_decision.targets,
+        )
+        for symbol in refused_soft_exit:
+            _record_soft_exit_missing_after_retry(pipeline, ctx, symbol)
+        if refused_soft_exit:
+            logger.warning(
+                "Refusing %d open target(s) %s before the ticket book: %s",
+                len(refused_soft_exit), SOFT_EXIT_MISSING_AFTER_RETRY,
+                refused_soft_exit,
+            )
+            existing = list(
+                getattr(portfolio_decision, "constructor_dropped", None) or []
+            )
+            for symbol in refused_soft_exit:
+                if symbol not in existing:
+                    existing.append(symbol)
+            portfolio_decision.constructor_dropped = existing
         portfolio_decision.decisions = pipeline.portfolio_constructor.construct_orders(
-            targets=portfolio_decision.targets,
+            targets=book_targets,
             positions=positions,
             analyses=analyses,
             total_value=total_value,
@@ -4854,8 +4929,9 @@ class RiskStage:
         isolated = _isolate_empty_soft_exit_entries(pipeline, ctx, portfolio_decision)
         if isolated and not getattr(portfolio_decision, "decisions", None):
             logger.warning(
-                "RiskStage: every BUY/SHORT was isolated for an empty "
-                "soft-exit; skipping Risk rather than vetoing an empty plan"
+                "RiskStage: every BUY/SHORT was refused (%s); "
+                "skipping Risk rather than vetoing an empty plan",
+                SOFT_EXIT_MISSING_AFTER_RETRY,
             )
             return None
 

@@ -99,6 +99,7 @@ def _analysis(symbol, *, entry, stop, levels, rating="buy", setup="range",
         computed_level_touches={p: 5 for p in levels},
         setup_type=setup, expected_horizon_sessions=horizon, atr_14=atr,
         reasoning_chain=_rc(),
+        thesis_invalid_if="closes below support",
     )
     a.bars_available = bars
     a.signal_bar_low = bar_low

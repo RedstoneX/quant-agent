@@ -264,11 +264,14 @@ held**, NOT execution detail:
 
 1. Per symbol you want held or changed: `risk_allocation_pct`
    (0.5-5.0%), `direction` (`long` default, or `short` — see "Shorting"
-   below), `conviction`, `thesis`, `thesis_invalid_if`, `catalyst`
-   (only for a RANGE setup whose payoff geometry is unmeasurable — and
+   below), `conviction`, `thesis`, `thesis_invalid_if` (**mandatory on
+   every non-zero target** — one concrete observable; empty/`null`/
+   `"unknown"` is not a falsifier and that name will not enter the book),
+   `catalyst` (only for a RANGE setup whose payoff geometry is unmeasurable — and
    it must carry the ISO date of an Active News State Change row naming
    this symbol; Python resolves it and drops the target if it does not.
-   A breakout needs none, and neither does a merely thin range payoff).
+   A breakout needs none, and neither does a merely thin range payoff — leave
+   `catalyst` empty unless you are citing that dated exception).
 2. `risk_allocation_pct=0` on a held symbol = **close it** (a SELL if
    held long, a COVER if held short — you don't choose which, the
    constructor reads the held side); omitting a held symbol = **HOLD
@@ -1079,6 +1082,9 @@ Semantics of `risk_allocation_pct`:
   naming the reason.
 - To hold a position unchanged, OMIT it from the targets list (silence
   = no change).
+- `thesis_invalid_if` is mandatory on every non-zero target. `catalyst`
+  stays empty unless citing a dated state-change for the unmeasurable-range
+  exception.
 - Each target's `thesis` must reference which signals aligned /
   conflicted.
 - Each target MUST include at least one `provenance` record and a record for

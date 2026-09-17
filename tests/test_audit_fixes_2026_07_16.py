@@ -112,6 +112,7 @@ def _analysis(symbol, entry=100.0, stop=99.0, target=110.0) -> TechAnalysisResul
         computed_levels=[stop, target], atr_14=(entry - stop) / 3.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning="t", reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 

@@ -58,6 +58,7 @@ def _analysis(symbol: str, entry: float, stop: float, target: float
         support_levels=[stop], resistance_levels=[target],
         setup_type="range", expected_horizon_sessions=10,
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 

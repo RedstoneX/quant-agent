@@ -76,6 +76,7 @@ def _long_analysis(symbol="NVDA", entry=100.0, stop=95.0, target=120.0) -> TechA
         computed_levels=[stop, target], atr_14=abs(entry - stop) / 3.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -87,6 +88,7 @@ def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0) -> Tec
         computed_levels=[target, stop], atr_14=abs(entry - stop) / 3.5,
         setup_type="range", expected_horizon_sessions=60,
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 

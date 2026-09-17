@@ -81,6 +81,7 @@ def _long_analysis(symbol="NVDA", entry=250.0, stop=237.5, target=300.0,
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -120,6 +121,7 @@ def _short_analysis(symbol="TSLA", entry=250.0, stop=262.5, target=200.0,
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
         atr_14=abs(entry - stop) / 3.5 if atr_14 is None else atr_14,
+        thesis_invalid_if="closes below support",
     )
 
 

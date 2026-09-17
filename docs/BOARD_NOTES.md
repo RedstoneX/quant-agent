@@ -319,3 +319,11 @@ decision at all.
 **The decision —** You asked for each position's target to be shown on the Mission Control chart, and for using it to be debated rather than dropped. Paper-trading "sell at target" for a week was argued against: too few trades to tell luck from skill, one market mood, and it would muddy the restart with a new manager model at the same time.
 **Recommendation —** Show the target on the chart. Then track, without placing orders, what four exit rules would have done on every trade — sell all at target; sell half at target and trail the rest; hitting target tightens the trailing stop instead of selling; and today's desk — with the rules fixed before anyone looks and no tuning afterwards. Nothing is built on one trade.
 
+## item 78
+
+**Plain language —** A temporary patch currently drops a name that still has no "I'll sell if" note after we already asked twice, so one blank name cannot veto the rest of the book. That drop-the-name patch is not the fix. The real rule is: every buy or short must carry a real "I'll sell if" sentence before it can be ticketed. The desk puts back a sentence the model already wrote if a later wipe blanked it, asks the seat once more to fill a missing one, and never invents the words. If it is still blank, that name is refused. A catalyst note stays optional except the already-agreed dated exception for an unmeasurable range trade.
+**Example —** A buy on a chip stock arrives with prices and a stop but the "I'll sell if" box is empty. The desk does not make up a sentence, does not let that blank name veto the rest of the book, and does not ticket it. After one re-ask still blank, that name is refused and the others can proceed.
+**The decision —** None for you. Delete the temporary drop-the-name patch when a live session proves no tradeable name arrives blank.
+**Recommendation —** Keep the never-blank rule. Do not treat "drop the name and trade the rest" as the standing design.
+
+

@@ -385,7 +385,8 @@ def test_pm_prompt_renders_the_real_configured_threshold_not_a_hardcoded_one():
                 trend="x", momentum="x", volatility="x", volume="x",
                 support_resistance="x",
             ),
-        ),
+        thesis_invalid_if="closes below support",
+    ),
     ]
     positions = [
         Position(symbol="AAPL", qty=5, avg_entry=180.0, current_price=190.0,

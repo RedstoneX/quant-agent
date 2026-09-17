@@ -74,6 +74,7 @@ def _decision(action="BUY", symbol="NVDA", alloc=10.0):
     return TradeDecision(
         action=action, symbol=symbol, allocation_pct=alloc,
         entry_price=100.0, stop_loss=95.0, take_profit=110.0, reasoning="x",
+        thesis_invalid_if="closes below support",
     )
 
 

@@ -505,6 +505,7 @@ _PM_PRODUCTION_ANALYSES = [
             "volume": "Accumulation on advance days.",
             "support_resistance": "Support at 94, target at 112.",
         },
+        thesis_invalid_if="Daily close below 94.",
     )
     for symbol in _PM_PRODUCTION_SYMBOLS
 ]

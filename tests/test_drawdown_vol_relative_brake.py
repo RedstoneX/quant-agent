@@ -1105,7 +1105,8 @@ def test_an_unmeasurable_rolling_window_is_stated_not_printed_as_a_null():
                 trend="x", momentum="x", volatility="x", volume="x",
                 support_resistance="x",
             ),
-        ),
+        thesis_invalid_if="closes below support",
+    ),
     ]
     positions = [
         Position(symbol="AAPL", qty=5, avg_entry=180.0, current_price=190.0,

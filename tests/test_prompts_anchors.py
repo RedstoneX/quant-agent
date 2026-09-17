@@ -100,9 +100,9 @@ _HARD_ANCHORS = (
         "conflict-resolution ordering used by RM in its audit",
     ),
     (
-        "portfolio_manager.md", "thesis_invalid_if",
-        "soft-exit observable — propagates from Tech to PM to "
-        "position_reviewer; PM's prompt must require it on every BUY",
+        "portfolio_manager.md", "`thesis_invalid_if` is mandatory on every non-zero target",
+        "soft-exit is required on every open/add; catalyst stays optional "
+        "except the dated unmeasurable-range exception",
     ),
     (
         "portfolio_manager.md", "TargetPosition",
@@ -235,6 +235,13 @@ _HARD_ANCHORS = (
         "sees it — without this transparency line, RM's prompt would "
         "imply RM is editing PM's raw output, which is misleading and "
         "leads to confused signal_fidelity audits",
+    ),
+    (
+        "tech_analyst.md",
+        "you MUST set `entry_price`, `stop_loss`, `reference_target`, "
+        "`setup_type`, `expected_horizon_sessions`, `thesis_invalid_if`",
+        "actionable Tech ratings require a real I'll-sell-if; empty/null/"
+        "unknown is not a falsifier and the name is not traded",
     ),
     (
         "tech_analyst.md", "signal-validity horizon",

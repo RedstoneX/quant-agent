@@ -194,6 +194,7 @@ def test_tech_analysis_result_normalizes_uppercase_enums():
             "volume": "x", "support_resistance": "x",
         },
         reasoning="x",
+        thesis_invalid_if="closes below support",
     )
     assert r.rating == "buy"
     assert r.conviction == "high"
@@ -211,6 +212,7 @@ def test_tech_analysis_result_normalizes_uppercase_enums():
             "volume": "x", "support_resistance": "x",
         },
         reasoning="x",
+        thesis_invalid_if="closes below support",
     )
     assert r2.rating == "buy"
     assert r2.conviction == "medium"

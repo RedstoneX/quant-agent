@@ -45,6 +45,7 @@ def _analysis(
         atr_14=(entry - stop) / 3.5 if atr is None else atr,
         setup_type="range", expected_horizon_sessions=horizon,
         reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -895,6 +896,7 @@ def _vol_analysis(symbol, entry, stop, target, atr, setup="range", horizon=60,
         reasoning_chain=TechReasoningChain(
             trend="x", momentum="x", volatility="x", volume="x",
             support_resistance="x"),
+        thesis_invalid_if="closes below support",
     )
 
 
@@ -1878,6 +1880,7 @@ def test_single_short_ceiling_rounding_to_zero_leaves_a_durable_reason():
         computed_levels=[60.0, 110.0], computed_level_touches={60.0: 5, 110.0: 5},
         atr_14=(110.0 - 100.0) / 3.5, setup_type="range",
         expected_horizon_sessions=60, reasoning_chain=_tech_rc(),
+        thesis_invalid_if="closes below support",
     )
     decisions = constructor.construct_orders(
         targets=[target], positions=[held],

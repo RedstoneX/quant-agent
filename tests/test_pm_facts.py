@@ -29,6 +29,7 @@ def _ta(symbol: str, age: int | None = None) -> TechAnalysisResult:
             trend="x", momentum="x", volatility="x",
             volume="x", support_resistance="x",
         ),
+        thesis_invalid_if="closes below support",
     )
     t.signal_age_days = age
     return t
