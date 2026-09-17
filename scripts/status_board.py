@@ -1506,6 +1506,117 @@ def find_closed_items_not_marked_done(work_md: Path) -> list[str]:
     return flagged
 
 
+#: BOARD-HYGIENE CHECK ONLY (`find_finished_items_still_on_board`). Reuses
+#: the renderer's own wide closure/no-action vocabularies rather than
+#: inventing a third one that could disagree with them:
+#:
+#:   `_RENDER_CLOSURE_WORDS` -- FIXED / DONE / MERGED / RESOLVED / WITHDRAWN /
+#:       SHIPPED / REPLACED / REDESIGNED / CLOSED / LANDED / SUPERSEDED /
+#:       DELIVERED / COMPLETE(D) -- the item's own status says the work landed.
+#:   `_NO_ACTION_WORDS` -- WORKING AS INTENDED / NOT A DEFECT -- the item was
+#:       investigated and needs no fix; still finished work, just never
+#:       "shipped" anything.
+#:   "SETTLED" -- added here because items 55/56/63/64/65/70/74 use it as
+#:       their own word for "the research question now has an answer", a
+#:       shape `_RENDER_CLOSURE_WORDS` does not otherwise cover.
+#:
+#: `QueueItem.claims_closure` and `QueueItem.no_action` already read these on
+#: WORD BOUNDARIES, off `status_tail` only (never the body), with
+#: `_CLOSURE_NEGATIONS` and cross-reference stripping applied first -- see
+#: their docstrings. This constant only widens that vocabulary by "SETTLED";
+#: it does not re-implement the reading.
+_BOARD_FINISHED_WORDS = _RENDER_CLOSURE_WORDS + _NO_ACTION_WORDS + ("SETTLED",)
+
+#: Any of these appearing in an item's own `status_tail` means the item is
+#: still, in its own words, open -- and must suppress a finished verdict even
+#: when one of `_BOARD_FINISHED_WORDS` also appears in the same tail.
+#:
+#: Found by running this check against the real backlog: item 80's tail is
+#: "every SHIPPED stop must trace to a computed level, the signal bar, or the
+#: volatility band. OPEN; the REFUSAL path is contested, filed 2026-09-17." --
+#: "SHIPPED" there describes the KIND of stop the rule is about (a stop that
+#: has already gone out to the broker), not this item's own state; the
+#: item's actual, self-declared state is the literal word "OPEN" two clauses
+#: later. Reusing the renderer's own `_RENDER_PART_DONE_WORDS` /
+#: `_RENDER_REVIEW_OWED_WORDS` / `_CLOSURE_EXEMPT_WORDS` / `_PAUSED_WORDS`
+#: covers "PARTIALLY", "PENDING REVIEW", "DEFERRED" and friends the same way
+#: `claims_closure`/`no_action` already exempt them; "OPEN" and "STILL OPEN"
+#: are added because the backlog's own convention opens a live item's status
+#: with exactly that word ("OPEN, filed 2026-09-14", "OPEN; the REFUSAL path
+#: is contested"), and no genuinely finished item in the real backlog uses it
+#: to describe itself.
+_BOARD_STILL_OPEN_WORDS = (
+    _RENDER_PART_DONE_WORDS + _RENDER_REVIEW_OWED_WORDS
+    + _CLOSURE_EXEMPT_WORDS + _PAUSED_WORDS
+    + ("OPEN", "STILL OPEN")
+)
+
+
+def find_finished_items_still_on_board(
+        work_md: Path, board_notes: Path) -> list[str]:
+    """Board items that declare themselves finished in their own status text
+    but are still sitting in `docs/WORK.md`.
+
+    `docs/WORK.md` opens with the owner's own rule: it holds only open work.
+    Finished work belongs in `docs/INCIDENT_HISTORY.md`, with its
+    `## item N` block deleted from `docs/BOARD_NOTES.md` and its number
+    added to the retired line. Nothing previously checked the OUTFLOW half
+    of that rule -- `test_no_board_item_disappears_without_being_retired` and
+    `test_work_md_stays_under_a_hundred_thousand_bytes` only stop the file
+    from growing past its cap without being pruned; neither one notices a
+    single item that has quietly finished and simply never been moved.
+
+    Reuses `load_funnel_queue` / `load_pm_gate` -- the same `QueueItem`
+    parser and the same `status_tail` (only the status half of the headline,
+    cross-references to OTHER items' PRs stripped, negations honoured) the
+    render path already relies on -- rather than a second parser that could
+    disagree with it. An item counts as "declares itself finished" only
+    when:
+
+      * its `status_tail` hits one of `_BOARD_FINISHED_WORDS`, AND
+      * `status_tail` hits none of `_BOARD_STILL_OPEN_WORDS` -- which is
+        what keeps a partially-fixed item with a listed follow-on, a
+        deferred owner decision, or an item whose own words are "OPEN" from
+        firing.
+
+    `board_notes` is `docs/BOARD_NOTES.md`'s path; it is loaded only so the
+    lookup-by-`ref` prose attaches the same way the renderer attaches it --
+    this check does not read the notes' own text, since an item's *headline*
+    is where the backlog records its status, and the notes file is the
+    owner-facing writeup, not a second place a status could be declared.
+
+    Returns plain-English strings, empty when nothing is flagged. Each
+    string names the item and spells out every step of the retirement
+    procedure, because whoever trips this will not otherwise know it.
+    """
+    notes = load_board_notes(board_notes)
+    flagged: list[str] = []
+    for items, _problem in (load_funnel_queue(work_md, notes=notes),
+                             load_pm_gate(work_md, notes=notes)):
+        for item in items:
+            if item.done:
+                continue
+            tail = item.status_tail
+            if any(w in tail for w in _CLOSURE_NEGATIONS):
+                continue
+            scan = _strip_cross_references(tail)
+            if not _closure_hit(scan, _BOARD_FINISHED_WORDS):
+                continue
+            if _closure_hit(scan, _BOARD_STILL_OPEN_WORDS):
+                continue
+            flagged.append(
+                f"{item.ref} declares itself finished "
+                f"({item.headline[:120]!r}) but is still on the board. "
+                "Write it up in docs/INCIDENT_HISTORY.md (newest first, "
+                "opening with one plain-language line), then delete its "
+                "docs/WORK.md block AND its matching '## " + item.ref +
+                "' block in docs/BOARD_NOTES.md, and add its number to "
+                "the retired line at the end of the relevant list in "
+                "docs/WORK.md."
+            )
+    return flagged
+
+
 #: `- [ ] DECIDE BY 2026-09-16 — question` — the same shape
 #: `test_no_pending_decision_is_overdue` enforces, deliberately, so the board
 #: and the build are reading one format and cannot disagree about it.
