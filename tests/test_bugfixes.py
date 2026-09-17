@@ -2104,5 +2104,8 @@ def test_main_live_mode_graceful_scheduler_exit_notifies_clearly(monkeypatch):
 
     main_mod.main()
 
-    assert any("scheduler_exited" in m for m in sent)
+    # 2026-09-17: the status header is now plain English
+    # (humanize_status("scheduler_exited") == "Scheduler exited"), not the
+    # raw snake_case code — check the readable label rather than the code.
+    assert any("Scheduler exited" in m for m in sent)
     assert not any("non-dict" in m for m in sent)

@@ -58,7 +58,7 @@ from src import trader_feed
 from src.config import IntradayScanConfig
 from src.pipeline import TradingPipeline
 from tests.test_intraday_scan import _ta_result, _todays_macro_state, _todays_news_dump
-from tests.test_trader_feed import _make_db
+from tests.test_trader_feed import _make_db, _pin_clock, _QUIET_TICK_TIME, _TOP_OF_HOUR_TIME
 
 
 def _pipeline(*, enabled=True, universe=("AAPL",), move_threshold_pct=3.0,
@@ -378,7 +378,14 @@ def test_normal_scan_with_no_opportunities_stays_healthy(
     gets a real tech_analyst call — but the portfolio manager proposes no
     trades. This is healthy, and distinct from both the crash case (an
     explicit error status) and the never-ran case (no key at all): it
-    attaches a real "intraday_no_trades" marker."""
+    attaches a real "intraday_no_trades" marker.
+
+    2026-09-17 cadence change: a genuinely quiet tick like this one (no
+    order, skip, or coverage problem) no longer sends its own Telegram
+    message — it is folded into the next top-of-hour summary instead, so
+    the owner is not pinged for a tick that had nothing to act on. Either
+    way it must never look like an error/alert banner.
+    """
     _make_db(tmp_path, monkeypatch)
     mock_compute_indicators.return_value = MagicMock()
     p = _pipeline(enabled=True, universe=("AAPL",))
@@ -400,9 +407,21 @@ def test_normal_scan_with_no_opportunities_stays_healthy(
     assert result["status"] == "ok"
     nested = result["intraday_scan"]
     assert nested["status"] == "intraday_no_trades"
-    msg = trader_feed.format_session_result("intra_check", result, 5.0)
-    assert msg is not None  # the scan DID engage a real candidate this tick
-    assert "🛑" not in msg  # but it is not an error/alert banner
+
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)  # not the top-of-hour tick
+    quiet_msg = trader_feed.format_session_result("intra_check", result, 5.0)
+    assert quiet_msg is None  # nothing actionable — folded into the hourly summary
+
+    _pin_clock(monkeypatch, _TOP_OF_HOUR_TIME)
+    hourly_msg = trader_feed.format_session_result("intra_check", result, 5.0)
+    assert hourly_msg is not None  # the top-of-hour tick always sends
+    assert "🛑" not in hourly_msg  # not an error/alert banner
+    assert "🕐 DESK CHECK" in hourly_msg
+    # This test's pipeline uses a MagicMock `p.db`, so the real
+    # specialist_evidence write `_persist_evidence` performs is a no-op —
+    # the hourly summary reading a DB-backed symbol list is covered
+    # end-to-end (real sqlite) by
+    # test_trader_feed.py::test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals.
 
 
 # --------------------------------------------------------- rehearsal rig
