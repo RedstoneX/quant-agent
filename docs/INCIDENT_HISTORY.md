@@ -10820,6 +10820,53 @@ token coerces to `[]`, and
 `test_every_unsourced_prompt_is_mapped_here` fails if a new prompt starts
 using the token without being added to the audited set.
 
+## 2026-09-17 — trimming a held stock to pay for a new one was read as buying more of it, and the whole plan was thrown out
+
+**In plain words:** on an intraday check the portfolio manager chose to open
+NET and pay for it by trimming AAPL. The safety check read the AAPL trim as a
+purchase, found no fresh chart analysis for AAPL (the intraday scan only
+analyses stocks that are moving), and rejected the entire plan. NET was never
+bought.
+
+Run `intra_check-44594a05`, 15:02 UTC. The PM asked NET at 1.75% risk and
+AAPL at 1.0% risk, down from AAPL's current 1.91% equity at risk. Risk-based
+targets state risk, not weight, and the grounding classifier had no view of a
+holding's current risk, so it treated every non-zero risk target as an
+increase on the theory that over-checking a trim is the safe mistake. It is
+not safe on intraday runs: an increase needs a current-run Technical
+analysis, the intraday scan analyses movers only, and a grounding error
+fails the whole session rather than one target. Any trim of a held non-mover
+would have rejected every valid entry alongside it.
+
+**What changed.** The classifier now compares a risk target against the
+holding's current stop-based risk — the same per-holding "equity at risk"
+figure the PM is shown and the constructor rations against, already passed
+into the PM. Below it, on the same side, is a trim. Everything else stays an
+increase, and a holding whose current risk is unknown keeps the old strict
+treatment. §9.3 conflict adjudication shares the classifier, so trims are now
+exempt there too, as that rule always intended. Genuine increases and new
+entries are checked exactly as before.
+
+**Not changed, and still open.** One ungrounded target still rejects the whole
+plan; dropping just that target is a design choice, not part of this fix.
+The constructor also needs a current-run analysis to size any risk target, so
+an intraday trim of a non-mover is expected to be dropped there as a data
+fault and the holding left as it is — the new entry is no longer blocked, but
+the trim that was meant to fund it may not happen.
+
+**Follow-up, same day — the real plan was still rejected.** Replaying the
+recorded plan showed a second barrier: AAPL's trim cited bullish earnings as
+"supports", and the check demanded bearish evidence for any reduction.
+Trimming a bullish holding for concentration is coherent — the evidence
+supports holding what remains — so a PARTIAL trim may now be supported by
+evidence on the side still held, as well as by evidence for reducing. Full
+closes, opens and increases keep exactly the old polarity rule. With both
+fixes the recorded plan passes grounding. Downstream, the constructor then
+buys NET and drops the AAPL trim for lack of a current-run analysis; that
+drop is recorded and paged as a "data fault", which misdescribes a working
+feed. How a trim of an unanalysed holding should be sized is an open design
+question, not fixed here.
+
 ## 2026-09-17 — shorts carry the same limits as longs (owner decision)
 
 Owner decision: "Shorts can have the same [limits] as longs." The desk is to
