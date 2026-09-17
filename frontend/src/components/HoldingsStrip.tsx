@@ -3,12 +3,14 @@ import { PositionItem } from "../api/client";
 import { fmtMoney, fmtNum, fmtPct, pnlClass } from "../lib/format";
 
 /* "What do I hold, and what is it doing?" — the first question a trader
- * asks on arrival, answered in one always-visible row rather than behind a
- * workspace tab. Deliberately a dense chip strip and not a second table:
- * PositionsPanel remains the full, sortable, column-complete view (now its
- * own dockable panel); this is the glance. Every figure here is the same
- * broker-marked PositionItem data that panel renders — no separate fetch,
- * no re-derivation.
+ * asks on arrival, answered in an always-visible strip rather than behind
+ * a workspace tab. Cards keep their existing content and stay about this
+ * size; they wrap at four per row on a normal desktop (fewer on a
+ * narrower window) instead of sliding sideways. PositionsPanel remains
+ * the full, sortable, column-complete view (now its own dockable panel);
+ * this is the glance. Every figure here is the same broker-marked
+ * PositionItem data that panel renders — no separate fetch, no
+ * re-derivation.
  *
  * Cash parking (SGOV) is kept visible but visually demoted and excluded
  * from the P&L total, matching the exclusion rule LiquidityPanel and
@@ -37,17 +39,17 @@ function HoldingChip({ position, onSelect }: { position: PositionItem; onSelect?
       type="button"
       onClick={() => onSelect?.(position.symbol)}
       aria-label={`Chart ${position.symbol}`}
-      className={`flex shrink-0 items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-accent/60 ${
+      className={`flex w-full min-w-0 items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-accent/60 ${
         cash ? "border-border bg-panel-inset opacity-80" : "border-border bg-panel-alt hover:border-accent"
       }`}
     >
-      <span className="flex flex-col">
+        <span className="flex min-w-0 flex-col">
         <span className={`font-bold leading-tight ${cash ? "text-dim" : "text-accent"}`}>{position.symbol}</span>
         <span className="font-mono text-[length:var(--fs-micro)] leading-tight text-dim">
           {fmtNum(position.qty)} @ {fmtMoney(position.avg_entry)}
         </span>
       </span>
-      <span className="flex flex-col text-right">
+      <span className="ml-auto flex min-w-0 flex-col text-right">
         <span className="font-mono text-[length:var(--fs-meta)] leading-tight text-ink">
           {fmtMoney(position.current_price)}
         </span>
@@ -107,7 +109,7 @@ export function HoldingsStrip({
           {error && !everLoaded ? `Positions read failed: ${error}` : "No open positions."}
         </div>
       ) : (
-        <div className="flex gap-2 overflow-x-auto pb-0.5">
+        <div className="grid grid-cols-1 gap-2 overflow-x-hidden sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {holdingsOrder(positions).map((position) => (
             <HoldingChip key={position.symbol} position={position} onSelect={onSelectSymbol} />
           ))}

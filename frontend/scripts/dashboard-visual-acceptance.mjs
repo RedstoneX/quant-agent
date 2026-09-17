@@ -76,6 +76,9 @@ const account = {
 const positions = [
   { symbol: "AAPL", qty: 12, avg_entry: 221.45, current_price: 226.2, market_value: 2714.4, unrealized_pnl: 57, unrealized_intraday_pnl: 34, sector: "Technology", is_cash_equivalent: false, direction: "long" },
   { symbol: "SQQQ", qty: 40, avg_entry: 31.2, current_price: 30.8, market_value: 1232, unrealized_pnl: -16, unrealized_intraday_pnl: -9, sector: "Inverse ETF", is_cash_equivalent: false, direction: "bearish_hedge" },
+  { symbol: "MSFT", qty: 8, avg_entry: 410.2, current_price: 412.1, market_value: 3296.8, unrealized_pnl: 15.2, unrealized_intraday_pnl: 6, sector: "Technology", is_cash_equivalent: false, direction: "long" },
+  { symbol: "NVDA", qty: 5, avg_entry: 118.4, current_price: 121.0, market_value: 605, unrealized_pnl: 13, unrealized_intraday_pnl: 4, sector: "Technology", is_cash_equivalent: false, direction: "long" },
+  { symbol: "AMD", qty: 20, avg_entry: 155.1, current_price: 152.4, market_value: 3048, unrealized_pnl: -54, unrealized_intraday_pnl: -12, sector: "Technology", is_cash_equivalent: false, direction: "long" },
   { symbol: "SGOV", qty: 259, avg_entry: 100.2, current_price: 100.39, market_value: 26001, unrealized_pnl: 49, unrealized_intraday_pnl: 3, sector: "Cash equivalent", is_cash_equivalent: true, direction: "cash_equivalent" },
 ];
 const orders = [

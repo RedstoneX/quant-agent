@@ -19,6 +19,8 @@ describe("Mission Control component policy", () => {
     expect(sourceModules["./OrdersPanel.tsx"]).toContain("DataTable");
     expect(sourceModules["./ui/DataTable.tsx"]).toContain("minSize: 8");
     expect(sourceModules["./ui/DataTable.tsx"]).toContain("truncate");
+    expect(sourceModules["./HoldingsStrip.tsx"]).toContain("xl:grid-cols-4");
+    expect(sourceModules["./HoldingsStrip.tsx"]).not.toContain("overflow-x-auto");
     expect(sourceModules["./TradesPanel.tsx"]).toContain("DataTable");
     expect(sourceModules["./PriceChartPanel.tsx"]).toContain("lightweight-charts");
     expect(sourceModules["./DesktopCockpitWorkspace.tsx"]).toContain("DockviewReact");

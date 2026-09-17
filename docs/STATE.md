@@ -672,6 +672,7 @@ Accepted behavior includes:
 - a position's entry marker is placed at the real entry-fill bar, not an approximation;
 - the Positions/Orders panel row uses a real resize sash (draggable, minimum-height floor) rather than a CSS-only hack that could crush the panel; dragging the chart bigger past that floor grows the workspace and that extra height persists across reload;
 - the above-chart identity row is company name (from the cached profile; omitted when unknown) + ticker + Lifecycle — no holding grid and no decision strip under the candles; the decision one-liner lives inside Lifecycle; unrealized P&L stays on the chart ENTRY line and on Positions, not in that identity row or the quote subtitle;
+- the Holdings strip wraps at four symbol cards on a normal desktop (fewer on a narrower window) and never uses a horizontal slider;
 - Positions/Orders table columns support resize and drag-to-reorder, opt-in per table via `DataTable` props, persisted to `localStorage`; columns can shrink to ~1ch so Stop and Target stay on the blotter;
 - a read-only Desk diary at `/diary` (and `/diary/`) served from gitignored `data/diary/`, same posture as `/board`; Mission Control does not generate the entries.
 
