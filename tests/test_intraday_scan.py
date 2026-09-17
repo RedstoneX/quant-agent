@@ -630,10 +630,35 @@ def test_open_tick_leftover_at_0937_is_still_the_open(mock_compute_indicators):
 
 
 @patch("src.pipeline.compute_indicators")
-def test_no_last_morning_skips_paid_intraday_even_off_the_open_tick(
+def test_no_last_morning_while_lock_held_skips_paid_intraday(
     mock_compute_indicators,
 ):
-    """10:00 with morning still unfinished is not a true INTRADAY look."""
+    """10:00 with morning still owning the wrapper is not a true INTRADAY look."""
+    mock_compute_indicators.return_value = MagicMock()
+    p = _intraday_pipeline(universe=["AAPL"])
+    p._scan_when = _intraday_et(10, 0)
+    p._last_morning_completed_at = False
+    p._blocking_owner_session = MagicMock(return_value="morning")
+    p.broker.get_intraday_snapshots.return_value = {
+        "AAPL": _snapshot(last=110.0, prev=100.0),
+    }
+
+    ctx = RunContext.start("intra_check")
+    with patch("time.sleep") as slept:
+        result = p._run_intraday_opportunity_scan(ctx)
+
+    assert result["status"] == "intraday_scan_morning_not_done"
+    p.tech_analyst.analyze_batch.assert_not_called()
+    slept.assert_not_called()
+
+
+@patch("src.pipeline.compute_indicators")
+def test_crashed_morning_lock_released_allows_first_cadence_after_open(
+    mock_compute_indicators,
+):
+    """A missing once-day stamp after lock release is a morning defect,
+    not a licence to starve every later fire. 10:00 is the next existing
+    cadence after the open tick; evidence gate still refuses a holey book."""
     mock_compute_indicators.return_value = MagicMock()
     p = _intraday_pipeline(universe=["AAPL"])
     p._scan_when = _intraday_et(10, 0)
@@ -642,12 +667,12 @@ def test_no_last_morning_skips_paid_intraday_even_off_the_open_tick(
     p.broker.get_intraday_snapshots.return_value = {
         "AAPL": _snapshot(last=110.0, prev=100.0),
     }
+    p.tech_analyst.analyze_batch.return_value = ({}, None)
 
     ctx = RunContext.start("intra_check")
-    result = p._run_intraday_opportunity_scan(ctx)
+    p._run_intraday_opportunity_scan(ctx)
 
-    assert result["status"] == "intraday_scan_morning_not_done"
-    p.tech_analyst.analyze_batch.assert_not_called()
+    p.tech_analyst.analyze_batch.assert_called_once()
 
 
 @patch("src.pipeline.compute_indicators")

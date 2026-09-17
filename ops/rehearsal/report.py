@@ -241,9 +241,9 @@ STATUS_PLAIN = {
     ),
     "intraday_scan_morning_not_done": (
         "The intra-session check's opportunity scan did not run a paid "
-        "look because this morning's open session has not finished yet. "
-        "The risk check still ran; it will look for new trades on the "
-        "next half-hour fire after morning completes."
+        "look because morning still owns the open session. The risk "
+        "check still ran; it will look for new trades on the next "
+        "half-hour fire after morning releases."
     ),
     "intraday_scan_before_first_intraday": (
         "The intra-session check's opportunity scan did not run a paid "

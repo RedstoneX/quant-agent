@@ -12789,10 +12789,10 @@ class TradingPipeline:
 
         Joint schedule law: 09:30 paid open is morning only. The first
         paid INTRADAY look is the next existing half-hour fire after
-        morning's once-day marker (finish unix + SESSION_WINDOWS), not
-        the same 09:30 tick waiting then hunting. Deterministic
-        risk/coverage already ran on this intra_check; they are not
-        gated here.
+        morning released (once-day finish unix when written, lock
+        release when it was not) — not the same 09:30 tick waiting then
+        hunting. Deterministic risk/coverage already ran on this
+        intra_check; they are not gated here.
         """
         from src.trading_calendar import (
             first_paid_intraday_tick_after,
@@ -12814,15 +12814,34 @@ class TradingPipeline:
             )
         completed = self._morning_completed_today(clock)
         if completed is None:
-            return self._intraday_schedule_skip(
-                ctx, movers,
-                status="intraday_scan_morning_not_done",
-                reason=(
-                    "paid discovery skipped: morning has not released "
-                    "today's once-day marker; first true INTRADAY is the "
-                    "next half-hour fire after that finish; "
-                    f"movers={','.join(movers) if movers else 'none'}"
-                ),
+            blocking = self._blocking_owner_session()
+            if blocking == "morning" or blocking == "unreadable":
+                return self._intraday_schedule_skip(
+                    ctx, movers,
+                    status="intraday_scan_morning_not_done",
+                    reason=(
+                        "paid discovery skipped: morning still owns the "
+                        "open (or the owner file is unreadable); first "
+                        "true INTRADAY is the next half-hour fire after "
+                        "that release; "
+                        f"movers={','.join(movers) if movers else 'none'}"
+                    ),
+                )
+            # Lock released without a once-day stamp: morning crashed or
+            # never wrote success. That is a defect in morning, not a
+            # licence to starve every later fire. First paid look is the
+            # next existing cadence after the open tick — same bound a
+            # 09:31 finish would have used.
+            from datetime import datetime as _dt
+
+            from src.trading_calendar import ET, SESSION_WINDOWS, to_et
+
+            d = to_et(clock).date()
+            morning_start, _ = SESSION_WINDOWS["morning"]
+            completed = _dt(
+                d.year, d.month, d.day,
+                morning_start // 60, morning_start % 60,
+                tzinfo=ET,
             )
         tick = intra_tick_minute(clock)
         first = first_paid_intraday_tick_after(completed)
