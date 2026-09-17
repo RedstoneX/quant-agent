@@ -1,0 +1,24 @@
+# Board-hygiene check — pairs with quant-agent-board-hygiene.timer.
+# Install:
+#   cp scripts/systemd/quant-agent-board-hygiene.* ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now quant-agent-board-hygiene.timer
+[Unit]
+Description=quant-agent work-board hygiene check (no LLM, no trading, read-only)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qamc/quant-agent
+# Read-only: reads docs/WORK.md's size and tests/test_status_board.py's own
+# cap assertion, and calls scripts/status_board.py's own finished-item
+# check. No git, no network beyond the Telegram push. Safe to fire
+# regardless of what else is running.
+#
+# Through the wrapper, NOT the venv Python directly — same reason as
+# run_drift_check.sh and run_unit_drift_check.sh: the qamc systemd user
+# environment carries no TELEGRAM_* variables, so an unwrapped run would
+# build a disabled notifier and any finding would reach nobody.
+ExecStart=/home/qamc/quant-agent/scripts/run_board_hygiene_check.sh
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
