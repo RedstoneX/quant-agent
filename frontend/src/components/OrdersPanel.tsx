@@ -70,6 +70,7 @@ export function OrdersPanel({
         header: "Target",
         cell: (info) => fmtMoney(info.getValue()),
       }),
+      columnHelper.accessor("limit_price", { header: "Limit", cell: (info) => fmtMoney(info.getValue()) }),
       columnHelper.accessor("qty", { header: "Requested", cell: (info) => fmtNum(info.getValue()) }),
       columnHelper.accessor("status", {
         header: "Status",
@@ -79,7 +80,6 @@ export function OrdersPanel({
         header: "Fill",
         cell: (info) => `${fmtNum(info.getValue())} @ ${fmtMoney(info.row.original.filled_avg_price)}`,
       }),
-      columnHelper.accessor("limit_price", { header: "Limit", cell: (info) => fmtMoney(info.getValue()) }),
       columnHelper.accessor("submitted_at", { header: "Submitted", cell: (info) => fmtTime(info.getValue()) }),
       columnHelper.accessor("filled_at", { header: "Filled", cell: (info) => fmtTime(info.getValue()) }),
     ] as LegacyColumnDef<OrderItem, unknown>[],

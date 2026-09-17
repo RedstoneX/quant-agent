@@ -671,7 +671,7 @@ Accepted behavior includes:
 - dividend/earnings markers on the price chart are sourced from `GET /events/{symbol}` (`MarketDataProvider.get_price_chart_events`, yfinance), separate from the single-next-value ex-div/earnings helpers stop adjustment and risk prompts use;
 - a position's entry marker is placed at the real entry-fill bar, not an approximation;
 - the Positions/Orders panel row uses a real resize sash (draggable, minimum-height floor) rather than a CSS-only hack that could crush the panel; dragging the chart bigger past that floor grows the workspace and that extra height persists across reload;
-- the above-chart identity row is company name (from the cached profile; omitted when unknown) + ticker + Lifecycle — no holding grid and no decision strip under the candles; the decision one-liner lives inside Lifecycle; the chart ENTRY label is qty @ price only (line color still follows P&L; the dollar figure is not repeated on the overlay);
+- the above-chart identity row is company name (from the cached profile; omitted when unknown) + ticker + Lifecycle — no holding grid and no decision strip under the candles; the decision one-liner lives inside Lifecycle; unrealized P&L stays on the chart ENTRY line and on Positions, not in that identity row or the quote subtitle;
 - Positions/Orders table columns support resize and drag-to-reorder, opt-in per table via `DataTable` props, persisted to `localStorage`; columns can shrink to ~1ch so Stop and Target stay on the blotter;
 - a read-only Desk diary at `/diary` (and `/diary/`) served from gitignored `data/diary/`, same posture as `/board`; Mission Control does not generate the entries.
 

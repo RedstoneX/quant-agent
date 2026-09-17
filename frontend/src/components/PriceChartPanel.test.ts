@@ -104,7 +104,7 @@ describe("tradeMarkers", () => {
 describe("entryPriceLine", () => {
   it("draws the held symbol's average entry, green when the position is up", () => {
     const line = entryPriceLine("MRVL", [position({ avg_entry: 240, unrealized_pnl: 100 })], COLORS);
-    expect(line).toEqual({ price: 240, color: "green", title: "ENTRY 10 @ $240.00" });
+    expect(line).toEqual({ price: 240, color: "green", title: "ENTRY 10 @ $240.00 · +$100.00" });
   });
 
   it("colors the line red when the position is down", () => {

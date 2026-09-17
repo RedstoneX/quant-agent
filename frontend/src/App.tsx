@@ -651,7 +651,7 @@ export default function App() {
                 {mobilePane === "positions" && <PositionsPanel positions={positions} error={positionsError} loading={!account && !positionsError} updatedAt={positionsUpdatedAt} onSelectSymbol={chartPositionSymbol} />}
                 {mobilePane === "watchlist" && <CandidateRail funnel={funnel} loading={todaysLoading} error={todaysError} updatedAt={todaysUpdatedAt} selectedSymbol={chartSymbol} onSelectSymbol={setChartSymbol} />}
                 {mobilePane === "chart" && (
-                  <div className="flex min-h-[520px] flex-col gap-2">
+                  <div className="flex min-h-[520px] flex-col gap-1">
                     <ChartSymbolBar
                       symbol={chartSymbol}
                       previousSymbol={previousChartSymbolRef.current}

@@ -216,9 +216,9 @@ export function tradeMarkers(
 }
 
 /* "Where am I versus the market" — the trader's own average entry for the
- * charted symbol, drawn as a labelled horizontal line. Color still follows
- * live P&L (green up, red down); the dollar figure itself is not repeated
- * in the label — it already lives on Positions and the holdings strip.
+ * charted symbol, drawn as a labelled horizontal line with its live
+ * unrealized P&L. That dollar figure belongs on the chart line and on
+ * Positions; it must not also sit in the identity row above the candles.
  * Sourced from the same broker-marked PositionItem those panels render;
  * never inferred from the bar data. Returns null when the symbol is not
  * held (or the entry price is missing/zero), in which case nothing is
@@ -238,13 +238,14 @@ export function entryPriceLine(
   const price = position.avg_entry;
   if (price == null || !Number.isFinite(price) || price <= 0) return null;
   const pnl = position.unrealized_pnl;
+  const pnlText = pnl == null || !Number.isFinite(pnl) ? "" : ` · ${pnl >= 0 ? "+" : ""}${fmtMoney(pnl)}`;
   return {
     price,
     // Market truth keeps the market-truth palette: green when the
     // position is up, red when it is down (never the cyan system accent,
     // which is reserved for chrome — see styles/index.css's token grammar).
     color: (pnl ?? 0) < 0 ? colors.red : colors.green,
-    title: `ENTRY ${fmtNum(position.qty)} @ ${fmtMoney(price)}`,
+    title: `ENTRY ${fmtNum(position.qty)} @ ${fmtMoney(price)}${pnlText}`,
   };
 }
 
@@ -1327,8 +1328,8 @@ export function PriceChartPanel({
           return { leftPct, widthPct: Math.min(widthPct, 100 - leftPct) };
         })()
       : null;
-  // qty @ entry next to the live quote. Unrealized P&L is not repeated
-  // here — it already lives on Positions and the holdings strip.
+  // qty @ entry next to the live quote. Unrealized P&L stays on the
+  // ENTRY overlay and on Positions, not in this subtitle.
   const heldPosition = symbol ? positions.find((item) => item.symbol === symbol) : undefined;
   const positionLine = heldPosition
     ? ` · position ${fmtNum(heldPosition.qty)} @ ${fmtMoney(heldPosition.avg_entry)}`

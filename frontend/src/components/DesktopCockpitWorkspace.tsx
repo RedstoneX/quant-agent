@@ -96,7 +96,7 @@ function ChartPane() {
   const { openCandidateDetail } = useModalActions();
   const candidate = state.funnel?.candidates.find((item) => item.symbol === state.chartSymbol);
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden p-2 gap-2">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden px-2 py-1">
       <ChartSymbolBar
         symbol={state.chartSymbol}
         previousSymbol={state.previousChartSymbol}
@@ -383,21 +383,27 @@ export function DesktopCockpitWorkspace() {
   // into the default-height box and the split snapped back.
   const [growth, setGrowth] = useState(() => readPersistedGrowth());
   const growthRef = useRef(growth);
+  const applyGrowth = useCallback((px: number) => {
+    growthRef.current = px;
+    const el = wrapperRef.current;
+    if (!el) return;
+    el.style.height = px > 0 ? `calc(${WORKSPACE_DEFAULT_HEIGHT} + ${px}px)` : "";
+  }, []);
   useEffect(() => {
-    growthRef.current = growth;
-  }, [growth]);
+    applyGrowth(growth);
+  }, [applyGrowth, growth]);
   const dragRef = useRef<{ startY: number; startGrowth: number } | null>(null);
 
   const reset = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
     clearPersistedGrowth();
     setGrowth(0);
-    growthRef.current = 0;
+    applyGrowth(0);
     const api = apiRef.current;
     if (!api) return;
     [...api.panels].forEach((panel) => api.removePanel(panel));
     buildDefaultLayout(api);
-  }, []);
+  }, [applyGrowth]);
   const onReady = useCallback((event: DockviewReadyEvent) => {
     apiRef.current = event.api;
     try {
@@ -424,8 +430,10 @@ export function DesktopCockpitWorkspace() {
       if (!drag) return;
       const next = nextSashGrowth(drag.startGrowth, drag.startY, e.clientY);
       const delta = next - growthRef.current;
-      growthRef.current = next;
-      setGrowth(next);
+      // Height goes on the DOM node immediately. Pushing it through React
+      // state mid-drag re-renders the box at the *previous* growth and
+      // dockview's ResizeObserver then snaps the sash back on mouse-up.
+      applyGrowth(next);
       if (delta === 0) return;
       const chartGroup = apiRef.current?.getPanel("chart")?.group;
       if (chartGroup) {
@@ -435,6 +443,7 @@ export function DesktopCockpitWorkspace() {
     const onPointerUp = () => {
       dragRef.current = null;
       document.removeEventListener("pointermove", onPointerMove);
+      setGrowth(growthRef.current);
       writePersistedGrowth(growthRef.current);
     };
     const onPointerDown = (e: PointerEvent) => {
@@ -459,7 +468,7 @@ export function DesktopCockpitWorkspace() {
       document.removeEventListener("pointermove", onPointerMove);
       document.removeEventListener("pointerup", onPointerUp);
     };
-  }, []);
+  }, [applyGrowth]);
 
   return (
     // (pb-6 was the original fix for the row butting against the footer
@@ -550,7 +559,6 @@ export function DesktopCockpitWorkspace() {
           specificity, so there's no fight between the two. */}
       <div
         ref={wrapperRef}
-        style={growth > 0 ? { height: `calc(${WORKSPACE_DEFAULT_HEIGHT} + ${growth}px)` } : undefined}
         className="h-[max(760px,calc(100vh-var(--chrome-h)+32px))] rounded-lg border border-border overflow-hidden"
       >
         <DockviewReact

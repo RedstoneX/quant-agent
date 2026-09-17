@@ -18,7 +18,9 @@ export function nextSashGrowth(startGrowth: number, startY: number, clientY: num
 
 /** Own the drag when the bottoms row is already on its floor (so native
  * dockview has nothing left to give the chart) or when this box is already
- * grown (so dragging back up can give that height back). */
+ * grown (so dragging back up can give that height back). Extra height is
+ * written onto the workspace node during the gesture, not through React
+ * state, so mouse-up cannot snap the sash back to the last rendered size. */
 export function growthOwnsDrag(
   currentGrowth: number,
   bottomsHeight: number,

@@ -29,7 +29,7 @@ export function DataTable<T extends object>({
   getRowId,
   onRowClick,
   compact = false,
-  resizable = false,
+  resizable = true,
   reorderable = false,
   storageKey,
 }: {
@@ -39,11 +39,11 @@ export function DataTable<T extends object>({
   getRowId?: (row: T) => string;
   onRowClick?: (row: T) => void;
   compact?: boolean;
-  /** Opt-in: adds a drag handle to the right edge of each header cell to
+  /** Adds a drag handle to the right edge of each header cell to
    * resize columns, and persists the resulting widths to localStorage
-   * under `storageKey`. Default false so existing consumers are unaffected.
-   * When on, columns have no header min beyond ~1ch (8px) so Stop/Target
-   * can stay on screen instead of being pushed into horizontal scroll. */
+   * under `storageKey` when one is set. Default on so every blotter
+   * can shrink a column to ~1ch (headers truncate) instead of a
+   * header-tied min shoving Stop/Target/Limit into horizontal scroll. */
   resizable?: boolean;
   /** Opt-in: adds a drag handle to reorder columns via native HTML5 drag
    * and drop, and persists the resulting order to localStorage under
@@ -294,13 +294,16 @@ export function DataTable<T extends object>({
                           }
                           header.column.getToggleSortingHandler()?.(event);
                         }}
-                        className="min-w-0 flex-1 overflow-hidden text-left uppercase tracking-wide"
+                        className="min-w-0 flex-1 truncate text-left uppercase tracking-wide"
+                        title={typeof header.column.columnDef.header === "string" ? header.column.columnDef.header : undefined}
                       >
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         {{ asc: " ↑", desc: " ↓" }[header.column.getIsSorted() as string] ?? ""}
                       </button>
                     ) : (
-                      flexRender(header.column.columnDef.header, header.getContext())
+                      <span className="min-w-0 truncate" title={typeof header.column.columnDef.header === "string" ? header.column.columnDef.header : undefined}>
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                      </span>
                     )}
                   </div>
                   {resizable && header.column.getCanResize() && (
