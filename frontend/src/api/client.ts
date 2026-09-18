@@ -713,22 +713,36 @@ export interface ResearchMarketContext {
   symbol: string;
   stop: number;
   entry: number;
-  target: number;
   /* Which way the trade runs, read from the stored geometry itself
    * (stop below entry = long, stop above entry = short) rather than from
    * a rating string — the desk's own invariant, see
    * `src/portfolio_constructor.py::_resolve_entry_and_stop`. */
   direction: "long" | "short";
-  /* Where the drawn target came from. `derived` is the desk's own
-   * `take_profit`, computed from the instrument's bars by
-   * `src/data/levels.py::derive_structural_target`. Nothing else is ever
-   * drawn — the analyst model's `reference_target` is a guess the
-   * constructor deliberately stopped trusting on 2026-09-01. */
-  target_source: "derived";
+  /* The desk's own `take_profit`, computed from the instrument's bars by
+   * `src/data/levels.py::derive_structural_target` and read off the
+   * portfolio_manager's `proposed_order` row for the same symbol. Null
+   * when no such row exists yet, or its price fails the direction-aware
+   * geometry check. */
+  derived_target: number | null;
   /* The derivation's own basis words ("structural level" / "measured
    * move") when the stored order reasoning carries them, else null. Never
    * inferred — the UI prints only what the desk wrote. */
-  target_basis: string | null;
+  derived_target_basis: string | null;
+  /* The technical analyst SEAT's own `reference_target` — drawn only when
+   * the seat itself named a checkable basis for it: either the number
+   * matches one of its own listed `support_levels`/`resistance_levels`
+   * (required by the prompt to be actual chart prices), or the setup is a
+   * breakout and the seat's `reasoning` states "measured move". A target
+   * the seat did not ground this way is never drawn, however close it
+   * sits to the desk's own number — see `config/prompts/tech_analyst.md`.
+   * Never invented or paraphrased: only these two named-in-full checks. */
+  analyst_target: number | null;
+  analyst_target_basis: "structural level" | "measured move" | null;
+  /* True when both numbers exist and agree to the cent — itself evidence
+   * worth surfacing (owner ruling 2026-09-18): agreement between an
+   * independently-grounded seat read and the desk's own arithmetic is not
+   * nothing. */
+  targets_agree: boolean;
 }
 
 export interface ResearchSignal {
