@@ -314,6 +314,21 @@ detection gap, and calling it silent would have put the fix in the wrong
 place. The pattern to distrust on sight: a function that returns a value being
 invoked as a statement.
 
+## Anything that cost money to produce gets kept
+
+**OWNER RULING, 2026-09-18, in his own terms.** A model was paid to form a
+judgement. Discarding that judgement means paying twice for the same
+sentence — and worse, it destroys the only record that could ever grade
+whether the desk's reasoning is any good.
+
+**The boundary, as he set it.** Keep anything a model said, any decision and
+its reason, and any number that came from the broker at a moment in time —
+write once, never edit. Do NOT keep anything the code can recompute from
+those; two stored versions of a derived value that can disagree with each
+other is its own defect, not a safeguard. This is doctrine, not an open
+board item — it governs how future storage/retention decisions get judged,
+it is not itself a task to execute.
+
 ## A finding with no owner and no due date will be lost
 
 **Measured, 2026-09-17.** An audit that produces an inventory rather than
