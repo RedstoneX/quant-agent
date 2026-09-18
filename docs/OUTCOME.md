@@ -399,6 +399,25 @@ timing question and answered only the claim as filed, so the existence
 question was never asked. **Brief the adversary with the existence question,
 not just the design question.**
 
+## Confirm whose retry loop you are tuning before you tune it
+
+**Same six pull requests as above, a second lesson.** All six adjusted this
+desk's own settings for how the fill-notification connection retries. None of
+them could have worked: the installed broker library retries a failed
+connection from inside its OWN internal loop, on a flat 10-millisecond sleep
+with no backoff and no attempt limit, and none of this desk's configuration
+reaches that loop at all. On 2026-09-15 that produced 32,896 connection
+attempts in a single day, the large majority rejected by the broker's own
+rate limit. The eventual fix (2026-09-18) did not tune the vendor's loop —
+it bounded it from outside, capping how many attempts the process allows per
+connection and per day regardless of what the library does internally.
+
+Before adjusting the timing of any retry, back-off or reconnect behaviour,
+first establish whose loop is actually running: this desk's own code, or a
+third-party library's, called from inside a method this desk does not
+control. A fix applied to the wrong owner changes nothing and looks like it
+should have worked, which is worse than an obvious no-op.
+
 ## Verify the single load-bearing claim of every agent report
 
 **Standing rule, reinforced 2026-09-17.** Roughly one agent report in three
