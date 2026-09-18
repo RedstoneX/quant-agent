@@ -11686,14 +11686,18 @@ class TradingPipeline:
         if session == "morning":
             _dc.write_status("morning", "evidence_gate_skip")
         try:
-            from src.notifier import send_owner_alert
+            from src.notifier import seat_words, send_owner_alert
 
+            # Seat names in words (board item 89: internal component names).
             send_owner_alert(
-                f"DECISION SKIPPED — no evidence from {', '.join(verdict.lost)} "
+                "DECISION SKIPPED — no answer from "
+                f"{', '.join(seat_words(s) for s in verdict.lost)} "
                 f"(run {run_id})\n"
                 f"{verdict.reason}\n"
-                f"Nothing was traded and no Portfolio Manager call was paid "
-                f"for. The next scheduled decision opportunity tries again."
+                "WHAT THIS MEANS FOR YOU: nothing was traded and no Portfolio "
+                "Manager call was paid for. Every position keeps the stop it "
+                "already had. The next scheduled decision opportunity tries "
+                "again; there is nothing for you to do."
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("evidence gate: owner alert failed: %s", exc)
@@ -13388,6 +13392,15 @@ class TradingPipeline:
             len(new_reports),
             ", ".join(r.symbol for r in new_reports),
         )
+        # Owner-facing record of WHICH filings this pass handled (2026-09-18:
+        # the message used to say "analyzed: 1 confirmed: 1 failed: 0" and
+        # the owner asked "which one? what's the symbol? what's the
+        # company?"). Report-only — nothing reads this back into a decision.
+        filings_waiting = [
+            {"symbol": r.symbol, "form_type": r.form_type,
+             "filing_date": r.filing_date, "outcome": "waiting"}
+            for r in new_reports
+        ]
         try:
             self._require_paid_analysis("earnings_analyst")
             results = self.earnings_analyst.analyze_reports(new_reports)
@@ -13405,7 +13418,10 @@ class TradingPipeline:
                     self.earnings_provider.record_failure(r)
                 except Exception as re:
                     logger.error("record_failure failed for %s: %s", r.symbol, re)
-            return {"status": "analysis_error", "run_id": run_id, "error": str(e)}
+            return {
+                "status": "analysis_error", "run_id": run_id, "error": str(e),
+                "filings": filings_waiting,
+            }
 
         # Match results to reports by (symbol, form_type, filing_date), not
         # just symbol. Same-symbol multiple-form-day is rare but real
@@ -13478,12 +13494,40 @@ class TradingPipeline:
             "Earnings preprocess complete: %d analyzed, %d confirmed, %d failed",
             analyzed_count, confirmed, len(failed_reports),
         )
+        # Per-filing outcome for the owner message: the reader's own
+        # sentiment / conviction / key_thesis where it produced one, and
+        # "failed" where it did not. Same (symbol, form, date) key as the
+        # confirmation logic above, so a same-day 10-Q and 10-K stay apart.
+        verdict_by_key: dict = {}
+        for res in results:
+            analysis = res.get("analysis") or {}
+            impl = analysis.get("investment_implications") or {}
+            if not isinstance(impl, dict):
+                impl = {}
+            verdict_by_key[_filing_key(
+                res.get("symbol"), res.get("form_type"), res.get("filing_date"),
+            )] = {
+                "sentiment": impl.get("sentiment"),
+                "conviction": impl.get("conviction"),
+                "key_thesis": impl.get("key_thesis"),
+            }
+        filings: list[dict] = []
+        for r in new_reports:
+            key = _filing_key(r.symbol, r.form_type, r.filing_date)
+            row = {
+                "symbol": r.symbol, "form_type": r.form_type,
+                "filing_date": r.filing_date,
+                "outcome": "analyzed" if key in successful_keys else "failed",
+            }
+            row.update(verdict_by_key.get(key) or {})
+            filings.append(row)
         return {
             "status": "preprocessed",
             "run_id": run_id,
             "analyzed": analyzed_count,
             "confirmed": confirmed,
             "failed": len(failed_reports),
+            "filings": filings,
             "smart_money_refresh": smart_money_refresh,
         }
 

@@ -971,6 +971,62 @@ _ALERT_EXEMPT_PER_SEAT: dict[str, set[str]] = {
 # publication or fetch failure, not normal cadence.
 
 
+# Board item 89 clarity defect — "a 'data degraded' warning that names
+# internal components". `data_status` is keyed by the desk's internal seat
+# names and valued with internal state tokens. Both maps below say what
+# each one MEANS in the words a person would use; the key never reaches
+# the message. An unmapped seat or value is DESCRIBED and its raw text is
+# labelled as kept-for-the-record, never paraphrased into a claim.
+_SEAT_WORDS: dict[str, str] = {
+    "macro": "the market-backdrop research",
+    "tech": "the chart research",
+    "news": "the news research",
+    "earnings": "the earnings-filing research",
+    "smart_money": "the insider-and-congressional-trading feed",
+    "sector": "the sector research",
+}
+
+_DATA_STATUS_WORDS: dict[str, str] = {
+    "failed": "did not return an answer",
+    "partial": "returned only part of an answer",
+    "parse_error": "returned an answer the desk could not read",
+    "truncated": "was cut off before it finished",
+    "empty": "returned nothing",
+    "low_confidence": "rated its own answer low-confidence",
+    "provider_error": "could not reach its data provider",
+    "release_overdue": "is waiting on a scheduled data release that is overdue",
+    "symbol_dropped": "dropped at least one symbol from its answer",
+    "degraded": "returned a degraded answer",
+}
+
+
+def seat_words(seat: Any) -> str:
+    """Plain words for one research seat's internal name."""
+    key = str(seat or "").strip().lower()
+    return _SEAT_WORDS.get(key) or (
+        f"a research seat the desk has no plain name for (recorded as: {key or 'blank'})"
+    )
+
+
+def describe_data_status(bad: dict) -> list[str]:
+    """One plain sentence per degraded seat — "the chart research did not
+    return an answer" — from a `{seat: state}` map. A state with no plain
+    wording is described as such, with the raw token kept for the record,
+    so nothing is ever guessed at on the owner's behalf."""
+    lines: list[str] = []
+    for seat, state in sorted((bad or {}).items()):
+        token = str(state or "").strip().lower()
+        words = _DATA_STATUS_WORDS.get(token)
+        if words:
+            lines.append(f"{seat_words(seat)} {words}")
+        else:
+            lines.append(
+                f"{seat_words(seat)} reported a state the desk has no plain "
+                f"wording for (kept for the record: {token or 'blank'})"
+            )
+    return lines
+
+
 def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
     """Fire a standalone alert when any agent's data this session was not
     clean, so a bad analyst seat can never hide inside an otherwise-normal
@@ -995,14 +1051,26 @@ def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
     }
     if not bad:
         return False
-    detail = ", ".join(f"{k}={v}" for k, v in sorted(bad.items()))
+    # Board item 89 clarity defect: this line used to read "macro=failed,
+    # tech=partial" — internal seat names and state tokens. Same facts, in
+    # words; the raw pair is kept beneath, labelled, for anyone debugging.
+    from src.trading_calendar import et_now
+
+    when = fmt_time_12h(et_now())
+    detail = "\n".join(f"  • {line}" for line in describe_data_status(bad))
+    raw = ", ".join(f"{k}={v}" for k, v in sorted(bad.items()))
     run_id = result.get("run_id", "unknown")
     text = (
-        f"DATA QUALITY ALERT — {mode} (run {run_id})\n"
-        f"Not clean this session: {detail}\n"
-        f"PM and Risk Manager may be sizing or deciding off incomplete or "
-        f"invalid input from these seats this run. Check Mission Control "
-        f"or the run log before trusting this session's decisions."
+        f"DATA QUALITY ALERT — the {mode} session at {when} ran on "
+        f"incomplete research (run {run_id})\n"
+        f"{detail}\n"
+        "WHAT THIS MEANS FOR YOU: the Portfolio Manager and the Risk "
+        "Manager may have sized or decided this session on incomplete or "
+        "unreadable input from the seats above. Nothing was undone; read "
+        "this session's decisions with that in mind, and check Mission "
+        "Control if one of them looks wrong.\n"
+        f"Machine record, kept for the log — nothing here needs anything "
+        f"from you: {raw}"
     )
     return send_owner_alert(text)
 
@@ -1371,10 +1439,12 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
         return
 
     def _describe(rows: list[dict]) -> str:
-        return ", ".join(
-            f"{g.get('symbol', '?')}"
-            f"({_fmt_qty(g.get('covered_qty', 0) or 0)}/"
-            f"{_fmt_qty(g.get('held_qty', 0) or 0)})"
+        # Board item 89 clarity: "NVDA(4/10)" was a fraction with no words
+        # around it. Same two numbers, said as what they are.
+        return "; ".join(
+            f"{g.get('symbol', '?')} holding "
+            f"{_fmt_qty(g.get('held_qty', 0) or 0)}, stop covers "
+            f"{_fmt_qty(g.get('covered_qty', 0) or 0)}"
             for g in rows[:6]
         )
 
@@ -1396,15 +1466,15 @@ def _append_coverage_gap_banner(lines: list[str], result: dict) -> None:
         # coverage is unbounded loss, not just a degraded state — the one
         # class of alert on this desk that gets the triple mark.
         lines.append(
-            f"🛑🛑🛑 NO STOP AT ALL: {len(uncovered)} position(s) with ZERO "
-            f"protective-stop coverage (covered/held): {_describe(uncovered)}"
+            f"🛑🛑🛑 NO STOP AT ALL: {len(uncovered)} position(s) with nothing "
+            f"protecting them — {_describe(uncovered)}"
         )
     if partial:
         # Still under-protected but a stop IS standing watch over most of
         # the position — warning tier, not the top one.
         lines.append(
-            f"⚠️ STOP MIS-SIZED: {len(partial)} position(s) partially "
-            f"under-protected (covered/held): {_describe(partial)}"
+            f"⚠️ STOP MIS-SIZED: {len(partial)} position(s) only partly "
+            f"protected — {_describe(partial)}"
         )
     _append_fractional_overnight_line(lines, expected)
 
@@ -1562,7 +1632,7 @@ def _dedupe_symbols(symbols: list) -> list[str]:
     return seen
 
 
-def _lookup_company_profiles(symbols: list) -> dict[str, Any]:
+def _lookup_company_profiles(symbols: list, limit: int | None = None) -> dict[str, Any]:
     """symbol -> CompanyProfile for every symbol the cache already knows.
 
     The ONE place that calls `CompanyProfileStore` for a trader-facing
@@ -1581,9 +1651,16 @@ def _lookup_company_profiles(symbols: list) -> dict[str, Any]:
     seen = _dedupe_symbols(symbols)
     if not seen:
         return {}
+    # `limit` — board item 89 clarity defect "bare ticker symbols with no
+    # company name after the twelfth name in a list": the cap below sized
+    # the base formatter's "who:" block, but src/trader_feed.py annotates
+    # names INLINE, where a bare ticker after the twelfth line is exactly
+    # the defect. The lookup is a cache read (allow_fetch=False), so a
+    # larger cap costs nothing on the wire; the trader feed passes its own.
+    cap = _MAX_LOOKED_UP_COMPANIES if limit is None else max(1, int(limit))
     try:
         from src.data.company import CompanyProfileStore
-        return CompanyProfileStore().get_many(seen[:_MAX_LOOKED_UP_COMPANIES], allow_fetch=False)
+        return CompanyProfileStore().get_many(seen[:cap], allow_fetch=False)
     except Exception as e:  # noqa: BLE001 — never lose an alert over prose
         logger.warning("notifier: company profiles unavailable: %s", e)
         return {}
@@ -2341,6 +2418,19 @@ def _append_position_snapshot(lines: list[str], total_value: float | None) -> No
 
 
 def _append_earnings_body(lines: list[str], result: dict) -> None:
+    """Fallback body only — the owner-facing pre-earnings message is
+    `src.trader_feed._format_earnings`. This names each filing when the
+    run recorded them (`result["filings"]`, 2026-09-18) and falls back to
+    the bare counts for a result that predates that field."""
+    filings = [f for f in (result.get("filings") or []) if isinstance(f, dict)]
+    if filings:
+        for row in filings:
+            outcome = "read" if row.get("outcome") == "analyzed" else "could not be read"
+            lines.append(
+                f"{row.get('symbol', '?')} {row.get('form_type', '')} filed "
+                f"{row.get('filing_date', 'date not recorded')}: {outcome}"
+            )
+        return
     analyzed = result.get("analyzed", 0)
     confirmed = result.get("confirmed", 0)
     failed = result.get("failed", 0)
