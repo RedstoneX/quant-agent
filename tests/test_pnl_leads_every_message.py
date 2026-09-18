@@ -174,7 +174,7 @@ def test_standalone_owner_alerts_carry_the_pnl_line_under_the_heading(monkeypatc
     sent: list[str] = []
     monkeypatch.setattr(
         n, "TelegramNotifier",
-        lambda: type("_T", (), {"send": lambda self, text, symbols=None: sent.append(text) or True})(),
+        lambda: type("_T", (), {"send": lambda self, text, symbols=None, **kwargs: sent.append(text) or True})(),
     )
     n.send_owner_alert("NAKED POSITION — AAPL has no protective stop\nDetail line.")
     assert len(sent) == 1
@@ -192,7 +192,7 @@ def test_owner_alert_pnl_line_is_not_doubled_up(monkeypatch):
     sent: list[str] = []
     monkeypatch.setattr(
         n, "TelegramNotifier",
-        lambda: type("_T", (), {"send": lambda self, text, symbols=None: sent.append(text) or True})(),
+        lambda: type("_T", (), {"send": lambda self, text, symbols=None, **kwargs: sent.append(text) or True})(),
     )
     once = n._with_pnl_header("HEADING\nbody")
     twice = n._with_pnl_header(once)

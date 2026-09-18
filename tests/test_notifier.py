@@ -2201,3 +2201,275 @@ def test_coverage_gap_banner_says_the_quantities_in_words():
     assert msg is not None
     assert "NVDA holding 10, stop covers 4" in msg
     assert "(4/10)" not in msg
+
+
+# ===========================================================================
+# notifier_sends: recording every outgoing message (2026-09-18)
+#
+# Before this, a successful send left no record at all — only failures
+# (`logger.warning`) and rehearsal-suppressions (`logger.info`) were ever
+# recorded, so "what did the desk actually tell the owner, and did it
+# arrive" had no single answer. See `TelegramNotifier._record_send`.
+# ===========================================================================
+
+def _notifier_sends_rows(db_path, **where):
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        clause = ""
+        args: list = []
+        if where:
+            clause = "WHERE " + " AND ".join(f"{k} = ?" for k in where)
+            args = list(where.values())
+        return [dict(r) for r in conn.execute(
+            f"SELECT * FROM notifier_sends {clause} ORDER BY id", args,
+        ).fetchall()]
+    finally:
+        conn.close()
+
+
+def test_successful_send_is_recorded(tmp_path, monkeypatch):
+    """A send that reaches Telegram now leaves a durable row — previously
+    nothing at all was recorded on the success path."""
+    db_path = tmp_path / "data" / "quant_agent.db"
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+        assert n.send("morning report body", kind="morning", run_id="run-1") is True
+
+    rows = _notifier_sends_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "morning"
+    assert rows[0]["status"] == "sent"
+    assert rows[0]["run_id"] == "run-1"
+    assert rows[0]["text"] == "morning report body"
+    assert rows[0]["detail"] is None
+
+
+def test_failed_send_is_recorded_and_distinguishable(tmp_path, monkeypatch):
+    """A failed send is recorded as 'failed', with a reason, distinct from
+    a successful 'sent' row — same query, different status."""
+    db_path = tmp_path / "data" / "quant_agent.db"
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.side_effect = requests.ConnectionError("DNS hiccup")
+        assert n.send("close report body", kind="close") is False
+
+    rows = _notifier_sends_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "close"
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["text"] == "close report body"
+    assert "DNS hiccup" in rows[0]["detail"]
+
+
+def test_rehearsal_suppressed_send_is_recorded_as_suppressed(tmp_path, monkeypatch):
+    """A rehearsal-suppressed send is recorded too, as its own status — not
+    conflated with a real send or a real failure."""
+    db_path = tmp_path / "data" / "quant_agent.db"
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    monkeypatch.setattr("src.notifier._REHEARSAL_MODE", True)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with patch("src.notifier.requests.post") as mock_post:
+        assert n.send("PAID ANALYSIS SUSPENDED", kind="owner_alert") is False
+        mock_post.assert_not_called()
+
+    rows = _notifier_sends_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "suppressed"
+    assert rows[0]["kind"] == "owner_alert"
+    assert rows[0]["text"] == "PAID ANALYSIS SUSPENDED"
+
+
+def test_recorded_output_never_contains_token_or_chat_id(tmp_path, monkeypatch):
+    """The token and chat id must never land in the durable record — same
+    guarantee `_redact` already gives the failure log, extended to cover
+    a case where a caller's free-text message happens to embed either
+    value (e.g. a rationale that quotes a URL fragment)."""
+    db_path = tmp_path / "data" / "quant_agent.db"
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    token = "9999999:SENTINELTOKEN"
+    chat_id = "424242424242"
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", token)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", chat_id)
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    # Successful send: message body itself happens to mention both values.
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+        assert n.send(
+            f"debug: token={token} chat={chat_id}", kind="generic",
+        ) is True
+
+    # Failed send: the exception text (as `requests` produces it) embeds
+    # the token in the request URL — the exact leak `_redact` exists for.
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    with patch("src.notifier.requests.post") as mock_post:
+        bad = MagicMock()
+        bad.raise_for_status.side_effect = requests.HTTPError(
+            f"401 Client Error: Unauthorized for url: {url}"
+        )
+        mock_post.return_value = bad
+        assert n.send("second message", kind="generic") is False
+
+    rows = _notifier_sends_rows(db_path)
+    assert len(rows) == 2
+    dump = str(rows)
+    assert token not in dump
+    assert chat_id not in dump
+    assert "<redacted>" in dump
+
+
+def test_recording_failure_does_not_prevent_the_send(tmp_path, monkeypatch):
+    """A recording bug (bad DB path, locked file, whatever) must never
+    stop the message from sending — the notifier is a best-effort side
+    channel and recording is strictly additive to it."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    def boom(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(n, "_record_send", boom)
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+        # _record_send itself would raise if called directly; send() must
+        # not call it in a way that can propagate that.
+        assert n.send("still goes out") is True
+
+
+def test_recording_failure_inside_record_send_is_swallowed(tmp_path, monkeypatch):
+    """Even without mocking `_record_send` away: if the DB write itself
+    raises (unreadable path, corrupt file, permissions), `_record_send`
+    swallows it and the caller never sees an exception."""
+    # Point at a path that cannot be opened as a SQLite DB (a directory).
+    bad_path = tmp_path / "not_a_db"
+    bad_path.mkdir()
+    monkeypatch.setattr("src.notifier._DB_PATH", bad_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+        assert n.send("still goes out despite bad db") is True
+
+
+def test_send_document_success_and_failure_are_recorded(tmp_path, monkeypatch):
+    """send_document (the daily P&L CSV path) gets the same treatment as
+    send(): success and failure both recorded, distinguishable, and the
+    file bytes themselves are never stored — only the caption/filename."""
+    db_path = tmp_path / "data" / "quant_agent.db"
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+        assert n.send_document(b"a,b\n1,2\n", "pnl.csv", caption="daily P&L") is True
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_post.side_effect = requests.ConnectionError("timeout")
+        assert n.send_document(b"a,b\n1,2\n", "pnl.csv", caption="daily P&L") is False
+
+    rows = _notifier_sends_rows(db_path)
+    assert len(rows) == 2
+    assert rows[0]["status"] == "sent"
+    assert rows[1]["status"] == "failed"
+    for row in rows:
+        assert row["kind"] == "document"
+        assert "pnl.csv" in row["text"]
+        assert "daily P&L" in row["text"]
+        # CSV bytes must never be stored, only the caption/filename.
+        assert "a,b" not in row["text"]
+
+
+def test_owner_alert_is_recorded_with_its_own_kind(monkeypatch, tmp_path):
+    """send_owner_alert routes through send(); its record should say
+    'owner_alert', not the generic default, so it's distinguishable from
+    routine session-result messages in the same table."""
+    from src.notifier import send_owner_alert
+
+    db_path = tmp_path / "data" / "quant_agent.db"
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+        assert send_owner_alert("naked position: NVDA") is True
+
+    rows = _notifier_sends_rows(db_path)
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "owner_alert"
+    assert rows[0]["status"] == "sent"
+
+
+def test_last_sends_of_each_kind_query_matches_notifier_last_sends_script(tmp_path, monkeypatch):
+    """Sanity check on the exact query `scripts/notifier_last_sends.py`
+    runs: for two kinds with several rows each, it must return only the
+    single latest row per kind."""
+    import sqlite3
+
+    db_path = tmp_path / "data" / "quant_agent.db"
+    monkeypatch.setattr("src.notifier._DB_PATH", db_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.delenv("TELEGRAM_DISABLED", raising=False)
+    n = TelegramNotifier()
+
+    with patch("src.notifier.requests.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+        n.send("morning v1", kind="morning")
+        n.send("evening v1", kind="evening")
+        n.send("morning v2 (latest)", kind="morning")
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT * FROM notifier_sends WHERE id IN "
+            "(SELECT MAX(id) FROM notifier_sends GROUP BY kind) ORDER BY kind"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    by_kind = {r["kind"]: r["text"] for r in rows}
+    assert by_kind == {"morning": "morning v2 (latest)", "evening": "evening v1"}
