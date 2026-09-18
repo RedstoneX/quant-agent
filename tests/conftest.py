@@ -61,3 +61,29 @@ def _isolate_cwd(tmp_path, monkeypatch):
     monkeypatch.setattr(
         alert_watchdog, "DB_PATH", tmp_path / "watchdog" / "quant_agent.db",
     )
+
+    # `src.agents.base._TOKEN_GOVERNORS` is a module-level singleton per
+    # provider domain, shared by every test in the process. `charge()` and
+    # `reconcile()` record REAL token counts into its sliding 60s window, so
+    # a test that sends a large mocked usage figure (e.g. a chunked batch at
+    # 80k+12k tokens) leaves that charge sitting in the window for whatever
+    # test runs next. That next test's own `charge()` call then sees the
+    # ceiling already breached by a PRIOR test's traffic and genuinely calls
+    # `time.sleep` for however long it takes the window to drain — up to the
+    # full 60s window. Measured: test_short_response_recovers_the_missing_
+    # symbols in test_tech_analyst.py took 1.3s alone and 60.00s (a real
+    # sleep, not noise) immediately after
+    # test_tech_analyst_chunked_merged_cost_sums_when_model_priced, which
+    # charges ~184k tokens against the 150k/min Anthropic ceiling.
+    #
+    # Clearing every governor's window before each test makes tests
+    # independent of run order without changing what the governor is or how
+    # it behaves — production still shares one real singleton per process,
+    # and tests that assert on it (test_provider_attempt_budget.py,
+    # test_token_rate_governor.py) already compare before/after snapshots
+    # within a single test, so starting from an empty window changes nothing
+    # they check.
+    from src.agents.base import _TOKEN_GOVERNORS
+    for _governor in _TOKEN_GOVERNORS.values():
+        with _governor._lock:
+            _governor._events.clear()
