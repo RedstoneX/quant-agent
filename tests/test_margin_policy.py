@@ -781,7 +781,10 @@ def test_reviewer_prompt_margin_headroom_wired_from_entry_deployment_budget():
 
     from src.pipeline import TradingPipeline
 
-    src = inspect.getsource(TradingPipeline.run_position_review)
+    # `run_position_review` became a thin persistence wrapper on 2026-09-18
+    # (see `Database.save_session_report`); the pinned call now lives in
+    # `_run_position_review_body`.
+    src = inspect.getsource(TradingPipeline._run_position_review_body)
     assert "_entry_deployment_budget(" in src
     assert "self, ctx, review_positions, total_value, review_cash," in src
     assert "margin_headroom_usd=margin_headroom_usd" in src

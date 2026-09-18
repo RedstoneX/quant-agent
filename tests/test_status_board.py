@@ -524,6 +524,22 @@ def _work_md_base_ref():
     not a stale fork point. Actions checks out a depth-1 clone, so the parent
     is fetched on demand rather than requiring a workflow change.
 
+    That on-demand fetch used to be a bare `git fetch --deepen=1 origin`, and
+    it was silently useless on a pull_request run. With no refspec, deepen
+    only extends refs matching the remote's default fetch refspec
+    (`refs/heads/*`); a pull_request run's HEAD lives at
+    `refs/remotes/pull/<N>/merge`, an ephemeral ref outside that namespace,
+    so the plain deepen exited 0 having fetched nothing relevant and HEAD^1
+    stayed unresolvable — confirmed against a real PR merge commit
+    (RedstoneX/quant-agent PR #500's merge ref) on 2026-09-18. Passing the
+    bare checked-out SHA as a "want" does not fix it either: GitHub's
+    upload-pack will not serve an unadvertised SHA with no destination
+    refspec. What does work, verified against that same PR ref, is refetching
+    the exact checked-out SHA into an explicit destination ref with one extra
+    layer of depth — the same shape of command `actions/checkout` itself uses
+    to fetch that SHA in the first place, so it works regardless of which
+    namespace the checkout landed the ref in.
+
     A local run measures against the merge base with origin/main.
     """
     import os
@@ -539,7 +555,11 @@ def _work_md_base_ref():
 
     if os.environ.get("GITHUB_ACTIONS"):
         if git("rev-parse", "--verify", "-q", "HEAD^1").returncode != 0:
-            git("fetch", "-q", "--deepen=1", "origin")
+            head = git("rev-parse", "HEAD")
+            if head.returncode == 0:
+                sha = head.stdout.strip()
+                git("fetch", "-q", "--depth=2", "origin",
+                    f"+{sha}:refs/ci-work-md-base-probe")
         r = git("rev-parse", "--verify", "-q", "HEAD^1")
         return r.stdout.strip() if r.returncode == 0 else None
     git("fetch", "-q", "origin", "main")

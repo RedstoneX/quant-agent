@@ -64,6 +64,42 @@ def test_pm_facts_render_over_mandate_never_suggests_trimming():
     assert "trim" not in out.lower()
 
 
+def test_pm_facts_render_over_mandate_reads_as_floor_not_ceiling():
+    """2026-09-17 refusal: the seat read "invested=109.4% vs mandate=100%
+    (gap +9pp)" as being over a limit, and cited it as a reason it could not
+    add without selling protected holdings. The owner's mandate is about CASH
+    DRAG, so the 100 is a floor on deployment; the ceiling on gross exposure
+    is the risk engine's, enforced in Python. This pins that the rendered
+    line cannot be read as a breach.
+    """
+    f = PMFacts()
+    f.invested_pct = 109.4
+    f.invested_target_pct = DESK_INVESTED_TARGET_PCT
+    f.deployment_gap_pp = 9.4
+    out = f.render()
+    # The word that caused the misreading must not describe the 100 any more.
+    assert "vs mandate=" not in out
+    assert "FLOOR" in out
+    assert "not a ceiling" in out
+    assert "NOT a breach" in out
+    # ...and it must still not be read as an over-limit warning.
+    assert "OVER" not in out
+    assert "UNDER" not in out
+    assert "DEPLOYMENT GAP" not in out
+
+
+def test_pm_facts_render_under_branch_still_names_the_floor():
+    """The under-deployed branch is unchanged in force: idle cash is still
+    the drag the advisory exists to surface."""
+    f = PMFacts()
+    f.invested_pct = 60.0
+    f.invested_target_pct = DESK_INVESTED_TARGET_PCT
+    f.deployment_gap_pp = -40.0
+    out = f.render()
+    assert "40pp UNDER" in out
+    assert "NOT a breach" not in out
+
+
 def test_pm_facts_render_no_target_no_section():
     out = PMFacts().render()
     assert "Deployment vs" not in out

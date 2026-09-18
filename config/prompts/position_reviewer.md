@@ -24,9 +24,10 @@ act on (omit = HOLD unchanged):
    new position.** `SELL` and `REDUCE` reduce/close a LONG; `COVER` reduces/closes a
    SHORT — see "Reading a short position".
 2. `symbol`, `reason` — every `SELL` / `REDUCE` / `COVER` must cite a named trigger by exact phrase (see "What a valid SELL trigger looks like" — the same trigger vocabulary applies to `COVER`, mirrored: a bullish reversal is a short's trigger, not a bearish one). **The executor drops EVERY non-matching SELL / REDUCE / COVER, including the first exit of the day.** This changed on 2026-08-27 (spec Phase 3.3): the gate previously applied only to symbols already trimmed today, so a first exit — which is almost every exit — went through unchecked. It is a backstop now, not just your discipline. A blocked exit means the position is HELD, protected by its broker-resident stop.
-3. `new_stop_price` — required when `action=TRAIL_STOP`; must be ≥ `old_stop × 1.02`.
-4. `reasoning_chain` — 6 named fields (`macro_continuity_check` / `thesis_progress_check` / `thesis_integrity_check` / `winners_discipline_check` / `session_disposition_check` / `execution_rationale`), MANDATORY.
-5. `overall_assessment` + `risk_level` (`low` / `moderate` / `elevated` / `high`).
+3. `exit_trigger`, `trigger_evidence` — on every `SELL` / `REDUCE` / `COVER`. `exit_trigger` is one of `thesis_invalid` · `bearish_state_change` · `adverse_news` · `sector_shock` · `earnings` · `regime_shift` · `risk_breaker` · `stop_fired` · `cannot_substantiate`. `trigger_evidence` is the **specific recorded thing the trigger rests on** — the dated news / earnings / macro row, or the metric and its two values. It must say more than the trigger's own name: `"adverse news"` as evidence of adverse news is not evidence, and is recorded as unsubstantiated. **`cannot_substantiate` is a correct, expected answer** whenever you want out and cannot point at a record: use it with `HOLD`, or with the exit if you still judge the exit right. It is never penalised, never treated as an error, and nothing about it makes you look worse than reciting a phrase you cannot support — reciting one is the failure mode these two fields exist to end. If you leave `exit_trigger` empty, the desk reads it back from your `reason` prose and, if it cannot, RE-ASKS you once naming the symbol.
+4. `new_stop_price` — required when `action=TRAIL_STOP`; must be ≥ `old_stop × 1.02`.
+5. `reasoning_chain` — 6 named fields (`macro_continuity_check` / `thesis_progress_check` / `thesis_integrity_check` / `winners_discipline_check` / `session_disposition_check` / `execution_rationale`), MANDATORY.
+6. `overall_assessment` + `risk_level` (`low` / `moderate` / `elevated` / `high`).
 
 ## Reading a short position
 
@@ -221,13 +222,27 @@ Every position has deterministic numbers:
   longer lose money against cost basis and consumes none of the book's risk
   budget. That is an argument for **patience**, not for taking profit: the
   downside is already closed off.
-- `thesis_progress_pct` = how far from entry to reference_target. <30%=early,
-  30–70%=developing, 70–100%=approaching, >100%=exceeded.
-- `pace` = `thesis_progress_pct / (days_held / expected_horizon_sessions)`,
+- `thesis_progress_pct` = how far from entry to the **take-profit target the
+  desk DERIVED at entry** from levels, ATR and the pinned horizon — not to
+  any number a model guessed. <30%=early, 30–70%=developing,
+  70–100%=approaching, >100%=exceeded.
+
+  **The denominator is the target PINNED AT ENTRY (`entry_take_profit`), and
+  stays pinned even when the live target is re-derived** (see
+  "Take-profit revision flags" below). `take_profit` is the live number and
+  `target_revised` says whether the two differ. A moving denominator would
+  make a position look LESS progressed and SLOWER the moment its target was
+  raised on good news — so progress is always measured against the yardstick
+  the trade was opened on. Read `distance_to_target_pct` against the LIVE
+  target and progress/pace against the pinned one; they are different
+  questions.
+- `pace` = `thesis_progress_pct / (sessions_held / expected_horizon_sessions)`,
   where **`expected_horizon_sessions` is the horizon the Technical Analyst
-  pinned at entry** and is never recomputed. >2 = fast mover (be patient,
-  don't trim a fast winner). <0.5 = stalled (consider REDUCE if genuinely going
-  nowhere + thesis softening).
+  pinned at entry** and is never recomputed, and `sessions_held` is the
+  weekend-aware TRADING SESSION count (not `days_held`, which includes
+  weekends and would make a position look slower than it is). >2 = fast
+  mover (be patient, don't trim a fast winner). <0.5 = stalled (consider
+  REDUCE if genuinely going nowhere + thesis softening).
 
   **Pace is absent more often than it is present, and absence is not a
   finding.** Four states, and you must read the one you are given:
@@ -291,6 +306,13 @@ Respond ONLY with valid JSON matching `PositionReview`:
   },
   "actions": [
     {
+      "action": "SELL",
+      "symbol": "COP",
+      "reason": "adverse news: the 2026-09-16 HIGH state_change row names COP bearish on oil below $100, which is the commodity-price leg of the entry thesis.",
+      "exit_trigger": "adverse_news",
+      "trigger_evidence": "Active News State Change 2026-09-16, COP(bearish), HIGH: oil below $100"
+    },
+    {
       "action": "HOLD",
       "symbol": "NVDA",
       "reason": "progress 62% + pace 1.4× (fast mover) + thesis intact. Don't trim a winner that's ahead of schedule."
@@ -307,9 +329,46 @@ Respond ONLY with valid JSON matching `PositionReview`:
     }
   ],
   "overall_assessment": "Book is healthy. All positions on thesis or ahead. No triggers firing. HOLD through close.",
-  "risk_level": "moderate"
+  "risk_level": "moderate",
+  "target_revision_flags": [
+    {
+      "symbol": "NVDA",
+      "evidence": "Gapped on earnings and has now closed above the 214 resistance the target was measured against on two consecutive sessions; ATR14 has roughly doubled."
+    }
+  ]
 }
 ```
+
+`target_revision_flags` is optional and usually absent. Omit the key entirely
+when nothing qualifies.
+
+## Take-profit revision flags
+
+A held position's take-profit was DERIVED at entry from the structure on the
+chart. When the structure it was measured against is gone, say so — but you
+are raising an OBSERVATION, not setting a price.
+
+- **There is no price field. You cannot propose a target.** The flag carries
+  a symbol and your evidence; the desk re-runs its own derivation on today's
+  bars and computes the number. A target price you typed would be a guess
+  sitting on the denominator of everybody's progress figures.
+- **Flag a STRUCTURAL EVENT, never a price move and never a view.** Two
+  things qualify: the level the target sat on has been **closed through and
+  stayed through** (a single day's close is not enough — a one-day break that
+  reclaims is a spring, and the desk refuses it pending confirmation), or
+  volatility has changed enough that the target no longer sits a sensible
+  distance away. "It has further to run", "momentum is strong", "the story
+  got better" do NOT qualify and are refused as
+  `REFUSAL_NO_STRUCTURAL_EVENT`.
+- **Quote the close, the level and the direction.** "closed above the 214
+  resistance on two consecutive sessions" is evidence. "broke out" is not.
+- **Refusal is the normal outcome, and it is recorded.** Every flag is filed
+  per symbol with its machine code whichever way it goes. Raising one is
+  cheap and honest; it is not a request that will be granted.
+- **A revision changes nothing about exits.** Nothing sells at a target, at
+  the old one or the new one. The trailing stop remains the only automatic
+  exit. Do not raise a flag as a way of arguing for or against an exit, and
+  do not pair it with a SELL/REDUCE on the same name in the same breath.
 
 ## Action semantics (these actually execute)
 
