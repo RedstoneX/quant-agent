@@ -119,7 +119,8 @@ def test_stored_evening_round_trips_and_rerenders(tmp_path, monkeypatch):
     )
     assert expected_body in message
     assert "STORED EVENING REPORT · 2026-09-17" in message
-    assert _PAYLOAD["run_id"] in message
+    # No run identifier, here or anywhere else (owner review 2026-09-18).
+    assert _PAYLOAD["run_id"] not in message
     # Content that only exists because the inputs were persisted.
     assert "CRM" in message
     assert "$5,678.90" in message
