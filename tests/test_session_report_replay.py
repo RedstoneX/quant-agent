@@ -165,7 +165,7 @@ def test_intra_check_renders_without_invented_figures(tmp_path, monkeypatch):
 
     monkeypatch.setattr(trader_feed, "_DB_PATH", _empty_db(tmp_path))
     message = trader_feed.render_stored_intra_check(record)
-    assert "STORED INTRA_CHECK TICK · 2026-09-17" in message
+    assert "STORED HALF-HOURLY CHECK · 2026-09-17" in message
     assert "CRM" not in message  # tick renderer reports a count, not names
     assert "Positions held: 1" in message
     assert "NOT AVAILABLE" not in message

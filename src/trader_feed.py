@@ -27,6 +27,8 @@ from src.notifier import (
     _new_section,
     _seal_section,
     company_name,
+    describe_ai_cost,
+    humanize_status,
     fmt_time_12h,
     format_session_result as _base_format_session_result,
     TelegramNotifier,
@@ -1010,10 +1012,12 @@ def _append_footer(lines: list[str], snap: dict[str, Any], elapsed: float) -> No
     bits: list[str] = []
     cost = snap.get("cost")
     if isinstance(cost, (int, float)):
-        cost_text = f"${cost:.4f}" if cost < 0.01 else f"${cost:.2f}"
-        bits.append(f"AI cost {cost_text}")
-    bits.append(_fmt_elapsed(elapsed))
-    lines.append("🧾 " + " · ".join(bits))
+        # In words, via the one shared helper (owner review, 2026-09-18).
+        # This used to render "AI cost $0.0000", which he read as broken
+        # rather than as the truthful price of a free-tier model.
+        bits.append(describe_ai_cost(cost, label="AI cost"))
+    bits.append(f"took {_fmt_elapsed(elapsed)}")
+    lines.append("\U0001f9fe " + " \u00b7 ".join(bits))
 
 
 def _append_coverage_gaps(lines: list[str], result: dict) -> None:
@@ -1738,14 +1742,14 @@ def _evening_cost_line(snap: dict) -> str:
     expensive seat, the portfolio manager, does not run in the evening at
     all. So the honest rendering is a word, not four decimal places.
     """
-    cost = snap.get("cost")
-    if cost is None:
-        return "AI cost tonight: not available"
-    if cost <= 0:
-        return "AI cost tonight: none — the evening review runs on free models"
-    if cost < 0.01:
-        return "AI cost tonight: under one cent"
-    return f"AI cost tonight: ${cost:,.2f}"
+    # One implementation of this wording, in src/notifier.py, so the evening
+    # message and every other owner-facing message cannot drift apart. The
+    # words below are unchanged from the version the owner signed off.
+    return describe_ai_cost(
+        snap.get("cost"),
+        label="AI cost tonight",
+        free_note="the evening review runs on free models",
+    )
 
 
 def _evening_meta_line(auto_meta: Any) -> str | None:
@@ -2639,10 +2643,9 @@ def render_stored_evening(record: dict, elapsed_seconds: float = 0.0) -> str:
         "   Read back from the stored record. Nothing was run to produce "
         "this: no broker call, no model call, no order.",
     ]
-    header.append(
-        f"   Produced by run {run_id}" if run_id
-        else "   The producing run id was not recorded"
-    )
+    # No run identifier (owner review, 2026-09-18): it means nothing to him
+    # and he does not need it. The date above already says which session
+    # this was.
     lines = [*header, "", body]
 
     if gaps:
@@ -2789,10 +2792,9 @@ def render_stored_session_report(
         "   Read back from the stored record. Nothing was run to produce "
         "this: no broker call, no model call, no order.",
     ]
-    header.append(
-        f"   Produced by run {run_id}" if run_id
-        else "   The producing run id was not recorded"
-    )
+    # No run identifier (owner review, 2026-09-18): it means nothing to him
+    # and he does not need it. The date above already says which session
+    # this was.
     lines = [*header, "", body]
 
     if gaps:
@@ -2929,15 +2931,14 @@ def render_stored_intra_check(record: dict, elapsed_seconds: float = 0.0) -> str
     date_text = record.get("date") or "date not recorded"
     run_id = record.get("run_id")
     lines = [
-        _b(f"STORED INTRA_CHECK TICK · {date_text}"),
+        _b(f"STORED HALF-HOURLY CHECK · {date_text}"),
         "   Read back from the stored record. Nothing was run to produce "
         "this: no broker call, no model call, no order. This tick's own "
         "status only — not a re-derivation of the hourly DESK CHECK "
         "message, which also reflects other ticks around it.",
-        (f"   Produced by run {run_id}" if run_id
-         else "   The producing run id was not recorded"),
+
         "",
-        f"{_status_emoji(status)} STATUS: {status}",
+        f"{_status_emoji(status)} {humanize_status(status)}",
     ]
     _new_section(lines, *_pnl_section_lines(result))
     _new_block(lines, _append_coverage_gaps, result)
