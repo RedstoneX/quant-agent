@@ -23,8 +23,8 @@ first attempt split by count, gave four shards 1,409 tests each, and they took
 22s, 24s, 92s and 160s.
 
 Measured on a real runner (``--durations=0`` across every shard, 2026-09-18,
-run 35301604006) the whole suite is 758.7s of test time, and where it goes is
-extremely lopsided:
+run 35301604006) the whole suite was 758.7s of test time, and where it went
+was extremely lopsided:
 
     230.9s  test_one_definition_per_quantity.py   30% of the suite, 5 tests
      85.0s  test_ops_scripts_importable.py        one test is 70.9s of it
@@ -33,21 +33,44 @@ extremely lopsided:
      30.2s  test_cost_circuit.py
     151.3s  the other 195 files, 4,454 tests, essentially flat
 
-Three files are just over half the suite. They are wall-clock assertions and
-whole-repo static scans -- they prove a deadline holds, or that a quantity has
-exactly one definition anywhere in the tree -- so they cost roughly the same
-however many other tests are around them.
+Three of those five costs were not inherent and have since been fixed at the
+source rather than papered over with more shards:
 
-That shape is why ``SLOW_FILES`` below carries a measured second count for the
-files that matter and everything else is estimated as its test count times
-``SECONDS_PER_TEST``, the measured mean over the flat tail. Get this wrong and
-the run gets slower, not just untidier: a count-weighted split put two of the
-three heavy files in one shard and that shard alone set a 160s wall-clock.
+- ``test_one_definition_per_quantity.py`` held three whole-repo AST scans
+  that each re-read and re-parsed every file under ``src/`` independently
+  (~62s apiece). They now share one cached parse per test session
+  (``_binops_cached`` in that file), so the walk happens once and the other
+  two tests reuse it -- three tests, one parse.
+- ``test_ops_scripts_importable.py::test_no_python_312_only_fstrings`` (the
+  71s test) parses ``ops/``, ``scripts/``, ``src/`` and ``tests/``. It now
+  goes through ``tests/_shared_ast_cache.py``, a path-keyed cache shared with
+  the guard above -- any file already parsed by one whole-repo scan is not
+  re-read by the other.
+- ``test_tech_analyst.py``'s 60s test was not inherent to what it proves at
+  all: `src.agents.base._TOKEN_GOVERNORS` is a process-wide singleton token-
+  rate limiter, and an earlier test in the same file (chunked cost-merging)
+  charged it ~184k tokens against a 150k/min ceiling with real usage numbers.
+  The next test to call the (real, unmocked) governor then genuinely called
+  `time.sleep` for up to the full 60s window to drain. `tests/conftest.py`
+  now clears every governor's window before each test, so a test's rate
+  budget can no longer leak into whichever test happens to run after it.
+
+With those fixed, the remaining floor is whatever a single whole-repo scan
+costs standing alone plus the flat ~151s tail, comfortably re-shardable into
+far fewer jobs than the five the un-fixed costs used to require. See the
+current shard count and its own measured comment in
+``.github/workflows/test.yml``.
+
+That shape is why ``SLOW_FILES`` below carries a measured second count for
+the files that still matter and everything else is estimated as its test
+count times ``SECONDS_PER_TEST``, the measured mean over the flat tail. A
+stale entry only costs balance, never correctness -- ``--check`` still proves
+the split is a complete partition of the suite regardless.
 
 Measure on the runner, not on a developer box. A local serial run disagreed
-badly with the numbers above -- it made one file look like 160s that is under
-5s in CI, and understated test_ops_scripts_importable fourfold -- because host
-load and Python version move these particular tests a lot.
+badly with the original numbers above -- it made one file look like 160s that
+is under 5s in CI, and understated test_ops_scripts_importable fourfold --
+because host load and Python version move these particular tests a lot.
 
 Keeping ``SLOW_FILES`` current is optional maintenance, not a correctness
 requirement. A stale entry costs some balance and nothing else: a new file
@@ -83,15 +106,21 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = REPO_ROOT / "tests"
 
 # Measured test time, in seconds, for the files whose cost is not proportional
-# to how many tests they hold. Summed per file from `pytest --durations=0` on
-# GitHub's own runners, 2026-09-18, run 35301604006. Refresh from any shard
-# job's log -- but from a CI log, not a local one; see the module docstring.
-# Files absent from here are estimated from their test count, and a stale entry
-# is a balance problem, never a correctness one.
+# to how many tests they hold. Most entries below are from `pytest
+# --durations=0` on GitHub's own runners, 2026-09-18, run 35301604006.
+# Files absent from here are estimated from their test count, and a stale
+# entry is a balance problem, never a correctness one -- see the module
+# docstring's "Measure on the runner" note before trusting a local number.
+#
+# The next three were the run's five expensive tests and are now fixed at
+# the source (see the module docstring); these are LOCAL post-fix numbers
+# (this box, 2026-09-18), not yet re-measured on a runner, kept only so the
+# balancer does not treat these three files as free. Refresh from a real
+# shard job's `--durations` log once one has run with the fix.
 SLOW_FILES: dict[str, float] = {
-    "test_one_definition_per_quantity.py": 230.9,
-    "test_tech_analyst.py": 120.4,
-    "test_ops_scripts_importable.py": 85.0,
+    "test_one_definition_per_quantity.py": 12.0,
+    "test_tech_analyst.py": 1.0,
+    "test_ops_scripts_importable.py": 16.0,
     "test_pipeline.py": 32.0,
     "test_cost_circuit.py": 30.2,
     "test_one_definition_guard.py": 29.1,
@@ -121,30 +150,12 @@ SLOW_FILES: dict[str, float] = {
 # 4,454 tests in the 195 files not named above.
 SECONDS_PER_TEST = 0.034
 
-# Files whose individual tests may be handed to different shards.
-#
-# The rule everywhere else is that a whole module goes to one shard, because
-# splitting a module is what makes sharding flaky. This is the deliberate
-# exception, and it is narrow. test_one_definition_per_quantity.py holds three
-# whole-repo AST scans of roughly a minute each, and they do not overlap when
-# run together -- a shard holding all three takes their sum, ~186s, not their
-# max. Measured: that one file set the wall-clock of the entire run.
-#
-# A file only belongs here when its tests are provably independent: module
-# level functions, no class scope, no module-level mutable state they touch,
-# nothing ordering-sensitive. `--check` re-asserts the structural half of that
-# on every run and refuses to split a file that has grown a test class.
-SPLITTABLE: frozenset[str] = frozenset({
-    "test_one_definition_per_quantity.py",
-})
-
-# Measured seconds for individual tests inside SPLITTABLE files, same run as
-# SLOW_FILES. Tests not named here get the file's remaining time spread evenly.
-SLOW_TESTS: dict[str, float] = {
-    "test_one_definition_per_quantity.py::test_no_second_definition_of_book_exposure": 63.6,
-    "test_one_definition_per_quantity.py::test_no_second_definition_of_unrealized_pnl_pct": 61.2,
-    "test_one_definition_per_quantity.py::test_no_second_definition_of_position_weight": 61.1,
-}
+# Splitting used to also divide test_one_definition_per_quantity.py's three
+# whole-repo AST scans across shards node-by-node, because running all three
+# in one process meant paying the repo walk three times (~186s). That
+# redundant walk is gone now that the three share one cached parse (see the
+# module docstring) -- the file costs about what one of its own scans costs,
+# so it is an ordinary whole-file unit like everything else below.
 
 
 def test_files(tests_dir: Path = TESTS_DIR) -> list[Path]:
@@ -155,22 +166,6 @@ def test_files(tests_dir: Path = TESTS_DIR) -> list[Path]:
         if "__pycache__" not in p.parts
     ]
     return sorted(found)
-
-
-TEST_NAME = re.compile(r"^(?:async\s+)?def\s+(test_\w+)", re.MULTILINE)
-CLASS_DEF = re.compile(r"^class\s+\w+", re.MULTILINE)
-
-
-def test_names(path: Path) -> list[str]:
-    """Names of the module-level test functions in one file, in source order."""
-    text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
-    return TEST_NAME.findall(text)
-
-
-def has_class(path: Path) -> bool:
-    """True if the file defines any class at all."""
-    text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
-    return bool(CLASS_DEF.search(text))
 
 
 def test_count(path: Path) -> int:
@@ -193,30 +188,12 @@ def weight(path: Path) -> float:
 def items(tests_dir: Path = TESTS_DIR) -> list[tuple[str, float]]:
     """Every unit pytest will be asked to run, with its estimated seconds.
 
-    A unit is a file path, except inside a ``SPLITTABLE`` file, where it is an
-    individual ``path::test_name`` node id. Returned sorted, so the split is
-    identical in every shard job without any shared state.
+    A unit is always a whole file path -- see the module docstring for why
+    this no longer needs to split any file's tests across shards. Returned
+    sorted, so the split is identical in every shard job without any shared
+    state.
     """
-    out: list[tuple[str, float]] = []
-    for path in test_files(tests_dir):
-        if path.name not in SPLITTABLE:
-            out.append((str(path), weight(path)))
-            continue
-
-        names = test_names(path)
-        named = {
-            n: SLOW_TESTS[f"{path.name}::{n}"]
-            for n in names
-            if f"{path.name}::{n}" in SLOW_TESTS
-        }
-        # Whatever the file costs beyond its individually measured tests is
-        # shared evenly over the rest.
-        remainder = max(0.0, weight(path) - sum(named.values()))
-        others = [n for n in names if n not in named]
-        each = remainder / len(others) if others else 0.0
-        for n in names:
-            out.append((f"{path}::{n}", named.get(n, each)))
-    return sorted(out)
+    return sorted((str(path), weight(path)) for path in test_files(tests_dir))
 
 
 def split(shards: int, tests_dir: Path = TESTS_DIR) -> list[list[str]]:
@@ -269,29 +246,11 @@ def check(shards: int, tests_dir: Path = TESTS_DIR) -> int:
     if empty:
         problems.append(f"empty shard(s): {empty}")
 
-    # Every test file must be represented, whether whole or as node ids.
-    covered = {i.split("::", 1)[0] for i in assigned}
+    # Every test file must be represented.
+    covered = set(assigned)
     absent = sorted(str(f) for f in test_files(tests_dir) if str(f) not in covered)
     if absent:
         problems.append(f"test file(s) no shard would run: {absent}")
-
-    # A splittable file is only safe to divide while it stays a flat module of
-    # independent functions. If one grows a class, stop splitting it rather
-    # than guess at the scope.
-    for f in test_files(tests_dir):
-        if f.name not in SPLITTABLE:
-            continue
-        if has_class(f):
-            problems.append(
-                f"{f} is in SPLITTABLE but defines a class; its tests may share "
-                "class scope, so remove it from SPLITTABLE instead of splitting it"
-            )
-        node_ids = {i for i in assigned if i.startswith(f"{f}::")}
-        if len(node_ids) != len(test_names(f)):
-            problems.append(
-                f"{f}: {len(test_names(f))} test functions but "
-                f"{len(node_ids)} node ids in the split"
-            )
 
     for line in problems:
         print(f"ci_shard: {line}", file=sys.stderr)
