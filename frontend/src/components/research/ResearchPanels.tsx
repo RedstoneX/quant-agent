@@ -28,12 +28,23 @@ export function SignalStackPanel({ data }: { data: ResearchDeskData }) {
   </section>;
 }
 
+/* The target is NOT a level the desk acts on. The automatic take-profit
+ * trim was deleted in PR #321 (2026-09-12) and "TARGET_BREACH" is
+ * deliberately absent from the exit-reason list the pipeline accepts, so
+ * nothing exits here by itself — the trailing stop is the only exit rule.
+ * It is therefore labelled "(recorded)", the same convention
+ * PriceChartPanel already uses for a stop that no live broker order backs.
+ * The basis words, when the desk wrote them, say what the number was
+ * measured from. */
 function MiniMarketContext({ item }: { item: ResearchMarketContext }) {
-  const position = ((item.entry - item.stop) / (item.target - item.stop)) * 100;
-  return <div className="research-mini-chart" aria-label={`${item.symbol} stop ${item.stop}, entry ${item.entry}, target ${item.target}`}>
-    <div className="research-mini-chart-head"><strong>{item.symbol}</strong><span>setup context</span></div>
+  const span = item.target - item.stop;
+  const position = span === 0 ? 0 : Math.min(100, Math.max(0, ((item.entry - item.stop) / span) * 100));
+  const basis = item.target_basis ? ` · ${item.target_basis}` : "";
+  const targetTitle = `Desk-derived target, not enforced — nothing exits here automatically${item.target_basis ? `; measured from ${item.target_basis}` : ""}.`;
+  return <div className="research-mini-chart" aria-label={`${item.symbol} ${item.direction}: stop ${item.stop}, entry ${item.entry}, recorded target ${item.target}, which the desk does not act on`}>
+    <div className="research-mini-chart-head"><strong>{item.symbol}</strong><span>{item.direction} setup context</span></div>
     <div className="research-mini-track"><span className="research-mini-risk" style={{ width: `${position}%` }} /><i style={{ left: `${position}%` }} /></div>
-    <div className="research-mini-labels"><span>stop {item.stop}</span><b>entry {item.entry}</b><span>target {item.target}</span></div>
+    <div className="research-mini-labels"><span>stop {item.stop}</span><b>entry {item.entry}</b><span title={targetTitle}>target {item.target} (recorded{basis})</span></div>
   </div>;
 }
 
@@ -43,6 +54,7 @@ function AgentCard({ agent }: { agent: ResearchAgentBrief }) {
     {agent.read && <p className="agent-read">{agent.read}</p>}
     <EvidenceStrip items={agent.evidence} />
     {agent.market_context.map((item) => <MiniMarketContext item={item} key={item.symbol} />)}
+    {agent.market_context_gaps.length > 0 && <div className="research-mini-gaps"><Eyebrow>Setup not drawn</Eyebrow>{agent.market_context_gaps.map((reason, i) => <p className="text-dim" key={i}>{reason}</p>)}</div>}
     {(agent.changed || agent.tension || agent.why_now) && <div className="agent-consequence">
       {agent.changed && <div><Eyebrow><SemanticLabel kind="change">Changed</SemanticLabel></Eyebrow><p>{agent.changed}</p></div>}
       {agent.tension && <div><Eyebrow tone="warn"><SemanticLabel kind="tension">Tension</SemanticLabel></Eyebrow><p>{agent.tension}</p></div>}
