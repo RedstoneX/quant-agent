@@ -22,6 +22,22 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — the risk seat's three sizing defects, one real and two that did not survive a check (items 135, 136, 137 closed)
+
+**What broke, in one line:** of three reported position-sizing defects, one was real and live (a short could be enlarged by an edit meant to shrink it), one was real but had never once fired in production (a levered ETF's size was shown to the risk seat in the wrong units), and the third — as filed — was wrong on both of its own claims; the actual, much smaller defect underneath it is what was fixed.
+
+**Item 135, the short-side gap.** PR #519 had already fixed a BUY that an edit could enlarge past what the risk seat believed it approved; it left the mirror case on SHORT alone. `_apply_risk_modifications` guard 1b in `src/pipeline.py` tested `decision.action == "BUY"` only, and the constructor sizes a short add with the identical cumulative arithmetic as a long add, so an edit that looked like a cut could enlarge a short already held. Live path: the desk has executed 3 SHORT trades [measured 2026-09-18 against the production database, 43 trades total]. Fixed by `_revert_entry_size_increases`, which reverts any RM edit that increases either side's allocation back toward the constructor's own already-clamped pre-modification value.
+
+**Item 136, CORRECTED rather than actioned as filed.** The filing brief made two claims and both fail on checking. First, it said the book-wide `scale_all_buys` lever is unbounded — it is not; `RiskVerdict` in `src/models.py` pins it `ge=0.0, le=1.0`, so it can only shrink a position, never enlarge one. Second, it said setting the lever to 0.0 zeroes the buy side and therefore collides with the desk's rule that a zero target is read as "sell it" — it does not; the code already **drops** the entry from the decision list rather than zeroing its allocation, which is exactly what that rule requires, not a collision with it. The real defect, and the only thing fixed, is much smaller: the drop wrote a logger line only, and the decision left the list before `RiskStage.run`'s per-decision event loop ran, so a 0.0 lever could delete the entire entry side with no record against any individual symbol. Fixed by capturing each drop and filing one `scaled_out` pipeline event per symbol, stating the pre-scale allocation and that the order was dropped, not zeroed.
+
+**Item 137, real but latent.** `allocation_pct` is raw notional; the constructor's own arithmetic already divides by the leverage multiplier correctly, but the number **shown** to the risk seat did not, so a fresh open of a 3x fund read as 21.67% "of portfolio" when it was actually 65% of gross exposure — the entire single-name ceiling. The post-modification hard-risk gate would have blocked an actual breach, so this was never an unchecked path; it was a seat editing in units nobody told it about. Checked against the production database rather than assumed: 43 trades total, zero in any of the four levered/inverse funds in the configured universe (SQQQ, SDS, PSQ, SH) [measured 2026-09-18]. Fixed by stating the prompt row from the same gross-scaled weight the clamp itself uses.
+
+**Debt this PR deliberately created, not closed here.** The natural home for item 135's guard is inside guard 1b in `src/pipeline.py`, which was locked by another workstream at the time, so the fix landed one layer out in `src/pipeline_stages.py` as a verified no-op behind guard 1b for a BUY (pinned by `test_item135_buy_guard_is_unchanged_by_the_sweep`), with the new function's own docstring naming guard 1b as where it belongs once that file is free. Left open as board item 155 rather than buried here, because it is still work owed, not something finished.
+
+**Not changed.** No constant was introduced; multiples come from `ETF_LEVERAGE`, the ceiling from `RiskConfig.max_position_pct` (unchanged at 65), weights from the equity denominator already rendered.
+
+---
+
 ### 2026-09-18 — the desk worked out what borrowing was costing and showed it to nobody (item 151)
 
 **In plain words:** the desk has been calculating, every time the dashboard
