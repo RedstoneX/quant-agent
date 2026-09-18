@@ -180,7 +180,7 @@ def main():
             # comment claiming parity while _run_safe in fact just logged.
             # If the scheduler itself crashes at startup or exits, the
             # finally block below now also catches it (previously silent).
-            notifier.send("🟢 quant-agent live scheduler starting")
+            notifier.send("🟢 quant-agent live scheduler starting", kind="scheduler_startup")
             scheduler = TradingScheduler(config)
             scheduler.setup()
             scheduler.start()
@@ -278,7 +278,10 @@ def main():
                 # `format_session_result`'s output (src/trader_feed.py),
                 # which embeds literal <b>/<blockquote expandable> tags on
                 # purpose — see TelegramNotifier.send()'s docstring.
-                notifier.send(message, symbols=symbols, preserve_structural_markup=True)
+                notifier.send(
+                    message, symbols=symbols, preserve_structural_markup=True,
+                    kind=args.mode, run_id=run_id,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("notifier crashed in finally: %s", exc)
     logger.info("Result: %s", result)

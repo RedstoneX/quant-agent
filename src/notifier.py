@@ -565,7 +565,8 @@ class TelegramNotifier:
                 )
 
     def _redact(self, value: object) -> str:
-        """Strip the bot token out of anything headed for the log.
+        """Strip the bot token AND chat id out of anything headed for the
+        log or the durable send record (see `_record_send`).
 
         `requests` embeds the full request URL in HTTPError /
         ConnectionError messages, and ours is
@@ -574,6 +575,12 @@ class TelegramNotifier:
         the systemd journal) on every Telegram failure. A wrong or
         rotated token is the most likely failure, i.e. the token leaked
         exactly when the operator was most likely to share the log.
+
+        The chat id is stripped too (2026-09-18, `_record_send`): it is not
+        a secret the way the token is, but it is a stable per-operator
+        identifier with no reason to sit in a table a future export or
+        support conversation might carry, so it gets the same treatment
+        for free here rather than a second bespoke check at the call site.
 
         Non-raising on purpose: this runs INSIDE the `except` blocks
         below, and `logger.warning("%s", exc)` used to defer `str(exc)`
@@ -586,9 +593,112 @@ class TelegramNotifier:
             text = str(value)
             if self.token:
                 text = text.replace(self.token, "<redacted>")
+            if self.chat_id:
+                text = text.replace(self.chat_id, "<redacted>")
             return text
         except Exception:  # noqa: BLE001
             return "<unprintable error>"
+
+    def _record_send(
+        self,
+        *,
+        kind: str,
+        status: str,
+        text: str,
+        detail: str | None = None,
+        run_id: str | None = None,
+    ) -> None:
+        """Durably record one outgoing-message attempt (sent/failed/
+        suppressed) so "what did the desk try to tell the owner, and did
+        it arrive" has a single answer that does not depend on the next
+        message happening to land.
+
+        Table, not a log line (see this file's module docstring for why
+        `send()` never logged a success): `session_reports` /
+        `intra_check_reports` / `evening_reports` (src/storage/db.py) are
+        this project's established home for a run's long, rendered text —
+        never the application log, which is grepped/tailed for operational
+        health and would drown in 4000-char message bodies. This table
+        follows the same shape (payload text + timestamp + a key to find
+        it by) rather than inventing a new convention.
+
+        Same-protection guarantee as the rest of this class: this is
+        called from inside `send()`/`send_document()`'s own try/except
+        (or, for the failure path, adds one more try/except around
+        itself), so a recording bug — a locked DB file, a full disk, a
+        schema mismatch — degrades to a `logger.warning` and the message
+        still sends and the caller still gets its True/False. Recording
+        must never be the reason a send looks like it failed, or the
+        reason a real failure looks like it succeeded.
+
+        Redaction: `text` and `detail` both go through `self._redact`
+        before they touch SQLite. `text` should never carry the token or
+        chat id (they live in the URL/payload, not the message body), but
+        redacting here anyway costs nothing and means one place — not
+        every call site — is responsible for the guarantee tested by
+        `test_record_send_output_never_contains_token_or_chat_id`.
+        """
+        try:
+            import sqlite3
+
+            safe_text = self._redact(text if text is not None else "")
+            safe_detail = self._redact(detail) if detail is not None else None
+            # Belt and suspenders: production's data/ dir always exists by
+            # the time this fires (Database() has already created it), but
+            # a notifier call can in principle be the very first thing a
+            # fresh checkout does (e.g. the live-scheduler startup ping in
+            # main.py, before TradingPipeline/Database is constructed) —
+            # don't let a missing directory be the reason recording fails.
+            _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(_DB_PATH), timeout=5.0)
+            try:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS notifier_sends (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        kind TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        run_id TEXT,
+                        text TEXT NOT NULL,
+                        detail TEXT,
+                        timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_notifier_sends_kind_ts "
+                    "ON notifier_sends(kind, timestamp)"
+                )
+                conn.execute(
+                    "INSERT INTO notifier_sends "
+                    "(kind, status, run_id, text, detail) VALUES (?, ?, ?, ?, ?)",
+                    (kind, status, run_id, safe_text, safe_detail),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001
+            # Never let a recording failure look like — or cause — a send
+            # failure. See docstring above.
+            logger.warning("notifier: failed to record send (%s/%s): %s", kind, status, exc)
+
+    def _safe_record_send(self, **kwargs) -> None:
+        """Call `_record_send`, wrapped in its own try/except.
+
+        `_record_send` already guards every DB failure it can anticipate
+        internally, but `send()`/`send_document()` call it from inside
+        their own control flow (the success path, and — for failures —
+        an `except` block that must not itself raise). Doubly-defensive
+        on purpose, same reasoning main.py gives for wrapping its own
+        `notifier.send()` call a second time: a bug inside the recording
+        path that `_record_send` did not anticipate must still be unable
+        to reach the caller of `send()`/`send_document()`, which is the
+        one guarantee this whole feature is not allowed to weaken.
+        """
+        try:
+            self._record_send(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("notifier: _record_send raised unexpectedly: %s", exc)
 
     def send(
         self,
@@ -597,8 +707,17 @@ class TelegramNotifier:
         link_label: str | None = None,
         symbols: list[str] | None = None,
         preserve_structural_markup: bool = False,
+        kind: str = "generic",
+        run_id: str | None = None,
     ) -> bool:
         """Fire-and-forget send. Returns True on success.
+
+        `kind` and `run_id` (2026-09-18) label the durable record this
+        call leaves behind (see `_record_send`) — `kind` is a short,
+        caller-chosen tag ("morning", "owner_alert", ...; default
+        "generic" for the many existing callers that have no reason to
+        care), `run_id` ties it back to `agent_logs`/`session_reports`
+        when a run produced this message. Neither changes delivery.
 
         - No-op when not enabled (returns False).
         - Escapes `text` and sends with `parse_mode="HTML"` — a stray
@@ -647,6 +766,7 @@ class TelegramNotifier:
                 "REHEARSAL: suppressed operator alert (%d chars): %s",
                 len(text), text.splitlines()[0][:120] if text else "",
             )
+            self._safe_record_send(kind=kind, status="suppressed", text=text, run_id=run_id)
             return False
 
         payload = self._build_payload(
@@ -661,6 +781,7 @@ class TelegramNotifier:
                 timeout=self.HTTP_TIMEOUT_S,
             )
             response.raise_for_status()
+            self._safe_record_send(kind=kind, status="sent", text=text, run_id=run_id)
             return True
         except Exception as exc:
             # Catch broadly on purpose — TelegramNotifier is a
@@ -668,6 +789,10 @@ class TelegramNotifier:
             # connection reset, a DNS failure, a bad token — none of
             # those should bubble up and crash the trading session.
             logger.warning("Telegram notify failed: %s", self._redact(exc))
+            self._safe_record_send(
+                kind=kind, status="failed", text=text,
+                detail=self._redact(exc), run_id=run_id,
+            )
             return False
 
     def _api_url(self, method: str) -> str:
@@ -856,10 +981,21 @@ class TelegramNotifier:
             return False, f"delete refused: {self._redact(detail)}"
         return True, ""
 
-    def send_document(self, csv_bytes: bytes, filename: str, caption: str = "") -> bool:
-        """Send a file (e.g. CSV) via Telegram sendDocument. Best-effort."""
+    def send_document(
+        self, csv_bytes: bytes, filename: str, caption: str = "",
+        kind: str = "document", run_id: str | None = None,
+    ) -> bool:
+        """Send a file (e.g. CSV) via Telegram sendDocument. Best-effort.
+
+        Recorded the same way `send()` is (see `_record_send`): the
+        document's bytes are never stored (they are the P&L CSV, not
+        text meant for the "what did we tell the owner" question), only
+        `caption` — the text that actually appears in the chat next to
+        it — plus `filename` so the record still says what went out.
+        """
         if not self.enabled:
             return False
+        recorded_text = f"[document: {filename}] {caption}".strip()
         try:
             response = requests.post(
                 f"https://api.telegram.org/bot{self.token}/sendDocument",
@@ -868,9 +1004,14 @@ class TelegramNotifier:
                 timeout=30.0,
             )
             response.raise_for_status()
+            self._safe_record_send(kind=kind, status="sent", text=recorded_text, run_id=run_id)
             return True
         except Exception as exc:
             logger.warning("Telegram send_document failed: %s", self._redact(exc))
+            self._safe_record_send(
+                kind=kind, status="failed", text=recorded_text,
+                detail=self._redact(exc), run_id=run_id,
+            )
             return False
 
 
@@ -943,7 +1084,7 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
     text = _with_pnl_header(text)
     logger.critical("OWNER ALERT\n%s", text)
     try:
-        return bool(TelegramNotifier().send(text, symbols=symbols))
+        return bool(TelegramNotifier().send(text, symbols=symbols, kind="owner_alert"))
     except Exception:  # noqa: BLE001
         logger.exception("owner alert delivery failed")
         return False
