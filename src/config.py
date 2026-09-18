@@ -1291,6 +1291,20 @@ class SmartMoneyConfig(BaseModel):
     # filing already processed is never re-fetched, so this number only
     # sets how many PAST DAYS get a "anything new here?" search query each
     # refresh, with headroom left in this file's own rate/deadline budget.
+    #
+    # RE-CHECKED 2026-09-18, and the paragraph above was TEMPORARILY FALSE
+    # for one day. It rests on the claim that only `refresh()` walks the
+    # window — once a day, pre-market. `peek_accessions` was added
+    # 2026-09-17 and called the same day-by-day discovery from inside every
+    # intraday decision tick, so the cost this number was cleared against
+    # was being paid ~13 times a day inside the decision path, where it ran
+    # the tick out of its deadline. The derivation is sound again because
+    # the intraday freshness check no longer walks the window at all: it
+    # reads each watched issuer's own filing history
+    # (`SECForm4Provider.form4_freshness`), which is O(watched names) and
+    # independent of this number. Anything added later that walks the
+    # lookback window from inside a decision tick falsifies this paragraph
+    # again — that is the thing to check, not the value.
     # STORAGE cost is small: measured directly against the live server's
     # actual cache 2026-09-11 — 4,324 records / 5.76 MB at the old 7-day
     # window, roughly ~300 MB at 365 days on a straight scale-up — trivial

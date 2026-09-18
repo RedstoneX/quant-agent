@@ -158,11 +158,14 @@ def test_the_arbitrary_count_is_an_equality_not_a_ceiling() -> None:
     ledger = load_ledger()
     arbitrary = [e for e in ledger.values() if e.get("status") == "arbitrary"]
     assert len(arbitrary) == MAX_ARBITRARY_ENTRIES
-    assert MAX_ARBITRARY_ENTRIES == 87, (
+    assert MAX_ARBITRARY_ENTRIES == 88, (
         "the ratchet moved; if a number was sourced, lower it and say which. "
         "86 -> 87 on 2026-09-18: `max_filings_per_refresh` was recorded as "
         "not-trade-governing, and that day the cap binding is what refused a "
-        "trading decision -- a misclassification corrected, not a number added."
+        "trading decision -- a misclassification corrected, not a number added. "
+        "87 -> 88 the same day: `refresh_deadline_s` carried the identical "
+        "falsified sentence and was what the intraday freshness check ran out "
+        "of while deciding whether the tick could decide."
     )
 
 

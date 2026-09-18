@@ -642,6 +642,65 @@ class CombinedSmartMoneyProvider:
         error = "; ".join(errors) or None
         return observations, error
 
+    def form4_freshness(self, symbols: list[str] | None = None) -> dict:
+        """Combined "anything filed since our last read?" verdict.
+
+        Fail-closed by construction: the result is ``ok`` only if EVERY
+        sub-provider that can answer did answer. A sub-provider that raised,
+        or one that cannot answer at all when none can, leaves the verdict
+        not-ok — the caller must read that as unknown freshness, never as
+        "nothing new". Congressional providers have no Form 4 history and
+        are skipped rather than counted as failures.
+        """
+        verdict = {
+            "ok": False, "new_filings": [], "read_through": "",
+            "checked": 0, "unchecked": [], "reason": "no Form 4 provider",
+        }
+        answered = False
+        new_filings: set[str] = set()
+        unchecked: list[str] = []
+        reasons: list[str] = []
+        read_through = ""
+        checked = 0
+        for index, provider in enumerate(self.providers):
+            probe = getattr(provider, "form4_freshness", None)
+            if not callable(probe):
+                continue
+            name = f"{index}:{type(provider).__name__}"
+            try:
+                result = probe(symbols) or {}
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Form 4 freshness probe failed (%s): %s", name, exc)
+                answered = True
+                unchecked.append(name)
+                reasons.append(f"{name}:{type(exc).__name__}")
+                continue
+            answered = True
+            new_filings.update(
+                str(a).strip() for a in (result.get("new_filings") or [])
+                if str(a).strip()
+            )
+            unchecked.extend(str(c) for c in (result.get("unchecked") or []))
+            checked += int(result.get("checked") or 0)
+            read_through = read_through or str(result.get("read_through") or "")
+            if not result.get("ok"):
+                reasons.append(f"{name}:{result.get('reason') or 'not ok'}")
+        verdict["new_filings"] = sorted(new_filings)
+        verdict["unchecked"] = unchecked
+        verdict["checked"] = checked
+        verdict["read_through"] = read_through
+        if not answered:
+            return verdict
+        if reasons:
+            verdict["reason"] = "; ".join(reasons)
+            return verdict
+        verdict["ok"] = True
+        verdict["reason"] = (
+            f"{len(new_filings)} new filing(s) since {read_through}"
+            if new_filings else f"nothing filed since {read_through}"
+        )
+        return verdict
+
     def peek_form4_accessions(self, symbols: list[str] | None = None) -> set[str]:
         """Union of Form 4 accessions currently visible on every sub-provider.
 

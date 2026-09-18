@@ -13773,6 +13773,7 @@ class TradingPipeline:
                     smart_money_refresh.get("watched_pending_filings"),
                     smart_money_refresh.get("discovery_cap_reached"),
                 )
+                self._alert_form4_backlog_before_open(smart_money_refresh)
             except Exception as exc:
                 logger.warning("SEC Form 4 refresh failed softly: %s", exc)
                 smart_money_refresh = {
@@ -14672,6 +14673,111 @@ class TradingPipeline:
             return False
         return newer_material_wire(frozenset(covered), fetched)
 
+    def _alert_form4_backlog_before_open(self, refresh: dict) -> None:
+        """Say BEFORE the open that today's intraday ticks will refuse.
+
+        `refresh` has always computed the backlog numbers and the pipeline
+        has only ever logged them. A returned value nobody catches is a
+        check that does not exist — on 2026-09-18 the cap bound at the
+        pre-market refresh, and the first anyone knew of it was six lost
+        decision windows later.
+
+        The condition is the watermark, not the raw counts: the insider
+        seat's freshness is measured against the date through which watched
+        names are confirmed read, so a watermark that is not today is
+        exactly the state in which every tick today expires the seat. The
+        cap and the unchecked-names list are reported alongside because
+        they are why it did not advance.
+        """
+        if not isinstance(refresh, dict):
+            return
+        from src.util.time import et_today
+        read_through = str(refresh.get("watched_read_through") or "").strip()[:10]
+        today = et_today().isoformat()
+        watched_pending = int(refresh.get("watched_pending_filings") or 0)
+        unchecked = list(refresh.get("watched_unchecked_names") or [])
+        cap_reached = bool(refresh.get("discovery_cap_reached"))
+        if read_through == today and not watched_pending and not unchecked:
+            return
+        why: list[str] = []
+        if watched_pending:
+            why.append(
+                f"{watched_pending} company filing(s) on names we hold are "
+                "still unread",
+            )
+        if unchecked:
+            why.append(
+                f"{len(unchecked)} of our own companies could not be checked "
+                "at all",
+            )
+        if cap_reached:
+            why.append(
+                "the morning read stopped at its own limit before finishing",
+            )
+        if not why:
+            why.append(
+                "the morning read did not confirm it finished"
+                + (f" (last confirmed {read_through})" if read_through else ""),
+            )
+        text = (
+            "Insider-filing check did not finish this morning: "
+            + "; ".join(why)
+            + ". Until it does, the desk will not make a new trading decision "
+            "today — it refuses rather than decide on company filings it has "
+            "not read. Nothing is at risk; existing positions and their stops "
+            "are unaffected."
+        )
+        logger.error("PRE-OPEN: %s", text)
+        try:
+            from src.notifier import send_owner_alert
+            send_owner_alert(text)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Form 4 backlog pre-open alert failed to send: %s", exc)
+
+    def _form4_freshness(self, ctx=None, symbols=None) -> dict:
+        """"Has anything been FILED on a watched name since our last read?"
+
+        The ONLY freshness question the decision tick asks. It is answered
+        from each watched issuer's own SEC filing history — O(watched names)
+        plain GETs — not from a full-text crawl of the whole filing stream.
+        The crawl answers a different question ("is there a filing I have
+        not read?"), belongs to the pre-market producing step, and ran
+        inside every decision tick until 2026-09-18, where it cost six
+        consecutive decision windows.
+
+        Returns the provider verdict unchanged. A provider that cannot
+        answer returns ``ok=False``, and the caller MUST treat that as
+        unknown freshness rather than as "nothing new".
+        """
+        provider = getattr(self, "smart_money_provider", None)
+        probe = getattr(provider, "form4_freshness", None)
+        if not callable(probe):
+            # No probe at all is not a silent pass. The seat's freshness is
+            # unknown, and unknown loses the seat at the evidence gate.
+            return {
+                "ok": False, "new_filings": [], "read_through": "",
+                "checked": 0, "unchecked": [],
+                "reason": "provider cannot answer Form 4 freshness",
+            }
+        if symbols is None:
+            symbols = self._watched_research_symbols(ctx=ctx)
+        try:
+            try:
+                result = probe(symbols)
+            except TypeError:
+                result = probe()
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False, "new_filings": [], "read_through": "",
+                "checked": 0, "unchecked": [],
+                "reason": f"freshness probe raised {type(exc).__name__}: {exc}",
+            }
+        return result if isinstance(result, dict) else {
+            "ok": False, "new_filings": [], "read_through": "",
+            "checked": 0, "unchecked": [],
+            "reason": "freshness probe returned no verdict",
+        }
+
     def _peek_new_form4_accessions(self, ctx=None, symbols=None) -> set[str]:
         """Currently visible Form 4 accessions for names we watch."""
         provider = getattr(self, "smart_money_provider", None)
@@ -14962,12 +15068,42 @@ class TradingPipeline:
             logger.warning("Intraday scan: insider remember failed: %s", e)
             return CarryForward(None, "carry_forward_failed", same_session=False)
         same_session = self._insider_same_session(findings)
-        new_form4 = False
-        try:
-            incoming = set(self._peek_new_form4_accessions(ctx=ctx) or [])
-            new_form4 = bool(incoming - set(accessions))
-        except Exception:  # noqa: BLE001
-            new_form4 = False
+        # The freshness ladder, written down deliberately because the old
+        # code fell the wrong way at every rung. Previously a failed peek
+        # was swallowed and became `new_form4=False`, i.e. "nothing new",
+        # i.e. REUSE — so a broken network let the desk decide on research
+        # it never checked was current, while a WORKING network that found
+        # the desk's own unread backlog refused the decision. Backwards in
+        # both directions. Now:
+        #
+        #   probe ok, nothing filed since the watermark  -> reuse
+        #   probe ok, something filed since the watermark -> expired (real)
+        #   probe failed, partial, or no watermark        -> expired
+        #
+        # Expiry is per tick and the probe is cheap, so an unknown costs one
+        # window and the next tick re-asks. Reuse on an unknown would put a
+        # decision on evidence nobody checked, which the evidence gate
+        # exists to prevent and which no later tick can undo.
+        freshness = self._form4_freshness(ctx=ctx)
+        probe_ok = bool(freshness.get("ok"))
+        incoming = {
+            str(a).strip() for a in (freshness.get("new_filings") or [])
+            if str(a).strip()
+        }
+        new_form4 = bool(incoming - set(accessions))
+        # Fail closed only where there is something to be stale ABOUT. An
+        # unknown freshness answer is dangerous precisely because it would
+        # let remembered findings be reused as current; with no remembered
+        # findings there is nothing to reuse, and `insider_reuse` below
+        # already classifies an empty payload as lost for its own, more
+        # accurate reason. Expiring a seat that holds nothing would report
+        # the wrong cause for the refusal.
+        if not probe_ok and findings:
+            logger.warning(
+                "Intraday scan: Form 4 freshness unknown, insider seat "
+                "expires this tick — %s", freshness.get("reason") or "no reason",
+            )
+            return CarryForward(findings, "expired", same_session=same_session)
         verdict = insider_reuse(
             findings if findings else [],
             same_session=same_session,

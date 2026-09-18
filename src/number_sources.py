@@ -262,7 +262,16 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 #: that day the cap binding is what refused a trading decision. Correcting a
 #: misclassification upward is the ratchet working; the debt was always
 #: there, unrecorded.
-MAX_ARBITRARY_ENTRIES = 87
+#: 2026-09-18: 87 -> 88, the SAME correction to the SAME sentence one row
+#: over. `refresh_deadline_s` carried that identical claim, and the same day
+#: it was the deadline the intraday research-freshness check ran out of
+#: while deciding whether the tick could decide at all (measured on the live
+#: desk: the check went 39.6s -> 180.3s and hit this deadline on three
+#: ticks). Again no number was added and none was loosened -- an unrecorded
+#: debt was written down. That the same falsified sentence sat on two rows
+#: is itself the finding: it is boilerplate, and boilerplate is not a
+#: classification.
+MAX_ARBITRARY_ENTRIES = 88
 
 #: Sentinel for the scope rule. Module-level numeric constants found by this
 #: same scanner in `src/**.py` files that are NOT in scope. Measured, not
