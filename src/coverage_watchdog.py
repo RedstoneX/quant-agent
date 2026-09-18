@@ -678,6 +678,58 @@ def claim_repair_failure_alert(
     return fresh
 
 
+# ---------------------------------------------------------------------------
+# the elected-but-unfilled marker — its own identity, the same machinery
+# ---------------------------------------------------------------------------
+# A protective stop that FIRED and did not FILL is a different condition
+# from a protective stop the desk could not PLACE, and it must not share
+# the placement-failure key: one key would let either condition silence the
+# other on the same name, and "do not double-alert" does not mean "alert
+# about only one of two real faults". Same state file, same trading-day
+# key, same claim-before-send discipline, separate identity.
+
+
+def _elected_unfilled_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
+    raw = state.get("elected_unfilled_alerted_symbols")
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {
+        str(sym).strip().upper()
+        for sym in (raw.get("symbols") or [])
+        if str(sym).strip()
+    }
+
+
+def claim_elected_unfilled_alert(
+    symbols: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Reserve today's elected-but-unfilled alert for `symbols` and return
+    the ones NOT already alerted today, in the order given.
+
+    Same contract as `claim_repair_failure_alert`, including that an
+    unwritable state file errs towards telling the owner twice rather than
+    not at all.
+    """
+    day = repair_failure_alert_day(now)
+    state = load_state(path)
+    already = _elected_unfilled_alerted_symbols(state, day)
+    fresh = [
+        sym for sym in dict.fromkeys(
+            str(raw).strip().upper() for raw in symbols if str(raw).strip()
+        )
+        if sym not in already
+    ]
+    if not fresh:
+        return []
+    merged = already | set(fresh)
+    state["elected_unfilled_alerted_symbols"] = {
+        "day": day, "symbols": sorted(merged),
+    }
+    save_state(state, path)
+    return fresh
+
+
 def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
     """Symbols mid scale-in that this watchdog must not report or repair.
 

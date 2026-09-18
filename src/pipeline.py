@@ -501,6 +501,35 @@ def _limit_is_vol_relative(risk_engine) -> bool:
     return basis == RiskRuleEngine.VOL_RELATIVE_BASIS
 
 
+def _price_is_through_stop(price: float, stop_price: float, *, is_short: bool) -> bool:
+    """Has the tape passed a protective stop's trigger?
+
+    A long's protective stop is a SELL stop and fires as price FALLS
+    through it; a short's is a BUY stop and fires as price RISES through
+    it. Same arithmetic, mirrored.
+
+    NO TOLERANCE, no grace band, no minimum distance and no percentage
+    lives here, by design: this is a comparison of two numbers the desk
+    already holds every session, which is the whole reason this detector
+    could be built without inventing a constant. The inequality is STRICT,
+    so "price exactly at the trigger" is deliberately NOT through it — the
+    only float-equality case is resolved towards silence rather than
+    towards an epsilon nobody chose.
+
+    Returns False on any unusable number rather than guessing.
+    """
+    try:
+        px = float(price)
+        stop = float(stop_price)
+    except (TypeError, ValueError):
+        return False
+    if not (math.isfinite(px) and math.isfinite(stop)):
+        return False
+    if px <= 0 or stop <= 0:
+        return False
+    return (px > stop) if is_short else (px < stop)
+
+
 def _position_notional(position, qty: float) -> float:
     """Dollar value of `qty` shares of `position`, or 0.0 if unknowable.
 
@@ -3009,6 +3038,11 @@ class TradingPipeline:
         market_open = _market_is_open_now(self.broker)
 
         gaps: list[dict] = []
+        # Positions whose protective stop has been elected and has not
+        # filled. Kept OUT of `gaps`: every consumer of that list buckets a
+        # row as "no stop at all" or "stop mis-sized", and this is neither —
+        # the stop is present and correctly sized, it simply did not fill.
+        elected_unfilled: list[dict] = []
         longs_checked = 0
         shorts_checked = 0
         sweeper = self._sweeper()
@@ -3054,6 +3088,27 @@ class TradingPipeline:
                 continue
             covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
             held = abs(qty)
+            # ---- ELECTED BUT UNFILLED -------------------------------------
+            # Runs for EVERY held position, including the ones this sweep is
+            # about to call perfectly covered — which is the entire point.
+            # The desk's protective stops rest at the broker as stop-LIMIT
+            # orders (see `StopLimitOrderRequest` / `STOP_LIMIT_BUFFER_PCT`).
+            # On a gap past the limit the stop is ELECTED and does not fill,
+            # and the order stays `status=OPEN`, so `specs` above still
+            # counts its shares as covered and this sweep — correctly by its
+            # own logic — does nothing about it, indefinitely. The shares are
+            # not protected: an unfilled order is not an exit.
+            #
+            # Detected only while the market is OPEN, reusing the one
+            # `market_open` read this pass already took: with the tape shut
+            # there is no live "price through the stop", only yesterday's
+            # close, and nobody could act on it anyway.
+            if market_open:
+                row = self._elected_unfilled_stop_row(
+                    p, specs, is_short=is_short,
+                )
+                if row is not None:
+                    elected_unfilled.append(row)
             if covered + 1e-6 < held:
                 # Spec §11.1 guard 3. NO STOP AT ALL and STOP PRESENT BUT
                 # MIS-SIZED were previously one condition with one message.
@@ -3224,6 +3279,8 @@ class TradingPipeline:
             g for g in gaps
             if g.get("coverage") == "none" and not g.get("repaired")
         ]
+        if elected_unfilled:
+            self._alert_owner_elected_unfilled(elected_unfilled)
         if naked:
             self._alert_owner_no_stop(naked)
         # A session-hours re-placement that did not land is its own
@@ -3261,6 +3318,147 @@ class TradingPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.error("stop-level reconcile failed: %s", exc)
         return gaps
+
+    def _elected_unfilled_stop_row(
+        self, position, specs, *, is_short: bool,
+    ) -> dict | None:
+        """One row per position whose protective stop has FIRED and has not
+        FILLED, or None when nothing is in that state. Never raises.
+
+        `specs` is what `snapshot_protective_stops` just returned: open
+        protective stop orders at the broker. "Open" is the load-bearing
+        word — an order the broker has filled is no longer in that list, so
+        a stop order that is still listed has not filled. Comparing the
+        live price against its trigger therefore answers the whole question:
+        price through the trigger + order still open = elected and unfilled.
+
+        This is the state `STOP_LIMIT_BUFFER_PCT`'s own comment describes
+        ("on gaps beyond 3% the limit won't fill and the position stays open
+        until a session can act") and which nothing could previously see.
+
+        DETECTS ONLY. Nothing here sells, cancels, replaces or re-prices
+        anything — an exit decision on an unfilled stop is an owner-level
+        change and is not made here.
+        """
+        try:
+            symbol = str(getattr(position, "symbol", "") or "").strip().upper()
+            price = float(getattr(position, "current_price", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        if not symbol or not (math.isfinite(price) and price > 0):
+            return None
+        through: list[dict] = []
+        for spec in specs or []:
+            try:
+                stop_price = float(spec.get("stop_price", 0) or 0)
+                stop_qty = float(spec.get("qty", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if stop_qty <= 0:
+                continue
+            if _price_is_through_stop(price, stop_price, is_short=is_short):
+                through.append({"stop_price": stop_price, "qty": stop_qty})
+        if not through:
+            return None
+        # The trigger the tape is FURTHEST past: for a long that is the
+        # highest elected stop, for a short the lowest. Derived from the
+        # orders themselves, not chosen.
+        worst = (min if is_short else max)(
+            through, key=lambda r: r["stop_price"],
+        )
+        stop_price = float(worst["stop_price"])
+        distance = (price - stop_price) if is_short else (stop_price - price)
+        stranded = sum(float(r["qty"]) for r in through)
+        logger.critical(
+            "PROTECTIVE STOP ELECTED AND UNFILLED: %s %s at $%.2f is $%.2f "
+            "through its $%.2f protective stop, whose order is still OPEN at "
+            "the broker over %.4f share(s) — the stop fired and did not "
+            "fill, so the coverage sweep counts those shares as protected "
+            "while nothing is standing watch. Detected only; nothing was "
+            "sold, cancelled or replaced.",
+            "short" if is_short else "long", symbol, price, distance,
+            stop_price, stranded,
+        )
+        return {
+            "symbol": symbol,
+            "held_qty": float(getattr(position, "qty", 0) or 0),
+            "price": price,
+            "stop": stop_price,
+            "through": distance,
+            "stranded_qty": stranded,
+            "is_short": is_short,
+            "unprotected_value": _position_notional(position, stranded),
+            # Rendered by the shared coverage bullet as the trailing plain
+            # sentence. Says the two numbers and nothing else.
+            "note": (
+                f"the protective order at ${stop_price:,.2f} fired and did "
+                f"not fill \u2014 price ${price:,.2f} is ${distance:,.2f} past it, "
+                "so those shares have nothing standing watch over them"
+            ),
+        }
+
+    @staticmethod
+    def _alert_owner_elected_unfilled(rows: list[dict]) -> None:
+        """Tell the owner a protective stop FIRED and did NOT fill. Never
+        raises.
+
+        A DIFFERENT condition from the one PR #514 alerts on, and it has to
+        stay different: that one is a stop the desk could not PLACE, this
+        one is a stop that exists, is correctly sized, and did not execute.
+        It therefore takes its own per-position per-day claim in the same
+        `data/alerting/coverage_heartbeat.json` state file rather than
+        borrowing the repair-failure key — sharing the key would let either
+        condition silence the other on the same name, which is the opposite
+        of not double-alerting.
+
+        The bullet is `src.trader_feed.format_coverage_gap_line`, the same
+        wording the session feed and the placement-failure alert use, so one
+        position cannot be described three ways.
+        """
+        try:
+            from src import notifier as _notifier
+            from src.coverage_watchdog import claim_elected_unfilled_alert
+            from src.trader_feed import _profiles, format_coverage_gap_line
+
+            symbols = [
+                str(r.get("symbol")).strip() for r in rows
+                if str(r.get("symbol") or "").strip()
+            ]
+            fresh = set(claim_elected_unfilled_alert(symbols))
+            if not fresh:
+                logger.info(
+                    "Elected-but-unfilled protective stop on %s already "
+                    "reported to the owner today \u2014 not paging again.",
+                    ", ".join(symbols) or "(unnamed)",
+                )
+                return
+            send = [
+                r for r in rows
+                if str(r.get("symbol") or "").strip().upper() in fresh
+            ]
+            try:
+                profiles = _profiles(send)
+            except Exception:  # noqa: BLE001
+                profiles = None
+            detail = "\n".join(
+                format_coverage_gap_line(row, profiles) for row in send
+            )
+            _notifier.send_owner_alert(
+                "\U0001f534 A PROTECTIVE STOP FIRED AND DID NOT FILL\n"
+                f"{len(send)} position(s) have traded past their protective "
+                "stop while that stop's order is still sitting unfilled at "
+                "the broker. Those shares have nothing standing watch over "
+                "them right now, even though a stop still shows as live. "
+                "This is not a missing stop and not the expected overnight "
+                "lapse on a part-share.\n"
+                f"{detail}\n"
+                "Nothing was sold, cancelled or replaced. Sell by hand, or "
+                "move the stop, if you want out of those shares. Each "
+                "position is reported at most once per trading day.",
+                symbols=sorted(fresh),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("elected-but-unfilled stop owner alert failed: %s", exc)
 
     def _still_uncovered(self, gap: dict) -> bool:
         """Is this position STILL short of stop coverage, read fresh from
@@ -15994,10 +16192,24 @@ class TradingPipeline:
                 # distance is the same arithmetic either way.
                 gap = (price - stop) if qty > 0 else (stop - price)
                 if gap < 0:
-                    # Price is already through the stop — the broker order
-                    # has not filled yet. Report it as the tightest case
-                    # rather than as a negative distance.
-                    gap = 0.0
+                    # PRICE IS THROUGH THE STOP and the broker order is
+                    # still open, so it has not filled. This used to be
+                    # clamped to 0.0 and reported as `status='near'`, which
+                    # merged two different facts into one row: a stop that
+                    # is merely TIGHT (an ordinary session could reach it)
+                    # and a stop that has already been BLOWN THROUGH without
+                    # filling (nothing is standing watch over those shares).
+                    # The second is the state the whole stop-limit buffer
+                    # trade-off produces on a gap, and it now reads as
+                    # itself. The distance is reported as a positive number
+                    # of dollars PAST the trigger, which is a different
+                    # quantity from `gap` and carries a different name.
+                    rows.append({
+                        "symbol": symbol, "status": "through", "price": price,
+                        "stop": float(stop), "through": -gap,
+                        "atr": float(atr),
+                    })
+                    continue
                 if gap < atr:
                     rows.append({
                         "symbol": symbol, "status": "near", "price": price,
