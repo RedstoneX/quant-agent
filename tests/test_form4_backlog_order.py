@@ -234,3 +234,237 @@ def test_combined_provider_passes_watched_names_and_surfaces_the_backlog():
     assert result["pending_filings"] == 7
     assert result["watched_pending_filings"] == 2
     assert result["discovery_cap_reached"] is True
+
+
+# --- since-watermark freshness, and the drain that makes it honest ---------
+#
+# 2026-09-18 follow-up. The six lost decision windows were not caused by a new
+# filing; they were caused by the tick asking a COMPLETENESS question ("is
+# there a filing I have not read?") that only a full-text crawl can answer.
+# The tick now asks a FRESHNESS question ("was anything filed on a watched
+# name since our last confirmed read?"), answered from each issuer's own
+# filing history. That is only sound because the drain below separately takes
+# the watched residue to zero and refuses to advance the watermark otherwise.
+
+
+def _submissions(by_cik: dict[str, list[tuple[str, str]]]):
+    """Fake data.sec.gov submissions: CIK -> [(accession, filing_date)]."""
+
+    def _get(url, *, params, deadline):
+        cik = str(int(url.rsplit("CIK", 1)[1].split(".")[0]))
+        rows = by_cik.get(cik, [])
+        response = Mock()
+        response.json.return_value = {
+            "filings": {
+                "recent": {
+                    "form": ["4"] * len(rows),
+                    "filingDate": [d for _a, d in rows],
+                    "accessionNumber": [a for a, _d in rows],
+                },
+            },
+        }
+        return response
+
+    return _get
+
+
+def test_freshness_ignores_backlog_and_never_runs_a_crawl(tmp_path, monkeypatch):
+    """THE ACCEPTANCE CONDITION for the six lost windows.
+
+    An unread accession filed on or before the watermark is backlog, not new
+    information, and the probe must reach that verdict without EFTS.
+    """
+    provider = _provider(tmp_path, lookback_days=365)
+    listed = {"1045810": {"NVDA": "Nasdaq"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    monkeypatch.setattr(
+        provider, "_discover",
+        Mock(side_effect=AssertionError("freshness must not run a crawl")),
+    )
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "processed_accessions": [],           # 000001 was NEVER read: backlog
+        "watched_read_through": "2026-09-18",
+    }))
+    monkeypatch.setattr(provider, "_get", _submissions({
+        "1045810": [("0000000001-26-000001", "2026-09-15")],
+    }))
+
+    verdict = provider.form4_freshness(["NVDA"])
+
+    assert verdict["ok"] is True
+    assert verdict["new_filings"] == []
+
+
+def test_freshness_expires_on_a_filing_after_the_watermark(tmp_path, monkeypatch):
+    provider = _provider(tmp_path, lookback_days=365)
+    listed = {"1045810": {"NVDA": "Nasdaq"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "processed_accessions": ["0000000001-26-000001"],
+        "watched_read_through": "2026-09-15",
+    }))
+    monkeypatch.setattr(provider, "_get", _submissions({
+        "1045810": [
+            ("0000000002-26-000002", "2026-09-16"),   # after the watermark
+            ("0000000001-26-000001", "2026-09-15"),
+        ],
+    }))
+
+    verdict = provider.form4_freshness(["NVDA"])
+
+    assert verdict["ok"] is True
+    assert verdict["new_filings"] == ["0000000002-26-000002"]
+
+
+def test_freshness_without_a_watermark_is_unknown_not_clean(tmp_path, monkeypatch):
+    """No confirmed read means no honest freshness claim. Fail closed."""
+    provider = _provider(tmp_path, lookback_days=365)
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: {})
+    verdict = provider.form4_freshness(["NVDA"])
+    assert verdict["ok"] is False
+    assert verdict["new_filings"] == []
+
+
+def test_freshness_partial_failure_is_unknown_not_clean(tmp_path, monkeypatch):
+    """One unreadable name is exactly the one that might have filed."""
+    provider = _provider(tmp_path, lookback_days=365)
+    listed = {"1045810": {"NVDA": "Nasdaq"}, "320193": {"AAPL": "Nasdaq"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "processed_accessions": [], "watched_read_through": "2026-09-18",
+    }))
+    good = _submissions({"1045810": []})
+
+    def _get(url, *, params, deadline):
+        if "0000320193" in url:
+            raise RuntimeError("SEC 503")
+        return good(url, params=params, deadline=deadline)
+
+    monkeypatch.setattr(provider, "_get", _get)
+
+    verdict = provider.form4_freshness(["NVDA", "AAPL"])
+
+    assert verdict["ok"] is False
+    assert verdict["unchecked"] == ["320193"]
+
+
+def test_drain_reads_watched_residue_and_advances_the_watermark(
+    tmp_path, monkeypatch,
+):
+    """The other half. The watermark is only sound if the backlog is driven
+    to zero, so the drain is bounded by the desk's own names, not by
+    market-wide filing volume."""
+    provider = _provider(tmp_path, max_filings_per_refresh=1, lookback_days=365)
+    listed = {"1045810": {"NVDA": "Nasdaq"}, "9000001": {"ZZZA": "NYSE"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    from src.data.smart_money import et_today
+
+    day0 = et_today().isoformat()
+    # The market-wide pass sees only a non-watched filing and its cap binds
+    # there — exactly 2026-09-18's shape.
+    efts = _efts({(day0, 0): [_hit("0000000009-26-000009", "9000001")]})
+    subs = _submissions({
+        "1045810": [("0000000003-26-000003", day0)],
+        "9000001": [],
+    })
+
+    def _get(url, *, params, deadline):
+        if "submissions" in url:
+            return subs(url, params=params, deadline=deadline)
+        return efts(url, params=params, deadline=deadline)
+
+    monkeypatch.setattr(provider, "_get", _get)
+    monkeypatch.setattr(
+        provider, "_submission", lambda filing, deadline: ("<xml/>", "u"),
+    )
+    monkeypatch.setattr(provider, "_parse_submission", lambda *a, **k: [])
+
+    result = provider.refresh(["NVDA"])
+
+    # The watched filing the market-wide cap could not reach was read anyway.
+    assert "0000000003-26-000003" in provider.known_accessions()
+    assert result["watched_pending_filings"] == 0
+    assert result["watched_read_through"] == day0
+    assert provider.read_through_date() == day0
+
+
+def test_watermark_does_not_advance_when_the_drain_cannot_finish(
+    tmp_path, monkeypatch,
+):
+    """A drain that could not read every watched name must leave the
+    watermark where it was — and the stale watermark is what makes the next
+    tick refuse, plus what the pre-open check alerts on."""
+    provider = _provider(tmp_path, max_filings_per_refresh=1, lookback_days=365)
+    listed = {"1045810": {"NVDA": "Nasdaq"}}
+    monkeypatch.setattr(provider, "_listed_map", lambda _deadline: listed)
+    from src.data.smart_money import et_today
+
+    day0 = et_today().isoformat()
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "processed_accessions": [], "watched_read_through": "2026-09-01",
+    }))
+    efts = _efts({})
+    subs = _submissions({"1045810": [("0000000003-26-000003", day0)]})
+
+    def _get(url, *, params, deadline):
+        if "submissions" in url:
+            return subs(url, params=params, deadline=deadline)
+        return efts(url, params=params, deadline=deadline)
+
+    monkeypatch.setattr(provider, "_get", _get)
+    monkeypatch.setattr(
+        provider, "_submission",
+        Mock(side_effect=RuntimeError("submission unavailable")),
+    )
+
+    result = provider.refresh(["NVDA"])
+
+    assert result["watched_pending_filings"] == 1
+    assert result["watched_read_through"] == "2026-09-01"
+    assert provider.read_through_date() == "2026-09-01"
+
+
+def test_combined_provider_freshness_is_fail_closed_on_a_subprovider_error():
+    class _Bad:
+        def form4_freshness(self, symbols=None):
+            raise RuntimeError("EDGAR unreachable")
+
+    combined = CombinedSmartMoneyProvider.__new__(CombinedSmartMoneyProvider)
+    combined.providers = [_Bad()]
+    verdict = combined.form4_freshness(["NVDA"])
+    assert verdict["ok"] is False
+
+
+def test_pre_open_check_alerts_before_the_day_is_lost(monkeypatch):
+    """`refresh` always computed these numbers; the pipeline only logged
+    them. A returned value nobody catches is a check that does not exist —
+    on 2026-09-18 the first anyone knew was six lost decision windows later.
+    """
+    import src.notifier as notifier
+    from src.pipeline import TradingPipeline
+    from src.util.time import et_today
+
+    sent: list[str] = []
+    monkeypatch.setattr(notifier, "send_owner_alert", lambda text: sent.append(text))
+    check = TradingPipeline._alert_form4_backlog_before_open.__get__(object())
+
+    # Clean morning: silence.
+    check({
+        "watched_read_through": et_today().isoformat(),
+        "watched_pending_filings": 0, "watched_unchecked_names": [],
+        "discovery_cap_reached": False,
+    })
+    assert sent == []
+
+    # The 2026-09-18 shape: cap bound, watched filings unread, watermark stale.
+    check({
+        "watched_read_through": "2026-09-17",
+        "watched_pending_filings": 4, "watched_unchecked_names": [],
+        "discovery_cap_reached": True,
+    })
+    assert len(sent) == 1
+    text = sent[0]
+    # Plain words: the owner is not a developer and must be able to act on it.
+    assert "will not make a new trading decision" in text
+    for jargon in ("Form 4", "accession", "watermark", "EDGAR", "peek", "cap"):
+        assert jargon not in text, f"{jargon!r} is not plain language"

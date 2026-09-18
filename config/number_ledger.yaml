@@ -886,17 +886,37 @@ numbers:
       recorded anywhere: not read off SEC filing volume, not measured
       against the refresh deadline. NO VALUE WAS CHANGED here -- re-deriving
       it needs a source for daily Form 4 volume.
+      UPDATE 2026-09-18 (second pass). This cap no longer decides whether
+      the desk trades. The watched residue is now drained by a separate
+      pass bounded by the desk's OWN ~100 names rather than by market-wide
+      filing volume, and the insider seat's freshness is measured against
+      what was FILED since the last confirmed read, not against what is
+      unread. The cap now bounds only how much of the wider market's Form 4
+      stream is read for external candidate nomination. The status stays
+      `arbitrary` because the value is still an undderived round 1,000.
+      MEASUREMENT, partial and recorded as such: SEC's daily index for
+      2026-09-17 listed 1,457 Form 4 filer rows and 2026-09-16 listed
+      1,277 (fetched directly from
+      /Archives/edgar/daily-index/2026/QTR3/form.<date>.idx, 2026-09-18).
+      Those are FILER rows, and one Form 4 produces one row per filer
+      (issuer plus each reporting owner), so the distinct-accession count
+      per day is materially lower than those figures and was NOT
+      established -- a follow-up attempt to count distinct accessions was
+      rate-limited (HTTP 403) by SEC and is not reported here as a number.
+      Do not treat 1,457 as a per-day accession count. `_discover` now
+      records EDGAR's own per-day total (`busiest_day_total`, read from
+      `hits.total.value`, which was previously fetched and discarded) so
+      the cap can be read off the instrument on a later pass.
     open_question: >-
-      How many Form 4 filings does one pre-market refresh have to read for
-      the unread residue on watched names to be zero -- measured against
-      actual daily EDGAR ownership-filing volume and the refresh deadline,
-      not chosen?
+      How many DISTINCT Form 4 accessions are filed on a busy day, and what
+      cap does that imply for market-wide reading -- read off
+      `busiest_day_total`, now recorded, rather than chosen?
     cost_while_unanswered: >-
-      Set too low, the desk carries an unread backlog it cannot drain until
-      the next morning; every unread filing on a watched name expires the
-      insider seat and the gate refuses the decision on roughly thirteen
-      opportunity ticks that day. Set too high, the refresh exceeds its
-      deadline and reads nothing at all.
+      Set too low, the desk reads less of the wider market's insider flow
+      than it could, so external candidate nomination sees fewer names.
+      Since 2026-09-18 this no longer starves the desk's own names or
+      refuses decisions: the watched drain covers those separately. Set too
+      high, the refresh exceeds its deadline and reads less, not more.
   - id: src.config.SmartMoneyConfig.max_observations
     value: 40
     status: arbitrary
@@ -999,13 +1019,37 @@ numbers:
       gap.
   - id: src.config.SmartMoneyConfig.refresh_deadline_s
     value: 180
-    status: not-trade-governing
+    status: arbitrary
     site: src/config.py
     note: >-
-      Network deadline, timeout, poll interval or fetch batch cap. It decides
-      how long the desk waits or how much it fetches, never whether or how
-      much to trade. A wrong value degrades data availability, which is a
-      separate failure the seats already see as missing evidence.
+      CORRECTION 2026-09-18. This entry read `not-trade-governing`, with the
+      note "it decides how long the desk waits or how much it fetches, never
+      whether or how much to trade" -- the identical sentence corrected as
+      falsified for `max_filings_per_refresh` in this same file on this same
+      day, and it was falsified here too. Until this change the intraday
+      research-freshness check ran a live 366-day EDGAR full-text crawl
+      INSIDE the decision tick, and this deadline was what that crawl ran
+      out of; measured on the live desk 2026-09-18, the check went from
+      39.6s to 180.3s and hit the deadline on three ticks. A deadline that
+      decides whether the tick decides is trade-governing.
+      The freshness check no longer runs that crawl -- it reads each watched
+      issuer's own filing history instead -- so this deadline no longer
+      gates a decision. It still bounds the pre-market refresh and its
+      watched-name drain, and the drain failing to finish is what withholds
+      the watermark and refuses the day's ticks, so it is NOT demoted back
+      to not-trade-governing. The value itself is a round 180 with no
+      derivation recorded anywhere. NO VALUE WAS CHANGED here.
+    open_question: >-
+      What is the right network budget for one pre-market refresh plus a
+      watched-name drain -- read off the measured time to read the desk's
+      own residue, not chosen? Note this is a budget belonging to the
+      caller, so it must NOT be derived from EDGAR filing volume; that
+      would make a property of the market decide how long the desk waits.
+    cost_while_unanswered: >-
+      Set too low, the pre-market drain cannot finish, the watermark does
+      not advance, and the pre-open check reports that the desk will refuse
+      to decide all day. Set too high, a stuck SEC endpoint delays the
+      pre-market path by up to this many seconds per refresh.
   - id: src.config.SmartMoneyConfig.request_timeout_s
     value: 15
     status: not-trade-governing
