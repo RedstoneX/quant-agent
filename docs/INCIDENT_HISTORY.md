@@ -22,6 +22,30 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — the written briefs that tell the trade-picking seats the desk's rules had seventeen statements in them that were no longer true (items 98 and 104 collapsed)
+
+**What broke, in one line:** the three seats that actually pick and size trades are each handed a brief, in plain English, describing the desk's own rules — and seventeen of those statements described machinery that had been changed or deleted underneath them, eight of which could change which trade happened or how big it was.
+
+**The cause was structural, not careless.** Nothing tied the English in a brief to the code it describes, so the prose rotted silently every time a mechanism was retired. The worst two cases were not even in a prompt file: they were strings the Python assembled at run time, which is why no file scan would have found them.
+
+**What shipped.** A prompt-drift check, and corrections to all three briefs: the retired seat-counting sizing ladder (only the refusal survives), the sector figure now rendered from the live config as a target plus a separate hard block rather than one flat wall, the sizing formula that multiplied by a term deleted 2026-09-01, the risk manager briefed on the wrong sizing quantity, a reward:risk floor described as required after it was abolished, an exit phrase the executor had silently stopped recognising, and a "None%" that read to a model as a number. The macro-counts-toward-agreement contradiction was stated honestly in the brief and flagged as disputed; the counting rule itself was deliberately left alone, because changing it moves trades — that question survives as item 109(a). The entry-thesis lookup that searched only today's trades, so any position opened earlier was judged with no thesis at all, was fixed separately by reusing the existing unrestricted "most recent opening row" query the evening context and the cockpit already used.
+
+**Why the same finding occupied two board numbers.** Two agents audited the same prompts in parallel on the same day and filed it twice, as items 98 and 104. They were diffed against each other before collapsing: 104 named one defect 98 did not, and that one defect is unfixed and survives as item 98.
+
+**What would catch it next time.** Search the prompts and the assembled strings for a mechanism's name at the moment that mechanism is deleted. The drift check cannot see a claim about machinery that was never built, which is what item 108 is.
+
+---
+
+### 2026-09-18 — the invented reward:risk thresholds turned out to already be switched off, and the dashboard and reports were rebuilt to the owner's own written specs (items 81 and 106 closed)
+
+**What broke, in one line:** two long-running worries were both checked to the bottom and both came back smaller than feared — the made-up reward:risk cut-offs are no longer wired to anything, and the three pieces of interface work the owner specified in his own words have all landed.
+
+**The reward:risk inventory (item 81).** Every live reward:risk number was traced to its call sites. The `1.5` floor keys are inert — nothing compares a ticket against them to refuse it or shrink it, and the one function that receives the value explicitly discards it. The real per-trade ratio is live, but only as an ordering signal for range setups; it never gates and never sizes, and breakout setups are exempt from the measurement entirely. The documentation around the number was the actual defect: a code comment, a matching number-ledger note and one line in `docs/OUTCOME.md` all still asserted that the number rejected trades. All three were corrected and no live number's value changed. Nothing about this ever needed an owner decision, despite the item's heading saying for a fortnight that it did. What is left is tidying, and it stays named on the board rather than being written off here.
+
+**The interface specs (item 106).** All three landed: panels own their own scrolling rather than inheriting it from where they sit on the screen; the "why do we hold this" view shows one plain sentence with the real reason and real numbers, with the machine identifiers behind a single toggle; and the evening report leads with today's and total P&L, states the AI spend in words instead of a row of zeros, drops the run identifiers and provider counts that carried no action, and stays silent about the overnight fractional remainder in the state the design produces every night. The requirement the owner asked for by name — when the reason to hold rests on an insider or institutional purchase, show that purchase's date and price — is on screen twice over: the insider's dates and average price in the smart-money lede, and the desk's own entry date, fill price and quantity in a purchase block, with the fill price preferred over the order price and the two distinguished in words because they differ. The one screen still printing raw machine evidence is the run-detail popup, which is item 115 and was split out deliberately so it would not be audited away as a duplicate.
+
+---
+
 ### 2026-09-18 — the gross-exposure de-lever does cancel stops to sell (it has to), the recovery around it is complete, and it has never fired (item 87 closed)
 
 **What broke, in one line:** nothing did — item 87 asked whether the desk's automatic de-lever cancels protective stop-losses in order to sell, because that is the exact flaw that got the daily-loss liquidation deleted on 2026-09-14. It does cancel them, but the cancel is mandatory (a resting stop holds the whole position, so the broker would reject the sell outright) and the recovery around it is complete, unlike the deleted liquidator.
