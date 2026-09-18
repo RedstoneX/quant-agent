@@ -1136,8 +1136,11 @@ def test_empty_morning_carry_forward_skips_the_intraday_pm(
     p.risk_stage.run.assert_not_called()
     p.execution_stage.run.assert_not_called()
     write_status.assert_not_called()
-    mock_alert.assert_called_once()
-    assert "DECISION SKIPPED" in mock_alert.call_args[0][0]
+    # 2026-09-18: no standalone alert on the intraday path any more — the
+    # tick's own message carries the skip, and firing both sent the owner
+    # the same event twice a minute apart. The skip itself is unchanged and
+    # still reaches him; see tests/test_evidence_gate.py for both halves.
+    mock_alert.assert_not_called()
 
 
 @patch("src.pipeline.compute_indicators")

@@ -1128,7 +1128,7 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     assert "VST (Vistra Corp)" in msg
     assert "Blocked by the desk — insufficient cash: funding sale pending" in msg
     assert "<b>👀 LOOKED AT, NO TRADE</b>" in msg
-    assert "AVGO NEUTRAL/low — PM passed" in msg
+    assert "AVGO NEUTRAL/low — not traded — the desk did not record why" in msg
 
     # --- PM view label, PM's own text untouched, inside DETAILS ---
     assert "<b>DETAILS</b>" in msg
@@ -1808,9 +1808,11 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
 
     # --- CHPX/OKLO/RKLB: analyzed and passed, not silently dropped ---
     looked_section = msg[looked_idx:details_idx]
-    assert "CHPX (Global X AI Semiconductor ETF) BUY/medium — PM passed" in looked_section
-    assert "OKLO (Oklo Inc) BUY/medium — PM passed" in looked_section
-    assert "RKLB (Rocket Lab) BUY/medium — PM passed" in looked_section
+    # No HOLD row was recorded for any of the three in this fixture, so the
+    # line says that in words rather than ending in "no reason recorded".
+    assert "CHPX (Global X AI Semiconductor ETF) BUY/medium — not traded" in looked_section
+    assert "OKLO (Oklo Inc) BUY/medium — not traded" in looked_section
+    assert "RKLB (Rocket Lab) BUY/medium — not traded" in looked_section
 
     # --- DETAILS: the full existing per-stock reasoning, unchanged,
     # collapsed behind a real Telegram HTML expandable blockquote ---
@@ -2292,7 +2294,7 @@ def test_looked_at_carries_the_pm_reason_or_says_none_recorded(tmp_path, monkeyp
             "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
         )
     assert "OKLO (Oklo Inc) BUY/medium — PM passed — Extended after a 30% run." in msg
-    assert "RKLB (Rocket Lab) BUY/medium — PM passed — no reason recorded" in msg
+    assert "RKLB (Rocket Lab) BUY/medium — not traded — the desk did not record why" in msg
     # The reward figure carries its unit.
     assert "reward 1.8× the risk" in msg
     assert "R/R 1.8" not in msg
@@ -2325,3 +2327,64 @@ def test_company_names_are_not_cut_off_after_the_twelfth_name(tmp_path, monkeypa
         msg = trader_feed.format_session_result("close", result, 1.0)
     for sym in symbols:
         assert f"{sym} (Company {sym})" in msg
+
+
+def test_intraday_skip_banner_carries_no_machine_text(tmp_path, monkeypatch):
+    """Defects 2-4 on the intraday tick, from the real 2026-09-18 11:19 ET
+    payload: the machine reason was printed verbatim directly beneath a
+    plain sentence that already said the same thing."""
+    _make_db(tmp_path, monkeypatch)
+    outer = {
+        "status": "ok", "run_id": "intra_check-cfb08f1c", "daily_pnl": -148.62,
+        "intraday_scan": {
+            "status": "evidence_gate_skip",
+            "run_id": "intra_check-cfb08f1c",
+            "data_status": {
+                "tech": "ok", "macro": "carried_from_morning", "news": "ok",
+                "earnings": "carried_from_morning", "smart_money": "expired",
+            },
+            "lost_seats": ["smart_money"],
+            "reason": (
+                "decision skipped: 1 seat(s) were asked and their answer "
+                "never arrived — smart_money=expired. A decision resting on "
+                "an answer the desk never received is not a degraded "
+                "decision, it is a fabricated one (docs/WORK.md item 20)."
+            ),
+            "candidates": ["MP"],
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 253.0)
+    assert msg is not None
+    assert "DECISION SKIPPED" in msg
+    for banned in ("docs/WORK.md", "item 20", "smart_money", "seat(s)",
+                   "=expired", "intra_check-cfb08f1c"):
+        assert banned not in msg, f"intraday message still contains {banned!r}"
+    assert "the insider-and-congressional-trading feed" in msg
+    banner = [ln for ln in msg.split("\n") if ln.startswith("🟡")][0]
+    assert banner == "🟡 <b>DECISION SKIPPED — NOTHING WAS TRADED</b>"
+
+
+def test_looked_at_says_a_missing_reason_in_words(tmp_path, monkeypatch):
+    """`PM passed — no reason recorded` read as a status code."""
+    _make_db(tmp_path, monkeypatch)
+    lines: list[str] = []
+    trader_feed._append_looked_at(
+        lines,
+        [{"symbol": "MP", "rating": "neutral", "conviction": "low"}],
+        {}, None,
+    )
+    body = "\n".join(lines)
+    assert "no reason recorded" not in body
+    assert "the desk did not record why" in body
+
+
+def test_no_trade_fallback_avoids_internal_phrasing(tmp_path, monkeypatch):
+    """`detailed PM evidence unavailable` is internal phrasing."""
+    _make_db(tmp_path, monkeypatch)
+    lines: list[str] = []
+    trader_feed._append_gate_and_execution(
+        lines, {"status": "ok"}, trader_feed._empty_snapshot(),
+    )
+    body = "\n".join(lines)
+    assert "detailed PM evidence unavailable" not in body
+    assert "nothing was bought or sold" in body

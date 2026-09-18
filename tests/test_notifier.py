@@ -1900,7 +1900,10 @@ def test_bad_data_status_fires_a_standalone_alert():
     body = alert.call_args.args[0]
     assert "DATA QUALITY ALERT" in body
     assert "smart_money=truncated" in body
-    assert "run-abc123" in body
+    # 2026-09-18: board item 89's run-identifier removal, finished for this
+    # alert. A run id is a database key with nothing the owner can do about
+    # it; it stays in the log line and every stored row.
+    assert "run-abc123" not in body
     assert "morning" in body
 
 
