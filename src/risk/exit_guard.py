@@ -18,7 +18,9 @@ right here.
 
 Directionality matters and is the whole point:
   - `thesis_progress_pct` rising is improvement.
-  - `distance_to_stop_pct` rising is improvement (further from the stop).
+  - `distance_to_stop_pct` rising is improvement (further from the stop),
+    on EITHER side — see `veto_contradicted_exit`'s docstring for the
+    2026-09-18 fix that made this actually true for a short.
   - `r_multiple` rising is improvement.
   - `pace` rising is improvement.
 A verdict may not call a position stalled while its own measured deltas are
@@ -213,10 +215,28 @@ def veto_contradicted_exit(
     new information, which the reviewer keeps full authority to make (spec
     Phase 3.8).
 
-    `deltas` is trusted to already be direction-corrected for a short (see
-    `TradingPipeline._build_position_facts` / `_pnl_pct` — every metric here
-    is "higher is better" regardless of which side is held), so COVER needs
-    no separate sign handling in this function.
+    `deltas` is trusted to already be direction-corrected for a short, so
+    COVER needs no separate sign handling in this function. Verified
+    per-metric, 2026-09-18 (each is computed in
+    `TradingPipeline._build_position_facts` unless noted):
+      - `thesis_progress_pct` — side-correct by construction: both
+        `(cur - entry)` and `(progress_target - entry)` flip sign together
+        for a short, so the ratio is unchanged.
+      - `pace` — inherits `thesis_progress_pct`'s correctness; the
+        denominator (`time_fraction`) is never signed.
+      - `r_multiple` — side-correct by construction (`src/risk/metrics.py
+        ::r_multiple` takes `qty`'s sign as the side and mirrors both the
+        numerator and the risk-per-share denominator for a short).
+      - `distance_to_stop_pct` — was NOT side-correct until 2026-09-18: it
+        was computed as `(cur - stop_loss) / cur * 100` regardless of side,
+        which is correct for a long (stop below price) but for a short
+        (stop above price) is negative and moves the WRONG way — it gets
+        MORE negative, i.e. reads as "worse" under `_HIGHER_IS_BETTER`, as
+        the price moves further from the stop and the position gets safer.
+        Fixed by mirroring the numerator for `qty < 0`. Any snapshot
+        written before that fix still has old-formula (mis-signed for
+        shorts) values, so a delta spanning that boundary is stale, not
+        wrong — it self-heals after one review cycle.
     """
     if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
         return None

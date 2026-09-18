@@ -12107,10 +12107,24 @@ class TradingPipeline:
                         pace_status = "measured"
 
             # Distance-to-stop / distance-to-target as % of current price.
+            #
+            # `distance_to_stop_pct` MUST be side-aware. A LONG's stop sits
+            # BELOW price, so `(cur - stop_loss)` is the room left and is
+            # positive while the position is alive. A SHORT's stop sits
+            # ABOVE price, so that same expression is NEGATIVE, and it moves
+            # the WRONG way: it gets MORE negative (looks worse under
+            # `_HIGHER_IS_BETTER`) as the price falls further from the stop
+            # — i.e. as the position gets safer. Mirror the numerator for a
+            # short (`p.qty < 0`) so the metric means the same thing on both
+            # sides: positive, and falling as the stop gets closer. See
+            # `src/risk/exit_guard.py::_HIGHER_IS_BETTER`, which trusts this
+            # value to already be direction-corrected.
             dist_stop_pct = None
             dist_target_pct = None
             if stop_loss and cur > 0:
-                dist_stop_pct = (cur - stop_loss) / cur * 100
+                dist_stop_pct = (
+                    (stop_loss - cur) if p.qty < 0 else (cur - stop_loss)
+                ) / cur * 100
             if take_profit and cur > 0:
                 dist_target_pct = (take_profit - cur) / cur * 100
 
