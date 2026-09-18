@@ -2,8 +2,11 @@
 # and its rotations on 2026-09-18. Nothing here is fabricated. Timestamps, tickers,
 # counts and broker payloads are exactly as the desk wrote them. Lines beginning
 # with '#' are this header only — the parser ignores anything that is not a log line.
+## Macro Data Coverage
 2026-08-21 17:00:43,689 [WARNING] src.data.news: Feed Reuters Business fetch failed: HTTP Error 404: Not Found
 2026-08-21 17:00:44,598 [WARNING] src.data.news: Feed AP Business fetch failed: HTTP Error 403: Forbidden
+2026-08-28 19:30:44,718 [WARNING] src.data.news: Feed Reuters Business fetch failed: HTTP Error 404: Not Found
+2026-08-28 19:30:45,514 [WARNING] src.data.news: Feed AP Business fetch failed: HTTP Error 403: Forbidden
 2026-08-31 19:20:26,026 [ERROR] yfinance: HTTP Error 404: Not Found{"quoteSummary":{"result":null,"error":{"code":"Not Found","description":"No fundamentals data found for symbol: XLE"}}}
 2026-08-31 19:30:59,991 [WARNING] src.agents.news_analyst: News analyst: dropping malformed stock_news entry under DIA (Stocks fall after U.S. strikes Iran, but Wall Street heads for winning month: Li): 1 validation error for StockNewsItem
 2026-08-31 21:29:22,603 [WARNING] src.agents.evening_analyst: Evening analyst: dropping malformed buy_grades entry for RSG: 1 validation error for BuyGrade
@@ -16,18 +19,29 @@
 2026-09-16 13:30:44,880 [ERROR] src.execution.stop_repair: coverage repair FAILED for BRK-B (0.4393 uncovered, stop $501.06) — retries exhausted or broker did not accept an order id
 2026-09-16 13:30:45,350 [ERROR] src.execution.stop_records: STOP RECORD MISMATCH: COP — recorded BUY stop_loss $125.2100 != broker stop $131.7600 (short=False)
 2026-09-16 17:05:09,749 [WARNING] src.agents.base: Agent position_reviewer attempt 1 failed: Upstream idle timeout exceeded. Retrying in 1.9s...
+2026-09-17 13:36:39,805 [INFO] src.pipeline: [intra_check] Earnings: 71 cached analyses, 0 unanalyzed placeholders
 2026-09-17 14:01:16,987 [WARNING] src.portfolio_constructor: Constructor: BUY DRAM refused [insufficient_history] — only 115 completed session(s) of history against the 200-session window the analyst's own trend reference needs. Too young to measure, not a judgement about the chart: the name qualifies the day it has the history.
 2026-09-17 14:02:10,590 [WARNING] src.agents.base: Agent portfolio_manager: provider-reported cost $0.11 differs from the pinned-rate estimate $0.30 (0.37x) for openai/gpt-5.5 — the reported figure is authoritative and is what was recorded, but the pinned rate for this model no longer reflects the endpoint serving it.
+2026-09-17 14:20:54,917 [INFO] src.agents.base: Agent macro_analyst input:
+Macro coverage: 15/15 FRED series returned data. Full coverage.
 2026-09-17 14:23:34,521 [WARNING] src.pipeline_stages: Macro event calendar PARTIAL this run: Macro event calendar: 1/7 release schedules returned this run. FAILED: CPI (no_scheduled_dates_published), Employment Situation (NFP) (no_scheduled_dates_published), PPI (no_scheduled_dates_published), Personal Income and Outlays (PCE) (no_scheduled_dates_published), GDP (no_scheduled_dates_published), Retail Sales (advance) (no_scheduled_dates_published). Treat this as a coverage GAP, not a confirmed empty calendar — a release whose schedule did not fetch is not a release that isn't happening.
 2026-09-17 14:23:42,284 [ERROR] src.pipeline_stages: Morning research degraded: tech | full status={'smart_money': 'ok', 'macro': 'ok', 'news': 'ok', 'tech': 'low_confidence', 'earnings': 'ok'}
 2026-09-17 14:24:54,216 [WARNING] src.execution.broker: trade_updates websocket handshake failed (status=unknown, attempt 1); reconnect in 0.8s
 2026-09-17 14:24:55,048 [ERROR] alpaca.trading.stream: error during websocket communication: failed to authenticate
 2026-09-17 14:26:39,464 [WARNING] src.pipeline_stages: BUY BRK-B NOT SUBMITTED — the displayed offer has run beyond the slippage ceiling after a desk-caused stall; latency blew the window. Ask $545.7900 is 669.2bp above the $511.5550 reference; the 40bp ceiling is $513.6012. (Quote is IEX, not NBBO, so it may also simply be a stale venue print — either way, not a book to cross blind.)
+2026-09-17 14:30:43,599 [INFO] src.execution.broker: get_current_stop_price: RSG carries 2 sell-stops [213.33, 213.33] — reporting the highest (first to trigger on the way down)
+2026-09-17 14:31:12,811 [ERROR] src.agents.tech_analyst: Tech batch: 3 symbol(s) unresolved after retry — recording an explicit failed outcome (never silently dropped): ['ETN', 'ORCL', 'SQQQ']
 2026-09-17 17:02:49,343 [WARNING] src.data.macro: FRED fetch deadline exceeded before attempt 2/3 for T10YIE — degrading now
 2026-09-17 17:05:30,362 [ERROR] src.pipeline: SELL_SHORT FLNC: broker returned no order id (payload={'id': None, 'status': 'rejected_outlier', 'symbol': 'FLNC'}) — skipping audit
+2026-09-17 17:05:30,362 [ERROR] src.execution.broker: Fat-finger guard: SELL_SHORT FLNC — stop_loss_price=$9.6600 deviates 24.1% from reference $7.79. Order REJECTED (likely data glitch or LLM hallucination).
+2026-09-17 19:04:21,988 [INFO] src.execution.broker: entry protection: [DAY fractional] sell stop-limit placed for NET qty=0.4785 @ stop $294.76
+2026-09-18 00:00:43,904 [WARNING] src.pipeline: OVERNIGHT FRACTIONAL EXPOSURE: 9 position(s) carrying a sub-share remainder with no live stop until the next session — $1285.92 total at risk. Expected and bounded by design; the whole-share part of each is still covered by its GTC stop.
 2026-09-18 00:02:51,058 [WARNING] src.data.market: yfinance returned 1 row(s) with NaN OHLCV for SPY — dropped; 7 clean rows remain
 2026-09-18 13:00:40,930 [CRITICAL] src.notifier: OWNER ALERT
 Placeholder trading credential in use (reported once a day while this stays true). The desk's alpaca_key is not a real trading credential — it contains the word 'placeholder', which is what a fill-this-in stand-in looks like. Anything that needs the broker to authenticate the desk itself will fail, including the live fill websocket. The desk's alpaca_secret is not a real trading credential — it contains the word 'placeholder', which is what a fill-this-in stand-in looks like. Anything that needs the broker to authenticate the desk itself will fail, including the live fill websocket.
+2026-09-18 13:00:40,930 [ERROR] __main__: PLACEHOLDER CREDENTIAL — The desk's alpaca_key is not a real trading credential — it contains the word 'placeholder', which is what a fill-this-in stand-in looks like. Anything that needs the broker to authenticate the desk itself will fail, including the live fill websocket.
 2026-09-18 13:30:44,375 [WARNING] src.pipeline: FRACTIONAL STOP MISSING DURING SESSION HOURS: AAPL held=9.7630, 9.0000 covered — the sub-share DAY stop is absent while the market is OPEN, which is a placement failure, not the expected overnight lapse. Repairing.
+2026-09-18 13:30:44,543 [WARNING] src.execution.stop_repair: COVERAGE REPAIRED: AAPL — placed protective sell stop-limit coverage for 0.7630 uncovered share(s) at the recorded BUY stop $315.85 (GTC over the whole shares, DAY over any sub-share remainder)
+2026-09-18 13:30:44,543 [INFO] src.pipeline: FRACTIONAL DAY STOP RE-PLACED: AAPL — the sub-share remainder is covered again for this session.
 2026-09-18 13:47:27,710 [ERROR] src.pipeline: EVIDENCE GATE — decision skipped: 2 seat(s) were asked and their answer never arrived — news=expired, smart_money=expired. A decision resting on an answer the desk never received is not a degraded decision, it is a fabricated one (docs/WORK.md item 20).
 2026-09-18 14:17:37,893 [ERROR] src.pipeline: EVIDENCE GATE — decision skipped: 2 seat(s) were asked and their answer never arrived — news=expired, smart_money=expired. A decision resting on an answer the desk never received is not a degraded decision, it is a fabricated one (docs/WORK.md item 20).

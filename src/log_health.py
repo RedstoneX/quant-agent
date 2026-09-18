@@ -56,6 +56,29 @@ serious findings in the first message, the rest in a second — rather than
 dropping a real fault to fit, which would reproduce the exact "looks quiet but
 is not" failure the report exists to prevent.
 
+A FALSE ALARM IS NOT A SMALL ERROR. The first version of this module shipped
+three, all found by reading its matched lines against the log by hand:
+
+  * it counted the macro seat's own prompt — an INFO line stating FULL data
+    coverage — as an economics failure, because the words matched;
+  * it told the owner his broker credentials were a fill-this-in stand-in,
+    in the present tense, from an alarm that fired three minutes before he
+    wrote the real keys and eleven minutes before the desk placed real orders
+    with them;
+  * it made "thirteen holdings left without their safety net" the headline of
+    a morning on which nine sub-share stops went missing and every one was
+    repaired, seven of them within the same second.
+
+Three rules came out of that, and they are why this module is shaped as it is.
+First, a REPORTABLE family only matches a line the desk itself logged as
+WARNING or worse: text alone is not evidence that something went wrong.
+Second, a family can name the thing it is ABOUT and the lines that CANCEL it,
+so a fault repaired inside the window is not reported — matched per holding,
+because seven repairs out of nine is two still open, not none. Third, every
+bullet says when the fault last happened and never asserts a present state,
+because a log line is evidence about a moment and several of these alarms are
+rate-limited to once a day, which makes their absence meaningless too.
+
 FAIL-CLOSED. Matching log text with regular expressions is matching against an
 interface that can change wording without warning; a renamed message would
 silently stop being counted and the report would read healthy. So every ERROR
@@ -152,6 +175,16 @@ class FaultFamily:
     #: across the whole retained log history so the bullet can state a
     #: measured duration instead of an impression.
     measure_duration: bool = False
+    #: Captures the thing the fault is ABOUT (a ticker), so a fault and its
+    #: repair can be matched up per holding instead of in bulk. Without it,
+    #: nine stops missing and seven repaired reads as nine unprotected
+    #: holdings, which is how the first version of this report told the owner
+    #: a self-healed morning was the worst thing that happened to him.
+    subject: re.Pattern[str] | None = None
+    #: Lines that CANCEL an occurrence. An occurrence whose subject is
+    #: resolved later in the window is not reported — the desk fixed it, and
+    #: a fixed fault reported as current is a false alarm.
+    resolved_by: tuple[re.Pattern[str], ...] = ()
 
 
 def _p(*patterns: str) -> tuple[re.Pattern[str], ...]:
@@ -195,10 +228,18 @@ FAMILIES: tuple[FaultFamily, ...] = (
             "answer it got back, so it judged without them"
         ),
         reason=COST_A_DECISION,
+        # ONLY the lines that record a name the desk gave up on. The seat
+        # reports a missing name THREE times on its way through a retry —
+        # once when the first answer came back short, once when a
+        # consolidated recovery is launched, and once if the name is still
+        # missing afterwards — and only the last of those is a loss. On
+        # 2026-09-18 ten names went missing and every one came back on the
+        # recovery ("0 remain explicit failures"); counting the first line
+        # would have reported ten companies judged blind on a day none were.
         patterns=_p(
-            r"missing-from-response=\[(?!\])",
+            r"unresolved after retry",
+            r"[1-9]\d* remain explicit failures",
             r"dropping malformed \w+ entry",
-            r"Tech batch incomplete across",
         ),
     ),
     FaultFamily(
@@ -218,20 +259,64 @@ FAMILIES: tuple[FaultFamily, ...] = (
     ),
     FaultFamily(
         key="stop_missing_or_failed",
-        short_name="holdings left without their safety net",
+        short_name="holdings still without their safety net",
         sentence=(
-            "A holding was left without the safety net that limits its loss on "
-            "{n} occasion{plural}"
+            "The window ended with {n} holding{plural} still missing the "
+            "safety net that limits a loss"
         ),
         reason=MONEY_UNPROTECTED,
+        # ONLY a gap that is still open when the window closes. On 2026-09-18
+        # the desk found nine sub-share stops missing at 09:30 ET, repaired
+        # seven within the same second and the eighth fifteen minutes later;
+        # the ninth was covered by an existing whole-share stop. Reporting
+        # that as nine unprotected holdings — which the first version of this
+        # module did, and made its headline — is not a smaller error than
+        # missing a real one. It is the same error: telling the owner
+        # something about his money that is not true.
         patterns=_p(
             r"FRACTIONAL STOP MISSING",
             r"FRACTIONAL STOP RE-PLACEMENT FAILED",
-            r"OVERNIGHT FRACTIONAL EXPOSURE",
             r"protective stop.*FAILED for",
             r"coverage repair FAILED",
             r"STOP RECORD MISMATCH",
         ),
+        subject=re.compile(
+            r"(?:MISSING DURING SESSION HOURS|RE-PLACEMENT FAILED for|"
+            r"FAILED for|repair FAILED for|MISMATCH):? ([A-Z][A-Z.-]{0,5})"
+        ),
+        # Three kinds of proof that the gap closed, all of them the desk's
+        # own words: the repair reporting success, the session confirming the
+        # sub-share leg is back, and — the one that matters most — a later
+        # read of the BROKER saying the holding carries stops. Without that
+        # third line, RSG read as unprotected all day on 2026-09-18 although
+        # the broker was holding two stops against it fifteen minutes later.
+        # Caveat, stated rather than hidden: the broker read counts stops on
+        # the holding, not specifically on the sub-share remainder, so it is
+        # good evidence rather than proof.
+        resolved_by=_p(
+            r"COVERAGE REPAIRED: ([A-Z][A-Z.-]{0,5})",
+            r"FRACTIONAL DAY STOP RE-PLACED: ([A-Z][A-Z.-]{0,5})",
+            r"get_current_stop_price: ([A-Z][A-Z.-]{0,5}) carries [1-9]",
+        ),
+        board_item=127,
+    ),
+    FaultFamily(
+        key="overnight_fractional_exposure",
+        short_name="sub-share remainders carrying no stop overnight",
+        sentence=(
+            "{n} holding{plural} went through the night with a sub-share "
+            "remainder no safety net can cover, because the broker will not "
+            "hold one overnight"
+        ),
+        reason=MONEY_UNPROTECTED,
+        # Real, unbounded, and NOT a bug: the broker refuses an overnight stop
+        # on a part-share, so this is a standing constraint rather than a
+        # failure. It is still money with no floor under it, so it is
+        # reported — but only while it is TRUE. Once the next session repairs
+        # the coverage it is resolved and drops out, which is why a report
+        # before the open carries it and a report after the close does not.
+        patterns=_p(r"OVERNIGHT FRACTIONAL EXPOSURE"),
+        resolved_by=_p(r"COVERAGE REPAIRED:"),
         board_item=127,
     ),
     FaultFamily(
@@ -254,26 +339,39 @@ FAMILIES: tuple[FaultFamily, ...] = (
     FaultFamily(
         key="broker_not_sure_who_we_are",
         short_name="the broker unable to confirm who the desk is",
+        # PAST TENSE, deliberately, and it is not a style choice. This alarm
+        # is rate-limited to once a day, so a log line saying it fired says
+        # nothing about whether it is still true — and on 2026-09-18 it fired
+        # at 09:00 ET, three minutes before the real keys were written, after
+        # which the desk placed three real orders a stand-in key could not
+        # have placed. The first version of this module read that line and
+        # told the owner, in the present tense, that his broker credentials
+        # were broken. Every bullet now carries when the fault last happened
+        # (see `_bullet`) instead of asserting a present state the log cannot
+        # support.
         sentence=(
-            "The broker cannot confirm who the desk is, because the desk is "
-            "still holding a fill-this-in stand-in instead of a real key"
+            "The desk found a fill-this-in stand-in where a real broker key "
+            "should be, and said so {n} time{plural}"
         ),
         reason=PROVIDER_REJECTED_US,
-        # Two lines for one condition — the startup check writes its own and
-        # the alerter writes the owner-facing copy. Both match here, and the
-        # sentence carries no count, so saying it twice cannot inflate anything.
+        # The specific alarm text, from the two places that raise it — NOT the
+        # word "placeholder", which also appears in a routine healthy line
+        # about earnings analyses ("0 unanalyzed placeholders", 26 times on
+        # 2026-09-18 alone) that has nothing to do with credentials.
         patterns=_p(r"Placeholder trading credential in use", r"PLACEHOLDER CREDENTIAL"),
-        board_item=86,
-    ),
-    FaultFamily(
-        key="broker_refused_an_order",
-        short_name="orders the broker refused",
-        sentence=("The broker refused {n} order{plural} the desk tried to place"),
-        reason=PROVIDER_REJECTED_US,
-        patterns=_p(
-            r"^Order failed for ",
-            r"broker returned no order id",
+        # A successful authenticated write to the broker AFTER the alarm is
+        # proof the key works now, and it is the only proof available: the
+        # alarm is rate-limited to once a day, so waiting for it to stop
+        # firing tells you nothing. On 2026-09-18 it fired at 09:00 ET, the
+        # owner wrote the real keys at 09:03 and 09:04, and the desk placed
+        # protective stops at the broker from 09:30 — which a stand-in key
+        # cannot do. Before this rule existed, that morning was reported to
+        # him as broken credentials.
+        resolved_by=_p(
+            r"entry protection:.* placed for",
+            r"COVERAGE REPAIRED:",
         ),
+        board_item=86,
     ),
     FaultFamily(
         key="news_source_dead",
@@ -297,7 +395,11 @@ FAMILIES: tuple[FaultFamily, ...] = (
         patterns=_p(
             r"FRED fetch deadline",
             r"Macro event calendar PARTIAL",
-            r"Macro coverage: \d+/\d+ FRED series",
+            # `FAILED:` is required. Without it this matched the macro seat's
+            # own PROMPT, which prints "Macro coverage: 15/15 FRED series
+            # returned data. Full coverage" — a healthy line, counted as a
+            # fault eight times in the retained logs before this was caught.
+            r"Macro coverage: \d+/\d+ FRED series.*FAILED:",
         ),
         board_item=119,
         measure_duration=True,
@@ -313,6 +415,25 @@ FAMILIES: tuple[FaultFamily, ...] = (
         patterns=(),  # populated by exclusion — see `analyse`
     ),
     # --- informational from here down: correct behaviour, never a bullet ----
+    FaultFamily(
+        key="order_blocked_by_a_rule",
+        short_name="orders a rule stopped before they reached the market",
+        sentence="{n} order{plural} was stopped by a rule before it was placed",
+        reason=HANDLED,
+        # Both kinds observed in the retained logs are rules doing their job,
+        # not faults: the broker refusing an order that would trade against
+        # the desk's own resting order, and the desk's own fat-finger guard
+        # refusing a stop price far off the reference. Neither cost a
+        # decision, neither left money unprotected, and neither is something
+        # to wake the owner for. An order failure of a kind NOT listed here
+        # still reaches him — it falls into the unrecognised bucket, which is
+        # the whole point of that bucket.
+        patterns=_p(
+            r"^Order failed for ",
+            r"broker returned no order id",
+            r"rejected_outlier",
+        ),
+    ),
     FaultFamily(
         key="desk_declined_to_trade",
         short_name="trades the desk chose not to make",
@@ -370,6 +491,11 @@ FAMILIES: tuple[FaultFamily, ...] = (
             r"COVERAGE REPAIRED",
             r"coverage repair: \S+ has no trade print",
             r"Agent \w+ attempt \d+ failed",
+            # A short first answer and the retry launched to fix it. The
+            # failure, if there is one, is logged separately when the retry
+            # gives up; see `names_dropped_from_answer`.
+            r"missing-from-response=\[",
+            r"Tech batch incomplete across",
         ),
     ),
 )
@@ -505,15 +631,73 @@ def _is_owner_alert_echo(record: LogRecord) -> bool:
     if record.source != "src.notifier" or not record.message.startswith("OWNER ALERT"):
         return False
     body = record.message.split("\n", 1)[1] if "\n" in record.message else ""
-    return classify(body) is not None
+    return classify(body, record.level) is not None
 
 
-def classify(message: str) -> FaultFamily | None:
+def classify(message: str, level: str | None = None) -> FaultFamily | None:
+    """Which family this line belongs to, if any.
+
+    `level` is not optional in practice — every caller inside this module
+    passes it — and it is what stops a reportable family firing on a healthy
+    line. A REPORTABLE family only ever matches a line the desk itself logged
+    as WARNING or worse. The defect that forced this: `Macro coverage: N/M
+    FRED series` also appears inside the macro seat's own prompt, at INFO,
+    stating FULL coverage, and was counted as a fault eight times. Text alone
+    is not evidence that something went wrong; the desk's own severity is.
+
+    Informational families keep matching at any level, because their whole
+    job is to account for ordinary lines so they do not fall into the
+    fail-closed bucket.
+    """
     for family in FAMILIES:
+        if (
+            family.reason is not None
+            and level is not None
+            and level not in _SERIOUS_LEVELS
+            and level != "WARNING"
+        ):
+            continue
         for pattern in family.patterns:
             if pattern.search(message):
                 return family
     return None
+
+
+def _subjects(pattern: re.Pattern[str] | None, message: str) -> set[str]:
+    """Every distinct thing (ticker) a line is about, via `pattern`'s group 1."""
+    if pattern is None:
+        return set()
+    return {m.group(1) for m in pattern.finditer(message)}
+
+
+def _resolved_subjects(
+    family: FaultFamily, records: list[LogRecord], after: datetime
+) -> set[str]:
+    out: set[str] = set()
+    for record in records:
+        if record.timestamp < after:
+            continue
+        for pattern in family.resolved_by:
+            for match in pattern.finditer(record.message):
+                out.add(match.group(1) if match.groups() else "")
+    return out
+
+
+def _is_resolved(
+    family: FaultFamily, record: LogRecord, records: list[LogRecord]
+) -> bool:
+    """Was this occurrence put right later in the same window?
+
+    Matched PER SUBJECT where the family names one — nine stops missing and
+    seven repaired is two still missing, not nine. Where the family names no
+    subject (the overnight sub-share exposure covers the whole book at once),
+    any later resolving line clears it.
+    """
+    subjects = _subjects(family.subject, record.message)
+    cleared = _resolved_subjects(family, records, record.timestamp)
+    if not subjects:
+        return bool(cleared)
+    return subjects.issubset(cleared)
 
 
 def analyse(
@@ -524,6 +708,7 @@ def analyse(
     previous: dict[str, int] | None = None,
 ) -> Report:
     findings: dict[str, Finding] = {}
+    resolved: dict[str, int] = {}
 
     def bump(family: FaultFamily, ts: datetime) -> None:
         finding = findings.get(family.key)
@@ -549,8 +734,14 @@ def analyse(
             # rather than disappearing, so a NEW kind of owner alert can never
             # be silently swallowed by this optimisation.
             continue
-        family = classify(record.message)
+        family = classify(record.message, record.level)
         if family is not None:
+            if family.resolved_by and _is_resolved(family, record, records):
+                # The desk found this and fixed it inside the window. A repair
+                # that worked is not a fault; carrying it as one is how a
+                # self-healed morning became a HURT verdict.
+                resolved[family.key] = resolved.get(family.key, 0) + 1
+                continue
             bump(family, record.timestamp)
         elif record.level in _SERIOUS_LEVELS:
             # Fail-closed: the desk itself called this a fault, and this module
@@ -579,7 +770,7 @@ def _first_occurrence(family: FaultFamily, log_dir: Path | None) -> datetime | N
     """
     for path in log_files(log_dir):
         for record in parse_records(path):
-            if classify(record.message) is family:
+            if classify(record.message, record.level) is family:
                 return record.timestamp
     return None
 
@@ -726,14 +917,36 @@ def _duration_words(since: datetime, now: datetime) -> str:
     return "since earlier today"
 
 
+def _time_words(moment: datetime) -> str:
+    stamp = moment.astimezone(OWNER_TZ).strftime("%-I:%M%p")
+    return stamp[:-2] + stamp[-2:].lower()
+
+
 def _bullet(
     finding: Finding, report: Report, on_board: set[int], in_tiers: set[int]
 ) -> str:
     sentence = finding.family.sentence.format(
         n=finding.count, plural=_plural(finding.count)
     )
-    if finding.family.measure_duration and finding.first_seen_ever:
+    # The duration clause earns its place only when the fault PREDATES this
+    # report — that is what makes "it has been like this since August" worth
+    # a phone screen. For something that started inside the window, the
+    # "last at" clause below already says everything the log supports.
+    if (
+        finding.family.measure_duration
+        and finding.first_seen_ever
+        and finding.first_seen_ever < report.window_start
+    ):
         sentence += f", {_duration_words(finding.first_seen_ever, report.window_end)}"
+    # WHEN IT LAST HAPPENED, on every bullet. A log line is evidence that
+    # something happened at a moment, never evidence that it is still true —
+    # and several of these alarms are rate-limited to once a day, so their
+    # absence proves nothing either. Stating the time is the only claim the
+    # log actually supports; asserting a present state from a past line is
+    # what told the owner his broker credentials were broken three minutes
+    # after he had fixed them.
+    if finding.last_seen:
+        sentence += f" (last at {_time_words(finding.last_seen)})"
     is_new = finding.family.key not in report.previous
     return f"• {sentence} — {disposition(finding, on_board, in_tiers, is_new)}."
 
