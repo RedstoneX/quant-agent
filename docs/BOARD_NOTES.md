@@ -329,11 +329,6 @@ decision at all.
 **Plain language —** When the book gets too big relative to the account, the desk automatically trims it. That is now the only thing on the desk that sells by itself. Nobody has ever checked whether it cancels the protective stop-losses first in order to free the shares — and if it cancels them and then fails to sell, the holdings are left with no protection at all. That exact flaw is why the older "big loss today" liquidation was deleted on 14 September.
 **Recommendation —** Audit it before changing anything. Find out what it actually does, then decide.
 
-## item 88
-
-**Plain language —** Inside the code, a stop price of exactly zero is the agreed way of saying "there is no stop". So if a bad number ever arrives as zero, the desk does not refuse the trade — it quietly removes the protection instead. The path that opens new trades has been checked and passes nothing rather than zero, so no live position depends on this today. The paths that resume, sweep and repair positions have not been checked.
-**Recommendation —** Trace the unchecked paths, then make a zero or missing stop a refusal, never a silent unprotected position.
-
 ## item 89
 
 **Plain language —** An audit on 17 September of everything the desk sends you found nineteen defects. Six of them can mislead you into a decision. Thirteen are clarity problems — the message is correct but hard or impossible to act on. You are choosing which get fixed.
@@ -456,12 +451,12 @@ decision at all.
 **Plain language — your decision, and we are waiting on it.** You asked for the internal scrollbars to come off the detail panels, and they have. The consequence is that the Trades tab, which holds your full live trade history, now makes the page about 6,000 pixels tall. That is the cost of the change, not a fault, and moving to any other tab puts it back to normal. You were offered that one tab's scrollbar back and have not answered, so nothing has been changed.
 **Recommendation —** None until you rule. Your ruling was that scrolling belongs to a panel rather than to a position on the screen, so making one tab an exception is yours to decide, not ours.
 
-## item 113
+## item 109
 
 **Plain language — your decision, and nobody may settle it by editing code.** The desk has a big-picture seat that reads the whole market: interest rates, credit, volatility, the general mood. It also has seats that read one company at a time. When the desk counts up how much evidence supports a single trade, it currently counts the big-picture read as one of those votes, for or against that individual company. The instructions given to the trade-picking seats said the opposite — that the big-picture read never counts toward that tally. One of the two has been wrong all along, and the code is the one that has actually been deciding.
 
 **Why it is not theoretical —** On 17 September a bullish read on the market as a whole cancelled out a bearish filing about one specific company, and the trade died. A second company passed with full support on the strength of the market read plus a filing, with no read of its own chart at all.
 
-**Why we stopped rather than fixing it —** The obvious "fix" is to correct the instructions so they match the code. That would quietly make the current behaviour official, and the desk's own standing doctrine points the other way: the market read is the weather the book is built in, not a fact about one company. Making the instructions match the code would have ratified a rule you never agreed to. So the wording is being made neutral — it says the tally does count it, that this is disputed, and not to lean on it either way — and the counting rule itself is untouched.
+**Why we stopped rather than fixing it —** The obvious "fix" is to correct the instructions so they match the code. That would quietly make the current behaviour official, and the desk's own standing doctrine points the other way: it is the trade-picking seats' own prompt (not `docs/OUTCOME.md`, which says nothing on this beyond a line about cash deployment) that states the market read is the regime the book is built in, not a fact about one company. Making the instructions match the code would have ratified a rule you never agreed to. So the wording is being made neutral — it says the tally does count it, that this is disputed, and not to lean on it either way — and the counting rule itself is untouched. Filed independently twice, hours apart, as this same question; the two are now one item.
 
 **Recommendation —** None; this is a mandate question, not an engineering one. Until you rule, neither side moves.

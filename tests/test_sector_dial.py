@@ -955,12 +955,71 @@ def test_the_75_percent_cost_is_stated_where_a_decision_maker_reads_it():
     Asserted in the PM prompt because that is where the decision is actually
     made — a consequence recorded only in a spec nobody reads at decision
     time is not stated.
+
+    CHANGED 2026-09-17. This used to assert the literal string "6.7% daily-
+    loss circuit breaker" in the prompt, which pinned a SECOND COPY of a
+    number whose first copy is `config/settings.yaml` — the exact shape
+    `src/agents/prompt_limits.py` exists to remove, and the shape that let a
+    stale figure survive elsewhere. The prompt now renders the figure from
+    the live config, so this asserts the RELATIONSHIP the paragraph claims
+    (15% of equity is more than twice the breaker's fixed rung) against the
+    rendered value, and that the paragraph renders rather than states it.
+    Two further corrections in the same change: 6.7% is the breaker's
+    FALLBACK rung, not its live trip point — on an ordinary day the limit is
+    measured from the held book's own volatility — and the paragraph now
+    says so.
+
+    CHANGED AGAIN 2026-09-18. The paragraph used to hand-type both the
+    sector weight ("at 75% of equity") and the product of that weight and
+    the illustrative 20% sector drawdown ("costs 15% of equity"), which was
+    a second copy of `risk.max_sector_pct` plus a number derived from it.
+    Both are now rendered/derived in the prose, so this asserts the
+    RELATIONSHIP against the live config instead of the literals: the cost
+    of a 20% drawdown at the rendered sector weight must still exceed the
+    breaker's fixed rung, which is the thing the paragraph is telling the
+    seat.
     """
     from pathlib import Path
+
+    from src.agents.prompt_limits import (
+        load_risk_config_from_settings, placeholders_in, render_prompt_limits,
+    )
+
     root = Path(__file__).resolve().parent.parent
-    prompt = (root / "config" / "prompts" / "portfolio_manager.md").read_text()
-    assert "15% of equity" in prompt
-    assert "6.7% daily-loss circuit breaker" in prompt
+    raw = (root / "config" / "prompts" / "portfolio_manager.md").read_text()
+
+    # The figure is rendered, never typed.
+    assert "risk.effective_max_daily_loss_pct" in placeholders_in(raw), (
+        "the PM sheet must RENDER the daily-loss figure from the live config, "
+        "not hand-type it — see src/agents/prompt_limits.py"
+    )
+
+    # The sector weight is rendered too, never typed — the paragraph states
+    # the cost OF that weight, so a second copy of it here would rot the
+    # same way the breaker figure did.
+    assert "risk.max_sector_pct" in placeholders_in(raw), (
+        "the PM sheet must RENDER the sector weight in the cost paragraph, "
+        "not hand-type it — see src/agents/prompt_limits.py"
+    )
+
+    cfg = load_risk_config_from_settings(root / "config" / "settings.yaml")
+    prompt = render_prompt_limits(raw, cfg)
+
+    # The relationship the paragraph asserts must survive the live numbers:
+    # a 20% drawdown on a sector carrying `max_sector_pct` of equity costs
+    # a fifth of that weight, and the paragraph tells the seat that lands
+    # above the breaker's fixed rung.
+    breaker = cfg.effective_max_daily_loss_pct
+    sector_cost = cfg.max_sector_pct * 0.20
+    assert sector_cost > breaker, (
+        f"the sheet says a 20% sector drawdown at the sector weight "
+        f"({cfg.max_sector_pct}%) costs a fifth of it ({sector_cost}% of "
+        f"equity), a multiple of the breaker's fixed rung — but that rung "
+        f"is now {breaker}%, so the stated relationship is stale. Fix the "
+        f"sentence, not this test."
+    )
+    assert f"{breaker:g}%" in prompt
+    assert f"{cfg.max_sector_pct:g}%" in prompt
     assert "15% daily-loss circuit breaker" not in prompt, (
         "stale pre-bug-1 breaker figure left in the PM prompt"
     )

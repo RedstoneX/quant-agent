@@ -78,7 +78,37 @@ describe("buildResearchDesk", () => {
     expect(data.why_now).toBe("Price retested support today.");
     expect(data.prior_as_of).toBe("2026-08-24T13:00:00Z");
     expect(data.dry_annotation).toBe("Several reads. No portfolio instruction. That is still a decision.");
-    expect(data.agents.find((agent) => agent.seat === "technical")?.market_context[0]).toMatchObject({ stop: 98, entry: 101, target: 110 });
+    // The analyst's own `reference_target` is NEVER drawn — only the desk's
+    // derived `take_profit` is. A row carrying only the guess records a
+    // stated reason instead of vanishing.
+    const technical = data.agents.find((agent) => agent.seat === "technical");
+    expect(technical?.market_context).toHaveLength(0);
+    expect(technical?.market_context_gaps.join(" ")).toContain("analyst's own estimated target");
+  });
+
+  it("draws the desk's derived target, labels its basis, and keeps shorts", () => {
+    const long = evidence({ payload: {
+      rating: "buy", entry_price: 101, stop_loss: 98, take_profit: 110, reference_target: 125,
+      reasoning: "Breakout held. [target $110.00 computed from structural level; analyst's reference $125.00, -12.0%]",
+    } });
+    const short = evidence({ id: 2, symbol: "XYZ", payload: {
+      rating: "sell", entry_price: 50, stop_loss: 54, take_profit: 42,
+      reasoning: "Breakdown confirmed. [target $42.00 computed from measured move; analyst's reference $40.00, +5.0%]",
+    } });
+    const data = buildResearchDesk(response([long, short]));
+    const context = data.agents.find((agent) => agent.seat === "technical")?.market_context || [];
+    expect(context).toHaveLength(2);
+    expect(context.find((item) => item.symbol === "XYZ")).toMatchObject({
+      stop: 54, entry: 50, target: 42, direction: "short", target_source: "derived", target_basis: "measured move",
+    });
+    expect(context.find((item) => item.direction === "long")).toMatchObject({ target: 110, target_basis: "structural level" });
+  });
+
+  it("records a reason instead of dropping an undrawable geometry", () => {
+    const data = buildResearchDesk(response([evidence({ payload: { rating: "buy", entry_price: 101, stop_loss: 98, take_profit: 97 } })]));
+    const technical = data.agents.find((agent) => agent.seat === "technical");
+    expect(technical?.market_context).toHaveLength(0);
+    expect(technical?.market_context_gaps[0]).toContain("not beyond the entry");
   });
 
   it("uses explicit News state changes for changed and why-now copy", () => {

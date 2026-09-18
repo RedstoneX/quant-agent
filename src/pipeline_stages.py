@@ -7069,7 +7069,18 @@ class ExecutionStage:
                     order = pipeline.broker.submit_order(
                         symbol=decision.symbol, qty=qty, side=entry_side,
                         limit_price=limit_price,
-                        stop_loss_price=stop_price if stop_price > 0 else None,
+                        # PASSED THROUGH AS-IS (docs/WORK.md item 88). This
+                        # used to read `stop_price if stop_price > 0 else
+                        # None`, which laundered a garbage stop into the
+                        # broker's "no stop was requested" case — so a zero
+                        # reaching here submitted an unprotected entry and
+                        # the broker never got the chance to refuse it.
+                        # Every decision on this loop is a BUY or a SHORT and
+                        # therefore OWES a stop, so there is nothing legitimate
+                        # to convert to None: `submit_order` judges the value
+                        # and returns `rejected_bad_stop` when it is not a
+                        # price (surfaced below as `unusable_stop`).
+                        stop_loss_price=stop_price,
                         reference_price=market_price,
                         # WORDING ONLY (see `submit_order`'s docstring): the
                         # same measured ATR(14) the constructor sized this
