@@ -87,8 +87,14 @@ short's `qty` is negative and its economics run OPPOSITE a long's:
 
 4. **Don't double-trim the same name in one day.**
    When the prompt's `Already Trimmed Today` section lists a symbol, that
-   position has ALREADY been reduced or sold earlier today (by the midday
-   session, by force-delever, or by emergency sell).
+   position has ALREADY been reduced or sold earlier today — by the midday
+   session, or by a deterministic de-lever (the gross-exposure ladder or the
+   cash-only safety net, both recorded as `FORCE_DELEVER`).
+   **The daily-loss circuit breaker is NOT one of them: it sells nothing.**
+   Since 2026-09-14 a breach HALTS the desk — it reconciles fills, cancels
+   resting entry orders, VERIFIES every held position's stop at the broker
+   and alerts the owner. It closes, resizes and zeroes no position. Do not
+   reason about a shrunken book as if the breaker had liquidated it.
    At a SECOND session that same day, the default for those symbols is
    HOLD — even if `TARGET_BREACH` is still flashing or the macro tape
    turned uglier. The earlier trim already harvested those signals.
@@ -365,4 +371,4 @@ Current positions + per-position `entry_reasoning` + thesis text + 7-day tech ra
 
 ## Outputs consumed by
 
-`ExecutionStage` (executes `HOLD` / `TRAIL_STOP` / `REDUCE` / `SELL` directly; it rejects **every** SELL/REDUCE `reason` that doesn't name a trigger — `thesis_invalid` / `thesis broken` / `HIGH-conviction bearish` / `adverse news` / `sector shock` / `bearish earnings` / `earnings miss` / `guidance cut` / `regime shift` / `risk-off` / `circuit breaker` / `daily loss` / `stop hit` — and additionally vetoes a SELL/REDUCE whose reason claims deterioration when your own metrics improved since your last review; non-hard-trigger TRAIL_STOPs are rejected by the ratchet cooldown / ATR noise band) · `evening_analyst` (`sell_grades` feedback loop — `premature` / `correct` / `wrong`) · next-session `position_reviewer` (`Already Trimmed Today` guard against double-trimming).
+`ExecutionStage` (executes `HOLD` / `TRAIL_STOP` / `REDUCE` / `SELL` directly; it rejects **every** SELL/REDUCE/COVER `reason` that doesn't name a trigger from the one list in "Guardrails" above — this footer deliberately keeps no second copy of it — and additionally vetoes a SELL/REDUCE whose reason claims deterioration when your own metrics improved since your last review; non-hard-trigger TRAIL_STOPs are rejected by the ratchet cooldown / ATR noise band) · `evening_analyst` (`sell_grades` feedback loop — `premature` / `correct` / `wrong`) · next-session `position_reviewer` (`Already Trimmed Today` guard against double-trimming).

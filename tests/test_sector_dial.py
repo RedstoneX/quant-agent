@@ -955,12 +955,48 @@ def test_the_75_percent_cost_is_stated_where_a_decision_maker_reads_it():
     Asserted in the PM prompt because that is where the decision is actually
     made — a consequence recorded only in a spec nobody reads at decision
     time is not stated.
+
+    CHANGED 2026-09-17. This used to assert the literal string "6.7% daily-
+    loss circuit breaker" in the prompt, which pinned a SECOND COPY of a
+    number whose first copy is `config/settings.yaml` — the exact shape
+    `src/agents/prompt_limits.py` exists to remove, and the shape that let a
+    stale figure survive elsewhere. The prompt now renders the figure from
+    the live config, so this asserts the RELATIONSHIP the paragraph claims
+    (15% of equity is more than twice the breaker's fixed rung) against the
+    rendered value, and that the paragraph renders rather than states it.
+    Two further corrections in the same change: 6.7% is the breaker's
+    FALLBACK rung, not its live trip point — on an ordinary day the limit is
+    measured from the held book's own volatility — and the paragraph now
+    says so.
     """
     from pathlib import Path
+
+    from src.agents.prompt_limits import (
+        load_risk_config_from_settings, placeholders_in, render_prompt_limits,
+    )
+
     root = Path(__file__).resolve().parent.parent
-    prompt = (root / "config" / "prompts" / "portfolio_manager.md").read_text()
+    raw = (root / "config" / "prompts" / "portfolio_manager.md").read_text()
+
+    # The figure is rendered, never typed.
+    assert "risk.effective_max_daily_loss_pct" in placeholders_in(raw), (
+        "the PM sheet must RENDER the daily-loss figure from the live config, "
+        "not hand-type it — see src/agents/prompt_limits.py"
+    )
+
+    cfg = load_risk_config_from_settings(root / "config" / "settings.yaml")
+    prompt = render_prompt_limits(raw, cfg)
     assert "15% of equity" in prompt
-    assert "6.7% daily-loss circuit breaker" in prompt
+
+    # The relationship the paragraph asserts must survive the live numbers.
+    breaker = cfg.effective_max_daily_loss_pct
+    assert 15.0 > 2 * breaker, (
+        f"the sheet says a 20% sector drawdown at 75% concentration costs "
+        f"15% of equity, 'more than twice' the breaker's fixed rung — but "
+        f"that rung is now {breaker}%, so the stated relationship is stale. "
+        f"Fix the sentence, not this test."
+    )
+    assert f"{breaker:g}%" in prompt
     assert "15% daily-loss circuit breaker" not in prompt, (
         "stale pre-bug-1 breaker figure left in the PM prompt"
     )

@@ -294,7 +294,7 @@ Position in the pipeline: Tech filters at the source, PM sizes (a thin RANGE pay
 
 - The reasoning_chain itself is incoherent (steps contradict each other, or are placeholders rather than substantive sentences), OR
 - ≥ 5 separate `modifications` would be required to fix the plan (at that point you're rewriting PM's output, not auditing it — sending back for redo is more honest), OR
-- A named hard rule the engine missed is being violated (e.g., earnings-queued cap bypassed without acknowledgement), OR
+- A named hard rule the engine missed is being violated (e.g., a single-name or sector cap breached in the Hard Risk Rule Check block without acknowledgement), OR
 - A genuinely book-level risk is present: a correlation cluster across the proposed names and the existing holdings, a total-exposure or concentration breach, or a drawdown state that makes any new risk wrong today.
 
 Don't reject just because the plan is "aggressive" — that's what `scale_all_buys < 1.0` is for. And don't reject the plan because ONE name in it fails — that is what `rejected_symbols` is for. Killing four sound trades to stop a fifth is not caution; it is a wrong answer with a conservative accent.
