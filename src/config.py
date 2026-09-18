@@ -491,39 +491,51 @@ class ExecutionConfig(BaseModel):
     """Master switch for the live `trade_updates` websocket fill feed
     (`_TradeUpdatesHub` in `src/execution/broker.py`).
 
-    OFF by default, owner decision 2026-09-17. This is not a preference: on
-    this host the socket CANNOT authenticate, and two independent blockers
-    were confirmed before the switch was written, so no code or config
-    change could have fixed it.
+    ON in `config/settings.yaml` since 2026-09-18. The field default stays
+    FALSE deliberately: a config that does not mention the socket, and
+    every test double that constructs this model bare, must not open one.
+    `AlpacaBroker._fill_stream_enabled` defaults false for the same reason.
 
-      1. The trading process holds PLACEHOLDER Alpaca credentials. A local
-         credential-injecting proxy substitutes the real key on outbound
-         REST — which is why REST order placement works — but the
-         websocket does not go through that proxy, and the installed
-         `alpaca-py` stream is built on `websockets.legacy`, which has no
-         proxy support at all (proxy support arrived in websockets 15.0,
-         and only in the asyncio and sync clients).
-      2. Alpaca authenticates the stream with an in-band websocket
-         MESSAGE, not a handshake header. The gateway injects headers
-         only, so even a proxy-capable client would not be authenticated.
+    The socket pushes a fill the instant it happens; with it off the desk
+    only learns of a fill on its next REST poll, which
+    on the bounded polling path can be up to half an hour later. The REST
+    path is untouched and remains the fallback for any wait the socket
+    cannot serve.
 
-    The observed cost of leaving it on was pure noise: every fill wait
-    burned part of its own bounded window on a handshake that could never
-    succeed, then degraded to the REST fallback anyway, and the box logged
-    ~150 `trade_updates` auth failures a day. The REST fallback is the
-    mechanism that has actually confirmed every fill since the socket was
-    built (2026-09-10), and it is untouched by this flag.
+    It was OFF from 2026-09-17 because the socket had never once
+    authenticated — 1,017 `failed to authenticate` occurrences across the
+    retained production logs and zero successes. The cause was not the
+    connection's timing (six pull requests adjusted that; none of them
+    could have worked). The process held a 29-character PLACEHOLDER
+    credential containing the literal word `placeholder`, and neither of
+    the two mechanisms that could have substituted a real one applies to
+    this socket:
 
-    With this OFF the desk never opens the socket, never takes the
-    account-wide lease, and never runs the reconnect loop; every fill wait
-    goes straight to the REST polling path — the same code path
-    `use_stream=False` has always taken, with the same timeouts, poll
-    intervals and ceilings. The websocket code is DORMANT, not deleted.
+      1. Alpaca authenticates the stream with an in-band websocket
+         MESSAGE, not a handshake header, while the local gateway that
+         substitutes the real key rewrites HTTP HEADERS — so it cannot
+         reach the credential at all.
+      2. The installed `alpaca-py` stream is built on `websockets.legacy`,
+         which has no proxy support (that arrived in websockets 15.0, and
+         only in the asyncio and sync clients), so the socket never
+         traversed the gateway either.
 
-    Flip to true to restore the pre-2026-09-17 behaviour byte for byte.
-    That is what the deferred credential decision would revive: if the
-    process is ever given real Alpaca credentials directly, this is the
-    only switch that has to move."""
+    Real credential files were delivered 2026-09-18 and the process now
+    reads them directly, so that single blocker is gone and this flag was
+    the only remaining thing holding the socket shut. This flip changes no
+    timeout, poll interval, retry count or ceiling, and nothing about
+    credential handling.
+
+    A refusal is now diagnosable rather than silent: the SDK throws the
+    rejection payload away and raises a bare `ValueError`, which the desk
+    used to log as `status=unknown` — indistinguishable from a transport
+    fault, and the reason this took a fortnight to identify.
+    `_install_trading_stream_auth_diagnostics` preserves Alpaca's own
+    `message`/`status` and logs
+    `trade_updates authentication REJECTED by broker`, with the key's
+    length and first two characters only — never the value, never the
+    secret. A successful handshake logs
+    `trade_updates websocket authenticated`."""
 
 
 class RiskConfig(BaseModel):

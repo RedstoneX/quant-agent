@@ -839,3 +839,217 @@ def test_frame_drain_is_not_the_ownership_fix():
     assert "fcntl.flock" in inspect.getsource(broker_mod._TradeUpdatesLease)
     assert "_wait_for_first_event" not in inspect.getsource(broker_mod)
 
+
+
+# === Auth-rejection diagnostics (2026-09-18) ===================================
+#
+# The socket was dark for a fortnight and the logs could not say why. Two
+# layers hid the reason, and both are now covered here:
+#
+#   * the installed SDK's `_auth` compares `data.status != "authorized"` and
+#     raises a bare `ValueError("failed to authenticate")`, DISCARDING
+#     Alpaca's `{"data":{"message":"code=401, message=Unauthorized", ...}}`;
+#   * a `ValueError` has no HTTP-status attribute, so the desk's own guard
+#     logged `status=unknown` — which reads as a transport fault, and is
+#     what sent six pull requests at the connection's timing instead of at
+#     the placeholder credential that was actually being sent as a password.
+#
+# The rejection payload Alpaca really returns, verbatim:
+_ALPACA_AUTH_REJECTION = (
+    '{"stream":"authorization","data":'
+    '{"message":"code=401, message=Unauthorized","status":"unauthorized"}}'
+)
+
+# The credential the process really held until 2026-09-18: 29 characters,
+# containing the literal word "placeholder". Not a secret — that is the
+# whole point of it.
+_PLACEHOLDER_KEY = "placeholder-alpaca-key-29chr!"
+_PLACEHOLDER_SECRET = "placeholder-alpaca-secret-value"
+
+
+class _FakeAuthSocket:
+    """The websocket object the SDK's `_auth` sends to and recvs from."""
+
+    def __init__(self, reply):
+        self._reply = reply
+        self.sent = []
+
+    async def send(self, payload):
+        self.sent.append(payload)
+
+    async def recv(self):
+        return self._reply
+
+
+class _FakeAuthStream:
+    """Mirrors `alpaca.trading.stream.TradingStream`'s auth shape exactly.
+
+    `_start_ws` -> `_connect` then `_auth`; `_auth` sends the in-band
+    credential frame, reads ONE reply, and throws that reply away behind a
+    bare ValueError. `_wait_before_reconnect` exists so the desk's guard
+    does not add a sleep of its own (the real SDK also has it).
+    """
+
+    def __init__(self, api_key, secret_key, reply):
+        import json as _json
+        self._json = _json
+        self._api_key = api_key
+        self._secret_key = secret_key
+        self._reply = reply
+        self._endpoint = "wss://paper-api.alpaca.markets/stream"
+        self._ws = None
+        self._should_run = True
+        self._reconnect_min_backoff = 1.0
+        self._reconnect_max_backoff = 30.0
+
+    async def _connect(self):
+        self._ws = _FakeAuthSocket(self._reply)
+
+    async def _auth(self):
+        await self._ws.send(self._json.dumps({
+            "action": "authenticate",
+            "data": {"key_id": self._api_key, "secret_key": self._secret_key},
+        }))
+        msg = self._json.loads(await self._ws.recv())
+        if msg.get("data").get("status") != "authorized":
+            raise ValueError("failed to authenticate")
+
+    async def _start_ws(self):
+        await self._connect()
+        await self._auth()
+
+    async def _wait_before_reconnect(self, retries):
+        return
+
+
+def _rejected_stream(reply=_ALPACA_AUTH_REJECTION):
+    from src.execution import broker as broker_mod
+
+    stream = _FakeAuthStream(_PLACEHOLDER_KEY, _PLACEHOLDER_SECRET, reply)
+    # getattr, not an import: the log-shape assertions below must fail on
+    # the pre-fix code by printing the MISLEADING line, not by failing to
+    # import the fix. That misleading line is the defect.
+    install_diagnostics = getattr(
+        broker_mod, "_install_trading_stream_auth_diagnostics", None,
+    )
+    if callable(install_diagnostics):
+        install_diagnostics(stream)
+    broker_mod._install_trading_stream_reconnect_guard(stream)
+    return stream
+
+
+def test_auth_rejection_carries_alpacas_own_words():
+    """The broker's `message` and `status` survive the SDK's bare ValueError."""
+    from src.execution.broker import TradeStreamAuthRejected
+
+    stream = _rejected_stream()
+    with pytest.raises(TradeStreamAuthRejected) as excinfo:
+        asyncio.run(stream._start_ws())
+    exc = excinfo.value
+    assert exc.broker_message == "code=401, message=Unauthorized"
+    assert exc.broker_status == "unauthorized"
+    # The original, information-free SDK error is preserved as the cause.
+    assert isinstance(exc.__cause__, ValueError)
+    assert "failed to authenticate" in str(exc.__cause__)
+
+
+def test_auth_rejection_is_not_logged_as_a_handshake_failure(caplog):
+    """`status=unknown` is what made this look like a transport problem.
+
+    An application-level credential refusal must say so in words, and must
+    carry the broker's own message into the log line.
+    """
+    import logging
+
+    stream = _rejected_stream()
+    with caplog.at_level(logging.WARNING, logger="src.execution.broker"):
+        with pytest.raises(Exception):
+            asyncio.run(stream._start_ws())
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "trade_updates authentication REJECTED by broker" in text
+    assert "code=401, message=Unauthorized" in text
+    assert "unauthorized" in text
+    # The old, misleading rendering must NOT be what an auth refusal prints.
+    assert "handshake failed" not in text
+    assert "status=unknown" not in text
+
+
+def test_auth_rejection_never_logs_the_credential(caplog):
+    """Length and first two characters only. Never the key, never the secret.
+
+    The fingerprint exists because it is the one fact that would have ended
+    the investigation on day one: a 29-character key starting `pl` is not an
+    Alpaca key.
+    """
+    import logging
+
+    stream = _rejected_stream()
+    with caplog.at_level(logging.WARNING, logger="src.execution.broker"):
+        with pytest.raises(Exception):
+            asyncio.run(stream._start_ws())
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert _PLACEHOLDER_KEY not in text
+    assert _PLACEHOLDER_SECRET not in text
+    assert "secret" not in text.lower()
+    assert f"length {len(_PLACEHOLDER_KEY)}" in text
+    assert "starts 'pl'" in text
+
+
+def test_auth_diagnostics_degrade_rather_than_replace_the_failure():
+    """An unparseable reply must still raise the refusal, without a message.
+
+    A diagnostic that can itself fail would hide the very failure it was
+    added to explain.
+    """
+    from src.execution.broker import TradeStreamAuthRejected
+
+    stream = _rejected_stream(reply='{"data": {"status": "nope"}}')
+    with pytest.raises(TradeStreamAuthRejected) as excinfo:
+        asyncio.run(stream._start_ws())
+    assert excinfo.value.broker_status == "nope"
+    assert excinfo.value.broker_message is None
+
+
+def test_auth_diagnostics_are_a_noop_without_an_auth_method():
+    """The fake streams in this suite have no `_auth`; nothing must break."""
+    from src.execution.broker import _install_trading_stream_auth_diagnostics
+
+    double = _FakeTradingStream()
+    _install_trading_stream_auth_diagnostics(double)
+    assert not hasattr(double, "_auth")
+
+
+def test_successful_handshake_leaves_an_affirmative_log_line(caplog):
+    """There was no line saying the socket EVER worked — only 1,017 saying
+    it did not. The SDK's own success line is on the alpaca logger, which
+    the desk's log does not carry, so the desk records its own."""
+    import logging
+
+    from src.execution.broker import _install_trading_stream_reconnect_guard
+
+    authorized = (
+        '{"stream":"authorization","data":'
+        '{"message":"authorized","status":"authorized"}}'
+    )
+    stream = _FakeAuthStream(_PLACEHOLDER_KEY, _PLACEHOLDER_SECRET, authorized)
+    _install_trading_stream_reconnect_guard(stream)
+    with caplog.at_level(logging.INFO, logger="src.execution.broker"):
+        asyncio.run(stream._start_ws())
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "trade_updates websocket authenticated" in text
+
+
+def test_shipped_config_has_the_fill_stream_on():
+    """Change 1: the flag is the only remaining gate, and it is now on.
+
+    Asserted against the shipped `config/settings.yaml`, not a fixture —
+    the flag being true in a test's own construction proves nothing about
+    what production loads.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parent.parent
+    raw = yaml.safe_load((root / "config" / "settings.yaml").read_text())
+    assert raw["execution"]["fill_stream_enabled"] is True

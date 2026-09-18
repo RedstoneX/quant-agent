@@ -143,9 +143,9 @@ def intended_specs(cancelled: list[dict], intended_stop: float) -> list[dict]:
 def confirm_protective_cancels(broker: Any, specs: list[dict]) -> tuple[bool, str]:
     """Wait until each cancelled stop is terminal, via `wait_for_order_terminal`.
 
-    That is bounded REST polling since `execution.fill_stream_enabled` was
-    switched off (2026-09-17); it was the websocket first before that. The
-    wait itself is unchanged either way.
+    That is the websocket first when `execution.fill_stream_enabled` is on
+    (it is, since 2026-09-18), and bounded REST polling otherwise. The wait
+    itself is unchanged either way.
 
     Returns ``(True, "")`` only when every spec with an id reached a
     cancelled-like terminal state. A fill aborts the add: the stop did its

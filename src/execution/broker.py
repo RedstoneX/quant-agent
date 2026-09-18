@@ -1,5 +1,6 @@
 import asyncio
 import fcntl
+import json
 import logging
 import math
 import os
@@ -293,6 +294,7 @@ class _TradeUpdatesHub:
 
         self._authed.set = _authed_set  # type: ignore[method-assign]
         self._authed.clear = _authed_clear  # type: ignore[method-assign]
+        _install_trading_stream_auth_diagnostics(stream)
         _install_trading_stream_reconnect_guard(stream)
         self.handshake_hook = callable(getattr(stream, "_start_ws", None))
         self._stream = stream
@@ -483,6 +485,166 @@ class _TradeUpdatesHub:
         return thread is not None and thread.is_alive()
 
 
+class TradeStreamAuthRejected(Exception):
+    """The broker REFUSED the trade_updates credential, in the broker's own words.
+
+    Why this class exists (2026-09-18). For a fortnight this failure was
+    indistinguishable from a transport fault in the desk's logs, and that
+    is what cost six pull requests of connection re-sequencing:
+
+      * The installed SDK's `TradingStream._auth` compares
+        `msg["data"]["status"] != "authorized"` and then raises a bare
+        `ValueError("failed to authenticate")` — it DISCARDS the reply.
+        Alpaca actually sends
+        `{"stream":"authorization","data":{"message":"code=401, message=Unauthorized","status":"unauthorized"}}`
+        and that `message` never reached any log line.
+      * A `ValueError` carries no HTTP-status attribute, so
+        `_stream_http_status` returned None and the desk logged
+        `status=unknown` — which reads as "the socket would not open",
+        not "the password was wrong".
+
+    This exception carries Alpaca's own `message`/`status` plus a
+    NON-REVEALING credential fingerprint (length and first two characters
+    only). The secret is never touched, and the key is never logged.
+    """
+
+    def __init__(
+        self,
+        *,
+        broker_message: str | None,
+        broker_status: str | None,
+        credential: str | None,
+        cause: BaseException | None = None,
+    ) -> None:
+        self.broker_message = broker_message
+        self.broker_status = broker_status
+        self.credential_fingerprint = _credential_fingerprint(credential)
+        super().__init__(
+            "broker refused the trade_updates credential "
+            f"(broker said: {broker_message or 'no message returned'}; "
+            f"broker status: {broker_status or 'not stated'}; "
+            f"api key {self.credential_fingerprint})"
+        )
+        self.__cause__ = cause
+
+
+def _credential_fingerprint(credential: str | None) -> str:
+    """Length + first two characters of a key. NEVER the value, never a secret.
+
+    Enough to tell a real Alpaca key (26 chars, `PK`/`AK` prefix) from the
+    29-character literal containing the word `placeholder` that the process
+    actually held until 2026-09-18 — which is the single fact that would
+    have ended this investigation on day one. Two characters cannot
+    identify an account and cannot be replayed.
+    """
+    if not credential:
+        return "absent (empty)"
+    text = str(credential)
+    return f"length {len(text)}, starts '{text[:2]}'"
+
+
+def _parse_stream_auth_reply(raw: object) -> tuple[str | None, str | None]:
+    """(message, status) out of Alpaca's authorization frame. Never raises.
+
+    Shape per Alpaca's streaming docs and observed rejections:
+    `{"stream":"authorization","data":{"message":...,"status":...}}`.
+    Anything unparseable degrades to (None, None) — a missing diagnostic
+    must never replace the failure it was added to explain.
+    """
+    if raw is None:
+        return None, None
+    payload: object = raw
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            payload = raw.decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            return None, None
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:  # noqa: BLE001
+            # Not JSON: the body itself is the most informative thing we have.
+            text = str(raw).strip()
+            return (text[:200] or None), None
+    if not isinstance(payload, dict):
+        return None, None
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        data = payload
+    message = data.get("message")
+    status = data.get("status")
+    return (
+        str(message) if message is not None else None,
+        str(status) if status is not None else None,
+    )
+
+
+def _install_trading_stream_auth_diagnostics(stream: object) -> None:
+    """Keep Alpaca's authorization reply so a refusal can be logged verbatim.
+
+    Deliberately NOT a monkeypatch of the vendor SDK and NOT a
+    reimplementation of the auth protocol: the SDK's own `_auth` still
+    sends the frame and still decides the outcome. We only (a) record the
+    first frame the socket hands back during auth, via a one-shot wrapper
+    on this instance's `recv`, and (b) translate the SDK's information-free
+    `ValueError` into `TradeStreamAuthRejected` carrying that frame.
+
+    Both wrappers are per-instance attributes on objects this module
+    constructed. Nothing in site-packages is edited. No timeout, retry
+    count or backoff is introduced — the reconnect guard owns all of those
+    and is untouched.
+
+    No-op when the object has no `_auth` (the test doubles).
+    """
+    original_auth = getattr(stream, "_auth", None)
+    if not callable(original_auth):
+        return
+
+    async def _auth():
+        captured: dict[str, object] = {}
+        ws = getattr(stream, "_ws", None)
+        original_recv = getattr(ws, "recv", None) if ws is not None else None
+        restored = False
+
+        def _restore() -> None:
+            nonlocal restored
+            if restored or ws is None or original_recv is None:
+                return
+            restored = True
+            try:
+                ws.recv = original_recv  # type: ignore[union-attr]
+            except Exception:  # noqa: BLE001
+                pass
+
+        if callable(original_recv):
+            async def _recv_once():
+                raw = await original_recv()
+                if "raw" not in captured:
+                    captured["raw"] = raw
+                    _restore()
+                return raw
+
+            try:
+                ws.recv = _recv_once  # type: ignore[union-attr]
+            except Exception:  # noqa: BLE001
+                original_recv = None
+
+        try:
+            await original_auth()
+        except ValueError as exc:
+            message, status = _parse_stream_auth_reply(captured.get("raw"))
+            raise TradeStreamAuthRejected(
+                broker_message=message,
+                broker_status=status,
+                credential=getattr(stream, "_api_key", None),
+                cause=exc,
+            ) from exc
+        finally:
+            _restore()
+
+    stream._auth = _auth
+
+
 def _stream_http_status(exc: BaseException) -> int | None:
     """Best-effort HTTP status on a websocket handshake error. Never raises."""
     for attr in ("status_code", "status"):
@@ -619,6 +781,15 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
         try:
             await original_start()
             failures = 0
+            # The SDK's own post-auth line (`connected to: wss...`) is on the
+            # alpaca logger, which the desk's log does not carry — so across
+            # all retained production logs there is no line that says the
+            # socket ever worked, only 1,017 that say it did not. This is the
+            # desk's own affirmative record of a successful handshake.
+            logger.info(
+                "trade_updates websocket authenticated (endpoint=%s)",
+                getattr(stream, "_endpoint", "unknown"),
+            )
             authed = getattr(stream, "_qamc_authed", None)
             if authed is not None:
                 try:
@@ -641,16 +812,31 @@ def _install_trading_stream_reconnect_guard(stream: object) -> None:
             failures += 1
             delay = _trading_stream_reconnect_delay(failures, exc, stream)
             now = time.monotonic()
-            status = _stream_http_status(exc)
             # Log at most once per wait: a 10ms loop otherwise reprints the
             # same HTTP 429 thousands of times during one fill window.
             if last_log_mono == 0.0 or now - last_log_mono >= delay:
-                logger.warning(
-                    "trade_updates websocket handshake failed "
-                    "(status=%s, attempt %d); reconnect in %.1fs",
-                    status if status is not None else "unknown",
-                    failures, delay,
-                )
+                if isinstance(exc, TradeStreamAuthRejected):
+                    # An application-level credential refusal, NOT a
+                    # handshake/transport fault. Reporting it as
+                    # "handshake failed (status=unknown)" is what sent six
+                    # previous pull requests at the connection's timing.
+                    logger.warning(
+                        "trade_updates authentication REJECTED by broker — "
+                        "broker said: %s (broker status: %s; api key %s); "
+                        "attempt %d, reconnect in %.1fs",
+                        exc.broker_message or "no message returned",
+                        exc.broker_status or "not stated",
+                        exc.credential_fingerprint,
+                        failures, delay,
+                    )
+                else:
+                    status = _stream_http_status(exc)
+                    logger.warning(
+                        "trade_updates websocket handshake failed "
+                        "(status=%s, attempt %d); reconnect in %.1fs",
+                        status if status is not None else "unknown",
+                        failures, delay,
+                    )
                 last_log_mono = now
             if not sdk_backs_off and delay > 0 and getattr(stream, "_should_run", True):
                 try:
@@ -1061,8 +1247,9 @@ class AlpacaBroker:
     #: through (the read-only broker in src/api/broker_reads.py, the
     #: heartbeat, one-off scripts, isolated unit tests) must not be able to
     #: open the account's single socket by omission. See
-    #: `ExecutionConfig.fill_stream_enabled` for WHY it is off in
-    #: production; src/pipeline.py is the only site that passes it.
+    #: `ExecutionConfig.fill_stream_enabled` for the flag's history (off
+    #: 2026-09-17, on in production again since 2026-09-18);
+    #: src/pipeline.py is the only site that passes it.
     _fill_stream_enabled: bool = False
     def __init__(self, api_key: str, secret_key: str, paper: bool = True,
                  kill_switch_path: str | None = None,
@@ -3350,6 +3537,7 @@ class AlpacaBroker:
             auth_wake.set()
 
         stream._qamc_authed.set = _authed_set  # type: ignore[method-assign]
+        _install_trading_stream_auth_diagnostics(stream)
         _install_trading_stream_reconnect_guard(stream)
 
         async def _handler(update) -> None:

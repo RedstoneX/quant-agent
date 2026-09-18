@@ -1135,10 +1135,11 @@ class TradingPipeline:
             paper=config.alpaca.paper,
             kill_switch_path=str(self._kill_switch_path),
             trade_updates_lease_path=str(trade_updates_lease_path),
-            # OFF since 2026-09-17 (owner). The only site that threads this
-            # through — see `ExecutionConfig.fill_stream_enabled` for the two
-            # confirmed blockers, and why the REST fill path is the real
-            # mechanism rather than a fallback.
+            # ON since 2026-09-18. The only site that threads this
+            # through — see `ExecutionConfig.fill_stream_enabled` for why it
+            # spent a day off, what actually blocked it (a placeholder
+            # credential, not the connection's timing), and how a refusal is
+            # logged now.
             fill_stream_enabled=config.execution.fill_stream_enabled,
         )
         # Wire the broker as yfinance's fallback so a yfinance outage doesn't
