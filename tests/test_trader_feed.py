@@ -1702,6 +1702,7 @@ def test_evening_leads_with_todays_and_total_pnl(tmp_path, monkeypatch):
     lines = [line for line in msg.split("\n") if line.strip()]
     assert lines[1].startswith("📈 Today's P&L: +$38.73")
     assert lines[2].startswith("📊 Total P&L since 2026-09-02: −$83.54")
+    assert lines[3] == "   Account value: $9,734.50"
     # ...and above the book, which used to come first.
     assert msg.index("Today's P&L") < msg.index("POSITIONS")
 

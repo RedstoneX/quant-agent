@@ -1266,6 +1266,7 @@ def _evening_pnl_lines(result: dict) -> list[str]:
     base formatter did. The total is the same dated figure every other feed
     message shows (`_pnl_section_lines`), so the two can never disagree.
     A figure that is genuinely unavailable says so — never a rendered 0.
+    The account's own value follows them, as it did before the redesign.
     """
     pnl_4pm = _number(result.get("pnl_4pm"))
     equity_close = _number(result.get("equity_close"))
@@ -1283,10 +1284,17 @@ def _evening_pnl_lines(result: dict) -> list[str]:
     total_ret = _number(result.get("total_return_pct"))
     since = result.get("total_pnl_since")
     total_label = f"📊 Total P&L since {since}:" if since else "📊 Total P&L:"
-    return [
+    lines = [
         _fmt_pnl_line("📈 Today's P&L:", today_pnl, today_ret) + suffix,
         _fmt_pnl_line(total_label, total_pnl, total_ret),
     ]
+    # The account's own value, kept from the pre-redesign message: it is
+    # the denominator both figures above are a change in, and the owner
+    # never asked for it to go.
+    equity = equity_close if equity_close is not None else _number(result.get("total_value"))
+    if equity is not None:
+        lines.append(f"   Account value: ${equity:,.2f}")
+    return lines
 
 
 def _evening_fractional_line(result: dict) -> str | None:
