@@ -29,10 +29,76 @@ breakeven ratchet still read THAT number, never the live one.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# THE one place a stop VALUE is judged usable (docs/WORK.md item 88).
+# ---------------------------------------------------------------------------
+# `0.0` was this codebase's sentinel for "no stop", so a garbage or
+# miscomputed stop of zero REMOVED protection instead of refusing the
+# trade — it failed open, in the one direction a risk path must never
+# fail. NaN was the same bug in a different disguise and was closed for
+# the entry lane only (PR #455).
+#
+# The fix is the DISTINCTION, not another threshold: "no stop was
+# requested" and "a stop was requested and its value is garbage" are
+# different facts with opposite correct responses. Absence is legitimate
+# on exactly one path — the cash-sweep park, which passes
+# `stop_loss_price=None` and says so in a comment. Garbage is never
+# legitimate anywhere, and must be refused loudly rather than silently
+# read as absence.
+#
+# No number is chosen here. Positive-and-finite is the arithmetic
+# precondition for a price to be a price at all.
+STOP_ABSENT = "absent"
+STOP_UNUSABLE = "unusable"
+STOP_USABLE = "usable"
+
+
+def classify_stop_price(value: Any) -> tuple[str, float]:
+    """Name what a caller is holding: an absent stop, an unusable one, or a price.
+
+    Returns ``(STOP_ABSENT | STOP_UNUSABLE | STOP_USABLE, price)`` where
+    `price` is the usable float and 0.0 otherwise.
+
+    * ``STOP_ABSENT``   — nothing was supplied (None, or an empty string
+      from a JSON/DB round-trip). The caller decides whether a stopless
+      order is legal on its path; only the cash-sweep park says yes.
+    * ``STOP_UNUSABLE`` — something WAS supplied and it cannot be a stop:
+      zero, negative, NaN, ±Inf, or unparseable. Never silently treated
+      as absence.
+    * ``STOP_USABLE``   — a finite, positive price.
+    """
+    if value is None:
+        return STOP_ABSENT, 0.0
+    if isinstance(value, str) and not value.strip():
+        return STOP_ABSENT, 0.0
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return STOP_UNUSABLE, 0.0
+    if not math.isfinite(price) or price <= 0:
+        return STOP_UNUSABLE, 0.0
+    return STOP_USABLE, price
+
+
+def usable_stop_prices(values: Any) -> list[float]:
+    """Only the values that are real stop prices, in input order.
+
+    For the callers that pick an extreme (most-protective) stop out of a
+    set of recorded specs: `min`/`max` over a list holding None raises,
+    and over a list holding 0.0 silently returns the sentinel.
+    """
+    out: list[float] = []
+    for value in values or []:
+        state, price = classify_stop_price(value)
+        if state == STOP_USABLE:
+            out.append(price)
+    return out
 
 # Alpaca's published stock ticks, the same split `_quantize_price` in
 # `src/execution/broker.py` already uses: $0.01 at or above $1, $0.0001
@@ -43,13 +109,13 @@ _ALPACA_TICK_BELOW_DOLLAR = 0.0001
 
 
 def _finite_price(value: Any) -> float:
-    try:
-        price = float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
-    if price != price or price <= 0:  # NaN or non-positive
-        return 0.0
-    return price
+    """The recorded level as a usable price, or 0.0 when it is not one.
+
+    Delegates to `classify_stop_price` so "finite" means finite: the old
+    `price != price` test caught NaN but passed ±Inf straight through,
+    which is not a price either.
+    """
+    return classify_stop_price(value)[1]
 
 
 def _prices_match(recorded: float, live: float) -> bool:
