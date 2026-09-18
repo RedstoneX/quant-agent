@@ -120,6 +120,18 @@ defending any threshold, cap, or rule in this codebase.** See
 `docs/WORK.md`'s session-start section for the current short version; this
 is the fuller statement of the same principle.
 
+**MECHANICALLY ENFORCED SINCE 2026-09-18, for the first time.** Until then
+this section was honour-system prose and the numbers it forbids accumulated
+under it — 122 in the modules that decide, size, price and exit a trade, of
+which 87 have nothing behind them. `src/number_sources.py` now requires every
+one to carry an entry in `config/number_ledger.yaml` recording where it came
+from, and `tests/test_number_sources.py` fails the build on a number that does
+not. Read that module's docstring before adding a constant; the ledger's
+header states what each classification requires. Two things it does NOT do:
+it does not judge whether a written source is TRUE, and it does not make any
+of the 87 sourced — those are `docs/WORK.md` item 90's open half, and every
+one of them is the owner's to move, not an agent's.
+
 Every constant that governs a real trade decision — a stop distance, a
 holding period, a risk percentage, a tolerance band, the reward:risk
 reference under which a range trade is capped at starter size (no longer a

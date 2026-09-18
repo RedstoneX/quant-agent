@@ -1,0 +1,1183 @@
+# The number ledger -- where every trade-governing number came from.
+#
+# WHAT THIS FILE IS. The desk's standing rule (docs/OUTCOME.md, and the top of
+# docs/WORK.md) is that a number which governs a trade must be read off the
+# instrument, derived from something that is itself read off the instrument, or
+# carry a written derivation at its definition site. Approval does not make a
+# flat number non-arbitrary and neither does backtesting it into place. Until
+# 2026-09-18 there was NO MECHANICAL CHECK of that rule at all, so the next
+# invented number got in free -- and did.
+#
+# `src/number_sources.py` enumerates every numeric definition site inside a
+# declared scope and requires each one to appear here. `tests/test_number_
+# sources.py` fails the build otherwise, and `pytest` is the check branch
+# protection requires. Read that module's docstring before editing this file:
+# it states the scope rules, the four things this file is checked for, and --
+# at the bottom -- what the check structurally cannot catch.
+#
+# HOW TO ADD A NUMBER. Do not reach for `arbitrary` because it is the easy
+# field. Say where the number came from:
+#
+#   instrument  -- read off the instrument at run time, or fixed by an external
+#                  spec the desk does not choose (a broker tick size, an
+#                  exchange margin requirement, a statutory deadline).
+#                  Requires `source`.
+#   sourced     -- a cited derivation or published source, written down.
+#                  Requires `source`. A source for a RANGE is not a source for
+#                  a point value inside it.
+#   derived     -- computed from another entry in this file. Requires
+#                  `derived_from` (its id) and `base_value` (what the base held
+#                  when the derivation was written). If the base later moves,
+#                  the build FAILS -- which is the point: a number can be
+#                  sourced when written and unsourced a month later because
+#                  what it was derived from changed underneath it.
+#   arbitrary   -- live, governs trades, nothing behind it. Honest, and
+#                  RATCHETED: `MAX_ARBITRARY_ENTRIES` in src/number_sources.py
+#                  is the ceiling. Lower it when one is sourced. Raising it is
+#                  an owner decision, not a build fix.
+#   not-trade-governing -- in scope structurally, cannot reach a trade
+#                  decision. Requires `note` saying why.
+#
+# `value` must equal the live literal. That is deliberate friction: changing a
+# number puts its justification back in front of whoever changes it, instead of
+# letting the number outlive it.
+#
+# SEEDED 2026-09-18 from board item 90. The classifications below are the
+# verified inventory that item asked for. NO VALUE WAS CHANGED -- changing a
+# live trade-governing number is the owner's call and several are
+# ratified-but-unsourced. The 30-odd numbers the 2026-09-11 and 2026-09-14
+# audits found are all still live and are all recorded here as `arbitrary`.
+numbers:
+  - id: src.config.CashSweepConfig.min_order_usd
+    value: 500.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Minimum order value. Not a broker minimum -- the broker accepts
+      fractional notional well below it. A round $500 with nothing behind
+      it, and it compounds with min_risk_pct to drop small plans.
+  - id: src.config.EventRiskConfig.calendar_deadline_s
+    value: 20.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.EventRiskConfig.earnings_deadline_s
+    value: 20.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.EventRiskConfig.earnings_symbol_timeout_s
+    value: 8.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.EventRiskConfig.fomc_cache_ttl_days
+    value: 7.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.EventRiskConfig.fomc_deadline_s
+    value: 15.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.EventRiskConfig.fomc_max_retries
+    value: 2.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.EventRiskConfig.fomc_request_timeout_s
+    value: 10.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.EventRiskConfig.horizon_days
+    value: 10.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      How far ahead the macro release calendar looks. The definition site
+      says 10 calendar days "covers the next few sessions the event_risk
+      field asks about" -- a restatement, not a derivation, and in calendar
+      days rather than sessions (board item 91). An event past this horizon
+      is invisible to every seat, so it decides which trades are taken into
+      a known catalyst.
+  - id: src.config.ExecutionConfig.fractional_share_decimals
+    value: 4.0
+    status: sourced
+    site: src/config.py
+    source: >-
+      Bounded by the broker on one side and by materiality on the other: the
+      quantity is FLOORED, never rounded up, so the only risk is
+      under-spending the budget, and 4dp is under a tenth of a cent of
+      notional at any price this desk trades (comment at the definition
+      site). See docs/INCIDENT_HISTORY.md 2026-09-01 for the fractional/GTC
+      measurement.
+  - id: src.config.ExecutionConfig.max_entry_slippage_bps
+    value: 40.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The entry-slippage belt: executed geometry worse than this rejects the
+      fill. docs/INCIDENT_HISTORY.md records the belt comparing every range
+      ticket to a flat unsourced number and skipping a name the constructor
+      had already approved. 40bps is not read off any spread.
+  - id: src.config.ExecutionConfig.repeg_poll_seconds
+    value: 5.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.IntradayScanConfig.cooldown_hours
+    value: 3.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The intraday scan trigger, its cooldown and its per-scan cap. THE SCAN
+      IS ON -- the 2026-09-14 verification corrected a stale settings
+      comment claiming it was disabled. A round 3% move and a round 3 hours,
+      neither read off any instrument.
+  - id: src.config.IntradayScanConfig.max_candidates_per_scan
+    value: 5.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The intraday scan trigger, its cooldown and its per-scan cap. THE SCAN
+      IS ON -- the 2026-09-14 verification corrected a stale settings
+      comment claiming it was disabled. A round 3% move and a round 3 hours,
+      neither read off any instrument.
+  - id: src.config.IntradayScanConfig.move_threshold_pct
+    value: 3.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The intraday scan trigger, its cooldown and its per-scan cap. THE SCAN
+      IS ON -- the 2026-09-14 verification corrected a stale settings
+      comment claiming it was disabled. A round 3% move and a round 3 hours,
+      neither read off any instrument.
+  - id: src.config.NominationConfig.max_per_seat_per_run
+    value: 3.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Nomination caps: 3 per seat, 6 per run, 3 external. Recorded in the
+      2026-09-14 verification as affordability caps, not measurements. They
+      bound what the desk can ever consider, so a name outside them is never
+      looked at.
+  - id: src.config.NominationConfig.max_total_per_run
+    value: 6.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Nomination caps: 3 per seat, 6 per run, 3 external. Recorded in the
+      2026-09-14 verification as affordability caps, not measurements. They
+      bound what the desk can ever consider, so a name outside them is never
+      looked at.
+  - id: src.config.RiskConfig.SECTOR_HARD_CEILING_MAX
+    value: 90.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The definition site is explicit that this is NOT in the ratified §12.3
+      text: "90 was chosen when §12.3 was built and is open for the owner to
+      move". It is the terminal bound on the sector ceiling, so it decides
+      when a sector stops accepting new risk.
+  - id: src.config.RiskConfig.SECTOR_HARD_MULTIPLE
+    value: 1.5
+    status: sourced
+    site: src/config.py
+    source: >-
+      docs/QAMC_REMEDIATION_SPEC.md §10.3, ratified: the hard sector ceiling
+      is defined there as a multiple of the sector target. The multiple is
+      the spec's, not this file's.
+  - id: src.config.RiskConfig.daily_loss_risk_multiple
+    value: 1.34
+    status: derived
+    site: src/config.py
+    derived_from: src.config.RiskConfig.drawdown_5d_risk_multiple
+    base_value: 3.0
+    source: >-
+      Scales the 5-session drawdown anchor to a one-day window. The
+      definition site states that the RELATIVE scaling between windows is
+      doctrine and is what was fixed; the anchor it scales
+      (drawdown_5d_risk_multiple) is itself INHERITED and unsourced, so this
+      entry records a real derivation over an arbitrary base. That is not a
+      laundering trick: recording it as `derived` is what arms the
+      base-drift check, so if the anchor is ever re-derived this number
+      cannot silently keep a ratio computed against the old one.
+  - id: src.config.RiskConfig.drawdown_20d_risk_multiple
+    value: 4.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The 20-session arm of the same brake ladder. The RELATIVE scaling
+      between windows is doctrine per the definition site; the absolute
+      value inherits the unsourced 5d anchor and no separate derivation is
+      written down. Not recorded as `derived` because the arithmetic tying
+      it to the anchor is not stated anywhere -- claiming a derivation
+      nobody wrote would be worse than admitting there is none.
+  - id: src.config.RiskConfig.drawdown_5d_risk_multiple
+    value: 3.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The ANCHOR of the drawdown-brake scaling, and the definition site says
+      so plainly: "still INHERITED, not re-derived: there is no measured
+      drawdown/track record to validate it against" after the 2026-09-02
+      reset wiped the equity history. Everything else in the brake ladder
+      hangs off this one number.
+  - id: src.config.RiskConfig.maintenance_margin_pct
+    value: 25.0
+    status: instrument
+    site: src/config.py
+    source: >-
+      Alpaca's standard equity maintenance requirement, quoted at the
+      definition site (src/config.py). Not a desk choice: the broker
+      liquidates at its number whatever this file says. Used only to report
+      distance-to-forced-liquidation and reproduces the spec's published
+      ~33%@2.0x / ~55%@1.5x.
+  - id: src.config.RiskConfig.margin_interest_rate_pct
+    value: 6.25
+    status: instrument
+    site: src/config.py
+    source: >-
+      The broker's published margin rate, on the broker's own (debit x
+      rate)/360 convention (src/margin_interest.py). The definition site
+      already labels every figure derived from it an ESTIMATE until the
+      broker's own INT activity confirms paper accounts are charged at all.
+  - id: src.config.RiskConfig.max_cluster_risk_share_pct
+    value: 40.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The share of total risk one correlation cluster may hold. A round 40%
+      with nothing behind it; it depends on a cluster definition whose own
+      threshold (CLUSTER_CORRELATION_THRESHOLD) is also unsourced.
+  - id: src.config.RiskConfig.max_gross_exposure_x
+    value: 2.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Gross-exposure ceiling, owner-ratified 2026-09-01 per the definition
+      site. Ratified, not sourced: nothing reads 2.0x off the account or off
+      a cited requirement, and the de-levering ladder that can only tighten
+      it is itself unsourced (GROSS_LADDER below).
+  - id: src.config.RiskConfig.max_portfolio_risk_pct
+    value: 25.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Total portfolio risk ceiling. A round 25% with no measurement behind
+      it.
+  - id: src.config.RiskConfig.max_position_risk_pct
+    value: 5.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The 5% single-position risk envelope, owner-ratified 2026-08-27.
+      Ratified and unsourced -- and see docs/WORK.md for the separate
+      finding that a 20%-notional cap has been limiting real trades to ~1%
+      rather than this.
+  - id: src.config.RiskConfig.max_stop_width_reach_atr_multiple
+    value: 1.5
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The reach caps, split out of one number -- board item 56 owns the
+      question and records that the split made them CONSISTENT without
+      making either RIGHT.
+  - id: src.config.RiskConfig.max_target_horizon_sessions
+    value: 60.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The longest horizon a target may claim before the desk stops believing
+      it. A round 60 sessions with no source. Interacts with board item 91,
+      the calendar-vs-trading-day defect.
+  - id: src.config.RiskConfig.max_target_reach_atr_multiple
+    value: 1.5
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The reach caps, split out of one number -- board item 56 owns the
+      question and records that the split made them CONSISTENT without
+      making either RIGHT.
+  - id: src.config.RiskConfig.min_level_touches_for_stop_honor
+    value: 5.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      How many touches make a price level real enough to honour a tight stop
+      against. Osler (2000) established the bounce-frequency TEST but
+      evaluates levels published by dealing firms and never defines a touch
+      count -- searched and ruled out, docs/INCIDENT_HISTORY.md. Unsourced.
+  - id: src.config.RiskConfig.min_stop_atr_multiple
+    value: 2.5
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The definition site cites a published 2.5-3.0 entry-stop consensus for
+      the RANGE but not for the point value, and calls itself "a
+      doctrine-grounded placeholder, not a permanent constant" pending
+      honest post-fix trade history. A range with a cited source and a point
+      value without one is not a sourced number. Multiplies into every stop
+      distance.
+  - id: src.config.RiskConfig.short_gap_risk_multiple
+    value: 1.5
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Sizing haircut on a short. The REASON is sound and stated (a short
+      gaps through its stop upward with no bound, so equal nominal risk is
+      not equal real risk); the MAGNITUDE 1.5 is picked. The 2026-09-14
+      verification recorded this one as self-admitting it stands "until a
+      separate pass re-examines it".
+  - id: src.config.RiskConfig.target_divergence_warn_pct
+    value: 25.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      How far a proposed target may diverge from the desk's own computation
+      before it is flagged. A round 25% with nothing behind it.
+  - id: src.config.SmartMoneyConfig.cluster_window_days
+    value: 2.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Windows and thresholds that decide whether an insider or congressional
+      buy becomes a signal at all -- what counts as a cluster, how far back
+      to look, and the cadence test that classifies a buy as routine rather
+      than informed. Every one a round number with no measurement behind it.
+      A name screened out here is never nominated, so these are as
+      trade-governing as any sizing constant.
+  - id: src.config.SmartMoneyConfig.congress_assumed_max_disclosure_lag_days
+    value: 45.0
+    status: instrument
+    site: src/config.py
+    source: >-
+      The statutory maximum disclosure lag for a congressional trade. Used
+      as the CONSERVATIVE estimate when a trade carries no filing date --
+      assume the latest date the statute allows, never an earlier one that
+      would overstate freshness (comment at the definition site). Read off
+      the statute.
+  - id: src.config.SmartMoneyConfig.congress_lookback_days
+    value: 180.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Windows and thresholds that decide whether an insider or congressional
+      buy becomes a signal at all -- what counts as a cluster, how far back
+      to look, and the cadence test that classifies a buy as routine rather
+      than informed. Every one a round number with no measurement behind it.
+      A name screened out here is never nominated, so these are as
+      trade-governing as any sizing constant.
+  - id: src.config.SmartMoneyConfig.congress_max_trades_per_source
+    value: 10000.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.SmartMoneyConfig.congress_refresh_deadline_s
+    value: 60.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.SmartMoneyConfig.congress_request_timeout_s
+    value: 15.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.SmartMoneyConfig.external_min_transaction_value_usd
+    value: 250000.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The insider-signal admission screen: 2 owners, $100k/$250k dollar
+      floors, a $5 minimum price, $10M average daily dollar volume, 20 days
+      of history. The dollar floors are board item 52. The $10M and 20-day
+      floors were recorded on 2026-09-01 as screening the WRONG THING, under
+      a redesign that was agreed and never built. All round numbers, none
+      measured.
+  - id: src.config.SmartMoneyConfig.insider_cadence_max_gap_dispersion
+    value: 0.25
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Windows and thresholds that decide whether an insider or congressional
+      buy becomes a signal at all -- what counts as a cluster, how far back
+      to look, and the cadence test that classifies a buy as routine rather
+      than informed. Every one a round number with no measurement behind it.
+      A name screened out here is never nominated, so these are as
+      trade-governing as any sizing constant.
+  - id: src.config.SmartMoneyConfig.insider_cadence_max_mean_gap_days
+    value: 120.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Windows and thresholds that decide whether an insider or congressional
+      buy becomes a signal at all -- what counts as a cluster, how far back
+      to look, and the cadence test that classifies a buy as routine rather
+      than informed. Every one a round number with no measurement behind it.
+      A name screened out here is never nominated, so these are as
+      trade-governing as any sizing constant.
+  - id: src.config.SmartMoneyConfig.insider_cadence_min_mean_gap_days
+    value: 20.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Windows and thresholds that decide whether an insider or congressional
+      buy becomes a signal at all -- what counts as a cluster, how far back
+      to look, and the cadence test that classifies a buy as routine rather
+      than informed. Every one a round number with no measurement behind it.
+      A name screened out here is never nominated, so these are as
+      trade-governing as any sizing constant.
+  - id: src.config.SmartMoneyConfig.insider_calendar_routine_years
+    value: 3.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Windows and thresholds that decide whether an insider or congressional
+      buy becomes a signal at all -- what counts as a cluster, how far back
+      to look, and the cadence test that classifies a buy as routine rather
+      than informed. Every one a round number with no measurement behind it.
+      A name screened out here is never nominated, so these are as
+      trade-governing as any sizing constant.
+  - id: src.config.SmartMoneyConfig.insider_min_cadence_trades
+    value: 3.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Windows and thresholds that decide whether an insider or congressional
+      buy becomes a signal at all -- what counts as a cluster, how far back
+      to look, and the cadence test that classifies a buy as routine rather
+      than informed. Every one a round number with no measurement behind it.
+      A name screened out here is never nominated, so these are as
+      trade-governing as any sizing constant.
+  - id: src.config.SmartMoneyConfig.lookback_days
+    value: 365.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Windows and thresholds that decide whether an insider or congressional
+      buy becomes a signal at all -- what counts as a cluster, how far back
+      to look, and the cadence test that classifies a buy as routine rather
+      than informed. Every one a round number with no measurement behind it.
+      A name screened out here is never nominated, so these are as
+      trade-governing as any sizing constant.
+  - id: src.config.SmartMoneyConfig.max_external_candidates
+    value: 3.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Nomination caps: 3 per seat, 6 per run, 3 external. Recorded in the
+      2026-09-14 verification as affordability caps, not measurements. They
+      bound what the desk can ever consider, so a name outside them is never
+      looked at.
+  - id: src.config.SmartMoneyConfig.max_filings_per_refresh
+    value: 1000.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.SmartMoneyConfig.max_observations
+    value: 40.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      Windows and thresholds that decide whether an insider or congressional
+      buy becomes a signal at all -- what counts as a cluster, how far back
+      to look, and the cadence test that classifies a buy as routine rather
+      than informed. Every one a round number with no measurement behind it.
+      A name screened out here is never nominated, so these are as
+      trade-governing as any sizing constant.
+  - id: src.config.SmartMoneyConfig.min_cluster_owners
+    value: 2.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The insider-signal admission screen: 2 owners, $100k/$250k dollar
+      floors, a $5 minimum price, $10M average daily dollar volume, 20 days
+      of history. The dollar floors are board item 52. The $10M and 20-day
+      floors were recorded on 2026-09-01 as screening the WRONG THING, under
+      a redesign that was agreed and never built. All round numbers, none
+      measured.
+  - id: src.config.SmartMoneyConfig.min_external_avg_dollar_volume_usd
+    value: 10000000.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The insider-signal admission screen: 2 owners, $100k/$250k dollar
+      floors, a $5 minimum price, $10M average daily dollar volume, 20 days
+      of history. The dollar floors are board item 52. The $10M and 20-day
+      floors were recorded on 2026-09-01 as screening the WRONG THING, under
+      a redesign that was agreed and never built. All round numbers, none
+      measured.
+  - id: src.config.SmartMoneyConfig.min_external_history_days
+    value: 20.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The insider-signal admission screen: 2 owners, $100k/$250k dollar
+      floors, a $5 minimum price, $10M average daily dollar volume, 20 days
+      of history. The dollar floors are board item 52. The $10M and 20-day
+      floors were recorded on 2026-09-01 as screening the WRONG THING, under
+      a redesign that was agreed and never built. All round numbers, none
+      measured.
+  - id: src.config.SmartMoneyConfig.min_external_price_usd
+    value: 5.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The insider-signal admission screen: 2 owners, $100k/$250k dollar
+      floors, a $5 minimum price, $10M average daily dollar volume, 20 days
+      of history. The dollar floors are board item 52. The $10M and 20-day
+      floors were recorded on 2026-09-01 as screening the WRONG THING, under
+      a redesign that was agreed and never built. All round numbers, none
+      measured.
+  - id: src.config.SmartMoneyConfig.min_transaction_value_usd
+    value: 100000.0
+    status: arbitrary
+    site: src/config.py
+    note: >-
+      The insider-signal admission screen: 2 owners, $100k/$250k dollar
+      floors, a $5 minimum price, $10M average daily dollar volume, 20 days
+      of history. The dollar floors are board item 52. The $10M and 20-day
+      floors were recorded on 2026-09-01 as screening the WRONG THING, under
+      a redesign that was agreed and never built. All round numbers, none
+      measured.
+  - id: src.config.SmartMoneyConfig.refresh_deadline_s
+    value: 180.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.SmartMoneyConfig.request_timeout_s
+    value: 15.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.config.SmartMoneyConfig.requests_per_second
+    value: 8.0
+    status: not-trade-governing
+    site: src/config.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.data.correlation.CLUSTER_CORRELATION_THRESHOLD
+    value: 0.7
+    status: arbitrary
+    site: src/data/correlation.py
+    note: >-
+      Called "the traditional finance cutoff" at the definition site with no
+      citation (2026-09-14 verification). It decides which names count as
+      one cluster, and therefore what max_cluster_risk_share_pct applies to.
+  - id: src.execution.cash_sweep._BUY_LIMIT_PAD
+    value: 1.001
+    status: arbitrary
+    site: src/execution/cash_sweep.py
+    note: >-
+      Limit-price padding on a sweep order -- 10bps either side, a round
+      number rather than a reading off the name's own spread. It sets the
+      worst price the desk will accept on a real fill.
+  - id: src.execution.cash_sweep._FUND_BUFFER_FRAC
+    value: 0.01
+    status: arbitrary
+    site: src/execution/cash_sweep.py
+    note: >-
+      The fees/slippage buffer held back when funding a sweep. A round 1%
+      with a round $50 floor. Now also read as the cash-drag tolerance
+      (docs/INCIDENT_HISTORY.md 2026-09-17), which widened what it governs
+      without sourcing it.
+  - id: src.execution.cash_sweep._FUND_BUFFER_MIN_USD
+    value: 50.0
+    status: arbitrary
+    site: src/execution/cash_sweep.py
+    note: >-
+      The fees/slippage buffer held back when funding a sweep. A round 1%
+      with a round $50 floor. Now also read as the cash-drag tolerance
+      (docs/INCIDENT_HISTORY.md 2026-09-17), which widened what it governs
+      without sourcing it.
+  - id: src.execution.cash_sweep._FUND_CASH_SETTLE_POLL_S
+    value: 2.0
+    status: not-trade-governing
+    site: src/execution/cash_sweep.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.execution.cash_sweep._FUND_CASH_SETTLE_TIMEOUT_S
+    value: 30.0
+    status: not-trade-governing
+    site: src/execution/cash_sweep.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.execution.cash_sweep._FUND_TERMINAL_TIMEOUT_S
+    value: 180.0
+    status: not-trade-governing
+    site: src/execution/cash_sweep.py
+    note: >-
+      Network deadline, timeout, poll interval or fetch batch cap. It
+      decides how long the desk waits or how much it fetches, never whether
+      or how much to trade. A wrong value degrades data availability, which
+      is a separate failure the seats already see as missing evidence.
+  - id: src.execution.cash_sweep._SELL_LIMIT_PAD
+    value: 0.999
+    status: arbitrary
+    site: src/execution/cash_sweep.py
+    note: >-
+      Limit-price padding on a sweep order -- 10bps either side, a round
+      number rather than a reading off the name's own spread. It sets the
+      worst price the desk will accept on a real fill.
+  - id: src.execution.stop_records._ALPACA_TICK_AT_OR_ABOVE_DOLLAR
+    value: 0.01
+    status: instrument
+    site: src/execution/stop_records.py
+    source: >-
+      The minimum price increment the venue accepts at or above $1.00. A
+      stop priced off this grid is rejected by the broker, so the value is
+      read off the venue, not chosen.
+  - id: src.execution.stop_records._ALPACA_TICK_BELOW_DOLLAR
+    value: 0.0001
+    status: instrument
+    site: src/execution/stop_records.py
+    source: >-
+      The minimum price increment the venue accepts below $1.00. Same
+      provenance as the at-or-above tick: rejected by the broker if
+      violated.
+  - id: src.nominations._CONVICTION_RANK['high']
+    value: 3.0
+    status: not-trade-governing
+    site: src/nominations.py
+    note: >-
+      An ordinal encoding of an enum so it can be sorted. Only the ORDER is
+      used; the magnitudes carry no meaning and changing them to 7 and 4
+      would change nothing. Not a magnitude that reaches a trade.
+  - id: src.nominations._CONVICTION_RANK['medium']
+    value: 2.0
+    status: not-trade-governing
+    site: src/nominations.py
+    note: >-
+      An ordinal encoding of an enum so it can be sorted. Only the ORDER is
+      used; the magnitudes carry no meaning and changing them to 7 and 4
+      would change nothing. Not a magnitude that reaches a trade.
+  - id: src.portfolio_constructor.ConstructorConfig.max_cluster_risk_share_pct
+    value: 40.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      The share of total risk one correlation cluster may hold. A round 40%
+      with nothing behind it; it depends on a cluster definition whose own
+      threshold (CLUSTER_CORRELATION_THRESHOLD) is also unsourced.
+  - id: src.portfolio_constructor.ConstructorConfig.max_gross_exposure_x
+    value: 2.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      Gross-exposure ceiling, owner-ratified 2026-09-01 per the definition
+      site. Ratified, not sourced: nothing reads 2.0x off the account or off
+      a cited requirement, and the de-levering ladder that can only tighten
+      it is itself unsourced (GROSS_LADDER below).
+  - id: src.portfolio_constructor.ConstructorConfig.max_portfolio_risk_pct
+    value: 25.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      Total portfolio risk ceiling. A round 25% with no measurement behind
+      it.
+  - id: src.portfolio_constructor.ConstructorConfig.max_position_pct
+    value: 65.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      Single-name ceiling, moved to 65 by owner override on 2026-09-11
+      (docs/INCIDENT_HISTORY.md, the prompt_limits defect). Ratified,
+      unsourced.
+  - id: src.portfolio_constructor.ConstructorConfig.max_sector_hard_pct
+    value: 90.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      The soft sector target and the hard sector ceiling. Owner-accepted
+      figures with no measurement behind either; approval does not make a
+      flat percent non-arbitrary (docs/OUTCOME.md). Board item 104
+      separately records that the prompts describe the soft bound as if it
+      were the hard one.
+  - id: src.portfolio_constructor.ConstructorConfig.max_sector_pct
+    value: 75.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      The soft sector target and the hard sector ceiling. Owner-accepted
+      figures with no measurement behind either; approval does not make a
+      flat percent non-arbitrary (docs/OUTCOME.md). Board item 104
+      separately records that the prompts describe the soft bound as if it
+      were the hard one.
+  - id: src.portfolio_constructor.ConstructorConfig.max_stop_width_reach_atr_multiple
+    value: 1.5
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      The reach caps, split out of one number -- board item 56 owns the
+      question and records that the split made them CONSISTENT without
+      making either RIGHT.
+  - id: src.portfolio_constructor.ConstructorConfig.max_target_horizon_sessions
+    value: 60.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      The longest horizon a target may claim before the desk stops believing
+      it. A round 60 sessions with no source. Interacts with board item 91,
+      the calendar-vs-trading-day defect.
+  - id: src.portfolio_constructor.ConstructorConfig.max_target_reach_atr_multiple
+    value: 1.5
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      The reach caps, split out of one number -- board item 56 owns the
+      question and records that the split made them CONSISTENT without
+      making either RIGHT.
+  - id: src.portfolio_constructor.ConstructorConfig.min_level_touches_for_stop_honor
+    value: 5.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      How many touches make a price level real enough to honour a tight stop
+      against. Osler (2000) established the bounce-frequency TEST but
+      evaluates levels published by dealing firms and never defines a touch
+      count -- searched and ruled out, docs/INCIDENT_HISTORY.md. Unsourced.
+  - id: src.portfolio_constructor.ConstructorConfig.min_order_usd
+    value: 500.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      Minimum order value. Not a broker minimum -- the broker accepts
+      fractional notional well below it. A round $500 with nothing behind
+      it, and it compounds with min_risk_pct to drop small plans.
+  - id: src.portfolio_constructor.ConstructorConfig.min_reward_risk_after_widening
+    value: 1.5
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      Recorded as having no derivation in the 2026-09-14 verification
+      (docs/INCIDENT_HISTORY.md). It rejects a trade whose reward:risk falls
+      below this once its stop is widened, and the definition site discloses
+      the tension it creates with min_stop_atr_multiple without sourcing the
+      value.
+  - id: src.portfolio_constructor.ConstructorConfig.min_risk_pct
+    value: 0.5
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      THE CASE THIS CHECK WAS BUILT FOR. Every new trade plan sized under
+      0.50% of the account is DENIED OUTRIGHT rather than shrunk. The number
+      exists only here, as a bare dataclass default: absent from
+      config/settings.yaml, absent from every document, absent from any
+      ratification record. The comment four lines above it, on
+      risk_budget_pct, calls the same 0.5% "a constructor default nobody
+      chose". Nothing measures what an immaterial payoff is on this account
+      size. Changing it is the owner's call.
+  - id: src.portfolio_constructor.ConstructorConfig.min_stop_atr_multiple
+    value: 2.5
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      The definition site cites a published 2.5-3.0 entry-stop consensus for
+      the RANGE but not for the point value, and calls itself "a
+      doctrine-grounded placeholder, not a permanent constant" pending
+      honest post-fix trade history. A range with a cited source and a point
+      value without one is not a sourced number. Multiplies into every stop
+      distance.
+  - id: src.portfolio_constructor.ConstructorConfig.min_trade_weight_delta
+    value: 0.5
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      How large a weight change must be before the desk bothers to trade it.
+      A round half a percent with no measurement of cost against it.
+  - id: src.portfolio_constructor.ConstructorConfig.risk_budget_pct
+    value: 5.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      The 5% single-position risk envelope, owner-ratified 2026-08-27.
+      Ratified and unsourced -- and see docs/WORK.md for the separate
+      finding that a 20%-notional cap has been limiting real trades to ~1%
+      rather than this.
+  - id: src.portfolio_constructor.ConstructorConfig.short_gap_risk_multiple
+    value: 1.5
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      Sizing haircut on a short. The REASON is sound and stated (a short
+      gaps through its stop upward with no bound, so equal nominal risk is
+      not equal real risk); the MAGNITUDE 1.5 is picked. The 2026-09-14
+      verification recorded this one as self-admitting it stands "until a
+      separate pass re-examines it".
+  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[0][1]
+    value: 1.2
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      Macro-regime stop-width scalers. Same shape as the setup scalers: the
+      direction (a risk-off tape widens ordinary swings for the same ATR
+      reading) is doctrine, the magnitudes are picked. No measured
+      regime/MAE breakdown exists in this repo. These multiply into every
+      stop distance.
+  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[1][1]
+    value: 1.1
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      Macro-regime stop-width scalers. Same shape as the setup scalers: the
+      direction (a risk-off tape widens ordinary swings for the same ATR
+      reading) is doctrine, the magnitudes are picked. No measured
+      regime/MAE breakdown exists in this repo. These multiply into every
+      stop distance.
+  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_regime_scale[2][1]
+    value: 0.95
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      Macro-regime stop-width scalers. Same shape as the setup scalers: the
+      direction (a risk-off tape widens ordinary swings for the same ATR
+      reading) is doctrine, the magnitudes are picked. No measured
+      regime/MAE breakdown exists in this repo. These multiply into every
+      stop distance.
+  - id: src.portfolio_constructor.ConstructorConfig.stop_atr_setup_scale[1][1]
+    value: 0.9
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      The range-setup stop-width scaler. The definition site is explicit:
+      the DIRECTION (range tighter than breakout) is doctrine, but 0.90 is
+      "a modest tightening off the base, not a specific measured number",
+      and there is no per-setup-type MAE breakdown in this repo to size it
+      from. VERIFIED 2026-09-18: introduced in commit 0088328c (2026-09-10),
+      the same commit that moved the base from 3.0 to 2.5 -- so the
+      often-repeated story that it was derived against a base of 1.5 which
+      later became 2.5 does not match git. It was never sourced, so it did
+      not become unsourced. Board item 90.
+  - id: src.portfolio_constructor.ConstructorConfig.target_divergence_warn_pct
+    value: 25.0
+    status: arbitrary
+    site: src/portfolio_constructor.py
+    note: >-
+      How far a proposed target may diverge from the desk's own computation
+      before it is flagged. A round 25% with nothing behind it.
+  - id: src.risk.constants.DEFAULT_DRAWDOWN_VOL_SENSITIVITY
+    value: 3.0
+    status: arbitrary
+    site: src/risk/constants.py
+    note: >-
+      Scales the drawdown brakes by realised volatility. Recorded unsourced
+      in the 2026-09-11 audit and still unsourced 2026-09-14.
+  - id: src.risk.constants.REWARD_RISK_FLOOR
+    value: 1.5
+    status: arbitrary
+    site: src/risk/constants.py
+    note: >-
+      Not a gate and not a size cap anywhere (owner ruling 2026-09-17); what
+      survives is an ordering signal into rank_verdicts. Ordering still
+      changes which names get taken when the book is full, and the reference
+      point itself has no source. See board item 110 for the document that
+      still describes it as a size cap.
+  - id: src.risk.constants.STARTER_POSITION_RISK_PCT
+    value: 0.5
+    status: arbitrary
+    site: src/risk/constants.py
+    note: >-
+      The size a range ticket is cut to. docs/INCIDENT_HISTORY.md records it
+      as a flat unsourced number that had already shrunk a real name (RSG)
+      to 0.50% risk. No source.
+  - id: src.risk.exit_guard._NEGATION_LOOKBACK_CHARS
+    value: 40.0
+    status: not-trade-governing
+    site: src/risk/exit_guard.py
+    note: >-
+      A character window for string matching inside the exit-reason phrase
+      check. It parses English, not price.
+  - id: src.risk.exit_guard._NOISE_FLOOR['distance_to_stop_pct']
+    value: 0.1
+    status: arbitrary
+    site: src/risk/exit_guard.py
+    note: >-
+      How far a position metric must move before the exit guard treats it as
+      a real change rather than rounding noise. Four round numbers in four
+      different units, none read off the name's own dispersion in that
+      metric. These decide whether a deteriorating position is seen to be
+      deteriorating at all, which is the mechanism board item 75 is about.
+  - id: src.risk.exit_guard._NOISE_FLOOR['pace']
+    value: 0.05
+    status: arbitrary
+    site: src/risk/exit_guard.py
+    note: >-
+      How far a position metric must move before the exit guard treats it as
+      a real change rather than rounding noise. Four round numbers in four
+      different units, none read off the name's own dispersion in that
+      metric. These decide whether a deteriorating position is seen to be
+      deteriorating at all, which is the mechanism board item 75 is about.
+  - id: src.risk.exit_guard._NOISE_FLOOR['r_multiple']
+    value: 0.05
+    status: arbitrary
+    site: src/risk/exit_guard.py
+    note: >-
+      How far a position metric must move before the exit guard treats it as
+      a real change rather than rounding noise. Four round numbers in four
+      different units, none read off the name's own dispersion in that
+      metric. These decide whether a deteriorating position is seen to be
+      deteriorating at all, which is the mechanism board item 75 is about.
+  - id: src.risk.exit_guard._NOISE_FLOOR['thesis_progress_pct']
+    value: 0.5
+    status: arbitrary
+    site: src/risk/exit_guard.py
+    note: >-
+      How far a position metric must move before the exit guard treats it as
+      a real change rather than rounding noise. Four round numbers in four
+      different units, none read off the name's own dispersion in that
+      metric. These decide whether a deteriorating position is seen to be
+      deteriorating at all, which is the mechanism board item 75 is about.
+  - id: src.risk.exit_guard._SUPPORTED_MA_PERIODS[0]
+    value: 20.0
+    status: not-trade-governing
+    site: src/risk/exit_guard.py
+    note: >-
+      The set of moving averages the desk is able to PARSE out of a written
+      exit condition (20/50/200-day), not a threshold it applies. These are
+      the periods universally published on price charts; the list bounds
+      what a condition may name, and no value here sizes, stops or refuses
+      anything.
+  - id: src.risk.exit_guard._SUPPORTED_MA_PERIODS[1]
+    value: 50.0
+    status: not-trade-governing
+    site: src/risk/exit_guard.py
+    note: >-
+      The set of moving averages the desk is able to PARSE out of a written
+      exit condition (20/50/200-day), not a threshold it applies. These are
+      the periods universally published on price charts; the list bounds
+      what a condition may name, and no value here sizes, stops or refuses
+      anything.
+  - id: src.risk.exit_guard._SUPPORTED_MA_PERIODS[2]
+    value: 200.0
+    status: not-trade-governing
+    site: src/risk/exit_guard.py
+    note: >-
+      The set of moving averages the desk is able to PARSE out of a written
+      exit condition (20/50/200-day), not a threshold it applies. These are
+      the periods universally published on price charts; the list bounds
+      what a condition may name, and no value here sizes, stops or refuses
+      anything.
+  - id: src.risk.rules.DESK_INVESTED_TARGET_PCT
+    value: 100.0
+    status: not-trade-governing
+    site: src/risk/rules.py
+    note: >-
+      Definitional, not chosen: 100% of the book is what "fully invested"
+      means. It is the identity against which a cash-drag advisory is
+      measured, and the tolerance beside it is read from
+      cash_sweep.reserve_pct (2026-09-17).
+  - id: src.risk.rules.DRAWDOWN_BUY_SCALE
+    value: 0.5
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      Halves buying while the book is in drawdown. A flat one-half with
+      nothing behind it.
+  - id: src.risk.rules.EARNINGS_STANCE_MAX_AGE_DAYS
+    value: 90.0
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      How old an earnings stance may be before it is dropped. A round
+      quarter in calendar days with no source, and calendar days are the
+      wrong unit per board item 91.
+  - id: src.risk.rules.GROSS_LADDER[0][0]
+    value: -8.0
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      The de-levering ladder: drawdown rungs and the gross multiple each
+      rung allows. Round drawdown percentages and round multiples, none read
+      off the account or off a cited source. It can only tighten
+      max_gross_exposure_x, which does not make the rungs sourced.
+  - id: src.risk.rules.GROSS_LADDER[0][1]
+    value: 1.5
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      The de-levering ladder: drawdown rungs and the gross multiple each
+      rung allows. Round drawdown percentages and round multiples, none read
+      off the account or off a cited source. It can only tighten
+      max_gross_exposure_x, which does not make the rungs sourced.
+  - id: src.risk.rules.GROSS_LADDER[1][0]
+    value: -15.0
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      The de-levering ladder: drawdown rungs and the gross multiple each
+      rung allows. Round drawdown percentages and round multiples, none read
+      off the account or off a cited source. It can only tighten
+      max_gross_exposure_x, which does not make the rungs sourced.
+  - id: src.risk.rules.GROSS_LADDER[2][0]
+    value: -20.0
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      The de-levering ladder: drawdown rungs and the gross multiple each
+      rung allows. Round drawdown percentages and round multiples, none read
+      off the account or off a cited source. It can only tighten
+      max_gross_exposure_x, which does not make the rungs sourced.
+  - id: src.risk.rules.GROSS_LADDER[2][1]
+    value: 0.5
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      The de-levering ladder: drawdown rungs and the gross multiple each
+      rung allows. Round drawdown percentages and round multiples, none read
+      off the account or off a cited source. It can only tighten
+      max_gross_exposure_x, which does not make the rungs sourced.
+  - id: src.risk.rules.GROSS_LADDER_ALERT_PCT
+    value: -20.0
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      The de-levering ladder: drawdown rungs and the gross multiple each
+      rung allows. Round drawdown percentages and round multiples, none read
+      off the account or off a cited source. It can only tighten
+      max_gross_exposure_x, which does not make the rungs sourced.
+  - id: src.risk.rules.MIN_REALIZED_VOL_RETURNS
+    value: 10.0
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      The realised-volatility estimation window and the minimum sample it
+      will accept. Round 20 and 10 sessions. The estimate feeds the drawdown
+      brakes, so the window length changes when the brakes bite.
+  - id: src.risk.rules.REALIZED_VOL_WINDOW_SESSIONS
+    value: 20.0
+    status: arbitrary
+    site: src/risk/rules.py
+    note: >-
+      The realised-volatility estimation window and the minimum sample it
+      will accept. Round 20 and 10 sessions. The estimate feeds the drawdown
+      brakes, so the window length changes when the brakes bite.
+  - id: src.risk.size_override._RANK['multiplier']
+    value: 3.0
+    status: not-trade-governing
+    site: src/risk/size_override.py
+    note: >-
+      An ordinal encoding of an enum so it can be sorted. Only the ORDER is
+      used; the magnitudes carry no meaning and changing them to 7 and 4
+      would change nothing. Not a magnitude that reaches a trade.
+  - id: src.risk.size_override._RANK['reduce_only']
+    value: 2.0
+    status: not-trade-governing
+    site: src/risk/size_override.py
+    note: >-
+      An ordinal encoding of an enum so it can be sorted. Only the ORDER is
+      used; the magnitudes carry no meaning and changing them to 7 and 4
+      would change nothing. Not a magnitude that reaches a trade.
+  - id: src.risk.trailing.CHANDELIER_ATR_MULTIPLE
+    value: 3.0
+    status: arbitrary
+    site: src/risk/trailing.py
+    note: >-
+      Called "the conventional setting" at the definition site with no
+      citation (2026-09-14 verification). It decides how much of a run-up
+      the desk gives back -- measured against ORCL the same day.
+  - id: src.risk.trailing.MIN_RATCHET_PCT
+    value: 2.0
+    status: arbitrary
+    site: src/risk/trailing.py
+    note: >-
+      The minimum step a trailing stop may ratchet by. The 2026-09-14
+      verification records it as the same rule as the reviewer prompt's
+      "new_stop >= old_stop x 1.02", kept deliberately identical and
+      unsourced in BOTH places. Board item 108 records that the prompt
+      states it as enforced while nothing enforces it against a
+      reviewer-proposed stop.
+  - id: src.risk.trailing.NOISE_BAND_ATR_MULTIPLE
+    value: 1.25
+    status: arbitrary
+    site: src/risk/trailing.py
+    note: >-
+      The trailing-stop noise band. The settings comment called it MEASURED;
+      the 2026-09-14 verification found nothing was measured. Its width is
+      approximately the stop width, which is why broker stops do almost all
+      real exits (docs/WORK.md).
+  - id: src.risk.trailing.PIVOT_WINDOW
+    value: 3.0
+    status: arbitrary
+    site: src/risk/trailing.py
+    note: >-
+      Bars either side that must be dominated for a swing pivot. Searched
+      extensively and every candidate source ruled out: TA-Lib FRACTAL
+      defaults to 2 with no rationale, MetaTrader 5 defines five bars and
+      gives no reason, fxssi records five became standard because it shipped
+      as an MT4 default, LuxAlgo states outright there is no universally
+      best setting (docs/INCIDENT_HISTORY.md -- do not re-search these).
+  - id: src.rotation.ROTATION_MARGIN_PCT
+    value: 0.25
+    status: arbitrary
+    site: src/rotation.py
+    note: >-
+      How much better a candidate must be before the desk rotates out of a
+      holding. A round quarter percent with no source. Auto-rotation is the
+      one flag the owner wants enabled, so this binds the moment it is.
