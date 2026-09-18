@@ -7032,6 +7032,27 @@ class ExecutionStage:
                     (a for a in (ctx.analyses or []) if a.symbol == decision.symbol),
                     None,
                 )
+                # Item 82: `setup_type` was being classified a SECOND time
+                # here, independently of `PortfolioConstructor._build_buy`/
+                # `_build_short` (see `TradeDecision.setup_type` in
+                # models.py, which exists specifically so execution does not
+                # have to re-derive this fact). On a scale-in ADD to an
+                # already-held name this second lookup re-read TODAY's
+                # technical read and wrote it onto the new row —
+                # `get_symbol_last_buy` returns the newest row, so this
+                # silently RECLASSIFIED a position whose setup_type was
+                # already pinned on its original entry, which is worse than
+                # a mere disagreement: pace/progress (disabled for a
+                # breakout) could flip back on, or off, on a held position
+                # with no new entry decision behind the change. A genuinely
+                # new entry has no prior pinned row and reads the single
+                # value the constructor already classified, carried on the
+                # decision.
+                if add_prep is not None and add_prep.is_scale_in:
+                    _existing_buy = pipeline.db.get_symbol_last_buy(decision.symbol)
+                    pinned_setup_type = (_existing_buy or {}).get("setup_type") or None
+                else:
+                    pinned_setup_type = getattr(decision, "setup_type", None)
                 entry_side = "sell_short" if is_short else "buy"
                 pending_row_id = pipeline.db.insert_trade(
                     symbol=decision.symbol, action=decision.action, qty=qty,
@@ -7043,7 +7064,7 @@ class ExecutionStage:
                     expected_horizon_sessions=getattr(
                         entry_analysis, "expected_horizon_sessions", None,
                     ),
-                    setup_type=getattr(entry_analysis, "setup_type", None),
+                    setup_type=pinned_setup_type,
                     # Conviction ledger (spec §7.2) — pinned at entry from
                     # the constructor's TradeDecision (see portfolio_
                     # constructor._build_buy/_build_short) and from this

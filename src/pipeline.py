@@ -11450,6 +11450,39 @@ class TradingPipeline:
         }
 
     def run_morning(self) -> dict:
+        """The morning session, plus the durable record of its own output.
+
+        `leverage` (the §11.2 gross-ceiling snapshot) and
+        `stop_coverage_gaps` (the broker-truth stop audit) are computed
+        fresh from live broker state every call and, before this wrapper,
+        were handed to the notifier and dropped — no other durable
+        table holds them (unlike PM/RM reasoning and orders, already kept
+        via `specialist_evidence`/`trades`). The body below is unchanged;
+        this wrapper persists EVERY return path so the message can be
+        re-read without paying for a fresh run. Fail-soft — a storage
+        problem costs the audit record, never the morning push.
+        """
+        result = self._run_morning_body()
+        self._persist_session_report("morning", result)
+        return result
+
+    def _persist_session_report(self, mode: str, result: dict) -> None:
+        """Write a morning/midday/close result dict verbatim, keyed by
+        trading day + mode. No field is defaulted or filled in here.
+        """
+        if not isinstance(result, dict):
+            return
+        try:
+            self.db.save_session_report(
+                mode=mode, date=session_date_key(),
+                run_id=result.get("run_id"), payload=result,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break the push
+            logger.warning(
+                "%s report persistence failed (non-fatal): %s", mode, exc,
+            )
+
+    def _run_morning_body(self) -> dict:
         ctx = RunContext.start("morning")
         run_id = ctx.run_id
         logger.info("=== Morning run started: %s ===", run_id)
@@ -12047,17 +12080,28 @@ class TradingPipeline:
                 # identified P&L defect in the system. A trade's expected
                 # horizon must never be derived from the system's own past
                 # behaviour.
-                if progress_pct is None or not pinned_horizon or days_held is None:
+                #
+                # Board item 91: `pinned_horizon` (`expected_horizon_sessions`)
+                # is denominated in TRADING SESSIONS, so both sides of this
+                # division must be — `sessions_held`, never the calendar-day
+                # `days_held`. A weekend adds two calendar days and zero
+                # sessions; dividing by calendar days made every position look
+                # slower than it is, worst on the short horizons this desk
+                # trades, and worse across a holiday weekend. `sessions_held`
+                # is the same weekend-aware count the noise-band scaling above
+                # already uses (`trading_calendar.trading_sessions_held`) —
+                # no new number, just the one already computed above.
+                if progress_pct is None or not pinned_horizon or sessions_held is None:
                     pace_status = "unavailable_no_pinned_horizon"
-                elif days_held < max(1, pinned_horizon / 3):
+                elif sessions_held < max(1, pinned_horizon / 3):
                     # Below one third of the pinned horizon the metric is
                     # mathematically meaningless — a thesis given 15 sessions
-                    # cannot be "behind schedule" on day 2, and reading it as
-                    # such is exactly how a day-5 position gets sold for "not
-                    # progressing".
+                    # cannot be "behind schedule" on session 2, and reading it
+                    # as such is exactly how a day-5 position gets sold for
+                    # "not progressing".
                     pace_status = "too_early"
                 else:
-                    time_fraction = days_held / pinned_horizon
+                    time_fraction = sessions_held / pinned_horizon
                     if time_fraction > 0:
                         pace = progress_pct / (time_fraction * 100)
                         pace_status = "measured"
@@ -12267,6 +12311,22 @@ class TradingPipeline:
         return "\n".join(lines)
 
     def run_position_review(self, session_type: str = "midday") -> dict:
+        """Midday/close, plus the durable record of its own output.
+
+        Same gap as `run_morning` (2026-09-18 sweep): `leverage`,
+        `stop_coverage_gaps` and this session's own `daily_pnl`/`total_pnl`
+        snapshot are computed from live broker state and handed to the
+        notifier with no other durable home. The body is unchanged; this
+        wrapper persists every return path, keyed by (date, session_type)
+        so midday and close each keep their own row. Fail-soft.
+        """
+        if session_type not in ("midday", "close"):
+            raise ValueError(f"run_position_review: unknown session_type {session_type!r}")
+        result = self._run_position_review_body(session_type)
+        self._persist_session_report(session_type, result)
+        return result
+
+    def _run_position_review_body(self, session_type: str) -> dict:
         """Unified entry for both midday (13:00 ET) and close (15:30 ET).
 
         Same memory layers, same schema, same agent. Session bias is injected
@@ -12274,9 +12334,6 @@ class TradingPipeline:
         de-lever / ex-div / news / earnings / LLM review /
         emergency liquidate / execution / reconcile — is identical.
         """
-        if session_type not in ("midday", "close"):
-            raise ValueError(f"run_position_review: unknown session_type {session_type!r}")
-
         ctx = RunContext.start(session_type)
         run_id = ctx.run_id
         logger.info("=== %s check: %s ===", session_type.capitalize(), run_id)
@@ -13129,6 +13186,36 @@ class TradingPipeline:
         }
 
     def run_intra_check(self) -> dict:
+        """Intra-session circuit-breaker check, plus the durable record of
+        its own output.
+
+        Same gap as `run_morning`/`run_position_review` (2026-09-18 sweep):
+        `stop_coverage_gaps` is computed from live broker state every tick
+        and handed to the notifier with no other durable home. This wrapper
+        persists every return path, keyed by run_id (not date — this fires
+        roughly every 30 minutes, so a date-keyed row would keep only the
+        last tick; see `Database.save_intra_check_report`). Fail-soft.
+        """
+        result = self._run_intra_check_body()
+        self._persist_intra_check_report(result)
+        return result
+
+    def _persist_intra_check_report(self, result: dict) -> None:
+        if not isinstance(result, dict):
+            return
+        run_id = result.get("run_id")
+        if not run_id:
+            return
+        try:
+            self.db.save_intra_check_report(
+                run_id=run_id, date=session_date_key(), payload=result,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break the push
+            logger.warning(
+                "intra_check report persistence failed (non-fatal): %s", exc,
+            )
+
+    def _run_intra_check_body(self) -> dict:
         """Lightweight intra-session circuit-breaker check (no LLM calls).
 
         Scheduled between morning and midday (typically 12:00 ET) to catch a
