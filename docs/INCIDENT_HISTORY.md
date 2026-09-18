@@ -22,6 +22,118 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — the gross-exposure de-lever does cancel stops to sell (it has to), the recovery around it is complete, and it has never fired (item 87 closed)
+
+**What broke, in one line:** nothing did — item 87 asked whether the desk's automatic de-lever cancels protective stop-losses in order to sell, because that is the exact flaw that got the daily-loss liquidation deleted on 2026-09-14. It does cancel them, but the cancel is mandatory (a resting stop holds the whole position, so the broker would reject the sell outright) and the recovery around it is complete, unlike the deleted liquidator.
+
+**How it works.** `_enforce_gross_ceiling` (`src/pipeline.py`) calls `_submit_protected_sell(label="FORCE_DELEVER")`, whose first act is `_cancel_stops_with_write_ahead`: snapshot the resting stops, write a durable recovery row, then cancel. Recovery is complete at every failure point verified in the code: a failed cancel is rolled back and the row discharged so the symbol is skipped with its stops untouched; a broker rejection of the sell restores the stops inline; a submit exception restores them inline; a no-fill or partial fill is resolved by `_finalize_pending_protections`, which restores the original stops or re-protects the actual residual against live broker quantity; and a mid-run process death is covered because the write-ahead row is durable before any broker mutation, and `_drain_pending_protection_restores` — which reads it — runs at the start of all five session entry points. An unreadable equity book is marked unmeasurable and trims nothing (`apply_gross_ceiling`).
+
+**Reachability.** Called unconditionally from the morning session and again from the shared midday/close body, no feature flag. It has never fired: zero `FORCE_DELEVER` rows exist in any live database checked, and the deepest recorded peak-to-trough drawdown is -1.48% against a first rung that fires at -8% (`src/risk/rules.py`).
+
+**Two real gaps found while auditing, neither the one item 87 asked about, both filed as new items rather than fixed here — a behaviour change on the live selling path during a drawdown needs the owner, not a self-authorised patch.** Item 111: when the ladder trims more than one holding in the same pass, `_submit_protected_sell` cancels each one's stops inside the loop, but `_finalize_pending_protections` — the only step that restores or re-protects — runs once, after the whole batch. The earliest-trimmed holding rides naked for the rest of the loop plus every later holding's fill wait, and this happens only during the drawdown conditions that trigger the ladder in the first place. `_force_delever` (the separate cash-only margin sweep) shares the same batch shape. There is no per-symbol precedent elsewhere in the file. Item 112: a de-lever pass that fails to bring the book back under its ceiling only logs a warning — nothing tells the owner the pass didn't work, only that a rung fired. Not silent (it does log); unreportable, because it cannot reach a session result, a Telegram message, or a test.
+
+**Not changed.** Nothing — this entry is an audit result, not a fix. Items 111 and 112 are open on the board for the owner.
+
+---
+
+### 2026-09-18 — the cockpit and the "why do we hold this" view were rebuilt to the owner's specs
+
+**In plain words:** the panels on the dashboard now each carry their own
+scrolling rule, so the rule travels with a panel when it is dragged instead
+of being tied to where it sits on screen; the Trades blotter keeps both its
+scrollbars and no other table gained one; and clicking through to ask why a
+position is held now opens with a plain sentence carrying the real reason
+and numbers, with machine identifiers folded away behind a toggle.
+
+Shipped as PRs #470, #471 and #472 (merged 2026-09-18). The scroll policy is
+`PANE_SCROLL` in `frontend/src/components/DesktopCockpitWorkspace.tsx` —
+three values (grow-to-fit, scroll vertically, scroll both), declared once and
+with the grow-to-fit set derived from it, rather than a check for the name
+"Trades". The horizontal half needed `DataTable`'s opt-in `scrollX`, which
+sizes columns to their content, plus one scoped exception to the blanket
+`overflow-x-hidden` rule; `frontend/src/components/componentPolicy.test.ts`
+asserts that exception is reachable only through `scrollX`, so the old "every
+table grew a sideways slider" regression cannot return. `TradesPanel` is the
+only consumer passing it. The "why" view is served by
+`GET /holdings/{symbol}/why` in `src/api/routes_history.py` over
+`src/api/holding_why.py`'s wording rules.
+
+**Closed a stale paragraph with it.** Board item 103 still said "he has not
+answered, so nothing is being changed" inside a heading that said shipped.
+He had answered — both scrollbars, that tab only — and it was built. The
+remaining owner-facing report and popup work is items 106 and 115, not here.
+
+---
+
+### 2026-09-18 — last night's evening report could not be re-read without paying for a new run
+
+**In plain words:** the evening summary was assembled from live broker state,
+sent, and thrown away. Anyone wanting to look at it again had to run the
+whole pipeline again, which costs money and would not produce the same
+numbers anyway.
+
+The run computed `stop_coverage_gaps`, `stop_proximity`,
+`earnings_proximity`, the P&L totals and `risk_capital_dollars`, handed them
+to the formatter and discarded them; only `daily_pnl` and `insights` reached
+disk. The run now writes its own result dict verbatim to an `evening_reports`
+table (`src/storage/db.py`), keyed by trading day with the producing run id,
+plus the book as `positions` held it at that moment — `trader_feed`'s
+positions query is not run-scoped, so a replay would otherwise print today's
+holdings under an older date. `scripts/desk_status.py --evening [DATE]`
+re-renders a stored night through the SAME formatter the live push uses:
+read-only connection, no broker call, no model call, no write. A missing or
+unreadable row is reported as unavailable and nothing is sent; a partial row
+names what is missing in words. Nothing is defaulted, zeroed or estimated,
+and the formatter itself was not touched. Covered by
+`tests/test_evening_report_replay.py`.
+
+Note `data/evening_replays/<date>.json` is the model's INPUT fixture for
+rehearsal, not the run's output — different thing, easy to confuse.
+
+---
+
+### 2026-09-18 — the board-size gate failed for its own reasons on pull-request runs
+
+**In plain words:** the automated check that stops this board growing without
+bound sometimes failed because it could not find the previous version of the
+file to compare against — nothing to do with the file's size. A required gate
+that fails for its own reasons is how a gate gets routed around rather than
+fixed.
+
+The on-demand deepen was a bare `git fetch --deepen=1 origin`. With no
+refspec, deepen only extends refs matching the remote's default fetch
+refspec (`refs/heads/*`); a pull_request run's HEAD lives at
+`refs/remotes/pull/<N>/merge`, outside that namespace, so the fetch exited 0
+having fetched nothing relevant and the baseline stayed unresolvable.
+Passing the bare SHA as a want does not work either — upload-pack will not
+serve an unadvertised SHA with no destination refspec. The fix refetches the
+checked-out SHA into an explicit destination ref with one extra layer of
+depth, the same shape `actions/checkout` uses. Root cause and fix are
+documented in `tests/test_status_board.py`; PR #501, merged 2026-09-18. The
+surviving `AssertionError` when no baseline can be read is the deliberate
+fail-closed branch, not the defect.
+
+Separately and already closed: three tests in
+`tests/test_intraday_scan_crash_visibility.py` read the wall clock and failed
+on any run landing on the quarter-hour, fixed by pinning the clock (PR #488).
+
+---
+
+### 2026-09-18 — the authority document called the reward:risk number a size cap
+
+**In plain words:** the document the desk treats as its own rulebook said a
+range trade was capped at starter size by its reward-to-risk number. The code
+does no such thing — that number is only used for ranking.
+
+`docs/OUTCOME.md` read "the reward:risk reference under which a range trade
+is capped at starter size". It now reads "the retired reward:risk reference a
+range trade's payoff is still measured against for ranking (no longer a gate
+anywhere, never a size cap, never applied to a breakout)". Verified against
+`src/risk/constants.py`,
+`src/agents/portfolio_manager.py::_apply_subfloor_catalyst_rule` and
+`src/verdicts.py::rank_verdicts`. The live question of whether that number
+should exist at all is item 81, which owns the full inventory; this was the
+documentation half and nothing here needed an owner decision.
 ### 2026-09-17 — morning research went out with holes, then the desk still decided as if it had a full picture
 
 **Status: RECORDED AS HISTORY, NOT FIXED.** The branch that produced the measurements below (PR #435) was CLOSED unmerged on 2026-09-18 and none of its code is on main. It was the sixth or seventh pass over the live-fill websocket, a path that has never authenticated once in any session since it was built — a 100% failure rate is not a race condition — and its own adversary section admits it had not shown the fix works AT THE OPEN, because every measurement in it was taken mid-morning under already-healthy conditions. The open and mid-morning are different conditions. The measured numbers are kept here because they are the genuinely useful artefact; the remedies described below are the shape that was PROPOSED, not work that shipped. The four strands are now board items 119 (economics feed), 120 (today's print), 121 (schedule law) and 122 (deploy installs the timetable), each judged on its own merits.
@@ -11560,101 +11672,3 @@ still retrying) is untouched by either change.
 
 ---
 
-### 2026-09-18 — the cockpit and the "why do we hold this" view were rebuilt to the owner's specs
-
-**In plain words:** the panels on the dashboard now each carry their own
-scrolling rule, so the rule travels with a panel when it is dragged instead
-of being tied to where it sits on screen; the Trades blotter keeps both its
-scrollbars and no other table gained one; and clicking through to ask why a
-position is held now opens with a plain sentence carrying the real reason
-and numbers, with machine identifiers folded away behind a toggle.
-
-Shipped as PRs #470, #471 and #472 (merged 2026-09-18). The scroll policy is
-`PANE_SCROLL` in `frontend/src/components/DesktopCockpitWorkspace.tsx` —
-three values (grow-to-fit, scroll vertically, scroll both), declared once and
-with the grow-to-fit set derived from it, rather than a check for the name
-"Trades". The horizontal half needed `DataTable`'s opt-in `scrollX`, which
-sizes columns to their content, plus one scoped exception to the blanket
-`overflow-x-hidden` rule; `frontend/src/components/componentPolicy.test.ts`
-asserts that exception is reachable only through `scrollX`, so the old "every
-table grew a sideways slider" regression cannot return. `TradesPanel` is the
-only consumer passing it. The "why" view is served by
-`GET /holdings/{symbol}/why` in `src/api/routes_history.py` over
-`src/api/holding_why.py`'s wording rules.
-
-**Closed a stale paragraph with it.** Board item 103 still said "he has not
-answered, so nothing is being changed" inside a heading that said shipped.
-He had answered — both scrollbars, that tab only — and it was built. The
-remaining owner-facing report and popup work is items 106 and 115, not here.
-
----
-
-### 2026-09-18 — last night's evening report could not be re-read without paying for a new run
-
-**In plain words:** the evening summary was assembled from live broker state,
-sent, and thrown away. Anyone wanting to look at it again had to run the
-whole pipeline again, which costs money and would not produce the same
-numbers anyway.
-
-The run computed `stop_coverage_gaps`, `stop_proximity`,
-`earnings_proximity`, the P&L totals and `risk_capital_dollars`, handed them
-to the formatter and discarded them; only `daily_pnl` and `insights` reached
-disk. The run now writes its own result dict verbatim to an `evening_reports`
-table (`src/storage/db.py`), keyed by trading day with the producing run id,
-plus the book as `positions` held it at that moment — `trader_feed`'s
-positions query is not run-scoped, so a replay would otherwise print today's
-holdings under an older date. `scripts/desk_status.py --evening [DATE]`
-re-renders a stored night through the SAME formatter the live push uses:
-read-only connection, no broker call, no model call, no write. A missing or
-unreadable row is reported as unavailable and nothing is sent; a partial row
-names what is missing in words. Nothing is defaulted, zeroed or estimated,
-and the formatter itself was not touched. Covered by
-`tests/test_evening_report_replay.py`.
-
-Note `data/evening_replays/<date>.json` is the model's INPUT fixture for
-rehearsal, not the run's output — different thing, easy to confuse.
-
----
-
-### 2026-09-18 — the board-size gate failed for its own reasons on pull-request runs
-
-**In plain words:** the automated check that stops this board growing without
-bound sometimes failed because it could not find the previous version of the
-file to compare against — nothing to do with the file's size. A required gate
-that fails for its own reasons is how a gate gets routed around rather than
-fixed.
-
-The on-demand deepen was a bare `git fetch --deepen=1 origin`. With no
-refspec, deepen only extends refs matching the remote's default fetch
-refspec (`refs/heads/*`); a pull_request run's HEAD lives at
-`refs/remotes/pull/<N>/merge`, outside that namespace, so the fetch exited 0
-having fetched nothing relevant and the baseline stayed unresolvable.
-Passing the bare SHA as a want does not work either — upload-pack will not
-serve an unadvertised SHA with no destination refspec. The fix refetches the
-checked-out SHA into an explicit destination ref with one extra layer of
-depth, the same shape `actions/checkout` uses. Root cause and fix are
-documented in `tests/test_status_board.py`; PR #501, merged 2026-09-18. The
-surviving `AssertionError` when no baseline can be read is the deliberate
-fail-closed branch, not the defect.
-
-Separately and already closed: three tests in
-`tests/test_intraday_scan_crash_visibility.py` read the wall clock and failed
-on any run landing on the quarter-hour, fixed by pinning the clock (PR #488).
-
----
-
-### 2026-09-18 — the authority document called the reward:risk number a size cap
-
-**In plain words:** the document the desk treats as its own rulebook said a
-range trade was capped at starter size by its reward-to-risk number. The code
-does no such thing — that number is only used for ranking.
-
-`docs/OUTCOME.md` read "the reward:risk reference under which a range trade
-is capped at starter size". It now reads "the retired reward:risk reference a
-range trade's payoff is still measured against for ranking (no longer a gate
-anywhere, never a size cap, never applied to a breakout)". Verified against
-`src/risk/constants.py`,
-`src/agents/portfolio_manager.py::_apply_subfloor_catalyst_rule` and
-`src/verdicts.py::rank_verdicts`. The live question of whether that number
-should exist at all is item 81, which owns the full inventory; this was the
-documentation half and nothing here needed an owner decision.

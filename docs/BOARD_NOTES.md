@@ -305,13 +305,8 @@ decision at all.
 **Plain language —** The live feed that tells the desk instantly when an order has filled has never once worked. The trading process deliberately holds a fake key; a local helper swaps in the real one for ordinary requests, but the live feed does not go through that helper — it dials the broker directly and offers the fake key. Two separate things block a quick fix: the library the desk uses cannot be pointed at that helper at all, and the broker checks the key inside the conversation rather than in the connection header, which the helper cannot reach.
 **Example —** Five rounds of work were spent making this path faster before anyone checked whether it had ever worked.
 **Nothing is at risk —** Orders are placed over the ordinary connection, which works, and fills are detected by asking the broker every few seconds instead. The feed is now switched off. The only loss is a few seconds of speed. Today's failure count was about 45, not the 147 first quoted — that figure counted log lines, several per failure.
-**The decision — yours, and nobody builds any of it without you.** Five options, best fit first: (1) have the machine hold the key in an encrypted store — **this turns out NOT to be possible on this machine** (the service cannot read the decryption key, there is no security chip, and the installed system software lacks the feature); an earlier answer of "encrypted and tied to the machine" was wrong. (2) A small local relay that holds the real key and rewrites the login message: the only option that keeps the key out of the trading process, but it is custom credential-handling code, which this project has previously refused. (3) Get the helper taught to do this properly, upstream: correct, does not exist, slow. (4) Make the library able to use the helper: does not fix the login problem on its own. (5) Leave the feed off and keep asking the broker — no credential change at all, costs a few seconds of fill latency, and stops about 150 error lines a day.
-**Recommendation —** Option 5 today, since it is already in place and costs almost nothing. What remains achievable for protecting the key on this machine is file-permission protection, not encryption.
-
-## item 87
-
-**Plain language —** When the book gets too big relative to the account, the desk automatically trims it. That is now the only thing on the desk that sells by itself. Nobody has ever checked whether it cancels the protective stop-losses first in order to free the shares — and if it cancels them and then fails to sell, the holdings are left with no protection at all. That exact flaw is why the older "big loss today" liquidation was deleted on 14 September.
-**Recommendation —** Audit it before changing anything. Find out what it actually does, then decide.
+**The decision — no longer yours to wait on; the orchestrator decides after an adversary run, and the decision and its reason are recorded before anything is built.** Five options, best fit first: (1) have the machine hold the key in an encrypted store — **this turns out NOT to be possible on this machine** (the service cannot read the decryption key, there is no security chip, and the installed system software lacks the feature); an earlier answer of "encrypted and tied to the machine" was wrong. (2) A small local relay that holds the real key and rewrites the login message: the only option that keeps the key out of the trading process, but it is custom credential-handling code, which this project has previously refused. (3) Get the helper taught to do this properly, upstream: correct, does not exist, slow. (4) Make the library able to use the helper: does not fix the login problem on its own. (5) Leave the feed off and keep asking the broker — no credential change at all, costs a few seconds of fill latency, and stops about 150 error lines a day.
+**Recommendation —** Option 5 today, since it is already in place and costs almost nothing. What remains achievable for protecting the key on this machine is file-permission protection, not encryption. **Standing exception:** if the eventual choice is option (2) or anything else that amounts to new credential-handling code, that is a credential redesign — one of the categories still escalated to the owner directly, regardless of who chose it.
 
 ## item 89
 
@@ -375,18 +370,18 @@ decision at all.
 
 ## item 95
 
-**Plain language — your decision.** The account can borrow. Today the portfolio manager is not even shown that, which is a separate defect. Once it is shown, the question is whether it may PLAN to spend borrowed money. Borrowing costs about 6.25% a year on the borrowed balance, so anything bought with it has to beat 6.25% just to break even, not zero.
-**Recommendation —** None until you rule. Nobody builds it either way.
+**Plain language — not yours to wait on any more; the orchestrator decides after an adversary run.** The account can borrow. Today the portfolio manager is not even shown that, which is a separate defect. Once it is shown, the question is whether it may PLAN to spend borrowed money. Borrowing costs about 6.25% a year on the borrowed balance, so anything bought with it has to beat 6.25% just to break even, not zero.
+**Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it.
 
 ## item 96
 
-**Plain language — your decision.** The risk manager can approve a sale whose stated reason is provably false against the desk's own records — nothing checks the reason before the sale goes through.
-**Recommendation —** None until you rule.
+**Plain language — not yours to wait on any more; the orchestrator decides after an adversary run.** The risk manager can approve a sale whose stated reason is provably false against the desk's own records — nothing checks the reason before the sale goes through.
+**Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it.
 
 ## item 97
 
-**Plain language — your decision.** The desk judges whether a trade is moving too slowly against a holding period the model simply states rather than reads off anything. That is the kind of unverifiable number the desk has already banned from sizing trades; whether it may stay in this one test is your call.
-**Recommendation —** None until you rule.
+**Plain language — not yours to wait on any more; the orchestrator decides after an adversary run.** The desk judges whether a trade is moving too slowly against a holding period the model simply states rather than reads off anything. That is the kind of unverifiable number the desk has already banned from sizing trades; whether it may stay in this one test is being decided, not left with you.
+**Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it.
 
 ## item 98
 
@@ -436,6 +431,17 @@ decision at all.
 **One requirement is not yet in any work at all —** You asked that when the reason to hold a stock rests on an insider or institutional purchase, the view show the DATE and the PRICE of that purchase — your example was Republic Services and when Cascade Investment actually bought. Somebody is working on it, but it is not committed anywhere yet, so it is recorded here as a requirement rather than as done.
 **The blocker on the rest of (b) is gone as of tonight —** the read-only endpoint behind this view is merged, and it was held back only until the panel-layout work landed; that has now also merged. Nothing stands between this and a working view: fetch the endpoint when a held symbol is opened, show its one-sentence reason and its labelled detail up front, and put the machine identifiers and the existing step-by-step trace behind one toggle. Nothing else about the page changes.
 
+## item 111
+
+**Plain language —** Item 87 asked whether the automatic de-lever that trims the book when it gets too big cancels the protective stop-losses first. It does, and it has to — the broker would refuse the sell otherwise, because a resting stop holds the whole position. That part is fine, and the recovery around it is complete: a failed cancel is rolled back, a rejected sell restores the stop, a partial or no fill is put right by the step that runs afterward, and even a crash mid-way is covered because the recovery note is saved to disk before anything is cancelled at the broker. What is NOT fine: when the de-lever trims more than one holding in the same pass, that recovery step runs only once, after every holding in the pass has already been sold. The first holding trimmed sits with no protection for the whole rest of the pass, plus the wait for each later holding's order to finish — and this only happens during a drawdown, which is exactly when a naked position is most dangerous.
+**It has never happened —** the live records show this de-lever has fired zero times, and the account has never come close to the level that triggers it.
+**Recommendation —** Run the recovery step after each holding individually rather than once at the end. This touches the live selling path during a drawdown, so it is flagged for your decision rather than changed on our own say-so.
+
+## item 112
+
+**Plain language —** When the automatic de-lever trims the book and the trims still leave it over the limit, nothing tells you. The system writes a warning to its own internal log, but that is as far as it goes — it does not reach a message to you, the end-of-session summary, or anything that gets checked.
+**Recommendation —** Add an alert for the case where a de-lever pass finishes and the book is still over its limit.
+
 ## item 101
 
 **Plain language —** Twice a session the desk works out something important and then throws the answer away. One check finds exits the broker made on its own that the desk's books never recorded; the other counts positions it has just put protection back onto. Both compute the answer and then discard it at every one of the five places they are called. The answers do reach the log file, so this is not invisible — but they can never reach a Telegram message, a session summary, or anything that would actually tell you.
@@ -450,13 +456,13 @@ decision at all.
 
 ## item 109
 
-**Plain language — your decision, and nobody may settle it by editing code.** The desk has a big-picture seat that reads the whole market: interest rates, credit, volatility, the general mood. It also has seats that read one company at a time. When the desk counts up how much evidence supports a single trade, it currently counts the big-picture read as one of those votes, for or against that individual company. The instructions given to the trade-picking seats said the opposite — that the big-picture read never counts toward that tally. One of the two has been wrong all along, and the code is the one that has actually been deciding.
+**Plain language — not yours to wait on any more; the orchestrator decides after an adversary run, and nobody may settle it by editing code first.** The desk has a big-picture seat that reads the whole market: interest rates, credit, volatility, the general mood. It also has seats that read one company at a time. When the desk counts up how much evidence supports a single trade, it currently counts the big-picture read as one of those votes, for or against that individual company. The instructions given to the trade-picking seats said the opposite — that the big-picture read never counts toward that tally. One of the two has been wrong all along, and the code is the one that has actually been deciding.
 
 **Why it is not theoretical —** On 17 September a bullish read on the market as a whole cancelled out a bearish filing about one specific company, and the trade died. A second company passed with full support on the strength of the market read plus a filing, with no read of its own chart at all.
 
 **Why we stopped rather than fixing it —** The obvious "fix" is to correct the instructions so they match the code. That would quietly make the current behaviour official, and the desk's own standing doctrine points the other way: it is the trade-picking seats' own prompt (not `docs/OUTCOME.md`, which says nothing on this beyond a line about cash deployment) that states the market read is the regime the book is built in, not a fact about one company. Making the instructions match the code would have ratified a rule you never agreed to. So the wording is being made neutral — it says the tally does count it, that this is disputed, and not to lean on it either way — and the counting rule itself is untouched. Filed independently twice, hours apart, as this same question; the two are now one item.
 
-**Recommendation —** None; this is a mandate question, not an engineering one. Until you rule, neither side moves.
+**Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it. This is a mandate question, not an engineering one, but it is no longer one that waits on him.
 ## item 115
 
 **Plain language —** The raw insider-filing gobbledygook you complained about is gone from the new "Why" tab, but there is a second screen — the run-detail popup — that still prints the same kind of raw machine text if you open it.
