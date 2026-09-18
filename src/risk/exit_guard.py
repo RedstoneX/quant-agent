@@ -18,7 +18,13 @@ right here.
 
 Directionality matters and is the whole point:
   - `thesis_progress_pct` rising is improvement.
-  - `distance_to_stop_pct` rising is improvement (further from the stop).
+  - `distance_to_stop_pct` rising is improvement ONLY when the PRICE moved
+    away from the stop. It is a function of the stop as much as of the
+    price, so widening the stop also makes it rise — which is the desk
+    removing its own protection, not the position getting better. Verified
+    on real 2026-09-01 snapshots for V, CMCSA and DIS, all three of which
+    were deteriorating at the time. Decomposed since 2026-09-18; see
+    `_STOP_DEPENDENT_METRIC` and `MetricDeltas.stop_driven`.
   - `r_multiple` rising is improvement.
   - `pace` rising is improvement.
 A verdict may not call a position stalled while its own measured deltas are
@@ -86,6 +92,41 @@ _DETERIORATION_RE = re.compile("|".join(DETERIORATION_PATTERNS), re.IGNORECASE)
 #: Metrics where a HIGHER value means the position is doing better.
 _HIGHER_IS_BETTER = ("thesis_progress_pct", "distance_to_stop_pct", "r_multiple", "pace")
 
+#: The one metric in `_HIGHER_IS_BETTER` that is a function of the desk's
+#: OWN protection as much as of the market.
+#:
+#: `distance_to_stop_pct = (current - stop) / current * 100`
+#: (`TradingPipeline._build_position_facts`). Both terms move. Raise the
+#: price and it improves — that is a real improvement. LOWER THE STOP and it
+#: also improves, and nothing about the position got better; the desk just
+#: took off some of its own protection.
+#:
+#: Verified on real recorded snapshots, 2026-09-01 midday vs the 2026-08-31
+#: close (`specialist_evidence`, agent_name='position_reviewer',
+#: kind='review_metrics'):
+#:   V      distance-to-stop 1.42 -> 3.41 "improved" while r_multiple fell
+#:          -0.11 -> -0.82. Price fell and distance rose, which is only
+#:          possible if the stop moved down (entry 381.18 / stop 374.27 at
+#:          entry; the implied stop by 09-01 midday is ~362.7).
+#:   CMCSA  3.53 -> 5.58 "improved" while r_multiple fell -0.04 -> -0.33.
+#:   DIS    1.85 -> 5.07 "improved" while thesis progress fell
+#:          -3.06 -> -12.50.
+#: In all three the position was demonstrably deteriorating and one of the
+#: four "things improved" measures said otherwise.
+#:
+#: The fix is decomposition, not deletion — see
+#: `MetricDeltas.stop_driven`. Deleting the metric would lose the genuine
+#: and load-bearing case: a position whose PRICE has risen away from a
+#: FIXED stop really has improved, and that is the case the metric was
+#: added for (the 2026-08-26 EPD premature exit in this module's own
+#: header cites distance-to-stop having improved).
+_STOP_DEPENDENT_METRIC = "distance_to_stop_pct"
+
+#: Snapshot fields that are not metrics but are needed to attribute a
+#: `distance_to_stop_pct` move to the price or to the stop. Carried
+#: alongside the metrics by `TradingPipeline._REVIEW_METRIC_KEYS`.
+_PROVENANCE_KEYS = ("stop_loss", "current_price")
+
 #: How much a metric must move before it counts as a real change rather than
 #: rounding noise. Expressed in each metric's own units.
 _NOISE_FLOOR = {
@@ -111,17 +152,84 @@ class MetricDeltas:
     symbol: str
     changes: dict[str, tuple[float, float]] = field(default_factory=dict)
     prior_timestamp: str | None = None
+    #: `{stop_loss: (before, after), current_price: (before, after)}` when
+    #: both snapshots carried them. Not metrics and never scored — they
+    #: exist only to attribute a `distance_to_stop_pct` move (see
+    #: `_STOP_DEPENDENT_METRIC`). Empty for a snapshot written before
+    #: 2026-09-18, which is handled explicitly rather than guessed.
+    provenance: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     @property
     def has_prior(self) -> bool:
         return bool(self.changes)
 
+    def _distance_move_is_price_driven(self) -> bool | None:
+        """Did `distance_to_stop_pct` improve because the PRICE moved?
+
+        True  - it improves even holding the stop where it was.
+        False - it only improves because the stop moved; the price alone
+                does not carry it past the same noise floor.
+        None  - unattributable: this pair of snapshots does not carry the
+                stop and the price, so the question cannot be answered.
+
+        The test is the metric's own formula with the stop pinned to its
+        prior value — an exact decomposition, not an estimate, and it
+        introduces no number: it reuses `_NOISE_FLOOR` exactly as
+        `improved` does.
+        """
+        pair = self.changes.get(_STOP_DEPENDENT_METRIC)
+        if pair is None:
+            return None
+        before_stop = self.provenance.get("stop_loss")
+        prices = self.provenance.get("current_price")
+        if before_stop is None or prices is None:
+            return None
+        stop_then = before_stop[0]
+        price_now = prices[1]
+        if price_now <= 0:
+            return None
+        # `(current - stop) / current * 100`, verbatim, with the stop held
+        # at the value it had at the prior review. Sign convention is the
+        # producer's and is not second-guessed here.
+        counterfactual = (price_now - stop_then) / price_now * 100
+        floor = _NOISE_FLOOR.get(_STOP_DEPENDENT_METRIC, 0.0)
+        return counterfactual - pair[0] > floor
+
+    @property
+    def stop_driven(self) -> list[str]:
+        """Metrics whose apparent IMPROVEMENT is not the position improving.
+
+        Today this is only ever `distance_to_stop_pct`, and only when the
+        improvement survives on the arithmetic solely because the stop
+        moved. `improved` excludes these, so loosening protection can no
+        longer make a deteriorating position read as improving.
+
+        An unattributable case (no stop/price in the snapshot pair) is
+        listed here too. That is the conservative direction on this path:
+        not counting an improvement can only make
+        `veto_contradicted_exit` fire LESS, and a veto stranding the desk
+        in a losing position is the worse failure (the call site's own
+        disclosed reasoning).
+        """
+        if _STOP_DEPENDENT_METRIC not in self.changes:
+            return []
+        before, after = self.changes[_STOP_DEPENDENT_METRIC]
+        if after - before <= _NOISE_FLOOR.get(_STOP_DEPENDENT_METRIC, 0.0):
+            return []  # not an apparent improvement at all
+        return [] if self._distance_move_is_price_driven() else [_STOP_DEPENDENT_METRIC]
+
     @property
     def improved(self) -> list[str]:
-        """Metrics that moved in the position's favour beyond the noise floor."""
+        """Metrics that moved in the position's favour beyond the noise floor.
+
+        Excludes a `distance_to_stop_pct` rise that came from the stop
+        moving rather than the price moving (`stop_driven`) — the desk
+        does not get to call loosening its own protection an improvement.
+        """
+        excluded = set(self.stop_driven)
         out = []
         for name, (before, after) in self.changes.items():
-            if name not in _HIGHER_IS_BETTER:
+            if name not in _HIGHER_IS_BETTER or name in excluded:
                 continue
             if after - before > _NOISE_FLOOR.get(name, 0.0):
                 out.append(name)
@@ -129,6 +237,15 @@ class MetricDeltas:
 
     @property
     def worsened(self) -> list[str]:
+        """Metrics that moved against the position beyond the noise floor.
+
+        Deliberately NOT decomposed. A `distance_to_stop_pct` FALL can
+        also be stop-driven (the stop was tightened), but discounting it
+        would remove an entry from `worsened` and could turn
+        `net_improved` True — making the veto fire more often and
+        blocking an exit on paperwork. The asymmetry is the fail-open
+        direction this path requires, not an oversight.
+        """
         out = []
         for name, (before, after) in self.changes.items():
             if name not in _HIGHER_IS_BETTER:
@@ -152,13 +269,24 @@ class MetricDeltas:
         if not self.changes:
             return f"  {self.symbol}: no prior review on record (first look)"
         bits = []
+        stop_driven = set(self.stop_driven)
         for name in sorted(self.changes):
             before, after = self.changes[name]
             arrow = "→"
             direction = ""
             if name in _HIGHER_IS_BETTER:
                 floor = _NOISE_FLOOR.get(name, 0.0)
-                if after - before > floor:
+                if name in stop_driven:
+                    # Never shown to the reviewer as "(improved)". It read
+                    # that way on real 2026-09-01 snapshots for V, CMCSA
+                    # and DIS while all three were deteriorating.
+                    attributed = self._distance_move_is_price_driven()
+                    direction = (
+                        " (wider stop, NOT an improvement)"
+                        if attributed is False
+                        else " (rose, provenance unknown — not counted)"
+                    )
+                elif after - before > floor:
                     direction = " (improved)"
                 elif before - after > floor:
                     direction = " (worsened)"
@@ -177,6 +305,7 @@ def compute_deltas(
 ) -> MetricDeltas:
     """Metric-by-metric change, skipping anything missing on either side."""
     changes: dict[str, tuple[float, float]] = {}
+    provenance: dict[str, tuple[float, float]] = {}
     if prior and current:
         for name in _HIGHER_IS_BETTER:
             before = _finite(prior.get(name))
@@ -184,8 +313,18 @@ def compute_deltas(
             if before is None or after is None:
                 continue
             changes[name] = (before, after)
+        # Stop/price are carried, never scored — they only answer "did the
+        # distance-to-stop move because the market moved or because we
+        # moved the stop?". Absent on snapshots written before 2026-09-18.
+        for name in _PROVENANCE_KEYS:
+            before = _finite(prior.get(name))
+            after = _finite(current.get(name))
+            if before is None or after is None:
+                continue
+            provenance[name] = (before, after)
     return MetricDeltas(
         symbol=symbol.upper(), changes=changes, prior_timestamp=prior_timestamp,
+        provenance=provenance,
     )
 
 
@@ -886,6 +1025,7 @@ def holding_discipline_claim_check(
     macro_status: str | None,
     active_state_changes: str = "",
     asof: date | None = None,
+    exit_trigger: object = None,
 ) -> HoldingDisciplineClaimCheck:
     """Judge whether a PROTECTED position's exit states a (b)/(c) trigger
     that real recorded data CONTRADICTS, merely cannot CHECK, or CONFIRMS.
@@ -937,7 +1077,30 @@ def holding_discipline_claim_check(
     contradictions: list[str] = []
     unverifiable: list[str] = []
 
-    if claims_regime_flip(reason):
+    # 2026-09-18: which claim is being made is read from the STRUCTURED
+    # trigger first and from the prose only as a fallback. That is the
+    # whole point of `PositionAction.exit_trigger`. Before it existed this
+    # function asked two regexes what the sentence claimed, so the two
+    # real 2026-09-16 exits — whose entire reason was the words "adverse
+    # news" — made no claim either regex recognised, returned "ok", and
+    # were never checked against anything.
+    #
+    # `adverse_news` is routed to the same-day state-change check because
+    # that is the record the claim is ABOUT: an adverse news event naming
+    # this symbol today. `sector_shock` is deliberately NOT routed here —
+    # it is a sector-level assertion and the desk records no sector-shock
+    # row, so pointing a symbol-level check at it would manufacture an
+    # "unverifiable" on every such exit and tell the reviewer nothing.
+    from src.risk.exit_trigger import ExitTrigger, normalize_trigger
+    _trigger = normalize_trigger(exit_trigger)
+    _claims_regime = (
+        claims_regime_flip(reason) or _trigger is ExitTrigger.REGIME_SHIFT
+    )
+    _claims_bearish = claims_bearish_state_change(reason) or _trigger in (
+        ExitTrigger.BEARISH_STATE_CHANGE, ExitTrigger.ADVERSE_NEWS,
+    )
+
+    if _claims_regime:
         if macro_status in TRUSTED_MACRO_STATUSES and macro_regime_today:
             if macro_regime_today != "risk-off":
                 contradictions.append(
@@ -956,7 +1119,15 @@ def holding_discipline_claim_check(
                 f"deny it"
             )
 
-    if claims_bearish_state_change(reason):
+    if _claims_bearish:
+        # Named after the claim actually made, so an alert reads truthfully
+        # whether the trigger arrived as prose or as a structured field.
+        claim_label = (
+            "an adverse news event naming it"
+            if _trigger is ExitTrigger.ADVERSE_NEWS
+            and not claims_bearish_state_change(reason)
+            else "a HIGH-conviction bearish state change"
+        )
         from src.agents.portfolio_manager import PortfolioManagerAgent
 
         by_date = PortfolioManagerAgent._state_change_symbols_by_date(
@@ -977,14 +1148,14 @@ def holding_discipline_claim_check(
             # treating "not found" as "false" would manufacture false
             # positives on legitimate exits.
             unverifiable.append(
-                f"claims a HIGH-conviction bearish state change today, but "
+                f"claims {claim_label} today, but "
                 f"no same-day Active News State Change row names {symbol_u} "
                 f"either way"
             )
         elif "bearish" not in symbol_directions:
             rendered = ", ".join(sorted(symbol_directions)) or "no recorded direction"
             contradictions.append(
-                f"claims a HIGH-conviction bearish state change today, but "
+                f"claims {claim_label} today, but "
                 f"today's Active News State Change block names {symbol_u} "
                 f"with direction(s) {rendered} instead of bearish"
             )

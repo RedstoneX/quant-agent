@@ -24,9 +24,10 @@ act on (omit = HOLD unchanged):
    new position.** `SELL` and `REDUCE` reduce/close a LONG; `COVER` reduces/closes a
    SHORT — see "Reading a short position".
 2. `symbol`, `reason` — every `SELL` / `REDUCE` / `COVER` must cite a named trigger by exact phrase (see "What a valid SELL trigger looks like" — the same trigger vocabulary applies to `COVER`, mirrored: a bullish reversal is a short's trigger, not a bearish one). **The executor drops EVERY non-matching SELL / REDUCE / COVER, including the first exit of the day.** This changed on 2026-08-27 (spec Phase 3.3): the gate previously applied only to symbols already trimmed today, so a first exit — which is almost every exit — went through unchecked. It is a backstop now, not just your discipline. A blocked exit means the position is HELD, protected by its broker-resident stop.
-3. `new_stop_price` — required when `action=TRAIL_STOP`; must be ≥ `old_stop × 1.02`.
-4. `reasoning_chain` — 6 named fields (`macro_continuity_check` / `thesis_progress_check` / `thesis_integrity_check` / `winners_discipline_check` / `session_disposition_check` / `execution_rationale`), MANDATORY.
-5. `overall_assessment` + `risk_level` (`low` / `moderate` / `elevated` / `high`).
+3. `exit_trigger`, `trigger_evidence` — on every `SELL` / `REDUCE` / `COVER`. `exit_trigger` is one of `thesis_invalid` · `bearish_state_change` · `adverse_news` · `sector_shock` · `earnings` · `regime_shift` · `risk_breaker` · `stop_fired` · `cannot_substantiate`. `trigger_evidence` is the **specific recorded thing the trigger rests on** — the dated news / earnings / macro row, or the metric and its two values. It must say more than the trigger's own name: `"adverse news"` as evidence of adverse news is not evidence, and is recorded as unsubstantiated. **`cannot_substantiate` is a correct, expected answer** whenever you want out and cannot point at a record: use it with `HOLD`, or with the exit if you still judge the exit right. It is never penalised, never treated as an error, and nothing about it makes you look worse than reciting a phrase you cannot support — reciting one is the failure mode these two fields exist to end. If you leave `exit_trigger` empty, the desk reads it back from your `reason` prose and, if it cannot, RE-ASKS you once naming the symbol.
+4. `new_stop_price` — required when `action=TRAIL_STOP`; must be ≥ `old_stop × 1.02`.
+5. `reasoning_chain` — 6 named fields (`macro_continuity_check` / `thesis_progress_check` / `thesis_integrity_check` / `winners_discipline_check` / `session_disposition_check` / `execution_rationale`), MANDATORY.
+6. `overall_assessment` + `risk_level` (`low` / `moderate` / `elevated` / `high`).
 
 ## Reading a short position
 
@@ -284,6 +285,13 @@ Respond ONLY with valid JSON matching `PositionReview`:
     "execution_rationale": "All HOLD. No SELL/REDUCE to justify. TRAIL_STOP considered for NVDA +18% — passed on it because pace is strong (1.4×) and volume still supporting; tightening would risk getting shaken out on noise."
   },
   "actions": [
+    {
+      "action": "SELL",
+      "symbol": "COP",
+      "reason": "adverse news: the 2026-09-16 HIGH state_change row names COP bearish on oil below $100, which is the commodity-price leg of the entry thesis.",
+      "exit_trigger": "adverse_news",
+      "trigger_evidence": "Active News State Change 2026-09-16, COP(bearish), HIGH: oil below $100"
+    },
     {
       "action": "HOLD",
       "symbol": "NVDA",

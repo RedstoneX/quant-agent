@@ -183,15 +183,46 @@ def test_reviewer_prompt_documents_the_pinned_horizon_not_average_hold_time():
 # ===========================================================================
 
 def test_deltas_detect_improvement():
+    """The EPD case: PRICE moved away from a FIXED stop, so distance-to-stop
+    improving is a real improvement and still counts as one.
+
+    `stop_loss` / `current_price` are carried on the snapshot since
+    2026-09-18 so the rise can be ATTRIBUTED (see
+    `test_a_wider_stop_is_not_an_improvement`). Stop unchanged at 24.00,
+    price 25.00 -> 25.32: (25.32 - 24.00) / 25.32 = 5.2%.
+    """
+    d = compute_deltas(
+        "EPD",
+        prior={"thesis_progress_pct": 16.0, "distance_to_stop_pct": 4.0,
+               "stop_loss": 24.0, "current_price": 25.0},
+        current={"thesis_progress_pct": 20.0, "distance_to_stop_pct": 5.2,
+                 "stop_loss": 24.0, "current_price": 25.32},
+    )
+    assert d.has_prior
+    assert d.improved == ["distance_to_stop_pct", "thesis_progress_pct"]
+    assert d.stop_driven == []
+    assert d.worsened == []
+    assert d.net_improved is True
+
+
+def test_distance_improvement_without_provenance_is_not_counted():
+    """A snapshot pair written before 2026-09-18 carries no stop or price,
+    so a distance-to-stop rise cannot be attributed to either term.
+
+    It is NOT counted as an improvement. That is the fail-open direction on
+    this path: an uncounted improvement can only make
+    `veto_contradicted_exit` fire LESS, and a veto that strands the desk in
+    a losing position is the worse failure. Self-heals after one session,
+    once both snapshots carry the two fields.
+    """
     d = compute_deltas(
         "EPD",
         prior={"thesis_progress_pct": 16.0, "distance_to_stop_pct": 4.0},
         current={"thesis_progress_pct": 20.0, "distance_to_stop_pct": 5.2},
     )
-    assert d.has_prior
-    assert d.improved == ["distance_to_stop_pct", "thesis_progress_pct"]
-    assert d.worsened == []
-    assert d.net_improved is True
+    assert d.stop_driven == ["distance_to_stop_pct"]
+    assert d.improved == ["thesis_progress_pct"]
+    assert "provenance unknown" in d.render()
 
 
 def test_deltas_detect_deterioration():
