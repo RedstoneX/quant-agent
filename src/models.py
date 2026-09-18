@@ -2079,10 +2079,130 @@ class TargetPosition(LLMOutputModel):
         return open_target_missing_falsifier(self)
 
 
+#: The named grounds on which the portfolio manager may drop a candidate it
+#: was shown. This is a VOCABULARY, not a gate: nothing here is consulted
+#: before a trade, no threshold reads it, and adding or removing a code
+#: cannot change what the desk is allowed to buy. What it changes is that
+#: "why was this name dropped" has an answer that two different sessions can
+#: be COMPARED on.
+#:
+#: Why an enum and not free text (2026-09-18, board item 118). The jam
+#: detector (`src/refusal_signature.py`) separates a jammed gate from a quiet
+#: market by asking whether every candidate died for the SAME reason while
+#: the candidates changed. Free prose defeats that from both ends: it varies
+#: with wording where the cause is identical (a missed alarm), and it cannot
+#: be counted. A code beside the prose is the shape the constructor's own
+#: refusals already use (`refusal=` / `fault=` on the deterministic-gate
+#: events), so this is the established pattern rather than a new one.
+#:
+#: The codes name causes the seat can actually have, and deliberately do NOT
+#: mirror any Python gate — a PM rejection is the seat's own judgement, and
+#: the deterministic gates record their own refusals separately.
+CANDIDATE_REJECTION_CODES: tuple[str, ...] = (
+    # the evidence itself
+    "evidence_insufficient",      # too few current sources to justify risk
+    "evidence_conflicts",         # sources disagree materially, unresolved
+    "evidence_stale",             # what exists is too old to act on
+    # the idea
+    "thesis_not_compelling",      # evidence present; the setup does not earn a slot
+    "no_readable_structure",      # no level to enter or invalidate against
+    "reward_not_worth_risk",      # the seat's own read of the payoff
+    "event_risk",                 # earnings/known event too close
+    # the book
+    "risk_budget_full",           # no portfolio risk budget left for a new name
+    "no_deployment_headroom",     # no cash/buying power to deploy
+    "sector_or_cluster_crowded",  # concentration against something already held
+    "better_use_of_the_slot",     # ranked below a name that was taken instead
+    "already_sized_correctly",    # held, and the current size is the right one
+    # the escape hatch — detail is what carries it
+    "other",
+)
+
+
+class CandidateRejection(LLMOutputModel):
+    """One candidate the portfolio manager was shown and chose NOT to target.
+
+    Why this exists (board item 118, 2026-09-18). The PM returned a list of
+    TARGETS and nothing else, so `DecisionStage` recorded every analysed
+    candidate missing from that list as
+    `portfolio_manager|omitted|candidate_not_selected_for_target`. The seat
+    was never ASKED why it dropped a name, so there was no per-candidate
+    reason and there could not be one — the absence of a reason WAS the
+    reason, identically, for every name and every session. On 2026-09-18 the
+    jam detector fired on exactly that: two sessions, three different
+    candidates, one unvarying key. It could not have reported anything else,
+    which is what made it useless as a diagnosis.
+
+    `code` is the comparable identity; `detail` is what a person reads.
+    Both are kept — the code alone does not tell the owner what happened to
+    HIS candidate, and the prose alone cannot be compared across sessions.
+
+    Fail-OPEN on shape, exactly as `SymbolRejection` is and for the same
+    reason: a rejection lost to a formatting slip turns back into the silent
+    omission this model exists to end. An unrecognised code becomes `other`
+    with the original spelling preserved in `detail`; a missing detail
+    becomes a stated absence. Only an entry naming no recoverable symbol is
+    dropped, because there is nothing to file it against.
+    """
+
+    symbol: str
+    code: str = Field(default="other")
+    detail: str = Field(default="", max_length=600)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, values):
+        _absent = (
+            "the portfolio manager named no reason beyond dropping the name"
+        )
+        if isinstance(values, str):
+            return {"symbol": values, "code": "other", "detail": _absent}
+        if not isinstance(values, dict):
+            return values
+        values = dict(values)
+        # Tolerate the two spellings a model actually reaches for.
+        for alias in ("reason_code", "rejection_code"):
+            if not values.get("code") and values.get(alias):
+                values["code"] = values[alias]
+        for alias in ("reason", "explanation", "why"):
+            if not values.get("detail") and values.get(alias):
+                values["detail"] = values[alias]
+        raw_code = str(values.get("code") or "").strip().lower().replace(" ", "_")
+        detail = values.get("detail")
+        detail = detail.strip() if isinstance(detail, str) else ""
+        if raw_code not in CANDIDATE_REJECTION_CODES:
+            if raw_code:
+                # Never paraphrase an unknown code into a known one — that
+                # would invent a cause. Keep the spelling where a person can
+                # read it and let it count as `other` when compared.
+                detail = (
+                    f"[unrecognised reason code '{raw_code}'] {detail}".strip()
+                )
+            raw_code = "other"
+        values["code"] = raw_code
+        values["detail"] = detail or _absent
+        return values
+
+    @field_validator("symbol")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        return _normalize_symbol(v)
+
+
 class PortfolioDecision(LLMOutputModel):
     reasoning_chain: ReasoningChain
     # Phase 2 output: PM emits intent (target weights), not orders.
     targets: list[TargetPosition] = Field(default_factory=list)
+    #: Every candidate the seat was shown and is NOT targeting, with the
+    #: named ground it dropped it on (board item 118, 2026-09-18). A target
+    #: or a rejection — the seat must account for each name one way or the
+    #: other. Empty here is not an error at PARSE time (an old stored row
+    #: must still load, and a validation failure would fail the whole
+    #: decision closed over a bookkeeping field). The accounting is enforced
+    #: downstream in `DecisionStage`, in the desk's standing heal order:
+    #: mechanical heal, one bounded re-ask, then a durable per-symbol
+    #: refusal — the same posture `missing_open_falsifier` documents.
+    rejections: list[CandidateRejection] = Field(default_factory=list)
     # Phase 2 derived: populated by PortfolioConstructor AFTER the LLM returns.
     # Downstream stages (hard risk filter, RM review, execution) read this.
     # PM must never fill it directly — the LLM output is validated with

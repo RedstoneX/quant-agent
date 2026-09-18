@@ -477,9 +477,71 @@ def check_refusal_signature(
     return status
 
 
+#: Board item 89 defect 5, applied here (2026-09-18). The owner was sent
+#: `portfolio_manager|omitted|candidate_not_selected_for_target||` — a
+#: pipe-joined internal key, with two empty trailing fields, as the answer
+#: to "why did the desk refuse everything". Every entry below is what a key
+#: MEANS in the words a person would use; the key itself never reaches the
+#: message except labelled as machine output, and an unrecognised key is
+#: DESCRIBED rather than pasted through or guessed at — the same rule
+#: `_ORDER_END_WORDS` in `src/trader_feed.py` follows.
+#:
+#: Keyed on (stage, outcome, code) — the three parts of the signature that
+#: are internal spellings rather than prose, so a new gate's wording cannot
+#: silently fall out of this map while its code stays the same.
+_PLAIN_BY_SIGNATURE: dict[tuple[str, str, str], str] = {
+    # The historical key, kept so an OLD stored session still renders in
+    # English. It cannot be produced any more (board item 118 replaced it).
+    ("portfolio_manager", "omitted", ""): (
+        "the portfolio manager simply did not pick the name, and was never "
+        "asked to say why — so this is not really a reason at all. The desk "
+        "no longer records refusals this way"
+    ),
+}
+
+
+def _plain_key(key: str) -> str:
+    """One reader-facing sentence for a signature key.
+
+    Never returns the raw key on its own, and never invents a meaning for
+    one it does not recognise.
+    """
+    parts = str(key or "").split("|")
+    if len(parts) < 4:
+        return "the desk recorded a reason it has no plain wording for"
+    stage, outcome, _reason, code = parts[0], parts[1], parts[2], parts[3]
+    known = _PLAIN_BY_SIGNATURE.get((stage, outcome, code))
+    if known:
+        return known
+    if stage == "portfolio_manager":
+        # The portfolio manager's own grounds live in one place, beside the
+        # vocabulary it emits them from, so a new ground gets its wording
+        # there rather than needing a second edit here.
+        from src.pm_accounting import plain_reason
+        return plain_reason(code)
+    if not code:
+        return "the desk recorded a reason it has no plain wording for"
+    return (
+        "the desk recorded a reason it has no plain wording for "
+        f"(its internal name for it is '{code}')"
+    )
+
+
 def _human_reason(session: SessionShape) -> str:
-    """The one reason, as a reader-facing line. Falls back to the key."""
-    return next(iter(session.distinct_keys), "")
+    """The one reason, in plain English, with the machine key labelled.
+
+    Both halves are kept. The sentence is what the owner reads; the key is
+    often the only thing an engineer can grep for, and dropping it would
+    trade one kind of unreadable message for another.
+    """
+    key = next(iter(session.distinct_keys), "")
+    if not key:
+        return "unknown — the desk recorded no reason at all"
+    return (
+        f"{_plain_key(key)}.\n"
+        f"(The desk's internal name for that, kept for the record and not "
+        f"something you need to act on: {key})"
+    )
 
 
 def alert_text(status: RefusalSignatureStatus) -> str:
