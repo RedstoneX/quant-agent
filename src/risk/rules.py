@@ -1305,19 +1305,32 @@ def resolve_gross_ceiling(
     and `apply_gross_ceiling` refuses to TRIM on an unmeasurable book. This
     matches how `_compute_recent_performance` has always treated an empty
     `daily_pnl` table (`in_drawdown: False`).
+
+    **But unknown is no longer SILENT (2026-09-18).** Holding the loosest
+    cap was never the defect; doing it without telling anyone was. An
+    unmeasurable drawdown now sets `alert_owner=True`, so it reaches the
+    owner through the same leverage-line path `GROSS_LADDER_ALERT_PCT`
+    already uses. This is the direct analogue of `apply_gross_ceiling`'s
+    `measurable = False` branch, which likewise trims nothing and says so
+    loudly rather than proceeding as if the book were fine. The ceiling
+    itself is deliberately unchanged — tightening it to a rung would be
+    picking a number for a state in which, by definition, nothing has been
+    measured, and would force-liquidate the fresh-account case the paragraph
+    above exists to protect.
     """
     base = float(base_x) if isinstance(base_x, (int, float)) and base_x > 0 else 0.0
     if not math.isfinite(base) or base <= 0:
         base = 0.0
     if drawdown_pct is None or not math.isfinite(drawdown_pct):
         return GrossCeiling(
-            ceiling_x=base, base_x=base, drawdown_pct=None, alert_owner=False,
+            ceiling_x=base, base_x=base, drawdown_pct=None, alert_owner=True,
             rung="unknown",
             reason=(
                 f"No measured equity history, so no drawdown could be "
                 f"computed. Gross exposure is held to the standing "
                 f"{base:.1f}x ceiling and nothing is trimmed on an "
-                f"unmeasured book."
+                f"unmeasured book — but the de-levering ladder cannot "
+                f"de-lever while this lasts, so the owner is being told."
             ),
         )
     drawdown = float(drawdown_pct)
@@ -1378,10 +1391,31 @@ def peak_to_trough_pct(
     one call cannot contaminate the next. A non-finite entry is dropped
     before `max()` ever sees it (`math.isfinite` below) rather than being
     excluded by a comparison a NaN could silently fail.
+
+    Guard 3 (2026-09-18): **an equity curve with no usable PRIOR reading is
+    unmeasurable, not a zero drawdown.** Until this guard, a history that
+    was empty — or whose every entry had been dropped as non-finite — left
+    `current_equity` alone in the list, so it became its own high-water mark
+    and the function returned a confident `0.0`. `resolve_gross_ceiling`
+    reads `0.0` as "inside the no-de-levering band" and holds the loosest
+    cap, which means a wiped or unreadable `daily_pnl` table silently
+    disabled the desk's only automatic seller AND looked, in every log line
+    and every owner-facing message, exactly like a book at record highs.
+    Losing the data and making new highs are opposite states and must not
+    produce the same output.
+
+    The boundary is deliberately zero prior readings, not a chosen minimum
+    number of days. Zero is the line between *measured* and *unmeasured* —
+    it is not a number anyone picked, and this file's standing rule forbids
+    inventing one. Whether a SHORT-but-non-empty curve (two or three days
+    after a reset) is long enough to carry a meaningful high-water mark is a
+    real, separate question with a real answer somewhere in the desk's own
+    data; it is NOT answered here, and no `min_history=N` default is
+    smuggled in as if it had been.
     """
-    values = []
+    history_values = []
     dropped_non_finite = 0
-    for raw in list(equity_history or []) + [current_equity]:
+    for raw in list(equity_history or []):
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             continue
         value = float(raw)
@@ -1395,19 +1429,17 @@ def peak_to_trough_pct(
             dropped_non_finite += 1
             continue
         if value > 0:
-            values.append(value)
+            history_values.append(value)
     if dropped_non_finite:
         logger.warning(
             "peak_to_trough_pct: dropped %d non-finite equity reading(s) "
             "(NaN/inf) rather than letting one win max() as a fabricated "
             "high-water mark. Alpaca has been observed to return NaN "
             "portfolio_value during market-open glitches (see "
-            "RiskRuleEngine.check_daily_loss). The remaining %d reading(s) "
-            "still went into this call's peak.",
-            dropped_non_finite, len(values),
+            "RiskRuleEngine.check_daily_loss). The remaining %d historical "
+            "reading(s) still went into this call's peak.",
+            dropped_non_finite, len(history_values),
         )
-    if not values:
-        return None
     if not (
         isinstance(current_equity, (int, float))
         and not isinstance(current_equity, bool)
@@ -1415,7 +1447,18 @@ def peak_to_trough_pct(
         and float(current_equity) > 0
     ):
         return None
-    peak = max(values)
+    if not history_values:
+        # Guard 3. Fail LOUD and UNMEASURABLE rather than quietly confident.
+        logger.warning(
+            "peak_to_trough_pct: no usable PRIOR equity reading (history "
+            "empty or every entry unusable) — returning UNMEASURABLE rather "
+            "than 0.0%%. Today's own equity is not a high-water mark: "
+            "reporting 0.0%% here would make a wiped equity curve "
+            "indistinguishable from a book at record highs and would hold "
+            "the de-levering ladder at its loosest cap.",
+        )
+        return None
+    peak = max(history_values + [float(current_equity)])
     if peak <= 0:
         return None
     return round((float(current_equity) - peak) / peak * 100, 2)
