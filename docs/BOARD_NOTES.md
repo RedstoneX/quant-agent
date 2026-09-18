@@ -385,7 +385,7 @@ decision at all.
 
 ## item 99
 
-**Plain language —** A second review, of the prompts that brief the analysts (the seats that read the market and write reports, one layer below the decision-makers), found the prompts are full of numbers and claims nothing in the code actually enforces.
+**Plain language —** A second review, of the prompts that brief the analysts (the seats that read the market and write reports, one layer below the decision-makers), found the prompts are full of numbers and claims nothing in the code actually enforces. The desk already bans numbers that were invented rather than read off real data; a number that lives only in a brief is exactly that, and it was invisible because nobody had looked in the briefs. (Filed twice, as items 99 and 105; diffed and collapsed into this one 2026-09-18.)
 **What it found —**
   - About 55 numbers exist only as text in a prompt, with no code checking or producing them.
   - About 20 claims about how markets behave are stated as fact with no source.
@@ -394,13 +394,6 @@ decision at all.
   - Roughly a third of the portfolio manager's briefing, and a quarter of the risk manager's and the position reviewer's, is prose describing machinery the model doesn't actually use. That dead weight is where almost every stale or wrong claim above was found living.
   - Separately: a check already exists that fills prompts with numbers straight from the code so they can't go stale, but it only covers 2 of the 10 prompt files. Scanning prompt text for suspicious numbers doesn't work either — there are about 1,825 numbers in there, mostly just dates and list numbering. Neither of the two confirmed mistakes above (item 98) was even sitting in a prompt file — both were assembled by Python code into a string. What would actually have caught the worst one: when code that a prompt describes gets deleted, search the prompts for its name at that moment.
 **Recommendation —** Decide the evening-vs-technical mandate question first (it changes what "fix the prompt" even means); then strip the dead weight, since that's where the false statements cluster; build the deletion-site check as ongoing insurance rather than trying to scan for numbers. Not yet placed in your priority order.
-
-## item 105
-
-**Plain language —** The analyst seats' briefs contain about 55 numbers that exist nowhere but in the brief itself — no code behind them, nothing that checks them. The desk already bans numbers that were invented rather than read off real data; these are exactly that, and they were invisible because nobody had looked in the briefs. About 20 further statements about how markets behave are asserted with no source at all. Roughly a third of the portfolio manager's brief, and a quarter of two others', describes machinery the model does not actually operate — and that dead prose is where nearly every stale claim in item 104 was hiding.
-**One seat is a bigger question than the rest —** The evening seat's brief has not been touched since before this project began and still describes a hand-picked 77-stock value book held over quarters. The technical seat's brief describes a 5 to 15 day swing book. Both advise the same decision seat. They cannot both be right, and choosing between them is your call, not ours — it is now a dated decision on the board.
-**What was ruled out, so nobody rebuilds it —** Automatically scanning the briefs for numbers does not work: there are about 1,825 number-like tokens in them and most are dates and list numbering. More importantly, neither of the two confirmed cases in item 104 was even in a brief file — both were text the code assembles as it runs, so a file scanner would have caught neither.
-**Recommendation —** Build the check at the point of DELETION instead: when a mechanism is removed from the code, search for its name across every brief and every assembled string. That would have caught the worst case; nothing else proposed would.
 
 ## item 111
 
