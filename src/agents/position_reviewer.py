@@ -278,7 +278,9 @@ class PositionReviewerAgent(BaseAgent):
                 )
             metric_bits: list[str] = []
             if pf.get("days_held") is not None:
-                metric_bits.append(f"days_held={pf['days_held']}")
+                metric_bits.append(f"days_held={pf['days_held']} (calendar)")
+            if pf.get("sessions_held") is not None:
+                metric_bits.append(f"sessions_held={pf['sessions_held']} (trading)")
             if pf.get("thesis_progress_pct") is not None:
                 metric_bits.append(f"thesis_progress={pf['thesis_progress_pct']:.0f}%")
             # R-multiple (audit §1.4) — profit in units of the risk originally
@@ -308,8 +310,8 @@ class PositionReviewerAgent(BaseAgent):
                 elif _status == "too_early":
                     _h = pf.get("expected_horizon_sessions")
                     metric_bits.append(
-                        f"pace=not-yet-measurable (held {pf.get('days_held')}d of a "
-                        f"{_h}-session thesis; under 1/3 elapsed, so pace is "
+                        f"pace=not-yet-measurable ({pf.get('sessions_held')} of "
+                        f"{_h} sessions elapsed; under 1/3, so pace is "
                         f"mathematically meaningless — this is NOT 'stalled')"
                     )
                 elif _status == "unavailable_no_pinned_horizon":

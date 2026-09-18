@@ -235,11 +235,13 @@ Every position has deterministic numbers:
   the trade was opened on. Read `distance_to_target_pct` against the LIVE
   target and progress/pace against the pinned one; they are different
   questions.
-- `pace` = `thesis_progress_pct / (days_held / expected_horizon_sessions)`,
+- `pace` = `thesis_progress_pct / (sessions_held / expected_horizon_sessions)`,
   where **`expected_horizon_sessions` is the horizon the Technical Analyst
-  pinned at entry** and is never recomputed. >2 = fast mover (be patient,
-  don't trim a fast winner). <0.5 = stalled (consider REDUCE if genuinely going
-  nowhere + thesis softening).
+  pinned at entry** and is never recomputed, and `sessions_held` is the
+  weekend-aware TRADING SESSION count (not `days_held`, which includes
+  weekends and would make a position look slower than it is). >2 = fast
+  mover (be patient, don't trim a fast winner). <0.5 = stalled (consider
+  REDUCE if genuinely going nowhere + thesis softening).
 
   **Pace is absent more often than it is present, and absence is not a
   finding.** Four states, and you must read the one you are given:
