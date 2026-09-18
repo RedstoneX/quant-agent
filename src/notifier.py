@@ -225,59 +225,135 @@ def _new_block(lines: list[str], render, *args, may_glue: bool = False, **kwargs
     _seal_section(lines, start, may_glue=may_glue)
 
 
+#: An internal status code -> the OUTCOME in plain words, written to read
+#: naturally after a session name: "Pre-market filings \u2014 nothing new
+#: was filed". Board item 89 clarity defect "internal status codes shown
+#: as-is": a code with its underscores taken out is still a code, so these
+#: are phrases rather than title-cased identifiers.
 _STATUS_LABELS: dict[str, str] = {
-    "ok": "OK",
-    "executed": "Traded",
-    "intraday_executed": "Traded",
-    "analyzed": "Analyzed",
-    "reviewed": "Reviewed, no action",
-    "preprocessed": "Preprocessed",
-    "reflected": "Reflected",
-    "sent": "Sent",
-    "no_trades": "No trade",
-    "intraday_no_trades": "No trade",
-    "no_data": "No data",
-    "nothing_new": "Nothing new",
-    "market_holiday": "Market holiday",
-    "early_close": "Early close",
-    "rejected": "Risk rejected the plan",
-    "hard_risk_block": "Blocked by risk rules",
-    "symbol_block": "Blocked by risk rules",
-    "buys_unfunded": "Could not fund the trade",
-    "failed": "Failed",
-    "analysis_error": "Analysis error",
-    "intraday_analysis_error": "Analysis error",
-    "broker_error": "Broker error",
-    "fetch_error": "Data fetch error",
-    "emergency_sold": "Emergency sell (historical)",
-    "daily_loss_halted": "Daily-loss halt",
-    "kill_switch_halted": "Halted (kill switch)",
-    "paid_analysis_suspended": "Paid analysis suspended",
-    "evidence_gate_skip": "Skipped — incomplete data",
-    "intraday_scan_crashed": "Scan crashed",
-    "intraday_scan_disabled": "Scan disabled",
-    "intraday_scan_lock_contended": "Scan delayed (busy)",
-    "intraday_scan_no_opportunity": "No movers found",
-    "digest_only": "Partially completed",
-    "skipped": "Skipped",
-    "scheduler_exited": "Scheduler exited",
-    "unknown": "Unknown",
+    "ok": "nothing to report",
+    "executed": "traded",
+    "intraday_executed": "traded",
+    "analyzed": "done",
+    "reviewed": "reviewed, nothing to change",
+    "preprocessed": "done",
+    "reflected": "done",
+    "sent": "sent",
+    "no_trades": "no trade taken",
+    "intraday_no_trades": "no trade taken",
+    "no_data": "no data to work from",
+    "nothing_new": "nothing new was filed",
+    "market_holiday": "the market was shut",
+    "early_close": "the market closed early",
+    "rejected": "the risk check turned the plan down",
+    "hard_risk_block": "blocked by the risk rules",
+    "symbol_block": "blocked by the risk rules",
+    "buys_unfunded": "there was not enough cash to fund the trade",
+    "failed": "it did not finish",
+    "error": "it did not finish",
+    "analysis_error": "the thinking step failed",
+    "intraday_analysis_error": "the thinking step failed",
+    "broker_error": "the broker could not be reached",
+    "fetch_error": "the data could not be fetched",
+    "emergency_sold": "an emergency sale was made (historical)",
+    "daily_loss_halted": "stopped for the day after losses",
+    "kill_switch_halted": "stopped by the manual kill switch",
+    "paid_analysis_suspended": "paid thinking is suspended",
+    "evidence_gate_skip": "skipped \u2014 the data was incomplete",
+    "intraday_scan_crashed": "the scan for movers crashed",
+    "intraday_scan_disabled": "the scan for movers is switched off",
+    "intraday_scan_lock_contended": "the scan for movers was delayed (busy)",
+    "intraday_scan_no_opportunity": "no movers worth looking at",
+    "digest_only": "only partly completed",
+    "skipped": "skipped",
+    "scheduler_exited": "the scheduler stopped",
+    "unknown": "outcome not recorded",
 }
 
 
 def humanize_status(status: str) -> str:
     """Plain-English rendering of an internal status code for the owner-
-    facing header line — e.g. "intraday_no_trades" -> "No trade". Falls
-    back to a humanised form of the raw code (underscores to spaces,
-    capitalised first letter) for any status not in the table above, so an
-    unmapped status is still readable rather than raw `snake_case`, never
-    raising and never silently dropping the information."""
+    facing header line \u2014 e.g. "intraday_no_trades" -> "no trade taken".
+
+    A status with no entry in the table above is reported as exactly that:
+    an outcome nobody has plain wording for. It is never paraphrased into
+    something the wording cannot support, and the raw code is never passed
+    off as a sentence written for the reader. It is not dropped either: it
+    is the only record of what happened.
+    """
     status = str(status or "")
     label = _STATUS_LABELS.get(status)
     if label:
         return label
-    text = status.replace("_", " ").strip()
-    return (text[:1].upper() + text[1:]) if text else "Unknown"
+    if not status.strip():
+        return "outcome not recorded"
+    return (
+        "an outcome the desk has no plain wording for (its own code for it, "
+        f"kept for the record, is \u201c{status}\u201d)"
+    )
+
+
+#: Internal session name -> the name the owner would use for it. The mode
+#: string is a scheduler identifier ("earnings_preprocess", "intra_check");
+#: putting it in a message is the same defect as printing a status code.
+#: Owner review, 2026-09-18, extending the evening report's ratified
+#: standard (PR #471) to every other message.
+_MODE_LABELS: dict[str, str] = {
+    "morning": "Morning session",
+    "midday": "Midday review",
+    "close": "Closing review",
+    "evening": "Evening report",
+    "once": "One-off session",
+    "intra_check": "Half-hourly check",
+    "earnings_preprocess": "Pre-market filings",
+    "meta": "Quarterly self-review",
+    "daily": "Daily performance export",
+}
+
+
+def mode_label(mode: str) -> str:
+    """The owner-facing name of a session, never the scheduler identifier."""
+    raw = str(mode or "")
+    label = _MODE_LABELS.get(raw)
+    if label:
+        return label
+    text = raw.replace("_", " ").strip()
+    return (text[:1].upper() + text[1:]) if text else "Session"
+
+
+def describe_ai_cost(
+    cost: float | None,
+    label: str = "AI cost for this run",
+    free_note: str = "this run used only free models",
+) -> str:
+    """The AI spend for a run, in words.
+
+    Owner review of the live 17 September evening message: "$0.0000" read as
+    broken. It is not \u2014 it is true. `src/cost_table.py` pins the
+    free-tier seats at $0.00 as a deliberate price, not as an unpriced
+    placeholder. So the honest rendering is a sentence, not four decimal
+    places.
+
+    This is the SINGLE implementation of that wording. The evening
+    formatter's `src.trader_feed._evening_cost_line` now calls it rather
+    than keeping its own copy, so the two can never drift; it lives here
+    because src/trader_feed.py imports src/notifier.py and not the reverse.
+
+    `None` means "the desk could not read what this cost" and says exactly
+    that \u2014 it never renders as zero. Inventing a number in an
+    owner-facing message is the worst failure mode on this desk.
+    """
+    if cost is None:
+        return f"{label}: not available"
+    try:
+        value = float(cost)
+    except (TypeError, ValueError):
+        return f"{label}: not available"
+    if value <= 0:
+        return f"{label}: none \u2014 {free_note}"
+    if value < 0.01:
+        return f"{label}: under one cent"
+    return f"{label}: ${value:,.2f}"
 
 
 def _fmt_signed_money(value: float) -> str:
@@ -1100,16 +1176,17 @@ def format_session_result(
         # _clip_text for why it clips on a boundary instead of mid-word.
         err_msg = _clip_text(str(error), 1500) or "(no message)"
         return (
-            f"🛑 FAILED: {mode}  ({timestamp})\n"
+            f"\U0001f6d1 FAILED: {mode_label(mode)} did not finish  "
+            f"({timestamp})\n"
             f"error: {err_type}: {err_msg}\n"
-            f"elapsed: {elapsed_str}"
+            f"\U0001f9fe took {elapsed_str}"
         )
 
     if not isinstance(result, dict):
         return (
-            f"⚪ {mode} returned non-dict result ({timestamp})\n"
-            f"type: {type(result).__name__}\n"
-            f"elapsed: {elapsed_str}"
+            f"\u26aa {mode_label(mode)} finished but reported nothing the "
+            f"desk could read ({timestamp})\n"
+            f"\U0001f9fe took {elapsed_str}"
         )
 
     status = str(result.get("status", "unknown"))
@@ -1159,11 +1236,21 @@ def format_session_result(
     # breaks that tie, but the header's first word states it in text too,
     # so the line is still correct with zero emoji rendering — "status:
     # {status}" a line below is not the FIRST word of the message.
-    severity_prefix = "FAILED: " if emoji == "🛑" else ""
+    severity_prefix = "FAILED: " if emoji == "\U0001f6d1" else ""
+    # The outcome goes IN the title line, in words. Two lines that used to
+    # sit under it are gone (owner review, 2026-09-18, extending PR #471's
+    # ratified evening standard to every message):
+    #   - "run_id: earnings_preprocess-a745ceda" \u2014 a run identifier
+    #     means nothing to him and he does not need it. Board item 89
+    #     clarity defect "run identifiers", previously fixed in the evening
+    #     message only. `run_id` is still read below for the cost lookup;
+    #     it is simply never shown.
+    #   - "status: Preprocessed" \u2014 an internal status code with its
+    #     underscores taken out is still an internal status code. Board
+    #     item 89 clarity defect "internal status codes shown as-is".
     lines: list[str] = [
-        f"{emoji} {severity_prefix}{mode}  ({timestamp})",
-        f"status: {humanize_status(status)}",
-        f"run_id: {run_id}",
+        f"{emoji} {severity_prefix}{mode_label(mode)} \u2014 "
+        f"{humanize_status(status)}  ({timestamp})",
     ]
 
     # Per-session LLM cost (looked up from agent_logs by run_id), the
@@ -1224,7 +1311,10 @@ def format_session_result(
             daily_block.append(f"error: {err}")
         _new_section(lines, *daily_block)
 
-    _new_section(lines, f"elapsed: {elapsed_str}")
+    # "elapsed: 3m 5s" \u2014 a raw label the owner called noise. Kept,
+    # because a session that suddenly takes four times as long is worth
+    # seeing, but as the evening message already renders it.
+    _new_section(lines, f"\U0001f9fe took {elapsed_str}")
     return "\n".join(lines)
 
 
@@ -1415,11 +1505,38 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
         # no alert. And the wording is exact — at the lowest rung new
         # positions are refused ONCE THE BOOK REACHES the cap, not
         # unconditionally; a book already below it may still trade.
-        lines.append(
-            f"🛑 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
-            f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
-            f"new positions are refused once the book reaches it."
-        )
+        #
+        # 2026-09-18: `alert_owner` is no longer only the -20% rung. It is
+        # also set when the drawdown could not be MEASURED at all (an
+        # unreadable equity read, rung "bad_read", which has set it since
+        # 2026-09-02; and an absent equity curve, rung "unknown"). Printing
+        # "DRAWDOWN PAST -20%" for those said something specific and false
+        # about the book — the owner would read a measured -20% where
+        # nothing had been measured. The message is chosen from the RUNG,
+        # so a state that was never measured never reports a number.
+        rung = leverage.get("rung")
+        if rung == "unknown":
+            lines.append(
+                f"🛑 DRAWDOWN UNMEASURABLE: there is no equity history to "
+                f"measure a high-water mark against, so the de-levering "
+                f"ladder cannot fire at all. This is NOT a book at record "
+                f"highs. Nothing is being trimmed and gross exposure is "
+                f"held to the standing {ceiling_x:.2f}x cap until a real "
+                f"equity curve exists."
+            )
+        elif rung == "bad_read":
+            lines.append(
+                f"🛑 DRAWDOWN UNMEASURABLE: the account equity reading came "
+                f"back unusable, so the book's drawdown cannot be verified. "
+                f"Gross exposure is held to the ladder's floor rung "
+                f"({ceiling_x:.2f}x equity) until a valid reading arrives."
+            )
+        else:
+            lines.append(
+                f"🛑 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
+                f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
+                f"new positions are refused once the book reaches it."
+            )
     if leverage.get("delever_incomplete"):
         # §11.2 reporting gap: a de-lever was attempted but the account is
         # still over its limit afterward. Plain words for a non-developer
@@ -1925,23 +2042,10 @@ def _session_cost_line(run_id: str | None) -> str | None:
             return None
         conn = sqlite3.connect(str(_DB_PATH))
         try:
-            columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(agent_logs)").fetchall()
-            }
-            if "provider_requests" in columns:
-                rows = conn.execute(
-                    "SELECT cost_usd, provider_requests FROM agent_logs WHERE run_id = ?",
-                    (run_id,),
-                ).fetchall()
-                requests = sum(
-                    1 if row[1] is None else max(0, int(row[1])) for row in rows
-                )
-            else:
-                rows = conn.execute(
-                    "SELECT cost_usd FROM agent_logs WHERE run_id = ?",
-                    (run_id,),
-                ).fetchall()
-                requests = len(rows)
+            rows = conn.execute(
+                "SELECT cost_usd FROM agent_logs WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
         finally:
             conn.close()
     except Exception as exc:
@@ -1950,16 +2054,18 @@ def _session_cost_line(run_id: str | None) -> str | None:
     if not rows:
         return None
     if any(r[0] is None for r in rows):
-        # Unknown model in pricing table for at least one call →
-        # cannot honestly sum. Surface a hint instead of a fake number.
-        return f"💵 cost: $?.?? ({requests} provider requests — see cost_table.py)"
-    total = sum(float(r[0]) for r in rows)
-    # Cents-or-better precision for human readability; sub-cent
-    # sessions (rare, e.g. intra_check with 0 LLM calls — but those
-    # don't reach this code path anyway) use 4-decimal.
-    if total < 0.01:
-        return f"💵 cost: ${total:.4f} ({requests} provider requests)"
-    return f"💵 cost: ${total:,.2f} ({requests} provider requests)"
+        # Unknown model in the pricing table for at least one call \u2014
+        # cannot honestly sum. Say so; never show a partial total as though
+        # it were the whole, and never show a fabricated figure.
+        return (
+            "\U0001f4b5 AI cost for this run: not available \u2014 one of "
+            "the models used has no price on file"
+        )
+    # The provider-request count that used to sit in brackets here is gone
+    # (owner review, 2026-09-18). It is an implementation detail, it is not
+    # a number he can act on, and it had already been removed from the
+    # evening message.
+    return "\U0001f4b5 " + describe_ai_cost(sum(float(r[0]) for r in rows))
 
 
 def _day_cost_line() -> str | None:
@@ -2002,10 +2108,24 @@ def _day_cost_line() -> str | None:
         return None
     spent = float(row[0])
     limit = _daily_cost_limit()
+    # In words, not a row of zeros (owner review, 2026-09-18). A day on
+    # which nothing paid has run yet is the common case before the open,
+    # and "$0.00 of $2.75 daily limit (0%)" said nothing he could use. The
+    # percentage is dropped: it restated the two figures already on the
+    # line. Both figures are read, never estimated.
+    if spent <= 0:
+        if not limit:
+            return "\U0001f4c5 Spent today: nothing yet"
+        return (
+            f"\U0001f4c5 Spent today: nothing yet, against a ${limit:,.2f} "
+            f"cap for the day"
+        )
     if not limit:
-        return f"📅 today: ${spent:,.2f} so far"
-    pct = int(round(spent / limit * 100))
-    return f"📅 today: ${spent:,.2f} of ${limit:,.2f} daily limit ({pct}%)"
+        return f"\U0001f4c5 Spent today: ${spent:,.2f} so far"
+    return (
+        f"\U0001f4c5 Spent today: ${spent:,.2f} of the ${limit:,.2f} cap "
+        f"for the day"
+    )
 
 
 def _daily_cost_limit() -> float | None:

@@ -614,10 +614,16 @@ def test_peak_to_trough_is_measured_from_the_equity_curve_not_from_agents():
 def test_an_unknown_drawdown_holds_the_standing_cap_and_trims_nothing():
     """A fresh account with no equity history genuinely has no drawdown.
     Forcing it to the deepest rung would refuse every trade on day one and
-    force-liquidate a book that never fell."""
+    force-liquidate a book that never fell.
+
+    UPDATED 2026-09-18: the CEILING is still the standing cap and nothing is
+    still trimmed — but the state now alerts (see
+    `test_an_unmeasurable_drawdown_alerts_the_owner_instead_of_going_quiet`).
+    Holding the loosest cap was never the defect; doing it silently, so a
+    wiped equity curve looked identical to a book at record highs, was."""
     ceiling = resolve_gross_ceiling(None, base_x=BASE_X)
     assert ceiling.ceiling_x == BASE_X
-    assert ceiling.alert_owner is False
+    assert ceiling.alert_owner is True
     assert ceiling.drawdown_pct is None
 
 
@@ -955,6 +961,33 @@ def test_the_deepest_rung_raises_a_separate_owner_alert():
     assert "refused once the book reaches it" in alert
 
 
+def test_an_unmeasurable_drawdown_alert_never_claims_a_measured_number():
+    """`alert_owner` is not only the -20% rung any more, so the owner-facing
+    line is chosen from the RUNG. Printing 'DRAWDOWN PAST -20%' for a state
+    in which nothing was measured would tell him something specific and
+    false about his own book."""
+    from src.notifier import _append_leverage_line
+
+    for rung in ("unknown", "bad_read"):
+        lines: list[str] = []
+        _append_leverage_line(lines, {"leverage": {
+            "gross_x": 1.1, "ceiling_x": 2.0, "base_ceiling_x": 2.0,
+            "drawdown_pct": None, "rung": rung, "alert_owner": True,
+        }})
+        assert len(lines) == 2
+        alert = lines[1]
+        assert "UNMEASURABLE" in alert
+        assert "-20%" not in alert, "nothing was measured; claim no number"
+
+    # And the state must not be readable as "we are fine": say so outright.
+    lines = []
+    _append_leverage_line(lines, {"leverage": {
+        "gross_x": 1.1, "ceiling_x": 2.0, "base_ceiling_x": 2.0,
+        "drawdown_pct": None, "rung": "unknown", "alert_owner": True,
+    }})
+    assert "NOT a book at record highs" in lines[1]
+
+
 def test_a_failed_delever_gets_its_own_plain_language_alert():
     """A de-lever that runs and still leaves the book over the ceiling is
     unreportable (it only reaches the log) unless this line exists. Plain
@@ -1076,18 +1109,49 @@ def test_peak_to_trough_pct_no_warning_when_all_readings_are_clean(caplog):
     assert not any("dropped" in r.message for r in caplog.records)
 
 
-def test_peak_to_trough_pct_all_history_corrupted_still_returns_a_number_not_nan(caplog):
-    """Documented, deliberately-not-closed residual: if EVERY historical
-    reading is non-finite but today's own read is fine, the function falls
-    back to treating today as the peak (0.0% drawdown) rather than
-    crashing or returning NaN — 'the ladder still functions'. It is
-    WARNED, though, because a true historical peak could have been lost."""
+def test_peak_to_trough_pct_all_history_corrupted_is_unmeasurable_not_zero(caplog):
+    """CLOSES a residual this file used to pin as accepted (Guard 3,
+    2026-09-18). If EVERY historical reading is non-finite, the function
+    used to fall back to treating today as its own peak and return a
+    confident 0.0% — indistinguishable, in the ceiling and in every
+    owner-facing line, from a book at record highs. It is now UNMEASURABLE:
+    losing the curve and making new highs are opposite states."""
     import logging
     with caplog.at_level(logging.WARNING, logger="src.risk.rules"):
         drawdown = peak_to_trough_pct([float("nan")] * 5, 95_000.0)
-    assert drawdown == 0.0
-    assert math.isfinite(drawdown)
+    assert drawdown is None
     assert any("dropped" in r.message for r in caplog.records)
+    assert any("UNMEASURABLE" in r.message for r in caplog.records)
+
+
+def test_peak_to_trough_pct_empty_history_is_unmeasurable_not_zero(caplog):
+    """The safety half of Guard 3. An empty `daily_pnl` table plus a
+    perfectly good current equity reading must NOT resolve to 0.0%, because
+    `resolve_gross_ceiling` reads 0.0% as the loosest standing cap — so a
+    data-loss event would silently disable the desk's only automatic
+    seller while reporting a healthy book."""
+    import logging
+    with caplog.at_level(logging.WARNING, logger="src.risk.rules"):
+        assert peak_to_trough_pct([], 95_000.0) is None
+    assert any("UNMEASURABLE" in r.message for r in caplog.records)
+    # One real prior reading is enough to measure against; no invented
+    # minimum number of days stands between "measured" and "unmeasured".
+    assert peak_to_trough_pct([100_000.0], 95_000.0) == -5.0
+
+
+def test_an_unmeasurable_drawdown_alerts_the_owner_instead_of_going_quiet():
+    """The ceiling deliberately stays at the standing cap (tightening it
+    would force-liquidate a genuinely fresh account that never fell), but
+    the state is no longer silent — the whole defect was that an
+    unmeasurable book and a book at record highs produced identical,
+    unalarming output."""
+    ceiling = resolve_gross_ceiling(None, base_x=BASE_X)
+    assert ceiling.rung == "unknown"
+    assert ceiling.ceiling_x == BASE_X, "an unmeasured book is not trimmed"
+    assert ceiling.drawdown_pct is None
+    assert ceiling.alert_owner is True
+    # A book genuinely at its high must NOT raise the same alarm.
+    assert resolve_gross_ceiling(0.0, base_x=BASE_X).alert_owner is False
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
@@ -1181,16 +1245,24 @@ def test_resolve_gross_ceiling_fresh_account_is_not_punished_like_a_bad_read():
     """Regression guard for the DELIBERATE prior behaviour this guard must
     not break: a genuinely fresh account (no daily_pnl history yet) with a
     perfectly good current equity read is NOT a bad read, and must still
-    resolve to the standing cap with no owner alert — exactly as
-    resolve_gross_ceiling's own docstring requires."""
+    resolve to the standing cap and trim nothing — exactly as
+    resolve_gross_ceiling's own docstring requires.
+
+    UPDATED 2026-09-18: the two states are still distinguished by their
+    CEILING (standing cap here, floor rung on a bad read), which is the
+    distinction this guard was written to protect. They are no longer
+    distinguished by SILENCE: an empty equity curve now alerts too, because
+    the desk cannot tell a fresh account from a wiped one, and one of those
+    two means the only automatic seller cannot fire."""
     pipeline = _pipeline_for_ceiling()
     ctx = _ctx_with_equity(100_000.0)  # good read, empty history via the mock db
 
     ceiling = pipeline._resolve_gross_ceiling(ctx)
 
+    assert ceiling.rung == "unknown"
     assert ceiling.rung != "bad_read"
     assert ceiling.ceiling_x == BASE_X
-    assert ceiling.alert_owner is False
+    assert ceiling.alert_owner is True
 
 
 def test_resolve_gross_ceiling_normal_drawdown_path_still_works():

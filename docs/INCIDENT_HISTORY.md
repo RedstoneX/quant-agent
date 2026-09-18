@@ -36,6 +36,116 @@ what would catch it next time.
 
 ---
 
+### 2026-09-17 — morning research went out with holes, then the desk still decided as if it had a full picture
+
+**Status: RECORDED AS HISTORY, NOT FIXED.** The branch that produced the measurements below (PR #435) was CLOSED unmerged on 2026-09-18 and none of its code is on main. It was the sixth or seventh pass over the live-fill websocket, a path that has never authenticated once in any session since it was built — a 100% failure rate is not a race condition — and its own adversary section admits it had not shown the fix works AT THE OPEN, because every measurement in it was taken mid-morning under already-healthy conditions. The open and mid-morning are different conditions. The measured numbers are kept here because they are the genuinely useful artefact; the remedies described below are the shape that was PROPOSED, not work that shipped. The four strands are now board items 119 (economics feed), 120 (today's print), 121 (schedule law) and 122 (deploy installs the timetable), each judged on its own merits.
+
+**In plain words:** At the open the economics feed only brought back eight of the fifteen numbers it is required to have, the live tape still showed yesterday on eight names, and the fill socket spent the review window failing to log in. The desk still produced a regime and a book. Missing required data is a defect in the step that should have produced it — not a thinner story to size off.
+
+**Cause.** The economics numbers were asked for one after another. The first eight, plus their metadata, ate the ninety-second ceiling. The last seven — unemployment, junk and investment-grade credit, real yield, breakeven, the dollar, weekly claims — were never even requested; the log said the deadline was exceeded. That is not a St. Louis outage. Mid-morning retest: each series on its own comes back in a few seconds; a clean full batch can finish inside the same ceiling; the remaining economics root is observation and due-date metadata sharing the same worker slots so a healthy batch spends almost the whole clock. Separately, the live snapshot asked for no feed and trusted last-trade only: at 09:30 last-trade can still be yesterday while today's forming bar already carries the open, so eight names (including a holding) were labelled STALE with no open print. Mid-morning six of those eight had a real print; two thin names still had none — a quote is not a print. The "ages" on the technical reads are how long a rating has persisted, not how old the analysis is, so an eight-day gate on that number would have been invented. The fill socket's login treats the first websocket message as the handshake; a hello or listen-ack before "authorized" is logged as failed login and retried through the review. REST still worked. Starting the socket during review does not help if that first frame is not the login reply, and overlap with review still leaves the open Risk window as the defect. And the 09:30 risk tick is allowed to run while morning still owns the open — both windows start at 09:30 — so it waited for morning to finish and then sent a second paid look labelled as an intraday opportunity at 09:37. That was still the open, not midday. Calling it INTRADAY because the timer fired is the same defect as renaming the alert.
+
+**The fix that was proposed, and never merged.** The miss was serial starvation and then shared-slot observation+metadata, not a short ceiling: the existing ninety seconds was enough if every series actually got a try. Ask for all fifteen observations first, concurrent enough that every series can still start inside that ceiling; due-date metadata is remaining-budget and unknown freshness is named. A series that still fails is asked for once more inside whatever budget remains — not a longer clock, and not a made-up number. If it is still missing, name it, skip the economist, and mark the seat lost so the evidence gate refuses. A later repair may re-fetch those series once; it may pay the economist only after they have all arrived. Do not invent the missing prints. Live snapshots pin the feed this account is entitled to and, when last-trade is still yesterday, use today's forming bar or today's minute bar on that same venue. A quote is not a print. The open print is re-read once at 09:30. A name with no today print after that path is a lost technical seat, not a low-confidence stain, and is not dropped forever. The fill socket starts at the portfolio-manager step, keeps reading until it is authorized, rejected by name, or the existing login budget runs out, and is waited out before review so the open Risk window is not the handshake. REST polling after a failed handshake is labelled a temporary safety net tied to that login fix — not the product, not a longer backoff, and repeg stays off. Reward-to-risk was not invented. Morning owns the 09:30 paid open. The 09:30 risk tick still runs deterministic coverage through the open; it does not wait for morning and then hunt again as INTRADAY. The first true paid INTRADAY look is the next existing half-hour fire after morning released — the finish stamp when the once-day marker was written, lock release when it was not. That interval is the cadence already on the box, not a pad invented after 09:30. Telegram stays silent on the open tick, on a fire while morning still owns the wrapper, and on a leftover still on the 09:30 cadence. Midday still waits, then looks. Deploy copies the systemd units from the checkout; restarting only the API left the timers drifted, which is how a schedule fix would not have landed.
+
+**What this does not close.** How many usable reads is "enough" is still the owner's (item 20 counting half). A real St. Louis outage still fails closed. A name with no today print on IEX at all is still lost tech — SIP is not entitled. A second websocket on the same account is still refused. A morning that crashes before it writes the once-day marker still releases the lock: later fires after the open tick may hunt, and the evidence gate still refuses a holey book — that hunt is not a substitute for morning actually filling the seats. Chase/repeg stays off.
+
+**Retest the same day, mid-morning vs the open.** Isolated economics series land in a few seconds; a full batch can bring all fifteen back in under the existing ceiling when nothing cascades, and the open miss was seven series never even asked for. The remaining economics root is asking for the numbers and their due-date metadata on the same worker slots, so a healthy batch spends almost the whole ceiling and one slow print starves the rest. That is a budget/concurrency defect, not a short clock and not a missing number to invent. Six of the eight stale names later showed a real today print; two thin names still had none — the tape this account is entitled to simply did not print, and a quote is not a print. The fill-socket login storm was gone by mid-morning; the open review window is still where it breaks if handshake starts there. Schedule law from the same morning stands: 09:30 is morning's open, not an intraday opportunity.
+
+**What would catch it next time.** A test that fifteen series each slow enough to miss a serial ceiling still all get attempted; a test that observations are finished before any due-date metadata HTTP; a test that a series which timed out is asked for once more and lands, and one that still fails stays named with no invented value; a test that one missing required series does not call the economist and marks the seat lost, and that a later repair pays the economist only after a complete re-fetch; a test that a yesterday last-trade with today's open on the bar (or today's minute bar on the entitled venue) is priced from that today print, that a quote is not worn as a print, and that a first-stale snapshot is re-read into a today print; a test that a parsed technical batch with a STALE live price is lost, not low-confidence; a test that a non-login first frame still authorizes, that an explicit reject fails by name, that REST after a failed handshake is labelled temporary, and that login is waited out before review rather than overlapped with it; a test that the 09:30 open tick and a 09:37 leftover of that same cadence do not run paid discovery or send INTRADAY OPPORTUNITY; a test that last-morning at 09:36 allows 10:00 and last-morning at 10:05 skips 10:00 and allows 10:30; a test that a crashed morning that has already released the lock still allows 10:00; a test that deploy copies systemd units rather than restarting only the API.
+
+---
+
+### 2026-09-17 — the desk could never have been told its own fills
+
+**In plain words:** the desk places orders through a service that quietly swaps
+in the real trading password on the way out, so ordering works even though the
+desk itself only holds a fake one. But the separate live feed that tells it
+"your order just filled" does not go through that service and has to present the
+password itself. It was presenting the fake one. That feed has never once worked,
+and could not have.
+
+**Cause.** Two independent blockers, either of which alone is fatal. The broker
+authenticates that feed with a message sent *inside* the connection, not with a
+header on the way in — and the swap-in service only rewrites headers, so there
+was nothing for it to rewrite. Separately, the library the feed is built on is an
+older implementation that cannot be routed through that service at all. So the
+feed could not be fixed by pointing it at the same plumbing everything else uses.
+
+**Why it went unnoticed for so long.** Because the ordering path kept working. A
+fake password that still places orders looks exactly like a healthy desk from
+the outside, and nothing said at startup which password the process was actually
+holding. Eight days passed, and five separate attempts went into tuning *when*
+the feed connected — optimising the timing of a handshake that was never going
+to succeed with the credential it was presenting. Every one of those attempts
+was reasoning about the wrong layer, and nothing in the system was positioned to
+say so.
+
+**Fix.** Since the feed must hold the real password, it is now delivered to the
+process as a locked-down file handed over by the system at startup, instead of
+sitting in the plain-text settings file with everything else. It never enters the
+process's environment, so it is not visible in the places a running process
+normally leaks its settings, and it is not in the code checkout, so no deploy can
+move or expose it. The fake password stays exactly where it is and is simply
+outranked. Every start now says, in the log, where each trading credential came
+from and how long it is — never what it is — and, if it is holding an obvious
+stand-in, pushes ONE Telegram message naming every affected credential, at most
+ONCE A DAY while that stays true.
+
+**Why the alert is rationed, which was a correction on this change.** The first
+version alerted once per problem, per start. `main.py --mode <session>` is the
+entrypoint for all six session units and both broker credentials are
+placeholders today, so that was roughly a dozen identical messages a day,
+indefinitely, about a condition that is the known intended state while the
+live-fill socket is off. That is the same mistake twice over: the
+fill-degradation alert was deliberately shipped NOT firing on the socket being
+off, precisely because paging on an intended configuration only moves the noise
+into Telegram — and the eight-day placeholder above went unnoticed BECAUSE
+roughly 150 daily auth failures had already made that channel unreadable. A
+placeholder credential is a standing configuration state, not an event; it
+changes only when a human changes it. So the honest cadence is the coarsest one
+that still re-states the condition while it is live. The log line is unchanged
+and still written on every single start; only the push is rationed, on the same
+once-a-day marker shape the coverage and silence watchdogs already use.
+
+**And the stand-in word list is matched on word boundaries, not raw substrings.**
+A real key is an opaque run of characters, and "todo", "insert" and "xxxx" can
+all turn up inside one by chance — at which point the desk would have shouted
+"placeholder" about a working credential. It could never have blocked anything,
+but an unmeasured false-positive word list sitting in an alert path is exactly
+how alerts stop being read. No length or prefix rule was added; Alpaca documents
+neither, and inventing one would start rejecting real keys the day the issuing
+format changed.
+
+**What was ruled out.** Encrypting the credential at rest, which was the
+original intent. The desk's services run under the unprivileged account's own
+service manager, and unlocking an encrypted credential requires reading a
+system file only the administrator can read, so the service dies before the
+application starts. There is also no security chip on this machine to fall back
+on. This was reproduced with a fake value rather than assumed. The result is a
+credential protected by file permissions, not by cryptography — a real
+improvement on a shared plain-text file, but a smaller one than intended, and it
+is recorded as such rather than overstated. Encryption becomes possible only if
+the services are moved to the administrator's service manager, which is a
+separate decision. Also ruled out: reviving the custom credential proxy that was
+rejected earlier — nothing here adds one.
+
+**Also ruled out: guessing whether a credential is real from its shape.** The
+broker does not publish what its keys look like, so any length or prefix rule
+would be a number invented to look careful, and would start rejecting genuine
+keys the day the broker changed its format. The check instead fires only on
+positive evidence someone typed a stand-in. It therefore cannot catch a
+wrong-but-plausible key, which is stated openly rather than papered over.
+
+**What would catch it next time.** The startup line naming the source and length
+of each trading credential, and the alert on a stand-in, both of which would have
+fired on day one of the eight. But the real lesson is narrower: a credential is
+not proven by anything the desk says about itself. The acceptance test for this
+change is a single observation that the broker *accepted* the credential on the
+live feed — a statement made by the other side. The feed stays switched off until
+that observation exists. Nobody demanded that existence proof for eight days, and
+that, not the credential, is what actually failed.
+
+---
+
 ### 2026-09-18 — a stop price of zero switched protection OFF instead of refusing the trade (item 88 closed)
 
 **In plain words.** The desk used the number zero to mean "this position was
@@ -11361,3 +11471,103 @@ no write-up in these docs at all before this entry.
 floors or the §12.1 level exemption. Nothing about how wide a stop is allowed
 to be. The `0.0` sentinel.
 
+
+---
+
+## The de-levering ladder was reading a shallower drawdown than the account really had, and an erased equity curve read as a book at record highs (2026-09-18)
+
+**In plain language.** The desk automatically reduces how much it owns once it
+falls far enough below its best-ever value. To do that it has to know what its
+best-ever value was. It was reading that from a table with a hole in it, so it
+thought the account was 1.3% below its high when it was really 2.7% below — and
+the error can only ever go that way, because a missing row can only make the
+"best ever" look smaller than it was. Worse: if that table were ever emptied
+completely, the desk reported 0.0% — no drawdown at all — which looks exactly
+like a book at record highs, holds the loosest possible limit, and says nothing
+to anybody. Losing the records and doing brilliantly produced identical output.
+
+**The one-directional error.** `peak_to_trough_pct` (`src/risk/rules.py`) takes
+`max()` over the stored `daily_pnl` history plus today's equity, and
+`resolve_gross_ceiling` reads the result. A missing row can only lower the peak,
+never raise it, so a hole in the table always produces a SHALLOWER drawdown and
+a LOOSER exposure ceiling than the ratified ladder intends. That is a safety
+error, not noise.
+
+**What was actually missing, and where it came from.** The live `daily_pnl`
+table held four rows, earliest 2026-09-02 at 9862.74. The desk reset of
+2026-09-02 (`data/resets/20260902T181859Z/`) deleted 13 rows **by design** — its
+own `reset_manifest.json` records `{"table": "daily_pnl", "rows": 13,
+"deleting": 13}` — and took a full database snapshot beside the manifest first.
+Those 13 rows run 2026-08-14 to 2026-09-01 and peak at **10005.68 on
+2026-08-20**. The account was not restarted by that reset: it flattened
+positions to cash on the same paper account (`PA3DFXH9FF5V` in both
+`book_before.json` and `book_after.json`), with equity running 9870.37 (08-27
+close) -> 9865.27 (pre-flatten) -> 9864.04 (post-flatten) -> 9862.74 (09-02
+close) and no capital added or removed. A high-water mark is a property of the
+account's capital, not of the strategy record the reset discarded, so 10005.68
+is this account's real high.
+
+**Correction to the brief that raised this.** The obvious restore source looked
+like `data/quant_agent.db.bak-20260828T151630`, which holds 10 of those rows.
+The reset's own snapshot holds all 13, including 2026-08-28, 2026-08-31 and
+2026-09-01, which the 08-28 backup predates. Restoring from the backup would
+have left a three-day hole. The snapshot was used instead.
+
+**What was restored.** All 13 rows, by `scripts/restore_daily_pnl_history.py`
+— dry run by default, idempotent (`INSERT OR IGNORE` on the `date` primary
+key), and it copies the target database before writing so the change is
+reversible. **Nothing was invented.** 2026-09-03 and the 2026-09-04..09-14 desk
+pause have no row in either database and were left absent: `daily_pnl` is
+written only by an evening run, `llm_budget_sessions` shows no desk activity
+across that window, and interpolating a row would fabricate an equity reading.
+
+**Measured effect.** Against the last stored equity (9734.50, 2026-09-17 close)
+the ladder read **-1.30%** before and reads **-2.71%** after. The resolved
+ceiling is 2.0x in both cases — the first rung is -8% — so **no trading
+behaviour changed today.** What changed is that the ladder is now measuring
+against the account's real high instead of a truncated one.
+
+**The worse half, and the fix.** With no usable prior reading at all,
+`peak_to_trough_pct` used to leave today's equity alone in the list, make it its
+own high-water mark, and return a confident `0.0`. `resolve_gross_ceiling` reads
+`0.0` as "inside the no-de-levering band" and holds the standing cap, so a
+data-loss event silently disabled the desk's only automatic seller while every
+log line and owner-facing message reported a healthy book. `peak_to_trough_pct`
+now returns UNMEASURABLE (`None`) when there is no usable PRIOR reading — empty
+history, or a history whose every entry was dropped as non-finite — and warns.
+`resolve_gross_ceiling`'s unknown branch now sets `alert_owner=True`.
+
+**Why the ceiling in that state was NOT tightened.** Following the precedent
+already in this area: `apply_gross_ceiling` marks an unreadable book
+UNMEASURABLE and trims nothing. Tightening to a rung would be picking a number
+for a state in which, by definition, nothing has been measured, and would
+force-liquidate the genuinely-fresh-account case `resolve_gross_ceiling`'s
+docstring exists to protect. Holding the loosest cap was never the defect;
+doing it in silence was.
+
+**Why the boundary is zero prior readings and not N days.** Zero is the line
+between measured and unmeasured — it is not a number anyone picked. Whether a
+short-but-non-empty curve (two or three days after a reset) is long enough to
+carry a meaningful high-water mark is a real and separate question with a real
+answer somewhere in the desk's own data; no `min_history=N` was smuggled in as
+if it had been answered.
+
+**A second defect found and fixed in passing.** The owner-facing leverage alert
+printed "DRAWDOWN PAST -20%" for every `alert_owner` state. Since 2026-09-02
+that already included the bad-equity-read state, which has no measured drawdown
+at all — so the owner could be told a specific, false number about his own book.
+The message is now chosen from the rung: a state that was never measured reports
+UNMEASURABLE and no number, and the empty-curve case says outright that this is
+NOT a book at record highs.
+
+**A test that pinned the old behaviour was replaced, deliberately.**
+`test_peak_to_trough_pct_all_history_corrupted_still_returns_a_number_not_nan`
+documented the all-history-corrupted -> 0.0 fallback as an accepted residual
+("the ladder still functions"). It was the same defect in a second doorway and
+is now pinned the other way.
+
+**Not changed.** No threshold, rung or trade-governing number. `GROSS_LADDER`
+and `GROSS_LADDER_ALERT_PCT` are untouched. The ladder's order type, its 1%
+limit buffer, and its sequencing of cancels, sells and stop placement are
+untouched — the sell-instrument question is filed as board item 118, with the
+order type explicitly left alone.

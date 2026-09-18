@@ -7,6 +7,7 @@ from pathlib import Path
 
 from src.config import load_config
 from src.cost_table import refresh_pricing
+from src.credentials import report_startup_credentials
 from src.notifier import TelegramNotifier
 from src.pipeline import TradingPipeline
 from src.scheduler import TradingScheduler
@@ -115,6 +116,15 @@ def main():
 
         config = load_config(config_path)
         logger.info("Config loaded. Universe: %s, Paper: %s", config.trading.universe, config.alpaca.paper)
+
+        # Say out loud, every start, how the broker credentials arrived and
+        # whether either is an obvious stand-in. Never prints a value. See
+        # `src/credentials.py` for why this check exists at all.
+        try:
+            report_startup_credentials(config.api_keys, logger=logger)
+        except Exception as exc:  # noqa: BLE001 - reporting must never block a session
+            logger.warning("credential delivery report failed: %s", exc)
+
         db_path_value = getattr(getattr(config, "storage", None), "db_path", None)
         if isinstance(db_path_value, str) and db_path_value.strip():
             watchdog_db_path = db_path_value

@@ -210,7 +210,7 @@ def test_morning_feed_surfaces_market_signal_pm_risk_cash_and_execution(tmp_path
     assert "BUY SQQQ" in msg and "filled" in msg
     # 2026-09-17: the footer dropped run_id and the raw provider-request
     # count (engineering detail) — kept: duration and a plain AI cost figure.
-    assert "AI cost $0.01" in msg
+    assert "AI cost: $0.01" in msg
     assert "provider request" not in msg
     assert f"run {run}" not in msg
 
@@ -465,7 +465,7 @@ def test_early_close_uses_established_formatter_not_trader_review(tmp_path, monk
         {"status": "early_close", "run_id": "close-early", "positions": 0, "orders": []},
         1.0,
     )
-    assert "status: Early close" in msg  # humanize_status("early_close")
+    assert "the market closed early" in msg  # plain outcome, no status code
     assert "CLOSE REVIEW" not in msg
 
 
@@ -1137,7 +1137,7 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     assert "View: No trades today." not in msg  # old bare label is gone
 
     # --- footer: duration + plain AI cost, no run_id, no raw call count ---
-    assert "AI cost $0.10" in msg
+    assert "AI cost: $0.10" in msg
     assert "provider request" not in msg
     assert f"run {run}" not in msg
 
