@@ -23,14 +23,16 @@ jobs:
   # `scripts/ci_shard.py` does the splitting; it slices by test FILE, so a
   # module is never divided and within-module ordering is unchanged.
   #
-  # Why three and not more. Measured on the runners: the suite is 758.7s of
-  # test time, and test_one_definition_per_quantity.py is 230.9s of that on its
-  # own -- five whole-repo static scans at roughly 46s each. A file is never
-  # divided, so whichever shard holds it cannot finish before those five do,
-  # which is about 92s once its own four cores are busy. Three shards reach
-  # that floor. A fourth cannot beat it and only takes another runner from the
-  # six or seven pull requests already competing for the free concurrency
-  # budget. Going faster from here means those scans, not more runners.
+  # Why five. Measured on the runners, the suite is 758.7s of test time and
+  # five individual tests are over half of it: three whole-repo AST scans in
+  # test_one_definition_per_quantity.py at ~62s each, one 71s test in
+  # test_ops_scripts_importable.py, and one 60s test in test_tech_analyst.py.
+  # Those five do not overlap with each other -- a shard holding two of them
+  # takes their sum -- so the wall-clock is set by how well they are kept
+  # apart, not by how evenly the other 6,600 tests are spread. Five shards is
+  # the first count that gives each of the five its own shard; fewer doubles
+  # one up and lands back at three or four minutes, and more cannot beat the
+  # 71s single test that is the hard floor.
   #
   # To change the shard count, edit this list and nothing else: the script is
   # told how many shards there are via `strategy.job-total`, so the two cannot
@@ -44,7 +46,7 @@ jobs:
       # in one run.
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3, 4]
 
     steps:
       - name: Check out repo
@@ -74,24 +76,25 @@ jobs:
           FRED_API_KEY: dummy-fred-key-for-ci
         run: |
           set -euo pipefail
-          # Refuse to run a split that is not a clean partition of the suite:
-          # a dropped file would be tests silently not running.
+          # Refuse to run a split that is not a clean partition of the suite.
+          # A dropped file would be tests silently not running underneath a
+          # green required check, which is worse than a slow build.
           python scripts/ci_shard.py --shards "${{ strategy.job-total }}" --check
-          mapfile -t FILES < <(
+          mapfile -t UNITS < <(
             python scripts/ci_shard.py \
               --shards "${{ strategy.job-total }}" \
               --index "${{ matrix.shard }}"
           )
-          if [ "${#FILES[@]}" -eq 0 ]; then
-            echo "::error::shard ${{ matrix.shard }} was handed no test files"
+          if [ "${#UNITS[@]}" -eq 0 ]; then
+            echo "::error::shard ${{ matrix.shard }} was handed nothing to run"
             exit 1
           fi
-          echo "shard ${{ matrix.shard }}/${{ strategy.job-total }}: ${#FILES[@]} files"
+          echo "shard ${{ matrix.shard }}/${{ strategy.job-total }}: ${#UNITS[@]} units"
           # --durations surfaces the slow files in the job log. The suite's
           # cost is concentrated in a handful of wall-clock assertions rather
           # than spread across the 6,600 tests, so these are the numbers to
           # refresh `SLOW_FILES` in the splitter from, and they are free.
-          pytest -q --durations=12 "${FILES[@]}"
+          pytest -q --durations=12 "${UNITS[@]}"
 
   # `pytest` is the required status check in branch protection on main, so this
   # job keeps that name and is the only thing branch protection looks at. It

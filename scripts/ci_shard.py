@@ -121,6 +121,31 @@ SLOW_FILES: dict[str, float] = {
 # 4,454 tests in the 195 files not named above.
 SECONDS_PER_TEST = 0.034
 
+# Files whose individual tests may be handed to different shards.
+#
+# The rule everywhere else is that a whole module goes to one shard, because
+# splitting a module is what makes sharding flaky. This is the deliberate
+# exception, and it is narrow. test_one_definition_per_quantity.py holds three
+# whole-repo AST scans of roughly a minute each, and they do not overlap when
+# run together -- a shard holding all three takes their sum, ~186s, not their
+# max. Measured: that one file set the wall-clock of the entire run.
+#
+# A file only belongs here when its tests are provably independent: module
+# level functions, no class scope, no module-level mutable state they touch,
+# nothing ordering-sensitive. `--check` re-asserts the structural half of that
+# on every run and refuses to split a file that has grown a test class.
+SPLITTABLE: frozenset[str] = frozenset({
+    "test_one_definition_per_quantity.py",
+})
+
+# Measured seconds for individual tests inside SPLITTABLE files, same run as
+# SLOW_FILES. Tests not named here get the file's remaining time spread evenly.
+SLOW_TESTS: dict[str, float] = {
+    "test_one_definition_per_quantity.py::test_no_second_definition_of_book_exposure": 63.6,
+    "test_one_definition_per_quantity.py::test_no_second_definition_of_unrealized_pnl_pct": 61.2,
+    "test_one_definition_per_quantity.py::test_no_second_definition_of_position_weight": 61.1,
+}
+
 
 def test_files(tests_dir: Path = TESTS_DIR) -> list[Path]:
     """Every test module, sorted, relative to the repo root."""
@@ -130,6 +155,22 @@ def test_files(tests_dir: Path = TESTS_DIR) -> list[Path]:
         if "__pycache__" not in p.parts
     ]
     return sorted(found)
+
+
+TEST_NAME = re.compile(r"^(?:async\s+)?def\s+(test_\w+)", re.MULTILINE)
+CLASS_DEF = re.compile(r"^class\s+\w+", re.MULTILINE)
+
+
+def test_names(path: Path) -> list[str]:
+    """Names of the module-level test functions in one file, in source order."""
+    text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
+    return TEST_NAME.findall(text)
+
+
+def has_class(path: Path) -> bool:
+    """True if the file defines any class at all."""
+    text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
+    return bool(CLASS_DEF.search(text))
 
 
 def test_count(path: Path) -> int:
@@ -149,7 +190,36 @@ def weight(path: Path) -> float:
     return test_count(path) * SECONDS_PER_TEST
 
 
-def split(shards: int, tests_dir: Path = TESTS_DIR) -> list[list[Path]]:
+def items(tests_dir: Path = TESTS_DIR) -> list[tuple[str, float]]:
+    """Every unit pytest will be asked to run, with its estimated seconds.
+
+    A unit is a file path, except inside a ``SPLITTABLE`` file, where it is an
+    individual ``path::test_name`` node id. Returned sorted, so the split is
+    identical in every shard job without any shared state.
+    """
+    out: list[tuple[str, float]] = []
+    for path in test_files(tests_dir):
+        if path.name not in SPLITTABLE:
+            out.append((str(path), weight(path)))
+            continue
+
+        names = test_names(path)
+        named = {
+            n: SLOW_TESTS[f"{path.name}::{n}"]
+            for n in names
+            if f"{path.name}::{n}" in SLOW_TESTS
+        }
+        # Whatever the file costs beyond its individually measured tests is
+        # shared evenly over the rest.
+        remainder = max(0.0, weight(path) - sum(named.values()))
+        others = [n for n in names if n not in named]
+        each = remainder / len(others) if others else 0.0
+        for n in names:
+            out.append((f"{path}::{n}", named.get(n, each)))
+    return sorted(out)
+
+
+def split(shards: int, tests_dir: Path = TESTS_DIR) -> list[list[str]]:
     """Partition the test files into ``shards`` buckets of similar weight.
 
     Greedy longest-processing-time: heaviest file first, into whichever bucket
@@ -158,13 +228,12 @@ def split(shards: int, tests_dir: Path = TESTS_DIR) -> list[list[Path]]:
     if shards < 1:
         raise ValueError("shards must be >= 1")
 
-    files = test_files(tests_dir)
     weighted = sorted(
-        ((weight(f), f) for f in files),
-        key=lambda pair: (-pair[0], str(pair[1])),
+        ((w, item) for item, w in items(tests_dir)),
+        key=lambda pair: (-pair[0], pair[1]),
     )
 
-    buckets: list[list[Path]] = [[] for _ in range(shards)]
+    buckets: list[list[str]] = [[] for _ in range(shards)]
     totals = [0.0] * shards
     for w, f in weighted:
         target = min(range(shards), key=lambda i: (totals[i], i))
@@ -175,38 +244,65 @@ def split(shards: int, tests_dir: Path = TESTS_DIR) -> list[list[Path]]:
 
 
 def check(shards: int, tests_dir: Path = TESTS_DIR) -> int:
-    """Assert the split is a real partition of the test files. 0 if it is."""
-    files = test_files(tests_dir)
-    buckets = split(shards, tests_dir)
+    """Assert the split is a real partition of the suite. 0 if it is.
 
-    assigned = [f for b in buckets for f in b]
+    This is the safety net, so it is deliberately paranoid: a file quietly
+    dropped from the split is tests quietly not running, which would leave a
+    green `pytest` check standing over code nobody tested.
+    """
+    expected = dict(items(tests_dir))
+    buckets = split(shards, tests_dir)
+    assigned = [i for b in buckets for i in b]
     problems = []
 
     if len(assigned) != len(set(assigned)):
-        seen: set[Path] = set()
-        dupes = sorted({f for f in assigned if f in seen or seen.add(f)})  # type: ignore[func-returns-value]
-        problems.append(f"file(s) in more than one shard: {dupes}")
-    missing = sorted(set(files) - set(assigned))
+        seen: set[str] = set()
+        dupes = sorted({i for i in assigned if i in seen or seen.add(i)})  # type: ignore[func-returns-value]
+        problems.append(f"unit(s) in more than one shard: {dupes}")
+    missing = sorted(set(expected) - set(assigned))
     if missing:
-        problems.append(f"file(s) in no shard: {missing}")
-    extra = sorted(set(assigned) - set(files))
+        problems.append(f"unit(s) in no shard: {missing}")
+    extra = sorted(set(assigned) - set(expected))
     if extra:
-        problems.append(f"file(s) not in the suite: {extra}")
+        problems.append(f"unit(s) not in the suite: {extra}")
     empty = [i for i, b in enumerate(buckets) if not b]
     if empty:
         problems.append(f"empty shard(s): {empty}")
+
+    # Every test file must be represented, whether whole or as node ids.
+    covered = {i.split("::", 1)[0] for i in assigned}
+    absent = sorted(str(f) for f in test_files(tests_dir) if str(f) not in covered)
+    if absent:
+        problems.append(f"test file(s) no shard would run: {absent}")
+
+    # A splittable file is only safe to divide while it stays a flat module of
+    # independent functions. If one grows a class, stop splitting it rather
+    # than guess at the scope.
+    for f in test_files(tests_dir):
+        if f.name not in SPLITTABLE:
+            continue
+        if has_class(f):
+            problems.append(
+                f"{f} is in SPLITTABLE but defines a class; its tests may share "
+                "class scope, so remove it from SPLITTABLE instead of splitting it"
+            )
+        node_ids = {i for i in assigned if i.startswith(f"{f}::")}
+        if len(node_ids) != len(test_names(f)):
+            problems.append(
+                f"{f}: {len(test_names(f))} test functions but "
+                f"{len(node_ids)} node ids in the split"
+            )
 
     for line in problems:
         print(f"ci_shard: {line}", file=sys.stderr)
     if problems:
         return 1
 
-    counts = [sum(test_count(f) for f in b) for b in buckets]
-    seconds = [sum(weight(f) for f in b) for b in buckets]
+    seconds = [sum(expected[i] for i in b) for b in buckets]
     print(
-        f"ci_shard: {len(files)} files, {sum(counts)} tests, {shards} shards"
+        f"ci_shard: {len(test_files(tests_dir))} files, {len(expected)} units, "
+        f"{shards} shards"
     )
-    print(f"ci_shard: tests per shard      {counts}")
     print(
         "ci_shard: estimated seconds   "
         f"{[round(s) for s in seconds]} (longest shard sets the wall-clock)"
