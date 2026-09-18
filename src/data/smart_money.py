@@ -76,7 +76,7 @@ _MIN_REQUEST_INTERVAL_S = 0.125
 
 
 class SmartMoneySource(Protocol):
-    def refresh(self) -> dict: ...
+    def refresh(self, symbols: list[str] | None = None) -> dict: ...
     def fetch(self, symbols: list[str]) -> tuple[list[SmartMoneyObservation], str | None]: ...
 
 
@@ -349,66 +349,148 @@ class SECForm4Provider:
                 continue
         return dict(out)
 
+    def _ciks_for_symbols(
+        self,
+        listed: dict[str, dict[str, str]],
+        symbols: list[str] | None,
+    ) -> set[str]:
+        """CIKs whose listed tickers include one of ``symbols``."""
+        watched = {_symbol(s) for s in (symbols or []) if str(s).strip()}
+        if not watched:
+            return set()
+        out: set[str] = set()
+        for cik, tickers in (listed or {}).items():
+            if not isinstance(tickers, dict):
+                continue
+            if any(_symbol(t) in watched for t in tickers):
+                out.add(str(cik))
+        return out
+
     def _discover(
         self,
         listed: dict[str, dict[str, str]],
         deadline: float,
         processed: set[str] | None = None,
+        priority_ciks: set[str] | None = None,
+        stats: dict | None = None,
     ) -> list[dict]:
+        """Unread Form 4 candidates, watched names first.
+
+        ``priority_ciks`` does NOT filter — it reorders how the
+        ``max_filings_per_refresh`` budget is spent. Filings on the desk's
+        own names are collected first; everything else fills whatever budget
+        remains, because external candidate nomination
+        (``max_external_candidates``) reads filings on names the desk does
+        not yet watch. Without the reordering the cap binds on the freshest
+        day slice, so the desk's own names could sit unread behind a
+        thousand filings from companies it does not trade — a backlog that
+        reads as "a new Form 4 I have not read" to the research-expiry peek
+        and refuses the midday decision.
+
+        ``stats``, when given, is filled with the counts part 3 reports:
+        every unread listed candidate seen (``candidates``), the watched
+        subset (``watched_candidates``), whether the cap bound
+        (``cap_reached``) and whether the refresh deadline truncated the
+        scan (``deadline_hit``).
+        """
         processed = processed or set()
-        found: dict[str, dict] = {}
+        watched_ciks = {str(c) for c in (priority_ciks or set())}
+        cap = self.max_filings_per_refresh
+        priority: dict[str, dict] = {}
+        other: dict[str, dict] = {}
+        seen: set[str] = set()
+        watched_seen: set[str] = set()
+        deadline_hit = False
+
+        def _budget_spent() -> bool:
+            # With no watched names this is exactly the old condition. With
+            # watched names the scan continues past a full residue bucket,
+            # because a watched filing further into the window must still be
+            # able to displace a non-watched one from the budget.
+            if watched_ciks:
+                return len(priority) >= cap
+            return len(other) >= cap
+
         # Query one day at a time. EFTS caps deep pagination, while 14 days of
         # ownership filings can exceed that cap. Day slices also let repeated
         # refreshes skip the processed head and make progress into a backlog.
-        for days_ago in range(self.lookback_days + 1):
-            filing_date = et_today() - timedelta(days=days_ago)
-            params = {
-                "forms": "4",
-                "startdt": filing_date.isoformat(),
-                "enddt": filing_date.isoformat(),
-                "from": 0,
-                "size": 100,
-            }
-            while len(found) < self.max_filings_per_refresh:
-                payload = self._get(self.search_url, params=params, deadline=deadline).json()
-                hits_block = payload.get("hits", {}) if isinstance(payload, dict) else {}
-                hits = hits_block.get("hits", []) if isinstance(hits_block, dict) else []
-                if not hits:
-                    break
-                for hit in hits:
-                    source = hit.get("_source", {}) if isinstance(hit, dict) else {}
-                    accession = str(source.get("adsh") or "")
-                    form = str(source.get("form") or "")
-                    if (
-                        accession in processed
-                        or not _ACCESSION_RE.fullmatch(accession)
-                        or form not in {"4", "4/A"}
-                    ):
-                        continue
-                    ciks: list[str] = []
-                    for raw_cik in source.get("ciks", []) or []:
-                        try:
-                            ciks.append(str(int(raw_cik)))
-                        except (TypeError, ValueError):
-                            continue
-                    listed_ciks = [cik for cik in ciks if cik in listed]
-                    if not listed_ciks:
-                        continue
-                    found[accession] = {
-                        "accession": accession,
-                        "form": form,
-                        "cik": listed_ciks[-1],
-                    }
-                    if len(found) >= self.max_filings_per_refresh:
+        try:
+            for days_ago in range(self.lookback_days + 1):
+                filing_date = et_today() - timedelta(days=days_ago)
+                params = {
+                    "forms": "4",
+                    "startdt": filing_date.isoformat(),
+                    "enddt": filing_date.isoformat(),
+                    "from": 0,
+                    "size": 100,
+                }
+                while not _budget_spent():
+                    payload = self._get(
+                        self.search_url, params=params, deadline=deadline,
+                    ).json()
+                    hits_block = payload.get("hits", {}) if isinstance(payload, dict) else {}
+                    hits = hits_block.get("hits", []) if isinstance(hits_block, dict) else []
+                    if not hits:
                         break
-                total = hits_block.get("total", {})
-                total_value = total.get("value", 0) if isinstance(total, dict) else int(total or 0)
-                params["from"] = int(params["from"]) + len(hits)
-                if len(hits) < int(params["size"]) or int(params["from"]) >= total_value:
+                    for hit in hits:
+                        source = hit.get("_source", {}) if isinstance(hit, dict) else {}
+                        accession = str(source.get("adsh") or "")
+                        form = str(source.get("form") or "")
+                        if (
+                            accession in processed
+                            or not _ACCESSION_RE.fullmatch(accession)
+                            or form not in {"4", "4/A"}
+                        ):
+                            continue
+                        ciks: list[str] = []
+                        for raw_cik in source.get("ciks", []) or []:
+                            try:
+                                ciks.append(str(int(raw_cik)))
+                            except (TypeError, ValueError):
+                                continue
+                        listed_ciks = [cik for cik in ciks if cik in listed]
+                        if not listed_ciks:
+                            continue
+                        watched_hit = [c for c in listed_ciks if c in watched_ciks]
+                        seen.add(accession)
+                        if watched_hit:
+                            watched_seen.add(accession)
+                        filing = {
+                            "accession": accession,
+                            "form": form,
+                            "cik": (watched_hit or listed_ciks)[-1],
+                        }
+                        if watched_hit:
+                            priority[accession] = filing
+                        elif len(other) < cap:
+                            other[accession] = filing
+                        if _budget_spent():
+                            break
+                    total = hits_block.get("total", {})
+                    total_value = (
+                        total.get("value", 0) if isinstance(total, dict)
+                        else int(total or 0)
+                    )
+                    params["from"] = int(params["from"]) + len(hits)
+                    if len(hits) < int(params["size"]) or int(params["from"]) >= total_value:
+                        break
+                if _budget_spent():
                     break
-            if len(found) >= self.max_filings_per_refresh:
-                break
-        return list(found.values())
+        except _RefreshDeadline:
+            # A deadline used to discard every filing discovered so far. Hand
+            # back the partial, watched-first set instead and let the caller
+            # record the truncation — the alternative spends the whole
+            # deadline scanning and reads nothing.
+            deadline_hit = True
+
+        out = list(priority.values())[:cap]
+        out.extend(list(other.values())[: max(0, cap - len(out))])
+        if stats is not None:
+            stats["candidates"] = len(seen)
+            stats["watched_candidates"] = len(watched_seen)
+            stats["cap_reached"] = len(out) >= cap
+            stats["deadline_hit"] = deadline_hit
+        return out
 
     def _archive_url(self, cik: str, accession: str) -> str:
         return (
@@ -598,27 +680,25 @@ class SECForm4Provider:
     def peek_accessions(self, symbols: list[str] | None = None) -> set[str]:
         """Known accessions plus newly listed filings for names we watch.
 
-        Discovery-only — does not download submissions. Restricted to
-        tickers already in the observations cache and any ``symbols``
-        the caller names (the desk universe). A market-wide Form 4 is
-        not a change to remembered research. Failed discover returns
-        the already-known set.
+        Discovery-only — does not download submissions. Restricted to the
+        ``symbols`` the caller names (the desk universe) and nothing else.
+        A market-wide Form 4 is not a change to remembered research, and a
+        false expiry on the midday tick cannot be healed
+        (docs/INCIDENT_HISTORY.md). The observations cache is NOT a source
+        of relevance: ``refresh`` caches rows for the whole listed market,
+        so unioning it in made the relevant set market-wide by
+        construction. Failed discover returns the already-known set.
         """
         known = self.known_accessions()
         relevant = {_symbol(s) for s in (symbols or []) if str(s).strip()}
-        cached = self._load_json(self.observations_path, [])
-        for row in cached if isinstance(cached, list) else []:
-            if not isinstance(row, dict):
-                continue
-            ticker = _symbol(row.get("symbol") or "")
-            if ticker:
-                relevant.add(ticker)
         if not relevant:
             return known
         try:
             deadline = time.monotonic() + self.refresh_deadline_s
             listed = self._listed_map(deadline)
-            for filing in self._discover(listed, deadline, known):
+            priority = self._ciks_for_symbols(listed, sorted(relevant))
+            peek_stats: dict = {}
+            for filing in self._discover(listed, deadline, known, priority, peek_stats):
                 cik = str((filing or {}).get("cik") or "")
                 tickers = listed.get(cik) if isinstance(listed, dict) else None
                 if not isinstance(tickers, dict):
@@ -628,14 +708,30 @@ class SECForm4Provider:
                 text = str((filing or {}).get("accession") or "").strip()
                 if text:
                     known.add(text)
+            if peek_stats.get("deadline_hit"):
+                # `_discover` now hands back its partial, watched-first set
+                # instead of discarding it, so the deadline no longer erases
+                # every filing found. A truncated peek can still MISS a
+                # genuinely new filing and let superseded research be reused,
+                # which errs in the dangerous direction — log it loudly.
+                logger.warning(
+                    "SEC Form 4 accession peek truncated by the refresh "
+                    "deadline: a new filing may be unseen",
+                )
         except _RefreshDeadline:
             logger.warning("SEC Form 4 accession peek hit refresh deadline")
         except Exception as exc:  # noqa: BLE001 — failed peek ≠ new filing
             logger.warning("SEC Form 4 accession peek failed: %s", exc)
         return known
 
-    def refresh(self) -> dict:
-        """Network refresh with a JSON-safe status/result summary."""
+    def refresh(self, symbols: list[str] | None = None) -> dict:
+        """Network refresh with a JSON-safe status/result summary.
+
+        ``symbols`` are the names the desk watches. They do not filter what
+        is cached — they decide the ORDER the `max_filings_per_refresh`
+        budget is spent in, so a watched filing can only go unread if
+        watched names alone exhaust the cap.
+        """
         deadline = time.monotonic() + self.refresh_deadline_s
         manifest = self._load_json(self.manifest_path, {})
         processed = set(manifest.get("processed_accessions", []))
@@ -646,10 +742,18 @@ class SECForm4Provider:
             observations[key] = raw
         new_count = 0
         processed_count = 0
+        watched_processed = 0
         errors: list[str] = []
+        discovery: dict = {}
+        discovered_count = 0
         try:
             listed = self._listed_map(deadline)
-            for filing in self._discover(listed, deadline, processed):
+            priority = self._ciks_for_symbols(listed, symbols)
+            discovered = self._discover(listed, deadline, processed, priority, discovery)
+            discovered_count = len(discovered)
+            if discovery.get("deadline_hit"):
+                errors.append("refresh_deadline_exceeded")
+            for filing in discovered:
                 accession = filing["accession"]
                 if accession in processed:
                     continue
@@ -664,6 +768,8 @@ class SECForm4Provider:
                         observations[key] = row.model_dump(mode="json")
                     processed.add(accession)
                     processed_count += 1
+                    if str(filing.get("cik") or "") in priority:
+                        watched_processed += 1
                 except _RefreshDeadline:
                     raise
                 except Exception as exc:
@@ -685,6 +791,19 @@ class SECForm4Provider:
                     kept.append(raw)
             except (TypeError, ValueError):
                 continue
+        # Backlog depth: unread listed Form 4 candidates this pass saw and did
+        # NOT read, and the watched-name subset of them. `refresh` only runs
+        # pre-market, so a residue cannot drain until the next morning — and
+        # until 2026-09-18 nothing measured whether it was draining at all.
+        # `candidates` is what the scan saw; when watched names are named the
+        # scan covers the whole lookback window, so it is the real residue.
+        # When `_discover` is stubbed the counts are absent and the residue
+        # falls back to what was discovered but not read.
+        seen_candidates = int(discovery.get("candidates", discovered_count) or 0)
+        pending_filings = max(0, seen_candidates - processed_count)
+        watched_pending = max(
+            0, int(discovery.get("watched_candidates", 0) or 0) - watched_processed,
+        )
         with self._cache_lock:
             # History is recorded from every row seen this refresh, including
             # those the lookback prune is about to drop — that prune is what
@@ -697,6 +816,11 @@ class SECForm4Provider:
             _atomic_json(self.manifest_path, {
                 "processed_accessions": sorted(processed),
                 "last_refresh_at": datetime.now(tz=_ET).isoformat(),
+                # Durable record of the backlog, so successive mornings can
+                # be compared without re-crawling EDGAR.
+                "pending_filings": pending_filings,
+                "watched_pending_filings": watched_pending,
+                "discovery_cap_reached": bool(discovery.get("cap_reached", False)),
             })
         error = None
         if errors:
@@ -710,6 +834,10 @@ class SECForm4Provider:
             ),
             "new_observations": new_count,
             "processed_filings": processed_count,
+            "discovered_filings": discovered_count,
+            "pending_filings": pending_filings,
+            "watched_pending_filings": watched_pending,
+            "discovery_cap_reached": bool(discovery.get("cap_reached", False)),
             "cached_observations": len(kept),
             "error": error,
         }
