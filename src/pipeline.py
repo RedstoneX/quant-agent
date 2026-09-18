@@ -12047,17 +12047,28 @@ class TradingPipeline:
                 # identified P&L defect in the system. A trade's expected
                 # horizon must never be derived from the system's own past
                 # behaviour.
-                if progress_pct is None or not pinned_horizon or days_held is None:
+                #
+                # Board item 91: `pinned_horizon` (`expected_horizon_sessions`)
+                # is denominated in TRADING SESSIONS, so both sides of this
+                # division must be — `sessions_held`, never the calendar-day
+                # `days_held`. A weekend adds two calendar days and zero
+                # sessions; dividing by calendar days made every position look
+                # slower than it is, worst on the short horizons this desk
+                # trades, and worse across a holiday weekend. `sessions_held`
+                # is the same weekend-aware count the noise-band scaling above
+                # already uses (`trading_calendar.trading_sessions_held`) —
+                # no new number, just the one already computed above.
+                if progress_pct is None or not pinned_horizon or sessions_held is None:
                     pace_status = "unavailable_no_pinned_horizon"
-                elif days_held < max(1, pinned_horizon / 3):
+                elif sessions_held < max(1, pinned_horizon / 3):
                     # Below one third of the pinned horizon the metric is
                     # mathematically meaningless — a thesis given 15 sessions
-                    # cannot be "behind schedule" on day 2, and reading it as
-                    # such is exactly how a day-5 position gets sold for "not
-                    # progressing".
+                    # cannot be "behind schedule" on session 2, and reading it
+                    # as such is exactly how a day-5 position gets sold for
+                    # "not progressing".
                     pace_status = "too_early"
                 else:
-                    time_fraction = days_held / pinned_horizon
+                    time_fraction = sessions_held / pinned_horizon
                     if time_fraction > 0:
                         pace = progress_pct / (time_fraction * 100)
                         pace_status = "measured"
