@@ -97,6 +97,30 @@ record whose value is constant across every symbol and every session cannot
 answer a question, and that is checkable by looking at it rather than by
 waiting for an alarm to fire uselessly.
 
+### 2026-09-18 — the written briefs that tell the trade-picking seats the desk's rules had seventeen statements in them that were no longer true (items 98 and 104 collapsed)
+
+**What broke, in one line:** the three seats that actually pick and size trades are each handed a brief, in plain English, describing the desk's own rules — and seventeen of those statements described machinery that had been changed or deleted underneath them, eight of which could change which trade happened or how big it was.
+
+**The cause was structural, not careless.** Nothing tied the English in a brief to the code it describes, so the prose rotted silently every time a mechanism was retired. The worst two cases were not even in a prompt file: they were strings the Python assembled at run time, which is why no file scan would have found them.
+
+**What shipped.** A prompt-drift check, and corrections to all three briefs: the retired seat-counting sizing ladder (only the refusal survives), the sector figure now rendered from the live config as a target plus a separate hard block rather than one flat wall, the sizing formula that multiplied by a term deleted 2026-09-01, the risk manager briefed on the wrong sizing quantity, a reward:risk floor described as required after it was abolished, an exit phrase the executor had silently stopped recognising, and a "None%" that read to a model as a number. The macro-counts-toward-agreement contradiction was stated honestly in the brief and flagged as disputed; the counting rule itself was deliberately left alone, because changing it moves trades — that question survives as item 109(a). The entry-thesis lookup that searched only today's trades, so any position opened earlier was judged with no thesis at all, was fixed separately by reusing the existing unrestricted "most recent opening row" query the evening context and the cockpit already used.
+
+**Why the same finding occupied two board numbers.** Two agents audited the same prompts in parallel on the same day and filed it twice, as items 98 and 104. They were diffed against each other before collapsing: 104 named one defect 98 did not, and that one defect is unfixed and survives as item 98.
+
+**What would catch it next time.** Search the prompts and the assembled strings for a mechanism's name at the moment that mechanism is deleted. The drift check cannot see a claim about machinery that was never built, which is what item 108 is.
+
+---
+
+### 2026-09-18 — the invented reward:risk thresholds turned out to already be switched off, and the dashboard and reports were rebuilt to the owner's own written specs (items 81 and 106 closed)
+
+**What broke, in one line:** two long-running worries were both checked to the bottom and both came back smaller than feared — the made-up reward:risk cut-offs are no longer wired to anything, and the three pieces of interface work the owner specified in his own words have all landed.
+
+**The reward:risk inventory (item 81).** Every live reward:risk number was traced to its call sites. The `1.5` floor keys are inert — nothing compares a ticket against them to refuse it or shrink it, and the one function that receives the value explicitly discards it. The real per-trade ratio is live, but only as an ordering signal for range setups; it never gates and never sizes, and breakout setups are exempt from the measurement entirely. The documentation around the number was the actual defect: a code comment, a matching number-ledger note and one line in `docs/OUTCOME.md` all still asserted that the number rejected trades. All three were corrected and no live number's value changed. Nothing about this ever needed an owner decision, despite the item's heading saying for a fortnight that it did. What is left is tidying, and it stays named on the board rather than being written off here.
+
+**The interface specs (item 106).** All three landed: panels own their own scrolling rather than inheriting it from where they sit on the screen; the "why do we hold this" view shows one plain sentence with the real reason and real numbers, with the machine identifiers behind a single toggle; and the evening report leads with today's and total P&L, states the AI spend in words instead of a row of zeros, drops the run identifiers and provider counts that carried no action, and stays silent about the overnight fractional remainder in the state the design produces every night. The requirement the owner asked for by name — when the reason to hold rests on an insider or institutional purchase, show that purchase's date and price — is on screen twice over: the insider's dates and average price in the smart-money lede, and the desk's own entry date, fill price and quantity in a purchase block, with the fill price preferred over the order price and the two distinguished in words because they differ. The one screen still printing raw machine evidence is the run-detail popup, which is item 115 and was split out deliberately so it would not be audited away as a duplicate.
+
+---
+
 ### 2026-09-18 — the gross-exposure de-lever does cancel stops to sell (it has to), the recovery around it is complete, and it has never fired (item 87 closed)
 
 **What broke, in one line:** nothing did — item 87 asked whether the desk's automatic de-lever cancels protective stop-losses in order to sell, because that is the exact flaw that got the daily-loss liquidation deleted on 2026-09-14. It does cancel them, but the cancel is mandatory (a resting stop holds the whole position, so the broker would reject the sell outright) and the recovery around it is complete, unlike the deleted liquidator.
@@ -209,60 +233,6 @@ anywhere, never a size cap, never applied to a breakout)". Verified against
 `src/verdicts.py::rank_verdicts`. The live question of whether that number
 should exist at all is item 81, which owns the full inventory; this was the
 documentation half and nothing here needed an owner decision.
-### 2026-09-18 — most of the nineteen Telegram defects are fixed; what is left is written on the board (item 89)
-
-**In plain words:** an audit on 17 September found nineteen things wrong with
-the messages the desk sends the owner, and on 18 September all but three of
-them were fixed — nothing about what the desk trades, or when, or how much,
-was touched.
-
-Of the six defects that could mislead a decision: four were fixed at the
-cause — a whole trade plan dropped on size alone with no message ever sent
-(the dropped-plan rows the desk already wrote are now read and reported); a
-"thesis unavailable" on anything held overnight (the lookup searched today
-only; the date-unrestricted lookup the evening review already uses is now
-threaded through, scoped to the thesis TEXT so the pinned stop and target
-cannot override live figures); a header whose holdings count disagreed with
-its own list (the count is now derived from the list printed beneath it); and
-a rule cited by section number that said the opposite of what it was cited
-for (§9.4 earns SIZE, states no refusal, and its sizing half was retired
-2026-09-14 — the rule is now written out, because a section number is an
-unchecked promise about another document). One was not reproducible and one
-was never attempted; both are still on the board under item 89.
-
-The evening message was separately redesigned to the owner's own review of
-the live 17 September copy: run id, provider-request count, "status:
-analyzed" and the nightly fractional-stop line removed; P&L first; the risk
-rating given its scale and its consequence; stop proximity measured against
-each name's own ATR, and imminent earnings, added. Nine of the eleven
-catalogued clarity defects were then fixed across the morning, midday, close,
-intraday, hourly desk-check, pre-earnings and data-quality messages: bare
-tickers after the twelfth name, the missing broker reason on a rejection,
-internal status codes, percentages with no denominator, reward:risk with no
-unit, detail truncated mid-sentence, "TRADED" on a run that only sold, the
-"data degraded" line naming internal components, and blocked-trade jargon in
-part. New substance the desk knew and never said was added at the same time:
-the pre-earnings note names each filing and what changes for the owner, the
-hourly check names every order and holding it counts, looked-at names carry
-the Portfolio Manager's own recorded reason, and a stop-coverage banner names
-the company, both quantities, the dollars unprotected and the repair's own
-refusal reason.
-
-Record gaps found in passing and now recorded: which filings the earnings
-pass handled, and the broker's own words on a plain rejection. Still not
-recorded: how many retries an unreadable filing has used. `min_trade_weight_
-delta = 0.5` — the threshold that drops a plan on size alone — was found to
-exist only as a dataclass default in `src/portfolio_constructor.py`, absent
-from `config/settings.yaml` and from every document; it IS in
-`config/number_ledger.yaml` (an earlier claim that the ledger missed it was
-wrong) and its value was not changed. Verified by re-rendering identical
-stored rows through `render_stored_session_report` and
-`render_stored_intra_check` on main and on the branch; the live database is
-not readable from the operator account, so no real past session was
-re-rendered — which is why item 89's three acceptance checks wait on a live
-session.
-
----
 ### 2026-09-17 — morning research went out with holes, then the desk still decided as if it had a full picture
 
 **Status: RECORDED AS HISTORY, NOT FIXED.** The branch that produced the measurements below (PR #435) was CLOSED unmerged on 2026-09-18 and none of its code is on main. It was the sixth or seventh pass over the live-fill websocket, a path that has never authenticated once in any session since it was built — a 100% failure rate is not a race condition — and its own adversary section admits it had not shown the fix works AT THE OPEN, because every measurement in it was taken mid-morning under already-healthy conditions. The open and mid-morning are different conditions. The measured numbers are kept here because they are the genuinely useful artefact; the remedies described below are the shape that was PROPOSED, not work that shipped. The four strands are now board items 119 (economics feed), 120 (today's print), 121 (schedule law) and 122 (deploy installs the timetable), each judged on its own merits.
@@ -11801,3 +11771,57 @@ still retrying) is untouched by either change.
 
 ---
 
+### 2026-09-18 — most of the nineteen Telegram defects are fixed; what is left is written on the board (item 89)
+
+**In plain words:** an audit on 17 September found nineteen things wrong with
+the messages the desk sends the owner, and on 18 September all but three of
+them were fixed — nothing about what the desk trades, or when, or how much,
+was touched.
+
+Of the six defects that could mislead a decision: four were fixed at the
+cause — a whole trade plan dropped on size alone with no message ever sent
+(the dropped-plan rows the desk already wrote are now read and reported); a
+"thesis unavailable" on anything held overnight (the lookup searched today
+only; the date-unrestricted lookup the evening review already uses is now
+threaded through, scoped to the thesis TEXT so the pinned stop and target
+cannot override live figures); a header whose holdings count disagreed with
+its own list (the count is now derived from the list printed beneath it); and
+a rule cited by section number that said the opposite of what it was cited
+for (§9.4 earns SIZE, states no refusal, and its sizing half was retired
+2026-09-14 — the rule is now written out, because a section number is an
+unchecked promise about another document). One was not reproducible and one
+was never attempted; both are still on the board under item 89.
+
+The evening message was separately redesigned to the owner's own review of
+the live 17 September copy: run id, provider-request count, "status:
+analyzed" and the nightly fractional-stop line removed; P&L first; the risk
+rating given its scale and its consequence; stop proximity measured against
+each name's own ATR, and imminent earnings, added. Nine of the eleven
+catalogued clarity defects were then fixed across the morning, midday, close,
+intraday, hourly desk-check, pre-earnings and data-quality messages: bare
+tickers after the twelfth name, the missing broker reason on a rejection,
+internal status codes, percentages with no denominator, reward:risk with no
+unit, detail truncated mid-sentence, "TRADED" on a run that only sold, the
+"data degraded" line naming internal components, and blocked-trade jargon in
+part. New substance the desk knew and never said was added at the same time:
+the pre-earnings note names each filing and what changes for the owner, the
+hourly check names every order and holding it counts, looked-at names carry
+the Portfolio Manager's own recorded reason, and a stop-coverage banner names
+the company, both quantities, the dollars unprotected and the repair's own
+refusal reason.
+
+Record gaps found in passing and now recorded: which filings the earnings
+pass handled, and the broker's own words on a plain rejection. Still not
+recorded: how many retries an unreadable filing has used. `min_trade_weight_
+delta = 0.5` — the threshold that drops a plan on size alone — was found to
+exist only as a dataclass default in `src/portfolio_constructor.py`, absent
+from `config/settings.yaml` and from every document; it IS in
+`config/number_ledger.yaml` (an earlier claim that the ledger missed it was
+wrong) and its value was not changed. Verified by re-rendering identical
+stored rows through `render_stored_session_report` and
+`render_stored_intra_check` on main and on the branch; the live database is
+not readable from the operator account, so no real past session was
+re-rendered — which is why item 89's three acceptance checks wait on a live
+session.
+
+---
