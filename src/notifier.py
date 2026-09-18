@@ -1420,6 +1420,17 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
             f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
             f"new positions are refused once the book reaches it."
         )
+    if leverage.get("delever_incomplete"):
+        # §11.2 reporting gap: a de-lever was attempted but the account is
+        # still over its limit afterward. Plain words for a non-developer
+        # owner — what was tried, that it fell short, and the real number,
+        # never an internal name or an invented figure.
+        lines.append(
+            f"⚠️ Tried to bring the account's exposure back under its limit "
+            f"by selling down positions, but it is still over: the account "
+            f"currently has {gross_x:.2f}x of equity invested against a "
+            f"{ceiling_x:.2f}x limit."
+        )
 
 
 _MAX_LOOKED_UP_COMPANIES = 12
