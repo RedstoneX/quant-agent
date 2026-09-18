@@ -25,6 +25,9 @@ from alpaca.trading.requests import (
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
 from src.models import Position, _ALLOWED_SECTORS, _SECTOR_ALIASES
+# THE stop-value judgement (docs/WORK.md item 88). `src.execution.stop_records`
+# imports nothing from this module, so this is a leaf dependency.
+from src.execution.stop_records import STOP_USABLE, classify_stop_price
 
 logger = logging.getLogger(__name__)
 
@@ -3618,32 +3621,33 @@ class AlpacaBroker:
         # pass a stop (see `use_stop` below): 'sell' is this codebase's
         # word for reducing/closing a long and never supplies one.
         if side.lower() in ("buy", "sell_short") and stop_was_supplied:
-            if not stop_was_finite:
+            # docs/WORK.md item 88. A stop WAS requested, so from here the
+            # only two legal outcomes are "a usable price" and "refused".
+            # `0.0` used to be a third: this codebase's sentinel for "no
+            # stop", which made a degenerate ATR output or a miscomputed
+            # level REMOVE protection instead of refusing the trade. The
+            # sentinel survives only where nothing was supplied at all
+            # (`stop_loss_price=None`, the cash-sweep park's deliberate
+            # stopless buy) — that distinction is the whole fix. NaN/Inf
+            # was the same hole in a different disguise, closed for this
+            # lane by PR #455; zero is closed here.
+            stop_state, _stop_px = classify_stop_price(
+                stop_loss_price if stop_was_finite else float("nan")
+            )
+            if stop_state != STOP_USABLE:
                 logger.error(
-                    "Stop sanity: %s %s — the supplied stop is not a finite "
-                    "number. Order REJECTED rather than submitted naked "
-                    "(quantization turns NaN/Inf into None, which would "
-                    "otherwise place the entry with no stop at all).",
-                    side.upper(), symbol,
+                    "Stop sanity: %s %s — a stop was requested and its value "
+                    "(%r) cannot be a stop price. Order REJECTED rather than "
+                    "submitted naked. A garbage stop is not an absent stop: "
+                    "only a caller that passes no stop at all (None) is "
+                    "allowed a stopless order.",
+                    side.upper(), symbol, stop_loss_price,
                 )
                 return {
                     "id": None, "status": "rejected_bad_stop",
                     "symbol": internal_symbol,
                     "detail": "the stop price is not a usable number",
                 }
-            # A NON-POSITIVE stop is deliberately NOT refused here. `0.0`
-            # is this codebase's long-standing sentinel for "no stop" — a
-            # degenerate ATR output, pinned by
-            # `test_submit_order_buy_with_zero_stop_loss_skips_oto` — and
-            # the entry then submits unprotected exactly as before. That is
-            # a real hole and it is NOT this change's to close: it is
-            # explicit, pre-dates this work, and the production entry
-            # callsite already passes `None` rather than `0` (see
-            # `src/pipeline_stages.py`), so nothing live reaches it.
-            # Reported, left alone. NaN/Inf is a different case: it is
-            # nobody's sentinel, and quantization laundering it into the
-            # same `None` was silent, which is why it is refused above.
-            #
             # Side check. A stop on the wrong side of the price we are
             # entering at protects nothing and would fire instantly — the
             # same refusal the constructor makes against its own entry
@@ -3661,7 +3665,9 @@ class AlpacaBroker:
             if (
                 entry_ref is not None
                 and stop_loss_price is not None
-                and stop_loss_price > 0  # 0 = "no stop" sentinel, see above
+                # Unreachable unless usable now — the refusal above returns
+                # on anything else. Kept as a precondition, not a sentinel.
+                and stop_loss_price > 0
             ):
                 is_short_entry = side.lower() == "sell_short"
                 wrong_side = (
@@ -4442,6 +4448,22 @@ class AlpacaBroker:
         success — so guard 2 stays silent on success and still fires on a
         genuine partial cover.
         """
+        # docs/WORK.md item 88. Refuse a garbage trigger BEFORE burning the
+        # retry burst on it: a zero/negative/NaN/Inf stop is not a transient
+        # broker failure, so three attempts and ~2 seconds of sleeps cannot
+        # turn it into a placed order. None is the caller's escalate signal
+        # and every caller on this path already treats it as one, so the
+        # gap stays flagged instead of being reported as covered.
+        if classify_stop_price(stop_price)[0] != STOP_USABLE:
+            logger.critical(
+                "protective stop REFUSED for %s (qty=%s): the requested "
+                "trigger %r cannot be a stop price. Nothing was placed and "
+                "the position stays flagged as uncovered — a garbage stop "
+                "is never treated as 'no stop needed'.",
+                symbol, qty, stop_price,
+            )
+            return None
+
         whole, frac = _split_protective_qty(qty)
         if frac <= 0:
             # Whole-share: unchanged in every observable way.
@@ -4661,6 +4683,22 @@ class AlpacaBroker:
                 self._kill_switch_path, symbol, qty, stop_price,
             )
             return {"id": None, "status": "kill_switch_halted", "symbol": symbol}
+        # docs/WORK.md item 88 — the LAST authority before the broker, for
+        # the callers that reach this directly (the partial-exit reprotect
+        # and the restore paths) rather than through
+        # `_submit_protective_stop_retrying`. A zero trigger quantizes to
+        # 0.0 and a non-finite one quantizes to None, and both used to be
+        # handed to the SDK: one becomes a broker rejection, the other a
+        # serializer error, and neither says what was wrong. Raising is the
+        # contract this method's callers already handle ("the submit either
+        # worked or it raised"), so a garbage stop can never be mistaken
+        # for a placed one.
+        if classify_stop_price(stop_price)[0] != STOP_USABLE:
+            raise ValueError(
+                f"refusing a protective stop for {symbol}: the requested "
+                f"trigger {stop_price!r} is not a usable stop price "
+                f"(must be finite and positive)"
+            )
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         time_in_force = _derive_stop_tif(qty)
         if time_in_force is TimeInForce.DAY:

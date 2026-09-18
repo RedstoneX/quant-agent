@@ -170,14 +170,77 @@ function evidenceChips(rows: StoredResearchEvidence[]): ResearchEvidenceItem[] {
     source: row.agent_name, timestamp: row.timestamp,
   }));
 }
-function marketContext(rows: StoredResearchEvidence[]): ResearchMarketContext[] {
-  return sortEvidence(rows).reverse().flatMap((row) => {
+/* The desk writes the derivation's provenance into the order's own
+ * `reasoning` as a fixed machine-written suffix — see
+ * `src/portfolio_constructor.py::_target_note`. That suffix is the ONLY
+ * place the basis reaches stored evidence (the payload has no
+ * `target_basis` field), so it is parsed rather than re-derived. A
+ * non-match yields null and the UI simply prints no basis; nothing is
+ * guessed. */
+const TARGET_NOTE = /\[target \$[\d,.]+(?: computed from ([a-z ]+);| — ([a-z_ ]+)\])/;
+function targetBasis(payload: unknown): string | null {
+  const reasoning = stringAt(payload, "reasoning");
+  if (!reasoning) return null;
+  const match = TARGET_NOTE.exec(reasoning);
+  const basis = (match?.[1] || match?.[2] || "").trim().replace(/_/g, " ");
+  return basis || null;
+}
+
+/* Stop/entry/target as the desk actually recorded them, or a stated
+ * reason why a row could not be drawn.
+ *
+ * Two things this deliberately does NOT do, both of them fixed defects:
+ *
+ * 1. It never draws `reference_target`. That field is the ANALYST MODEL'S
+ *    guess. The constructor stopped choosing answers from it on
+ *    2026-09-01 (`derive_structural_target`'s docstring: "never used to
+ *    choose the answer"); it survives only so the divergence can be
+ *    logged. Only the desk's own `take_profit` is drawn. In the live store
+ *    the two keys never even share a row — `reference_target` is on
+ *    tech_analyst `analysis` rows and `take_profit` on portfolio_manager
+ *    `proposed_order` rows — so reading the guess meant every technical
+ *    mini-chart's target had no basis at all.
+ *
+ * 2. It is direction-aware. The old geometry test was `stop < entry &&
+ *    entry < target`, which silently discarded every short (a short's
+ *    stop sits ABOVE entry and its target BELOW) and left no record that
+ *    anything had been dropped.
+ */
+function marketContext(rows: StoredResearchEvidence[]): { contexts: ResearchMarketContext[]; gaps: string[] } {
+  const contexts: ResearchMarketContext[] = [];
+  const faults: string[] = [];
+  let guessOnly = 0;
+  for (const row of sortEvidence(rows).reverse()) {
     const entry = numberAt(row.payload, "entry_price");
     const stop = numberAt(row.payload, "stop_loss", "suggested_stop_price");
-    const target = numberAt(row.payload, "reference_target", "take_profit");
-    if (!row.symbol || entry == null || stop == null || target == null || !(stop < entry && entry < target)) return [];
-    return [{ symbol: row.symbol, stop, entry, target }];
-  }).slice(0, 3);
+    if (!row.symbol || entry == null || stop == null) continue;
+    const target = numberAt(row.payload, "take_profit");
+    if (target == null) {
+      // A stop and an entry but no desk-derived target. Draw nothing: the
+      // only other number available is the model's guess.
+      if (numberAt(row.payload, "reference_target") != null) guessOnly += 1;
+      continue;
+    }
+    if (stop === entry) {
+      faults.push(`${row.symbol}: the recorded stop equals the entry — no risk distance to draw.`);
+      continue;
+    }
+    const direction = stop < entry ? "long" : "short";
+    const targetBeyondEntry = direction === "long" ? target > entry : target < entry;
+    if (!targetBeyondEntry) {
+      faults.push(`${row.symbol}: the recorded ${direction} target ${target} is not beyond the entry ${entry} — geometry not drawable.`);
+      continue;
+    }
+    contexts.push({
+      symbol: row.symbol, stop, entry, target, direction,
+      target_source: "derived", target_basis: targetBasis(row.payload),
+    });
+  }
+  const gaps = faults.slice(0, 3);
+  if (guessOnly) {
+    gaps.push(`${guessOnly} read${guessOnly === 1 ? "" : "s"} carried only the analyst's own estimated target, which the desk does not use — not drawn.`);
+  }
+  return { contexts: contexts.slice(0, 3), gaps };
 }
 function aggregateDirection(rows: StoredResearchEvidence[]): ResearchDirection {
   const directions = rows.map((row) => directionOf(row.payload)).filter((value) => value !== "unknown" && value !== "neutral");
@@ -390,13 +453,14 @@ export function buildResearchDesk(data: ResearchDailyResponse, priorDay: Researc
     const seatStatus: ResearchItemStatus = failedCall || missingSeat || allRowsForSeat.some((row) => row.state === "invalid")
       ? "error" : current ? freshnessStatus : "unavailable";
     const newsChange = seat === "news" ? last(currentRows.flatMap((row) => objects(object(row.payload)?.state_changes))) : undefined;
+    const setups = seat === "technical" ? marketContext(currentRows) : { contexts: [], gaps: [] };
     return {
       seat, status: seatStatus,
       headline, read: headline && read && headline.toLowerCase() === read.toLowerCase() ? null : read,
       direction: aggregateDirection(currentRows), evidence: evidenceChips(currentRows),
       changed: changedRead(seat, currentRows, previous?.rows || [], callRead, editCopy(priorCall?.output_summary)),
       tension: null, why_now: editCopy(stringAt(rep?.payload, "why_now", "catalyst", "shift_reason") || stringAt(newsChange, "market_impact", "event"), 220),
-      market_context: seat === "technical" ? marketContext(currentRows) : [],
+      market_context: setups.contexts, market_context_gaps: setups.gaps,
       timestamp: call?.timestamp || rep?.timestamp || null,
       error: failedCall ? "Agent call failed; no conclusion is inferred." : allRowsForSeat.some((row) => row.state === "invalid") ? "Some structured evidence was invalid." : null,
     };

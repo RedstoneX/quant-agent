@@ -197,7 +197,18 @@ def rearm_full_position_stop(
     On accept, writes `stop_price` back onto the opening row when `db` is
     given — the rearmed level can be tighter than the add's own stop.
     """
-    if qty <= 0 or stop_price <= 0:
+    # docs/WORK.md item 88: a non-finite trigger passed the old `<= 0` test
+    # (NaN/Inf compare False) and reached the broker, where quantization
+    # turned it into None. Returning None here is the caller's failure
+    # signal — the WAL row stays and the gap keeps escalating.
+    from src.execution.stop_records import STOP_USABLE, classify_stop_price
+
+    if qty <= 0 or classify_stop_price(stop_price)[0] != STOP_USABLE:
+        logger.error(
+            "scale-in rearm REFUSED for %s: qty=%r stop=%r is not a "
+            "placeable protective stop — nothing placed, the gap stays open",
+            symbol, qty, stop_price,
+        )
         return None
     buffer = getattr(broker, "STOP_LIMIT_BUFFER_PCT", 0.03)
     try:
@@ -501,11 +512,14 @@ def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
     held = abs(float(qty))
     if held <= 0:
         return True
-    if stop_price <= 0:
+    # item 88: `<= 0` alone let a recorded ±Inf through to the broker.
+    from src.execution.stop_records import STOP_USABLE, classify_stop_price
+
+    if classify_stop_price(stop_price)[0] != STOP_USABLE:
         logger.error(
-            "scale-in drain: %s held %.4f but no usable stop price on the "
-            "WAL row — leaving the row so the owner alert / next repair can "
-            "see it", symbol, held,
+            "scale-in drain: %s held %.4f but the WAL row's stop price is "
+            "%r, which cannot be a stop — leaving the row so the owner alert "
+            "/ next repair can see it", symbol, held, stop_price,
         )
         return False
 

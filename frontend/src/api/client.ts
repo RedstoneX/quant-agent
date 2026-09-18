@@ -701,6 +701,10 @@ export interface ResearchAgentBrief {
   tension: string | null;
   why_now: string | null;
   market_context: ResearchMarketContext[];
+  /* Why a stored row that LOOKED like a setup was not drawn as one. A
+   * dropped row used to vanish with no trace, so a missing mini-chart was
+   * indistinguishable from a seat that recorded nothing at all. */
+  market_context_gaps: string[];
   timestamp: string | null;
   error?: string | null;
 }
@@ -710,6 +714,21 @@ export interface ResearchMarketContext {
   stop: number;
   entry: number;
   target: number;
+  /* Which way the trade runs, read from the stored geometry itself
+   * (stop below entry = long, stop above entry = short) rather than from
+   * a rating string — the desk's own invariant, see
+   * `src/portfolio_constructor.py::_resolve_entry_and_stop`. */
+  direction: "long" | "short";
+  /* Where the drawn target came from. `derived` is the desk's own
+   * `take_profit`, computed from the instrument's bars by
+   * `src/data/levels.py::derive_structural_target`. Nothing else is ever
+   * drawn — the analyst model's `reference_target` is a guess the
+   * constructor deliberately stopped trusting on 2026-09-01. */
+  target_source: "derived";
+  /* The derivation's own basis words ("structural level" / "measured
+   * move") when the stored order reasoning carries them, else null. Never
+   * inferred — the UI prints only what the desk wrote. */
+  target_basis: string | null;
 }
 
 export interface ResearchSignal {
