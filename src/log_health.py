@@ -1,0 +1,823 @@
+"""Read the desk's own application log for a window and say, in plain words,
+whether the desk is healthy, degraded or hurt.
+
+WHY THIS EXISTS. The owner reads Telegram and nothing else. Everything in
+`quant_agent.log` that is not routed through an explicit owner alert reaches
+nobody, and the two worst classes of fault on this desk have both been of
+exactly that kind: a feed that failed every single time it was tried for a
+fortnight (`Feed AP Business fetch failed: HTTP Error 403: Forbidden`,
+53 occurrences, 2026-08-14 to 2026-08-28, verified in the rotated logs) and a
+broker socket that was refused 11,427 times in one day
+(`server rejected WebSocket connection: HTTP 429`, 2026-09-15, verified in
+`quant_agent.log.3`). Neither produced a single message he saw.
+
+THE SEVERITY RULE, AND WHY IT IS SHAPED THIS WAY.
+This desk has a standing doctrine that a deliberate, correct refusal is NOT a
+fault. A session that declines every candidate because the reward:risk did not
+clear the bar has worked perfectly, and dressing that up as an incident trains
+the owner to ignore the channel — which is the only channel he has. So a
+refusal, a handled data drop, a retry that succeeded, and a cost figure that
+was reconciled are all INFORMATIONAL and never produce a bullet.
+
+But the same doctrine says a quiet day that is really a broken day must never
+read as healthy. The failure mode that has actually bitten this desk is not a
+loud crash; it is a warning nobody is subscribed to, repeated until it becomes
+the background. So the bar for reporting is deliberately NOT "is it noisy" and
+NOT a count. It is one of four conditions, each of which is a statement about
+consequence rather than volume:
+
+  COST_A_DECISION      — the desk was unable to decide something it set out to
+                         decide. A skipped decision and a name that silently
+                         fell out of a seat's answer are the same injury: the
+                         desk acted on a view it did not actually form.
+  MONEY_UNPROTECTED    — a position was left, for any length of time, without
+                         the protective stop the desk believes is on it. This
+                         is the only class where the loss is unbounded, so it
+                         is always reported and always drives the verdict.
+  PROVIDER_REJECTED_US — the broker or a data provider refused us. We cannot
+                         fix it by trying harder and it invalidates the desk's
+                         assumption that it can act when it decides to.
+  SILENTLY_FAILING     — it has failed every time it was tried for long enough
+                         that the desk's apparent health is misleading. This is
+                         reported PRECISELY BECAUSE it is quiet: the longer it
+                         has been true, the more the silence has been read as
+                         health. Severity here is a function of duration, which
+                         is measured from the logs, not assumed.
+
+Anything that does not meet one of those four is not reported at all.
+
+NO INVENTED LIMITS. The number of bullets is whatever the desk actually has
+wrong — that is a measurement, not a setting, and if it is nine then nine is
+the signal. The single length ceiling encoded here is Telegram's own published
+per-message limit of 4,096 characters (Bot API `sendMessage`, `text` field),
+consumed via `TelegramNotifier.MAX_MESSAGE_CHARS` so this module does not carry
+a second copy of it. When a report will not fit, it SPLITS by severity — the
+serious findings in the first message, the rest in a second — rather than
+dropping a real fault to fit, which would reproduce the exact "looks quiet but
+is not" failure the report exists to prevent.
+
+FAIL-CLOSED. Matching log text with regular expressions is matching against an
+interface that can change wording without warning; a renamed message would
+silently stop being counted and the report would read healthy. So every ERROR
+and CRITICAL line in the window that matches no known family is itself counted
+as a family (`unrecognised_faults`) and reported. The health check cannot
+quietly stop working.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from src.notifier import TelegramNotifier
+
+logger = logging.getLogger(__name__)
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+#: Production app log and its rotations. `quant_agent.log` is the live file;
+#: `.1`-`.5` are the rotations, continuous back to 2026-08-14.
+DEFAULT_LOG_DIR = Path("/home/qamc/quant-agent")
+LOG_BASENAME = "quant_agent.log"
+
+#: Where the watermark lives. Keyed to the log directory so a dry run against a
+#: fixture cannot advance production's watermark.
+DEFAULT_STATE_PATH = PROJECT_ROOT / "data" / "log_health" / "state.json"
+
+#: Log timestamps are UTC (the box runs UTC); the owner is ET. Every time the
+#: owner is shown is converted. `docs/WORK.md`, "Engineering setup", records
+#: this — quoting him a UTC time has caused confusion before.
+LOG_TZ = timezone.utc
+OWNER_TZ = ZoneInfo("America/New_York")
+
+#: `2026-09-18 13:47:27,710 [ERROR] src.pipeline: text`
+_LINE_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d{3} "
+    r"\[(?P<level>[A-Z]+)\] (?P<logger>[\w.]+): (?P<msg>.*)$"
+)
+_SERIOUS_LEVELS = frozenset({"ERROR", "CRITICAL"})
+
+# --- the four reporting conditions ------------------------------------------
+# Ordered worst-first; the verdict and the bullet order both read off this
+# order, so neither needs a rank number of its own.
+COST_A_DECISION = "cost_a_decision"
+MONEY_UNPROTECTED = "money_unprotected"
+PROVIDER_REJECTED_US = "provider_rejected_us"
+SILENTLY_FAILING = "silently_failing"
+HANDLED = None  # informational — never reported
+
+_REASON_ORDER = (
+    MONEY_UNPROTECTED,
+    COST_A_DECISION,
+    PROVIDER_REJECTED_US,
+    SILENTLY_FAILING,
+)
+
+#: A verdict of "hurt" is reserved for the two conditions that cost the desk
+#: something it cannot get back — a decision it could not make, or a position
+#: it did not protect. Being refused by a provider, or failing quietly, leaves
+#: the desk working but not trustworthy: that is "degraded".
+_HURT_REASONS = frozenset({COST_A_DECISION, MONEY_UNPROTECTED})
+
+
+@dataclass(frozen=True)
+class FaultFamily:
+    """One recognised way this desk breaks, in the owner's words.
+
+    `sentence` is the whole bullet, bar the disposition. It is written as a
+    complete plain-English sentence with `{n}` (the count) and `{plural}` (an
+    "s" when `n != 1`) so a bullet never reads like a log line. It must contain
+    no file name, no function name, no field name, no status token and no run
+    id — the owner has said repeatedly that developer vocabulary in a message
+    aimed at him makes the message unreadable.
+
+    `board_item` is the number of the `docs/WORK.md` item that already tracks
+    this, or None. It is checked against the live board at render time: a
+    family whose item has been retired must not keep telling the owner that
+    work is happening.
+    """
+
+    key: str
+    short_name: str
+    sentence: str
+    reason: str | None
+    patterns: tuple[re.Pattern[str], ...]
+    board_item: int | None = None
+    #: True when severity depends on how long this has been failing, not on
+    #: what happened in the window. The first occurrence is then looked up
+    #: across the whole retained log history so the bullet can state a
+    #: measured duration instead of an impression.
+    measure_duration: bool = False
+
+
+def _p(*patterns: str) -> tuple[re.Pattern[str], ...]:
+    return tuple(re.compile(p) for p in patterns)
+
+
+# --- the families -----------------------------------------------------------
+# Every pattern below was read off real production log lines (verified against
+# /home/qamc/quant-agent/quant_agent.log and its rotations on 2026-09-18);
+# tests/fixtures/log_health_production_excerpt.txt holds genuine copies.
+FAMILIES: tuple[FaultFamily, ...] = (
+    FaultFamily(
+        key="decision_skipped_no_evidence",
+        short_name="decisions thrown away for want of an answer",
+        sentence=(
+            "The desk threw away {n} trading decision{plural} because a research "
+            "desk it had asked never answered in time"
+        ),
+        reason=COST_A_DECISION,
+        patterns=_p(r"EVIDENCE GATE .*decision skipped", r"(?m)^DECISION SKIPPED\b"),
+        board_item=20,
+    ),
+    FaultFamily(
+        key="seat_answer_unreadable",
+        short_name="answers that came back unreadable",
+        sentence=(
+            "{n} research answer{plural} came back in a form the desk could not "
+            "read, so the work was paid for and thrown away"
+        ),
+        reason=COST_A_DECISION,
+        patterns=_p(
+            r"failed to parse",
+            r"validation failed — attempting one repair reprompt",
+        ),
+    ),
+    FaultFamily(
+        key="names_dropped_from_answer",
+        short_name="companies quietly missing from an answer",
+        sentence=(
+            "{n} of the companies the desk asked about went missing from the "
+            "answer it got back, so it judged without them"
+        ),
+        reason=COST_A_DECISION,
+        patterns=_p(
+            r"missing-from-response=\[(?!\])",
+            r"dropping malformed \w+ entry",
+            r"Tech batch incomplete across",
+        ),
+    ),
+    FaultFamily(
+        key="research_seat_unavailable",
+        short_name="a research desk that could not be reached",
+        sentence=(
+            "A research desk could not be reached on {n} occasion{plural} and the "
+            "work had to go ahead short-handed"
+        ),
+        reason=COST_A_DECISION,
+        # Deliberately NOT `Agent X attempt N failed ... Retrying` — that line
+        # is a retry that then succeeded, and the desk's doctrine is explicit
+        # that something handled correctly is informational. It is matched
+        # below, among the things that never get a bullet. Only a seat that
+        # was still missing when the work went ahead lands here.
+        patterns=_p(r"Morning research degraded"),
+    ),
+    FaultFamily(
+        key="stop_missing_or_failed",
+        short_name="holdings left without their safety net",
+        sentence=(
+            "A holding was left without the safety net that limits its loss on "
+            "{n} occasion{plural}"
+        ),
+        reason=MONEY_UNPROTECTED,
+        patterns=_p(
+            r"FRACTIONAL STOP MISSING",
+            r"FRACTIONAL STOP RE-PLACEMENT FAILED",
+            r"OVERNIGHT FRACTIONAL EXPOSURE",
+            r"protective stop.*FAILED for",
+            r"coverage repair FAILED",
+            r"STOP RECORD MISMATCH",
+        ),
+        board_item=127,
+    ),
+    FaultFamily(
+        key="broker_turned_us_away",
+        short_name="the broker turning the desk away",
+        sentence=(
+            "The broker turned the desk away {n} time{plural} when it tried to "
+            "open its live connection"
+        ),
+        reason=PROVIDER_REJECTED_US,
+        patterns=_p(
+            r"server rejected WebSocket connection",
+            r"trade_updates websocket handshake failed",
+            r"websocket did not authenticate",
+            r"error during websocket communication",
+            r"order-fill stream unavailable",
+        ),
+        board_item=86,
+    ),
+    FaultFamily(
+        key="broker_not_sure_who_we_are",
+        short_name="the broker unable to confirm who the desk is",
+        sentence=(
+            "The broker cannot confirm who the desk is, because the desk is "
+            "still holding a fill-this-in stand-in instead of a real key"
+        ),
+        reason=PROVIDER_REJECTED_US,
+        # Two lines for one condition — the startup check writes its own and
+        # the alerter writes the owner-facing copy. Both match here, and the
+        # sentence carries no count, so saying it twice cannot inflate anything.
+        patterns=_p(r"Placeholder trading credential in use", r"PLACEHOLDER CREDENTIAL"),
+        board_item=86,
+    ),
+    FaultFamily(
+        key="broker_refused_an_order",
+        short_name="orders the broker refused",
+        sentence=("The broker refused {n} order{plural} the desk tried to place"),
+        reason=PROVIDER_REJECTED_US,
+        patterns=_p(
+            r"^Order failed for ",
+            r"broker returned no order id",
+        ),
+    ),
+    FaultFamily(
+        key="news_source_dead",
+        short_name="a news source that answers nothing",
+        sentence=(
+            "One of the desk's news sources has answered nothing every single "
+            "time it has been asked"
+        ),
+        reason=SILENTLY_FAILING,
+        patterns=_p(r"^Feed .* fetch failed"),
+        measure_duration=True,
+    ),
+    FaultFamily(
+        key="economics_feed_incomplete",
+        short_name="economic readings the desk could not get",
+        sentence=(
+            "The desk went ahead without economic readings it had asked for on "
+            "{n} occasion{plural}"
+        ),
+        reason=SILENTLY_FAILING,
+        patterns=_p(
+            r"FRED fetch deadline",
+            r"Macro event calendar PARTIAL",
+            r"Macro coverage: \d+/\d+ FRED series",
+        ),
+        board_item=119,
+        measure_duration=True,
+    ),
+    FaultFamily(
+        key="unrecognised_faults",
+        short_name="faults this health check does not recognise",
+        sentence=(
+            "The desk recorded {n} fault{plural} of a kind this health check has "
+            "never seen before and cannot describe"
+        ),
+        reason=SILENTLY_FAILING,
+        patterns=(),  # populated by exclusion — see `analyse`
+    ),
+    # --- informational from here down: correct behaviour, never a bullet ----
+    FaultFamily(
+        key="desk_declined_to_trade",
+        short_name="trades the desk chose not to make",
+        sentence="The desk decided against {n} trade{plural} for a stated reason",
+        reason=HANDLED,
+        patterns=_p(
+            r"Constructor: (BUY|SELL) \S+ refused",
+            r"NOT SUBMITTED",
+            r"Deterministic gate: BLOCKED",
+            r"Fat-finger guard",
+        ),
+    ),
+    FaultFamily(
+        key="price_rows_unusable",
+        short_name="price rows that arrived damaged",
+        sentence=(
+            "The price service sent {n} damaged reading{plural}, which the desk "
+            "spotted and discarded"
+        ),
+        reason=HANDLED,
+        patterns=_p(
+            r"NaN OHLCV",
+            r"failed to resolve even after retry",
+        ),
+    ),
+    FaultFamily(
+        key="model_bill_reconciled",
+        short_name="research bills that differed from the estimate",
+        sentence=(
+            "The research bill differed from the estimate {n} time{plural} and "
+            "the real figure was used"
+        ),
+        reason=HANDLED,
+        patterns=_p(r"provider-reported cost \$"),
+    ),
+    FaultFamily(
+        key="optional_fields_defaulted",
+        short_name="optional details left blank in an answer",
+        sentence=(
+            "{n} answer{plural} arrived with an optional detail left blank and "
+            "were kept"
+        ),
+        reason=HANDLED,
+        patterns=_p(
+            r"dropped explicit null/empty on defaulted field",
+            r"schema could not be made strict-compatible",
+            r"token-rate governor held a request",
+            r"accession peek truncated",
+            r"redacted and re-saved cached analysis",
+            r"asserts price-derived valuation",
+            r"low conviction",
+            r"in-session price unavailable",
+            r"cash sweep: funding sell",
+            r"STOP-OUT RECORDED",
+            r"COVERAGE REPAIRED",
+            r"coverage repair: \S+ has no trade print",
+            r"Agent \w+ attempt \d+ failed",
+        ),
+    ),
+)
+
+_FAMILY_BY_KEY = {f.key: f for f in FAMILIES}
+UNRECOGNISED_KEY = "unrecognised_faults"
+
+
+@dataclass(frozen=True)
+class LogRecord:
+    timestamp: datetime
+    level: str
+    source: str
+    message: str
+
+
+@dataclass
+class Finding:
+    family: FaultFamily
+    count: int = 0
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+    #: Earliest occurrence anywhere in the retained history, for the families
+    #: whose severity is a function of how long they have been failing.
+    first_seen_ever: datetime | None = None
+
+    @property
+    def reportable(self) -> bool:
+        return self.family.reason is not None and self.count > 0
+
+
+@dataclass
+class Report:
+    window_start: datetime
+    window_end: datetime
+    findings: list[Finding] = field(default_factory=list)
+    #: Keys reported in the previous report, so an unchanged issue can be
+    #: compressed instead of restated in full.
+    previous: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def reported(self) -> list[Finding]:
+        """Everything that meets the bar, worst condition first."""
+        return sorted(
+            (f for f in self.findings if f.reportable),
+            key=lambda f: (_REASON_ORDER.index(f.family.reason), -f.count),
+        )
+
+    @property
+    def verdict(self) -> str:
+        reasons = {f.family.reason for f in self.reported}
+        if reasons & _HURT_REASONS:
+            return "hurt"
+        if reasons:
+            return "degraded"
+        return "healthy"
+
+
+# --- reading the log --------------------------------------------------------
+
+
+def log_files(log_dir: Path | None = None) -> list[Path]:
+    """The retained log history, OLDEST FIRST for reading.
+
+    A path to a single file is accepted and returned as-is, so a test can point
+    the whole analyser at one fixture without the fixture having to impersonate
+    a production rotation scheme.
+    """
+    base = Path(log_dir or DEFAULT_LOG_DIR)
+    if base.is_file():
+        return [base]
+    paths = [base / LOG_BASENAME]
+    paths += [base / f"{LOG_BASENAME}.{i}" for i in range(1, 6)]
+    existing = [p for p in paths if p.exists()]
+    # `.5` is the oldest rotation, the bare name the newest.
+    return sorted(existing, key=lambda p: p.suffix, reverse=True)
+
+
+def parse_records(path: Path) -> list[LogRecord]:
+    """Parse one log file. Continuation lines (a multi-line owner alert, a
+    stack trace) are appended to the record they belong to rather than dropped,
+    because the line that names the fault is often the second one."""
+    records: list[LogRecord] = []
+    try:
+        text = path.read_text(errors="replace")
+    except OSError as exc:  # unreadable rotation — never fatal
+        logger.warning("log-health: could not read %s: %s", path.name, exc)
+        return records
+    for line in text.splitlines():
+        match = _LINE_RE.match(line)
+        if match:
+            records.append(
+                LogRecord(
+                    timestamp=datetime.strptime(
+                        match.group("ts"), "%Y-%m-%d %H:%M:%S"
+                    ).replace(tzinfo=LOG_TZ),
+                    level=match.group("level"),
+                    source=match.group("logger"),
+                    message=match.group("msg"),
+                )
+            )
+        elif records:
+            prev = records[-1]
+            records[-1] = LogRecord(
+                prev.timestamp, prev.level, prev.source, prev.message + "\n" + line
+            )
+    return records
+
+
+def read_window(
+    start: datetime, end: datetime, log_dir: Path | None = None
+) -> list[LogRecord]:
+    """Every record with `start < timestamp <= end`.
+
+    The bounds are half-open at the start ON PURPOSE: the watermark stores the
+    timestamp of the last record consumed, so a strict `>` is what makes two
+    consecutive reports neither skip a second nor count one twice.
+    """
+    out: list[LogRecord] = []
+    for path in log_files(log_dir):
+        records = parse_records(path)
+        if not records:
+            continue
+        if records[-1].timestamp <= start:
+            continue  # whole rotation predates the window
+        out.extend(r for r in records if start < r.timestamp <= end)
+    out.sort(key=lambda r: r.timestamp)
+    return out
+
+
+def _is_owner_alert_echo(record: LogRecord) -> bool:
+    """True for an owner alert whose body is already counted at its own site."""
+    if record.source != "src.notifier" or not record.message.startswith("OWNER ALERT"):
+        return False
+    body = record.message.split("\n", 1)[1] if "\n" in record.message else ""
+    return classify(body) is not None
+
+
+def classify(message: str) -> FaultFamily | None:
+    for family in FAMILIES:
+        for pattern in family.patterns:
+            if pattern.search(message):
+                return family
+    return None
+
+
+def analyse(
+    records: list[LogRecord],
+    window_start: datetime,
+    window_end: datetime,
+    log_dir: Path | None = None,
+    previous: dict[str, int] | None = None,
+) -> Report:
+    findings: dict[str, Finding] = {}
+
+    def bump(family: FaultFamily, ts: datetime) -> None:
+        finding = findings.get(family.key)
+        if finding is None:
+            finding = Finding(family=family)
+            findings[family.key] = finding
+        finding.count += 1
+        if finding.first_seen is None or ts < finding.first_seen:
+            finding.first_seen = ts
+        if finding.last_seen is None or ts > finding.last_seen:
+            finding.last_seen = ts
+
+    for record in records:
+        if _is_owner_alert_echo(record):
+            # An owner alert is a RESTATEMENT of a condition that was already
+            # logged where it happened — the evidence gate writes its own line
+            # and then alerts; the credential check does the same. Counting
+            # both would tell the owner five lost decisions were ten.
+            #
+            # Fail-closed, deliberately: the echo is skipped only when its body
+            # matches a family we already count at its own site. An alert this
+            # module cannot place falls through to the unrecognised bucket
+            # rather than disappearing, so a NEW kind of owner alert can never
+            # be silently swallowed by this optimisation.
+            continue
+        family = classify(record.message)
+        if family is not None:
+            bump(family, record.timestamp)
+        elif record.level in _SERIOUS_LEVELS:
+            # Fail-closed: the desk itself called this a fault, and this module
+            # has no wording for it. Saying nothing would be the one outcome
+            # the report exists to prevent.
+            bump(_FAMILY_BY_KEY[UNRECOGNISED_KEY], record.timestamp)
+
+    for finding in findings.values():
+        if finding.family.measure_duration and finding.count:
+            finding.first_seen_ever = _first_occurrence(finding.family, log_dir)
+
+    return Report(
+        window_start=window_start,
+        window_end=window_end,
+        findings=list(findings.values()),
+        previous=dict(previous or {}),
+    )
+
+
+def _first_occurrence(family: FaultFamily, log_dir: Path | None) -> datetime | None:
+    """Earliest time this family appears anywhere in the retained history.
+
+    Only called for the families whose severity is duration-based, so the cost
+    of reading the rotations is paid only when it buys a measured number the
+    owner can act on ("since the middle of August") rather than an impression.
+    """
+    for path in log_files(log_dir):
+        for record in parse_records(path):
+            if classify(record.message) is family:
+                return record.timestamp
+    return None
+
+
+# --- the watermark ----------------------------------------------------------
+
+
+def load_state(path: Path | None = None) -> dict:
+    state_path = Path(path or DEFAULT_STATE_PATH)
+    try:
+        return json.loads(state_path.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(report: Report, path: Path | None = None) -> None:
+    """Persist the end of the window and what was reported in it.
+
+    `through` is the exclusive lower bound of the NEXT window. It is the end of
+    the window just analysed, not "now" — so a report that ran while the desk
+    was mid-session cannot skip the lines written during its own run.
+    """
+    state_path = Path(path or DEFAULT_STATE_PATH)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "through": report.window_end.astimezone(LOG_TZ).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                ),
+                "reported": {f.family.key: f.count for f in report.reported},
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+
+def window_from_state(
+    now: datetime, state: dict, default_lookback_hours: int = 24
+) -> tuple[datetime, datetime]:
+    """Where the last report stopped, to now.
+
+    The fallback matters only on the very first run, before a watermark exists.
+    24 hours is not a judgement about what is interesting — it is one turn of
+    the desk's own daily cycle, so the first report covers exactly one of
+    everything the schedule does and nothing is quietly excluded.
+    """
+    raw = str(state.get("through") or "")
+    try:
+        start = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=LOG_TZ)
+    except ValueError:
+        start = now - timedelta(hours=default_lookback_hours)
+    if start >= now:
+        start = now - timedelta(hours=default_lookback_hours)
+    return start, now
+
+
+# --- the board --------------------------------------------------------------
+
+
+def board_state(work_md: Path | None = None) -> tuple[set[int], set[int]]:
+    """(item numbers on the board, item numbers in the priority tiers).
+
+    READ ONLY. The disposition on every bullet has to come from somewhere real:
+    an item that is on the board is tracked, an item in the priority tiers is
+    being worked on now, and a family with neither gets told the truth — that
+    it is new and nobody has picked it up. Inventing a plan per run would let
+    the message claim work is happening that is not.
+    """
+    path = Path(work_md or PROJECT_ROOT / "docs" / "WORK.md")
+    try:
+        text = path.read_text()
+    except OSError:
+        return set(), set()
+    on_board = {int(m) for m in re.findall(r"^\*\*(\d+)[.:]", text, re.MULTILINE)}
+    in_tiers: set[int] = set()
+    for line in text.splitlines():
+        if line.startswith("- **Tier "):
+            in_tiers.update(int(m) for m in re.findall(r"\b(\d{1,3})\b", line))
+    return on_board, in_tiers
+
+
+def disposition(
+    finding: Finding, on_board: set[int], in_tiers: set[int], is_new: bool
+) -> str:
+    item = finding.family.board_item
+    if item is not None and item in in_tiers:
+        return "being worked on"
+    if item is not None and item in on_board:
+        return "on the list"
+    if finding.family.reason is None:
+        return "watched and left alone"
+    # No board item means nobody has picked this up. Saying anything warmer
+    # would let the message claim work is happening that is not.
+    return "new — not yet on the list" if is_new else "still not on the list"
+
+
+# --- the message ------------------------------------------------------------
+
+#: Telegram's own published per-message ceiling is 4,096 characters for the
+#: `text` field of `sendMessage`. `TelegramNotifier.MAX_MESSAGE_CHARS` is this
+#: desk's already-measured working budget beneath that (it leaves room for the
+#: tap-through link the notifier appends). It is read from there rather than
+#: restated, so there is exactly one copy of the only real limit in play.
+MESSAGE_BUDGET = TelegramNotifier.MAX_MESSAGE_CHARS
+
+_VERDICT_WORDS = {
+    "healthy": "HEALTHY",
+    "degraded": "DEGRADED",
+    "hurt": "HURT",
+}
+
+
+def _plural(n: int) -> str:
+    return "" if n == 1 else "s"
+
+
+def _window_words(report: Report) -> str:
+    start = report.window_start.astimezone(OWNER_TZ)
+    end = report.window_end.astimezone(OWNER_TZ)
+    fmt = "%-I:%M%p"
+
+    def clock(moment: datetime, with_date: bool) -> str:
+        # Only the am/pm is lowercased — "Fri 31 Jul" reads as a date, "fri 31
+        # jul" reads as a typo.
+        stamp = moment.strftime(("%a %-d %b " if with_date else "") + fmt)
+        return stamp[:-2] + stamp[-2:].lower()
+
+    if start.date() == end.date():
+        return f"{clock(start, False)} to {clock(end, False)} today"
+    # Across a date boundary the weekday alone is ambiguous — two consecutive
+    # Fridays read identically — so the date goes in. It is the owner's local
+    # (Eastern) date, never the log's UTC one.
+    return f"{clock(start, True)} to {clock(end, True)}"
+
+
+def _duration_words(since: datetime, now: datetime) -> str:
+    days = max(0, (now - since).days)
+    if days >= 14:
+        return f"since {since.astimezone(OWNER_TZ).strftime('%-d %B')}"
+    if days >= 1:
+        return f"for {days} day{_plural(days)}"
+    return "since earlier today"
+
+
+def _bullet(
+    finding: Finding, report: Report, on_board: set[int], in_tiers: set[int]
+) -> str:
+    sentence = finding.family.sentence.format(
+        n=finding.count, plural=_plural(finding.count)
+    )
+    if finding.family.measure_duration and finding.first_seen_ever:
+        sentence += f", {_duration_words(finding.first_seen_ever, report.window_end)}"
+    is_new = finding.family.key not in report.previous
+    return f"• {sentence} — {disposition(finding, on_board, in_tiers, is_new)}."
+
+
+def _verdict_line(report: Report) -> str:
+    word = _VERDICT_WORDS[report.verdict]
+    if report.verdict == "healthy":
+        return f"{word} — nothing cost the desk a decision or left a holding unprotected."
+    worst = report.reported[0]
+    return f"{word} — {worst.family.short_name}."
+
+
+def render(
+    report: Report, work_md: Path | None = None
+) -> list[str]:
+    """The message(s). One normally; two only when the truth does not fit.
+
+    The shape is the one already ratified for this desk's owner-facing
+    messages (`src/trader_feed.py`): a bold title line carrying the conclusion,
+    then short bullets, one sentence each. Nothing that worked gets a line.
+    """
+    on_board, in_tiers = board_state(work_md)
+    title = f"<b>Desk health — {_window_words(report)}</b>"
+
+    if report.verdict == "healthy":
+        # Two lines, as promised. A healthy report still goes out: its absence
+        # would be indistinguishable from the job not running.
+        return [f"{title}\n{_verdict_line(report)}"]
+
+    head = [title, _verdict_line(report), ""]
+    entries: list[tuple[Finding, str]] = []
+    for finding in report.reported:
+        was = report.previous.get(finding.family.key)
+        if was is None or finding.count > was:
+            entries.append((finding, _bullet(finding, report, on_board, in_tiers)))
+        else:
+            # Unchanged since the last report: one short line, not the whole
+            # bullet again. Restating an issue verbatim every twelve hours is
+            # how a channel stops being read.
+            entries.append((finding, f"• Still true: {finding.family.short_name}."))
+
+    # New issues first, then the "still true" ones — a line he has already read
+    # should never sit above one he has not.
+    entries.sort(key=lambda e: e[1].startswith("• Still true:"))
+    body = [line for _, line in entries]
+    message = "\n".join(head + body)
+    if len(message) <= MESSAGE_BUDGET:
+        return [message]
+
+    # Too long for one message. Nothing is dropped — the findings are packed
+    # into as many messages as they need, most serious first, so the message he
+    # opens carries the worst of it. Dropping a real fault to fit a length
+    # would reproduce the exact "looks quiet but is not" failure this report
+    # exists to prevent.
+    ordered = [line for f, line in entries if f.family.reason in _HURT_REASONS]
+    ordered += [line for f, line in entries if f.family.reason not in _HURT_REASONS]
+    return _pack(head, ordered, title)
+
+
+def _pack(head: list[str], bullets: list[str], title: str) -> list[str]:
+    """Split `bullets` across as few messages as will hold them all."""
+    messages: list[str] = []
+    current_head = head
+    current: list[str] = []
+    for bullet in bullets:
+        candidate = "\n".join(current_head + current + [bullet])
+        if current and len(candidate) > MESSAGE_BUDGET:
+            messages.append("\n".join(current_head + current))
+            current_head = [f"{title} — continued", ""]
+            current = [bullet]
+        else:
+            current.append(bullet)
+    if current:
+        messages.append("\n".join(current_head + current))
+    return messages
+
+
+def build_report(
+    now: datetime | None = None,
+    log_dir: Path | None = None,
+    state_path: Path | None = None,
+) -> Report:
+    now = (now or datetime.now(tz=LOG_TZ)).astimezone(LOG_TZ).replace(microsecond=0)
+    state = load_state(state_path)
+    start, end = window_from_state(now, state)
+    records = read_window(start, end, log_dir)
+    return analyse(records, start, end, log_dir=log_dir, previous=state.get("reported"))
