@@ -367,10 +367,6 @@ decision at all.
 **Plain language —** The file that records what has gone wrong and been fixed is merged automatically when two sessions edit it at once. Eleven entries written since 2 September use the wrong heading style, so the merge tool cannot see them, and branches collide over nothing.
 **Recommendation —** Fix it with the tool's own machinery and add a check. Never by hand — hand-editing that file is how live items were once deleted.
 
-## item 94
-
-**Plain language —** The live machine's copy of the code is carrying dashboard files that were never committed. That is drift: what is running is not exactly what is recorded.
-
 ## item 95
 
 **Plain language — your decision.** The account can borrow. Today the portfolio manager is not even shown that, which is a separate defect. Once it is shown, the question is whether it may PLAN to spend borrowed money. Borrowing costs about 6.25% a year on the borrowed balance, so anything bought with it has to beat 6.25% just to break even, not zero.
@@ -385,3 +381,39 @@ decision at all.
 
 **Plain language — your decision.** The desk judges whether a trade is moving too slowly against a holding period the model simply states rather than reads off anything. That is the kind of unverifiable number the desk has already banned from sizing trades; whether it may stay in this one test is your call.
 **Recommendation —** None until you rule.
+
+## item 98
+
+**Plain language —** A review of the prompts that brief the decision-making seats (the ones that actually pick and size trades) found seventeen statements in those briefings that are flatly wrong about what the code does today. Eight of the seventeen can change which trade happens or how big it is.
+**The eight that can change a trade —**
+  1. A sizing rule tied to a seat-counting scheme that was retired is still capping position size.
+  2. The briefing says the macro view never counts toward whether other seats agree; the actual rule counts it as plus-or-minus-one, and that difference killed a real trade on 17 September.
+  3. A 75% sector limit is described as a hard wall; it is really advisory and can go as high as 90%.
+  4. A sizing formula is described as mandatory that multiplies by a number deleted from the code 1 September.
+  5. The risk manager is briefed on the wrong quantity when it checks position size.
+  6. A minimum reward-to-risk ratio is described as required; it was abolished.
+  7. Reasons the executor gives for exiting a trade are silently thrown away rather than recorded.
+  8. Any position held overnight shows "thesis unavailable" because the lookup that fetches the reason for holding it only searches today — the reason exists, it just isn't found. Same defect as item 89's clarity issue #3, but here it affects the decision, not just the message to you.
+**The other nine —** clarity-only mismatches between what the prompt claims and what the code does; listed in the audit, not trade-affecting on their own.
+**In progress —** PRs #464 (a prompt-drift check) and #467 (fixes sixteen of the seventeen), stacked, not yet merged; confirm which one is left out and why before treating this item as closed.
+**Recommendation —** Fix the eight trade-affecting ones first, in the order above (the agreement-ladder and sector-cap ones are the most likely to have already cost or blocked a trade). Not yet placed in your priority order — flagging so it doesn't get lost.
+
+## item 99
+
+**Plain language —** A second review, of the prompts that brief the analysts (the seats that read the market and write reports, one layer below the decision-makers), found the prompts are full of numbers and claims nothing in the code actually enforces.
+**What it found —**
+  - About 55 numbers exist only as text in a prompt, with no code checking or producing them.
+  - About 20 claims about how markets behave are stated as fact with no source.
+  - The technical analyst is told it gets 20 days of price history; it actually gets 40, plus five whole categories of data the prompt never mentions it has.
+  - The evening report's briefing hasn't been touched since before this project started, and still describes a completely different strategy — a 77-symbol quarterly value approach — while the technical seat's own briefing describes a 5-to-15-day swing-trading window. Both feed the same decision seat. They cannot both be the desk's real strategy — **this is now a pending decision for you, in `docs/WORK.md`.**
+  - Roughly a third of the portfolio manager's briefing, and a quarter of the risk manager's and the position reviewer's, is prose describing machinery the model doesn't actually use. That dead weight is where almost every stale or wrong claim above was found living.
+  - Separately: a check already exists that fills prompts with numbers straight from the code so they can't go stale, but it only covers 2 of the 10 prompt files. Scanning prompt text for suspicious numbers doesn't work either — there are about 1,825 numbers in there, mostly just dates and list numbering. Neither of the two confirmed mistakes above (item 98) was even sitting in a prompt file — both were assembled by Python code into a string. What would actually have caught the worst one: when code that a prompt describes gets deleted, search the prompts for its name at that moment.
+**Recommendation —** Decide the evening-vs-technical mandate question first (it changes what "fix the prompt" even means); then strip the dead weight, since that's where the false statements cluster; build the deletion-site check as ongoing insurance rather than trying to scan for numbers. Not yet placed in your priority order.
+
+## item 100
+
+**Plain language —** Three pieces of cockpit and reporting work are already in progress, and your instructions for each are recorded here so they survive if the session restarts.
+  1. **Cockpit panel scrolling.** Panels can be dragged around the screen, so a scrolling rule tied to "top of screen" or "bottom of screen" breaks the moment a panel moves. Scroll behaviour should belong to each panel itself. Holdings and Positions scroll internally; the tabbed detail panels should grow to fit their content and let the whole page scroll instead.
+  2. **"Why do we hold this" view.** When you click through to see why a position is held, the fix replaces what's already there rather than adding a new panel: one plain sentence at the top giving the real reason with actual numbers in it, then the rest of the decision-relevant detail written for a human to read, with no fixed line count — you rejected a "keep it to four lines" rule; the test is whether something is relevant, not how long it is. Internal ID numbers get tucked behind a toggle rather than shown up front.
+  3. **Evening report.** Drop run identifiers and provider-request counts (nobody-facing plumbing); state the LLM cost in a sentence instead of a row of zeros; only mention "overnight fractional position unprotected by design" when something is actually abnormal that night, not every night; put today's and total profit/loss at the very top; keep the winners and underwater-positions lists; rewrite the risk/bias section so it reads in plain language.
+**Recommendation —** No action needed from you; recorded so the in-progress work has something to be checked against when it lands.

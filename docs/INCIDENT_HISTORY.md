@@ -11160,3 +11160,7 @@ no write-up in these docs at all before this entry.
 **Not changed.** The 20% band's value. The kill switch. The constructor's ATR
 floors or the §12.1 level exemption. Nothing about how wide a stop is allowed
 to be. The `0.0` sentinel.
+
+### 2026-09-18 — the production checkout now matches what git records (item 94 closed)
+
+The live box was running a hand-built dashboard bundle that had never been committed. Git was not wrong about production in the usual direction — the SERVER was the stale side, since nobody could say from the repo alone what was actually being served. PR #465 rebuilt and committed the cockpit bundle from current frontend source so the two agree, and added a guard that `index.html` may only reference assets that are actually committed, so the drift cannot silently recur. Verified: the dashboard looks no different to the owner — this was a recording fix, not a behaviour change. Item 94 retired.
