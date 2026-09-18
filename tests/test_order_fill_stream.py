@@ -399,10 +399,65 @@ class _Fake429(Exception):
 
 
 def test_reconnect_delay_honors_server_retry_after():
+    """Retry-After is honoured verbatim for a NON-rate-limit failure.
+
+    CHANGED 2026-09-18: this test used to assert that a 429 carrying
+    Retry-After 12 waited exactly 12s. It no longer may. Alpaca publishes
+    the limit as 200 requests per MINUTE, so a retry 12s into the same
+    exhausted window cannot clear it — a 429 now floors at the full
+    published window. The verbatim-hint contract still holds for every
+    other failure, which is what this now pins.
+    """
     from src.execution.broker import _trading_stream_reconnect_delay
-    exc = _Fake429(retry_after=12)
+
+    class _TransientWithHint(ConnectionError):
+        def __init__(self):
+            super().__init__("connection reset")
+            self.headers = {"retry-after": "12"}
+
+    exc = _TransientWithHint()
     assert _trading_stream_reconnect_delay(1, exc) == 12.0
     assert _trading_stream_reconnect_delay(9, exc) == 12.0
+
+
+def test_rate_limit_backs_off_harder_than_a_transient_error():
+    """A 429 must wait strictly longer than a generic network failure.
+
+    This is the whole lesson of 2026-09-15: 32,666 of the day's 32,896
+    handshakes were HTTP 429, and retrying a rate limit on transport
+    timings is what produced them.
+    """
+    from src.execution.broker import (
+        _trading_stream_reconnect_delay,
+        _STREAM_RATE_LIMIT_STAND_DOWN_S,
+        _ALPACA_STREAM_RECONNECT_MAX_S,
+    )
+
+    # The rate-limit floor must exceed the TRANSPORT cap, or "harder" is
+    # only true on early attempts.
+    assert _STREAM_RATE_LIMIT_STAND_DOWN_S > _ALPACA_STREAM_RECONNECT_MAX_S
+
+    for attempt in (1, 2, 5, 9, 50):
+        transient = _trading_stream_reconnect_delay(
+            attempt, ConnectionError("connection reset"),
+        )
+        rate_limited = _trading_stream_reconnect_delay(attempt, _Fake429())
+        assert rate_limited > transient, (
+            f"attempt {attempt}: 429 waited {rate_limited}s but a generic "
+            f"error waited {transient}s"
+        )
+        assert rate_limited >= _STREAM_RATE_LIMIT_STAND_DOWN_S
+
+    # A server asking us back sooner than its own published window does not
+    # shorten the stand-down.
+    assert (
+        _trading_stream_reconnect_delay(1, _Fake429(retry_after=5))
+        == _STREAM_RATE_LIMIT_STAND_DOWN_S
+    )
+    # A server asking for LONGER always wins.
+    assert _trading_stream_reconnect_delay(
+        1, _Fake429(retry_after=_STREAM_RATE_LIMIT_STAND_DOWN_S + 90),
+    ) == _STREAM_RATE_LIMIT_STAND_DOWN_S + 90
 
 
 def test_reconnect_delay_grows_then_caps_without_retry_after():
@@ -423,10 +478,11 @@ def test_stream_http_status_reads_429_from_exc_and_message():
     assert _stream_http_status(ConnectionError("timed out")) is None
 
 
-def test_guarded_handshake_does_not_tight_loop_on_429():
+def test_guarded_handshake_does_not_tight_loop_on_429(monkeypatch):
     """Old SDK shape: except + 10ms sleep. With Retry-After 0.2s the
     guarded `_start_ws` itself waits, so a 0.5s window cannot issue
     dozens of handshakes."""
+    from src.execution import broker as broker_mod
     from src.execution.broker import _install_trading_stream_reconnect_guard
 
     attempts = {"n": 0}
@@ -442,6 +498,11 @@ def test_guarded_handshake_does_not_tight_loop_on_429():
             self._should_run = False
 
     stream = Stream()
+    # The 429 stand-down is now the published 60s minute-window, which this
+    # 0.5s probe cannot wait out. Shrink the constant, not the assertion:
+    # what is under test is that the guard SLEEPS AT ALL between handshakes.
+    monkeypatch.setattr(broker_mod, "_STREAM_RATE_LIMIT_STAND_DOWN_S", 0.2)
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
     _install_trading_stream_reconnect_guard(stream)
 
     async def _old_sdk_loop(duration: float) -> None:
@@ -459,6 +520,7 @@ def test_guarded_handshake_does_not_tight_loop_on_429():
 
 
 def test_guard_stop_interrupts_backoff_wait():
+    from src.execution import broker as broker_mod
     from src.execution.broker import _install_trading_stream_reconnect_guard
 
     class Stream:
@@ -471,6 +533,7 @@ def test_guard_stop_interrupts_backoff_wait():
             self._should_run = False
 
     stream = Stream()
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
     _install_trading_stream_reconnect_guard(stream)
 
     async def _fail_then_stop():
@@ -1053,3 +1116,167 @@ def test_shipped_config_has_the_fill_stream_on():
     root = Path(__file__).resolve().parent.parent
     raw = yaml.safe_load((root / "config" / "settings.yaml").read_text())
     assert raw["execution"]["fill_stream_enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# Reconnect CEILINGS (2026-09-18). The backoff guard fixed the RATE of the
+# 2026-09-15 storm but not its BOUND: the attempt counter lived in a closure
+# and reset on every new hub, so a socket that can never authenticate
+# retried at the 30s cap forever. These pin the ceiling that ends it.
+# ---------------------------------------------------------------------------
+
+
+class _CeilingStream:
+    """Old-SDK shape: `_start_ws` that always fails, driven by a 10ms loop."""
+
+    def __init__(self, exc_factory):
+        self._should_run = True
+        self._exc_factory = exc_factory
+        self.attempts = 0
+
+    async def _start_ws(self):
+        self.attempts += 1
+        raise self._exc_factory()
+
+    async def stop_ws(self):
+        self._should_run = False
+
+
+async def _drive_sdk_loop(stream, max_iterations: int = 500) -> None:
+    """Reproduce `alpaca.trading.stream._run_forever` (alpaca-py 0.43.5).
+
+    Verbatim in the part that matters: catch everything, then
+    `finally: await asyncio.sleep(0.01)`, then re-check `_should_run` at the
+    top. No backoff and no ceiling of its own — which is the defect.
+    """
+    for _ in range(max_iterations):
+        if not stream._should_run:
+            return
+        try:
+            await stream._start_ws()
+            return
+        except Exception:
+            pass
+        finally:
+            await asyncio.sleep(0)
+
+
+def test_session_ceiling_stops_the_reconnect_loop(monkeypatch):
+    """The loop must STOP, not merely slow down."""
+    from src.execution import broker as broker_mod
+
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
+    monkeypatch.setattr(broker_mod, "_STREAM_RATE_LIMIT_STAND_DOWN_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MIN_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MAX_S", 0.0)
+    monkeypatch.setattr(broker_mod, "send_owner_alert", None, raising=False)
+    sent: list[str] = []
+    monkeypatch.setattr(
+        broker_mod, "_alert_stream_gave_up", lambda reason: sent.append(reason),
+    )
+
+    stream = _CeilingStream(_Fake429)
+    broker_mod._install_trading_stream_reconnect_guard(stream)
+    asyncio.run(_drive_sdk_loop(stream))
+
+    ceiling = broker_mod._STREAM_ATTEMPT_CEILING_PER_SESSION
+    assert stream.attempts == ceiling, (
+        f"expected the loop to stop at the {ceiling}-attempt session "
+        f"ceiling, got {stream.attempts}"
+    )
+    # The SDK's own loop is told to exit, which is what actually ends it.
+    assert stream._should_run is False
+    assert sent == ["it rate-limited us"], "exactly one give-up, once"
+
+
+def test_daily_ceiling_survives_a_fresh_session(monkeypatch):
+    """A new hub must NOT hand the socket a fresh unbounded budget.
+
+    This is the hole the closure-local counter left: every `start()` reset
+    `failures` to zero, so nothing ever accumulated across a day.
+    """
+    from src.execution import broker as broker_mod
+
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
+    monkeypatch.setattr(broker_mod, "_STREAM_RATE_LIMIT_STAND_DOWN_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MIN_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MAX_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_STREAM_ATTEMPT_CEILING_PER_DAY", 10)
+    monkeypatch.setattr(broker_mod, "_alert_stream_gave_up", lambda reason: None)
+
+    total = 0
+    for _ in range(20):  # twenty fresh sockets in one day
+        stream = _CeilingStream(_Fake429)
+        broker_mod._install_trading_stream_reconnect_guard(stream)
+        asyncio.run(_drive_sdk_loop(stream))
+        total += stream.attempts
+
+    assert total <= 10 + broker_mod._STREAM_ATTEMPT_CEILING_PER_SESSION, (
+        f"twenty sessions spent {total} handshakes against a daily ceiling "
+        "of 10 — the budget is not shared across sessions"
+    )
+    assert broker_mod._STREAM_ATTEMPT_BUDGET.day_exhausted()
+
+
+def test_budget_rolls_over_to_a_new_day():
+    """Yesterday's exhaustion must not keep the socket shut forever."""
+    from src.execution.broker import _StreamAttemptBudget
+
+    budget = _StreamAttemptBudget()
+    for _ in range(500):
+        budget.record_attempt("2026-09-15")
+    assert budget.day_exhausted("2026-09-15")
+    assert budget.claim_alert("2026-09-15") is True
+    assert budget.claim_alert("2026-09-15") is False, "alert is once a day"
+
+    assert not budget.day_exhausted("2026-09-16")
+    assert budget.attempts_today("2026-09-16") == 0
+    assert budget.claim_alert("2026-09-16") is True
+
+
+def test_giveup_alert_is_plain_english_and_says_fills_still_work():
+    """The owner reads this on a phone and must not need to act on it."""
+    from src.execution.broker import _stream_giveup_owner_message
+
+    text = _stream_giveup_owner_message("it rate-limited us")
+    lowered = text.lower()
+    assert "instant fill alerts switched off" in lowered
+    assert "slower way" in lowered
+    assert "nothing for you to do" in lowered
+    for jargon in (
+        "websocket", "trade_updates", "429", "http", "handshake",
+        "backoff", "rest", "auth", "socket",
+    ):
+        assert jargon not in lowered, f"owner text leaked the term {jargon!r}"
+
+
+def test_auth_rejection_also_hits_the_ceiling(monkeypatch):
+    """A wrong credential must give up too, not just a rate limit.
+
+    2026-09-15 was a credential refusal that PRESENTED as 429s. Bounding
+    only the rate-limit path would leave the original fault unbounded.
+    """
+    from src.execution import broker as broker_mod
+
+    broker_mod._STREAM_ATTEMPT_BUDGET.reset()
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MIN_S", 0.0)
+    monkeypatch.setattr(broker_mod, "_ALPACA_STREAM_RECONNECT_MAX_S", 0.0)
+    sent: list[str] = []
+    monkeypatch.setattr(
+        broker_mod, "_alert_stream_gave_up", lambda reason: sent.append(reason),
+    )
+
+    def _rejected():
+        return broker_mod.TradeStreamAuthRejected(
+            broker_message="code=401, message=Unauthorized",
+            broker_status="unauthorized",
+            credential="PKplaceholderplaceholder1234",
+        )
+
+    stream = _CeilingStream(_rejected)
+    broker_mod._install_trading_stream_reconnect_guard(stream)
+    asyncio.run(_drive_sdk_loop(stream))
+
+    assert stream.attempts == broker_mod._STREAM_ATTEMPT_CEILING_PER_SESSION
+    assert stream._should_run is False
+    assert sent == ["it rejected our credential"]

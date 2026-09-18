@@ -535,7 +535,18 @@ class ExecutionConfig(BaseModel):
     `trade_updates authentication REJECTED by broker`, with the key's
     length and first two characters only — never the value, never the
     secret. A successful handshake logs
-    `trade_updates websocket authenticated`."""
+    `trade_updates websocket authenticated`.
+
+    CEILINGS ADDED 2026-09-18 (after the storm audit). Enabling this flag
+    no longer risks an unbounded reconnect loop. The installed alpaca-py
+    retries a failed handshake every 10ms with no backoff and no limit of
+    its own — that is what produced 32,896 attempts and 32,666 HTTP 429
+    rejections on 2026-09-15 — so `src/execution/broker.py` now enforces
+    both a per-session and a per-day attempt ceiling of its own, treats a
+    429 as a rate-limit stand-down rather than a transport retry, and when
+    a ceiling is reached stops the socket for the day, tells the owner once
+    in plain words, and leaves fills to the bounded REST path. See the
+    `_STREAM_ATTEMPT_CEILING_*` constants there for each number's source."""
 
 
 class RiskConfig(BaseModel):
