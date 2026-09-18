@@ -9,7 +9,8 @@ from pydantic import ValidationError
 from src.agents.base import BaseAgent
 from src.agents.prompt_limits import LiveLimitPrompt
 from src.models import (
-    AnalystVerdict, EarningsAnalysis, MacroAnalysis, NewsIntelligenceReport,
+    AnalystVerdict, CandidateRejection, EarningsAnalysis, MacroAnalysis,
+    NewsIntelligenceReport,
     PortfolioDecision, Position, TargetPosition, TechAnalysisResult,
     SmartMoneyFinding, news_verdict_for_symbol, normalize_sector_stance,
     open_target_missing_falsifier, parse_telemetry,
@@ -1308,7 +1309,20 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             "deployable this session, no margin" if not allow_margin
             else "raw cash — see Margin Capacity below for what may still be spent"
         )
-        return f"""## Account Status
+        # Accounting re-ask (board item 133, 2026-09-18). Non-empty ONLY on
+        # the one bookkeeping re-ask `DecisionStage` may make in a session,
+        # and it names the candidates this seat dropped without saying why.
+        # Empty string on every first call, so the prompt this seat normally
+        # sees is byte-for-byte unchanged. It asks for the missing
+        # `rejections` entries and nothing else — see
+        # `src/pm_accounting.REASK_DIRECTIVE` for why it must not re-open
+        # the decision.
+        accounting_challenge: str = kwargs.get("accounting_challenge") or ""
+        accounting_section = (
+            f"### ⚠️ {accounting_challenge}\n\n"
+            if accounting_challenge else ""
+        )
+        return f"""{accounting_section}## Account Status
 - Total Value: ${total_value:,.2f}
 - Cash Balance: ${cash_balance:,.2f} ({cash_status}){reserve_line}
 - Invested: ${invested:,.2f} ({invested_pct:.1f}% of equity — capital at work, unsigned and un-leveraged; a short counts its notional, not a credit)
@@ -2080,6 +2094,10 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # from the same preview pass, so eligibility rule R6 can name
                # a candidate the one shared funnel has already refused.
                constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
+               # Board item 133 (2026-09-18): the ONE bookkeeping re-ask
+               # `DecisionStage` may make when this seat dropped a candidate
+               # without naming a ground. Empty on every ordinary call.
+               accounting_challenge: str = "",
                ) -> tuple[PortfolioDecision | None, "AgentResult"]:
         # One fill retry per decide() call — the agent is long-lived across
         # morning/midday/close. A morning miss must not spend the close's
@@ -2129,6 +2147,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
             rotation_execute_enabled=rotation_execute_enabled,
             real_reward_risk_by_symbol=real_reward_risk_by_symbol,
             constructor_refusals_by_symbol=constructor_refusals_by_symbol,
+            accounting_challenge=accounting_challenge,
         )
         parsed = result.parse_json()
         if parsed is None:
@@ -2168,6 +2187,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
         )
         if isinstance(parsed, dict):
             parsed = self._drop_invalid_targets(parsed)
+            parsed = self._drop_invalid_rejections(parsed)
         try:
             decision = PortfolioDecision(**parsed)
             if parsed_target_count > 0 and not decision.targets:
@@ -2257,6 +2277,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     if isinstance(reparsed.get("targets", []), list) else 0
                 )
                 reparsed = self._drop_invalid_targets(reparsed)
+                reparsed = self._drop_invalid_rejections(reparsed)
                 if not self._decision_fields_unchanged(parsed, reparsed):
                     logger.error(
                         "Portfolio decision repair changed target symbols/"
@@ -2958,6 +2979,45 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                     SUBFLOOR_CATALYST_UNVERIFIED_STATUS, target.symbol, intent,
                 )
         return decision
+
+    @staticmethod
+    def _drop_invalid_rejections(parsed: dict) -> dict:
+        """Same per-entry isolation as `_drop_invalid_targets`, for the
+        candidate-accounting list (board item 133, 2026-09-18).
+
+        `rejections` is BOOKKEEPING. A malformed entry in it must never
+        destroy `reasoning_chain`, `portfolio_view` and every target — the
+        seat explaining itself badly is not a reason to lose a whole
+        session's decision. A dropped entry is not lost either: the symbol
+        it named is then simply unaccounted for, and the accounting step in
+        `DecisionStage` re-asks and records it exactly as it does for a name
+        the seat never mentioned. So the failure mode is one paid re-ask,
+        never a silent hole and never a dead session.
+        """
+        raw = parsed.get("rejections")
+        if raw is None:
+            return parsed
+        if not isinstance(raw, list):
+            logger.warning(
+                "Portfolio manager: rejections is %s, not list — replacing "
+                "with []", type(raw).__name__,
+            )
+            parsed["rejections"] = []
+            return parsed
+        valid: list = []
+        for i, item in enumerate(raw):
+            try:
+                CandidateRejection.model_validate(item)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Portfolio manager: dropping unusable rejections entry at "
+                    "index %d (%s) — the symbol it named will be re-asked "
+                    "for, not silently omitted: %r", i, e, item,
+                )
+                continue
+            valid.append(item)
+        parsed["rejections"] = valid
+        return parsed
 
     @staticmethod
     def _drop_invalid_targets(parsed: dict) -> dict:

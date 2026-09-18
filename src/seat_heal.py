@@ -61,6 +61,15 @@ class HealResult:
     paid_retry: bool = False
     usable: bool = False
     details: dict = field(default_factory=dict)
+    #: What this failure means FOR THE OWNER, in his words, when the default
+    #: sentence below would be false for this seat. Added 2026-09-18 (board
+    #: item 133): the default body says "the desk will not decide on this
+    #: seat as if it had answered", which is true of a lost research seat
+    #: and false of a bookkeeping heal, where the decision was already made
+    #: and only the explanation is missing. Telling him a trade was withheld
+    #: when it was not is the owner-facing-message class of defect this desk
+    #: is already fixing elsewhere (item 89). Empty keeps the default.
+    owner_consequence: str = ""
 
     def to_evidence(self) -> dict:
         return {
@@ -383,11 +392,14 @@ def heal_failure_alert_text(result: HealResult, *, cap_blocked: bool = False) ->
             f"already bound. The seat was not treated as green-empty. "
             f"Reason: {result.reason}"
         )
+    consequence = (result.owner_consequence or "").strip() or (
+        "The desk will not decide on this seat as if it had answered."
+    )
     return (
         f"OWNER ALERT — research heal failed\n"
         f"Seat: {result.seat}\n"
         f"Mechanical repair did not produce usable output"
         f"{' and the one paid retry also failed' if result.paid_retry else ''}. "
-        f"The desk will not decide on this seat as if it had answered. "
+        f"{consequence} "
         f"Reason: {result.reason}"
     )

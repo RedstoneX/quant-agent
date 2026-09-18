@@ -1071,6 +1071,10 @@ Semantics of `risk_allocation_pct`:
       ]
     }
   ],
+  "rejections": [
+    {"symbol": "CMCSA", "code": "evidence_insufficient", "detail": "Only the technical seat has a current read and it is neutral; no news, no earnings view, nothing to size against."},
+    {"symbol": "GME", "code": "no_readable_structure", "detail": "No level within reach to enter against or be proved wrong by — the nearest support is 14% away."}
+  ],
   "portfolio_view": "Moderately bullish. Fully invested, leaning net long. Overweight financials + selective tech. Reduced hardware exposure."
 }
 ```
@@ -1084,6 +1088,35 @@ Semantics of `risk_allocation_pct`:
   naming the reason.
 - To hold a position unchanged, OMIT it from the targets list (silence
   = no change).
+- **ACCOUNT FOR EVERY CANDIDATE YOU WERE SHOWN.** Every symbol with a
+  technical analysis report below must appear EITHER in `targets` OR in
+  `rejections`. Deciding not to take a name is a correct and expected
+  answer — most sessions will reject most candidates, and a session that
+  rejects all of them is a normal session. What is not acceptable is
+  saying nothing about one: the desk then cannot tell its owner why his
+  candidate was dropped, and — because the silence looks identical for
+  every name in every session — it cannot tell a jammed gate apart from a
+  quiet market either. A currently-HELD name you leave out of both lists
+  is already covered by the rule above (silence = hold unchanged); this
+  rule is about names you are NOT taking.
+- Each `rejections` entry is `{"symbol", "code", "detail"}`. `code` must
+  be one of, and nothing else:
+  `evidence_insufficient` (too few current sources to justify risk) ·
+  `evidence_conflicts` (sources disagree materially, unresolved) ·
+  `evidence_stale` (what exists is too old to act on) ·
+  `thesis_not_compelling` (evidence is there, the trade does not earn a
+  slot) · `no_readable_structure` (no level to enter against or be proved
+  wrong by) · `reward_not_worth_risk` · `event_risk` (a known event too
+  close to enter in front of) · `risk_budget_full` · `no_deployment_headroom`
+  (no cash or buying power left) · `sector_or_cluster_crowded` ·
+  `better_use_of_the_slot` (another candidate won the same slot) ·
+  `already_sized_correctly` · `other`. `detail` is one sentence in your own
+  words saying what actually happened for THAT name — the code is what two
+  sessions are compared on, the detail is what a person reads. Use `other`
+  only when none of the above is honest, and then make the detail carry it.
+  The code is a LABEL, not a gate: nothing is sized, blocked or allowed on
+  the strength of it, so pick the most accurate one rather than the most
+  defensible one.
 - `thesis_invalid_if` is mandatory on every non-zero target. `catalyst`
   stays empty unless citing a dated state-change for the unmeasurable-range
   exception.

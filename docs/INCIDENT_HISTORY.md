@@ -22,6 +22,81 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — the desk could say it refused every idea, but never why (item 133)
+
+**In plain words.** The owner got an alarm saying the desk had turned down
+every idea it looked at, two sessions running, for one unchanging reason.
+The alarm was right to fire. The trouble was the reason it printed:
+`portfolio_manager|omitted|candidate_not_selected_for_target||`. That is not
+a reason. It is what the desk wrote down when the portfolio manager simply
+did not pick a name — and nobody had ever asked the portfolio manager why.
+Because the manager was never asked, every candidate it dropped got the same
+non-answer, in every session, forever.
+
+**Why that mattered more than it looks.** The whole point of that alarm is
+to tell a JAMMED gate apart from a QUIET MARKET. The test is shape, not
+count: a quiet market kills different names for different reasons, and a
+jammed gate kills every name for the same one. With exactly one reason
+available to it, the alarm could never observe anything else. Every empty
+day looked like a jam and every jam looked like an empty day. An alarm that
+can only say one thing is not a diagnosis; it is a light that is always on.
+
+**What was ruled out.** The obvious read — "the gate really is jammed, go
+find it" — was the wrong job. The likely cause of the 2026-09-17 jam had
+already been fixed overnight: the manager had been told the account had no
+margin while margin was enabled, and separately told it was over a
+fully-invested mandate while the book was deliberately levered above it.
+Both were prompt falsehoods, both were corrected before this work started,
+and both were confirmed on the main branch rather than taken on trust. So
+the task was never to unjam anything. It was to make sure the NEXT jam can
+be named.
+
+**What was actually wrong, and the fix.** The manager was asked to produce
+targets and nothing else, and the code then inferred a refusal from the
+silence. Inferring is the defect: silence carries no information, so there
+was nothing to record but the fact of the silence itself. The manager is now
+required to account for every candidate it was shown — either it is a
+target, or it is a rejection carrying a named ground from a fixed vocabulary
+plus a sentence of the manager's own. When it still says nothing, the desk
+does not quietly write the silence down as though it were a fact about the
+stock. It follows the same order it already follows for a lost research seat
+and for an unsubstantiated exit: repair mechanically from what the seat DID
+say, ask once more under the retry budget that already exists, and only then
+record, per name, that the seat would not account for it — which is a fact
+about the desk, and reads as one.
+
+**Two things that were easy to get wrong here and were deliberately not
+done.** The re-ask asks for bookkeeping only and its answer is thrown away
+except for the missing explanations; if a paid retry could revise the plan,
+every accounting gap would become a chance to re-trade the book. And the
+manager's own prose is deliberately kept OUT of the field the alarm compares
+sessions on. Prose varies with wording where the cause is identical, so
+comparing on prose would make a genuine jam invisible whenever the model
+happened to phrase itself differently twice. The named ground is what gets
+compared; the sentence is what the owner reads.
+
+**Why this cannot make the alarm cry wolf.** Before, every candidate
+produced the same single key, so any session with no entries was
+automatically "one unvarying reason". Now a session only looks that way when
+its candidates really did die on the same named ground. More distinct
+reasons can only split that set and shorten a run — the alarm can get
+rarer, never more frequent. That direction was checked explicitly rather
+than assumed.
+
+**Note for anyone reading older entries.** The worked example under item 59
+elsewhere in this file quotes
+`portfolio_manager / omitted / candidate_not_selected_for_target` as the
+terminal record for five real candidates. That was true when it was written.
+That outcome no longer exists; the same situation now records a named ground
+or an explicit "the seat would not say".
+
+**What would have caught it earlier.** Nothing in the code was broken — it
+did exactly what it was written to do. What was missing was anyone asking
+whether the thing being recorded was INFORMATION. A durable per-symbol
+record whose value is constant across every symbol and every session cannot
+answer a question, and that is checkable by looking at it rather than by
+waiting for an alarm to fire uselessly.
+
 ### 2026-09-18 — the written briefs that tell the trade-picking seats the desk's rules had seventeen statements in them that were no longer true (items 98 and 104 collapsed)
 
 **What broke, in one line:** the three seats that actually pick and size trades are each handed a brief, in plain English, describing the desk's own rules — and seventeen of those statements described machinery that had been changed or deleted underneath them, eight of which could change which trade happened or how big it was.
