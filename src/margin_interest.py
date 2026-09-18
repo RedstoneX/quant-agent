@@ -169,13 +169,108 @@ def build_estimate(
 
 def format_alert_line(estimate: MarginInterestEstimate | None) -> str | None:
     """Plain-language morning-alert line, or `None` when there's nothing
-    to report (silent on a zero/no debit balance — no noise policy)."""
+    to report (silent on a zero/no debit balance — no noise policy).
+
+    UNCHANGED, deliberately. The owner's 2026-09-18 "show it every day,
+    even if it's zero" decision is implemented in `format_daily_line`
+    below, NOT here: this formatter cannot tell "no debit balance" apart
+    from "no rate configured" — `build_estimate` returns `None` for both —
+    so making it speak on `None` would print a reassuring zero over a
+    broken config. The always-speak policy belongs where the inputs are
+    still distinguishable.
+    """
     if estimate is None:
         return None
     return (
         f"💳 margin interest: ${estimate.daily_usd:,.2f}/day "
         f"(~${estimate.annual_usd:,.0f}/yr) on ${estimate.debit_balance:,.0f} "
         f"carried overnight at {estimate.rate_pct:.2f}% — {ESTIMATE_LABEL}"
+    )
+
+
+#: Rendered when the account's own cash figure could not be read at all.
+#: Owner decision 2026-09-18 (below): degrading to silence is
+#: indistinguishable from the tracker being dead, so a failed read says it
+#: failed. Never a fabricated zero — "not available" and "$0.00" are
+#: different claims about the world and must read differently.
+UNAVAILABLE_LINE = (
+    "💳 margin interest: not available — the account's cash balance "
+    "could not be read this time"
+)
+
+#: Rendered when no usable interest rate is configured. Kept SEPARATE from
+#: the zero line on purpose: `build_estimate` returns `None` both when
+#: nothing was borrowed and when `rate_pct` is missing or zero, and
+#: printing "nothing to pay" over a deleted or mis-keyed
+#: `risk.margin_interest_rate_pct` would be a reassuring lie on exactly
+#: the day the owner most needs to know the tracker is broken — the
+#: inverse of what his "so I know it's still working" asked for.
+RATE_UNAVAILABLE_LINE = (
+    "💳 margin interest: not available — no borrowing rate is configured, "
+    "so nothing can be worked out"
+)
+
+
+def _money(usd: float) -> str:
+    """`$1,234.56` / `-$1,234.56` — sign outside the dollar mark, which is
+    how the rest of the owner-facing lines in this desk render money."""
+    return f"-${abs(usd):,.2f}" if usd < 0 else f"${usd:,.2f}"
+
+
+def format_daily_line(
+    end_of_day_cash: float | None, rate_pct: float | None,
+) -> str:
+    """ALWAYS exactly one owner-facing line. Never `None`, never silent.
+
+    OWNER DECISION 2026-09-18, verbatim: "Yes, every day, even if it's
+    zero, that way I know it's still working." This DELIBERATELY OVERRIDES
+    the spec's original no-noise policy (§11.2: say nothing on a zero debit
+    balance), which `format_alert_line` and `build_estimate` still
+    implement above and which stays correct for their own contracts. The
+    policy was wrong for the one reader it serves: to him an absent line
+    and a dead tracker look identical, so the zero has to be said out loud
+    — the zero IS the evidence the thing still runs.
+
+    Takes the raw inputs rather than a built estimate precisely so it can
+    keep apart the states `build_estimate` collapses into a single `None`:
+
+      * cash not readable        -> `UNAVAILABLE_LINE`
+      * no/zero rate configured  -> `RATE_UNAVAILABLE_LINE` (a FAULT, not a zero)
+      * nothing borrowed         -> the zero line below
+      * a real debit balance     -> `format_alert_line`, unchanged
+
+    The zero line carries the MEASURED overnight cash figure rather than a
+    bare "$0.00/day", for two reasons. First, a constant string is
+    indistinguishable from a stuck one, so a zero that never changes would
+    prove nothing — a cash balance that moves day to day does. Second, the
+    desk ignores a debit below `MARGIN_DEFICIT_FLOOR_USD` as settlement
+    noise, so a flat "nothing was borrowed" would be factually false on a
+    99-cent deficit; showing the number instead of asserting the absence
+    cannot be false at any balance.
+
+    The zero line carries NO `ESTIMATE_LABEL`, on purpose: it reports the
+    broker's own cash figure and the fact that nothing was borrowed, which
+    is measured. The label belongs on the non-zero figure, which genuinely
+    is a projection; pasting it onto a certain zero would blunt it exactly
+    where it has to bite.
+    """
+    if end_of_day_cash is None:
+        return UNAVAILABLE_LINE
+    if rate_pct is None or rate_pct <= 0:
+        return RATE_UNAVAILABLE_LINE
+    debit_balance = overnight_debit_balance(end_of_day_cash)
+    line = format_alert_line(build_estimate(debit_balance, rate_pct))
+    if line is not None:
+        return line
+    if end_of_day_cash < 0:
+        # A deficit the desk treats as settlement noise, not borrowing.
+        return (
+            f"💳 margin interest: $0.00/day — overnight cash "
+            f"{_money(end_of_day_cash)}, too small to charge on"
+        )
+    return (
+        f"💳 margin interest: $0.00/day — overnight cash "
+        f"{_money(end_of_day_cash)}, nothing borrowed"
     )
 
 

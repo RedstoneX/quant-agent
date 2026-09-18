@@ -16,6 +16,7 @@ import { ModalProvider, useModalState } from "./context/ModalContext";
 import { TopStrip } from "./components/TopStrip";
 import { HeroBand } from "./components/HeroBand";
 import { LiquidityStrip } from "./components/LiquidityPanel";
+import { MarginInterestStrip } from "./components/MarginInterestPanel";
 import { HoldingsStrip } from "./components/HoldingsStrip";
 import { DecisionStateBanner } from "./components/DecisionStateBanner";
 import { TodaySessionsStrip } from "./components/TodaySessionsStrip";
@@ -662,6 +663,12 @@ export default function App() {
             <HeroBand account={account} accountError={accountError} positions={positions} regime={latestRegime} collapsed={chromeCompact} />
             {!chromeCompact && (
               <LiquidityStrip account={account} accountError={accountError} positions={positions} />
+            )}
+            {/* Directly under Liquidity: what the desk can deploy, then what
+              * it owes for having borrowed. Own strip, never folded into the
+              * liquidity row — see MarginInterestPanel.tsx. */}
+            {!chromeCompact && (
+              <MarginInterestStrip account={account} accountError={accountError} />
             )}
             <TodaySessionsStrip
               runs={todaysRuns}

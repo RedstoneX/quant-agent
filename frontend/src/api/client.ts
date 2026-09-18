@@ -122,6 +122,33 @@ export interface ExposureBreakdown {
   net_exposure_pct: number | null;
 }
 
+/** Margin interest — what the desk pays to borrow, NOT an operating cost.
+ * Computed server-side by src/margin_interest.py and never re-derived here.
+ *
+ * Three shapes (owner decision 2026-09-18, "every day, even if it's zero"):
+ *   - a carried debit balance: every field set, `label` set;
+ *   - nothing borrowed: `0.0` in the three dollar fields, the real
+ *     `rate_pct`, `label` null (a certain zero is not an estimate), `error`
+ *     null;
+ *   - a fault: dollar fields null and `error` set.
+ * `error` is the ONLY safe way to tell a real zero from a failed read —
+ * never render a null figure as $0.00. */
+export interface MarginInterestEstimate {
+  /** The overnight amount borrowed the charge is computed on. */
+  debit_balance: number | null;
+  /** Annual borrowing rate in percent. Lives in config; never set here. */
+  rate_pct: number | null;
+  daily_usd: number | null;
+  annual_usd: number | null;
+  /** The verbatim ESTIMATE framing. Must be DISPLAYED, not tooltipped:
+   * the desk never presents an estimate as a measurement. */
+  label: string | null;
+  /** Plain-language result of checking the estimate against the broker's
+   * own INT activity records. Null until a debit has been carried. */
+  broker_check_note: string | null;
+  error: string | null;
+}
+
 export interface RiskLimits {
   max_position_pct: number | null;
   max_total_position_pct: number | null;
@@ -140,6 +167,7 @@ export interface AccountResponse {
   liquidity: LiquidityBreakdown | null;
   exposure: ExposureBreakdown | null;
   risk_limits: RiskLimits | null;
+  margin_interest: MarginInterestEstimate | null;
   error: string | null;
 }
 

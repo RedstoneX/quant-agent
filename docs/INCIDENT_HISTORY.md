@@ -22,6 +22,54 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — the desk worked out what borrowing was costing and showed it to nobody (item 151)
+
+**In plain words:** the desk has been calculating, every time the dashboard
+refreshed, what it costs to borrow money overnight — and no part of the
+dashboard ever put that number on the screen. For seventeen days it was
+computed and thrown away. On Telegram it did appear, but only on mornings
+when money was actually owed, and only as one line filed under running costs
+next to the AI bill, so the owner never found it.
+
+**What the real cause was.** Two separate things, both invisible in the same
+direction. The API had returned a `margin_interest` object since 2026-09-01
+and no cockpit component ever read it — nothing failed, nothing logged, the
+figure simply had no reader. And the original specification asked the
+tracker to stay silent when nothing was owed, on the reasonable-sounding
+ground that a zero is noise. For this reader it was the opposite: an absent
+line and a dead tracker look identical, so the silence removed the only
+evidence the thing still ran.
+
+**The owner's decision, verbatim, 2026-09-18:** "Yes, every day, even if it's
+zero, that way I know it's still working." That deliberately overrides the
+spec's own no-noise rule, and the code says so where the override happens.
+
+**What was ruled out.** Showing a bare "$0.00/day" every morning was
+rejected: a constant string is indistinguishable from a stuck one, so it
+would prove nothing. The zero line carries the measured overnight cash
+balance instead, which moves day to day and cannot be produced by a failed
+read. Also rejected: letting a zero stand for every quiet state. The
+underlying builder returns the same "nothing to report" answer when nothing
+was borrowed AND when no interest rate is configured, so a naive reading
+would have printed a reassuring zero over a broken config — the exact
+inverse of what the decision asked for. Those are now separate lines, and a
+missing rate reads as a fault.
+
+**What catches it next time.** The zero state is now the thing the tests pin,
+on both surfaces — a Telegram line and a cockpit component that must render
+the explicit zero, and must render a fault as a fault rather than as a zero.
+The arithmetic, the 6.25% rate and the broker comparison were not touched;
+this was a visibility change only.
+
+**Acceptance condition, met in the same change:** the margin-interest figure
+appears on the cockpit in every state including zero, and in the morning
+Telegram message every day including zero, in its own section rather than
+inside the running-cost block. Filed and closed together, per this board's
+own rule that finished work is written up here and not left on the board as
+a tombstone.
+
+---
+
 ### 2026-09-18 — the desk could say it refused every idea, but never why (item 133)
 
 **In plain words.** The owner got an alarm saying the desk had turned down

@@ -876,6 +876,48 @@ class TelegramNotifier:
 
 # === Out-of-band owner alert ===
 
+#: The P&L stand-in every standalone owner alert carries directly under its
+#: heading. Owner, 2026-09-18, verbatim: "all the P&L information has to go
+#: at the very top of every telegram alert, right after the first line,
+#: which is really the heading."
+#:
+#: A standalone alert genuinely CANNOT carry a figure. It fires the instant
+#: a problem is found \u2014 from the credential check, the stop-coverage audit,
+#: a reconciliation mismatch \u2014 on paths that have done no account read, and
+#: a page about a naked position must never block on a broker round-trip or
+#: be able to fail inside one. So the line says exactly that, in one
+#: sentence, rather than being dropped (an absent block reads as a broken
+#: one) or filled with a fabricated zero.
+_ALERT_NO_PNL_LINE = (
+    "\U0001f4c8 P&L: not available in this alert \u2014 it is sent the moment a "
+    "problem is found, before any account is read."
+)
+
+
+def _with_pnl_header(text: str) -> str:
+    """Insert the P&L block directly under an alert's heading line.
+
+    Enforced HERE, in the one funnel every standalone alert already goes
+    through, rather than in each of the eighteen callers that build one.
+    The rule has been restated by the owner more than once and drifts every
+    time it depends on the next author remembering it; a single choke point
+    is the only version of it that holds.
+
+    Never raises \u2014 an alerting bug must not be able to break the thing it
+    reports on. On any fault the original text goes out unchanged.
+    """
+    try:
+        if _ALERT_NO_PNL_LINE in text:
+            return text
+        heading, sep, rest = text.partition("\n")
+        if not sep:
+            return f"{heading}\n{_ALERT_NO_PNL_LINE}"
+        return f"{heading}\n{_ALERT_NO_PNL_LINE}\n{rest}"
+    except Exception:  # noqa: BLE001
+        logger.exception("could not attach the P&L line to an owner alert")
+        return text
+
+
 def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
     """Push an alert to the owner NOW, outside the session-result message.
 
@@ -898,6 +940,7 @@ def send_owner_alert(text: str, *, symbols: list[str] | None = None) -> bool:
     """
     if not text:
         return False
+    text = _with_pnl_header(text)
     logger.critical("OWNER ALERT\n%s", text)
     try:
         return bool(TelegramNotifier().send(text, symbols=symbols))
@@ -1275,6 +1318,34 @@ def alert_records_disagree_with_broker(
 # easy to unit-test without the network stub and so main.py can
 # compute the message before deciding to send.
 
+def _pnl_lines_for(result: dict | None, mode: str = "") -> list[str]:
+    """`trader_feed._pnl_section_lines` for whatever this message knows.
+
+    One renderer for the owner's P&L block across BOTH message modules, so
+    the figure and its wording can never differ between two messages sent
+    minutes apart. Never raises: a P&L-rendering fault must not be able to
+    stop the message it leads \u2014 it degrades to the same honest
+    "not available" wording the normal path uses for a missing figure.
+    """
+    if mode == "evening" and isinstance(result, dict):
+        # Evening has its own, richer and 4pm-close-correct block — see
+        # `_evening_pnl_block`. The shared renderer would show the
+        # real-time (after-hours-contaminated) figure instead.
+        try:
+            return _evening_pnl_block(result)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("evening P&L block could not be rendered: %s", exc)
+    try:
+        from src.trader_feed import _pnl_section_lines
+        return _pnl_section_lines(result if isinstance(result, dict) else {})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("P&L block could not be rendered: %s", exc)
+        return [
+            "\U0001f4c8 Today's P&L: not available",
+            "   The figure could not be read while this message was built.",
+        ]
+
+
 def format_session_result(
     mode: str,
     result: dict | None,
@@ -1381,6 +1452,21 @@ def format_session_result(
         f"{humanize_status(status)}  ({timestamp})",
     ]
 
+    # P&L FIRST, directly under the heading \u2014 owner, 2026-09-18, verbatim:
+    # "all the P&L information has to go at the very top of every telegram
+    # alert, right after the first line, which is really the heading." A
+    # REPEAT correction: it kept drifting below whatever block was added
+    # next, so the tests that go with this change assert the POSITION, not
+    # the presence.
+    #
+    # Rendered by the same `trader_feed._pnl_section_lines` every other
+    # message uses, so two messages can never state his P&L differently.
+    # Imported lazily because `trader_feed` imports this module. A mode
+    # that carries no account figures (the pre-open filing reader, a crash
+    # report) renders "not available" plus one sentence saying why \u2014 never
+    # a dropped block and never a fabricated zero.
+    _new_section(lines, *_pnl_lines_for(result, mode))
+
     # Per-session LLM cost (looked up from agent_logs by run_id), the
     # day-to-date spend, and (morning/once only) the prepaid balance and
     # margin-interest lines — one "cost info" section, kept tight against
@@ -1412,8 +1498,16 @@ def format_session_result(
         balance_line = _openrouter_balance_line()
         if balance_line:
             cost_block.append(balance_line)
-        cost_block.extend(_margin_interest_lines())
     _new_section(lines, *cost_block)
+
+    # Margin interest gets its OWN section, not a berth in the cost block
+    # above (owner, 2026-09-18). It sat there since 2026-09-01 and he never
+    # found it: model spend and the prepaid OpenRouter balance are what it
+    # costs to RUN the desk, while this is the price of money the desk
+    # borrowed — a different kind of number, and filing it under running
+    # costs is what made it invisible.
+    if mode in ("morning", "once"):
+        _new_section(lines, *_margin_interest_lines())
 
     # === Mode-specific body ===
     if mode in ("morning", "midday", "close", "once"):
@@ -1900,6 +1994,96 @@ def _append_trade_session_body(lines: list[str], result: dict) -> None:
         _new_section(lines, f"⚠️ degraded: {', '.join(sorted(degraded))}")
 
 
+def _evening_pnl_block(result: dict) -> list[str]:
+    """The evening message's own P&L lines — Daily P&L (4pm-correct where
+    available), equity, and the same day's return against capital actually
+    at risk.
+
+    Lifted OUT of `_append_evening_body` unchanged on 2026-09-18 so it can
+    lead the message rather than sit below the escalation banners and the
+    cost lines (owner: P&L directly under the heading, every message). Not
+    one figure, basis or fallback was altered in the move — this is the
+    same arithmetic in a different place, which is why the existing
+    4pm-vs-real-time regression tests still pin it.
+
+    Deliberately NOT `trader_feed._pnl_section_lines`: that renders the
+    real-time `daily_pnl`, and the evening message must show the official
+    close-to-close figure. Using the shared one here would leak exactly the
+    after-hours number the 4pm path exists to keep out.
+    """
+    lines: list[str] = []
+    # Daily P&L summary — the headline of the evening push. Operator wants to
+    # know "did I make money today" without grepping logs.
+    #
+    # Prefer the TRUE close-to-close ("4pm-to-4pm") P&L the pipeline computed
+    # from Alpaca portfolio_history (pnl_4pm / equity_close = today's official
+    # regular-session close). That's clean of after-hours drift AND free of the
+    # off-by-one trap of differencing account.last_equity (which is the PRIOR
+    # day's close). Fall back to the real-time prior-close→now diff when the
+    # 4pm figures aren't available (API gap / legacy result dicts).
+    daily_pnl = result.get("daily_pnl")
+    total_value = result.get("total_value")
+    pnl_4pm = result.get("pnl_4pm")
+    equity_close = result.get("equity_close")
+
+    _fmt_pnl = _fmt_signed_money
+
+    # Phase 6 (§6.3b) — the SAME day's P&L expressed against capital
+    # actually at risk, not just against total equity. "Risk capital" here
+    # is `sum((entry - stop) x shares)` across open positions — audit §1.3's
+    # `budget_risk_dollars` from `src.risk.metrics.portfolio_heat`, reused
+    # (not recomputed) via `TradingPipeline._build_portfolio_heat` and
+    # threaded through evening's result dict as `risk_capital_dollars`.
+    # Equity tells you how the whole book did; this tells you how the
+    # capital that was actually exposed today did — a much bigger number on
+    # a day the book was mostly in cash or mostly stopped-out to breakeven.
+    risk_capital = result.get("risk_capital_dollars")
+
+    def _append_risk_capital_line(pnl: float | None) -> None:
+        if risk_capital is None:
+            return  # heat build failed or wasn't available — say nothing, not a guess
+        if risk_capital <= 0:
+            # A flat book (or a book where every stop has trailed past
+            # entry, releasing all risk) — not a divide-by-zero, and NOT a
+            # fabricated 0%: there was no capital at risk to measure P&L
+            # against today.
+            lines.append("   vs risk capital: n/a — no capital currently at risk (flat book)")
+            return
+        if pnl is None:
+            return
+        risk_pct = pnl / risk_capital * 100
+        risk_str = f"+{risk_pct:.2f}%" if pnl >= 0 else f"{risk_pct:.2f}%"
+        lines.append(f"   vs risk capital: {risk_str}  (${risk_capital:,.2f} at risk)")
+
+    if pnl_4pm is not None and equity_close is not None:
+        # baseline = prior official close = equity_close - pnl_4pm.
+        baseline = equity_close - pnl_4pm
+        if baseline > 0:
+            r = pnl_4pm / baseline * 100
+            ret_str = f"+{r:.2f}%" if pnl_4pm >= 0 else f"{r:.2f}%"
+        else:
+            ret_str = "n/a"
+        lines.append(f"💰 Daily P&L: {_fmt_pnl(pnl_4pm)} ({ret_str})  ·  4pm close")
+        lines.append(f"   Equity: ${equity_close:,.2f}")
+        _append_risk_capital_line(pnl_4pm)
+    elif daily_pnl is not None and total_value is not None:
+        # Fallback: real-time diff (prior close → 8pm, includes after-hours).
+        # Return is P&L over PRIOR-day equity (= total_value − daily_pnl); using
+        # current equity would understate losses (denominator includes the draw).
+        prior_equity = total_value - daily_pnl
+        if prior_equity > 0:
+            ret_pct = (daily_pnl / prior_equity) * 100
+            ret_str = f"+{ret_pct:.2f}%" if daily_pnl >= 0 else f"{ret_pct:.2f}%"
+        else:
+            # prior_equity <= 0 → return % undefined; "0.00%" would mislead.
+            ret_str = "n/a"
+        lines.append(f"💰 Daily P&L: {_fmt_pnl(daily_pnl)} ({ret_str})")
+        lines.append(f"   Equity: ${total_value:,.2f}")
+        _append_risk_capital_line(daily_pnl)
+
+    return lines
+
+
 def _append_evening_body(lines: list[str], result: dict) -> None:
     # === Escalation banners (first thing read, before Daily P&L) ===
     analysis = result.get("analysis")
@@ -1969,76 +2153,11 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
 
     _new_block(lines, _render_escalation_banners)
 
-    # Daily P&L summary — the headline of the evening push. Operator wants to
-    # know "did I make money today" without grepping logs.
-    #
-    # Prefer the TRUE close-to-close ("4pm-to-4pm") P&L the pipeline computed
-    # from Alpaca portfolio_history (pnl_4pm / equity_close = today's official
-    # regular-session close). That's clean of after-hours drift AND free of the
-    # off-by-one trap of differencing account.last_equity (which is the PRIOR
-    # day's close). Fall back to the real-time prior-close→now diff when the
-    # 4pm figures aren't available (API gap / legacy result dicts).
-    daily_pnl = result.get("daily_pnl")
-    total_value = result.get("total_value")
-    pnl_4pm = result.get("pnl_4pm")
-    equity_close = result.get("equity_close")
-
-    _fmt_pnl = _fmt_signed_money
-
-    # Phase 6 (§6.3b) — the SAME day's P&L expressed against capital
-    # actually at risk, not just against total equity. "Risk capital" here
-    # is `sum((entry - stop) x shares)` across open positions — audit §1.3's
-    # `budget_risk_dollars` from `src.risk.metrics.portfolio_heat`, reused
-    # (not recomputed) via `TradingPipeline._build_portfolio_heat` and
-    # threaded through evening's result dict as `risk_capital_dollars`.
-    # Equity tells you how the whole book did; this tells you how the
-    # capital that was actually exposed today did — a much bigger number on
-    # a day the book was mostly in cash or mostly stopped-out to breakeven.
-    risk_capital = result.get("risk_capital_dollars")
-
-    def _append_risk_capital_line(pnl: float | None) -> None:
-        if risk_capital is None:
-            return  # heat build failed or wasn't available — say nothing, not a guess
-        if risk_capital <= 0:
-            # A flat book (or a book where every stop has trailed past
-            # entry, releasing all risk) — not a divide-by-zero, and NOT a
-            # fabricated 0%: there was no capital at risk to measure P&L
-            # against today.
-            lines.append("   vs risk capital: n/a — no capital currently at risk (flat book)")
-            return
-        if pnl is None:
-            return
-        risk_pct = pnl / risk_capital * 100
-        risk_str = f"+{risk_pct:.2f}%" if pnl >= 0 else f"{risk_pct:.2f}%"
-        lines.append(f"   vs risk capital: {risk_str}  (${risk_capital:,.2f} at risk)")
-
-    _pnl_start = len(lines)
-    if pnl_4pm is not None and equity_close is not None:
-        # baseline = prior official close = equity_close - pnl_4pm.
-        baseline = equity_close - pnl_4pm
-        if baseline > 0:
-            r = pnl_4pm / baseline * 100
-            ret_str = f"+{r:.2f}%" if pnl_4pm >= 0 else f"{r:.2f}%"
-        else:
-            ret_str = "n/a"
-        lines.append(f"💰 Daily P&L: {_fmt_pnl(pnl_4pm)} ({ret_str})  ·  4pm close")
-        lines.append(f"   Equity: ${equity_close:,.2f}")
-        _append_risk_capital_line(pnl_4pm)
-    elif daily_pnl is not None and total_value is not None:
-        # Fallback: real-time diff (prior close → 8pm, includes after-hours).
-        # Return is P&L over PRIOR-day equity (= total_value − daily_pnl); using
-        # current equity would understate losses (denominator includes the draw).
-        prior_equity = total_value - daily_pnl
-        if prior_equity > 0:
-            ret_pct = (daily_pnl / prior_equity) * 100
-            ret_str = f"+{ret_pct:.2f}%" if daily_pnl >= 0 else f"{ret_pct:.2f}%"
-        else:
-            # prior_equity <= 0 → return % undefined; "0.00%" would mislead.
-            ret_str = "n/a"
-        lines.append(f"💰 Daily P&L: {_fmt_pnl(daily_pnl)} ({ret_str})")
-        lines.append(f"   Equity: ${total_value:,.2f}")
-        _append_risk_capital_line(daily_pnl)
-    _seal_section(lines, _pnl_start)
+    # The evening P&L block is NOT rendered here any more: owner, 2026-09-18,
+    # "all the P&L information has to go at the very top of every telegram
+    # alert, right after the first line, which is really the heading." It now
+    # renders from `_evening_pnl_block` above the escalation banners and above
+    # the cost lines — see `_pnl_lines_for`. Nothing about the figures changed.
 
     # Suggested actions — surfaced HIGH in the message (right after the
     # headline P&L) so the tail-clip truncation in send() can never eat
@@ -2066,7 +2185,10 @@ def _append_evening_body(lines: list[str], result: dict) -> None:
     # Position snapshot: total invested + cash + top winners/losers.
     # Helper queries the live DB so this works regardless of how the
     # evening result dict is constructed.
-    _new_block(lines, _append_position_snapshot, total_value)
+    # `total_value` used to be a local of the P&L block that moved to
+    # `_evening_pnl_block` (2026-09-18); read it back from the same key the
+    # block reads, so the snapshot's denominator is unchanged.
+    _new_block(lines, _append_position_snapshot, result.get("total_value"))
 
     _tomorrow_start = len(lines)
     analysis = result.get("analysis")
@@ -2330,8 +2452,15 @@ def _openrouter_balance_line() -> str | None:
 
 
 def _margin_interest_lines() -> list[str]:
-    """['💳 margin interest: $X/day ... — ESTIMATE ...', '   broker check: ...']
-    or `[]` — spec §11.2.
+    """['💳 margin interest: ...', '   broker check: ...'] — spec §11.2.
+
+    ALWAYS returns at least one line outside rehearsal (owner decision,
+    2026-09-18, verbatim: "Yes, every day, even if it's zero, that way I
+    know it's still working"). `margin_interest.format_daily_line` owns
+    that policy and the wording of all four states — real debit, nothing
+    borrowed, cash unreadable, no rate configured; read its docstring for
+    why the spec's original silent-on-zero rule is deliberately overridden
+    and why a missing rate must NOT render as a zero.
 
     Morning-only, like the balance/day-cost lines above: interest accrues
     on the OVERNIGHT debit balance, so the morning snapshot — taken before
@@ -2346,10 +2475,10 @@ def _margin_interest_lines() -> list[str]:
     `src/agents/portfolio_manager.py`'s DE-LEVER MANDATE already treats
     "cash negative AND allow_margin False" as a real, live state — so a
     debit balance can exist even with margin disabled, and a short-circuit
-    on `allow_margin` alone would silently miss it. On today's actual
-    zero-debit-balance day this still costs one broker round-trip (spent
-    on `overnight_debit_balance()` returning `0.0`) but produces no line —
-    no noise, correctness over the saved call.
+    on `allow_margin` alone would silently miss it. On a zero-debit day
+    this still costs one broker round-trip (spent on
+    `overnight_debit_balance()` returning `0.0`) and now renders the
+    explicit zero line it proves.
 
     When a debit balance IS present, this also reads the broker's own
     `INT` account activity and reports whether it confirms, denies, or has
@@ -2358,10 +2487,18 @@ def _margin_interest_lines() -> list[str]:
     left open rather than assumed either way.
 
     Never raises: a broker-read failure here must not be able to block the
-    alert — it degrades to `[]`, same as every other line in this module.
-    Suppressed under QAMC_REHEARSAL, same as every other line here that
-    touches the network.
+    alert — it degrades to a line that SAYS the read failed, rather than to
+    silence. Suppressed entirely under QAMC_REHEARSAL, same as every other
+    line here that touches the network: a rehearsal has no live account to
+    report on, so there is no running tracker for a zero to prove alive and
+    the line would be theatre.
     """
+    from src.margin_interest import (
+        RATE_UNAVAILABLE_LINE, UNAVAILABLE_LINE, build_estimate,
+        compare_estimate_to_broker_activity, format_daily_line,
+        overnight_debit_balance,
+    )
+
     if _REHEARSAL_MODE:
         return []
     try:
@@ -2370,28 +2507,27 @@ def _margin_interest_lines() -> list[str]:
         rate_pct = cfg.risk.margin_interest_rate_pct
     except Exception as exc:  # noqa: BLE001 — a nicety must never break the alert
         logger.warning("margin interest config read failed: %s", exc)
-        return []
+        return [RATE_UNAVAILABLE_LINE]
 
     try:
         from src.api.deps import get_alpaca_credentials, get_alpaca_paper
         from src.execution.broker import AlpacaBroker
-        from src.margin_interest import (
-            build_estimate, compare_estimate_to_broker_activity,
-            format_alert_line, overnight_debit_balance,
-        )
         key, secret = get_alpaca_credentials()
         broker = AlpacaBroker(api_key=key, secret_key=secret, paper=get_alpaca_paper())
         account = broker.get_account()
-        debit_balance = overnight_debit_balance(account.get("cash"))
+        cash = account.get("cash")
+        debit_balance = overnight_debit_balance(cash)
         estimate = build_estimate(debit_balance, rate_pct)
     except Exception as exc:  # noqa: BLE001
         logger.warning("margin interest estimate failed: %s", exc)
-        return []
+        return [UNAVAILABLE_LINE]
 
-    estimate_line = format_alert_line(estimate)
-    if not estimate_line:
-        return []  # None/zero debit balance — silent, per spec's noise policy
-    lines = [estimate_line]
+    # Always exactly one line, zero and fault states included.
+    lines = [format_daily_line(cash, rate_pct)]
+    if estimate is None:
+        # Nothing borrowed: there is no charge to check the broker's own
+        # INT records against, so the second line would have nothing to say.
+        return lines
 
     try:
         activities = broker.get_margin_interest_activities()
