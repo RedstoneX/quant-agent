@@ -22,6 +22,71 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — a stop price of zero switched protection OFF instead of refusing the trade (item 88 closed)
+
+**In plain words.** The desk used the number zero to mean "this position was
+never given a stop". So whenever a stop came out as zero by accident — a
+miscalculation, a corrupted saved level, a bad number from a model — the
+system did not say "that is wrong, refuse the trade". It read it as "this one
+is not supposed to have a stop" and carried on with nothing protecting the
+position. The one thing a risk control must never do is fail in the direction
+of less protection, and this did exactly that.
+
+**Where it was real, and where it was not.** Three lanes were untraced when
+this was filed. Traced against the code, not the docstrings:
+
+* **The coverage-repair janitor — genuinely exposed, and worse than failing
+  open.** The thing whose entire job is to close protection gaps REFUSED to
+  act on a recorded stop of zero, and reported that refusal as the same fact
+  as "this row never had a stop". So a position could be permanently
+  unrepairable, and the owner alert that eventually fired said only that "the
+  automatic repair could not restore one" — identical wording for a corrupt
+  saved level, a level the price had already passed, and three exhausted
+  broker retries. Three different states, three different owner actions, one
+  sentence. Worse, the refusal only reaches the owner at all when coverage is
+  *exactly zero*; a partly-covered position carried it no further than a log
+  file.
+* **The partial-exit reprotect — a genuine fail-open, found while tracing.**
+  After a partial sale the residual shares are re-protected using the most
+  protective of the stops that were cancelled to make the sale possible. If
+  none of those carried a usable price, the function returned **success**. The
+  caller reads success as "coverage rebuilt" and DELETES the saved recovery
+  intent — so the residual position was left naked with nothing left to retry
+  it, and nothing said so. A missing (rather than zero) price would instead
+  crash the comparison.
+* **The position-resume / write-ahead lanes — not exposed.** They already
+  refused a non-positive stop and kept the recovery row alive. They did pass a
+  recorded infinity straight through to the broker, which is not a price
+  either; closed here.
+* **The live entry lane — safe, but for a reason nobody should rely on.** The
+  entry call site converted a zero into "no stop supplied" *before* the broker
+  could judge it, which is the laundering at the heart of this item. Nothing
+  live reached it only because a zero stop on an entry is separately hard-
+  blocked by the `require_stop_loss` risk rule, i.e. by a setting that happens
+  to be switched on. The order edge now fails closed on its own.
+
+**What the fix actually is: the distinction, not another threshold.** "No stop
+was requested" and "a stop was requested and its value is garbage" are
+different facts with opposite correct responses, and every one of these lanes
+had collapsed them into one. Exactly one path is legitimately stopless — the
+cash-sweep park, which passes no stop at all and says so — and it still works.
+Everything else now refuses zero, negative, NaN and infinity loudly, at the
+order edge, and keeps the gap flagged instead of reporting it as covered. The
+repair janitor now hands its caller the REASON it declined, which the owner
+alert and the standalone coverage watchdog both render instead of guessing.
+
+**What would have caught it.** Nothing, and that is the point: the sentinel was
+documented, deliberate and explicitly left in place by an earlier pass (the
+NaN half of the same hole was closed on the entry lane only). A test asserted
+the defect as correct behaviour. The lesson is the one already in
+`docs/OUTCOME.md`: a value that means "absent" must never be a value the
+arithmetic can also produce.
+
+**Deliberately NOT changed.** `TradeDecision` still accepts `stop_loss=0` on a
+BUY/SHORT — that is what lets the `require_stop_loss` rule be tested at all,
+and the refusal now lives at the order edge where it fails closed for every
+producer rather than at one model's validator.
+
 ### 2026-09-18 — the production checkout now matches what git records (item 94 closed)
 
 The live box was running a hand-built dashboard bundle that had never been committed. Git was not wrong about production in the usual direction — the SERVER was the stale side, since nobody could say from the repo alone what was actually being served. PR #465 rebuilt and committed the cockpit bundle from current frontend source so the two agree, and added a guard that `index.html` may only reference assets that are actually committed, so the drift cannot silently recur. Verified: the dashboard looks no different to the owner — this was a recording fix, not a behaviour change. Item 94 retired.
