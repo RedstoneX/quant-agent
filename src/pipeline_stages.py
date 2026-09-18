@@ -3316,7 +3316,64 @@ def _stash_macro_parse_failure(reason: str) -> None:
 
 
 
-def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
+def _revert_entry_size_increases(decisions, pre_alloc: dict) -> tuple[list, list[dict]]:
+    """Revert any RM edit that ENLARGED a BUY *or a SHORT* (board item 135).
+
+    `_apply_risk_modifications` guard 1b already does this for a BUY. It was
+    written `decision.action == "BUY"`, so a SHORT — sized by the mirror of
+    the same cumulative clamp in the constructor, and scaled alongside BUY by
+    `_apply_scale_all_buys` precisely because both open new risk — could be
+    enlarged by an edit the seat believed was protective. On a short that ADDS
+    to a short already held, `allocation_pct` is an increment exactly as it is
+    on a long add, so an upward edit grows the short by more than the number
+    reads.
+
+    Enforced here rather than inside guard 1b only because this sweep needs
+    the pre-modification sizes, which this stage already has. Guard 1b stays:
+    it fires first and more specifically for a BUY, and this is a no-op behind
+    it. If the two are ever consolidated, consolidate ONTO guard 1b.
+
+    Fails toward the SMALLER size in every branch: the pre-modification value
+    is the constructor's own, which is already clamped by the single-name
+    ceiling, the risk budget and the sector dial. Nothing here can raise a
+    size, and a decision whose pre-modification size is unknown is left
+    untouched rather than guessed at.
+    """
+    out: list = []
+    rejected: list[dict] = []
+    for d in decisions:
+        if d is None or d.action not in ("BUY", "SHORT"):
+            out.append(d)
+            continue
+        before = pre_alloc.get((d.symbol.strip().upper(), d.action))
+        if before is None or d.allocation_pct <= before:
+            out.append(d)
+            continue
+        reason = (
+            f"RM modification would INCREASE {d.symbol}'s {d.action} "
+            f"allocation_pct ({before:.2f} -> {d.allocation_pct:.2f}). "
+            f"Reverted — the risk seat may only reduce an entry's size, "
+            f"never enlarge it; on an add to a position already held this "
+            f"field is an increment, so an upward edit grows the position by "
+            f"more than the number reads."
+        )
+        logger.warning("Risk mod REJECTED for %s: %s", d.symbol, reason)
+        rejected.append({
+            "symbol": d.symbol, "field": "allocation_pct", "reason": reason,
+        })
+        try:
+            out.append(d.model_copy(update={"allocation_pct": before}))
+        except Exception as e:  # pragma: no cover - model_copy on a valid value
+            # Cannot restore the smaller size, so do not ship the larger one.
+            logger.warning(
+                "Could not revert %s's enlarged allocation_pct (%s) — "
+                "DROPPING the decision rather than executing the increase",
+                d.symbol, e,
+            )
+    return out, rejected
+
+
+def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float, list]:
     """Apply RiskVerdict.scale_all_buys to BUY (and Stage-3 SHORT) decisions.
 
     `scale_all_buys` is documented in config/prompts/risk_manager.md as
@@ -3331,14 +3388,17 @@ def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
     level "cut everything new" knob should not have a blind spot for one
     of the two ways to open it. SELL, COVER and HOLD are untouched.
 
-    Returns ``(scaled_decisions, scale)`` so the caller can use the
+    Returns ``(scaled_decisions, scale, dropped)`` so the caller can use the
     coerced scale for follow-up filters (re-running hard risk if the
-    scale dropped allocations into different buckets).
+    scale dropped allocations into different buckets) and file a visible
+    pipeline event for every entry the scaling removed outright (board item
+    136 — see the drop branch below).
     """
     scale_raw = getattr(verdict, "scale_all_buys", 1.0)
     scale = 1.0 if scale_raw is None else float(scale_raw)
+    dropped: list[tuple[str, float]] = []
     if scale >= 1.0 or scale < 0.0:
-        return list(decisions), scale
+        return list(decisions), scale, dropped
 
     scaled: list = []
     for d in decisions:
@@ -3349,6 +3409,18 @@ def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
                     "scale_all_buys=%.2f drops %s (alloc 0 after scaling)",
                     scale, d.symbol,
                 )
+                # Board item 136. The DROP is correct and stays: this desk's
+                # standing rule is that a refusal must remove a target, never
+                # zero one, because an allocation_pct of 0 reads as SKIP at
+                # execution (the same convention guard 1 in
+                # `_apply_risk_modifications` protects). What was wrong is
+                # that the drop left NO trace anywhere the desk can read —
+                # a logger line only, and the decision is gone from the list
+                # before the per-decision event loop in `RiskStage.run`
+                # runs, so `scale_all_buys=0.0` silently deleted the whole
+                # entry side with no pipeline event for any symbol. Recorded
+                # here so the caller can file one per dropped name.
+                dropped.append((d.symbol, d.allocation_pct))
                 continue
             try:
                 scaled.append(d.model_copy(update={"allocation_pct": new_alloc}))
@@ -3364,7 +3436,7 @@ def _apply_scale_all_buys(decisions, verdict) -> tuple[list, float]:
                 scaled.append(d)
         else:
             scaled.append(d)
-    return scaled, scale
+    return scaled, scale, dropped
 
 
 class MorningResearchStage:
@@ -5959,10 +6031,31 @@ class RiskStage:
                     }
 
         if verdict.modifications:
+            # Board item 135. `_apply_risk_modifications` guard 1b refuses an
+            # `allocation_pct` edit that ENLARGES a BUY, but it tests
+            # `decision.action == "BUY"` only — a SHORT was never covered,
+            # although the constructor sizes it with the identical cumulative
+            # arithmetic (`name_headroom_pct = (max_position_pct -
+            # current_short_gross_pct) / gross_mul`, the explicit mirror of
+            # the long clamp) and `_apply_scale_all_buys` already treats the
+            # two sides alike because both open new risk. Snapshotted here
+            # and enforced below for BOTH sides: for a BUY the inner guard
+            # has already reverted the edit, so this sweep is a no-op and
+            # finds nothing; for a SHORT it is the only thing standing
+            # between the seat and a short it believes it is cutting.
+            pre_mod_entry_alloc = {
+                (d.symbol.strip().upper(), d.action): d.allocation_pct
+                for d in portfolio_decision.decisions
+                if d.action in ("BUY", "SHORT")
+            }
             portfolio_decision.decisions, rejected_mods = pipeline._apply_risk_modifications(
                 portfolio_decision.decisions, verdict.modifications,
                 symbols_bars=getattr(ctx, "symbols_bars", None),
             )
+            portfolio_decision.decisions, enlarged = _revert_entry_size_increases(
+                portfolio_decision.decisions, pre_mod_entry_alloc,
+            )
+            rejected_mods = list(rejected_mods) + enlarged
             # A modification this method refused (exit silently zeroed, or a
             # stop/target edit that would have shipped a reward:risk / noise-
             # band floor breach) must be a visible, distinguishable event —
@@ -5975,9 +6068,23 @@ class RiskStage:
                     field=rejected["field"],
                 )
 
-        portfolio_decision.decisions, scale = _apply_scale_all_buys(
+        portfolio_decision.decisions, scale, scale_dropped = _apply_scale_all_buys(
             portfolio_decision.decisions, verdict,
         )
+        # Board item 136 — a scale-driven drop is a real refusal of a real
+        # trade and must leave the same kind of trace an RM refusal does.
+        # It cannot use the loop at the bottom of this method: the decision
+        # is no longer in the list by then.
+        for _sym, _pre_alloc in scale_dropped:
+            _record_pipeline_event(
+                pipeline, ctx, _sym, "risk", "scaled_out",
+                f"scale_all_buys={scale:.2f} reduced {_sym}'s entry "
+                f"allocation_pct from {_pre_alloc:.2f} to 0 — the order is "
+                f"DROPPED, not zeroed (a zero allocation reads as SKIP at "
+                f"execution). RM reason category: "
+                f"{getattr(verdict, 'reason_category', None)!r}",
+                field="allocation_pct",
+            )
 
         if verdict.modifications or scale < 1.0 or refused_decisions:
             portfolio_decision.decisions, post_mod_violations, blocked_reasons = (

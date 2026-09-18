@@ -200,7 +200,7 @@ def test_apply_scale_all_buys_zero_drops_every_buy():
     )
     decisions = [_buy("SPY", 10), _buy("QQQ", 8), _hold("MSFT"), _sell("NVDA")]
 
-    scaled, scale = _apply_scale_all_buys(decisions, verdict)
+    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
 
     assert scale == 0.0, "0.0 must propagate, not collapse to 1.0"
     actions = [d.action for d in scaled]
@@ -216,7 +216,7 @@ def test_apply_scale_all_buys_partial_scales_buy_allocations():
     verdict = RiskVerdict(approved=True, scale_all_buys=0.5, reasoning_chain=_risk_rc(), reasoning="trim")
     decisions = [_buy("SPY", 10), _buy("QQQ", 8), _hold("MSFT")]
 
-    scaled, scale = _apply_scale_all_buys(decisions, verdict)
+    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
 
     assert scale == 0.5
     by_sym = {d.symbol: d for d in scaled}
@@ -233,7 +233,7 @@ def test_apply_scale_all_buys_one_is_no_op():
     verdict = RiskVerdict(approved=True, scale_all_buys=1.0, reasoning_chain=_risk_rc(), reasoning="ok")
     decisions = [_buy("SPY", 10), _buy("QQQ", 8)]
 
-    scaled, scale = _apply_scale_all_buys(decisions, verdict)
+    scaled, scale, _dropped = _apply_scale_all_buys(decisions, verdict)
 
     assert scale == 1.0
     assert [(d.symbol, d.allocation_pct) for d in scaled] == [
@@ -252,7 +252,7 @@ def test_apply_scale_all_buys_handles_missing_attribute_as_one():
         modifications = []
 
     decisions = [_buy("SPY", 10)]
-    scaled, scale = _apply_scale_all_buys(decisions, LegacyVerdict())
+    scaled, scale, _dropped = _apply_scale_all_buys(decisions, LegacyVerdict())
 
     assert scale == 1.0
     assert len(scaled) == 1
@@ -3382,3 +3382,130 @@ def test_session_candidate_ranking_is_none_not_empty_when_there_is_no_ranking():
             last_candidate_ranking=[SimpleNamespace(symbol="  ")],
         ))
     ) is None
+
+
+# ---------------------------------------------------------------------------
+# Board items 135 (short side of the #519 guard) and 136 (a scale-driven
+# drop must leave a trace). 2026-09-18.
+# ---------------------------------------------------------------------------
+
+def _short(symbol, alloc):
+    from src.models import TradeDecision
+    return TradeDecision(
+        action="SHORT", symbol=symbol, allocation_pct=alloc,
+        entry_price=100.0, stop_loss=105.0, take_profit=90.0,
+        reasoning="x", thesis_invalid_if="reclaims resistance",
+    )
+
+
+def _run_mods_then_sweep(decisions, modifications):
+    """Exactly the sequence `RiskStage.run` performs: the pipeline's own
+    `_apply_risk_modifications`, then the entry-size sweep."""
+    from src.pipeline import TradingPipeline
+    from src.pipeline_stages import _revert_entry_size_increases
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pre = {
+        (d.symbol.strip().upper(), d.action): d.allocation_pct
+        for d in decisions if d.action in ("BUY", "SHORT")
+    }
+    updated, rejected = pipeline._apply_risk_modifications(decisions, modifications)
+    updated, enlarged = _revert_entry_size_increases(updated, pre)
+    return updated, list(rejected) + enlarged
+
+
+def test_item135_short_allocation_may_not_be_enlarged_by_a_risk_mod():
+    """Board item 135. `_apply_risk_modifications` guard 1b tests
+    `decision.action == "BUY"`, so an RM edit that ENLARGED a SHORT sailed
+    through — although the constructor sizes a short add with the mirror of
+    the same cumulative clamp, so an upward edit grows the short by more than
+    the number reads. Must be reverted to the constructor's size."""
+    from src.models import RiskModification
+
+    mods = [RiskModification(
+        symbol="XLU", field="allocation_pct",
+        original_value=12.0, new_value=40.0,
+        reason="wants a bigger short",
+    )]
+    updated, rejected = _run_mods_then_sweep([_short("XLU", 12.0)], mods)
+
+    assert len(updated) == 1
+    assert updated[0].allocation_pct == 12.0, (
+        "the SHORT must ship at the constructor's size, not the enlarged one"
+    )
+    assert any(
+        r["symbol"] == "XLU" and r["field"] == "allocation_pct"
+        and "INCREASE" in r["reason"]
+        for r in rejected
+    ), f"the refusal must be recorded as a visible event; got {rejected}"
+
+
+def test_item135_short_allocation_may_still_be_reduced():
+    """Control. Cutting a short is the seat's actual remit and must apply."""
+    from src.models import RiskModification
+
+    mods = [RiskModification(
+        symbol="XLU", field="allocation_pct",
+        original_value=12.0, new_value=5.0, reason="too big",
+    )]
+    updated, rejected = _run_mods_then_sweep([_short("XLU", 12.0)], mods)
+
+    assert updated[0].allocation_pct == 5.0
+    assert rejected == []
+
+
+def test_item135_buy_guard_is_unchanged_by_the_sweep():
+    """Control. The BUY case is already handled inside
+    `_apply_risk_modifications`; the sweep must not double-report it or
+    change the outcome."""
+    from src.models import RiskModification
+
+    mods = [RiskModification(
+        symbol="SPY", field="allocation_pct",
+        original_value=10.0, new_value=25.0, reason="bigger",
+    )]
+    updated, rejected = _run_mods_then_sweep([_buy("SPY", 10.0)], mods)
+
+    assert updated[0].allocation_pct == 10.0
+    assert len(rejected) == 1, f"exactly one refusal, not two; got {rejected}"
+
+
+def test_item136_scale_all_buys_reports_every_entry_it_drops():
+    """Board item 136. The 0.0 lever DROPS each entry rather than zeroing it
+    — which is correct and stays, because a zero allocation reads as SKIP at
+    execution. What was missing is any trace: the drop emitted a logger line
+    only, and the decision is gone from the list before `RiskStage.run`'s
+    per-decision event loop, so `scale_all_buys=0.0` deleted the entire entry
+    side with no pipeline event for any symbol."""
+    from src.models import RiskVerdict
+    from src.pipeline_stages import _apply_scale_all_buys
+
+    verdict = RiskVerdict(
+        approved=True, scale_all_buys=0.0,
+        reasoning_chain=_risk_rc(), reasoning="risk-off",
+    )
+    decisions = [_buy("SPY", 10), _short("XLU", 8), _hold("MSFT"), _sell("NVDA")]
+
+    scaled, scale, dropped = _apply_scale_all_buys(decisions, verdict)
+
+    assert scale == 0.0
+    assert [d.action for d in scaled] == ["HOLD", "SELL"]
+    assert sorted(dropped) == [("SPY", 10.0), ("XLU", 8.0)], (
+        f"every dropped entry must be reported with its pre-scale size; "
+        f"got {dropped}"
+    )
+
+
+def test_item136_no_drops_reported_when_the_lever_is_not_pulled():
+    """Control. A scale that removes nothing reports nothing."""
+    from src.models import RiskVerdict
+    from src.pipeline_stages import _apply_scale_all_buys
+
+    verdict = RiskVerdict(
+        approved=True, scale_all_buys=0.5,
+        reasoning_chain=_risk_rc(), reasoning="trim",
+    )
+    scaled, scale, dropped = _apply_scale_all_buys([_buy("SPY", 10)], verdict)
+
+    assert scaled[0].allocation_pct == 5.0
+    assert dropped == []
