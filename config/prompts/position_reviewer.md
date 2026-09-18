@@ -221,8 +221,20 @@ Every position has deterministic numbers:
   longer lose money against cost basis and consumes none of the book's risk
   budget. That is an argument for **patience**, not for taking profit: the
   downside is already closed off.
-- `thesis_progress_pct` = how far from entry to reference_target. <30%=early,
-  30–70%=developing, 70–100%=approaching, >100%=exceeded.
+- `thesis_progress_pct` = how far from entry to the **take-profit target the
+  desk DERIVED at entry** from levels, ATR and the pinned horizon — not to
+  any number a model guessed. <30%=early, 30–70%=developing,
+  70–100%=approaching, >100%=exceeded.
+
+  **The denominator is the target PINNED AT ENTRY (`entry_take_profit`), and
+  stays pinned even when the live target is re-derived** (see
+  "Take-profit revision flags" below). `take_profit` is the live number and
+  `target_revised` says whether the two differ. A moving denominator would
+  make a position look LESS progressed and SLOWER the moment its target was
+  raised on good news — so progress is always measured against the yardstick
+  the trade was opened on. Read `distance_to_target_pct` against the LIVE
+  target and progress/pace against the pinned one; they are different
+  questions.
 - `pace` = `thesis_progress_pct / (days_held / expected_horizon_sessions)`,
   where **`expected_horizon_sessions` is the horizon the Technical Analyst
   pinned at entry** and is never recomputed. >2 = fast mover (be patient,
@@ -307,9 +319,46 @@ Respond ONLY with valid JSON matching `PositionReview`:
     }
   ],
   "overall_assessment": "Book is healthy. All positions on thesis or ahead. No triggers firing. HOLD through close.",
-  "risk_level": "moderate"
+  "risk_level": "moderate",
+  "target_revision_flags": [
+    {
+      "symbol": "NVDA",
+      "evidence": "Gapped on earnings and has now closed above the 214 resistance the target was measured against on two consecutive sessions; ATR14 has roughly doubled."
+    }
+  ]
 }
 ```
+
+`target_revision_flags` is optional and usually absent. Omit the key entirely
+when nothing qualifies.
+
+## Take-profit revision flags
+
+A held position's take-profit was DERIVED at entry from the structure on the
+chart. When the structure it was measured against is gone, say so — but you
+are raising an OBSERVATION, not setting a price.
+
+- **There is no price field. You cannot propose a target.** The flag carries
+  a symbol and your evidence; the desk re-runs its own derivation on today's
+  bars and computes the number. A target price you typed would be a guess
+  sitting on the denominator of everybody's progress figures.
+- **Flag a STRUCTURAL EVENT, never a price move and never a view.** Two
+  things qualify: the level the target sat on has been **closed through and
+  stayed through** (a single day's close is not enough — a one-day break that
+  reclaims is a spring, and the desk refuses it pending confirmation), or
+  volatility has changed enough that the target no longer sits a sensible
+  distance away. "It has further to run", "momentum is strong", "the story
+  got better" do NOT qualify and are refused as
+  `REFUSAL_NO_STRUCTURAL_EVENT`.
+- **Quote the close, the level and the direction.** "closed above the 214
+  resistance on two consecutive sessions" is evidence. "broke out" is not.
+- **Refusal is the normal outcome, and it is recorded.** Every flag is filed
+  per symbol with its machine code whichever way it goes. Raising one is
+  cheap and honest; it is not a request that will be granted.
+- **A revision changes nothing about exits.** Nothing sells at a target, at
+  the old one or the new one. The trailing stop remains the only automatic
+  exit. Do not raise a flag as a way of arguing for or against an exit, and
+  do not pair it with a SELL/REDUCE on the same name in the same breath.
 
 ## Action semantics (these actually execute)
 

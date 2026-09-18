@@ -1184,6 +1184,26 @@ class HoldingTakeProfit(BaseModel):
     #: than a comment so a future change has to flip it deliberately.
     acted_on: bool = False
     note: str
+    #: The target PINNED AT ENTRY (`trades.initial_take_profit`). `price`
+    #: above is the live number, which a confirmed structural event can
+    #: re-derive (`src.risk.target_revision`); this is the one
+    #: `thesis_progress_pct` and `pace` are measured against, and the only
+    #: yardstick a revision can ever be graded on. Equal to `price` on a
+    #: position that has never been revised, and None on legacy rows.
+    entry_price_target: float | None = None
+    #: True when the live target is no longer the entry derivation.
+    revised: bool = False
+    #: The derivation basis behind the LIVE number — "structural_level" or
+    #: "measured_move" — so the display can label it honestly rather than
+    #: implying a model picked it. Empty when no revision is on record.
+    basis: str = ""
+    #: The machine code of the most recent adjudicated revision flag for
+    #: this symbol, whichever way it went: a TRIGGER_* code when the target
+    #: was re-derived, otherwise the REFUSAL_*/FAULT_* code naming why not.
+    #: A refusal is a first-class outcome and is never left blank.
+    last_revision_code: str = ""
+    #: One line of provenance for that outcome.
+    last_revision_detail: str = ""
 
 
 class HoldingWhyReadable(BaseModel):
