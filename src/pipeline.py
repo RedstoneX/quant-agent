@@ -11998,7 +11998,11 @@ class TradingPipeline:
         THE SKIP IS LOUD, by three independent paths, because retired item 11
         was this desk producing nothing for a whole day with nobody noticing
         (docs/INCIDENT_HISTORY.md, closed 2026-09-13):
-          - its own standalone owner alert, sent here;
+          - its own standalone owner alert, sent here — MORNING ONLY as of
+            2026-09-18. On an intra_check tick the session message below is
+            guaranteed to speak (`evidence_gate_skip` is actionable on the
+            trader feed and is in none of its silent-status sets), so this
+            alert only duplicated it, one minute apart, word for word;
           - `notifier.maybe_alert_data_quality`, which fires from main.py's
             finally block on the `data_status` carried in the result and
             cannot be suppressed by a mode's noise policy;
@@ -12066,22 +12070,30 @@ class TradingPipeline:
         # morning's status with a later refusal.
         if session == "morning":
             _dc.write_status("morning", "evidence_gate_skip")
-        try:
-            from src.notifier import seat_words, send_owner_alert
+        # The owner was told the same skip TWICE, one minute apart, on
+        # 2026-09-18 11:19 ET: once by this standalone alert and once by the
+        # intraday tick's own message. On an intra_check tick the tick
+        # message is guaranteed to speak — `evidence_gate_skip` is in
+        # `trader_feed._intraday_tick_actionable`'s list and in neither
+        # `_BASE_ONLY_STATUSES` nor `_INTRADAY_SILENT_STATUSES`, so the
+        # "a quiet tick is silent" policy that this standalone alert exists
+        # to defeat cannot apply to a skip. The tick message also carries
+        # P&L and the book, which this one cannot. So the tick message
+        # speaks for an intraday skip and this alert stays quiet; the skip
+        # is not silenced anywhere, and the morning path (whose own session
+        # message is a different renderer) keeps its alert unchanged.
+        if session == "morning":
+            try:
+                from src.notifier import describe_skipped_decision, send_owner_alert
 
-            # Seat names in words (board item 89: internal component names).
-            send_owner_alert(
-                "DECISION SKIPPED — no answer from "
-                f"{', '.join(seat_words(s) for s in verdict.lost)} "
-                f"(run {run_id})\n"
-                f"{verdict.reason}\n"
-                "WHAT THIS MEANS FOR YOU: nothing was traded and no Portfolio "
-                "Manager call was paid for. Every position keeps the stop it "
-                "already had. The next scheduled decision opportunity tries "
-                "again; there is nothing for you to do."
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("evidence gate: owner alert failed: %s", exc)
+                # Plain words only — no run id, no seat key, no state token
+                # and no `verdict.reason`. The machine reason is unchanged in
+                # the result dict, the event rows and the log line above.
+                send_owner_alert("\n".join(
+                    describe_skipped_decision(verdict.lost, verdict.data_status)
+                ))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("evidence gate: owner alert failed: %s", exc)
         return {
             "status": "evidence_gate_skip", "orders": [], "run_id": run_id,
             "data_status": dict(ctx.data_status),

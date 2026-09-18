@@ -29,9 +29,9 @@ from src.notifier import (
     company_name,
     describe_ai_cost,
     describe_data_status,
+    describe_skipped_decision,
     fmt_time_12h,
     humanize_status,
-    seat_words,
     format_session_result as _base_format_session_result,
     TelegramNotifier,
 )
@@ -1084,7 +1084,14 @@ def _append_no_trade_reason(
     elif snap.get("pm_reasoning") or pm_summary:
         lines.append("⏸️ NO TRADE — PM produced no executable portfolio change")
     else:
-        lines.append("⏸️ NO TRADE — no market-risk order was submitted; detailed PM evidence unavailable")
+        # Was "...; detailed PM evidence unavailable" — internal phrasing.
+        # The honest plain-words version, which does NOT overclaim: there is
+        # no stored reasoning for this run, which is not the same as saying
+        # there was nothing to explain.
+        lines.append(
+            "⏸️ NO TRADE — nothing was bought or sold, and the desk stored "
+            "no reasoning to explain for this run"
+        )
 
 
 def _append_footer(lines: list[str], snap: dict[str, Any], elapsed: float) -> None:
@@ -1230,9 +1237,15 @@ def _append_blocked(lines: list[str], rows: list[dict], profiles: dict) -> None:
         )
 
 
-def _pm_pass_reason(symbol: str, snap: dict[str, Any] | None) -> str:
+def _pm_pass_reason(symbol: str, snap: dict[str, Any] | None) -> str | None:
     """The Portfolio Manager's own recorded reason for leaving `symbol`
-    alone this run (its HOLD row), or an honest 'no reason recorded'."""
+    alone this run (its HOLD row), or None when nothing was recorded.
+
+    Returns None rather than the old literal "no reason recorded" — that
+    phrasing read as a status code on the end of the owner's line. The
+    caller says the same fact in words instead. This is still an honest
+    gap, not an assertion that the desk had no reason.
+    """
     for row in (snap or {}).get("pm_orders") or []:
         if (
             isinstance(row, dict)
@@ -1242,7 +1255,7 @@ def _pm_pass_reason(symbol: str, snap: dict[str, Any] | None) -> str:
             reason = _clip(row.get("reasoning"), 300)
             if reason:
                 return reason
-    return "no reason recorded"
+    return None
 
 
 def _append_looked_at(
@@ -1260,9 +1273,13 @@ def _append_looked_at(
         symbol = str(row.get("symbol", "?")).upper()
         rating = str(row.get("rating", "?")).upper()
         conviction = str(row.get("conviction", "?")).lower()
+        reason = _pm_pass_reason(symbol, snap)
+        tail = (
+            f"PM passed — {reason}" if reason
+            else "not traded — the desk did not record why"
+        )
         lines.append(
-            f"   • {_ticker_co(symbol, profiles)} {rating}/{conviction} — "
-            f"PM passed — {_pm_pass_reason(symbol, snap)}"
+            f"   • {_ticker_co(symbol, profiles)} {rating}/{conviction} — {tail}"
         )
 
 
@@ -2254,15 +2271,22 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
                     )
                 ))
         elif status == "evidence_gate_skip":
-            lost = nested.get("lost_seats") or []
-            seats = ", ".join(seat_words(s) for s in lost) or "a research seat"
-            lines.append(
-                f"🟡 DECISION SKIPPED: {seats} never returned an answer, so this "
-                "tick declined to decide rather than guess. Nothing was traded "
-                "and the Portfolio Manager was not paid for."
+            # Was: one prose sentence, then `nested["reason"]` printed raw
+            # underneath it — so the owner read the same explanation twice,
+            # once in English and once in machine ("1 seat(s) ... "
+            # "smart_money=expired ... docs/WORK.md item 20"). The stored
+            # reason is unchanged; it simply no longer renders. Title line
+            # plus bullets, shared with the standalone alert via
+            # `describe_skipped_decision`.
+            skip_lines = describe_skipped_decision(
+                nested.get("lost_seats"), nested.get("data_status"),
+                # This IS the tick's own message; "the next scheduled
+                # decision tries again" belongs on the standalone alert,
+                # not repeated inside every tick.
+                include_next_pass=False,
             )
-            if nested.get("reason"):
-                lines.append(_clip(nested.get("reason"), 900))
+            lines.append(f"🟡 {skip_lines[0]}")
+            lines.extend(skip_lines[1:])
         elif status == "intraday_scan_crashed":
             # Operator-honesty fix: this used to be indistinguishable from a
             # healthy tick that ran and found nothing — the scan raised, the

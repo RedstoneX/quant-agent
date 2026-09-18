@@ -997,6 +997,24 @@ _DATA_STATUS_WORDS: dict[str, str] = {
     "release_overdue": "is waiting on a scheduled data release that is overdue",
     "symbol_dropped": "dropped at least one symbol from its answer",
     "degraded": "returned a degraded answer",
+    # The four remaining CATEGORY_LOST states in src/evidence_gate.py had no
+    # plain wording, so an evidence-gate skip naming one of them showed the
+    # owner the raw token instead. Each phrase below is read straight off
+    # that module's own comment for the state — not a guess at what it might
+    # mean.
+    "expired": (
+        "had only an out-of-date answer, and this check did not fetch a "
+        "fresh one"
+    ),
+    "content_missing": "answered, but the answer had no content in it",
+    "carry_forward_empty": (
+        "had nothing to carry forward from this morning — the morning never "
+        "wrote an answer for today"
+    ),
+    "carry_forward_failed": (
+        "could not be carried forward from this morning — the lookup itself "
+        "failed"
+    ),
 }
 
 
@@ -1024,6 +1042,45 @@ def describe_data_status(bad: dict) -> list[str]:
                 f"{seat_words(seat)} reported a state the desk has no plain "
                 f"wording for (kept for the record: {token or 'blank'})"
             )
+    return lines
+
+
+def describe_skipped_decision(
+    lost: Any, data_status: Any, *, include_next_pass: bool = True,
+) -> list[str]:
+    """The owner-facing account of an evidence-gate skip: a bold title line
+    that states the conclusion, then one short bullet per idea.
+
+    The single source of this wording, used by BOTH owner-facing renderers
+    of the same event (the standalone alert in
+    `pipeline._evidence_gate_skip` and the intraday tick banner in
+    src/trader_feed.py), so the two can never drift apart again.
+
+    What it deliberately does NOT do is show `EvidenceVerdict.reason`. That
+    string is the durable machine record — it stays exactly as it is in the
+    database, the event rows and the log, where it is correct — but it
+    carries a source-file reference, an internal seat key, a raw state
+    token and "N seat(s)", none of which mean anything on a phone. Every
+    fact in it is said here in words instead, via `describe_data_status`,
+    which describes an unmapped token rather than guessing at it.
+    """
+    seats = [str(seat) for seat in (lost or []) if seat]
+    status = data_status if isinstance(data_status, dict) else {}
+    bad = {seat: status.get(seat) for seat in seats}
+    lines = ["<b>DECISION SKIPPED — NOTHING WAS TRADED</b>"]
+    detail = describe_data_status(bad) if bad else []
+    if not detail:
+        detail = ["a research seat the desk needed did not return an answer"]
+    lines += [f"   • {sentence}" for sentence in detail]
+    lines += [
+        "   • the desk declined to decide rather than guess",
+        "   • no Portfolio Manager call was paid for",
+        "   • every position keeps the stop it already had",
+    ]
+    if include_next_pass:
+        lines.append(
+            "   • the next scheduled decision tries again — nothing for you to do"
+        )
     return lines
 
 
@@ -1059,10 +1116,13 @@ def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
     when = fmt_time_12h(et_now())
     detail = "\n".join(f"  • {line}" for line in describe_data_status(bad))
     raw = ", ".join(f"{k}={v}" for k, v in sorted(bad.items()))
-    run_id = result.get("run_id", "unknown")
+    # Board item 89's run-identifier removal landed on the evening message
+    # only; this alert still carried one. A run id is a database key, not
+    # something the owner can act on — it stays in the log line above and in
+    # every stored row, and leaves the message.
     text = (
         f"DATA QUALITY ALERT — the {mode} session at {when} ran on "
-        f"incomplete research (run {run_id})\n"
+        f"incomplete research\n"
         f"{detail}\n"
         "WHAT THIS MEANS FOR YOU: the Portfolio Manager and the Risk "
         "Manager may have sized or decided this session on incomplete or "

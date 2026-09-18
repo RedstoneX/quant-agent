@@ -328,3 +328,84 @@ def test_a_gate_crash_lets_the_run_proceed():
         result, _, _ = _run(p)
     assert result["status"] != "evidence_gate_skip"
     p._decision_stage.assert_called_once()
+
+
+# ---------- owner-facing rendering of the skip (2026-09-18) ----------
+#
+# The owner was told the same 11:19 ET skip twice, one minute apart — once
+# by the standalone alert below and once by the intraday tick's own
+# message — and both copies carried the machine reason verbatim.
+
+
+def _skip_alert(session: str, data_status: dict):
+    """Run `_evidence_gate_skip` for one session and return the owner alert
+    text it sent, or None when it deliberately stayed quiet."""
+    from src import decision_checkpoint as dc
+
+    p = _pipeline(data_status)
+    ctx = MagicMock()
+    ctx.data_status = dict(data_status)
+    ctx.analyses = []
+    with patch.object(dc, "write_status"), \
+         patch("src.notifier.send_owner_alert", return_value=True) as alert:
+        p._evidence_gate_skip(ctx, "intra_check-cfb08f1c", session=session)
+    if not alert.call_args_list:
+        return None
+    return alert.call_args[0][0]
+
+
+def test_an_intraday_skip_does_not_also_fire_the_standalone_alert():
+    """Defect 1: two messages for one event. The intraday tick message
+    always speaks for a skip, so this alert must not duplicate it."""
+    assert _skip_alert("intra_check", {"smart_money": "expired"}) is None
+
+
+def test_a_morning_skip_still_tells_the_owner_once():
+    """The condition is never silenced — only de-duplicated."""
+    text = _skip_alert("morning", {"smart_money": "expired"})
+    assert text is not None
+    assert "DECISION SKIPPED" in text
+
+
+def test_the_owner_alert_carries_no_machine_text():
+    """Defects 2 and 3: a source-file reference, an internal seat key, a
+    raw state token, "N seat(s)" and a run identifier all reached him."""
+    text = _skip_alert("morning", {"smart_money": "expired"})
+    for banned in ("docs/WORK.md", "item 20", "smart_money", "seat(s)",
+                   "=expired", "intra_check-cfb08f1c", "run "):
+        assert banned not in text, f"owner alert still contains {banned!r}"
+    assert "the insider-and-congressional-trading feed" in text
+
+
+def test_the_owner_alert_is_bullets_not_a_paragraph():
+    """Defect 4: his approved format is a bold conclusion line then short
+    bullets, one idea each."""
+    lines = [ln for ln in _skip_alert(
+        "morning", {"smart_money": "expired"}).split("\n") if ln.strip()]
+    assert lines[0].startswith("<b>") and lines[0].endswith("</b>")
+    assert all(ln.strip().startswith("•") for ln in lines[1:])
+
+
+def test_the_stored_machine_reason_is_unchanged():
+    """This is a rendering fix. The durable record must still say exactly
+    what it said, for the database and the log."""
+    v = evidence_gate.evaluate({"smart_money": "expired"})
+    assert v.reason == (
+        "decision skipped: 1 seat(s) were asked and their answer never "
+        "arrived — smart_money=expired. A decision resting on an answer the "
+        "desk never received is not a degraded decision, it is a fabricated "
+        "one (docs/WORK.md item 20)."
+    )
+
+
+def test_every_lost_status_has_plain_owner_wording():
+    """A lost seat is the one category that always reaches the owner, so
+    none of its statuses may fall through to the raw-token description."""
+    from src.notifier import _DATA_STATUS_WORDS
+
+    lost = sorted(
+        s for s, cat in evidence_gate.STATUS_CATEGORY.items()
+        if cat == evidence_gate.CATEGORY_LOST
+    )
+    missing = [s for s in lost if s not in _DATA_STATUS_WORDS]
+    assert not missing, f"no plain wording for lost status(es): {missing}"
