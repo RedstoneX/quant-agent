@@ -1,6 +1,6 @@
 """The portfolio manager must account for every candidate it was shown.
 
-Board item 119, 2026-09-18. The defect, reproduced by
+Board item 124, 2026-09-18. The defect, reproduced by
 `test_defect_every_omitted_candidate_carried_one_identical_reason` below:
 the seat returned TARGETS and nothing else, and `DecisionStage` recorded
 every analysed candidate missing from that list as

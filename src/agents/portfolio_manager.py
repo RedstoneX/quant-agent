@@ -1309,7 +1309,7 @@ Overall sentiment: {news_intel.market_sentiment} (confidence: {news_intel.confid
             "deployable this session, no margin" if not allow_margin
             else "raw cash — see Margin Capacity below for what may still be spent"
         )
-        # Accounting re-ask (board item 119, 2026-09-18). Non-empty ONLY on
+        # Accounting re-ask (board item 124, 2026-09-18). Non-empty ONLY on
         # the one bookkeeping re-ask `DecisionStage` may make in a session,
         # and it names the candidates this seat dropped without saying why.
         # Empty string on every first call, so the prompt this seat normally
@@ -2094,7 +2094,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
                # from the same preview pass, so eligibility rule R6 can name
                # a candidate the one shared funnel has already refused.
                constructor_refusals_by_symbol: dict[str, dict[str, str]] | None = None,
-               # Board item 119 (2026-09-18): the ONE bookkeeping re-ask
+               # Board item 124 (2026-09-18): the ONE bookkeeping re-ask
                # `DecisionStage` may make when this seat dropped a candidate
                # without naming a ground. Empty on every ordinary call.
                accounting_challenge: str = "",
@@ -2983,7 +2983,7 @@ Based on all the above (memory of past decisions + environment trajectory + toda
     @staticmethod
     def _drop_invalid_rejections(parsed: dict) -> dict:
         """Same per-entry isolation as `_drop_invalid_targets`, for the
-        candidate-accounting list (board item 119, 2026-09-18).
+        candidate-accounting list (board item 124, 2026-09-18).
 
         `rejections` is BOOKKEEPING. A malformed entry in it must never
         destroy `reasoning_chain`, `portfolio_view` and every target — the

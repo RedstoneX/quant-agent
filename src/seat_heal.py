@@ -63,7 +63,7 @@ class HealResult:
     details: dict = field(default_factory=dict)
     #: What this failure means FOR THE OWNER, in his words, when the default
     #: sentence below would be false for this seat. Added 2026-09-18 (board
-    #: item 119): the default body says "the desk will not decide on this
+    #: item 124): the default body says "the desk will not decide on this
     #: seat as if it had answered", which is true of a lost research seat
     #: and false of a bookkeeping heal, where the decision was already made
     #: and only the explanation is missing. Telling him a trade was withheld

@@ -22,7 +22,7 @@ what would catch it next time.
 
 ---
 
-### 2026-09-18 — the desk could say it refused every idea, but never why (item 119)
+### 2026-09-18 — the desk could say it refused every idea, but never why (item 124)
 
 **In plain words.** The owner got an alarm saying the desk had turned down
 every idea it looked at, two sessions running, for one unchanging reason.
@@ -11612,5 +11612,5 @@ is now pinned the other way.
 **Not changed.** No threshold, rung or trade-governing number. `GROSS_LADDER`
 and `GROSS_LADDER_ALERT_PCT` are untouched. The ladder's order type, its 1%
 limit buffer, and its sequencing of cancels, sells and stop placement are
-untouched — the sell-instrument question is filed as board item 119, with the
+untouched — the sell-instrument question is filed as board item 124, with the
 order type explicitly left alone.

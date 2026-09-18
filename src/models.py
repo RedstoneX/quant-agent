@@ -2086,7 +2086,7 @@ class TargetPosition(LLMOutputModel):
 #: "why was this name dropped" has an answer that two different sessions can
 #: be COMPARED on.
 #:
-#: Why an enum and not free text (2026-09-18, board item 119). The jam
+#: Why an enum and not free text (2026-09-18, board item 124). The jam
 #: detector (`src/refusal_signature.py`) separates a jammed gate from a quiet
 #: market by asking whether every candidate died for the SAME reason while
 #: the candidates changed. Free prose defeats that from both ends: it varies
@@ -2122,7 +2122,7 @@ CANDIDATE_REJECTION_CODES: tuple[str, ...] = (
 class CandidateRejection(LLMOutputModel):
     """One candidate the portfolio manager was shown and chose NOT to target.
 
-    Why this exists (board item 119, 2026-09-18). The PM returned a list of
+    Why this exists (board item 124, 2026-09-18). The PM returned a list of
     TARGETS and nothing else, so `DecisionStage` recorded every analysed
     candidate missing from that list as
     `portfolio_manager|omitted|candidate_not_selected_for_target`. The seat
@@ -2194,7 +2194,7 @@ class PortfolioDecision(LLMOutputModel):
     # Phase 2 output: PM emits intent (target weights), not orders.
     targets: list[TargetPosition] = Field(default_factory=list)
     #: Every candidate the seat was shown and is NOT targeting, with the
-    #: named ground it dropped it on (board item 119, 2026-09-18). A target
+    #: named ground it dropped it on (board item 124, 2026-09-18). A target
     #: or a rejection — the seat must account for each name one way or the
     #: other. Empty here is not an error at PARSE time (an old stored row
     #: must still load, and a validation failure would fail the whole

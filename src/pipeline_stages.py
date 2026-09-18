@@ -2763,7 +2763,7 @@ def _account_for_pm_candidates(
 ) -> None:
     """Make the portfolio manager account for every candidate it was shown.
 
-    Board item 119 (2026-09-18). Replaces the loop that recorded every
+    Board item 124 (2026-09-18). Replaces the loop that recorded every
     analysed candidate missing from `targets` as
     `omitted / candidate_not_selected_for_target` — one unvarying string
     that was not a reason, because the seat was never asked for one. See
