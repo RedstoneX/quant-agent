@@ -703,7 +703,11 @@ class PortfolioVolEstimate:
     it does, and specifically so an incomplete measurement is visible rather
     than silent: `unmeasured_symbols` names holdings whose price history
     could not support a return series, and `measured_weight_pct` is how much
-    of the book's gross exposure the estimate actually covers.
+    of the book's gross exposure has its OWN price history behind it —
+    `unmeasured_symbols` still contribute to `daily_vol_pct` itself (item 92:
+    they are assumed to move like the measurable peers' median, not dropped),
+    so `measured_weight_pct` is a provenance figure, not the coverage of the
+    number produced.
     """
     daily_vol_pct: float | None
     reason: str = ""
@@ -973,14 +977,32 @@ def measure_portfolio_daily_vol(
     holidays) are not splices — no trading happened, so there is no return
     being skipped over.
 
-    A HOLDING WITH NO USABLE HISTORY is dropped from the estimate rather
-    than voiding it, and named in `unmeasured_symbols`. Dropping it makes
-    the measured volatility a LOWER BOUND on the book's true volatility, so
-    the threshold comes out tighter — the alarm fires sooner, never later,
-    which is the safe direction for a brake. It is also exactly the same
-    arithmetic as that holding not being deployed, which is the
-    deployment-scaling behaviour this design already wants. When NOTHING is
-    measurable the answer is None and the fixed percentage governs.
+    A HOLDING WITH NO USABLE HISTORY is named in `unmeasured_symbols` but is
+    NOT dropped from the basket (docs/BOARD_NOTES.md item 92, fixed
+    2026-09-18). An earlier version excluded it entirely, which reasoned
+    that a smaller measured volatility is "the safe direction for a brake"
+    — but that reasoning is backwards for THIS brake: silently zeroing an
+    unmeasurable holding's contribution makes the book look calmer than it
+    really is, so the computed threshold comes out SMALLER and the breaker
+    becomes MORE likely to halt the desk on an ordinary day. A tighter
+    number is not automatically the safe one when the mechanism it feeds is
+    itself a halt with a cost (cancelled orders, an owner alert, blocked new
+    risk) rather than a passive ceiling.
+
+    Instead, an unmeasurable holding is assumed to move like a NORMAL
+    holding in the same book — the cross-sectional MEDIAN of that session's
+    per-symbol returns among the holdings that DO have price history. This
+    introduces no new number: the median is read off the measurable part of
+    the same book on every session, never a constant. It keeps the
+    holding's own weight and sign (long adds the peer move, short adds its
+    negative) rather than assuming it moves with the book's own correlation
+    structure, which `unmeasured_symbols` already names as an assumption,
+    not a measurement.
+
+    When there are no measurable peers at all (`closes` is empty) there is
+    nothing to derive a median from, and the estimate is None — the fixed
+    percentage governs, exactly as before. When NOTHING is measurable the
+    answer is None and the fixed percentage governs.
     """
     try:
         window = int(window_sessions)
@@ -1049,13 +1071,30 @@ def measure_portfolio_daily_vol(
             unmeasured_symbols=tuple(sorted(unmeasured)),
         )
 
+    # Weight still held by names with no usable price history of their own.
+    # `unmeasured` was built from `clean`, so every entry is still there.
+    unmeasured_weights = {sym: clean[sym] for sym in unmeasured if sym in clean}
+
     returns: list = []
     for i in range(1, len(axis)):
         today, yesterday = axis[i], axis[i - 1]
         basket = 0.0
+        instrument_returns: list = []
         for sym, series in closes.items():
             prev = series[yesterday]
-            basket += clean[sym] * (series[today] - prev) / prev * 100.0
+            r = (series[today] - prev) / prev * 100.0
+            basket += clean[sym] * r
+            instrument_returns.append(r)
+        if unmeasured_weights:
+            # item 92: an unmeasurable holding is assumed to move like a
+            # NORMAL holding in this same book on this same session — the
+            # cross-sectional median of what the measurable peers actually
+            # did — rather than being dropped, which silently zeroed its
+            # contribution and made the book look calmer than it is. This
+            # is read off the book every session, never a fixed number.
+            peer_return = statistics.median(instrument_returns)
+            for sym, weight in unmeasured_weights.items():
+                basket += weight * peer_return
         returns.append(basket)
 
     if len(returns) < floor:
@@ -1112,9 +1151,11 @@ def measure_portfolio_daily_vol(
     if unmeasured:
         logger.warning(
             "drawdown alarms: %d holding(s) have too little price history to "
-            "measure (%s). The volatility yardstick covers %.1f%% of the "
-            "book's %.1f%% gross exposure, so it is a LOWER bound and the "
-            "thresholds come out tighter, not looser.",
+            "measure directly (%s), covering %.1f%% of the book's %.1f%% "
+            "gross exposure. Their contribution is assumed to move like the "
+            "measured peers' session-by-session median (item 92) rather "
+            "than being dropped, so the yardstick is not silently tightened "
+            "by an unmeasurable name.",
             len(unmeasured), ", ".join(sorted(unmeasured)),
             sum(abs(clean[s]) for s in closes) * 100.0, book_weight_pct,
         )
@@ -1264,19 +1305,32 @@ def resolve_gross_ceiling(
     and `apply_gross_ceiling` refuses to TRIM on an unmeasurable book. This
     matches how `_compute_recent_performance` has always treated an empty
     `daily_pnl` table (`in_drawdown: False`).
+
+    **But unknown is no longer SILENT (2026-09-18).** Holding the loosest
+    cap was never the defect; doing it without telling anyone was. An
+    unmeasurable drawdown now sets `alert_owner=True`, so it reaches the
+    owner through the same leverage-line path `GROSS_LADDER_ALERT_PCT`
+    already uses. This is the direct analogue of `apply_gross_ceiling`'s
+    `measurable = False` branch, which likewise trims nothing and says so
+    loudly rather than proceeding as if the book were fine. The ceiling
+    itself is deliberately unchanged — tightening it to a rung would be
+    picking a number for a state in which, by definition, nothing has been
+    measured, and would force-liquidate the fresh-account case the paragraph
+    above exists to protect.
     """
     base = float(base_x) if isinstance(base_x, (int, float)) and base_x > 0 else 0.0
     if not math.isfinite(base) or base <= 0:
         base = 0.0
     if drawdown_pct is None or not math.isfinite(drawdown_pct):
         return GrossCeiling(
-            ceiling_x=base, base_x=base, drawdown_pct=None, alert_owner=False,
+            ceiling_x=base, base_x=base, drawdown_pct=None, alert_owner=True,
             rung="unknown",
             reason=(
                 f"No measured equity history, so no drawdown could be "
                 f"computed. Gross exposure is held to the standing "
                 f"{base:.1f}x ceiling and nothing is trimmed on an "
-                f"unmeasured book."
+                f"unmeasured book — but the de-levering ladder cannot "
+                f"de-lever while this lasts, so the owner is being told."
             ),
         )
     drawdown = float(drawdown_pct)
@@ -1337,10 +1391,31 @@ def peak_to_trough_pct(
     one call cannot contaminate the next. A non-finite entry is dropped
     before `max()` ever sees it (`math.isfinite` below) rather than being
     excluded by a comparison a NaN could silently fail.
+
+    Guard 3 (2026-09-18): **an equity curve with no usable PRIOR reading is
+    unmeasurable, not a zero drawdown.** Until this guard, a history that
+    was empty — or whose every entry had been dropped as non-finite — left
+    `current_equity` alone in the list, so it became its own high-water mark
+    and the function returned a confident `0.0`. `resolve_gross_ceiling`
+    reads `0.0` as "inside the no-de-levering band" and holds the loosest
+    cap, which means a wiped or unreadable `daily_pnl` table silently
+    disabled the desk's only automatic seller AND looked, in every log line
+    and every owner-facing message, exactly like a book at record highs.
+    Losing the data and making new highs are opposite states and must not
+    produce the same output.
+
+    The boundary is deliberately zero prior readings, not a chosen minimum
+    number of days. Zero is the line between *measured* and *unmeasured* —
+    it is not a number anyone picked, and this file's standing rule forbids
+    inventing one. Whether a SHORT-but-non-empty curve (two or three days
+    after a reset) is long enough to carry a meaningful high-water mark is a
+    real, separate question with a real answer somewhere in the desk's own
+    data; it is NOT answered here, and no `min_history=N` default is
+    smuggled in as if it had been.
     """
-    values = []
+    history_values = []
     dropped_non_finite = 0
-    for raw in list(equity_history or []) + [current_equity]:
+    for raw in list(equity_history or []):
         if isinstance(raw, bool) or not isinstance(raw, (int, float)):
             continue
         value = float(raw)
@@ -1354,19 +1429,17 @@ def peak_to_trough_pct(
             dropped_non_finite += 1
             continue
         if value > 0:
-            values.append(value)
+            history_values.append(value)
     if dropped_non_finite:
         logger.warning(
             "peak_to_trough_pct: dropped %d non-finite equity reading(s) "
             "(NaN/inf) rather than letting one win max() as a fabricated "
             "high-water mark. Alpaca has been observed to return NaN "
             "portfolio_value during market-open glitches (see "
-            "RiskRuleEngine.check_daily_loss). The remaining %d reading(s) "
-            "still went into this call's peak.",
-            dropped_non_finite, len(values),
+            "RiskRuleEngine.check_daily_loss). The remaining %d historical "
+            "reading(s) still went into this call's peak.",
+            dropped_non_finite, len(history_values),
         )
-    if not values:
-        return None
     if not (
         isinstance(current_equity, (int, float))
         and not isinstance(current_equity, bool)
@@ -1374,7 +1447,18 @@ def peak_to_trough_pct(
         and float(current_equity) > 0
     ):
         return None
-    peak = max(values)
+    if not history_values:
+        # Guard 3. Fail LOUD and UNMEASURABLE rather than quietly confident.
+        logger.warning(
+            "peak_to_trough_pct: no usable PRIOR equity reading (history "
+            "empty or every entry unusable) — returning UNMEASURABLE rather "
+            "than 0.0%%. Today's own equity is not a high-water mark: "
+            "reporting 0.0%% here would make a wiped equity curve "
+            "indistinguishable from a book at record highs and would hold "
+            "the de-levering ladder at its loosest cap.",
+        )
+        return None
+    peak = max(history_values + [float(current_equity)])
     if peak <= 0:
         return None
     return round((float(current_equity) - peak) / peak * 100, 2)

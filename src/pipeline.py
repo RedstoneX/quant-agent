@@ -11129,21 +11129,28 @@ class TradingPipeline:
         # `peak_to_trough_pct`'s "unmeasurable" branch, which
         # `resolve_gross_ceiling` resolves to the STANDING (loosest) cap.
         # That branch is correct for a genuinely fresh account with no
-        # equity curve yet (see `resolve_gross_ceiling`'s docstring) — but
-        # by inspection `peak_to_trough_pct` only ever returns None when
-        # TODAY's reading itself is unusable: a fresh account's own current
-        # equity is finite, so it always produces a real number (0.0
-        # against an empty history), never None. "Unknown" is therefore
-        # reachable in production ONLY on a bad read, and Alpaca has been
-        # observed to return NaN portfolio_value during market-open
-        # glitches (see `RiskRuleEngine.check_daily_loss`'s docstring).
-        # Silently holding the loosest cap on exactly that kind of
-        # broken-snapshot day is the failure this guard closes: halting new
-        # risk (the ladder's own floor rung) is safer than assuming zero
-        # drawdown, and — unlike the ordinary "unknown" fallback — this
-        # ALSO alerts the owner (`alert_owner=True` below) via the same
-        # leverage-line/Telegram path `GROSS_LADDER_ALERT_PCT` already
-        # uses, rather than staying silent.
+        # equity curve yet (see `resolve_gross_ceiling`'s docstring). Alpaca
+        # has been observed to return NaN portfolio_value during market-open
+        # glitches (see `RiskRuleEngine.check_daily_loss`'s docstring), and
+        # holding the loosest cap on exactly that kind of broken-snapshot
+        # day is the failure this guard closes: halting new risk (the
+        # ladder's own floor rung) is safer than assuming zero drawdown.
+        #
+        # CORRECTION 2026-09-18. This comment used to assert, "by
+        # inspection", that `peak_to_trough_pct` returns None ONLY when
+        # today's own reading is unusable — that an empty history always
+        # produced a real 0.0. That was accurate about the code and wrong
+        # about safety: it meant a wiped `daily_pnl` table read as a book at
+        # record highs and silently held the loosest cap. `peak_to_trough_pct`
+        # now returns None when there is no usable PRIOR reading (its Guard
+        # 3), so "unknown" is reachable in production from a lost equity
+        # curve as well as from a bad read, and `resolve_gross_ceiling` now
+        # alerts the owner in that state instead of staying silent. The two
+        # paths still differ on purpose, and the difference is the point:
+        # a BAD READ (below) is a book of unknown depth that already exists,
+        # so it drops to the floor rung; an ABSENT CURVE may be a genuinely
+        # fresh account that never fell, so it holds the standing cap and
+        # trims nothing. Both now alert.
         total_value = ctx.total_value
         bad_equity_read = (
             isinstance(total_value, bool)
