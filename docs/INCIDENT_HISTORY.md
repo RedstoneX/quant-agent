@@ -22,6 +22,20 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — the gross-exposure de-lever does cancel stops to sell (it has to), the recovery around it is complete, and it has never fired (item 87 closed)
+
+**What broke, in one line:** nothing did — item 87 asked whether the desk's automatic de-lever cancels protective stop-losses in order to sell, because that is the exact flaw that got the daily-loss liquidation deleted on 2026-09-14. It does cancel them, but the cancel is mandatory (a resting stop holds the whole position, so the broker would reject the sell outright) and the recovery around it is complete, unlike the deleted liquidator.
+
+**How it works.** `_enforce_gross_ceiling` (`src/pipeline.py`) calls `_submit_protected_sell(label="FORCE_DELEVER")`, whose first act is `_cancel_stops_with_write_ahead`: snapshot the resting stops, write a durable recovery row, then cancel. Recovery is complete at every failure point verified in the code: a failed cancel is rolled back and the row discharged so the symbol is skipped with its stops untouched; a broker rejection of the sell restores the stops inline; a submit exception restores them inline; a no-fill or partial fill is resolved by `_finalize_pending_protections`, which restores the original stops or re-protects the actual residual against live broker quantity; and a mid-run process death is covered because the write-ahead row is durable before any broker mutation, and `_drain_pending_protection_restores` — which reads it — runs at the start of all five session entry points. An unreadable equity book is marked unmeasurable and trims nothing (`apply_gross_ceiling`).
+
+**Reachability.** Called unconditionally from the morning session and again from the shared midday/close body, no feature flag. It has never fired: zero `FORCE_DELEVER` rows exist in any live database checked, and the deepest recorded peak-to-trough drawdown is -1.48% against a first rung that fires at -8% (`src/risk/rules.py`).
+
+**Two real gaps found while auditing, neither the one item 87 asked about, both filed as new items rather than fixed here — a behaviour change on the live selling path during a drawdown needs the owner, not a self-authorised patch.** Item 107: when the ladder trims more than one holding in the same pass, `_submit_protected_sell` cancels each one's stops inside the loop, but `_finalize_pending_protections` — the only step that restores or re-protects — runs once, after the whole batch. The earliest-trimmed holding rides naked for the rest of the loop plus every later holding's fill wait, and this happens only during the drawdown conditions that trigger the ladder in the first place. `_force_delever` (the separate cash-only margin sweep) shares the same batch shape. There is no per-symbol precedent elsewhere in the file. Item 108: a de-lever pass that fails to bring the book back under its ceiling only logs a warning — nothing tells the owner the pass didn't work, only that a rung fired. Not silent (it does log); unreportable, because it cannot reach a session result, a Telegram message, or a test.
+
+**Not changed.** Nothing — this entry is an audit result, not a fix. Items 107 and 108 are open on the board for the owner.
+
+---
+
 ### 2026-09-18 — the production checkout now matches what git records (item 94 closed)
 
 The live box was running a hand-built dashboard bundle that had never been committed. Git was not wrong about production in the usual direction — the SERVER was the stale side, since nobody could say from the repo alone what was actually being served. PR #465 rebuilt and committed the cockpit bundle from current frontend source so the two agree, and added a guard that `index.html` may only reference assets that are actually committed, so the drift cannot silently recur. Verified: the dashboard looks no different to the owner — this was a recording fix, not a behaviour change. Item 94 retired.

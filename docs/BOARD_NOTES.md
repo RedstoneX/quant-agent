@@ -324,11 +324,6 @@ decision at all.
 **The decision — yours, and nobody builds any of it without you.** Five options, best fit first: (1) have the machine hold the key in an encrypted store — **this turns out NOT to be possible on this machine** (the service cannot read the decryption key, there is no security chip, and the installed system software lacks the feature); an earlier answer of "encrypted and tied to the machine" was wrong. (2) A small local relay that holds the real key and rewrites the login message: the only option that keeps the key out of the trading process, but it is custom credential-handling code, which this project has previously refused. (3) Get the helper taught to do this properly, upstream: correct, does not exist, slow. (4) Make the library able to use the helper: does not fix the login problem on its own. (5) Leave the feed off and keep asking the broker — no credential change at all, costs a few seconds of fill latency, and stops about 150 error lines a day.
 **Recommendation —** Option 5 today, since it is already in place and costs almost nothing. What remains achievable for protecting the key on this machine is file-permission protection, not encryption.
 
-## item 87
-
-**Plain language —** When the book gets too big relative to the account, the desk automatically trims it. That is now the only thing on the desk that sells by itself. Nobody has ever checked whether it cancels the protective stop-losses first in order to free the shares — and if it cancels them and then fails to sell, the holdings are left with no protection at all. That exact flaw is why the older "big loss today" liquidation was deleted on 14 September.
-**Recommendation —** Audit it before changing anything. Find out what it actually does, then decide.
-
 ## item 88
 
 **Plain language —** Inside the code, a stop price of exactly zero is the agreed way of saying "there is no stop". So if a bad number ever arrives as zero, the desk does not refuse the trade — it quietly removes the protection instead. The path that opens new trades has been checked and passes nothing rather than zero, so no live position depends on this today. The paths that resume, sweep and repair positions have not been checked.
@@ -438,6 +433,17 @@ decision at all.
 **Plain language — these are your own instructions, written down so the work lands against them.** Three pieces of work are in flight and each must match what you asked for, not an agent's taste: how the dashboard panels scroll, what the "why do we hold this" view shows, and how the evening report reads.
 **One requirement is not yet in any work at all —** You asked that when the reason to hold a stock rests on an insider or institutional purchase, the view show the DATE and the PRICE of that purchase — your example was Republic Services and when Cascade Investment actually bought. Somebody is working on it, but it is not committed anywhere yet, so it is recorded here as a requirement rather than as done.
 **The blocker on the rest of (b) is gone as of tonight —** the read-only endpoint behind this view is merged, and it was held back only until the panel-layout work landed; that has now also merged. Nothing stands between this and a working view: fetch the endpoint when a held symbol is opened, show its one-sentence reason and its labelled detail up front, and put the machine identifiers and the existing step-by-step trace behind one toggle. Nothing else about the page changes.
+
+## item 107
+
+**Plain language —** Item 87 asked whether the automatic de-lever that trims the book when it gets too big cancels the protective stop-losses first. It does, and it has to — the broker would refuse the sell otherwise, because a resting stop holds the whole position. That part is fine, and the recovery around it is complete: a failed cancel is rolled back, a rejected sell restores the stop, a partial or no fill is put right by the step that runs afterward, and even a crash mid-way is covered because the recovery note is saved to disk before anything is cancelled at the broker. What is NOT fine: when the de-lever trims more than one holding in the same pass, that recovery step runs only once, after every holding in the pass has already been sold. The first holding trimmed sits with no protection for the whole rest of the pass, plus the wait for each later holding's order to finish — and this only happens during a drawdown, which is exactly when a naked position is most dangerous.
+**It has never happened —** the live records show this de-lever has fired zero times, and the account has never come close to the level that triggers it.
+**Recommendation —** Run the recovery step after each holding individually rather than once at the end. This touches the live selling path during a drawdown, so it is flagged for your decision rather than changed on our own say-so.
+
+## item 108
+
+**Plain language —** When the automatic de-lever trims the book and the trims still leave it over the limit, nothing tells you. The system writes a warning to its own internal log, but that is as far as it goes — it does not reach a message to you, the end-of-session summary, or anything that gets checked.
+**Recommendation —** Add an alert for the case where a de-lever pass finishes and the book is still over its limit.
 
 ## item 101
 
