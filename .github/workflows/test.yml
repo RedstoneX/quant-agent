@@ -65,6 +65,12 @@ jobs:
           FRED_API_KEY: dummy-fred-key-for-ci
         run: |
           set -euo pipefail
+          # SCRATCH BRANCH ONLY -- deliberately fail one shard to prove the
+          # aggregating `pytest` job goes red. Never merge this branch.
+          if [ "${{ matrix.shard }}" = "2" ]; then
+            echo "::error::deliberate failure to test aggregate propagation"
+            exit 1
+          fi
           # Refuse to run a split that is not a clean partition of the suite:
           # a dropped file would be tests silently not running.
           python scripts/ci_shard.py --shards "${{ strategy.job-total }}" --check
