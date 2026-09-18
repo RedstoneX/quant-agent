@@ -14128,6 +14128,7 @@ class TradingPipeline:
         different 15 names and invent new titles.
         """
         from src.evidence_kind import headline_mentions_symbols
+        self._last_news_peek_items = []
         provider = getattr(self, "news_provider", None)
         fetch = getattr(provider, "fetch_news", None)
         if not callable(fetch):
@@ -14142,6 +14143,10 @@ class TradingPipeline:
                 items, _coverage = fetch()
         except Exception:  # noqa: BLE001 — failed fetch ≠ supersede
             return []
+        # Keep what we just paid for. The expiry compare only needs titles,
+        # but discarding the wire body meant the tick proved its remembered
+        # news was superseded and then had nothing to re-ask with.
+        self._last_news_peek_items = list(items or [])
         titles: list[str] = []
         for item in items or []:
             title = getattr(item, "title", None)
@@ -14159,6 +14164,29 @@ class TradingPipeline:
                 continue
             titles.append(text)
         return titles
+
+    def _peeked_news_wire_text(self) -> str:
+        """The wire text the expiry peek already fetched, formatted for the
+        news analyst. Empty when the peek returned nothing.
+
+        No second fetch and no new window: this is the same fetch that
+        proved the remembered report superseded. A failed or empty peek
+        stays empty so the seat expires and is lost — a fetch that got
+        nothing must never be dressed up as fresh news.
+        """
+        items = list(getattr(self, "_last_news_peek_items", None) or [])
+        if not items:
+            return ""
+        provider = getattr(self, "news_provider", None)
+        fmt = getattr(provider, "format_for_prompt", None)
+        if not callable(fmt):
+            return ""
+        try:
+            text = fmt(items, max_items=self.config.news.max_prompt_items)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday scan: wire text for news heal failed: %s", e)
+            return ""
+        return text if isinstance(text, str) and text.strip() else ""
 
     def _news_has_newer_material_wire(self, report) -> bool:
         """Best-effort mechanical headline compare. Failed fetch ≠ supersede.
@@ -14337,11 +14365,18 @@ class TradingPipeline:
             return CarryForward(None, verdict.status, same_session=same_session)
         return CarryForward(payload, verdict.status, same_session=same_session)
 
-    def _carry_forward_news(self) -> CarryForward:
+    def _carry_forward_news(self, ctx: RunContext | None = None) -> CarryForward:
         """This session's news intelligence, re-validated from its stored dump.
 
         Same-session GOOD reuse is #430. A newer material wire expires it.
         Parse failure is lost, never reused as research.
+
+        When the wire DID move, the peek that proved it holds current wire
+        text. Hand that to the heal path (`ctx.heal_news_text`) so the
+        expired seat is re-asked with the data this tick already paid for,
+        instead of being lost while fresh headlines are thrown away. The
+        evidence gate is untouched: expired is still LOST unless the
+        re-ask actually succeeds.
         """
         from src.evidence_kind import news_reuse
         try:
@@ -14356,12 +14391,17 @@ class TradingPipeline:
         # load_daily_report only opens today's dated directory. A successful
         # load is therefore same-session; there is no undated news snapshot
         # on this path. Empty/failed above cannot claim it.
+        wire_moved = self._news_has_newer_material_wire(payload)
         verdict = news_reuse(
             payload,
             same_session=True,
-            newer_material_wire=self._news_has_newer_material_wire(payload),
+            newer_material_wire=wire_moved,
         )
         if not verdict.usable:
+            if wire_moved and ctx is not None:
+                wire_text = self._peeked_news_wire_text()
+                if wire_text:
+                    ctx.heal_news_text = wire_text
             return CarryForward(None, verdict.status, same_session=True)
         return CarryForward(payload, verdict.status, same_session=True)
 
@@ -14994,7 +15034,7 @@ class TradingPipeline:
         # about an intraday move with no idea what regime it is happening in.
         ctx.analyses = analyses
         carried_macro = self._carry_forward_macro()
-        carried_news = self._carry_forward_news()
+        carried_news = self._carry_forward_news(ctx)
         carried_earnings = self._carry_forward_earnings(ctx)
         carried_insider = self._carry_forward_insider(ctx)
         ctx.data_status = {
