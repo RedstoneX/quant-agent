@@ -74,7 +74,14 @@ def test_idx4_stop_target_backfilled_from_position_facts():
     )
     assert "Hard stop (broker): $99.00" in msg
     assert "Reference target: $121.00" in msg
-    assert "Entry thesis: (unavailable" in msg
+    # Board item 89 defect 3: with no entry row supplied AT ALL, the thesis
+    # is genuinely unknown and the line still names the absence. What
+    # changed is the explanation: "position opened before today" was a
+    # FALSE reason — the reason was on the entry row and the lookup was
+    # date-bounded — so the line now says only what is true, that the
+    # entry row carries none.
+    assert "Entry thesis: (not recorded on this position's entry row" in msg
+    assert "opened before today" not in msg
 
 
 def test_idx4_today_buy_context_still_preferred():
@@ -98,7 +105,7 @@ def test_idx4_today_buy_context_still_preferred():
     assert "Hard stop (broker): $95.00" in msg
     assert "Reference target: $130.00" in msg
     assert "Entry thesis: AI capex thesis" in msg
-    assert "Entry thesis: (unavailable" not in msg
+    assert "not recorded on this position's entry row" not in msg
 
 
 def test_idx4_no_facts_no_context_notes_absence():
@@ -114,7 +121,7 @@ def test_idx4_no_facts_no_context_notes_absence():
         total_value=10_000.0,
         session_type="midday",
     )
-    assert "Entry thesis: (unavailable" in msg
+    assert "Entry thesis: (not recorded on this position's entry row" in msg
 
 
 # ---------------------------------------------------------------------------
