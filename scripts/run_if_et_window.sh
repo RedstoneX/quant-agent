@@ -223,6 +223,25 @@ if [[ -f "${PROJECT_ROOT}/.env" ]]; then
     set +a
 fi
 
+# systemd-delivered broker credentials WIN over .env, and must be applied AFTER
+# it — .env carries the placeholder the credential gateway substitutes on REST,
+# so sourcing it later would silently put the stand-in back. PR #458 shipped the
+# delivery half (SetCredential= stand-in, LoadCredential= real file) and nothing
+# read $CREDENTIALS_DIRECTORY, so a delivered key was ignored: the desk still
+# reported PLACEHOLDER CREDENTIAL with both files present and correct.
+# Absent directory or absent file is the normal, supported state — the gateway
+# keeps REST working and the placeholder alert says the socket cannot authenticate.
+if [[ -n "${CREDENTIALS_DIRECTORY:-}" ]]; then
+    if [[ -r "${CREDENTIALS_DIRECTORY}/alpaca_api_key" ]]; then
+        ALPACA_API_KEY="$(<"${CREDENTIALS_DIRECTORY}/alpaca_api_key")"
+        export ALPACA_API_KEY
+    fi
+    if [[ -r "${CREDENTIALS_DIRECTORY}/alpaca_secret_key" ]]; then
+        ALPACA_SECRET_KEY="$(<"${CREDENTIALS_DIRECTORY}/alpaca_secret_key")"
+        export ALPACA_SECRET_KEY
+    fi
+fi
+
 # Best-effort Telegram push from BASH. RC5 (2026-07-16): when `timeout`
 # SIGTERM/SIGKILLs python, the finally-block notifier never runs — 13
 # straight days of morning kills produced ZERO failure notifications.

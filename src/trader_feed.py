@@ -27,7 +27,11 @@ from src.notifier import (
     _new_section,
     _seal_section,
     company_name,
+    describe_ai_cost,
+    describe_data_status,
     fmt_time_12h,
+    humanize_status,
+    seat_words,
     format_session_result as _base_format_session_result,
     TelegramNotifier,
 )
@@ -82,6 +86,17 @@ def format_session_result(
         return _base_format_session_result(mode, result, elapsed_seconds, error=error)
 
     status = str(result.get("status", "unknown"))
+    # The pre-market earnings pass (2026-09-18): rendered here for the two
+    # outcomes that speak — filings read, or the reader failing — so the
+    # message names each company instead of counting them. Every silent
+    # status (nothing_new / fetch_error / market_holiday) and the paid-
+    # analysis latch keep the base formatter's noise policy unchanged.
+    if mode == "earnings_preprocess" and status in ("preprocessed", "analysis_error"):
+        try:
+            return _format_earnings(result, elapsed_seconds)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("trader-feed earnings render failed: %s", exc)
+            return _base_format_session_result(mode, result, elapsed_seconds, error=None)
     if status in _BASE_ONLY_STATUSES or status.startswith("pm_") or status == "paid_analysis_suspended":
         return _base_format_session_result(mode, result, elapsed_seconds, error=None)
 
@@ -178,6 +193,18 @@ def _b(text: str) -> str:
     above. Never build a `<b>` tag around text some other way; the escape
     step in src/notifier.py only preserves this exact fixed string."""
     return f"<b>{text}</b>"
+
+
+# Board item 89 clarity defect — bare tickers after the twelfth name. The
+# base formatter's cap (12) sized a separate "who:" block; the trader feed
+# names companies inline, so every listed symbol needs one. Cache read only.
+_COMPANY_NAME_CAP = 60
+
+
+def _profiles(*groups: Any) -> dict[str, Any]:
+    """Company profiles for every symbol across `groups` — one cache read
+    per message, uncapped at the twelfth name (see `_COMPANY_NAME_CAP`)."""
+    return _lookup_company_profiles(_all_symbols(*groups), limit=_COMPANY_NAME_CAP)
 
 
 def _ticker_co(symbol: str, profiles: dict[str, Any] | None) -> str:
@@ -472,16 +499,39 @@ def _looked_at_rows(
     return rows
 
 
-def _outcome_word(status: str, done_count: int, blocked_count: int) -> str:
-    """ONE plain word for the header line — TRADED / NO CHANGE / FAILED /
-    PARTIAL — computed from the SAME counts the sections below render, so
-    the header can never claim something the body doesn't show."""
+def _traded_word(done_rows: list[dict] | None) -> str:
+    """Board item 89 clarity defect — a 'TRADED' header on a run that only
+    sold. The word is read off the actions that actually reached the
+    broker: all exits read SOLD, all entries read BOUGHT, a mix reads
+    TRADED. An unknown action falls back to TRADED rather than guessing
+    a direction."""
+    actions = {
+        str(row.get("action", "")).upper() for row in (done_rows or [])
+        if isinstance(row, dict)
+    }
+    exits = {"SELL", "REDUCE", "COVER", "TRIM"}
+    entries = {"BUY", "SHORT", "ADD"}
+    if actions and actions <= exits:
+        return "SOLD"
+    if actions and actions <= entries:
+        return "BOUGHT"
+    return "TRADED"
+
+
+def _outcome_word(
+    status: str, done_count: int, blocked_count: int,
+    done_rows: list[dict] | None = None,
+) -> str:
+    """ONE plain word for the header line — BOUGHT / SOLD / TRADED / NO
+    CHANGE / FAILED / PARTIAL — computed from the SAME counts the sections
+    below render, so the header can never claim something the body doesn't
+    show. `done_rows` lets the word say which way the trades went."""
     if _status_emoji(status) == "🔴":
         return "FAILED"
     if done_count and blocked_count:
         return "PARTIAL"
     if done_count:
-        return "TRADED"
+        return _traded_word(done_rows)
     if blocked_count:
         return "FAILED"
     return "NO CHANGE"
@@ -749,7 +799,7 @@ def _append_book(lines: list[str], snap: dict[str, Any]) -> None:
     sweep_rows = [row for row in positions if str(row.get("symbol", "")).upper() in _SWEEP_SYMBOLS]
     invested = sum(_number(row.get("market_value")) or 0.0 for row in risk_rows)
     parked = sum(_number(row.get("market_value")) or 0.0 for row in sweep_rows)
-    text = f"💼 Book: {len(risk_rows)} risk pos · ${invested:,.0f} invested"
+    text = f"💼 Book: {len(risk_rows)} position(s) · ${invested:,.0f} invested"
     if parked > 0:
         text += f" · ${parked:,.0f} T-bills"
     lines.append(text)
@@ -797,7 +847,12 @@ def _signal_row_line(row: dict, profiles: dict[str, Any] | None = None) -> str:
     rating = str(row.get("rating", "?")).upper()
     conviction = str(row.get("conviction", "?")).lower()
     rr = row.get("risk_reward")
-    rr_text = f" · R/R {rr:g}" if isinstance(rr, (int, float)) else ""
+    # Board item 89 clarity defect — "R/R 2.5" carried no unit. Same
+    # figure, said as what it is: the reward measured in multiples of the
+    # risk taken to get it.
+    rr_text = (
+        f" · reward {rr:g}× the risk" if isinstance(rr, (int, float)) else ""
+    )
     reason = _clip(row.get("reasoning"), 420)
     text = f"   • {label}: {rating}/{conviction}{rr_text}"
     if reason:
@@ -844,7 +899,13 @@ def _append_pm(lines: list[str], snap: dict[str, Any]) -> None:
             action = str(row.get("action", "?")).upper()
             symbol = str(row.get("symbol", "?")).upper()
             allocation = row.get("allocation_pct")
-            alloc_text = f" {allocation:g}%" if isinstance(allocation, (int, float)) else ""
+            # Board item 89 clarity defect — a percentage with no
+            # denominator. `allocation_pct` is the constructor's target
+            # for this order as a share of the account.
+            alloc_text = (
+                f" {allocation:g}% of the account"
+                if isinstance(allocation, (int, float)) else ""
+            )
             reason = _clip(row.get("reasoning"), 420)
             text = f"   • {action} {symbol}{alloc_text}"
             if reason:
@@ -872,15 +933,44 @@ def _append_pm(lines: list[str], snap: dict[str, Any]) -> None:
         lines.append(f"   PM view (this check): {_clip(pm_summary, 550)}")
 
 
+# `models.RiskReasonCategory`, each value in the words a person would use
+# (board item 89: internal status codes shown as-is). An unmapped value is
+# described, with the raw token kept for the record, never guessed at.
+_RISK_CATEGORY_WORDS: dict[str, str] = {
+    "clean": "no changes asked for",
+    "oversized": "sizing too aggressive for the conviction",
+    "rr_fail": "reward too thin for the risk",
+    "concentration": "too much in one sector or one name",
+    "correlation_risk": "too many positions moving together",
+    "event_risk": "an event (earnings, Fed, macro) too close",
+    "macro_misalign": "plan runs against the market backdrop",
+    "data_degraded": "several research inputs failed",
+    "signal_fidelity": "PM contradicted the chart research without saying why",
+    "other": "a reason outside the usual categories",
+}
+
+
+def _risk_category_words(category: Any) -> str:
+    token = str(category or "").strip().lower()
+    if not token:
+        return "no category recorded"
+    return _RISK_CATEGORY_WORDS.get(token) or (
+        f"a category the desk has no plain wording for (kept for the record: {token})"
+    )
+
+
 def _append_risk(lines: list[str], snap: dict[str, Any]) -> None:
     risk = snap.get("risk")
     if not isinstance(risk, dict):
         return
     approved = risk.get("approved")
     label = "APPROVED" if approved is True else "REJECTED" if approved is False else "UNKNOWN"
-    category = risk.get("reason_category") or "?"
+    category = _risk_category_words(risk.get("reason_category"))
     scale = risk.get("scale_all_buys")
-    scale_text = f" · buy size {scale * 100:.0f}%" if isinstance(scale, (int, float)) else ""
+    scale_text = (
+        f" · every buy cut to {scale * 100:.0f}% of the size asked for"
+        if isinstance(scale, (int, float)) else ""
+    )
     mods = snap.get("risk_mods") or []
     # Phase 10.1: a verdict can now be APPROVED overall and still have refused
     # individual names. Reading only `approved` would show that run as a clean
@@ -1010,10 +1100,43 @@ def _append_footer(lines: list[str], snap: dict[str, Any], elapsed: float) -> No
     bits: list[str] = []
     cost = snap.get("cost")
     if isinstance(cost, (int, float)):
-        cost_text = f"${cost:.4f}" if cost < 0.01 else f"${cost:.2f}"
-        bits.append(f"AI cost {cost_text}")
-    bits.append(_fmt_elapsed(elapsed))
-    lines.append("🧾 " + " · ".join(bits))
+        # In words, via the one shared helper (owner review, 2026-09-18).
+        # This used to render "AI cost $0.0000", which he read as broken
+        # rather than as the truthful price of a free-tier model.
+        bits.append(describe_ai_cost(cost, label="AI cost"))
+    bits.append(f"took {_fmt_elapsed(elapsed)}")
+    lines.append("\U0001f9fe " + " \u00b7 ".join(bits))
+
+
+def format_coverage_gap_line(row: dict, profiles: dict | None = None) -> str:
+    """One owner-facing bullet for a stop-coverage gap.
+
+    Company name, the two quantities as words, the dollars with no stop
+    over them, and the reason the automatic repair gave when it refused
+    (`repair_refusal` is a plain sentence stamped at the repair site;
+    absent when it has nothing to say). Nothing here is estimated.
+
+    Module-level and shared on purpose: `src/pipeline.py` sends the same
+    facts as an interrupting alert when a session-hours re-placement fails,
+    and two renderings of one condition are how the feed and the alert end
+    up describing the same position differently.
+    """
+    name = _ticker_co(str(row.get("symbol", "?")), profiles)
+    held = _number(row.get("held_qty"))
+    covered = _number(row.get("covered_qty"))
+    bits = [name]
+    if held is not None:
+        bits.append(f"holding {held:g}")
+    if covered is not None:
+        bits.append(f"stop covers {covered:g}")
+    value = _number(row.get("unprotected_value"))
+    if value is not None and value > 0:
+        bits.append(f"${value:,.2f} unprotected")
+    text = "   \u2022 " + ", ".join(bits)
+    refusal = str(row.get("repair_refusal") or "").strip()
+    if refusal:
+        text += f" \u2014 {_clip(refusal, 300)}"
+    return text
 
 
 def _append_coverage_gaps(lines: list[str], result: dict) -> None:
@@ -1031,15 +1154,35 @@ def _append_coverage_gaps(lines: list[str], result: dict) -> None:
     gaps = result.get("stop_coverage_gaps")
     if not isinstance(gaps, list) or not gaps:
         return
-    rows = [row for row in gaps if isinstance(row, dict)]
+    from src.notifier import _gap_is_expected_fractional
+
+    rows = [
+        row for row in gaps
+        if isinstance(row, dict) and not _gap_is_expected_fractional(row)
+    ]
     uncovered = [row for row in rows if _gap_is_uncovered(row)]
     partial = [row for row in rows if not _gap_is_uncovered(row)]
+    if not uncovered and not partial:
+        return
+    profiles = _profiles(uncovered, partial)
+
+    def _gap_line(row: dict) -> str:
+        return format_coverage_gap_line(row, profiles)
+
     if uncovered:
-        names = ", ".join(str(row.get("symbol", "?")) for row in uncovered[:6])
-        lines.append(f"🚨 NO STOP AT ALL: {len(uncovered)} · {names}")
+        lines.append(f"🚨 NO STOP AT ALL: {len(uncovered)} position(s) with nothing protecting them")
+        lines.extend(_gap_line(row) for row in uncovered[:8])
+        lines.append(
+            "   The desk's automatic re-protection did not close this. Place "
+            "a protective stop by hand or close the position."
+        )
     if partial:
-        names = ", ".join(str(row.get("symbol", "?")) for row in partial[:6])
-        lines.append(f"🚨 STOP MIS-SIZED: {len(partial)} · {names}")
+        lines.append(f"🚨 STOP MIS-SIZED: {len(partial)} position(s) only partly protected")
+        lines.extend(_gap_line(row) for row in partial[:8])
+        lines.append(
+            "   A stop is standing watch over part of each position; the "
+            "rest has none. The desk re-checks at its next scheduled pass."
+        )
 
 
 def _append_done(lines: list[str], rows: list[dict], snap: dict, profiles: dict) -> None:
@@ -1073,16 +1216,39 @@ def _append_blocked(lines: list[str], rows: list[dict], profiles: dict) -> None:
         return
     lines.append(_b("❌ BLOCKED / FAILED"))
     for row in rows:
-        reason = _clip(row.get("reason"), 300)
+        # 600, not 300: a constructor refusal sentence runs ~250 characters
+        # and a broker reason can run longer; a cut mid-sentence was item
+        # 89's "detail truncated" defect.
+        reason = _clip(row.get("reason"), 600)
         lines.append(
             f"   • {row['action']} {_ticker_co(row['symbol'], profiles)} — "
             f"{row['who']}: {reason}"
         )
 
 
-def _append_looked_at(lines: list[str], rows: list[dict], profiles: dict) -> None:
+def _pm_pass_reason(symbol: str, snap: dict[str, Any] | None) -> str:
+    """The Portfolio Manager's own recorded reason for leaving `symbol`
+    alone this run (its HOLD row), or an honest 'no reason recorded'."""
+    for row in (snap or {}).get("pm_orders") or []:
+        if (
+            isinstance(row, dict)
+            and str(row.get("symbol", "")).upper() == symbol
+            and str(row.get("action", "")).upper() == "HOLD"
+        ):
+            reason = _clip(row.get("reasoning"), 300)
+            if reason:
+                return reason
+    return "no reason recorded"
+
+
+def _append_looked_at(
+    lines: list[str], rows: list[dict], profiles: dict,
+    snap: dict[str, Any] | None = None,
+) -> None:
     """NEW LAYOUT item 5 — analyzed signals the PM/constructor passed on,
-    one line each: ticker, company, rating/conviction, plain outcome."""
+    one line each: ticker, company, rating/conviction, plain outcome, and
+    (2026-09-18) the PM's own reason where one was recorded — "PM passed"
+    alone told the owner nothing about why."""
     if not rows:
         return
     lines.append(_b("👀 LOOKED AT, NO TRADE"))
@@ -1090,7 +1256,10 @@ def _append_looked_at(lines: list[str], rows: list[dict], profiles: dict) -> Non
         symbol = str(row.get("symbol", "?")).upper()
         rating = str(row.get("rating", "?")).upper()
         conviction = str(row.get("conviction", "?")).lower()
-        lines.append(f"   • {_ticker_co(symbol, profiles)} {rating}/{conviction} — PM passed")
+        lines.append(
+            f"   • {_ticker_co(symbol, profiles)} {rating}/{conviction} — "
+            f"PM passed — {_pm_pass_reason(symbol, snap)}"
+        )
 
 
 def _append_held(lines: list[str], symbols: list[str], profiles: dict) -> None:
@@ -1127,7 +1296,16 @@ def _append_watch(lines: list[str], rows: list[dict], profiles: dict) -> None:
     lines.append(_b("⚠️ WATCH"))
     for row in rows:
         symbol = str(row.get("symbol", "?")).upper()
-        lines.append(f"   • {_ticker_co(symbol, profiles)} — stop coverage is mis-sized")
+        held = _number(row.get("held_qty"))
+        covered = _number(row.get("covered_qty"))
+        sizes = (
+            f" (holding {held:g}, stop covers {covered:g})"
+            if held is not None and covered is not None else ""
+        )
+        lines.append(
+            f"   • {_ticker_co(symbol, profiles)} — the stop covers only part "
+            f"of the position{sizes}"
+        )
 
 
 def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
@@ -1148,11 +1326,9 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     blocked_rows = _blocked_rows(result, snap)
     acted = {row["symbol"] for row in done_rows} | {row["symbol"] for row in blocked_rows}
     looked_at_rows = _looked_at_rows(snap, None, acted)
-    profiles = _lookup_company_profiles(
-        _all_symbols(done_rows, blocked_rows, looked_at_rows)
-    )
+    profiles = _profiles(done_rows, blocked_rows, looked_at_rows)
 
-    outcome = _outcome_word(status, len(done_rows), len(blocked_rows))
+    outcome = _outcome_word(status, len(done_rows), len(blocked_rows), done_rows)
     lines = [f"{_status_emoji(status)} {mode.upper()} · {fmt_time_12h(et_now())} · {outcome}"]
 
     _new_block(lines, _append_coverage_gaps, result)
@@ -1160,18 +1336,25 @@ def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     data_status = result.get("data_status") or {}
     if isinstance(data_status, dict):
         from src import evidence_gate
-        degraded = [
-            name for name, value in data_status.items()
+        degraded = {
+            name: value for name, value in data_status.items()
             if evidence_gate.counts_as_degraded(value)
-        ]
+        }
         if degraded:
-            _new_section(lines, f"⚠️ Data degraded: {', '.join(sorted(degraded))}")
+            # Board item 89 clarity defect — this named internal components
+            # ("macro, tech"). Same seats, in words, plus what it means.
+            _new_section(
+                lines,
+                "⚠️ Research was incomplete this session:",
+                *(f"   • {line}" for line in describe_data_status(degraded)),
+                "   The decisions below were made without that input.",
+            )
 
     _new_block(lines, _append_market, snap)
     _new_block(lines, _append_book, snap)
     _new_block(lines, _append_done, done_rows, snap, profiles)
     _new_block(lines, _append_blocked, blocked_rows, profiles)
-    _new_block(lines, _append_looked_at, looked_at_rows, profiles)
+    _new_block(lines, _append_looked_at, looked_at_rows, profiles, snap)
 
     detail_lines: list[str] = []
     _new_block(detail_lines, _append_signals, snap)
@@ -1214,11 +1397,9 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     blocked_rows = _blocked_rows(result, snap)
     held_symbols = _held_symbols(snap)
     watch_rows = _watch_rows(result)
-    profiles = _lookup_company_profiles(
-        _all_symbols(done_rows, blocked_rows, held_symbols, watch_rows)
-    )
+    profiles = _profiles(done_rows, blocked_rows, held_symbols, watch_rows)
 
-    outcome = _outcome_word(status, len(done_rows), len(blocked_rows))
+    outcome = _outcome_word(status, len(done_rows), len(blocked_rows), done_rows)
     lines = [
         f"{_status_emoji(status)} {mode.upper()} REVIEW · "
         f"{fmt_time_12h(et_now())} · {outcome}"
@@ -1275,7 +1456,9 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
         if isinstance(positions, int) and positions != len(held_symbols):
             bits.append(f"{positions} at the start of this session")
         if risk_level:
-            bits.append(f"risk {risk_level}")
+            # Board item 89 clarity defect — an unscaled risk rating. Same
+            # scale treatment the evening message gives it.
+            bits.append(f"risk {_risk_with_scale(risk_level)}")
         lines.append("📍 Review: " + " · ".join(bits))
 
     _new_block(lines, _render_review_summary)
@@ -1689,6 +1872,16 @@ def _append_evening_watchlist(lines: list[str], result: dict, profiles: dict) ->
 _RISK_SCALE = ("low", "moderate", "elevated", "high")
 
 
+def _risk_with_scale(risk: Any) -> str:
+    """'moderate — step 2 of 4 (low · moderate · elevated · high)', or the
+    word alone when it is not on the desk's own four-step scale."""
+    text = str(risk or "").strip()
+    if text.lower() in _RISK_SCALE:
+        step = _RISK_SCALE.index(text.lower()) + 1
+        return f"{text} — step {step} of {len(_RISK_SCALE)} ({' · '.join(_RISK_SCALE)})"
+    return text
+
+
 def _append_evening_tomorrow(lines: list[str], result: dict) -> None:
     """Tomorrow, with a scale and a consequence attached (owner review item
     9: "moderate" with no scale and "bullish" with no consequence both say
@@ -1738,14 +1931,14 @@ def _evening_cost_line(snap: dict) -> str:
     expensive seat, the portfolio manager, does not run in the evening at
     all. So the honest rendering is a word, not four decimal places.
     """
-    cost = snap.get("cost")
-    if cost is None:
-        return "AI cost tonight: not available"
-    if cost <= 0:
-        return "AI cost tonight: none — the evening review runs on free models"
-    if cost < 0.01:
-        return "AI cost tonight: under one cent"
-    return f"AI cost tonight: ${cost:,.2f}"
+    # One implementation of this wording, in src/notifier.py, so the evening
+    # message and every other owner-facing message cannot drift apart. The
+    # words below are unchanged from the version the owner signed off.
+    return describe_ai_cost(
+        snap.get("cost"),
+        label="AI cost tonight",
+        free_note="the evening review runs on free models",
+    )
 
 
 def _evening_meta_line(auto_meta: Any) -> str | None:
@@ -1871,6 +2064,130 @@ def _format_evening(result: dict, elapsed: float) -> str:
     return "\n".join(lines)
 
 
+# === Pre-market earnings pass (2026-09-18) ===
+#
+# The owner's own words on the old message ("analyzed: 1 confirmed: 1
+# failed: 0"): "which one? what's the symbol? what's the company?". The
+# run now records each filing it handled (`result["filings"]`, see
+# `TradingPipeline.run_earnings_preprocess`) and this names every one:
+# ticker, company, which report, when it was filed, what the reader
+# concluded, and what that changes for him. A result that predates the
+# field says plainly that the companies were not recorded.
+
+_FORM_WORDS: dict[str, str] = {
+    "10-Q": "quarterly report (10-Q)",
+    "10-K": "annual report (10-K)",
+}
+
+
+def _form_words(form_type: Any) -> str:
+    text = str(form_type or "").strip()
+    return _FORM_WORDS.get(text.upper(), text or "filing")
+
+
+def _earnings_filing_line(row: dict, profiles: dict) -> str:
+    name = _ticker_co(str(row.get("symbol", "?")), profiles)
+    filed = row.get("filing_date") or "filing date not recorded"
+    return f"{name} — {_form_words(row.get('form_type'))} filed {filed}"
+
+
+def _format_earnings(result: dict, elapsed: float) -> str:
+    status = str(result.get("status", "unknown"))
+    filings = [f for f in (result.get("filings") or []) if isinstance(f, dict)]
+    read = [f for f in filings if str(f.get("outcome", "")) == "analyzed"]
+    failed = [f for f in filings if str(f.get("outcome", "")) != "analyzed"]
+    profiles = _profiles(filings)
+
+    if status == "analysis_error":
+        outcome = "FAILED"
+    elif read and failed:
+        outcome = "PARTLY READ"
+    elif read:
+        outcome = f"{len(read)} FILING{'S' if len(read) != 1 else ''} READ"
+    elif failed:
+        outcome = "NOTHING READ"
+    else:
+        outcome = "RAN"
+    lines = [f"📄 PRE-MARKET EARNINGS · {fmt_time_12h(et_now())} · {outcome}"]
+
+    if status == "analysis_error":
+        banner = [
+            "🛑 The earnings reader stopped with a fault before it finished, "
+            "so no filing below was read this morning. Nothing was bought or "
+            "sold because of it. The desk tries again at its next pre-market "
+            "pass; until a filing is read, the Portfolio Manager treats it as "
+            "unread and caps any new buy of that company.",
+        ]
+        if result.get("error"):
+            banner.append(_machine_detail(result.get("error")))
+        _new_section(lines, *banner)
+        if filings:
+            waiting = [_b("WAITING TO BE READ")]
+            waiting += [f"   • {_earnings_filing_line(f, profiles)}" for f in filings]
+            _new_section(lines, *waiting)
+        else:
+            _new_section(
+                lines,
+                "The desk did not record which companies' filings were waiting.",
+            )
+        _new_section(lines, f"🧾 {_fmt_elapsed(elapsed)}")
+        return "\n".join(lines)
+
+    if not filings:
+        # A result from before the run recorded its filings: say so, and
+        # keep the only figures the run did record, unrounded.
+        _new_section(
+            lines,
+            "The desk did not record which companies these were. What it "
+            f"did record: {result.get('analyzed', 'not recorded')} read, "
+            f"{result.get('confirmed', 'not recorded')} filed as read, "
+            f"{result.get('failed', 'not recorded')} failed.",
+        )
+        _new_section(lines, f"🧾 {_fmt_elapsed(elapsed)}")
+        return "\n".join(lines)
+
+    if read:
+        block = [_b("READ AND FILED")]
+        for row in read:
+            verdict_bits = [
+                str(v) for v in (row.get("sentiment"), row.get("conviction")) if v
+            ]
+            verdict = (
+                f"{verdict_bits[0]}, {verdict_bits[1]} conviction"
+                if len(verdict_bits) == 2 else
+                (verdict_bits[0] if verdict_bits else "the reader recorded no verdict")
+            )
+            block.append(f"   • {_earnings_filing_line(row, profiles)}: {verdict}")
+            thesis = _clip(row.get("key_thesis"), 420)
+            if thesis:
+                block.append(f"      {thesis}")
+        block.append(
+            "   What changes: from the next session on, the Portfolio Manager "
+            "and the position reviewer read this verdict when they look at "
+            "the company. Nothing was bought or sold on it now."
+        )
+        _new_section(lines, *block)
+
+    if failed:
+        block = [_b("COULD NOT BE READ")]
+        for row in failed:
+            block.append(
+                f"   • {_earnings_filing_line(row, profiles)}: the reader did "
+                "not produce a usable analysis"
+            )
+        block.append(
+            "   What it means: nothing was traded on these. The desk tries "
+            "again at its next pre-market pass, and gives up on a filing after "
+            "repeated failures — this message does not record which try this "
+            "was. Until it is read, the Portfolio Manager treats the filing as "
+            "unread and caps any new buy of that company."
+        )
+        _new_section(lines, *block)
+
+    _new_section(lines, f"🧾 {_fmt_elapsed(elapsed)}")
+    return "\n".join(lines)
+
+
 def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     run_id = nested.get("run_id") or outer.get("run_id")
     snap = _read_run(run_id)
@@ -1881,11 +2198,9 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
     blocked_rows = _blocked_rows(nested, snap)
     acted = {row["symbol"] for row in done_rows} | {row["symbol"] for row in blocked_rows}
     looked_at_rows = _looked_at_rows(snap, candidates, acted)
-    profiles = _lookup_company_profiles(
-        _all_symbols(done_rows, blocked_rows, looked_at_rows)
-    )
+    profiles = _profiles(done_rows, blocked_rows, looked_at_rows)
 
-    outcome = _outcome_word(status, len(done_rows), len(blocked_rows))
+    outcome = _outcome_word(status, len(done_rows), len(blocked_rows), done_rows)
     lines = [f"⚡ INTRADAY OPPORTUNITY · {fmt_time_12h(et_now())} · {outcome}"]
 
     def _render_status_banner(lines: list[str]) -> None:
@@ -1917,7 +2232,7 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
                 ))
         elif status == "evidence_gate_skip":
             lost = nested.get("lost_seats") or []
-            seats = ", ".join(str(s) for s in lost) or "a research seat"
+            seats = ", ".join(seat_words(s) for s in lost) or "a research seat"
             lines.append(
                 f"🟡 DECISION SKIPPED: {seats} never returned an answer, so this "
                 "tick declined to decide rather than guess. Nothing was traded "
@@ -1955,7 +2270,7 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
 
     _new_block(lines, _append_done, done_rows, snap, profiles)
     _new_block(lines, _append_blocked, blocked_rows, profiles)
-    _new_block(lines, _append_looked_at, looked_at_rows, profiles)
+    _new_block(lines, _append_looked_at, looked_at_rows, profiles, snap)
 
     detail_lines: list[str] = []
     _new_block(detail_lines, _append_signals, snap, candidates=candidates)
@@ -2270,33 +2585,43 @@ def _read_hour_evidence(hour_window_minutes: int = _HOUR_WINDOW_MINUTES) -> list
     return list(rows.values())
 
 
-def _read_hour_trade_count(hour_window_minutes: int = _HOUR_WINDOW_MINUTES) -> int:
-    """Count of real (non-HOLD) broker trades in roughly the last hour —
-    read-only, fail-soft: any DB problem reads as 0 rather than blocking
-    the guaranteed hourly message (a real trade still sent its own
-    immediate message regardless of this count)."""
+def _read_hour_trades(hour_window_minutes: int = _HOUR_WINDOW_MINUTES) -> list[dict]:
+    """Every real (non-HOLD) broker trade row in roughly the last hour —
+    read-only, fail-soft: any DB problem reads as an empty list rather than
+    blocking the guaranteed hourly message (a real trade still sent its own
+    immediate message regardless). The rows carry symbol, action, quantity,
+    price and fill state so the hourly message can NAME what it counts
+    (board item 89: a count is not information)."""
     if not Path(_DB_PATH).exists():
-        return 0
+        return []
     conn = None
     try:
         uri = f"file:{Path(_DB_PATH).resolve()}?mode=ro"
         conn = sqlite3.connect(uri, uri=True, timeout=1.0)
+        conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=1000")
-        row = conn.execute(
-            "SELECT COUNT(*) FROM trades WHERE timestamp >= datetime('now', ?) "
-            "AND UPPER(action) != 'HOLD'",
+        rows = conn.execute(
+            "SELECT symbol, action, qty, price, fill_status, fill_qty, "
+            "fill_price FROM trades WHERE timestamp >= datetime('now', ?) "
+            "AND UPPER(action) != 'HOLD' ORDER BY id",
             (f"-{hour_window_minutes} minutes",),
-        ).fetchone()
-        return int(row[0]) if row else 0
+        ).fetchall()
+        return [dict(row) for row in rows]
     except Exception as exc:  # noqa: BLE001
-        logger.warning("hourly desk check: trade count read failed: %s", exc)
-        return 0
+        logger.warning("hourly desk check: trade read failed: %s", exc)
+        return []
     finally:
         if conn is not None:
             try:
                 conn.close()
             except Exception:  # noqa: BLE001
                 pass
+
+
+def _read_hour_trade_count(hour_window_minutes: int = _HOUR_WINDOW_MINUTES) -> int:
+    """Count of real (non-HOLD) broker trades in roughly the last hour —
+    see `_read_hour_trades`; a DB problem reads as 0."""
+    return len(_read_hour_trades(hour_window_minutes))
 
 
 def _format_hourly_desk_check(
@@ -2306,6 +2631,7 @@ def _format_hourly_desk_check(
     *,
     snap: dict[str, Any] | None = None,
     trade_count: int | None = None,
+    trade_rows: list[dict] | None = None,
     period_line: str = "Covering the last hour",
     coverage_text: str | None = None,
     scanned_text: str | None = None,
@@ -2325,16 +2651,48 @@ def _format_hourly_desk_check(
     run_id = result.get("run_id")
     if snap is None:
         snap = _read_run(run_id)
+    if trade_count is None and trade_rows is None:
+        # The scheduled path: read the hour's trades once and name them.
+        trade_rows = _read_hour_trades()
     if trade_count is None:
-        trade_count = _read_hour_trade_count()
-    outcome = "TRADED" if trade_count else "NO CHANGE"
+        trade_count = len(trade_rows or [])
+    trade_rows = [row for row in (trade_rows or []) if isinstance(row, dict)]
+    outcome = _traded_word(trade_rows) if trade_count else "NO CHANGE"
     lines = [
         f"🕐 DESK CHECK · {fmt_time_12h(et_now())} · {outcome}",
         period_line,
     ]
 
+    positions = [row for row in (snap.get("positions") or []) if isinstance(row, dict)]
+    risk_positions = [
+        row for row in positions
+        if str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS
+    ]
+    hour_rows = _read_hour_evidence()
+    hour_symbols = [
+        str(row.get("symbol", "")).upper() for row in hour_rows if row.get("symbol")
+    ]
+    profiles = _profiles(hour_symbols, trade_rows, risk_positions)
+
     if trade_count == 0:
         _new_section(lines, "⏸️ No action this hour")
+    elif trade_rows:
+        # Board item 89: "N order(s) this hour" named nothing. Each order,
+        # with its company and true fill state, from the same rows the
+        # count came from — so the count can never exceed the list.
+        trade_lines = [f"⚡ {trade_count} order(s) this hour — each already alerted on its own"]
+        for row in trade_rows:
+            action = str(row.get("action", "?")).upper()
+            symbol = str(row.get("symbol", "?")).upper()
+            qty = _number(row.get("fill_qty")) or _number(row.get("qty"))
+            price = _number(row.get("fill_price")) or _number(row.get("price"))
+            qty_text = f" {qty:g}" if qty is not None else ""
+            price_text = f" @ ${price:,.2f}" if price is not None and price > 0 else ""
+            trade_lines.append(
+                f"   • {action} {_ticker_co(symbol, profiles)}{qty_text}{price_text} — "
+                f"{_fill_state_plain(row.get('fill_status'))}"
+            )
+        _new_section(lines, *trade_lines)
     else:
         _new_section(
             lines,
@@ -2343,18 +2701,15 @@ def _format_hourly_desk_check(
 
     _new_section(lines, *_pnl_section_lines(result))
 
-    positions = [row for row in (snap.get("positions") or []) if isinstance(row, dict)]
-    risk_positions = [
-        row for row in positions
-        if str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS
-    ]
-    _new_section(lines, f"💼 Positions held: {len(risk_positions)}")
-
-    hour_rows = _read_hour_evidence()
-    hour_symbols = [
-        str(row.get("symbol", "")).upper() for row in hour_rows if row.get("symbol")
-    ]
-    profiles = _lookup_company_profiles(hour_symbols)
+    # Board item 89: "Positions held: N" named none of them. Every holding,
+    # company alongside, with its own open profit or loss where recorded.
+    position_lines = [f"💼 Positions held: {len(risk_positions)}"]
+    for row in risk_positions:
+        symbol = str(row.get("symbol", "?")).upper()
+        pnl = _number(row.get("unrealized_pnl"))
+        pnl_text = f" · {_fmt_signed_money(pnl)} open" if pnl is not None else ""
+        position_lines.append(f"   • {_ticker_co(symbol, profiles)}{pnl_text}")
+    _new_section(lines, *position_lines)
 
     _cov_start = len(lines)
     _append_coverage_gaps(lines, result)
@@ -2639,10 +2994,9 @@ def render_stored_evening(record: dict, elapsed_seconds: float = 0.0) -> str:
         "   Read back from the stored record. Nothing was run to produce "
         "this: no broker call, no model call, no order.",
     ]
-    header.append(
-        f"   Produced by run {run_id}" if run_id
-        else "   The producing run id was not recorded"
-    )
+    # No run identifier (owner review, 2026-09-18): it means nothing to him
+    # and he does not need it. The date above already says which session
+    # this was.
     lines = [*header, "", body]
 
     if gaps:
@@ -2789,10 +3143,9 @@ def render_stored_session_report(
         "   Read back from the stored record. Nothing was run to produce "
         "this: no broker call, no model call, no order.",
     ]
-    header.append(
-        f"   Produced by run {run_id}" if run_id
-        else "   The producing run id was not recorded"
-    )
+    # No run identifier (owner review, 2026-09-18): it means nothing to him
+    # and he does not need it. The date above already says which session
+    # this was.
     lines = [*header, "", body]
 
     if gaps:
@@ -2929,15 +3282,14 @@ def render_stored_intra_check(record: dict, elapsed_seconds: float = 0.0) -> str
     date_text = record.get("date") or "date not recorded"
     run_id = record.get("run_id")
     lines = [
-        _b(f"STORED INTRA_CHECK TICK · {date_text}"),
+        _b(f"STORED HALF-HOURLY CHECK · {date_text}"),
         "   Read back from the stored record. Nothing was run to produce "
         "this: no broker call, no model call, no order. This tick's own "
         "status only — not a re-derivation of the hourly DESK CHECK "
         "message, which also reflects other ticks around it.",
-        (f"   Produced by run {run_id}" if run_id
-         else "   The producing run id was not recorded"),
+
         "",
-        f"{_status_emoji(status)} STATUS: {status}",
+        f"{_status_emoji(status)} {humanize_status(status)}",
     ]
     _new_section(lines, *_pnl_section_lines(result))
     _new_block(lines, _append_coverage_gaps, result)
@@ -2946,10 +3298,13 @@ def render_stored_intra_check(record: dict, elapsed_seconds: float = 0.0) -> str
         if isinstance(row, dict)
         and str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS
     ]
+    profiles = _profiles(risk_positions)
     lines.append(f"💼 Positions held: {len(risk_positions)}")
+    for row in risk_positions:
+        lines.append(f"   • {_ticker_co(str(row.get('symbol', '?')), profiles)}")
     scan = payload.get("intraday_scan")
     if isinstance(scan, dict):
-        lines.append(f"🔎 Intraday scan: {scan.get('status', 'unknown')}")
+        lines.append(f"🔎 Movers scanned: {_movers_scanned_text(scan)}")
 
     if gaps:
         if len(gaps) == 1:

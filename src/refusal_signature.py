@@ -491,7 +491,7 @@ def check_refusal_signature(
 #: silently fall out of this map while its code stays the same.
 _PLAIN_BY_SIGNATURE: dict[tuple[str, str, str], str] = {
     # The historical key, kept so an OLD stored session still renders in
-    # English. It cannot be produced any more (board item 124 replaced it).
+    # English. It cannot be produced any more (board item 133 replaced it).
     ("portfolio_manager", "omitted", ""): (
         "the portfolio manager simply did not pick the name, and was never "
         "asked to say why — so this is not really a reason at all. The desk "

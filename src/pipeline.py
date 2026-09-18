@@ -3134,6 +3134,19 @@ class TradingPipeline:
                         gap["unprotected_value"] = _position_notional(
                             p, held - covered,
                         )
+                        # The marker that makes the log line below TRUE.
+                        # It used to be a claim only: a partial fallback
+                        # ('partial' whenever any whole share is still
+                        # covered, which is every fractional position) never
+                        # reached `_alert_owner_no_stop`, and the only code
+                        # that could page lived in the standalone coverage
+                        # watchdog — a separate process that need not be
+                        # running, and was not on 2026-09-18, when NET and
+                        # RSG sat uncovered during the session and the owner
+                        # was never told. The session that OBSERVED it now
+                        # sends it.
+                        gap["session_repair_failed"] = True
+                        gap["is_short"] = is_short
                         logger.error(
                             "FRACTIONAL STOP RE-PLACEMENT FAILED for %s during "
                             "session hours (held=%.4f, covered=%.4f) — this is "
@@ -3212,6 +3225,22 @@ class TradingPipeline:
         ]
         if naked:
             self._alert_owner_no_stop(naked)
+        # A session-hours re-placement that did not land is its own
+        # escalation, separate from the naked list above: the whole-share
+        # GTC leg is usually still standing watch, so the gap classifies as
+        # 'partial' and would otherwise be a banner line the owner reads
+        # hours later, if at all. Suppression is shared with the standalone
+        # watchdog so whichever process sees it first is the one that tells
+        # him, and neither repeats the other.
+        session_failures = [
+            g for g in gaps
+            if g.get("session_repair_failed") and not g.get("repaired")
+            # A sub-share failure with zero coverage left already went out
+            # as NO STOP AT ALL above; one condition, one message.
+            and g not in naked
+        ]
+        if session_failures:
+            self._alert_owner_session_repair_failed(session_failures)
         try:
             from src.execution.stop_records import (
                 reconcile_recorded_stop_levels, report_stop_level_mismatches,
@@ -3231,6 +3260,110 @@ class TradingPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.error("stop-level reconcile failed: %s", exc)
         return gaps
+
+    def _still_uncovered(self, gap: dict) -> bool:
+        """Is this position STILL short of stop coverage, read fresh from
+        the broker? Unreadable answers True — an unprotected position is
+        the one thing this desk cannot go quiet about on a bad read.
+        """
+        symbol = str(gap.get("symbol") or "").strip()
+        if not symbol:
+            return True
+        try:
+            held = abs(float(gap.get("held_qty") or 0))
+            _ok, specs = self.broker.snapshot_protective_stops(
+                symbol, side=("buy" if gap.get("is_short") else "sell"),
+            )
+            covered = sum(float(s.get("qty", 0) or 0) for s in (specs or []))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "could not re-read stops for %s before alerting (%s) — "
+                "alerting anyway", symbol, exc,
+            )
+            return True
+        if covered + 1e-6 >= held:
+            logger.info(
+                "%s is fully stop-covered (%.4f of %.4f) by the time the "
+                "alert was about to go out — another process placed it. Not "
+                "paging the owner about a failure that succeeded.",
+                symbol, covered, held,
+            )
+            return False
+        return True
+
+    def _alert_owner_session_repair_failed(self, failures: list[dict]) -> None:
+        """Tell the owner a protective stop could not be put back while the
+        market was OPEN. Never raises.
+
+        Deliberately NOT the overnight fractional lapse. That one is owner-
+        ratified, bounded and happens to every fractional position every
+        night — the broker accepts fractional orders only on DAY
+        time-in-force, so the sub-share stop dies at 16:00 by design. It is
+        stamped 'fractional_overnight' well before here, is reported as a
+        measured number rather than an interruption, and must stay silent: a
+        quiet expected state that starts paging is how a channel gets tuned
+        out.
+
+        The wording is `src.trader_feed.format_coverage_gap_line` — the same
+        bullet the session feed renders — so the alert and the feed cannot
+        describe one position two ways.
+
+        The broker is re-read for each failing position immediately before
+        sending, and one that turns out to be covered after all is dropped.
+        Two processes have already been seen running this same repair
+        concurrently (2026-09-16, BRK-B: orders 23 ms apart) and the loser's
+        retry loop reported FAILURE on an order that had in fact landed.
+        Paging the owner about a failure that succeeded is its own defect,
+        and the standalone watchdog already re-reads before it ACTS for the
+        same reason. Same epsilon, no new threshold, no retry.
+        """
+        try:
+            from src import notifier as _notifier
+            from src.coverage_watchdog import claim_repair_failure_alert
+            from src.trader_feed import _profiles, format_coverage_gap_line
+
+            still_open = [g for g in failures if self._still_uncovered(g)]
+            if not still_open:
+                return
+            symbols = [
+                str(g.get("symbol")).strip() for g in still_open
+                if str(g.get("symbol") or "").strip()
+            ]
+            fresh = set(claim_repair_failure_alert(symbols))
+            if not fresh:
+                logger.info(
+                    "Session stop-repair failure on %s already reported to "
+                    "the owner today — not paging again.",
+                    ", ".join(symbols) or "(unnamed)",
+                )
+                return
+            rows = [
+                g for g in still_open
+                if str(g.get("symbol") or "").strip().upper() in fresh
+            ]
+            try:
+                profiles = _profiles(rows)
+            except Exception:  # noqa: BLE001
+                profiles = None
+            detail = "\n".join(
+                format_coverage_gap_line(row, profiles) for row in rows
+            )
+            _notifier.send_owner_alert(
+                "🔴 COULD NOT PUT THE PROTECTIVE STOP BACK\n"
+                f"{len(rows)} position(s) lost part of their protective stop "
+                "while the market was OPEN, and the desk tried to place the "
+                "missing stop and failed. Those shares have nothing standing "
+                "watch over them right now. This is not the expected "
+                "overnight lapse on a part-share.\n"
+                f"{detail}\n"
+                "Nothing was sold, resized or cancelled. Place the missing "
+                "stop by hand — a stop over a part-share has to be a "
+                "day-only order — or close the position. Each position is "
+                "reported at most once per trading day.",
+                symbols=sorted(fresh),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("session stop-repair owner alert failed: %s", exc)
 
     @staticmethod
     def _alert_owner_no_stop(naked: list[dict]) -> None:
@@ -11686,14 +11819,18 @@ class TradingPipeline:
         if session == "morning":
             _dc.write_status("morning", "evidence_gate_skip")
         try:
-            from src.notifier import send_owner_alert
+            from src.notifier import seat_words, send_owner_alert
 
+            # Seat names in words (board item 89: internal component names).
             send_owner_alert(
-                f"DECISION SKIPPED — no evidence from {', '.join(verdict.lost)} "
+                "DECISION SKIPPED — no answer from "
+                f"{', '.join(seat_words(s) for s in verdict.lost)} "
                 f"(run {run_id})\n"
                 f"{verdict.reason}\n"
-                f"Nothing was traded and no Portfolio Manager call was paid "
-                f"for. The next scheduled decision opportunity tries again."
+                "WHAT THIS MEANS FOR YOU: nothing was traded and no Portfolio "
+                "Manager call was paid for. Every position keeps the stop it "
+                "already had. The next scheduled decision opportunity tries "
+                "again; there is nothing for you to do."
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("evidence gate: owner alert failed: %s", exc)
@@ -13355,8 +13492,27 @@ class TradingPipeline:
         smart_money_refresh: dict = {"status": "disabled"}
         if self.config.smart_money.enabled:
             try:
-                smart_money_refresh = self.smart_money_provider.refresh()
+                # Watched names are passed so the Form 4 discovery budget
+                # (`max_filings_per_refresh`) is spent on the desk's own
+                # names before the rest of the listed market. Nothing is
+                # filtered out — external candidate nomination still reads
+                # filings on names the desk does not watch.
+                watched = self._watched_research_symbols()
+                try:
+                    smart_money_refresh = self.smart_money_provider.refresh(watched)
+                except TypeError:
+                    smart_money_refresh = self.smart_money_provider.refresh()
                 logger.info("Smart-money refresh (SEC Form 4 + congressional): %s", smart_money_refresh)
+                # Backlog depth, named in its own line: `refresh` runs once a
+                # day pre-market, so a residue cannot drain until tomorrow,
+                # and an unread Form 4 is what the research-expiry peek reads
+                # as a new filing. Report-only — no threshold, no alert.
+                logger.info(
+                    "Smart-money Form 4 backlog: pending=%s watched_pending=%s cap_reached=%s",
+                    smart_money_refresh.get("pending_filings"),
+                    smart_money_refresh.get("watched_pending_filings"),
+                    smart_money_refresh.get("discovery_cap_reached"),
+                )
             except Exception as exc:
                 logger.warning("SEC Form 4 refresh failed softly: %s", exc)
                 smart_money_refresh = {
@@ -13388,6 +13544,15 @@ class TradingPipeline:
             len(new_reports),
             ", ".join(r.symbol for r in new_reports),
         )
+        # Owner-facing record of WHICH filings this pass handled (2026-09-18:
+        # the message used to say "analyzed: 1 confirmed: 1 failed: 0" and
+        # the owner asked "which one? what's the symbol? what's the
+        # company?"). Report-only — nothing reads this back into a decision.
+        filings_waiting = [
+            {"symbol": r.symbol, "form_type": r.form_type,
+             "filing_date": r.filing_date, "outcome": "waiting"}
+            for r in new_reports
+        ]
         try:
             self._require_paid_analysis("earnings_analyst")
             results = self.earnings_analyst.analyze_reports(new_reports)
@@ -13405,7 +13570,10 @@ class TradingPipeline:
                     self.earnings_provider.record_failure(r)
                 except Exception as re:
                     logger.error("record_failure failed for %s: %s", r.symbol, re)
-            return {"status": "analysis_error", "run_id": run_id, "error": str(e)}
+            return {
+                "status": "analysis_error", "run_id": run_id, "error": str(e),
+                "filings": filings_waiting,
+            }
 
         # Match results to reports by (symbol, form_type, filing_date), not
         # just symbol. Same-symbol multiple-form-day is rare but real
@@ -13478,12 +13646,40 @@ class TradingPipeline:
             "Earnings preprocess complete: %d analyzed, %d confirmed, %d failed",
             analyzed_count, confirmed, len(failed_reports),
         )
+        # Per-filing outcome for the owner message: the reader's own
+        # sentiment / conviction / key_thesis where it produced one, and
+        # "failed" where it did not. Same (symbol, form, date) key as the
+        # confirmation logic above, so a same-day 10-Q and 10-K stay apart.
+        verdict_by_key: dict = {}
+        for res in results:
+            analysis = res.get("analysis") or {}
+            impl = analysis.get("investment_implications") or {}
+            if not isinstance(impl, dict):
+                impl = {}
+            verdict_by_key[_filing_key(
+                res.get("symbol"), res.get("form_type"), res.get("filing_date"),
+            )] = {
+                "sentiment": impl.get("sentiment"),
+                "conviction": impl.get("conviction"),
+                "key_thesis": impl.get("key_thesis"),
+            }
+        filings: list[dict] = []
+        for r in new_reports:
+            key = _filing_key(r.symbol, r.form_type, r.filing_date)
+            row = {
+                "symbol": r.symbol, "form_type": r.form_type,
+                "filing_date": r.filing_date,
+                "outcome": "analyzed" if key in successful_keys else "failed",
+            }
+            row.update(verdict_by_key.get(key) or {})
+            filings.append(row)
         return {
             "status": "preprocessed",
             "run_id": run_id,
             "analyzed": analyzed_count,
             "confirmed": confirmed,
             "failed": len(failed_reports),
+            "filings": filings,
             "smart_money_refresh": smart_money_refresh,
         }
 
@@ -14128,6 +14324,7 @@ class TradingPipeline:
         different 15 names and invent new titles.
         """
         from src.evidence_kind import headline_mentions_symbols
+        self._last_news_peek_items = []
         provider = getattr(self, "news_provider", None)
         fetch = getattr(provider, "fetch_news", None)
         if not callable(fetch):
@@ -14142,6 +14339,10 @@ class TradingPipeline:
                 items, _coverage = fetch()
         except Exception:  # noqa: BLE001 — failed fetch ≠ supersede
             return []
+        # Keep what we just paid for. The expiry compare only needs titles,
+        # but discarding the wire body meant the tick proved its remembered
+        # news was superseded and then had nothing to re-ask with.
+        self._last_news_peek_items = list(items or [])
         titles: list[str] = []
         for item in items or []:
             title = getattr(item, "title", None)
@@ -14159,6 +14360,29 @@ class TradingPipeline:
                 continue
             titles.append(text)
         return titles
+
+    def _peeked_news_wire_text(self) -> str:
+        """The wire text the expiry peek already fetched, formatted for the
+        news analyst. Empty when the peek returned nothing.
+
+        No second fetch and no new window: this is the same fetch that
+        proved the remembered report superseded. A failed or empty peek
+        stays empty so the seat expires and is lost — a fetch that got
+        nothing must never be dressed up as fresh news.
+        """
+        items = list(getattr(self, "_last_news_peek_items", None) or [])
+        if not items:
+            return ""
+        provider = getattr(self, "news_provider", None)
+        fmt = getattr(provider, "format_for_prompt", None)
+        if not callable(fmt):
+            return ""
+        try:
+            text = fmt(items, max_items=self.config.news.max_prompt_items)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Intraday scan: wire text for news heal failed: %s", e)
+            return ""
+        return text if isinstance(text, str) and text.strip() else ""
 
     def _news_has_newer_material_wire(self, report) -> bool:
         """Best-effort mechanical headline compare. Failed fetch ≠ supersede.
@@ -14337,11 +14561,18 @@ class TradingPipeline:
             return CarryForward(None, verdict.status, same_session=same_session)
         return CarryForward(payload, verdict.status, same_session=same_session)
 
-    def _carry_forward_news(self) -> CarryForward:
+    def _carry_forward_news(self, ctx: RunContext | None = None) -> CarryForward:
         """This session's news intelligence, re-validated from its stored dump.
 
         Same-session GOOD reuse is #430. A newer material wire expires it.
         Parse failure is lost, never reused as research.
+
+        When the wire DID move, the peek that proved it holds current wire
+        text. Hand that to the heal path (`ctx.heal_news_text`) so the
+        expired seat is re-asked with the data this tick already paid for,
+        instead of being lost while fresh headlines are thrown away. The
+        evidence gate is untouched: expired is still LOST unless the
+        re-ask actually succeeds.
         """
         from src.evidence_kind import news_reuse
         try:
@@ -14356,12 +14587,17 @@ class TradingPipeline:
         # load_daily_report only opens today's dated directory. A successful
         # load is therefore same-session; there is no undated news snapshot
         # on this path. Empty/failed above cannot claim it.
+        wire_moved = self._news_has_newer_material_wire(payload)
         verdict = news_reuse(
             payload,
             same_session=True,
-            newer_material_wire=self._news_has_newer_material_wire(payload),
+            newer_material_wire=wire_moved,
         )
         if not verdict.usable:
+            if wire_moved and ctx is not None:
+                wire_text = self._peeked_news_wire_text()
+                if wire_text:
+                    ctx.heal_news_text = wire_text
             return CarryForward(None, verdict.status, same_session=True)
         return CarryForward(payload, verdict.status, same_session=True)
 
@@ -14994,7 +15230,7 @@ class TradingPipeline:
         # about an intraday move with no idea what regime it is happening in.
         ctx.analyses = analyses
         carried_macro = self._carry_forward_macro()
-        carried_news = self._carry_forward_news()
+        carried_news = self._carry_forward_news(ctx)
         carried_earnings = self._carry_forward_earnings(ctx)
         carried_insider = self._carry_forward_insider(ctx)
         ctx.data_status = {

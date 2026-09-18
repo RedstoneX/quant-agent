@@ -109,14 +109,12 @@ this line, one heading per item.
 **The decision —** Not yet yours to make. It becomes a decision once the model-test gate below is clear; until then the date only exists because this file needs one, and it moves rather than forcing an answer.
 **Recommendation —** Nothing to approve. Clear the gate first. A recommendation to spend roughly $5 and settle it was put to you on 2026-09-13 and withdrawn the same day for this reason.
 
-
 ## item 17
 
 **Plain language —** If the desk's own record-keeping breaks, a safety switch can shut down all further AI-based decisions completely, and it stays off until a person manually clears it — working as intended. The real problem, observed live, was that the alert meant to warn someone about it also failed to send, so the desk could sit switched off for a full day or a weekend with nobody aware, looking exactly like an ordinary quiet market.
 **Example —** This happened for real: the safety switch tripped because a data file couldn't be opened, and the message meant to warn the owner about it failed to deliver too, so both the shutdown and the warning about it went unnoticed at once.
 **The decision —** None for you right now. Already decided, 2026-09-03: not now, bigger problems to solve first. No due date; revisit only at your discretion. This line used to describe it as open — it wasn't kept in sync with your own ruling, corrected 2026-09-13.
 **Recommendation —** Nothing to approve right now. Bring it back yourself when you want to revisit it.
-
 
 ## item 18
 
@@ -127,12 +125,10 @@ this line, one heading per item.
 **The decision —** Whether two more pieces of evidence, reward-to-risk and net evidence, should be folded into the scoring system used to rank ideas.
 **Recommendation —** Hold off until the reward-to-risk fix above is fully re-measured; folding in a number still being corrected risks baking the same distortion into the ranking.
 
-
 ## item 19
 
 **Plain language —** Given the exact same information twice, the AI gives a strikingly consistent answer, which is useful: the desk can use repeat runs to prove a code change actually reached the AI, potentially skip paying for repeats where the answer never varies, and mathematically correct a known, repeatable bias instead of arguing it away with wording changes. All secondary to the bigger prompt fix already underway elsewhere.
 **Example —** Five runs with stock names hidden and five with them shown produced answers identical to four decimal places; a later batch of five runs failed the same check four times out of five, always flagging the same two stock names.
-
 
 ## item 20
 
@@ -201,7 +197,6 @@ is that enough?". Nothing published answers that, so it either gets a
 number from you or a ruling that partial coverage should never stop a
 decision at all.
 
-
 ## item 32
 
 **Plain language —** The desk has two separate ways of noticing it is losing money: one watches how much the account has fallen over a rolling window, the other watches how far it is below its best-ever level. They were built independently and had never been written down side by side. That comparison is now done, and the answer is that they do not fight each other — neither can block the other, they cannot both sell the same shares, and neither can be asleep past the point the other acts. What the comparison turned up is that the alarm which goes off soonest was taking the most drastic action of the two: it sold the entire book and abandoned the day, while the mechanism that only triggers after a much worse fall merely halves how much the desk may own. Shallowest trigger, most violent action.
@@ -218,7 +213,6 @@ decision at all.
 
 **Recommendation —** Keep them as two, and the case got stronger. They no longer do the same KIND of thing: one stops the desk, the other trims excess exposure. Two measurements pointing at two different responses is much easier to justify than two measurements racing to sell the same book. Merging still means re-deciding trip points already set once — worth doing when there is real evidence of how each behaves, not before.
 
-
 ## item 39
 
 **Plain language —** When the desk has run out of risk budget and has to turn away a good new idea, it now compares that idea against the weakest thing it is already holding. Two different things can happen. If the holding merely ranks lower, the desk only shows the comparison and does nothing. If the holding would flatly not be bought today — it fails the desk's own entry rules, the same rules a brand-new buy has to pass — the desk can now sell it itself to make room. That selling half is switched ON, at your instruction, rather than shipped switched off. It has never actually happened yet: nothing has been running since 3 September, so the first one will also be the first proof it works end to end, and you will get a message the moment it does.
@@ -228,7 +222,6 @@ decision at all.
 **Example —** On the one real day with good records, the desk found 25 trades it was allowed to take, wanting to risk about 48% of the account against a 25% ceiling. That is the "no room left" condition, measured, not imagined — so on a day like that the door to rotation is open. What comes through it is deliberately narrow: only a holding that fails today's entry rules AND whose original reason for existing has already broken. Nothing has passed all of that yet, so there is no real swap to show you, and I am not going to invent one.
 
 **One thing you should know —** the tier that only ranks things uses a "must be 25% better" bar that is a made-up number. It is honestly labelled as made-up in the code and it decides nothing — it only controls whether a comparison gets printed for the AI to read. The tier that can actually sell doesn't use it at all. It stays a research question, not a decision for you.
-
 
 ## item 52
 
@@ -279,7 +272,6 @@ decision at all.
 **The decision —** Do you want the other four specialists asked to rate their own strength, separately from their confidence? It is a change to what each is asked to produce, not a number to pick.
 **Recommendation —** Not yet, and not urgent. The current state invents nothing, which is the important part, and the ranking is honestly described as breadth-and-confidence. Adding a strength question to four prompts is cheap to do and expensive to get wrong — every one of them would be a fresh place for a specialist to assert a number nobody can check. Worth revisiting if the ranking ever looks like it is missing an obvious distinction; not worth doing pre-emptively.
 
-
 ## item 70
 
 **Plain language —** One made-up number, 1.0, is doing two different jobs in the selling path, and neither job is read off anything. The first job is deciding how far a stock has to move against you before the move counts as real rather than ordinary daily wobble. The second is deciding how tight a stop-loss is allowed to be before the desk refuses it as too close. Both are expressed as "one average day's range". That they are the same figure is a coincidence — nothing ties them — so changing one would not change the other, and changing neither is not a source. The first job is also the only measured over-refusal on this path: of eight proposed sales the reviewer approved, seven were blocked as "too small a move". Closing the plumbing next door did not answer why.
@@ -308,26 +300,13 @@ decision at all.
 **The decision —** You locked the standing rule. The temporary drop-the-name patch stays until a live session proves the seats actually fill the box. The rule is not only about "I'll sell if" — any missing required field is the same class of defect.
 **Recommendation —** Keep the never-blank path. Keep the drop-the-name patch labelled temporary. Do not treat skip-and-continue as the product.
 
-
-
-## item 79
-
-**Plain language —** The desk has a guard against a typo in a price — a "fat finger" check that refuses anything more than 20% away from the market. It is being applied to the stop-loss price as well as the buy price, and on 17 September it threw away a perfectly good short on FLNC after the desk had already paid for the whole analysis. FLNC moves about 9.6% on a normal day, so a flat 20% cap forbids any stop wider than about two normal days — a volatility question answered with a made-up number.
-**Example —** A name that swings 10% a day needs a stop further away than a name that swings 1%. One flat percentage cannot serve both.
-**Recommendation —** Apply the typo guard only to the price we are buying or selling at, which is where a typo lands. Do not swap 20% for another invented number. Separately, when a refusal is shown to you it must print the name's normal daily range beside the percentage, or a correct refusal reads like a bug.
-
 ## item 86
 
 **Plain language —** The live feed that tells the desk instantly when an order has filled has never once worked. The trading process deliberately holds a fake key; a local helper swaps in the real one for ordinary requests, but the live feed does not go through that helper — it dials the broker directly and offers the fake key. Two separate things block a quick fix: the library the desk uses cannot be pointed at that helper at all, and the broker checks the key inside the conversation rather than in the connection header, which the helper cannot reach.
 **Example —** Five rounds of work were spent making this path faster before anyone checked whether it had ever worked.
 **Nothing is at risk —** Orders are placed over the ordinary connection, which works, and fills are detected by asking the broker every few seconds instead. The feed is now switched off. The only loss is a few seconds of speed. Today's failure count was about 45, not the 147 first quoted — that figure counted log lines, several per failure.
-**The decision — yours, and nobody builds any of it without you.** Five options, best fit first: (1) have the machine hold the key in an encrypted store — **this turns out NOT to be possible on this machine** (the service cannot read the decryption key, there is no security chip, and the installed system software lacks the feature); an earlier answer of "encrypted and tied to the machine" was wrong. (2) A small local relay that holds the real key and rewrites the login message: the only option that keeps the key out of the trading process, but it is custom credential-handling code, which this project has previously refused. (3) Get the helper taught to do this properly, upstream: correct, does not exist, slow. (4) Make the library able to use the helper: does not fix the login problem on its own. (5) Leave the feed off and keep asking the broker — no credential change at all, costs a few seconds of fill latency, and stops about 150 error lines a day.
-**Recommendation —** Option 5 today, since it is already in place and costs almost nothing. What remains achievable for protecting the key on this machine is file-permission protection, not encryption.
-
-## item 87
-
-**Plain language —** When the book gets too big relative to the account, the desk automatically trims it. That is now the only thing on the desk that sells by itself. Nobody has ever checked whether it cancels the protective stop-losses first in order to free the shares — and if it cancels them and then fails to sell, the holdings are left with no protection at all. That exact flaw is why the older "big loss today" liquidation was deleted on 14 September.
-**Recommendation —** Audit it before changing anything. Find out what it actually does, then decide.
+**The decision — no longer yours to wait on; the orchestrator decides after an adversary run, and the decision and its reason are recorded before anything is built.** Five options, best fit first: (1) have the machine hold the key in an encrypted store — **this turns out NOT to be possible on this machine** (the service cannot read the decryption key, there is no security chip, and the installed system software lacks the feature); an earlier answer of "encrypted and tied to the machine" was wrong. (2) A small local relay that holds the real key and rewrites the login message: the only option that keeps the key out of the trading process, but it is custom credential-handling code, which this project has previously refused. (3) Get the helper taught to do this properly, upstream: correct, does not exist, slow. (4) Make the library able to use the helper: does not fix the login problem on its own. (5) Leave the feed off and keep asking the broker — no credential change at all, costs a few seconds of fill latency, and stops about 150 error lines a day.
+**Recommendation —** Option 5 today, since it is already in place and costs almost nothing. What remains achievable for protecting the key on this machine is file-permission protection, not encryption. **Standing exception:** if the eventual choice is option (2) or anything else that amounts to new credential-handling code, that is a credential redesign — one of the categories still escalated to the owner directly, regardless of who chose it.
 
 ## item 89
 
@@ -349,6 +328,14 @@ decision at all.
   - **Fixed — raw internal error text.** Internal code-words and broker status tokens no longer reach you; the plain-English wording for them already existed and one line was skipping it. Where a fault message is genuinely the only record of what broke it is kept, but labelled as machine text with a note that there is nothing in it for you to do — inventing a friendly paraphrase of a fault would be inventing a fact. A token nobody has plain wording for is reported as exactly that, never guessed at.
   - **Could not be found — being told you hold a name sold that morning.** Every message that names your holdings reads one table, and that table is refreshed from the broker at the start of every session, after every order, and on every half-hourly check, so it is never more than half an hour behind. We could not produce the message from the code and have not fixed a defect we cannot reproduce. The board's own note on the discarded stop-out reconciliation (item 101) points at the likeliest mechanism and is still open. If you have the message, it would settle this in one look.
 **Progress, 18 September —** The evening message was redesigned against the owner's own review of the live 17 September copy. Three of the thirteen are now fixed THERE (run identifiers, internal status codes, the unscaled risk rating) and remain open in the other messages. Also removed from the evening message: the provider-request count, and the nightly "overnight fractional unprotected by design" line, which now speaks only when a holding of under one whole share has nothing protecting it overnight. The near-zero cost was verified truthful, not broken — every seat the evening session runs is on a free model and the one expensive seat does not run in the evening — and now renders as a sentence. Two things the desk knew and never said were added: which holdings sit within one ordinary day's move of their stop, and which report earnings inside the three-session window.
+**Progress, 18 September, later — the other messages.** Nine of the eleven clarity defects named above are now fixed in every other message (morning, midday, close, the intraday alert, the hourly desk check, the pre-market earnings note, the data-quality alert). Nothing about what the desk trades, or when, or how much, was touched.
+  - **The pre-market earnings note names the company.** It used to say "analyzed: 1 confirmed: 1 failed: 0". It now says which company, which report (quarterly or annual), when it was filed, what the reader concluded and in what words, and what that changes for you — which is that the Portfolio Manager reads that verdict from the next session on, and nothing was bought or sold on it. A filing the reader could not make sense of is listed by name with what happens next. An older run that never wrote down the names says so rather than guessing.
+  - **The hourly check names what it counts.** "1 order(s) this hour" now lists the order — company, quantity, price, whether it filled. "Positions held: 4" now lists the four, with each one's open profit or loss.
+  - **A name the desk looked at and passed on now says why**, in the Portfolio Manager's own recorded words, or says "no reason recorded" when it wrote none.
+  - **A stop-coverage warning names the company**, says how many shares are held and how many the stop covers, the dollars unprotected, why the automatic repair refused (when it said), and what you can do.
+  - **Words instead of codes and bare numbers:** a rating's reward is now "reward 1.8× the risk", a size is "19.8% of the account", a risk verdict's category is a phrase, the research seats are named in words ("the chart research returned only part of an answer") with any unrecognised state described and its raw text labelled, a run that only sold reads SOLD not TRADED, and a rejection carries the broker's own words when it gave any.
+  - **Not fixed:** the reasons written at the moment a trade is skipped are still in market shorthand (basis points, feed names) at eighteen places in the code — the plain "who stopped it" label sits in front of them, but the detail after the colon is still jargon. Run identifiers are being removed by a separate change.
+  - **Things the desk did not write down, found in passing:** which filings the earnings pass handled (now recorded); the broker's own reason on a plain rejection (now recorded); how many times it has already tried an unreadable filing (still not recorded); a reason for a name the Portfolio Manager never mentioned at all (there is none to record).
 
 ## item 90
 
@@ -383,18 +370,18 @@ decision at all.
 
 ## item 95
 
-**Plain language — your decision.** The account can borrow. Today the portfolio manager is not even shown that, which is a separate defect. Once it is shown, the question is whether it may PLAN to spend borrowed money. Borrowing costs about 6.25% a year on the borrowed balance, so anything bought with it has to beat 6.25% just to break even, not zero.
-**Recommendation —** None until you rule. Nobody builds it either way.
+**Plain language — not yours to wait on any more; the orchestrator decides after an adversary run.** The account can borrow. Today the portfolio manager is not even shown that, which is a separate defect. Once it is shown, the question is whether it may PLAN to spend borrowed money. Borrowing costs about 6.25% a year on the borrowed balance, so anything bought with it has to beat 6.25% just to break even, not zero.
+**Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it.
 
 ## item 96
 
-**Plain language — your decision.** The risk manager can approve a sale whose stated reason is provably false against the desk's own records — nothing checks the reason before the sale goes through.
-**Recommendation —** None until you rule.
+**Plain language — not yours to wait on any more; the orchestrator decides after an adversary run.** The risk manager can approve a sale whose stated reason is provably false against the desk's own records — nothing checks the reason before the sale goes through.
+**Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it.
 
 ## item 97
 
-**Plain language — your decision.** The desk judges whether a trade is moving too slowly against a holding period the model simply states rather than reads off anything. That is the kind of unverifiable number the desk has already banned from sizing trades; whether it may stay in this one test is your call.
-**Recommendation —** None until you rule.
+**Plain language — not yours to wait on any more; the orchestrator decides after an adversary run.** The desk judges whether a trade is moving too slowly against a holding period the model simply states rather than reads off anything. That is the kind of unverifiable number the desk has already banned from sizing trades; whether it may stay in this one test is being decided, not left with you.
+**Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it.
 
 ## item 98
 
@@ -424,13 +411,6 @@ decision at all.
   - Separately: a check already exists that fills prompts with numbers straight from the code so they can't go stale, but it only covers 2 of the 10 prompt files. Scanning prompt text for suspicious numbers doesn't work either — there are about 1,825 numbers in there, mostly just dates and list numbering. Neither of the two confirmed mistakes above (item 98) was even sitting in a prompt file — both were assembled by Python code into a string. What would actually have caught the worst one: when code that a prompt describes gets deleted, search the prompts for its name at that moment.
 **Recommendation —** Decide the evening-vs-technical mandate question first (it changes what "fix the prompt" even means); then strip the dead weight, since that's where the false statements cluster; build the deletion-site check as ongoing insurance rather than trying to scan for numbers. Not yet placed in your priority order.
 
-## item 100
-
-**Plain language —** Three pieces of cockpit and reporting work are already in progress, and your instructions for each are recorded here so they survive if the session restarts.
-  1. **Cockpit panel scrolling.** Panels can be dragged around the screen, so a scrolling rule tied to "top of screen" or "bottom of screen" breaks the moment a panel moves. Scroll behaviour should belong to each panel itself. Holdings and Positions scroll internally; the tabbed detail panels should grow to fit their content and let the whole page scroll instead.
-  2. **"Why do we hold this" view.** When you click through to see why a position is held, the fix replaces what's already there rather than adding a new panel: one plain sentence at the top giving the real reason with actual numbers in it, then the rest of the decision-relevant detail written for a human to read, with no fixed line count — you rejected a "keep it to four lines" rule; the test is whether something is relevant, not how long it is. Internal ID numbers get tucked behind a toggle rather than shown up front.
-  3. **Evening report.** Drop run identifiers and provider-request counts (nobody-facing plumbing); state the LLM cost in a sentence instead of a row of zeros; only mention "overnight fractional position unprotected by design" when something is actually abnormal that night, not every night; put today's and total profit/loss at the very top; keep the winners and underwater-positions lists; rewrite the risk/bias section so it reads in plain language.
-**Recommendation —** No action needed from you; recorded so the in-progress work has something to be checked against when it lands.
 ## item 104
 
 **Plain language —** The three seats that actually pick and size your trades are each given a written brief, in plain English, describing the desk's rules. Seventeen statements in those briefs are no longer true — the code underneath them was changed and nobody changed the brief. Eight of the seventeen can change a trade. One of them killed a name on 17 September: the brief tells the seat that the macro view never counts toward how many sources agree, while the code counts it as a vote either way.
@@ -451,6 +431,17 @@ decision at all.
 **One requirement is not yet in any work at all —** You asked that when the reason to hold a stock rests on an insider or institutional purchase, the view show the DATE and the PRICE of that purchase — your example was Republic Services and when Cascade Investment actually bought. Somebody is working on it, but it is not committed anywhere yet, so it is recorded here as a requirement rather than as done.
 **The blocker on the rest of (b) is gone as of tonight —** the read-only endpoint behind this view is merged, and it was held back only until the panel-layout work landed; that has now also merged. Nothing stands between this and a working view: fetch the endpoint when a held symbol is opened, show its one-sentence reason and its labelled detail up front, and put the machine identifiers and the existing step-by-step trace behind one toggle. Nothing else about the page changes.
 
+## item 111
+
+**Plain language —** Item 87 asked whether the automatic de-lever that trims the book when it gets too big cancels the protective stop-losses first. It does, and it has to — the broker would refuse the sell otherwise, because a resting stop holds the whole position. That part is fine, and the recovery around it is complete: a failed cancel is rolled back, a rejected sell restores the stop, a partial or no fill is put right by the step that runs afterward, and even a crash mid-way is covered because the recovery note is saved to disk before anything is cancelled at the broker. What is NOT fine: when the de-lever trims more than one holding in the same pass, that recovery step runs only once, after every holding in the pass has already been sold. The first holding trimmed sits with no protection for the whole rest of the pass, plus the wait for each later holding's order to finish — and this only happens during a drawdown, which is exactly when a naked position is most dangerous.
+**It has never happened —** the live records show this de-lever has fired zero times, and the account has never come close to the level that triggers it.
+**Recommendation —** Run the recovery step after each holding individually rather than once at the end. This touches the live selling path during a drawdown, so it is flagged for your decision rather than changed on our own say-so.
+
+## item 112
+
+**Plain language —** When the automatic de-lever trims the book and the trims still leave it over the limit, nothing tells you. The system writes a warning to its own internal log, but that is as far as it goes — it does not reach a message to you, the end-of-session summary, or anything that gets checked.
+**Recommendation —** Add an alert for the case where a de-lever pass finishes and the book is still over its limit.
+
 ## item 101
 
 **Plain language —** Twice a session the desk works out something important and then throws the answer away. One check finds exits the broker made on its own that the desk's books never recorded; the other counts positions it has just put protection back onto. Both compute the answer and then discard it at every one of the five places they are called. The answers do reach the log file, so this is not invisible — but they can never reach a Telegram message, a session summary, or anything that would actually tell you.
@@ -463,20 +454,15 @@ decision at all.
 **Age —** This is not new and not from tonight's changes; it has been true at every one of these checks since they were written.
 **Recommendation —** Decide what a part-fill should record, then make that branch write it instead of skipping.
 
-## item 103
-
-**Plain language — your decision, and we are waiting on it.** You asked for the internal scrollbars to come off the detail panels, and they have. The consequence is that the Trades tab, which holds your full live trade history, now makes the page about 6,000 pixels tall. That is the cost of the change, not a fault, and moving to any other tab puts it back to normal. You were offered that one tab's scrollbar back and have not answered, so nothing has been changed.
-**Recommendation —** None until you rule. Your ruling was that scrolling belongs to a panel rather than to a position on the screen, so making one tab an exception is yours to decide, not ours.
-
 ## item 109
 
-**Plain language — your decision, and nobody may settle it by editing code.** The desk has a big-picture seat that reads the whole market: interest rates, credit, volatility, the general mood. It also has seats that read one company at a time. When the desk counts up how much evidence supports a single trade, it currently counts the big-picture read as one of those votes, for or against that individual company. The instructions given to the trade-picking seats said the opposite — that the big-picture read never counts toward that tally. One of the two has been wrong all along, and the code is the one that has actually been deciding.
+**Plain language — not yours to wait on any more; the orchestrator decides after an adversary run, and nobody may settle it by editing code first.** The desk has a big-picture seat that reads the whole market: interest rates, credit, volatility, the general mood. It also has seats that read one company at a time. When the desk counts up how much evidence supports a single trade, it currently counts the big-picture read as one of those votes, for or against that individual company. The instructions given to the trade-picking seats said the opposite — that the big-picture read never counts toward that tally. One of the two has been wrong all along, and the code is the one that has actually been deciding.
 
 **Why it is not theoretical —** On 17 September a bullish read on the market as a whole cancelled out a bearish filing about one specific company, and the trade died. A second company passed with full support on the strength of the market read plus a filing, with no read of its own chart at all.
 
 **Why we stopped rather than fixing it —** The obvious "fix" is to correct the instructions so they match the code. That would quietly make the current behaviour official, and the desk's own standing doctrine points the other way: it is the trade-picking seats' own prompt (not `docs/OUTCOME.md`, which says nothing on this beyond a line about cash deployment) that states the market read is the regime the book is built in, not a fact about one company. Making the instructions match the code would have ratified a rule you never agreed to. So the wording is being made neutral — it says the tally does count it, that this is disputed, and not to lean on it either way — and the counting rule itself is untouched. Filed independently twice, hours apart, as this same question; the two are now one item.
 
-**Recommendation —** None; this is a mandate question, not an engineering one. Until you rule, neither side moves.
+**Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it. This is a mandate question, not an engineering one, but it is no longer one that waits on him.
 ## item 115
 
 **Plain language —** The raw insider-filing gobbledygook you complained about is gone from the new "Why" tab, but there is a second screen — the run-detail popup — that still prints the same kind of raw machine text if you open it.
@@ -488,12 +474,6 @@ decision at all.
 **Plain language —** The evening report used to compute real numbers from the broker every night and then throw them away, so a night's report could never be checked again later. That is now fixed. Nobody has checked whether the same thing happens at the other five points in the day: morning, midday, close, the half-hourly check, and the pre-earnings pass.
 **Why it matters —** if a decision that night rested on a price or a model's judgement that was never saved, there is no way to go back and check whether the decision was reasonable at the time.
 **Recommendation —** Apply the same fix used for the evening report to each of the other five checkpoints, one at a time.
-
-## item 117
-
-**Plain language —** The automated check that watches the size of this very file sometimes fails for a reason that has nothing to do with the file — it cannot get enough git history to compare against on some CI runs. A related problem, where three tests failed depending on what minute the clock read, has already been fixed.
-**Why it matters —** this automated check is the only gate that has to pass before a change can merge. A gate that fails for reasons unrelated to the actual change trains people to route around it instead of trusting it.
-**Recommendation —** Give the CI job enough git history up front so it never needs to guess, or make the check fail open (skip, not block) when it genuinely cannot read a baseline.
 
 ## item 118
 

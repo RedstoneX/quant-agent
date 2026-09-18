@@ -577,13 +577,14 @@ def test_format_morning_executed_shows_orders_and_status():
     }
     msg = format_session_result("morning", result, 12.3)
     assert msg is not None
-    assert "🟢 morning" in msg
-    assert "status: Traded" in msg  # humanize_status("executed")
-    assert "run_id: run-abc12345" in msg
+    assert "🟢 Morning session" in msg
+    assert "Morning session — traded" in msg  # plain name + plain outcome
+    # No run identifier anywhere (owner review 2026-09-18).
+    assert "run_id" not in msg and "run-abc12345" not in msg
     assert "BUY 1 / SELL 1" in msg
     assert "NVDA" in msg
     assert "AAPL" in msg
-    assert "elapsed: 12.3s" in msg
+    assert "took 12.3s" in msg
     assert "degraded" not in msg  # all data ok
 
 
@@ -662,9 +663,9 @@ def test_format_morning_no_trades_shows_zero_orders():
     result = {"status": "no_trades", "run_id": "run-x", "orders": []}
     msg = format_session_result("morning", result, 65.7)
     assert msg is not None
-    assert "⚪ morning" in msg
+    assert "⚪ Morning session" in msg
     assert "orders: 0" in msg
-    assert "elapsed: 1m 5s" in msg
+    assert "took 1m 5s" in msg
 
 
 def test_format_morning_degraded_data_flagged():
@@ -980,8 +981,9 @@ def test_format_includes_session_cost_when_db_has_rows(tmp_path, monkeypatch):
     }
     msg = format_session_result("morning", result, 600.0)
     assert msg is not None
-    assert "💵 cost: $4.53" in msg  # 3.45 + 0.90 + 0.18
-    assert "(3 provider requests)" in msg
+    assert "💵 AI cost for this run: $4.53" in msg  # 3.45 + 0.90 + 0.18
+    # The provider-request count is gone: engineering detail he cannot act on.
+    assert "provider request" not in msg
 
 
 def test_format_omits_cost_line_when_no_db(tmp_path, monkeypatch):
@@ -995,7 +997,7 @@ def test_format_omits_cost_line_when_no_db(tmp_path, monkeypatch):
     result = {"status": "executed", "run_id": "run-x", "orders": []}
     msg = format_session_result("morning", result, 60.0)
     assert msg is not None
-    assert "💵 cost" not in msg
+    assert "💵 AI cost" not in msg
 
 
 def test_format_flags_cost_unknown_when_any_row_has_null_cost(tmp_path, monkeypatch):
@@ -1027,8 +1029,10 @@ def test_format_flags_cost_unknown_when_any_row_has_null_cost(tmp_path, monkeypa
     result = {"status": "executed", "run_id": "run-mixed", "orders": []}
     msg = format_session_result("morning", result, 60.0)
     assert msg is not None
-    assert "$?.??" in msg
-    assert "see cost_table.py" in msg
+    assert "AI cost for this run: not available" in msg
+    assert "has no price on file" in msg
+    # No fabricated figure, and no provider-request count beside it.
+    assert "$?.??" not in msg and "provider request" not in msg
 
 
 def test_format_evening_position_snapshot_tolerates_null_unrealized_pnl(
@@ -1202,7 +1206,7 @@ def test_format_intra_check_emergency_sold_notifies():
     }
     msg = format_session_result("intra_check", result, 3.2)
     assert msg is not None
-    assert "🟡 intra_check" in msg
+    assert "🟡 Half-hourly check" in msg
     assert "EMERGENCY orders: 2" in msg
     assert "NVDA" in msg
     assert "reason" in msg
@@ -1276,10 +1280,10 @@ def test_format_exception_path_includes_error_type_and_message():
     exc = ValueError("broker timeout after 3 retries")
     msg = format_session_result("morning", None, 17.0, error=exc)
     assert msg is not None
-    assert "🛑 FAILED: morning" in msg
+    assert "🛑 FAILED: Morning session" in msg
     assert "ValueError" in msg
     assert "broker timeout" in msg
-    assert "elapsed: 17.0s" in msg
+    assert "took 17.0s" in msg
 
 
 def test_format_exception_path_overrides_noise_policy():
@@ -1298,10 +1302,11 @@ def test_format_unknown_status_uses_neutral_emoji():
     result = {"status": "some_new_status_we_havent_seen", "run_id": "x"}
     msg = format_session_result("morning", result, 1.0)
     assert msg is not None
-    # humanize_status() has no table entry for this status, so it falls
-    # back to a humanised form of the raw code rather than the exact
-    # snake_case string — still readable, never a crash.
-    assert "Some new status we havent seen" in msg
+    # humanize_status() has no table entry for this status. It says so in
+    # words and keeps the raw code LABELLED as the desk's own, rather than
+    # passing a tidied-up code off as a sentence written for the owner.
+    assert "no plain wording for" in msg
+    assert "some_new_status_we_havent_seen" in msg
 
 
 def test_format_non_dict_result_does_not_crash():
@@ -1309,10 +1314,10 @@ def test_format_non_dict_result_does_not_crash():
     handle other types without raising."""
     msg = format_session_result("morning", None, 1.0)
     assert msg is not None
-    assert "non-dict" in msg
+    assert "reported nothing the desk could read" in msg
     msg = format_session_result("morning", "oops", 1.0)
     assert msg is not None
-    assert "non-dict" in msg
+    assert "reported nothing the desk could read" in msg
 
 
 def test_format_elapsed_formatting():
@@ -1822,8 +1827,10 @@ def test_day_cost_line_shows_spend_against_the_limit(monkeypatch, tmp_path):
     monkeypatch.setattr(n, "_DB_PATH", db)
     monkeypatch.setattr(n, "_daily_cost_limit", lambda: 2.75)
     line = n._day_cost_line()
-    assert "$1.14 of $2.75 daily limit" in line
-    assert "(41%)" in line
+    assert "$1.14 of the $2.75 cap for the day" in line
+    # The percentage is gone: it restated the two figures already on the
+    # line, and board item 89 flags percentages the owner cannot anchor.
+    assert "%" not in line
 
 
 def test_day_cost_line_degrades_without_a_limit(monkeypatch, tmp_path):
@@ -1839,7 +1846,7 @@ def test_day_cost_line_degrades_without_a_limit(monkeypatch, tmp_path):
     conn.commit(); conn.close()
     monkeypatch.setattr(n, "_DB_PATH", db)
     monkeypatch.setattr(n, "_daily_cost_limit", lambda: None)
-    assert n._day_cost_line() == "📅 today: $0.50 so far"
+    assert n._day_cost_line() == "📅 Spent today: $0.50 so far"
 
 
 def test_day_cost_line_never_breaks_the_alert(monkeypatch):
@@ -1868,8 +1875,8 @@ def test_daily_brake_and_prepaid_balance_are_labelled_differently(monkeypatch, t
     monkeypatch.setattr(n, "_REHEARSAL_MODE", False)
     monkeypatch.setattr("urllib.request.urlopen", _credits(50.0, 17.90))
     day, bal = n._day_cost_line(), n._openrouter_balance_line()
-    assert "daily limit" in day and "left of" not in day
-    assert "left of" in bal and "daily limit" not in bal
+    assert "cap for the day" in day and "left of" not in day
+    assert "left of" in bal and "cap for the day" not in bal
 
 
 # ===========================================================================
@@ -2158,3 +2165,36 @@ def test_send_without_the_flag_still_fully_escapes_a_literal_tag():
         assert notifier.send("<b>hi</b> & bye") is True
     body = mock_post.call_args.kwargs["json"]["text"]
     assert body == "&lt;b&gt;hi&lt;/b&gt; &amp; bye"
+
+
+def test_data_quality_alert_speaks_in_words_and_keeps_the_raw_pair_labelled():
+    """Board item 89 clarity defect: the alert named internal components
+    ("macro=failed"). The seat and its state are now said in words, what
+    it means for the owner is stated, and the raw pair is kept beneath,
+    labelled as a machine record."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {"run_id": "run-dq", "data_status": {"macro": "failed", "tech": "partial",
+                                                  "sector": "brand_new_state"}}
+    with patch("src.notifier.send_owner_alert") as alert:
+        assert maybe_alert_data_quality(result, mode="morning")
+    body = alert.call_args[0][0]
+    assert "DATA QUALITY ALERT" in body
+    assert "the market-backdrop research did not return an answer" in body
+    assert "the chart research returned only part of an answer" in body
+    assert "no plain wording for (kept for the record: brand_new_state)" in body
+    assert "WHAT THIS MEANS FOR YOU" in body
+    assert "Machine record, kept for the log" in body
+    assert "macro=failed, sector=brand_new_state, tech=partial" in body
+
+
+def test_coverage_gap_banner_says_the_quantities_in_words():
+    """"NVDA(4/10)" was a bare fraction; it now reads as what it is."""
+    result = {
+        "status": "ok", "run_id": "r",
+        "stop_coverage_gaps": [{"symbol": "NVDA", "held_qty": 10.0, "covered_qty": 4.0}],
+    }
+    msg = format_session_result("intra_check", result, 1.0)
+    assert msg is not None
+    assert "NVDA holding 10, stop covers 4" in msg
+    assert "(4/10)" not in msg

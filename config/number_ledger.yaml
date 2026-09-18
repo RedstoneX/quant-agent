@@ -868,13 +868,35 @@ numbers:
       A candidate is dropped unseen once the cap binds.
   - id: src.config.SmartMoneyConfig.max_filings_per_refresh
     value: 1000
-    status: not-trade-governing
+    status: arbitrary
     site: src/config.py
     note: >-
-      Network deadline, timeout, poll interval or fetch batch cap. It decides
-      how long the desk waits or how much it fetches, never whether or how
-      much to trade. A wrong value degrades data availability, which is a
-      separate failure the seats already see as missing evidence.
+      CORRECTION 2026-09-18. This entry read `not-trade-governing`, with the
+      note "it decides how long the desk waits or how much it fetches, never
+      whether or how much to trade". That sentence was falsified the same
+      day: the cap binding is what REFUSED a trading decision. `refresh`
+      runs once, pre-market, and stops at this many filings; the residue is
+      unread Form 4s, and the research-expiry peek reads an unread filing as
+      a new one, so the `smart_money` seat expired on the desk's own backlog
+      and the evidence gate declined to decide for the rest of the day. The
+      discovery order is now watched-names-first, which is what stops that
+      residue containing a name the desk trades -- but the cap is still the
+      thing that decides how much of the filing stream is ever read, so it
+      governs trades. The value itself is a round 1,000 with no derivation
+      recorded anywhere: not read off SEC filing volume, not measured
+      against the refresh deadline. NO VALUE WAS CHANGED here -- re-deriving
+      it needs a source for daily Form 4 volume.
+    open_question: >-
+      How many Form 4 filings does one pre-market refresh have to read for
+      the unread residue on watched names to be zero -- measured against
+      actual daily EDGAR ownership-filing volume and the refresh deadline,
+      not chosen?
+    cost_while_unanswered: >-
+      Set too low, the desk carries an unread backlog it cannot drain until
+      the next morning; every unread filing on a watched name expires the
+      insider seat and the gate refuses the decision on roughly thirteen
+      opportunity ticks that day. Set too high, the refresh exceeds its
+      deadline and reads nothing at all.
   - id: src.config.SmartMoneyConfig.max_observations
     value: 40
     status: arbitrary

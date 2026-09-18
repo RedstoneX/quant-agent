@@ -210,7 +210,7 @@ def test_morning_feed_surfaces_market_signal_pm_risk_cash_and_execution(tmp_path
     assert "BUY SQQQ" in msg and "filled" in msg
     # 2026-09-17: the footer dropped run_id and the raw provider-request
     # count (engineering detail) — kept: duration and a plain AI cost figure.
-    assert "AI cost $0.01" in msg
+    assert "AI cost: $0.01" in msg
     assert "provider request" not in msg
     assert f"run {run}" not in msg
 
@@ -465,7 +465,7 @@ def test_early_close_uses_established_formatter_not_trader_review(tmp_path, monk
         {"status": "early_close", "run_id": "close-early", "positions": 0, "orders": []},
         1.0,
     )
-    assert "status: Early close" in msg  # humanize_status("early_close")
+    assert "the market closed early" in msg  # plain outcome, no status code
     assert "CLOSE REVIEW" not in msg
 
 
@@ -1137,7 +1137,7 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     assert "View: No trades today." not in msg  # old bare label is gone
 
     # --- footer: duration + plain AI cost, no run_id, no raw call count ---
-    assert "AI cost $0.10" in msg
+    assert "AI cost: $0.10" in msg
     assert "provider request" not in msg
     assert f"run {run}" not in msg
 
@@ -1827,7 +1827,10 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     ]:
         assert f"{sym}:" in details_section and reason in details_section
     assert "🧠 PM/Constructor: 2 change(s) · 0 hold(s)" in details_section
-    assert "🛡️ Risk: APPROVED · rr_fail" in details_section
+    # 2026-09-18: the internal category token ("rr_fail") is rendered in
+    # words; the token itself no longer reaches the owner.
+    assert "🛡️ Risk: APPROVED · reward too thin for the risk" in details_section
+    assert "rr_fail" not in msg
     # Board item 89 defect 5: the DETAILS block used to paste the internal
     # reason code through verbatim. The guard's own plain sentence (the
     # `detail`) is what carries the evidence, unabridged; the code does not
@@ -2117,3 +2120,208 @@ def test_evening_details_block_uses_the_shared_collapsible_layout(tmp_path, monk
     payload = notifier._build_payload(msg, symbols=["NVDA"], preserve_structural_markup=True)
     assert len(payload["text"]) <= TelegramNotifier.MAX_MESSAGE_CHARS + 300
     assert "<b>POSITIONS (1)</b>" in payload["text"]
+
+
+# === 2026-09-18: substance in every message — a count is not information ===
+#
+# Owner's own words on the pre-earnings message ("analyzed: 1 confirmed: 1
+# failed: 0"): "which one? what's the symbol? what's the company?". These
+# pin the fixes to board item 89's clarity defects across the messages
+# that are NOT the evening report (which was redesigned separately).
+
+NVDA_PROFILE = CompanyProfile(symbol="NVDA", name="NVIDIA", industry="Semiconductors")
+MRVL_PROFILE = CompanyProfile(symbol="MRVL", name="Marvell Technology", industry="Semiconductors")
+
+
+def _profiles_patch(profiles: dict):
+    return patch.object(
+        CompanyProfileStore, "get_many",
+        lambda self, symbols, allow_fetch=False: {
+            s: profiles[s] for s in symbols if s in profiles
+        },
+    )
+
+
+def test_earnings_message_names_each_company_and_what_it_concluded(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    result = {
+        "status": "preprocessed", "run_id": "ep-1",
+        "analyzed": 1, "confirmed": 1, "failed": 1,
+        "filings": [
+            {"symbol": "NVDA", "form_type": "10-Q", "filing_date": "2026-09-17",
+             "outcome": "analyzed", "sentiment": "bullish", "conviction": "high",
+             "key_thesis": "Data-centre revenue accelerated again."},
+            {"symbol": "OKLO", "form_type": "10-K", "filing_date": "2026-09-16",
+             "outcome": "failed"},
+        ],
+    }
+    with _profiles_patch({"NVDA": NVDA_PROFILE, "OKLO": OKLO_PROFILE}):
+        msg = trader_feed.format_session_result("earnings_preprocess", result, 18.5)
+
+    assert msg is not None
+    assert msg.startswith("📄 PRE-MARKET EARNINGS · 10:45 AM ET · PARTLY READ")
+    assert "NVDA (NVIDIA) — quarterly report (10-Q) filed 2026-09-17: bullish, high conviction" in msg
+    assert "Data-centre revenue accelerated again." in msg
+    assert "OKLO (Oklo Inc) — annual report (10-K) filed 2026-09-16" in msg
+    assert "COULD NOT BE READ" in msg
+    assert "Nothing was bought or sold" in msg
+    # The old count line, the run id and the raw status are gone.
+    assert "analyzed: 1" not in msg
+    assert "run_id" not in msg and "ep-1" not in msg
+    assert "preprocessed" not in msg
+
+
+def test_earnings_message_says_when_the_companies_were_not_recorded(tmp_path, monkeypatch):
+    """A result from before the run recorded its filings must say so —
+    never invent a name, never drop the figures it did record."""
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    result = {"status": "preprocessed", "run_id": "ep-old", "analyzed": 2, "confirmed": 2, "failed": 0}
+    msg = trader_feed.format_session_result("earnings_preprocess", result, 3.0)
+    assert "did not record which companies" in msg
+    assert "2 read" in msg
+
+
+def test_earnings_fault_names_the_filings_left_waiting(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    result = {
+        "status": "analysis_error", "run_id": "ep-2", "error": "RateLimitError: 429",
+        "filings": [{"symbol": "NVDA", "form_type": "10-Q", "filing_date": "2026-09-17",
+                     "outcome": "waiting"}],
+    }
+    with _profiles_patch({"NVDA": NVDA_PROFILE}):
+        msg = trader_feed.format_session_result("earnings_preprocess", result, 2.0)
+    assert "· FAILED" in msg
+    assert "no filing below was read" in msg
+    assert "WAITING TO BE READ" in msg
+    assert "NVDA (NVIDIA) — quarterly report (10-Q) filed 2026-09-17" in msg
+    # The exception text is kept, but labelled as machine output.
+    assert "Machine fault text, kept for the record" in msg
+    assert "RateLimitError: 429" in msg
+
+
+def test_earnings_silent_statuses_stay_silent(tmp_path, monkeypatch):
+    """The noise policy is untouched: nothing_new / fetch_error / holiday."""
+    _make_db(tmp_path, monkeypatch)
+    for status in ("nothing_new", "fetch_error", "market_holiday"):
+        assert trader_feed.format_session_result(
+            "earnings_preprocess", {"status": status, "run_id": "x"}, 1.0,
+        ) is None
+
+
+def test_hourly_desk_check_names_the_orders_and_the_holdings(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    _trade(db, "run-earlier", "AMD", "SELL", qty=2, price=150.0, status="filled")
+    _insert_position(db, "NVDA")
+    _pin_clock(monkeypatch, _TOP_OF_HOUR_TIME)
+    outer = {"status": "ok", "run_id": "run-top", "daily_pnl": 1.0, "daily_return_pct": 0.01}
+    with _profiles_patch({"AMD": AMD_PROFILE, "NVDA": NVDA_PROFILE}):
+        msg = trader_feed.format_session_result("intra_check", outer, 1.0)
+
+    assert msg is not None
+    # A run that only sold does not read TRADED.
+    assert msg.startswith("🕐 DESK CHECK · 3:15 PM ET · SOLD")
+    assert "⚡ 1 order(s) this hour" in msg
+    assert "   • SELL AMD (Advanced Micro Devices) 2 @ $150.00 — filled" in msg
+    assert "💼 Positions held: 1" in msg
+    assert "   • NVDA (NVIDIA)" in msg
+
+
+def test_quiet_hourly_check_still_sends_nothing_off_the_hour(tmp_path, monkeypatch):
+    """Naming holdings must not make an idle tick speak: the silence rule
+    is unchanged."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    outer = {"status": "ok", "run_id": "run-quiet", "daily_pnl": 1.0}
+    assert trader_feed.format_session_result("intra_check", outer, 1.0) is None
+
+
+def test_degraded_research_is_named_in_words_not_component_names(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    result = {
+        "status": "no_trades", "run_id": "run-deg", "orders": [],
+        "data_status": {"macro": "failed", "tech": "partial", "news": "ok",
+                        "smart_money": "wobbly_new_token"},
+    }
+    msg = trader_feed.format_session_result("morning", result, 1.0)
+    assert "Research was incomplete this session" in msg
+    assert "the market-backdrop research did not return an answer" in msg
+    assert "the chart research returned only part of an answer" in msg
+    # An unmapped state is described and the raw token labelled, not guessed.
+    assert "no plain wording for (kept for the record: wobbly_new_token)" in msg
+    assert "Data degraded: macro" not in msg
+
+
+def test_coverage_gap_names_the_company_and_says_what_to_do(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    result = {
+        "status": "no_trades", "run_id": "run-gap", "orders": [],
+        "stop_coverage_gaps": [
+            {"symbol": "MRVL", "held_qty": 2.0, "covered_qty": 0.0, "coverage": "none",
+             "unprotected_value": 151.30, "repair_refusal": "no recorded stop level to rebuild from"},
+            {"symbol": "NVDA", "held_qty": 10.0, "covered_qty": 4.0, "coverage": "partial"},
+        ],
+    }
+    with _profiles_patch({"NVDA": NVDA_PROFILE, "MRVL": MRVL_PROFILE}):
+        msg = trader_feed.format_session_result("morning", result, 1.0)
+    assert "🚨 NO STOP AT ALL: 1 position(s) with nothing protecting them" in msg
+    assert "MRVL (Marvell Technology), holding 2, stop covers 0, $151.30 unprotected — no recorded stop level to rebuild from" in msg
+    assert "Place a protective stop by hand or close the position." in msg
+    assert "🚨 STOP MIS-SIZED: 1 position(s) only partly protected" in msg
+    assert "NVDA (NVIDIA), holding 10, stop covers 4" in msg
+
+
+def test_looked_at_carries_the_pm_reason_or_says_none_recorded(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-pass"
+    for sym in ("OKLO", "RKLB"):
+        _evidence(db, run, "tech_analyst", "analysis",
+                  {"symbol": sym, "rating": "buy", "conviction": "medium", "risk_reward": 1.8},
+                  symbol=sym)
+    _evidence(db, run, "portfolio_manager", "proposed_order",
+              {"action": "HOLD", "symbol": "OKLO", "reasoning": "Extended after a 30% run."},
+              symbol="OKLO")
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    with _profiles_patch({"OKLO": OKLO_PROFILE, "RKLB": RKLB_PROFILE}):
+        msg = trader_feed.format_session_result(
+            "morning", {"status": "no_trades", "run_id": run, "orders": []}, 1.0,
+        )
+    assert "OKLO (Oklo Inc) BUY/medium — PM passed — Extended after a 30% run." in msg
+    assert "RKLB (Rocket Lab) BUY/medium — PM passed — no reason recorded" in msg
+    # The reward figure carries its unit.
+    assert "reward 1.8× the risk" in msg
+    assert "R/R 1.8" not in msg
+
+
+def test_position_review_risk_rating_carries_its_scale(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    result = {
+        "status": "reviewed", "run_id": "run-rev", "positions": 1,
+        "review": {"risk_level": "elevated", "overall_assessment": "x", "actions": []},
+        "orders": [], "daily_pnl": 0.0,
+    }
+    msg = trader_feed.format_session_result("midday", result, 1.0)
+    assert "risk elevated — step 3 of 4 (low · moderate · elevated · high)" in msg
+
+
+def test_company_names_are_not_cut_off_after_the_twelfth_name(tmp_path, monkeypatch):
+    """Board item 89 clarity defect: bare tickers after the twelfth name."""
+    db = _make_db(tmp_path, monkeypatch)
+    symbols = [f"S{i:02d}" for i in range(15)]
+    for sym in symbols:
+        _insert_position(db, sym)
+    profiles = {s: CompanyProfile(symbol=s, name=f"Company {s}", industry="x") for s in symbols}
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
+    result = {"status": "reviewed", "run_id": "run-many", "positions": 15,
+              "review": {"actions": []}, "orders": [], "daily_pnl": 0.0}
+    with _profiles_patch(profiles):
+        msg = trader_feed.format_session_result("close", result, 1.0)
+    for sym in symbols:
+        assert f"{sym} (Company {sym})" in msg
