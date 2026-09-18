@@ -198,6 +198,25 @@ def record(
     return state
 
 
+#: The probe's internal stage token -> where it actually got to, in words.
+#: The tokens are produced by `TelegramNotifier.probe` in src/notifier.py.
+_STAGE_WORDS: dict[str, str] = {
+    "credentials": (
+        "no further than this machine: it has no Telegram credentials set, "
+        "so an alarm raised here would reach nobody"
+    ),
+    "transport": (
+        "no answer at all from Telegram \u2014 the request never completed"
+    ),
+    "api": "a refusal back from Telegram",
+    "rehearsal": (
+        "stopped before sending, because this was a rehearsal and a "
+        "rehearsal must never transmit"
+    ),
+    "delivered": "all the way through, which is not a failure",
+}
+
+
 def failure_text(stage: str, detail: str) -> str:
     """Best-effort alert when the probe fails.
 
@@ -206,10 +225,26 @@ def failure_text(stage: str, detail: str) -> str:
     path survives, and then this is the fastest warning available. It costs
     one request to try.
     """
+    # Owner requirement, 2026-09-18: say what was being attempted and why
+    # it failed, in plain words. "Stage: transport" was an internal token
+    # pasted at him; the underlying detail is Telegram's own text, kept but
+    # LABELLED as machine output rather than addressed to him.
+    from src.notifier import machine_detail
+
+    where = _STAGE_WORDS.get(str(stage or "").strip().lower())
+    if where is None:
+        where = (
+            "as far as a step the desk has no plain wording for (its own "
+            f"word for it, kept for the record, is \u201c{stage}\u201d)"
+        )
     return (
         "🛑 FAILED: QAMC alert channel FAILED its self-test\n\n"
-        f"Stage: {stage}\n"
-        f"Detail: {detail or 'no detail'}\n\n"
+        "What it was doing: sending itself a test message to prove alarms "
+        "can still reach you.\n"
+        f"Why it failed: it got {where}.\n"
+        + (machine_detail(detail) + "\n" if detail else
+           "The desk recorded no further detail.\n")
+        + "\n"
         "Every alarm on this desk — deploy drift, pricing cache, session "
         "crash, missing stop — goes out over this channel. Until it is "
         "fixed, silence from QAMC means nothing at all.\n\n"

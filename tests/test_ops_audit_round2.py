@@ -561,9 +561,11 @@ def test_meta_mode_body_renders_staged_hint_from_editor_report():
     }
     msg = format_session_result("meta", result, 60.0)
     assert msg is not None
-    assert "applied=0 rejected=2" in msg
-    assert "2 proposal(s) staged for review" in msg
-    assert "proposed_edits.json" in msg
+    assert "applied=0 rejected=2" not in msg
+    assert "Not changed:" in msg
+    assert "2 proposed change(s) are held back" in msg
+    # The internal file path is gone; he has no use for one.
+    assert "proposed_edits.json" not in msg
 
 
 # ===========================================================================

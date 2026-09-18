@@ -516,7 +516,14 @@ def alert_text(status: SilenceStatus) -> str:
     window_note = ""
     if status.newest_elapsed_window is not None:
         w = status.newest_elapsed_window
-        window_note = f"\nMost recent missed window: {w.mode} on {w.date}."
+        # A plain session name, not the scheduler identifier (owner
+        # review, 2026-09-18).
+        from src.notifier import mode_label
+
+        window_note = (
+            f"\nMost recent missed session: the {mode_label(w.mode).lower()} "
+            f"on {w.date}."
+        )
     db_note = f"\nDatabase note: {status.db_error}" if status.db_error else ""
     return (
         "🛑 SILENT: QAMC has recorded no completed session in "
@@ -525,9 +532,12 @@ def alert_text(status: SilenceStatus) -> str:
         f"Last known completed session: {since}."
         f"{window_note}{db_note}\n\n"
         "This is the desk-wide silence check, not a specific failure alert — "
-        "it fires on the ABSENCE of any completed morning/intra_check/"
-        "midday/close/evening/earnings_preprocess session, whatever the "
-        "cause. Check Mission Control and the systemd journal for the "
-        "scheduled units; the desk may be latched, crashing on startup, or "
-        "simply not firing at all."
+        "it fires on the ABSENCE of any completed session at all \u2014 "
+        "morning, half-hourly check, midday, close, evening or the "
+        "pre-market filings pass \u2014 whatever the cause.\n\n"
+        "What this means for you: nothing is being bought or sold, and "
+        "nothing you already hold has lost the stop it already had, but "
+        "the desk is not watching them either. Check Mission Control; the "
+        "desk may be stopped on purpose, crashing on startup, or simply "
+        "not firing at all."
     )

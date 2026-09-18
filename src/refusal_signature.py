@@ -488,8 +488,10 @@ def alert_text(status: RefusalSignatureStatus) -> str:
     sessions = status.streak
     lines = []
     for session in sessions:
+        # No run identifier (owner review, 2026-09-18): it means nothing to
+        # him. The trading day already identifies the session.
         lines.append(
-            f"  {session.trading_day} ({session.run_id}): "
+            f"  {session.trading_day}: "
             f"{len(session.candidates)} candidate(s), all refused — "
             + ", ".join(sorted(session.candidates))
         )

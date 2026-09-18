@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,9 +27,11 @@ from src.notifier import (
     _new_block,
     _new_section,
     _seal_section,
+    collapse_ws,
     company_name,
     describe_ai_cost,
     humanize_status,
+    machine_detail as _machine_detail,
     fmt_time_12h,
     format_session_result as _base_format_session_result,
     TelegramNotifier,
@@ -84,6 +87,19 @@ def format_session_result(
         return _base_format_session_result(mode, result, elapsed_seconds, error=error)
 
     status = str(result.get("status", "unknown"))
+    # `earnings_preprocess` is checked BEFORE the base-only escape hatch:
+    # "analysis_error" is in `_BASE_ONLY_STATUSES` (it predates this
+    # formatter), and routing it to the base formatter is exactly the case
+    # the owner complained about — a run where every queued filing failed
+    # would render "analyzed: 0  confirmed: 0  failed: 0" and name nobody.
+    # `run_earnings_preprocess` now carries the named filings out on that
+    # path, so the message can say which companies and what was attempted.
+    if mode == "earnings_preprocess" and status != "paid_analysis_suspended":
+        try:
+            return _format_earnings(result, elapsed_seconds)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("trader-feed enrichment failed for %s: %s", mode, exc)
+            return _base_format_session_result(mode, result, elapsed_seconds, error=None)
     if status in _BASE_ONLY_STATUSES or status.startswith("pm_") or status == "paid_analysis_suspended":
         return _base_format_session_result(mode, result, elapsed_seconds, error=None)
 
@@ -100,7 +116,9 @@ def format_session_result(
         if mode == "evening":
             return _format_evening(result, elapsed_seconds)
 
-        # earnings/meta/daily have their own noise policy — base formatter.
+        # meta/daily have their own noise policy — base formatter.
+        # (earnings_preprocess is handled above, before the base-only
+        # status escape hatch.)
         return _base_format_session_result(mode, result, elapsed_seconds, error=None)
     except Exception as exc:  # noqa: BLE001
         logger.warning("trader-feed enrichment failed for %s: %s", mode, exc)
@@ -273,22 +291,6 @@ _FILL_STATE_WORDS: dict[str, str] = {
     "rejected": "turned down by the broker",
     "submit_failed": "never reached the broker",
 }
-
-
-def _machine_detail(text: Any) -> str:
-    """Board item 89 defect 5 — the underlying fault text, LABELLED as
-    machine output instead of pasted in as though it were a sentence
-    written for the reader.
-
-    It is kept rather than dropped: it is often the only record of what
-    actually broke, and inventing a friendly paraphrase of an exception
-    would be inventing a fact. What changes is that the owner is told what
-    he is looking at and that there is nothing in it for him to do.
-    """
-    return (
-        "Machine fault text, kept for the record — nothing here needs "
-        f"anything from you: {_clip(text, 900)}"
-    )
 
 
 def _order_end_plain(fill_status: Any) -> str:
@@ -1872,6 +1874,221 @@ def _format_evening(result: dict, elapsed: float) -> str:
     _wrap_details(lines, detail_lines)
 
     _new_section(lines, f"🧾 {_fmt_elapsed(elapsed)}")
+    return "\n".join(lines)
+
+
+# === pre-market filings ("earnings_preprocess") ===
+#
+# Owner review of the live 08:03 ET message, 18 September 2026. What he
+# received was a run identifier, a provider request count, "$0.0000" and
+# "analyzed: 1  confirmed: 1  failed: 0". His words: the run id means
+# nothing to him, a row of zeros is meaningless, and a count tells him
+# nothing \u2014 he wants to know WHICH company it looked at and WHAT it
+# found. This formatter is the evening report's ratified standard (PR #471)
+# applied to that message; no second style is invented here.
+
+#: The regulator's form names are jargon. This is what each one IS.
+_FORM_WORDS: dict[str, str] = {
+    "10-Q": "quarterly report",
+    "10-K": "annual report",
+}
+
+#: The analyst's own one-word verdict -> what it means for the shares.
+#: Never paraphrased into a direction the analyst did not state.
+_SENTIMENT_WORDS: dict[str, str] = {
+    "bullish": "read it as good news for the shares",
+    "positive": "read it as good news for the shares",
+    "bearish": "read it as bad news for the shares",
+    "negative": "read it as bad news for the shares",
+    "neutral": "read it as neither good nor bad for the shares",
+    "mixed": "read it as good in parts and bad in others",
+}
+
+
+def _form_words(form_type: Any) -> str:
+    raw = str(form_type or "").strip().upper()
+    known = _FORM_WORDS.get(raw)
+    if known:
+        return known
+    if raw:
+        return f"a filing the desk has no plain name for (its code: {raw})"
+    return "a filing whose type was not recorded"
+
+
+def _filing_date_words(filing_date: Any) -> str:
+    """'filed 17 September 2026', or an honest absence. Never guesses a
+    date, and never renders one in a format he did not ask for."""
+    raw = str(filing_date or "").strip()
+    if not raw:
+        return "filing date not recorded"
+    try:
+        parsed = datetime.strptime(raw[:10], "%Y-%m-%d")
+    except ValueError:
+        return f"filed on a date the desk recorded as \u201c{raw}\u201d"
+    return f"filed {parsed.day} {parsed.strftime('%B %Y')}"
+
+
+def _sentiment_words(sentiment: Any) -> str | None:
+    raw = str(sentiment or "").strip().lower()
+    if not raw or raw == "?":
+        return None
+    known = _SENTIMENT_WORDS.get(raw)
+    if known:
+        return known
+    return (
+        "reached a verdict it has no plain wording for (its own word for "
+        f"it, kept for the record, is \u201c{raw}\u201d)"
+    )
+
+
+def _append_filings_read(lines: list[str], rows: list[dict], profiles: dict) -> None:
+    """What was read and what was found \u2014 one entry per filing, named.
+
+    Board item 89 clarity defect "bare ticker symbols with no company
+    name": `_ticker_co` renders both, and this list is short enough that
+    there is no twelfth-name cutoff to fall off.
+    """
+    if not rows:
+        return
+    lines.append(_b("WHAT WAS READ"))
+    for row in rows:
+        symbol = str(row.get("symbol") or "?").upper()
+        lines.append(
+            f"   {_ticker_co(symbol, profiles)} \u2014 "
+            f"{_form_words(row.get('form_type'))}, "
+            f"{_filing_date_words(row.get('filing_date'))}"
+        )
+        verdict = _sentiment_words(row.get("sentiment"))
+        if verdict:
+            lines.append(f"      The desk {verdict}.")
+        else:
+            lines.append(
+                "      The desk read it and recorded no view either way."
+            )
+        takeaway = _clip(row.get("takeaway"), 320)
+        if takeaway:
+            lines.append(f"      {takeaway}")
+        if row.get("confirmed"):
+            lines.append(
+                "      Saved, and the morning session will use it. Nothing "
+                "was bought or sold \u2014 this pass never trades."
+            )
+        else:
+            lines.append(
+                "      Read, but NOT saved as settled, so it will be read "
+                "again at the next pre-market pass."
+            )
+
+
+def _append_filings_failed(lines: list[str], rows: list[dict], profiles: dict) -> None:
+    """A filing that could not be read \u2014 who, what, why, when, where,
+    and what it means for him. Owner requirement, 18 September 2026.
+
+    None of those is invented. Where the desk genuinely did not record why,
+    the message says so in as many words: a failure the desk cannot
+    describe is a defect in what it RECORDS, and papering over it in the
+    formatter would hide that defect rather than fix it.
+    """
+    if not rows:
+        return
+    lines.append(_b("WHAT COULD NOT BE READ"))
+    for row in rows:
+        symbol = str(row.get("symbol") or "?").upper()
+        lines.append(
+            f"   {_ticker_co(symbol, profiles)} \u2014 "
+            f"{_form_words(row.get('form_type'))}, "
+            f"{_filing_date_words(row.get('filing_date'))}"
+        )
+        lines.append(
+            "      What was being attempted: reading the filing and writing "
+            "down what it means for the shares."
+        )
+        reason = _clip(row.get("reason"), 320)
+        if reason:
+            lines.append(f"      Why it failed: {reason}")
+        elif row.get("error"):
+            lines.append(
+                "      Why it failed: the desk did not record a reason in "
+                "plain words. " + _machine_detail(row.get("error"))
+            )
+        else:
+            lines.append(
+                "      Why it failed: the desk recorded no reason at all. "
+                "That is a gap in what it writes down, not something this "
+                "message is holding back from you."
+            )
+    lines.append(
+        "   What this means for you: nothing is unprotected and nothing "
+        "needs doing. No trade was opened or closed \u2014 this pass never "
+        "trades. The morning session simply has not seen these filings, so "
+        "it will size down on those names rather than act on something it "
+        "has not read. Each one is tried again at the next pre-market pass."
+    )
+
+
+def _format_earnings(result: dict, elapsed: float) -> str | None:
+    """The pre-market filings message.
+
+    Returns None on the quiet outcomes, which stay quiet: the silence rule
+    is absolute and most pre-market days have no fresh filing at all. Those
+    statuses never reach here \u2014 `src.notifier.format_session_result`
+    holds that policy \u2014 but this is defensive about it either way.
+    """
+    status = str(result.get("status", "unknown"))
+    if status in ("nothing_new", "fetch_error", "market_holiday"):
+        return None
+
+    filings = [r for r in (result.get("filings") or []) if isinstance(r, dict)]
+    failures = [r for r in (result.get("failures") or []) if isinstance(r, dict)]
+    profiles = _lookup_company_profiles(_all_symbols(filings, failures))
+
+    read_count = len(filings)
+    # Severity in the leading word and in the symbol's SHAPE, never in hue
+    # alone (`src/notifier.py` convention).
+    marker = "\U0001f4c4"
+    if failures and not filings:
+        headline = "no filing could be read"
+        marker = "\u26a0\ufe0f"
+    elif failures:
+        headline = f"{read_count} read, {len(failures)} that could not be"
+        marker = "\u26a0\ufe0f"
+    elif read_count == 1:
+        headline = "one filing read"
+    elif read_count:
+        headline = f"{read_count} filings read"
+    else:
+        headline = "nothing to report"
+
+    lines = [
+        f"{marker} PRE-MARKET FILINGS \u00b7 {fmt_time_12h(et_now())} "
+        f"\u00b7 {headline}"
+    ]
+
+    _new_block(lines, _append_filings_read, filings, profiles)
+    _new_block(lines, _append_filings_failed, failures, profiles)
+
+    if not filings and not failures:
+        # The counts said something happened and the per-name record is
+        # absent. Say THAT, rather than printing the counts he rejected.
+        _new_section(
+            lines,
+            "The desk did not record which companies this pass looked at, "
+            "so this message cannot name them. Nothing was bought or sold "
+            "\u2014 this pass never trades \u2014 and nothing needs doing "
+            "from you.",
+        )
+
+    detail_lines: list[str] = []
+    _new_section(
+        detail_lines,
+        describe_ai_cost(
+            _read_run(result.get("run_id")).get("cost"),
+            label="AI cost for this run",
+        ),
+    )
+    _wrap_details(lines, detail_lines)
+
+    _new_section(lines, f"\U0001f9fe took {_fmt_elapsed(elapsed)}")
     return "\n".join(lines)
 
 

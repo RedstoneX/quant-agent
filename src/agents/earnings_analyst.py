@@ -108,6 +108,14 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
         Returns list of {symbol, analysis_dict, agent_result_or_none}.
         """
         results = []
+        # Owner requirement, 2026-09-18: a failure must say which company,
+        # what was being attempted and WHY it failed. The isolation below
+        # already knew all three and wrote them to a log file only, so the
+        # message to the owner could never say more than "failed: 1". These
+        # records are read by `TradingPipeline.run_earnings_preprocess` for
+        # the owner-facing message and by nothing else \u2014 no retry, no
+        # gate and no stored value keys off them.
+        self.last_analysis_failures: list[dict] = []
 
         for report in reports:
             try:
@@ -121,6 +129,16 @@ Analyze this filing and respond with JSON. Cite specific numbers from the text a
                 # while record_failure never ticked for them.
                 logger.error("earnings: analysis failed for %s %s — isolating: %s",
                              report.symbol, report.form_type, e)
+                self.last_analysis_failures.append({
+                    "symbol": report.symbol,
+                    "form_type": report.form_type,
+                    "filing_date": report.filing_date,
+                    # No plain-English reason is invented here. The message
+                    # labels `error` as machine text; `reason` stays None
+                    # until something can honestly fill it in.
+                    "reason": None,
+                    "error": f"{type(e).__name__}: {e}",
+                })
                 try:
                     self.earnings_provider_record_failure(report)
                 except Exception:  # noqa: BLE001

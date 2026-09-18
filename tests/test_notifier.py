@@ -1156,11 +1156,37 @@ def test_format_earnings_preprocess_with_analysis_notifies():
     result = {
         "status": "preprocessed", "run_id": "run-ep",
         "analyzed": 2, "confirmed": 2, "failed": 0,
+        "filings": [
+            {"symbol": "NVDA", "form_type": "10-Q",
+             "filing_date": "2026-09-17", "sentiment": "bullish",
+             "takeaway": "Margins held and the outlook was raised.",
+             "confirmed": True},
+            {"symbol": "F", "form_type": "10-K",
+             "filing_date": "2026-09-16", "sentiment": None,
+             "takeaway": None, "confirmed": True},
+        ],
+        "failures": [],
     }
-    msg = format_session_result("earnings_preprocess", result, 18.5)
+    # The formatter the scheduler actually sends through.
+    from src.trader_feed import format_session_result as feed_format
+
+    msg = feed_format("earnings_preprocess", result, 18.5)
     assert msg is not None
-    assert "analyzed: 2" in msg
-    assert "confirmed: 2" in msg
+    # A count is not information (owner review 2026-09-18): the message
+    # names the companies and says what was found about each.
+    assert "analyzed: 2" not in msg and "confirmed: 2" not in msg
+    assert "NVDA" in msg and "F" in msg
+    assert "quarterly report" in msg and "annual report" in msg
+    assert "good news for the shares" in msg
+    assert "Margins held and the outlook was raised." in msg
+    # The one with no recorded verdict says so rather than inventing one.
+    assert "recorded no view either way" in msg
+
+    # Even the fail-soft base formatter never falls back on a bare count.
+    fallback = format_session_result("earnings_preprocess", result, 18.5)
+    assert fallback is not None
+    assert "analyzed: 2" not in fallback
+    assert "Read: NVDA, F" in fallback
 
 
 def test_format_earnings_preprocess_nothing_new_is_silent():
@@ -1252,9 +1278,11 @@ def test_format_meta_reflected_notifies():
     }
     msg = format_session_result("meta", result, 90.0)
     assert msg is not None
-    assert "period: 2026-Q1" in msg
-    assert "applied=3" in msg
-    assert "rejected=1" in msg
+    assert "Quarter reviewed: 2026-Q1" in msg
+    # Substance, not counts: what changed, not how many things did.
+    assert "applied=3" not in msg and "rejected=1" not in msg
+    assert "Changed:" in msg and "Not changed:" in msg
+    assert "jaccard_similarity=0.80" in msg
 
 
 def test_format_meta_digest_only_uses_yellow_warning_emoji():

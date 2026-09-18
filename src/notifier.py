@@ -321,6 +321,119 @@ def mode_label(mode: str) -> str:
     return (text[:1].upper() + text[1:]) if text else "Session"
 
 
+#: What each session is FOR, in plain words. Used on a failure so the
+#: message can say what was being ATTEMPTED, which a bare mode name never
+#: did. Owner requirement, 2026-09-18: a failure must say who, what, why,
+#: when and where.
+_MODE_PURPOSE: dict[str, str] = {
+    "morning": "picking and placing the day's trades before the open",
+    "midday": "reviewing every position you hold, mid-session",
+    "close": "reviewing every position you hold, near the close",
+    "evening": "writing up the day and preparing tomorrow",
+    "once": "a single manual run of the full decision pass",
+    "intra_check": "the half-hourly safety check over your open positions",
+    "earnings_preprocess": (
+        "reading any company report newly filed with the regulator, before "
+        "the open, so the morning session can use it"
+    ),
+    "meta": "the once-a-quarter review of the desk's own instructions",
+    "daily": "exporting the day's performance history to a spreadsheet",
+}
+
+#: What a failure of each session MEANS for the owner \u2014 specifically
+#: whether anything is now unprotected, unbought, unsold or stale, and
+#: whether he has to do anything. Most of the time the honest answer is
+#: "nothing needs doing", and saying so plainly is worth more than silence.
+_MODE_FAILURE_CONSEQUENCE: dict[str, str] = {
+    "morning": (
+        "No trade was opened or closed by this run. Everything you already "
+        "hold is untouched and keeps the protective stop it already had. "
+        "Nothing needs doing from you; the next scheduled session will try "
+        "again."
+    ),
+    "midday": (
+        "Nothing was bought or sold. Your positions keep the stops they "
+        "already had, but they have NOT been reviewed this session, so "
+        "anything that changed since the open is unassessed until the next "
+        "review."
+    ),
+    "close": (
+        "Nothing was bought or sold. Your positions keep the stops they "
+        "already had, but they have NOT been reviewed this session."
+    ),
+    "evening": (
+        "Nothing was traded \u2014 the evening pass never places an order. "
+        "What is missing is the write-up, not protection; nothing needs "
+        "doing."
+    ),
+    "once": (
+        "No trade was opened or closed by this run. Everything you already "
+        "hold is untouched."
+    ),
+    "intra_check": (
+        "Nothing was bought or sold. This run did NOT confirm that every "
+        "position still has a protective stop, so that check is stale until "
+        "the next one \u2014 which is roughly half an hour away."
+    ),
+    "earnings_preprocess": (
+        "No trade was opened or closed \u2014 this pass never trades. "
+        "Nothing is unprotected. What is missing is knowledge: any newly "
+        "filed report is unread, so the morning session will size down on "
+        "those names rather than act on something it has not seen. The "
+        "filing stays queued and is tried again at the next pre-market "
+        "pass; nothing needs doing from you."
+    ),
+    "meta": (
+        "Nothing was traded and no instruction was changed. Nothing needs "
+        "doing."
+    ),
+    "daily": (
+        "Nothing was traded. The spreadsheet of past performance was not "
+        "sent; the underlying records are unaffected."
+    ),
+}
+
+
+def mode_purpose(mode: str) -> str:
+    """What the session was attempting, in plain words."""
+    return _MODE_PURPOSE.get(str(mode or ""), "a scheduled run of the desk")
+
+
+def mode_failure_consequence(mode: str) -> str:
+    """What a failure of this session means for the owner."""
+    return _MODE_FAILURE_CONSEQUENCE.get(
+        str(mode or ""),
+        "Nothing was bought or sold by this run, and nothing you hold lost "
+        "the protective stop it already had.",
+    )
+
+
+def collapse_ws(value) -> str:
+    """One line, whitespace collapsed \u2014 the first half of every clip."""
+    return " ".join(str(value or "").split())
+
+
+def machine_detail(text) -> str:
+    """Board item 89 defect 5 \u2014 the underlying fault text, LABELLED as
+    machine output instead of pasted in as though it were a sentence
+    written for the reader.
+
+    It is kept rather than dropped: it is often the only record of what
+    actually broke, and inventing a friendly paraphrase of an exception
+    would be inventing a fact. What changes is that the owner is told what
+    he is looking at and that there is nothing in it for him to do.
+
+    Lives here, not in src/trader_feed.py, because every owner-facing
+    message needs it and trader_feed imports notifier rather than the other
+    way round. `src.trader_feed._machine_detail` is this function.
+    """
+    clipped = _clip_text(collapse_ws(text), 900, marker="\u2026")
+    return (
+        "Machine fault text, kept for the record \u2014 nothing here needs "
+        f"anything from you: {clipped}"
+    )
+
+
 def describe_ai_cost(
     cost: float | None,
     label: str = "AI cost for this run",
@@ -1169,16 +1282,34 @@ def format_session_result(
 
     if error is not None:
         # Errors always notify — operator wants to see crashes loudly.
-        err_type = type(error).__name__
-        # 1500 chars, not the old 500 — a Python traceback's exception
-        # message (chained cause, validation error detail) routinely runs
-        # long, and this is a single line in a 4000-char budget; see
-        # _clip_text for why it clips on a boundary instead of mid-word.
-        err_msg = _clip_text(str(error), 1500) or "(no message)"
+        # Owner requirement, 2026-09-18: a failure must say who, what, why,
+        # when and where. "error: KeyError: 'symbol'" answered none of
+        # those \u2014 it pasted an exception class at him as though it
+        # were a sentence and left him with no idea whether anything was
+        # now unprotected.
+        #
+        # WHICH COMPANY is deliberately not guessed here. On this path the
+        # session raised before returning anything, so the desk genuinely
+        # holds no per-name record to read, and saying so is the only
+        # honest option \u2014 inventing a symbol would be the worst
+        # failure on this desk. That the desk records nothing nameable on a
+        # crash is a real gap in what it STORES; a formatter cannot close
+        # it and must not paper over it.
+        #
+        # 1500 chars, not the old 500 \u2014 a chained cause or validation
+        # detail routinely runs long, and `_clip_text` clips on a boundary
+        # rather than mid-word (board item 89: "detail truncated
+        # mid-sentence").
+        err_msg = _clip_text(str(error), 1500) or "(no message text)"
         return (
             f"\U0001f6d1 FAILED: {mode_label(mode)} did not finish  "
             f"({timestamp})\n"
-            f"error: {err_type}: {err_msg}\n"
+            f"What it was doing: {mode_purpose(mode)}.\n"
+            f"Why it stopped: the run hit a fault it could not recover from "
+            f"and ended there. The desk did not record which companies it "
+            f"had reached, so this message cannot name one.\n"
+            f"{machine_detail(f'{type(error).__name__}: {err_msg}')}\n"
+            f"What this means for you: {mode_failure_consequence(mode)}\n"
             f"\U0001f9fe took {elapsed_str}"
         )
 
@@ -1186,6 +1317,11 @@ def format_session_result(
         return (
             f"\u26aa {mode_label(mode)} finished but reported nothing the "
             f"desk could read ({timestamp})\n"
+            f"What it was doing: {mode_purpose(mode)}.\n"
+            f"Why there is nothing to show: the run returned a result the "
+            f"desk does not know how to read, so it cannot say what was "
+            f"looked at or what was found.\n"
+            f"What this means for you: {mode_failure_consequence(mode)}\n"
             f"\U0001f9fe took {elapsed_str}"
         )
 
@@ -1302,13 +1438,32 @@ def format_session_result(
         # Only error / skipped reach here ("sent" is silenced above).
         # Surface the failure reason — a bare '🛑 FAILED: status error' is
         # undebuggable from a phone.
-        daily_block: list[str] = []
-        filename = result.get("filename", "")
-        if filename:
-            daily_block.append(f"📊 {result.get('rows', '?')} rows → {filename}")
+        # Owner requirement, 2026-09-18: what was attempted, why it
+        # stopped, and what it means for him. The internal file path it
+        # used to print is gone \u2014 he has no use for one.
+        daily_block: list[str] = [
+            f"What it was doing: {mode_purpose('daily')}."
+        ]
+        rows_count = result.get("rows")
+        if rows_count is not None:
+            daily_block.append(
+                f"It had {rows_count} day(s) of performance history ready "
+                f"to send."
+            )
         err = result.get("error")
         if err:
-            daily_block.append(f"error: {err}")
+            daily_block.append(
+                "Why it stopped: the desk did not record a reason in plain "
+                "words. " + machine_detail(err)
+            )
+        else:
+            daily_block.append(
+                "Why there is nothing: the export did not run and recorded "
+                "no reason at all."
+            )
+        daily_block.append(
+            f"What this means for you: {mode_failure_consequence('daily')}"
+        )
         _new_section(lines, *daily_block)
 
     # "elapsed: 3m 5s" \u2014 a raw label the owner called noise. Kept,
@@ -2341,10 +2496,41 @@ def _append_position_snapshot(lines: list[str], total_value: float | None) -> No
 
 
 def _append_earnings_body(lines: list[str], result: dict) -> None:
-    analyzed = result.get("analyzed", 0)
-    confirmed = result.get("confirmed", 0)
-    failed = result.get("failed", 0)
-    lines.append(f"analyzed: {analyzed}  confirmed: {confirmed}  failed: {failed}")
+    """The fail-soft fallback for the pre-market filings message.
+
+    `src.trader_feed._format_earnings` is the real one; this runs only if
+    that formatter itself raises. It used to read "analyzed: 1
+    confirmed: 1  failed: 0", which the owner rejected outright \u2014 a
+    count is not information. Even the fallback now names the companies,
+    and where the desk recorded no names it says so rather than falling
+    back on a row of numbers.
+    """
+    named = [
+        str(r.get("symbol")).upper()
+        for r in (result.get("filings") or [])
+        if isinstance(r, dict) and r.get("symbol")
+    ]
+    unread = [
+        str(r.get("symbol")).upper()
+        for r in (result.get("failures") or [])
+        if isinstance(r, dict) and r.get("symbol")
+    ]
+    if named:
+        lines.append("Read: " + ", ".join(named))
+    if unread:
+        lines.append("Could NOT be read: " + ", ".join(unread))
+        lines.append(
+            "Nothing is unprotected and nothing needs doing \u2014 this "
+            "pass never trades. Those filings stay queued and are tried "
+            "again at the next pre-market pass."
+        )
+    if not named and not unread:
+        lines.append(
+            "The desk did not record which companies this pass looked at, "
+            "so this message cannot name them. Nothing was bought or sold "
+            "\u2014 this pass never trades \u2014 and nothing needs doing "
+            "from you."
+        )
 
 
 def _append_daily_loss_halt_banner(lines: list[str], result: dict) -> None:
@@ -2397,7 +2583,7 @@ def _append_intra_check_body(lines: list[str], result: dict) -> None:
 def _append_meta_body(lines: list[str], result: dict) -> None:
     period = result.get("period")
     if period:
-        lines.append(f"period: {period}")
+        lines.append(f"Quarter reviewed: {period}")
     # audit round 2 (#15/#19): run_quarterly_meta_reflection has no flat
     # "applied"/"rejected" keys — derive the counts from the nested
     # editor_report lists (ApplicationReport.to_dict), same as the evening
@@ -2411,20 +2597,75 @@ def _append_meta_body(lines: list[str], result: dict) -> None:
         if isinstance(r, dict) and "dry_run" in str(r.get("reason", ""))
     )
     if applied or rejected:
-        lines.append(f"learnings: applied={applied} rejected={rejected}")
+        # Substance, not counts (owner review, 2026-09-18): say WHAT
+        # changed about the desk's own instructions, not how many things
+        # did. "learnings: applied=2 rejected=1" told him nothing he could
+        # act on. Neither list is summarised into something the record
+        # does not support \u2014 see `_describe_learning`.
+        for entry in (report.get("applied") or [])[:5]:
+            text = _describe_learning(entry)
+            if text:
+                lines.append(f"   \u2022 Changed: {text}")
+        for entry in rej_list[:5]:
+            text = _describe_learning(entry)
+            if not text:
+                continue
+            why = ""
+            if isinstance(entry, dict) and entry.get("reason"):
+                why = f" \u2014 {collapse_ws(entry['reason'])}"
+            lines.append(f"   \u2022 Not changed: {text}{why}")
         if staged:
             lines.append(
-                f"🧪 {staged} proposal(s) staged for review — "
-                f"data/evolution/{period}/proposed_edits.json"
+                f"{staged} proposed change(s) are held back for you to look "
+                f"at before anything is altered. None of them is live."
             )
     elif result.get("proposed_learnings_count"):
         lines.append(
-            f"⚠️ {result['proposed_learnings_count']} proposal(s) generated "
-            f"but prompt-editor report missing — check logs"
+            f"\u26a0\ufe0f The review produced "
+            f"{result['proposed_learnings_count']} proposed change(s), and "
+            f"then the step that records what happened to them produced "
+            f"nothing. The desk cannot say which were applied and which "
+            f"were not."
+        )
+        lines.append(
+            "What this means for you: nothing was traded and no position "
+            "changed. The desk's own instructions may or may not have been "
+            "edited, and that is not recorded."
         )
     reason = result.get("reason")
     if reason:
-        lines.append(f"reason: {reason}")
+        lines.append(f"Why: {collapse_ws(reason)}")
+
+
+def _describe_learning(entry: Any) -> str:
+    """One proposed change to the desk's own instructions, in words.
+
+    Never invents: an entry the record does not describe is reported as
+    exactly that, rather than summarised into something unsupported.
+    """
+    if isinstance(entry, str):
+        return _clip_text(collapse_ws(entry), 220, marker="\u2026")
+    if not isinstance(entry, dict):
+        return ""
+    # `learning_text` is what `ApplicationReport.to_dict` actually writes;
+    # the rest are accepted so a change of key upstream degrades into a
+    # worse description rather than into silence.
+    for key in ("learning_text", "summary", "description", "title",
+                "learning", "text", "name"):
+        value = entry.get(key)
+        if value:
+            text = _clip_text(collapse_ws(value), 220, marker="\u2026")
+            seat = entry.get("agent_name") or entry.get("agent")
+            if seat:
+                return f"{text} (the {collapse_ws(seat)}'s instructions)"
+            return text
+    target = entry.get("agent_name") or entry.get("agent") or entry.get("prompt")
+    if target:
+        return (
+            f"an edit to the instructions for the {collapse_ws(target)}, "
+            f"which the record does not describe in words"
+        )
+    return "a change the record does not describe in words"
 
 
 # === Helpers ===

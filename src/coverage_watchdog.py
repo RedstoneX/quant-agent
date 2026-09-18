@@ -404,6 +404,26 @@ def _notional(position: Any, qty: float) -> float:
 # may we place an order right now? the exchange calendar answers, nobody else
 # ---------------------------------------------------------------------------
 
+def _clock(when) -> str:
+    """'9:30 AM ET' \u2014 12-hour clock, timezone kept.
+
+    This text lands verbatim inside the unprotected-shares alert, which is
+    an owner-facing message, so it obeys the owner's ratified rule (2026-09-17):
+    no 24-hour clock anywhere, and never drop the timezone. It was
+    `strftime('%H:%M %Z')` until 2026-09-18.
+    """
+    from src.notifier import fmt_time_12h
+
+    local = when.astimezone(ET)
+    text = fmt_time_12h(local)
+    tzname = local.strftime("%Z")
+    # `fmt_time_12h` hard-codes the "ET" suffix, which is right for this
+    # desk; if the broker ever hands back another zone, say which.
+    if tzname and tzname not in ("EST", "EDT"):
+        return f"{text.removesuffix(' ET')} {tzname}"
+    return text
+
+
 def session_is_open(broker: Any, now: datetime) -> tuple[bool, str]:
     """`(open_now, reason)` from the calendar the BROKER publishes.
 
@@ -433,12 +453,13 @@ def session_is_open(broker: Any, now: datetime) -> tuple[bool, str]:
         return False, "the broker's calendar did not give both session edges"
     try:
         if now < opens:
-            return False, f"the session has not opened yet (opens {opens:%H:%M %Z})"
+            return False, ("the session has not opened yet (opens "
+                           f"{_clock(opens)})")
         if now >= closes:
-            return False, f"the session has closed (closed {closes:%H:%M %Z})"
+            return False, f"the session has closed (closed {_clock(closes)})"
     except TypeError as exc:  # noqa: BLE001 - naive/aware mismatch
         return False, f"session-hours comparison failed ({exc})"
-    return True, f"the session is open until {closes:%H:%M %Z}"
+    return True, f"the session is open until {_clock(closes)}"
 
 
 # ---------------------------------------------------------------------------

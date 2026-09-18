@@ -13405,7 +13405,23 @@ class TradingPipeline:
                     self.earnings_provider.record_failure(r)
                 except Exception as re:
                     logger.error("record_failure failed for %s: %s", r.symbol, re)
-            return {"status": "analysis_error", "run_id": run_id, "error": str(e)}
+            # Owner requirement, 2026-09-18: a failure must say WHICH
+            # company, what was attempted and why. The whole batch died
+            # here, so every queued filing is nameable \u2014 carry them
+            # out so the message can name them instead of reporting a count.
+            return {
+                "status": "analysis_error", "run_id": run_id, "error": str(e),
+                "failures": [
+                    {
+                        "symbol": r.symbol,
+                        "form_type": r.form_type,
+                        "filing_date": r.filing_date,
+                        "reason": None,
+                        "error": str(e),
+                    }
+                    for r in new_reports
+                ],
+            }
 
         # Match results to reports by (symbol, form_type, filing_date), not
         # just symbol. Same-symbol multiple-form-day is rare but real
@@ -13430,6 +13446,23 @@ class TradingPipeline:
                 self.earnings_provider.record_failure(report)
             except Exception as re:
                 logger.error("record_failure failed for %s: %s", report.symbol, re)
+
+        # Per-filing detail for the owner-facing message (2026-09-18). It
+        # used to read "analyzed: 1  confirmed: 1  failed: 0", which the
+        # owner rejected: a count is not information, he wants WHICH
+        # company and WHAT was found. Nothing here changes what is traded,
+        # gated or stored \u2014 these keys are read by the formatter only.
+        filing_details: list[dict] = []
+        # A per-filing failure the analyst isolated rather than raised.
+        # `EarningsAnalystAgent.analyze_reports` records these; an older
+        # agent (or a test double) may not, in which case the reason is
+        # genuinely unrecorded and the message says so rather than guessing.
+        isolated: dict = {}
+        for rec in getattr(self.earnings_analyst, "last_analysis_failures", None) or []:
+            if isinstance(rec, dict) and rec.get("symbol"):
+                isolated[_filing_key(
+                    rec["symbol"], rec.get("form_type"), rec.get("filing_date"),
+                )] = rec
 
         # Log each LLM call (parity with the inline bg-thread path).
         analyzed_count = 0
@@ -13466,11 +13499,14 @@ class TradingPipeline:
         # Match by (symbol, form_type, filing_date) to avoid confirming a
         # failed 10-Q on the back of a successful same-day 10-K.
         confirmed = 0
+        confirmed_keys: set = set()
         for r in new_reports:
-            if _filing_key(r.symbol, r.form_type, r.filing_date) in successful_keys:
+            key = _filing_key(r.symbol, r.form_type, r.filing_date)
+            if key in successful_keys:
                 try:
                     self.earnings_provider.confirm_filing(r)
                     confirmed += 1
+                    confirmed_keys.add(key)
                 except Exception as e:
                     logger.warning("confirm_filing failed for %s: %s", r.symbol, e)
 
@@ -13478,12 +13514,49 @@ class TradingPipeline:
             "Earnings preprocess complete: %d analyzed, %d confirmed, %d failed",
             analyzed_count, confirmed, len(failed_reports),
         )
+        for res in results:
+            if not res.get("is_new"):
+                continue
+            analysis = res.get("analysis") or {}
+            implications = analysis.get("investment_implications") or {}
+            filing_details.append({
+                "symbol": res.get("symbol"),
+                "form_type": res.get("form_type"),
+                "filing_date": res.get("filing_date"),
+                # The analyst's own verdict. None when it did not produce
+                # one \u2014 the message then says the filing was read but
+                # the desk recorded no view, which is the truth, rather
+                # than inventing a direction.
+                "sentiment": implications.get("sentiment"),
+                "takeaway": (
+                    analysis.get("summary")
+                    or implications.get("rationale")
+                    or implications.get("thesis")
+                ),
+                "confirmed": _filing_key(
+                    res.get("symbol"), res.get("form_type"), res.get("filing_date"),
+                ) in confirmed_keys,
+            })
+
+        failure_details = []
+        for r in failed_reports:
+            rec = isolated.get(_filing_key(r.symbol, r.form_type, r.filing_date)) or {}
+            failure_details.append({
+                "symbol": r.symbol,
+                "form_type": r.form_type,
+                "filing_date": r.filing_date,
+                "reason": rec.get("reason"),
+                "error": rec.get("error"),
+            })
+
         return {
             "status": "preprocessed",
             "run_id": run_id,
             "analyzed": analyzed_count,
             "confirmed": confirmed,
             "failed": len(failed_reports),
+            "filings": filing_details,
+            "failures": failure_details,
             "smart_money_refresh": smart_money_refresh,
         }
 

@@ -14,6 +14,7 @@ on truthiness, because ~58 tests in this suite drive a MagicMock broker
 and a MagicMock is always truthy.
 """
 
+import re
 import json
 import sqlite3
 from datetime import datetime
@@ -393,3 +394,147 @@ def test_the_reviewer_reads_levels_from_live_data_not_from_the_entry_row():
     assert 'entry_row.get("reasoning")' in source
     assert 'entry_row.get("stop_loss")' not in source
     assert 'entry_row.get("take_profit")' not in source
+
+
+# ===========================================================================
+# The pre-market filings message — owner review of the live 08:03 ET copy,
+# 18 September 2026. "analyzed: 1  confirmed: 1  failed: 0" told him
+# nothing; he wants WHICH company and WHAT was found. And a failure must
+# say who, what, why, when and where, plus what it means for him.
+# ===========================================================================
+
+def _earnings(**over):
+    base = {
+        "status": "preprocessed", "run_id": "run-ep",
+        "analyzed": 1, "confirmed": 1, "failed": 0,
+        "filings": [], "failures": [],
+    }
+    base.update(over)
+    return base
+
+
+def test_filings_message_names_the_company_and_what_was_found():
+    from src.trader_feed import format_session_result
+
+    msg = format_session_result("earnings_preprocess", _earnings(filings=[{
+        "symbol": "NVDA", "form_type": "10-Q", "filing_date": "2026-09-17",
+        "sentiment": "bearish", "takeaway": "Gross margin fell for a third quarter.",
+        "confirmed": True,
+    }]), 185.0)
+    assert msg is not None
+    assert "NVDA" in msg
+    assert "quarterly report" in msg and "filed 17 September 2026" in msg
+    assert "bad news for the shares" in msg
+    assert "Gross margin fell for a third quarter." in msg
+    # None of the things the owner rejected.
+    assert "analyzed:" not in msg and "confirmed:" not in msg
+    assert "run-ep" not in msg and "run_id" not in msg
+    assert "provider request" not in msg
+    assert "$0.0000" not in msg
+    assert "10-Q" not in msg  # the form code itself is jargon
+    # No 24-hour clock, and the timezone is kept.
+    assert " ET" in msg
+    assert not re.search(r"\b(1[3-9]|2[0-3]):[0-5][0-9]\b", msg)
+
+
+def test_a_failed_filing_says_who_what_why_when_and_what_it_means():
+    from src.trader_feed import format_session_result
+
+    msg = format_session_result("earnings_preprocess", _earnings(
+        analyzed=0, confirmed=0, failed=1,
+        failures=[{"symbol": "F", "form_type": "10-K",
+                   "filing_date": "2026-09-16", "reason": None,
+                   "error": "JSONDecodeError: Expecting value"}],
+    ), 200.0)
+    assert msg is not None
+    assert "F" in msg                                   # who
+    assert "annual report" in msg                       # what it was
+    assert "What was being attempted" in msg            # what
+    assert "Why it failed" in msg                       # why
+    assert "16 September 2026" in msg                   # when
+    assert "What this means for you" in msg
+    assert "nothing is unprotected and nothing needs doing" in msg
+    # The raw fault is kept but LABELLED, never addressed to him as prose.
+    assert "Machine fault text, kept for the record" in msg
+    assert "JSONDecodeError" in msg
+
+
+def test_a_failure_with_no_recorded_reason_says_so_rather_than_inventing():
+    from src.trader_feed import format_session_result
+
+    msg = format_session_result("earnings_preprocess", _earnings(
+        analyzed=0, confirmed=0, failed=1,
+        failures=[{"symbol": "F", "form_type": "10-K",
+                   "filing_date": "2026-09-16", "reason": None, "error": None}],
+    ), 200.0)
+    assert msg is not None
+    assert "recorded no reason at all" in msg
+    assert "gap in what it writes down" in msg
+
+
+def test_a_filing_with_no_recorded_verdict_does_not_get_one_invented():
+    from src.trader_feed import format_session_result
+
+    msg = format_session_result("earnings_preprocess", _earnings(filings=[{
+        "symbol": "NVDA", "form_type": "10-Q", "filing_date": "2026-09-17",
+        "sentiment": None, "takeaway": None, "confirmed": True,
+    }]), 185.0)
+    assert msg is not None
+    assert "recorded no view either way" in msg
+    for word in ("good news", "bad news", "neither good nor bad"):
+        assert word not in msg
+
+
+def test_a_whole_batch_failure_still_names_the_companies():
+    """`analysis_error` is a base-only status and used to render
+    "analyzed: 0  confirmed: 0  failed: 0", naming nobody — exactly the
+    case the owner complained about, at the moment it matters most."""
+    from src.trader_feed import format_session_result
+
+    msg = format_session_result("earnings_preprocess", {
+        "status": "analysis_error", "run_id": "r", "error": "RateLimitError",
+        "failures": [{"symbol": "F", "form_type": "10-K",
+                      "filing_date": "2026-09-16", "reason": None,
+                      "error": "RateLimitError: 429"}],
+    }, 20.0)
+    assert msg is not None
+    assert "F" in msg and "annual report" in msg
+    assert "analyzed:" not in msg
+
+
+def test_filings_message_stays_silent_when_there_is_nothing_to_report():
+    """The silence rule is absolute: most pre-market days have no fresh
+    filing, and a row of zeros is not a reason to speak."""
+    from src.trader_feed import format_session_result
+
+    for status in ("nothing_new", "fetch_error", "market_holiday"):
+        assert format_session_result(
+            "earnings_preprocess", {"status": status, "run_id": "r"}, 5.0,
+        ) is None
+
+
+def test_filings_message_admits_when_the_desk_recorded_no_names():
+    """The counts say something ran and the per-name record is absent. Say
+    THAT, rather than falling back on the counts he rejected."""
+    from src.trader_feed import format_session_result
+
+    msg = format_session_result("earnings_preprocess", _earnings(), 185.0)
+    assert msg is not None
+    assert "did not record which companies" in msg
+    assert "analyzed:" not in msg
+
+
+def test_a_session_crash_says_what_it_was_doing_and_what_it_means():
+    from src.trader_feed import format_session_result
+
+    msg = format_session_result(
+        "earnings_preprocess", None, 4.0, error=ValueError("bad filing text"),
+    )
+    assert msg is not None
+    assert "Pre-market filings did not finish" in msg
+    assert "What it was doing:" in msg
+    assert "Why it stopped:" in msg
+    assert "What this means for you:" in msg
+    assert "Machine fault text, kept for the record" in msg
+    # It does not guess a company it never recorded.
+    assert "did not record which companies it had reached" in msg

@@ -167,8 +167,13 @@ def test_format_session_result_daily_delivery_failure_keeps_rows_line():
         3.0,
     )
     assert msg is not None
-    assert "42 rows" in msg and "pnl_history_2026-05-30.csv" in msg
+    # The internal file path is gone — he has no use for one. The row
+    # count stays: it says how much history was ready to send.
+    assert "42 day(s) of performance history" in msg
+    assert "pnl_history_2026-05-30.csv" not in msg
     assert "telegram delivery failed" in msg
+    assert "Machine fault text, kept for the record" in msg
+    assert "What this means for you:" in msg
 
 
 def test_format_session_result_daily_skipped_notifies():
@@ -181,7 +186,7 @@ def test_format_session_result_daily_skipped_notifies():
         3.0,
     )
     assert msg is not None
-    assert "skipped" in msg and "42 rows" in msg  # plain outcome word
+    assert "skipped" in msg and "42 day(s) of performance history" in msg
 
 
 def test_build_daily_csv_filters_nan_spy(monkeypatch):
