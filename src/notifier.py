@@ -1415,11 +1415,38 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
         # no alert. And the wording is exact — at the lowest rung new
         # positions are refused ONCE THE BOOK REACHES the cap, not
         # unconditionally; a book already below it may still trade.
-        lines.append(
-            f"🛑 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
-            f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
-            f"new positions are refused once the book reaches it."
-        )
+        #
+        # 2026-09-18: `alert_owner` is no longer only the -20% rung. It is
+        # also set when the drawdown could not be MEASURED at all (an
+        # unreadable equity read, rung "bad_read", which has set it since
+        # 2026-09-02; and an absent equity curve, rung "unknown"). Printing
+        # "DRAWDOWN PAST -20%" for those said something specific and false
+        # about the book — the owner would read a measured -20% where
+        # nothing had been measured. The message is chosen from the RUNG,
+        # so a state that was never measured never reports a number.
+        rung = leverage.get("rung")
+        if rung == "unknown":
+            lines.append(
+                f"🛑 DRAWDOWN UNMEASURABLE: there is no equity history to "
+                f"measure a high-water mark against, so the de-levering "
+                f"ladder cannot fire at all. This is NOT a book at record "
+                f"highs. Nothing is being trimmed and gross exposure is "
+                f"held to the standing {ceiling_x:.2f}x cap until a real "
+                f"equity curve exists."
+            )
+        elif rung == "bad_read":
+            lines.append(
+                f"🛑 DRAWDOWN UNMEASURABLE: the account equity reading came "
+                f"back unusable, so the book's drawdown cannot be verified. "
+                f"Gross exposure is held to the ladder's floor rung "
+                f"({ceiling_x:.2f}x equity) until a valid reading arrives."
+            )
+        else:
+            lines.append(
+                f"🛑 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
+                f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
+                f"new positions are refused once the book reaches it."
+            )
     if leverage.get("delever_incomplete"):
         # §11.2 reporting gap: a de-lever was attempted but the account is
         # still over its limit afterward. Plain words for a non-developer
