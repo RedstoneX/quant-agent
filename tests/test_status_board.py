@@ -606,26 +606,78 @@ def test_no_board_item_disappears_without_being_retired():
     )
 
 
-def test_work_md_does_not_grow_without_pruning():
-    """Owner's standing rule: every write to docs/WORK.md cleans it up first.
-    Resolved items that are written up in docs/INCIDENT_HISTORY.md are
-    deleted, not condensed — the file is loaded by every session and every
-    compaction, so every resolved byte is paid for again and again.
+def test_work_md_growth_budget_shrinks_as_the_file_fills():
+    """Pins `sb.work_md_growth_budget`'s shape directly, independent of git
+    plumbing: half of whatever headroom remains below the cap, so the
+    allowance shrinks as the file fills rather than staying flat. See the
+    function's own docstring in scripts/status_board.py for why 0.5 is
+    provisional and what it replaced."""
+    cap = sb.WORK_MD_GROWTH_CAP_BYTES
+    assert sb.work_md_growth_budget(30_000, cap) == 35_000   # ~30% full
+    assert sb.work_md_growth_budget(85_000, cap) == 7_500    # ~85% full
+    assert sb.work_md_growth_budget(95_000, cap) == 2_500    # ~95% full
+    assert sb.work_md_growth_budget(cap, cap) == 0           # at the cap
+    assert sb.work_md_growth_budget(cap + 10_000, cap) == 0  # past it: never negative
 
-    Until 2026-09-14 that rule lived only in memory, and the only mechanical
-    check was the 100,000-byte ceiling below. The ceiling cannot catch it: a
-    change that adds 2,000 bytes and prunes nothing passes it until the day
-    the file hits the cap, and five board items were added that way in one
-    afternoon. This test encodes the rule itself: a change may not leave
-    WORK.md larger than it found it. Adding an item means removing at least
-    as much finished material in the same change.
 
-    Deliberately no escape hatch — an override is how a rule gets bypassed.
-    If a change ever genuinely has nothing left to prune, this failing is the
-    signal to raise that with the owner, not to work around it.
+def test_work_md_growth_share_is_pinned():
+    """`WORK_MD_GROWTH_SHARE` is a provisional judgement call (see its
+    comment in scripts/status_board.py) — pinned here so a future edit
+    cannot quietly loosen or tighten it without a visible, reviewed test
+    change."""
+    assert sb.WORK_MD_GROWTH_SHARE == 0.5
 
-    Fails closed in CI when no base can be read, so a shallow checkout cannot
-    silently skip it. Skips only on a local run with no reachable origin.
+
+def test_work_md_growth_cap_matches_the_byte_ceiling():
+    """`WORK_MD_GROWTH_CAP_BYTES` must equal the cap
+    `test_work_md_stays_under_a_hundred_thousand_bytes` enforces below —
+    that test owns the number, this only guards against the two silently
+    drifting apart if the ceiling is ever changed there and not here.
+    Reads the ceiling test's own source, the same way
+    `scripts/check_board_hygiene.py:read_cap_bytes` already does, rather
+    than re-typing the number a third time."""
+    from scripts.check_board_hygiene import read_cap_bytes
+
+    repo = Path(__file__).resolve().parents[1]
+    cap, error = read_cap_bytes(repo)
+    assert error is None, error
+    assert sb.WORK_MD_GROWTH_CAP_BYTES == cap
+
+
+def test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills():
+    """Owner's ruling, 2026-09-17, in substance: the old rule here (no
+    change may ever leave docs/WORK.md larger than it found it, "
+    deliberately no escape hatch") was WRITTEN BADLY. It was meant to stop
+    finished work piling up unpruned, and it did — but it could not tell
+    that apart from a night where far more genuine defects were found than
+    were closed, and blocked recording them while the file sat at roughly
+    30,000 of its 100,000-byte cap, comfortably under it, with nothing left
+    to prune. What he wants is housekeeping enforced, not recording
+    blocked; the 100,000-byte ceiling itself stays exactly as it was.
+
+    The replacement, `sb.work_md_growth_budget` (see its docstring for the
+    full reasoning): a single change may grow the file by at most `share`
+    (provisional, `sb.WORK_MD_GROWTH_SHARE`) of whatever headroom remains
+    below the cap. That budget is enormous while the file is well under the
+    cap — recording a new defect is never blocked for lack of something to
+    prune — and shrinks automatically as the file fills, so growth that is
+    fine at 30% full is not fine at 95% full, without a second flat number
+    to justify at each band.
+
+    This test only bounds how fast the file may approach the cap. It does
+    NOT, by itself, make housekeeping happen — that is enforced separately
+    and unconditionally (not gated on growth) by
+    `find_finished_items_still_on_board` / `find_closed_items_not_marked_
+    done`, via `test_the_real_backlog_has_no_finished_item_still_on_the_
+    board` and `test_the_real_backlog_has_no_item_contradicting_its_own_
+    title`: a change that adds nothing here still fails CI if it leaves a
+    self-declared-finished item sitting on the board. The three checks
+    together are the housekeeping rule: a hard ceiling, a shrinking growth
+    budget, and an unconditional finished-item gate.
+
+    Fails closed in CI when no base can be read, so a shallow checkout
+    cannot silently skip it. Skips only on a local run with no reachable
+    origin.
     """
     import os
     import subprocess
@@ -651,13 +703,18 @@ def test_work_md_does_not_grow_without_pruning():
         return  # WORK.md did not exist at the base; nothing to compare
     before = len(r.stdout)
     after = work_md.stat().st_size
-    assert after <= before, (
-        f"docs/WORK.md grew from {before:,} to {after:,} bytes "
-        f"(+{after - before:,}) without pruning. Owner's standing rule: every "
-        "write to WORK.md cleans it up in the same change. Delete resolved "
-        "items already written up in docs/INCIDENT_HISTORY.md (write one up "
-        "first if it is not), and their `## item N` blocks in "
-        "docs/BOARD_NOTES.md, until the file is no larger than it was."
+    cap = sb.WORK_MD_GROWTH_CAP_BYTES
+    budget = sb.work_md_growth_budget(before, cap)
+    grew_by = after - before
+    assert grew_by <= budget, (
+        f"docs/WORK.md grew from {before:,} to {after:,} bytes (+{grew_by:,}), "
+        f"more than the {budget:,}-byte growth budget allowed at this fullness "
+        f"({before:,}/{cap:,} bytes, {before / cap:.0%} full). The closer the "
+        "file is to the cap, the less room a single change gets before it "
+        "must prune first: delete items already written up in "
+        "docs/INCIDENT_HISTORY.md (write one up first if it is not), and "
+        "their `## item N` blocks in docs/BOARD_NOTES.md, until the growth "
+        "fits the budget."
     )
 
 

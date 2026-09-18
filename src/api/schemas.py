@@ -1118,3 +1118,81 @@ class AnalystScorecardResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+# --- holding "why do we hold this" view (2026-09-18) -------------------
+# Assembled by `src.api.holding_why.build_holding_why` from what is
+# already stored; see that module for every wording rule. The models are
+# deliberately shallow and string-first: the consumer renders these
+# fields as prose, and nothing here should need a second lookup table on
+# the frontend to become readable.
+
+
+class HoldingInsiderPurchase(BaseModel):
+    """The Form 4 facts a person actually wants: who, how much, when, at
+    what price. `not_recorded` names any of those the desk did not
+    capture, so a gap reads as a gap."""
+
+    plain: str
+    actor: str | None = None
+    role: str | None = None
+    total_usd: float | None = None
+    total_usd_plain: str | None = None
+    purchase_count: int | None = None
+    first_transaction_date: str | None = None
+    last_transaction_date: str | None = None
+    average_price: float | None = None
+    not_recorded: list[str] = []
+
+
+class HoldingSupportingReason(BaseModel):
+    seat: str
+    reason: str
+
+
+class HoldingHorizon(BaseModel):
+    sessions: int | None = None
+    plain: str
+    #: Why the number is a plan and not a rule — nothing sells on it.
+    note: str
+
+
+class HoldingTakeProfit(BaseModel):
+    price: float | None = None
+    plain: str
+    #: ALWAYS False today. The automatic take-profit trim was deleted on
+    #: 2026-09-12 and no caller passes `take_profit_price` to the broker,
+    #: so no order exists at this price. Kept as an explicit field rather
+    #: than a comment so a future change has to flip it deliberately.
+    acted_on: bool = False
+    note: str
+
+
+class HoldingWhyReadable(BaseModel):
+    why: str | None = None
+    primary_driver: str | None = None
+    primary_driver_detail: str | None = None
+    raised_by: str | None = None
+    insider: HoldingInsiderPurchase | None = None
+    supporting: list[HoldingSupportingReason] = []
+    fundamental_reason: str | None = None
+    invalidation: str
+    stop_price: float | None = None
+    horizon: HoldingHorizon
+    take_profit: HoldingTakeProfit
+    since_entry: list[str] = []
+
+
+class HoldingWhyResponse(BaseModel):
+    """One plain sentence, the decision-relevant detail, and the machine
+    evidence behind a toggle."""
+
+    symbol: str
+    company_name: str | None = None
+    lede: str
+    readable: HoldingWhyReadable
+    #: What the desk does NOT record for this holding, named in words.
+    not_recorded: list[str] = []
+    #: Accession numbers, internal flags, broker-eligibility JSON, run
+    #: identifiers — everything deliberately kept out of `readable`.
+    raw_evidence: dict = {}

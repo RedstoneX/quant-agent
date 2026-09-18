@@ -98,7 +98,9 @@ export function CandidateRail({
   updatedAt,
   selectedSymbol,
   onSelectSymbol,
+  fit,
 }: {
+  fit?: boolean;
   funnel: RunFunnelResponse | null;
   loading: boolean;
   error: string | null;
@@ -169,7 +171,7 @@ export function CandidateRail({
   const activeFilterIndex = FILTERS.findIndex((item) => item.key === filter);
 
   return (
-    <Panel title="Candidates this run" subtitle={total > 0 ? `${total} shortlisted for consideration` : undefined} status={status} staleSince={updatedAt}>
+    <Panel fit={fit} title="Candidates this run" subtitle={total > 0 ? `${total} shortlisted for consideration` : undefined} status={status} staleSince={updatedAt}>
       {error && !funnel && <StateMessage text={`Could not load candidates: ${error}`} error hero glyph="■" />}
       {!error && !funnel && !loading && (
         <StateMessage text="No session yet today. Candidates populate once QAMC's first scan completes." hero glyph="○" />

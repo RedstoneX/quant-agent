@@ -1,13 +1,67 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   useLegacyTable as useReactTable,
   getCoreRowModel,
   getSortedRowModel,
   type LegacyColumnDef,
 } from "@tanstack/react-table/legacy";
-import { flexRender, type ColumnOrderState, type ColumnSizingState, type SortingState } from "@tanstack/react-table";
+import { flexRender, type ColumnOrderState, type SortingState } from "@tanstack/react-table";
 import { Table, TableBody, TableCell, TableHead, TableHeaderCell, TableRow } from "@tremor/react";
 import { readPersistedColumnState, writePersistedColumnState } from "./dataTablePersistence";
+
+/* Column widths are stored as FRACTIONS of the table's own width that
+ * always sum to 1, not as absolute pixels.
+ *
+ * Why (measured live 2026-09-17, owner report "column resizing kind of
+ * works"): widths used to come from TanStack's `columnSizing`, whose
+ * default per-column size is 150px, rendered as an inline `width: 150px`
+ * on every header/body cell. CSS `table-layout: fixed` does NOT clamp a
+ * table to its specified `width: 100%` — the spec makes the used width
+ * the LARGER of the specified width and the sum of the column widths. In
+ * the live cockpit that was 9 columns x 150px = 1350px inside a 743px
+ * panel, and the DataTable wrapper's `overflow-x-hidden` (added earlier
+ * to kill a sideways scrollbar) silently clipped the overflow. The last
+ * four Positions columns — Market value, Day P&L, Unrealized P&L,
+ * Sector — and every one of their resize handles were rendered outside
+ * the visible box and could not be reached at all, while the first few
+ * resized normally. That is the whole of "kind of works".
+ *
+ * Fractions fix it by construction: the widths are emitted as
+ * percentages that sum to 100%, so the table can never be wider than its
+ * container and no column can be pushed out of reach. A drag moves ONE
+ * boundary — it takes from the column on the right and gives to the
+ * column on the left, leaving the total untouched — so the boundary
+ * tracks the cursor 1:1 instead of being rescaled by the browser, and no
+ * other column jumps. Persisted values are normalized on read, so
+ * pixel-valued entries written by the previous build load as sensible
+ * ratios rather than needing a migration. */
+type ColumnFractions = Record<string, number>;
+
+/** Smallest a column may be dragged, as a share of the table width.
+ * Roughly 24px on a 750px panel — narrow enough to park a column you do
+ * not care about, wide enough to still find its handle again. */
+const MIN_COLUMN_FRACTION = 0.032;
+
+export function normalizeFractions(raw: unknown, ids: string[]): ColumnFractions {
+  const source = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const known = ids.filter((id) => {
+    const value = source[id];
+    return typeof value === "number" && Number.isFinite(value) && value > 0;
+  });
+  if (!ids.length) return {};
+  // Nothing usable persisted (or an entirely new column set): equal split.
+  if (!known.length) {
+    const share = 1 / ids.length;
+    return Object.fromEntries(ids.map((id) => [id, share]));
+  }
+  // Columns that were added since the widths were saved get the average
+  // of the known ones rather than zero, so a new column is never invisible.
+  const knownTotal = known.reduce((sum, id) => sum + (source[id] as number), 0);
+  const average = knownTotal / known.length;
+  const filled = ids.map((id) => [id, known.includes(id) ? (source[id] as number) : average] as const);
+  const total = filled.reduce((sum, [, value]) => sum + value, 0);
+  return Object.fromEntries(filled.map(([id, value]) => [id, value / total]));
+}
 
 // Header/cell padding below is deliberately tighter than Tremor's default
 // (p-4 / px-4 py-3.5) - owner override 2026-09-10: Positions' "Day P&L"
@@ -54,9 +108,8 @@ export function DataTable<T extends object>({
   storageKey?: string;
 }) {
   const [sorting, setSorting] = useState<SortingState>(initialSorting);
-  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>(() =>
-    resizable ? readPersistedColumnState<ColumnSizingState>(storageKey, "sizing", {}) : {}
-  );
+  const [fractions, setFractions] = useState<ColumnFractions>({});
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(() =>
     reorderable ? readPersistedColumnState<ColumnOrderState>(storageKey, "order", []) : []
   );
@@ -141,14 +194,13 @@ export function DataTable<T extends object>({
     columns: stableColumns,
     state: {
       sorting,
-      columnSizing: resizable ? columnSizing : undefined,
       columnOrder: reorderable ? columnOrder : undefined,
     },
     onSortingChange: setSorting,
-    onColumnSizingChange: resizable ? setColumnSizing : undefined,
-    enableColumnResizing: resizable,
-    columnResizeMode: "onChange",
-    defaultColumn: resizable ? { minSize: 8 } : undefined,
+    // Widths are owned by `fractions` above and applied as percentages,
+    // not by TanStack's pixel-based columnSizing — see the block comment
+    // on ColumnFractions for the measured reason.
+    enableColumnResizing: false,
     onColumnOrderChange: reorderable ? setColumnOrder : undefined,
     getRowId,
     getCoreRowModel: getCoreRowModel(),
@@ -173,10 +225,88 @@ export function DataTable<T extends object>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reorderable]);
 
-  useEffect(() => {
+  // Visible leaf columns in render order — the only thing the width
+  // bookkeeping below cares about. Joined into a string so the effects
+  // re-run when a column is added/removed/reordered, not on every render.
+  const visibleIds = table.getVisibleLeafColumns().map((column) => column.id);
+  const visibleKey = visibleIds.join(",");
+
+  // Seed/reconcile widths against the columns that actually exist.
+  // Persisted values are normalized rather than migrated (see the
+  // ColumnFractions comment), and a reorder keeps each column's own share.
+  useLayoutEffect(() => {
     if (!resizable) return;
-    writePersistedColumnState(storageKey, "sizing", columnSizing);
-  }, [resizable, storageKey, columnSizing]);
+    const ids = visibleKey ? visibleKey.split(",") : [];
+    setFractions((prev) => {
+      // First paint of a table with nothing saved renders with the
+      // browser's own automatic table layout (see the `style` on <Table>
+      // below), so the header cells are sitting at the width their
+      // contents actually want. Seeding from that measurement is what
+      // gives a date column more room than a side column without anyone
+      // hand-picking numbers — an equal split would be a guess, and the
+      // old 150px-per-column default was a guess that also overflowed.
+      // useLayoutEffect so the switch happens before the browser paints.
+      const measured = Object.fromEntries(
+        [...(wrapperRef.current?.querySelectorAll<HTMLElement>("th[data-column-id]") ?? [])]
+          .map((cell) => [cell.dataset.columnId ?? "", cell.getBoundingClientRect().width] as const)
+          .filter(([id, width]) => id && width > 0),
+      );
+      const source = Object.keys(prev).length
+        ? prev
+        : (() => {
+            const saved = readPersistedColumnState<ColumnFractions>(storageKey, "sizing", {});
+            return Object.keys(saved).length ? saved : measured;
+          })();
+      const next = normalizeFractions(source, ids);
+      const unchanged =
+        Object.keys(next).length === Object.keys(prev).length &&
+        ids.every((id) => Math.abs((next[id] ?? 0) - (prev[id] ?? 0)) < 1e-6);
+      return unchanged ? prev : next;
+    });
+  }, [resizable, storageKey, visibleKey]);
+
+  useEffect(() => {
+    if (!resizable || !Object.keys(fractions).length) return;
+    writePersistedColumnState(storageKey, "sizing", fractions);
+  }, [resizable, storageKey, fractions]);
+
+  /** Drag one column boundary. All the width moved comes out of the
+   * column immediately to the right, so the row's total never changes
+   * and nothing can be pushed off the edge. The last column has no
+   * boundary of its own — its left-hand neighbour's handle is the one
+   * that sizes it — so it gets no handle, which is also why the old
+   * handle-clipped-by-the-panel-edge problem cannot come back. */
+  const beginColumnResize = (columnId: string) => (event: React.PointerEvent<HTMLElement>) => {
+    if (!resizable || event.button !== 0) return;
+    const ids = visibleIds;
+    const index = ids.indexOf(columnId);
+    const nextId = ids[index + 1];
+    const width = wrapperRef.current?.clientWidth ?? 0;
+    if (!nextId || width <= 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startSelf = fractions[columnId] ?? 1 / ids.length;
+    const startNext = fractions[nextId] ?? 1 / ids.length;
+    const pair = startSelf + startNext;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const delta = (moveEvent.clientX - startX) / width;
+      const self = Math.min(
+        Math.max(startSelf + delta, MIN_COLUMN_FRACTION),
+        Math.max(pair - MIN_COLUMN_FRACTION, MIN_COLUMN_FRACTION),
+      );
+      setFractions((prev) => ({ ...prev, [columnId]: self, [nextId]: pair - self }));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
 
   useEffect(() => {
     if (!reorderable) return;
@@ -245,8 +375,14 @@ export function DataTable<T extends object>({
   }, [reorderable, dragColumnId]);
 
   return (
-    <div className="max-w-full min-w-0 overflow-x-hidden rounded-lg ring-1 ring-border">
-      <Table className={`${compact ? "text-xs" : "text-sm"} overflow-x-hidden`} style={resizable ? { width: "100%", tableLayout: "fixed" } : undefined}>
+    <div ref={wrapperRef} className="max-w-full min-w-0 overflow-x-hidden rounded-lg ring-1 ring-border">
+      {/* `table-layout: fixed` only once the widths are known. Until
+          then the browser's automatic layout runs, which is what the
+          seeding effect above measures. */}
+      <Table
+        className={`${compact ? "text-xs" : "text-sm"} overflow-x-hidden`}
+        style={resizable ? { width: "100%", tableLayout: Object.keys(fractions).length ? "fixed" : "auto" } : undefined}
+      >
         <TableHead>
           {table.getHeaderGroups().map((group) => (
             <TableRow key={group.id}>
@@ -254,8 +390,16 @@ export function DataTable<T extends object>({
                 <TableHeaderCell
                   key={header.id}
                   data-column-id={header.column.id}
-                  className={`relative px-2 py-2 ${resizable ? "overflow-hidden" : "whitespace-nowrap"} ${reorderable ? "cursor-grab select-none" : ""}`}
-                  style={resizable ? { width: header.getSize(), minWidth: 8 } : undefined}
+                  // `overflow-hidden` deliberately does NOT go on this cell
+                  // (measured 2026-09-17): it clipped the absolutely
+                  // positioned resize handle below to the cell box, halving
+                  // its 14px hit area to the 7px that happened to fall
+                  // inside — one real cause of "the drag target is hard to
+                  // hit". Truncation now happens on the inner content
+                  // wrapper, which looks identical and leaves the handle
+                  // whole.
+                  className={`relative px-2 py-2 ${resizable ? "" : "whitespace-nowrap"} ${reorderable ? "cursor-grab select-none" : ""}`}
+                  style={resizable ? { width: `${(fractions[header.column.id] ?? 0) * 100}%` } : undefined}
                   // Drag-anywhere reorder (2026-09-11): pointerdown on ANY
                   // part of the header cell starts click-vs-drag tracking,
                   // not just the small grip icon below. The grip stays as
@@ -264,7 +408,7 @@ export function DataTable<T extends object>({
                   // cell now.
                   onPointerDown={reorderable ? beginHeaderPointerTracking(header.column.id) : undefined}
                 >
-                  <div className="flex min-w-0 items-center gap-1.5">
+                  <div className={`flex min-w-0 items-center gap-1.5 ${resizable ? "overflow-hidden" : ""}`}>
                     {reorderable && (
                       <span
                         className={`pointer-events-none select-none text-border ${
@@ -306,29 +450,29 @@ export function DataTable<T extends object>({
                       </span>
                     )}
                   </div>
-                  {resizable && header.column.getCanResize() && (
-                    // Widened (14px) INTERACTIVE hit area, centered on the
-                    // actual column boundary (right: -7px + w-3.5/14px, so
-                    // it spans 7px either side of the cell's right edge -
-                    // the same edge the old flush-right 6px strip sat
-                    // against). The VISUAL strip inside stays the original
-                    // 6px/right-aligned-to-boundary size and position, so
-                    // the rendered border doesn't shift - only the
-                    // grabbable area around it grows. `group` so hovering
-                    // anywhere in the wider hit area still lights up the
-                    // thin visual strip, not just the strip itself.
+                  {resizable && visibleIds.indexOf(header.column.id) < visibleIds.length - 1 && (
+                    // 14px INTERACTIVE hit area centred on the column
+                    // boundary (right: -7px + w-3.5), now genuinely 14px
+                    // wide since the cell no longer clips it. The VISUAL
+                    // strip inside stays the original 6px flush against the
+                    // boundary, so nothing moves on screen — only the
+                    // grabbable area is real. `group` so hovering anywhere
+                    // in the hit area lights the strip.
+                    //
+                    // No handle on the LAST column: its right edge is the
+                    // table's own edge, there is nothing on the far side to
+                    // trade width with, and a handle there used to hang
+                    // outside the wrapper's overflow-x-hidden where it could
+                    // not be grabbed. Its width is set from its left
+                    // neighbour's handle instead.
                     <div
                       data-resize-handle="true"
-                      onMouseDown={header.getResizeHandler()}
-                      onTouchStart={header.getResizeHandler()}
+                      onPointerDown={beginColumnResize(header.column.id)}
                       className="group absolute top-0 z-10 h-full w-3.5 cursor-col-resize touch-none select-none"
                       style={{ right: "-7px" }}
+                      title="Drag to resize this column"
                     >
-                      <div
-                        className={`absolute right-[7px] top-0 h-full w-1.5 ${
-                          header.column.getIsResizing() ? "bg-accent" : "group-hover:bg-border"
-                        }`}
-                      />
+                      <div className="absolute right-[7px] top-0 h-full w-1.5 group-hover:bg-border" />
                     </div>
                   )}
                 </TableHeaderCell>
@@ -353,7 +497,7 @@ export function DataTable<T extends object>({
                 <TableCell
                   key={cell.id}
                   className={`font-mono tabular-nums px-2 py-2 ${resizable ? "overflow-hidden truncate" : "whitespace-nowrap"}`}
-                  style={resizable ? { width: cell.column.getSize(), minWidth: 8 } : undefined}
+                  style={resizable ? { width: `${(fractions[cell.column.id] ?? 0) * 100}%` } : undefined}
                 >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </TableCell>

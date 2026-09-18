@@ -17,7 +17,13 @@ describe("Mission Control component policy", () => {
   it("keeps the approved table, financial-chart and desktop-workspace components", () => {
     expect(sourceModules["./PositionsPanel.tsx"]).toContain("DataTable");
     expect(sourceModules["./OrdersPanel.tsx"]).toContain("DataTable");
-    expect(sourceModules["./ui/DataTable.tsx"]).toContain("minSize: 8");
+    // Columns must still be shrinkable to near nothing rather than
+    // carrying a header-tied minimum that shoves later columns out of
+    // view. The mechanism changed on 2026-09-17 from TanStack's pixel
+    // `minSize` to a minimum SHARE of the table width, because pixel
+    // sizes summed past the panel width and silently clipped the last
+    // columns — see the ColumnFractions comment in DataTable.tsx.
+    expect(sourceModules["./ui/DataTable.tsx"]).toContain("MIN_COLUMN_FRACTION");
     expect(sourceModules["./ui/DataTable.tsx"]).toContain("truncate");
     expect(sourceModules["./HoldingsStrip.tsx"]).toContain("holdings-wrap");
     expect(sourceModules["./HoldingsStrip.tsx"]).not.toContain("overflow-x-auto");

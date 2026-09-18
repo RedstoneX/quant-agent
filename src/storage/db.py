@@ -3210,6 +3210,20 @@ class Database:
             }
         return self._locked_write(_do, label="backfill_conviction_ledger")
 
+    def get_earliest_daily_pnl(self) -> dict | None:
+        """The oldest row this table actually has.
+
+        Used for the Telegram feed's "total P&L" baseline: the 2026-09-02
+        book-wide liquidation archived every earlier row (see
+        docs/INCIDENT_HISTORY.md), so this table's own earliest surviving
+        row IS the reset baseline — never reconstructed from the archive.
+        """
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT * FROM daily_pnl ORDER BY date ASC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+
     def get_daily_pnl(self, limit: int = 30, before_date: str | None = None) -> list[dict]:
         conditions = []
         params: list = []

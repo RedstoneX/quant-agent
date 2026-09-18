@@ -22,6 +22,107 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — the production checkout now matches what git records (item 94 closed)
+
+The live box was running a hand-built dashboard bundle that had never been committed. Git was not wrong about production in the usual direction — the SERVER was the stale side, since nobody could say from the repo alone what was actually being served. PR #465 rebuilt and committed the cockpit bundle from current frontend source so the two agree, and added a guard that `index.html` may only reference assets that are actually committed, so the drift cannot silently recur. Verified: the dashboard looks no different to the owner — this was a recording fix, not a behaviour change. Item 94 retired.
+### 2026-09-18 — the stale-prose problem is not limited to the briefs; the code's own comments are rotting the same way, and two of them were checked
+
+**What broke, in one line:** the desk found seventeen out-of-date statements
+in the written briefs given to the trading seats, and then found the same kind
+of out-of-date statement inside the code's own comments — so the explanation a
+future reader trusts can be describing a rule that was switched off weeks ago.
+
+**The confirmed instance.** `src/portfolio_constructor.py` carries a long
+comment reasoning about a "hard reward:risk floor", and works through the
+arithmetic of `min_reward_risk_after_widening` as a live constraint a trade
+must clear. About two hundred lines above it, the same file states plainly
+that nothing in the module refuses a trade on a reward:risk floor any more,
+and `src/risk/constants.py` labels the historical key inert. Both cannot be
+true. The second is the current one. Nobody is misled into a bad trade by this
+— the code does not read the comment — but the next person deriving a stop
+width from that arithmetic would be reasoning from a rule that does not exist,
+and that is exactly how the brief defects in item 98 were born.
+
+**A second finding in the same comment, worth more than the comment itself.**
+The stop-width setup scalers are breakout 1.00 / range 0.90. They were
+corrected to those values on 2026-09-04, and the reasoning was recorded
+properly at the time: range 0.90 was chosen as *the tightest scaler that keeps
+the narrowest reachable stop outside the measured 1.25-ATR noise band*, and
+0.85 was explicitly rejected because `1.5 x 0.85 x 0.95 = 1.21` fell back
+inside that band. That derivation depended on the base being 1.5. **The base
+was changed to 2.5 on 2026-09-10.** At 2.5 the narrowest reachable stop is
+`2.5 x 0.90 x 0.95 = 2.14` ATR, nowhere near the noise band — so the
+constraint that produced 0.90 rather than 0.85 no longer binds at all. The
+number survived; the reason for it did not. It is now effectively an
+unsourced constant wearing an old derivation, and it belongs with the rest of
+the unsourced trade-governing numbers rather than being treated as settled.
+Nothing here says 0.90 is wrong — only that it is no longer derived.
+
+**One thing checked and found FINE, recorded so nobody reopens it.** A
+question was raised about whether the exit gate leaves a durable, per-symbol
+record when it refuses a sale whose reason names no recognised trigger. It
+does. The gate writes a per-symbol, per-run row carrying the status and the
+rejected reason text, and separately records the refusal with its own code and
+layer. The concern was that the refusal existed only as a log line. It does
+not. No work needed.
+
+**A claim that did NOT check out, recorded because a wrong entry is worse than
+a missing one.** It was suspected that the setup and regime multipliers had
+drifted from what the 2026-09-04 audit recorded with no write-up explaining
+why. Half right. They did change — the audit's own table lists setup scalers
+of 0.85/1.15, and the live values are 0.90/1.00 — but there IS a full
+write-up, in this file under the 2026-09-04 entry, giving the inversion
+argument and the derivation of each new value. The regime scalers
+(1.20/1.10/0.95) never changed at all. What is genuinely missing is only the
+narrower point above: that the 2.5 base silently retired range 0.90's
+justification.
+
+**What would catch this class next time.** The same check item 99 argues for,
+extended one step: when a mechanism is deleted, grep its symbol name across
+the briefs, the assembled strings AND the comments. A comment is the cheapest
+place for a deleted rule to keep living, because nothing ever executes it.
+
+### 2026-09-18 — two reconciliation answers were computed and binned, and nobody noticed because a third one next to them was not
+
+**What broke, in one line:** twice every session the desk works out something
+worth knowing — which positions the broker closed behind its back, and which
+unprotected positions it has just re-protected — and then throws the answer
+away before anything can tell the owner.
+
+**The shape of it.** Both routines return a real result: one a list of exits
+the broker made unilaterally that the ledger never heard about, the other a
+count of protection restores it drained. Every one of the five call sites
+calls them as bare statements and keeps nothing. The reason this is a defect
+rather than a style choice is sitting on the adjacent line: the third member
+of the same family, the stop-coverage audit, has its return captured and
+threaded into the session result at every exit point, which is the mechanism
+by which a missing stop reaches the owner today. Two of three siblings are
+wired up; one pattern was simply never finished.
+
+**Not invisible, and the distinction matters.** Both discarded routines log
+what they did, so the information exists in the journal. What it cannot do is
+reach a session result, a Telegram message, or any test that reads one. The
+honest statement is "unreportable", not "silent" — overstating it would put a
+detection gap where there is a reporting gap.
+
+**Found alongside it, older and separate.** A partly-filled order that is
+still open never has its filled quantity written down. The fill reconciler
+acts only on terminal broker statuses, and a part-fill is not terminal, so
+the row stays marked as merely submitted. The code documents that as
+deliberate deferral to the next pass, which is sound — except that the same
+function documents the case that breaks it: the broker purges order history
+after a few days, and an unreconciled row then falls through a
+legacy-compatibility filter that treats it as fully filled. A half-filled
+order can therefore end up counted as a whole one, taking the cash and
+position figures with it. This predates all of tonight's work.
+
+**What would catch it next time.** A test asserting that every reconciliation
+routine's result appears in the session result, in the same way the stop
+coverage gap already must. The pattern to distrust is a function that returns
+a value being called as a statement.
+
+---
+
 ### 2026-09-17 — the live fill feed never once worked, and nobody was told
 
 **In plain words:** when the desk places an order it needs to know whether it actually bought anything. It was built in September to be told the instant a trade happens, over a live connection to the broker. That connection has never worked — not once, in any session, since the day it was built. Everything kept running because the desk also asks the broker over and over the ordinary way, and that has always worked, so no trade was missed and no money was lost. What was lost was a few seconds of every order's waiting time spent on a connection that could never open, and about a hundred and fifty error lines a day in a log the owner does not read.
@@ -11160,3 +11261,4 @@ no write-up in these docs at all before this entry.
 **Not changed.** The 20% band's value. The kill switch. The constructor's ATR
 floors or the §12.1 level exemption. Nothing about how wide a stop is allowed
 to be. The `0.0` sentinel.
+
