@@ -703,7 +703,11 @@ class PortfolioVolEstimate:
     it does, and specifically so an incomplete measurement is visible rather
     than silent: `unmeasured_symbols` names holdings whose price history
     could not support a return series, and `measured_weight_pct` is how much
-    of the book's gross exposure the estimate actually covers.
+    of the book's gross exposure has its OWN price history behind it —
+    `unmeasured_symbols` still contribute to `daily_vol_pct` itself (item 92:
+    they are assumed to move like the measurable peers' median, not dropped),
+    so `measured_weight_pct` is a provenance figure, not the coverage of the
+    number produced.
     """
     daily_vol_pct: float | None
     reason: str = ""
@@ -973,14 +977,32 @@ def measure_portfolio_daily_vol(
     holidays) are not splices — no trading happened, so there is no return
     being skipped over.
 
-    A HOLDING WITH NO USABLE HISTORY is dropped from the estimate rather
-    than voiding it, and named in `unmeasured_symbols`. Dropping it makes
-    the measured volatility a LOWER BOUND on the book's true volatility, so
-    the threshold comes out tighter — the alarm fires sooner, never later,
-    which is the safe direction for a brake. It is also exactly the same
-    arithmetic as that holding not being deployed, which is the
-    deployment-scaling behaviour this design already wants. When NOTHING is
-    measurable the answer is None and the fixed percentage governs.
+    A HOLDING WITH NO USABLE HISTORY is named in `unmeasured_symbols` but is
+    NOT dropped from the basket (docs/BOARD_NOTES.md item 92, fixed
+    2026-09-18). An earlier version excluded it entirely, which reasoned
+    that a smaller measured volatility is "the safe direction for a brake"
+    — but that reasoning is backwards for THIS brake: silently zeroing an
+    unmeasurable holding's contribution makes the book look calmer than it
+    really is, so the computed threshold comes out SMALLER and the breaker
+    becomes MORE likely to halt the desk on an ordinary day. A tighter
+    number is not automatically the safe one when the mechanism it feeds is
+    itself a halt with a cost (cancelled orders, an owner alert, blocked new
+    risk) rather than a passive ceiling.
+
+    Instead, an unmeasurable holding is assumed to move like a NORMAL
+    holding in the same book — the cross-sectional MEDIAN of that session's
+    per-symbol returns among the holdings that DO have price history. This
+    introduces no new number: the median is read off the measurable part of
+    the same book on every session, never a constant. It keeps the
+    holding's own weight and sign (long adds the peer move, short adds its
+    negative) rather than assuming it moves with the book's own correlation
+    structure, which `unmeasured_symbols` already names as an assumption,
+    not a measurement.
+
+    When there are no measurable peers at all (`closes` is empty) there is
+    nothing to derive a median from, and the estimate is None — the fixed
+    percentage governs, exactly as before. When NOTHING is measurable the
+    answer is None and the fixed percentage governs.
     """
     try:
         window = int(window_sessions)
@@ -1049,13 +1071,30 @@ def measure_portfolio_daily_vol(
             unmeasured_symbols=tuple(sorted(unmeasured)),
         )
 
+    # Weight still held by names with no usable price history of their own.
+    # `unmeasured` was built from `clean`, so every entry is still there.
+    unmeasured_weights = {sym: clean[sym] for sym in unmeasured if sym in clean}
+
     returns: list = []
     for i in range(1, len(axis)):
         today, yesterday = axis[i], axis[i - 1]
         basket = 0.0
+        instrument_returns: list = []
         for sym, series in closes.items():
             prev = series[yesterday]
-            basket += clean[sym] * (series[today] - prev) / prev * 100.0
+            r = (series[today] - prev) / prev * 100.0
+            basket += clean[sym] * r
+            instrument_returns.append(r)
+        if unmeasured_weights:
+            # item 92: an unmeasurable holding is assumed to move like a
+            # NORMAL holding in this same book on this same session — the
+            # cross-sectional median of what the measurable peers actually
+            # did — rather than being dropped, which silently zeroed its
+            # contribution and made the book look calmer than it is. This
+            # is read off the book every session, never a fixed number.
+            peer_return = statistics.median(instrument_returns)
+            for sym, weight in unmeasured_weights.items():
+                basket += weight * peer_return
         returns.append(basket)
 
     if len(returns) < floor:
@@ -1112,9 +1151,11 @@ def measure_portfolio_daily_vol(
     if unmeasured:
         logger.warning(
             "drawdown alarms: %d holding(s) have too little price history to "
-            "measure (%s). The volatility yardstick covers %.1f%% of the "
-            "book's %.1f%% gross exposure, so it is a LOWER bound and the "
-            "thresholds come out tighter, not looser.",
+            "measure directly (%s), covering %.1f%% of the book's %.1f%% "
+            "gross exposure. Their contribution is assumed to move like the "
+            "measured peers' session-by-session median (item 92) rather "
+            "than being dropped, so the yardstick is not silently tightened "
+            "by an unmeasurable name.",
             len(unmeasured), ", ".join(sorted(unmeasured)),
             sum(abs(clean[s]) for s in closes) * 100.0, book_weight_pct,
         )
