@@ -1641,3 +1641,272 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     assert final_text.count("<blockquote expandable>") == 1
     assert final_text.count("</blockquote>") == 1
     assert "<b>✅ DONE</b>" in final_text
+
+
+# === Evening report, 2026-09-18 owner redesign ===
+#
+# Owner review of the live 2026-09-17 evening message. Each assertion below
+# pins one of his points so the structure cannot silently drift back.
+
+
+def _evening_result(**overrides):
+    """A realistic evening result dict, shaped like `run_evening`'s return."""
+    result = {
+        "status": "analyzed",
+        "run_id": "evening-testrun",
+        "total_value": 9734.50,
+        "daily_pnl": 38.73,
+        "daily_return_pct": 0.3994,
+        "equity_close": None,
+        "pnl_4pm": None,
+        "total_pnl": -83.54,
+        "total_return_pct": -0.85,
+        "total_pnl_since": "2026-09-02",
+        "risk_capital_dollars": 720.60,
+        "max_daily_loss_pct": 6.7,
+        "missing_sessions": [],
+        "auto_meta": None,
+        "stop_coverage_gaps": [],
+        "stop_proximity": [],
+        "earnings_proximity": [],
+        "analysis": {
+            "daily_summary": "Tech led a recovery day.",
+            "tomorrow_outlook": "Momentum likely continues.",
+            "risk_rating": "moderate",
+            "tomorrow_bias": "bullish",
+            "tomorrow_conviction": "medium",
+            "tomorrow_key_risks": ["VIX complacency near 17.7"],
+            "suggested_actions": ["Monitor AMD support at $495"],
+        },
+    }
+    result.update(overrides)
+    return result
+
+
+def _expected_fractional_gap(symbol="AAPL", covered=9.0):
+    """The overnight state the hybrid-stop design produces every night."""
+    return {
+        "symbol": symbol, "held_qty": covered + 0.76, "covered_qty": covered,
+        "coverage": "fractional_overnight", "uncovered_qty": 0.76,
+        "unprotected_value": 256.44, "repaired": False,
+    }
+
+
+def test_evening_leads_with_todays_and_total_pnl(tmp_path, monkeypatch):
+    """Owner request: both P&L figures at the VERY top, above everything
+    except a banner that needs reading first."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    lines = [line for line in msg.split("\n") if line.strip()]
+    assert lines[1].startswith("📈 Today's P&L: +$38.73")
+    assert lines[2].startswith("📊 Total P&L since 2026-09-02: −$83.54")
+    assert lines[3] == "   Account value: $9,734.50"
+    # ...and above the book, which used to come first.
+    assert msg.index("Today's P&L") < msg.index("POSITIONS")
+
+
+def test_evening_drops_run_id_and_provider_request_count(tmp_path, monkeypatch):
+    """Both are internal identifiers with no action attached to them."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _agent_log(db, "evening-testrun", "evening_analyst", "done", cost=0.0)
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "run_id" not in msg
+    assert "evening-testrun" not in msg
+    assert "provider request" not in msg
+
+
+def test_evening_says_analyzed_in_plain_words(tmp_path, monkeypatch):
+    """'status: analyzed' only ever meant "the review produced a parseable
+    answer". The success case becomes one header word; the failure case —
+    which the owner CAN act on — becomes a sentence."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+
+    ok = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+    assert ok.split("\n")[0].endswith("REVIEWED")
+    assert "analyzed" not in ok.lower()
+    assert "status:" not in ok
+
+    failed = trader_feed.format_session_result(
+        "evening",
+        _evening_result(status="evening_parse_error", analysis=None),
+        41.6,
+    )
+    assert failed.split("\n")[0].endswith("REVIEW FAILED")
+    assert "The evening review did not complete" in failed
+
+
+def test_evening_cost_is_words_not_a_row_of_zeros(tmp_path, monkeypatch):
+    """Every seat the evening session runs is on a free model, so the true
+    cost is zero — which read as broken rendered as '$0.0000'."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _agent_log(db, "evening-testrun", "evening_analyst", "done", cost=0.0)
+    _agent_log(db, "evening-testrun", "news_analyst_evening", "done", cost=0.0)
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "$0.0000" not in msg
+    assert "AI cost tonight: none — the evening review runs on free models" in msg
+
+
+def test_evening_cost_says_not_available_when_a_price_is_missing(tmp_path, monkeypatch):
+    """An unpriced model must never render as a confident zero."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _agent_log(db, "evening-testrun", "evening_analyst", "done", cost=None)
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "AI cost tonight: not available" in msg
+
+
+def test_evening_is_silent_about_the_expected_overnight_fractional_state(
+    tmp_path, monkeypatch,
+):
+    """The sub-share DAY stop lapsing at the close happens to every
+    fractional position every night. A line that never varies is not
+    information — the owner called it redundant and it now says nothing."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(stop_coverage_gaps=[
+        _expected_fractional_gap("AAPL"), _expected_fractional_gap("AMD", 1.0),
+    ])
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "unprotected" not in msg
+    assert "by design" not in msg
+    assert "NO STOP" not in msg
+
+
+def test_evening_speaks_when_a_sub_one_share_holding_has_no_stop(tmp_path, monkeypatch):
+    """The one overnight state that is NOT expected: a holding of less than
+    one whole share has no whole-share GTC leg, so the ENTIRE position is
+    stopless overnight — the classifier still calls it 'fractional'."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(stop_coverage_gaps=[{
+        "symbol": "BRK-B", "held_qty": 0.44, "covered_qty": 0.0,
+        "coverage": "fractional_overnight", "uncovered_qty": 0.44,
+        "unprotected_value": 223.74, "repaired": False,
+    }])
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "🛑 NO STOP OVERNIGHT" in msg
+    assert "BRK-B" in msg
+    assert "$223.74" in msg
+
+
+def test_evening_speaks_when_a_remainder_was_not_recovered_in_session(
+    tmp_path, monkeypatch,
+):
+    """'fractional_replaced' means the session's sweep put the stop back.
+    A row that claims that without having repaired anything is a fault."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(stop_coverage_gaps=[{
+        "symbol": "NET", "held_qty": 3.48, "covered_qty": 3.0,
+        "coverage": "fractional_replaced", "uncovered_qty": 0.48,
+        "unprotected_value": 160.30, "repaired": False,
+    }])
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "🛑 NO STOP OVERNIGHT" in msg
+    assert "NET" in msg
+
+
+def test_evening_still_raises_a_real_uncovered_position(tmp_path, monkeypatch):
+    """Suppressing the nightly line must not suppress the banner that
+    matters: a whole-share position with zero coverage."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(stop_coverage_gaps=[
+        {"symbol": "MRVL", "held_qty": 2.0, "covered_qty": 0.0, "coverage": "none"},
+        _expected_fractional_gap("AAPL"),
+    ])
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "🛑🛑🛑 NO STOP AT ALL" in msg
+    assert "MRVL" in msg
+    # ...and the expected fractional rows are still not counted into it.
+    assert "1 position(s)" in msg
+
+
+def test_evening_positions_line_reads_as_a_heading(tmp_path, monkeypatch):
+    """Owner review item 8 — "Positions: 9 invested $10,650" was a section
+    title that did not look like one."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _insert_position(db, "AMD", qty=2, avg_entry=500.0, current_price=480.0)
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "<b>POSITIONS (2)</b>" in msg
+    assert "📈 Top winners:" in msg
+    assert "📉 Underwater:" in msg
+
+
+def test_evening_tomorrow_carries_a_scale_and_a_consequence(tmp_path, monkeypatch):
+    """Owner review item 9 — "moderate" with no scale and "bullish" with no
+    consequence both said nothing."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "<b>TOMORROW</b>" in msg
+    assert "step 2 of 4 (low · moderate · elevated · high)" in msg
+    assert "Leaning bullish, medium confidence — tomorrow morning's decisions start from this" in msg
+    assert "risk=moderate" not in msg
+
+
+def test_evening_reports_stop_proximity_and_earnings(tmp_path, monkeypatch):
+    """The two additions: what is close to its stop, and what reports
+    earnings imminently. An unknown is labelled, never rendered as calm."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(
+        stop_proximity=[
+            {"symbol": "ETN", "status": "near", "price": 409.46,
+             "stop": 400.12, "gap": 9.34, "atr": 11.2},
+            {"symbol": "BRK-B", "status": "unknown"},
+        ],
+        earnings_proximity=[
+            {"symbol": "AAPL", "sessions_away": 1, "status": "measured"},
+            {"symbol": "NOK", "sessions_away": 14, "status": "measured"},
+        ],
+    )
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "<b>WORTH KNOWING</b>" in msg
+    assert "ETN" in msg and "one ordinary day's move of its stop" in msg
+    assert "Could not check the stop distance on" in msg and "BRK-B" in msg
+    assert "AAPL" in msg and "reports earnings tomorrow" in msg
+    # A report two weeks out is not news tonight.
+    assert "NOK" not in msg.split("<b>WORTH KNOWING</b>")[1].split("<b>")[0]
+
+
+def test_evening_says_nothing_when_nothing_is_worth_knowing(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "WORTH KNOWING" not in msg
+
+
+def test_evening_details_block_uses_the_shared_collapsible_layout(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _agent_log(db, "evening-testrun", "evening_analyst", "done", cost=0.0)
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "<b>DETAILS</b>\n<blockquote expandable>" in msg
+    assert msg.count("</blockquote>") == 1
+    details = msg.split("<b>DETAILS</b>")[1]
+    assert "Tech led a recovery day." in details
+    assert "Monitor AMD support at $495" in details
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    payload = notifier._build_payload(msg, symbols=["NVDA"], preserve_structural_markup=True)
+    assert len(payload["text"]) <= TelegramNotifier.MAX_MESSAGE_CHARS + 300
+    assert "<b>POSITIONS (1)</b>" in payload["text"]

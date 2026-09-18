@@ -1334,6 +1334,14 @@ _EARNINGS_ABSENCE_TEXT = {
 }
 
 
+#: Sessions-to-earnings inside which a scheduled report is treated as
+#: imminent. Not a new threshold: `EarningsProximity.describe()` has marked
+#: this same window "INSIDE THE 3-SESSION EVENT WINDOW" for every seat that
+#: reads it, and the evening owner report (src/trader_feed.py) now names the
+#: same window rather than picking a second one of its own.
+EARNINGS_EVENT_WINDOW_SESSIONS = 3
+
+
 @dataclass
 class EarningsProximity:
     """How far away one symbol's next scheduled earnings report is.
@@ -1353,9 +1361,10 @@ class EarningsProximity:
 
     def describe(self) -> str:
         if self.measured:
-            imminent = " ** INSIDE THE 3-SESSION EVENT WINDOW **" if (
-                self.sessions_away <= 3
-            ) else ""
+            imminent = (
+                f" ** INSIDE THE {EARNINGS_EVENT_WINDOW_SESSIONS}-SESSION "
+                f"EVENT WINDOW **"
+            ) if self.sessions_away <= EARNINGS_EVENT_WINDOW_SESSIONS else ""
             unit = "session" if self.sessions_away == 1 else "sessions"
             return (
                 f"{self.symbol}: next earnings ~{self.sessions_away} {unit} "

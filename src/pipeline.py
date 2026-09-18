@@ -14722,6 +14722,14 @@ class TradingPipeline:
 
         meta_result = self._maybe_run_quarterly_meta()
         missing_sessions = self._expected_sessions_missing_today()
+        # Owner-facing evening report (2026-09-18): today's P&L alone never
+        # answered "am I up since the desk restarted". The same
+        # `_total_pnl_since_reset` the trader-feed messages already use is
+        # read here so the evening message can lead with BOTH figures on the
+        # identical basis, rather than computing a second "total" of its own.
+        total_pnl, total_return_pct, total_pnl_since = (
+            self._total_pnl_since_reset(total_value)
+        )
         if missing_sessions:
             logger.warning(
                 "Dead-man's check: expected session(s) left no agent_logs "
@@ -14763,7 +14771,114 @@ class TradingPipeline:
             # build; 0.0 for a genuinely flat/fully-released book — the
             # notifier tells those two apart.
             "risk_capital_dollars": risk_capital_dollars,
+            # Dated total P&L (see `_total_pnl_since_reset` for why it is
+            # dated rather than called "since inception").
+            "total_pnl": total_pnl,
+            "total_return_pct": total_return_pct,
+            "total_pnl_since": total_pnl_since,
+            # Two end-of-day facts the desk knew and never told the owner:
+            # which holdings sit within one ordinary day's move of their stop,
+            # and which report earnings imminently. Both fail soft to [].
+            "stop_proximity": self._evening_stop_proximity(positions),
+            "earnings_proximity": self._evening_earnings_proximity(positions),
         }
+
+    def _evening_stop_proximity(self, positions) -> list[dict]:
+        """Held positions whose live stop is less than one ordinary day's
+        move away — the evening report's "close to its stop" line.
+
+        "Close" is read off the instrument, never picked: the yardstick is
+        the symbol's own ATR(14) (`_atr_for_symbol`, the same measure the
+        trailing-stop noise band uses). A position is listed when the gap
+        between the last price and the live broker stop is smaller than one
+        ATR, i.e. a single ordinary session could reach it. No percentage
+        threshold is invented anywhere in this method.
+
+        A symbol whose stop or ATR cannot be read is returned with
+        ``status='unknown'`` rather than dropped: silently omitting it would
+        render as "nothing is near its stop", which is not what was
+        measured. Never raises — any failure degrades to [].
+        """
+        rows: list[dict] = []
+        try:
+            park = (self._sweep_symbol() or "").strip().upper()
+            for p in positions or ():
+                symbol = str(getattr(p, "symbol", "") or "").strip().upper()
+                if not symbol or (park and symbol == park):
+                    continue
+                try:
+                    qty = float(getattr(p, "qty", 0) or 0)
+                    price = float(getattr(p, "current_price", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if qty == 0 or not (math.isfinite(price) and price > 0):
+                    continue
+                try:
+                    stop = self.broker.get_current_stop_price(symbol)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "evening stop-proximity: stop read failed for %s: %s",
+                        symbol, exc,
+                    )
+                    stop = None
+                atr = self._atr_for_symbol(symbol)
+                if stop is None or atr is None or not (stop > 0):
+                    rows.append({"symbol": symbol, "status": "unknown"})
+                    continue
+                # A long is stopped from BELOW, a short from ABOVE. The
+                # distance is the same arithmetic either way.
+                gap = (price - stop) if qty > 0 else (stop - price)
+                if gap < 0:
+                    # Price is already through the stop — the broker order
+                    # has not filled yet. Report it as the tightest case
+                    # rather than as a negative distance.
+                    gap = 0.0
+                if gap < atr:
+                    rows.append({
+                        "symbol": symbol, "status": "near", "price": price,
+                        "stop": float(stop), "gap": gap, "atr": float(atr),
+                    })
+        except Exception as exc:  # noqa: BLE001 — never break the evening push
+            logger.warning("evening stop-proximity sweep failed: %s", exc)
+            return []
+        return rows
+
+    def _evening_earnings_proximity(self, positions) -> list[dict]:
+        """Next-earnings proximity for every held name, for the evening
+        report's "reports earnings soon" line.
+
+        Reuses `src.data.event_calendar.fetch_earnings_proximity` — already
+        bounded per symbol and in aggregate by the same `config.event_risk`
+        timeouts the morning research stage uses — rather than calling the
+        unbounded provider method directly. A symbol whose date could not be
+        fetched comes back labelled, never as "no earnings".
+
+        Never raises; degrades to [].
+        """
+        try:
+            symbols = self._news_held_symbols(positions)
+            if not symbols or getattr(self, "market", None) is None:
+                return []
+            from src.data.event_calendar import fetch_earnings_proximity
+            event_cfg = getattr(getattr(self, "config", None), "event_risk", None)
+            rows = fetch_earnings_proximity(
+                self.market, symbols,
+                per_symbol_timeout_s=getattr(
+                    event_cfg, "earnings_symbol_timeout_s", 8.0,
+                ),
+                total_deadline_s=getattr(event_cfg, "earnings_deadline_s", 20.0),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("evening earnings-proximity sweep failed: %s", exc)
+            return []
+        return [
+            {
+                "symbol": r.symbol,
+                "sessions_away": r.sessions_away,
+                "status": r.status,
+            }
+            for r in rows or []
+        ]
 
     def _expected_sessions_missing_today(self) -> list[str]:
         """Best-effort internal dead-man's check: on a trading day, which of
