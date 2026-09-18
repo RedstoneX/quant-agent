@@ -263,7 +263,7 @@ MAX_ARBITRARY_ENTRIES = 86
 #: chosen. The build fails if it RISES, so a trade number cannot be parked
 #: outside scope silently. Raising it is a reviewed line that says a new
 #: unscoped constant was looked at and is not trade-governing.
-MAX_UNSCOPED_NUMERIC_SITES = 188
+MAX_UNSCOPED_NUMERIC_SITES = 189  # 2026-09-18: +1 for `src/trader_feed.py::_COMPANY_NAME_CAP` — how many company names one Telegram message looks up from cache; presentation only, governs no trade.
 
 #: Paths under `src/` the unscoped sentinel does not count: generated code and
 #: vendored trees have no author to ask.

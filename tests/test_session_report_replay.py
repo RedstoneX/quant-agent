@@ -166,8 +166,14 @@ def test_intra_check_renders_without_invented_figures(tmp_path, monkeypatch):
     monkeypatch.setattr(trader_feed, "_DB_PATH", _empty_db(tmp_path))
     message = trader_feed.render_stored_intra_check(record)
     assert "STORED HALF-HOURLY CHECK · 2026-09-17" in message
-    assert "CRM" not in message  # tick renderer reports a count, not names
+    # 2026-09-18: the tick renderer names every holding under its count
+    # (board item 89: a count is not information) — from the STORED book,
+    # since `_DB_PATH` points at an empty database here.
     assert "Positions held: 1" in message
+    assert "   • CRM" in message
+    # Internal status token rendered in words, never as-is.
+    assert "nothing to report" in message
+    assert "STATUS: ok" not in message
     assert "NOT AVAILABLE" not in message
 
 

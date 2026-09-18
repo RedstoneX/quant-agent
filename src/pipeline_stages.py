@@ -7183,12 +7183,21 @@ class ExecutionStage:
                         )
                     else:
                         skip_reason = "broker_rejected"
+                        # Board item 89 clarity defect — "a missing broker
+                        # reason on a rejection". The broker's own words are
+                        # kept when it gave any; when it did not, the message
+                        # says so instead of leaving the owner to wonder.
                         skip_detail = (
                             f"broker rejected {decision.action.lower()} "
                             f"{_fmt_shares(qty)} @ "
                             f"{'limit $%.2f' % limit_price if limit_price else 'market'}"
-                            + (f" (status={order_status})" if order_status else "")
+                            + (f" — broker said: {order_detail}" if order_detail
+                               else " — the broker gave no reason the desk recorded")
                         )
+                        # The raw broker status token is not appended to the
+                        # owner-facing detail any more (it read
+                        # "(status=rejected)"); it stays in the log line and
+                        # the pipeline event above.
                     _record_pipeline_event(
                         pipeline, ctx, decision.symbol, "order", "rejected",
                         skip_reason, trade_row_id=pending_row_id, qty=qty,

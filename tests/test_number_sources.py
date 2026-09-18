@@ -275,7 +275,7 @@ def test_a_new_constant_outside_scope_cannot_arrive_silently() -> None:
         f"{MAX_UNSCOPED_NUMERIC_SITES}. If the new one governs a trade, scope "
         f"its module and ledger it. If not, raise the ceiling and say which."
     )
-    assert MAX_UNSCOPED_NUMERIC_SITES == 188
+    assert MAX_UNSCOPED_NUMERIC_SITES == 189
 
 
 # --------------------------------------------------------------------------
