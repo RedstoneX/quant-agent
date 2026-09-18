@@ -434,13 +434,13 @@ decision at all.
 **One requirement is not yet in any work at all —** You asked that when the reason to hold a stock rests on an insider or institutional purchase, the view show the DATE and the PRICE of that purchase — your example was Republic Services and when Cascade Investment actually bought. Somebody is working on it, but it is not committed anywhere yet, so it is recorded here as a requirement rather than as done.
 **The blocker on the rest of (b) is gone as of tonight —** the read-only endpoint behind this view is merged, and it was held back only until the panel-layout work landed; that has now also merged. Nothing stands between this and a working view: fetch the endpoint when a held symbol is opened, show its one-sentence reason and its labelled detail up front, and put the machine identifiers and the existing step-by-step trace behind one toggle. Nothing else about the page changes.
 
-## item 109
+## item 111
 
 **Plain language —** Item 87 asked whether the automatic de-lever that trims the book when it gets too big cancels the protective stop-losses first. It does, and it has to — the broker would refuse the sell otherwise, because a resting stop holds the whole position. That part is fine, and the recovery around it is complete: a failed cancel is rolled back, a rejected sell restores the stop, a partial or no fill is put right by the step that runs afterward, and even a crash mid-way is covered because the recovery note is saved to disk before anything is cancelled at the broker. What is NOT fine: when the de-lever trims more than one holding in the same pass, that recovery step runs only once, after every holding in the pass has already been sold. The first holding trimmed sits with no protection for the whole rest of the pass, plus the wait for each later holding's order to finish — and this only happens during a drawdown, which is exactly when a naked position is most dangerous.
 **It has never happened —** the live records show this de-lever has fired zero times, and the account has never come close to the level that triggers it.
 **Recommendation —** Run the recovery step after each holding individually rather than once at the end. This touches the live selling path during a drawdown, so it is flagged for your decision rather than changed on our own say-so.
 
-## item 110
+## item 112
 
 **Plain language —** When the automatic de-lever trims the book and the trims still leave it over the limit, nothing tells you. The system writes a warning to its own internal log, but that is as far as it goes — it does not reach a message to you, the end-of-session summary, or anything that gets checked.
 **Recommendation —** Add an alert for the case where a de-lever pass finishes and the book is still over its limit.
