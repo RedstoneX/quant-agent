@@ -676,6 +676,22 @@ def _trade_updates_already_started(pipeline) -> bool:
         return False
 
 
+def _fill_stream_enabled(pipeline) -> bool:
+    """Whether the desk may open the `trade_updates` socket at all.
+
+    Defaults TRUE when the broker predates the switch (a test double with no
+    such method), so this helper cannot silently remove a budget from a
+    broker that really does handshake.
+    """
+    enabled = getattr(getattr(pipeline, "broker", None), "fill_stream_enabled", None)
+    if not callable(enabled):
+        return True
+    try:
+        return enabled() is not False
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
     """Programmed waits still ahead of submit. Not a fitted clock.
 
@@ -684,9 +700,16 @@ def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
     own ceiling; they must not be added as leftover slack on the submit
     path after fund_buys has already returned. Call this AFTER funding
     with will_fund=False.
+
+    Auth is also omitted when the socket is switched off entirely
+    (`execution.fill_stream_enabled`, off since 2026-09-17): there is no
+    handshake ahead of submit, so counting one would leave a stale 30s of
+    slack in a window that is supposed to be the sum of the waits actually
+    programmed. This widens nothing and tightens no existing timeout — it
+    stops claiming a wait that cannot happen.
     """
     budget = 0.0
-    if not _trade_updates_already_started(pipeline):
+    if _fill_stream_enabled(pipeline) and not _trade_updates_already_started(pipeline):
         contended = getattr(
             getattr(pipeline, "broker", None),
             "trade_updates_lease_contended",
@@ -772,13 +795,7 @@ def _pin_approved_entry_ceilings(pipeline, ctx, buy_decisions) -> None:
         symbol = getattr(decision, "symbol", None)
         if not symbol:
             continue
-        live = None
-        getter = getattr(getattr(pipeline, "broker", None), "get_latest_price", None)
-        if callable(getter):
-            try:
-                live = getter(symbol)
-            except Exception:  # noqa: BLE001
-                live = None
+        live = _today_order_price(pipeline, symbol)
         ref = live if isinstance(live, (int, float)) and live > 0 else None
         if ref is None:
             entry = getattr(decision, "entry_price", None)
@@ -828,9 +845,46 @@ def _warm_trade_updates(pipeline, ctx) -> None:
         ctx.desk_latency_stall = True
 
 
-def _live_fill_price(pipeline, symbol) -> float | None:
-    """Live last for a fill. Never a daily bar close (owner 2026-09-16)."""
-    getter = getattr(getattr(pipeline, "broker", None), "get_latest_price", None)
+def _today_order_price(pipeline, symbol) -> float | None:
+    """A price from TODAY that an order may be placed against, or None.
+
+    Never a daily bar close (owner 2026-09-16), and now never a price the
+    provider stamped with an earlier date either. A live quote mid-session is
+    a legitimate fill reference, so quotes are allowed — what is refused is
+    yesterday's last print on a thin name, or any value whose timestamp
+    cannot be read. Unknown freshness returns None, which the callers already
+    treat as "no verifiable live price" and skip, rather than pricing an
+    order off it.
+    """
+    broker = getattr(pipeline, "broker", None)
+    stamped_getter = getattr(broker, "get_latest_price_stamped", None)
+    stamped = None
+    if callable(stamped_getter):
+        try:
+            from src.execution.broker import LivePrice
+
+            candidate = stamped_getter(symbol)
+            # isinstance, not truthiness — ~58 tests build the pipeline with
+            # a MagicMock broker whose auto-attributes answer every call. A
+            # MagicMock must never read as "this price is from today", and
+            # must not read as "no price" either, so it falls through to the
+            # bare getter below unchanged.
+            if isinstance(candidate, LivePrice):
+                stamped = candidate
+        except Exception:  # noqa: BLE001
+            return None
+    if stamped is not None:
+        if not (stamped.price > 0):
+            return None
+        if not stamped.is_today:
+            logger.warning(
+                "%s live price $%.2f is not stamped today (source %s) — not "
+                "pricing an order against it",
+                symbol, stamped.price, stamped.source,
+            )
+            return None
+        return float(stamped.price)
+    getter = getattr(broker, "get_latest_price", None)
     if not callable(getter):
         return None
     try:
@@ -840,6 +894,11 @@ def _live_fill_price(pipeline, symbol) -> float | None:
     if isinstance(live, (int, float)) and live > 0:
         return float(live)
     return None
+
+
+def _live_fill_price(pipeline, symbol) -> float | None:
+    """Back-compat alias for `_today_order_price`."""
+    return _today_order_price(pipeline, symbol)
 
 
 def _repeg_settings(pipeline) -> tuple[float, float] | None:
@@ -4473,6 +4532,25 @@ class DecisionStage:
             ) or {}).items()
         }
 
+        # Margin capacity for the PM prompt — WORDING ONLY. Reuses the
+        # EXACT §11.2 computation the execution submit loop uses to size
+        # entries (`_entry_deployment_budget`, which itself resolves the
+        # ladder via `_session_gross_ceiling`), so the prompt cannot state a
+        # different number than execution sizes against. Book state here
+        # (positions/equity/held-gross) has not changed since ctx was built
+        # above, so this is the same headroom execution will see for this
+        # session's opening entries — never a new formula.
+        margin_headroom_usd, margin_ladder_backed, _margin_headroom_note = (
+            _entry_deployment_budget(pipeline, ctx, positions, total_value, cash)
+        )
+        _margin_ceiling = _session_gross_ceiling(pipeline, ctx)
+        margin_ladder_multiple = (
+            _margin_ceiling.ceiling_x if _margin_ceiling is not None else None
+        )
+        margin_ladder_rung = (
+            _margin_ceiling.rung if _margin_ceiling is not None else None
+        )
+
         portfolio_decision, pm_result = pipeline.portfolio_manager.decide(
             analyses=analyses,
             positions=positions,
@@ -4499,6 +4577,10 @@ class DecisionStage:
             blocked_proposals=blocked_proposals,
             facts=pm_facts,
             allow_margin=bool(getattr(pipeline.config.risk, "allow_margin", False)),
+            margin_headroom_usd=margin_headroom_usd,
+            margin_ladder_backed=margin_ladder_backed,
+            margin_ladder_multiple=margin_ladder_multiple,
+            margin_ladder_rung=margin_ladder_rung,
             symbol_sectors=dict(getattr(pipeline, "_last_symbol_sectors", {})),
             session_type=ctx.session,
             allowed_buy_symbols={
@@ -6950,6 +7032,27 @@ class ExecutionStage:
                     (a for a in (ctx.analyses or []) if a.symbol == decision.symbol),
                     None,
                 )
+                # Item 82: `setup_type` was being classified a SECOND time
+                # here, independently of `PortfolioConstructor._build_buy`/
+                # `_build_short` (see `TradeDecision.setup_type` in
+                # models.py, which exists specifically so execution does not
+                # have to re-derive this fact). On a scale-in ADD to an
+                # already-held name this second lookup re-read TODAY's
+                # technical read and wrote it onto the new row —
+                # `get_symbol_last_buy` returns the newest row, so this
+                # silently RECLASSIFIED a position whose setup_type was
+                # already pinned on its original entry, which is worse than
+                # a mere disagreement: pace/progress (disabled for a
+                # breakout) could flip back on, or off, on a held position
+                # with no new entry decision behind the change. A genuinely
+                # new entry has no prior pinned row and reads the single
+                # value the constructor already classified, carried on the
+                # decision.
+                if add_prep is not None and add_prep.is_scale_in:
+                    _existing_buy = pipeline.db.get_symbol_last_buy(decision.symbol)
+                    pinned_setup_type = (_existing_buy or {}).get("setup_type") or None
+                else:
+                    pinned_setup_type = getattr(decision, "setup_type", None)
                 entry_side = "sell_short" if is_short else "buy"
                 pending_row_id = pipeline.db.insert_trade(
                     symbol=decision.symbol, action=decision.action, qty=qty,
@@ -6961,7 +7064,7 @@ class ExecutionStage:
                     expected_horizon_sessions=getattr(
                         entry_analysis, "expected_horizon_sessions", None,
                     ),
-                    setup_type=getattr(entry_analysis, "setup_type", None),
+                    setup_type=pinned_setup_type,
                     # Conviction ledger (spec §7.2) — pinned at entry from
                     # the constructor's TradeDecision (see portfolio_
                     # constructor._build_buy/_build_short) and from this
@@ -6987,8 +7090,27 @@ class ExecutionStage:
                     order = pipeline.broker.submit_order(
                         symbol=decision.symbol, qty=qty, side=entry_side,
                         limit_price=limit_price,
-                        stop_loss_price=stop_price if stop_price > 0 else None,
+                        # PASSED THROUGH AS-IS (docs/WORK.md item 88). This
+                        # used to read `stop_price if stop_price > 0 else
+                        # None`, which laundered a garbage stop into the
+                        # broker's "no stop was requested" case — so a zero
+                        # reaching here submitted an unprotected entry and
+                        # the broker never got the chance to refuse it.
+                        # Every decision on this loop is a BUY or a SHORT and
+                        # therefore OWES a stop, so there is nothing legitimate
+                        # to convert to None: `submit_order` judges the value
+                        # and returns `rejected_bad_stop` when it is not a
+                        # price (surfaced below as `unusable_stop`).
+                        stop_loss_price=stop_price,
                         reference_price=market_price,
+                        # WORDING ONLY (see `submit_order`'s docstring): the
+                        # same measured ATR(14) the constructor sized this
+                        # trade against, so a fat-finger refusal can name
+                        # the stock's own daily range instead of a bare
+                        # percentage. None on the resume/sweep lanes that
+                        # carry no analysis — the message then omits the
+                        # range rather than inventing one.
+                        atr=getattr(entry_analysis, "atr_14", None),
                     )
                 except Exception as e:
                     # Submit raised — broker may or may not have the
@@ -7043,6 +7165,17 @@ class ExecutionStage:
                         # `_SKIP_WHO_LABELS`), not repeated here.
                         skip_reason = "fat_finger_guard"
                         skip_detail = order_detail or "price is too far from the market price"
+                    elif order_status == "rejected_bad_stop":
+                        # The stop-side sanity checks (non-finite, non-
+                        # positive, wrong side of entry) — desk-side, like
+                        # the fat-finger guard, not the broker. Kept a
+                        # SEPARATE reason from `fat_finger_guard` because
+                        # they are a different fact about a different
+                        # price, and collapsing them would tell the owner a
+                        # price was "too far from the market" when what
+                        # actually happened is the stop could never work.
+                        skip_reason = "unusable_stop"
+                        skip_detail = order_detail or "the stop price is not usable"
                     elif order_status == "kill_switch_halted":
                         skip_reason = "kill_switch_halted"
                         skip_detail = order_detail or (

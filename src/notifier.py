@@ -931,6 +931,141 @@ def maybe_alert_data_quality(result: dict | None, *, mode: str) -> bool:
     return send_owner_alert(text)
 
 
+# === Fill-confirmation alerts (own message, not bundled) ===
+#
+# 2026-09-17. The desk confirms a fill by polling the broker over REST
+# inside a bounded window. That path is now the ONLY fill-confirmation
+# mechanism: `execution.fill_stream_enabled` is off, because the
+# `trade_updates` websocket has never once authenticated on this host (see
+# that flag for the two confirmed blockers). Nothing about that is an
+# incident — it is the intended configuration.
+#
+# What WAS silent to the owner is the case that actually matters: the REST
+# window ending without the broker having confirmed what happened to an
+# order, or the half-hourly reconciliation finding the desk's own record
+# and the broker's record disagreeing with no sale to explain the gap.
+# Before these two alerts, both only ever reached a log line the owner
+# never reads — the same failure shape as the 2026-08-28 ONDS/CCJ
+# stop-outs, which sat silent for a full trading day.
+#
+# WHAT MUST NEVER PAGE: the websocket being off. That is the configuration,
+# not a fault, and alerting on it would move ~150 daily error lines out of
+# the log and into Telegram, which is worse. Neither condition below looks
+# at the socket at all — both are true or false identically with the flag
+# on or off.
+#
+# Standard owner alert-design rules (2026-09-02), same as the data-quality
+# alert above: its OWN Telegram message, never a line in a run summary;
+# severity carried in TEXT, never colour; NOT deduplicated, so a still-
+# broken thing keeps alerting. Plain English, no jargon, no run ids, and
+# any time is 12-hour with AM/PM and the timezone (`fmt_time_12h`).
+#
+# Neither function raises. An alerting bug must not break the execution or
+# reconciliation path it reports on.
+
+
+def alert_order_outcome_unconfirmed(
+    symbol: str, order_id: str, waited_seconds: float,
+    last_status: str | None = None,
+) -> bool:
+    """PAGE: the desk could not confirm what happened to a live order.
+
+    Fires when the bounded confirmation window closed — AND the follow-up
+    cancel-and-recheck also closed — with the order still not in a terminal
+    state. The desk therefore does not know whether it bought anything.
+
+    `waited_seconds` is the window the caller actually used
+    (`_ENTRY_FILL_TIMEOUT_S`), passed in rather than restated here: this
+    alert introduces no threshold of its own.
+
+    Does NOT fire on an order that filled, partially filled, was cancelled
+    cleanly, expired or was rejected. Every one of those is a KNOWN
+    outcome, and three of them already have their own reporting.
+    """
+    try:
+        from src.trading_calendar import et_now
+        when = fmt_time_12h(et_now())
+        sym = str(symbol or "").strip() or "an order"
+        whole = int(waited_seconds) if waited_seconds else 0
+        body = (
+            "ORDER OUTCOME NOT CONFIRMED — the desk does not know whether "
+            "this trade happened\n"
+            f"{sym}: the desk sent an order to the broker and waited the "
+            f"full {whole} seconds it allows, then cancelled it and waited "
+            "again. The broker never confirmed the result either time. The "
+            f"last thing it said was \"{(last_status or 'nothing at all')}\".\n"
+            "\n"
+            "WHAT THIS MEANS FOR YOU: this may have bought nothing, or it "
+            f"may have bought {sym} shares that have no protective stop on "
+            "them yet. The desk is assuming nothing was bought, which is "
+            "the safe assumption but may be wrong. It did not invent a "
+            "position or a price to cover the gap.\n"
+            f"WHAT TO CHECK: your broker account's {sym} position and its "
+            "order list, as of " + when + ". If shares are there, the desk "
+            "re-checks stop coverage at the start of every scheduled check "
+            "during market hours and will place a stop on anything it finds "
+            "unprotected — but confirm it did."
+        )
+        return send_owner_alert(body, symbols=[sym])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "unconfirmed-order alert for %s could not be sent: %s", symbol, exc,
+        )
+        return False
+
+
+def alert_records_disagree_with_broker(
+    symbol: str, desk_qty: float, broker_qty: float, lookback_days: int,
+) -> bool:
+    """PAGE: reconciliation found the desk's record and the broker's disagreeing.
+
+    Fires on the `stop_out_gap_unexplained` outcome only: the desk believes
+    it holds more shares than the broker shows, AND no untracked sale in the
+    broker's own recent order history explains the difference. That is the
+    case where neither record can be trusted and nothing can be written
+    back without guessing.
+
+    Deliberately NOT fired for `stop_out_pnl_unmatched`, which is a
+    different thing: there the broker and the desk agree on what was sold,
+    and only the desk's own older buy history is too thin to compute the
+    profit. That needs review, not a page — it is not a live position
+    mismatch.
+
+    `lookback_days` is the reconciler's own configured search window
+    (`ReconciliationConfig.stop_out_lookback_days`), passed in for the same
+    reason as above: no threshold is invented here.
+    """
+    try:
+        from src.trading_calendar import et_now
+        when = fmt_time_12h(et_now())
+        sym = str(symbol or "").strip() or "a position"
+        body = (
+            "RECORDS DISAGREE — the desk's records and the broker's do not "
+            "match, and the desk cannot tell which is right\n"
+            f"{sym}: the desk's own records say it holds "
+            f"{_fmt_qty(desk_qty)} share(s). The broker shows "
+            f"{_fmt_qty(broker_qty)}. The desk searched the broker's order "
+            f"history for the last {int(lookback_days)} day(s) for a sale "
+            "that would explain the difference and found none.\n"
+            "\n"
+            "WHAT THIS MEANS FOR YOU: one of the two is wrong. Until this "
+            f"is resolved, treat the desk's profit-and-loss figures for "
+            f"{sym} as unreliable. Nothing was changed, written back or "
+            "estimated to make the two numbers agree — the desk stopped "
+            "rather than guess.\n"
+            f"WHAT TO CHECK: your broker account's {sym} position and order "
+            "history, as of " + when + ". The likely causes are a sale the "
+            "desk placed but never recorded, or a change you made in the "
+            "broker account yourself."
+        )
+        return send_owner_alert(body, symbols=[sym])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "records-disagree alert for %s could not be sent: %s", symbol, exc,
+        )
+        return False
+
+
 # === Session result formatting ===
 # Built as a free function (not a TelegramNotifier method) so it's
 # easy to unit-test without the network stub and so main.py can
@@ -1284,6 +1419,17 @@ def _append_leverage_line(lines: list[str], result: dict) -> None:
             f"🛑 DRAWDOWN PAST -20%: the de-levering ladder is at its lowest "
             f"rung. Gross exposure is capped at {ceiling_x:.2f}x equity and "
             f"new positions are refused once the book reaches it."
+        )
+    if leverage.get("delever_incomplete"):
+        # §11.2 reporting gap: a de-lever was attempted but the account is
+        # still over its limit afterward. Plain words for a non-developer
+        # owner — what was tried, that it fell short, and the real number,
+        # never an internal name or an invented figure.
+        lines.append(
+            f"⚠️ Tried to bring the account's exposure back under its limit "
+            f"by selling down positions, but it is still over: the account "
+            f"currently has {gross_x:.2f}x of equity invested against a "
+            f"{ceiling_x:.2f}x limit."
         )
 
 

@@ -85,6 +85,8 @@ This is a hypothesis until the measured win rate, average win/loss ratio and exp
 | Max total at risk | 25% of equity, correlation-adjusted |
 | Position count | Not fixed. Determined dynamically by the risk budget. |
 
+**Correction, 2026-09-18:** the 0.5% minimum was reported internally as unsourced — existing only as a dataclass default, absent from config and from any ratification record. That report was wrong. Verify directly: `config/settings.yaml` (`risk.min_position_risk_pct: 0.5`), the row above (this file, owner-ratified 2026-08-27), and `src/risk/constants.py` (`STARTER_POSITION_RISK_PCT`, whose own docstring names it the same field). Check a documented claim against the file before repeating it.
+
 Correlated names consume a single bet's budget rather than several, so genuine diversification is rewarded and fake diversification is refused. Risk is released as trades prove themselves: once a position's trailing stop sits at or above entry it stops consuming budget, so the book expands when the desk is right and contracts when it is not.
 
 **Conviction is expressed as risk allocation, not as percent-of-portfolio notional.** The specialist team decides how much conviction an idea carries; deterministic code converts that into a share count using the analyst's stop. A wider stop yields a smaller position, never a tighter stop.
@@ -255,6 +257,118 @@ ships — heal, re-ask the seat, and if it still cannot produce the field,
 refuse that name with a durable reason. That refuse is last-resort, not the
 product.
 
+## Prompt text is code that can rot
+
+**Found twice live, 2026-09-17.** The desk's own rules are asserted in prose
+inside the model prompts. Nothing ties that prose to the code it describes,
+and nothing notices when the behaviour changes underneath it. Two live
+instances were found the same day: a rule cited to the owner by number whose
+text says the opposite of what it was cited for, and a reviewer exemption
+decided off a classification the rest of the path disagrees with.
+
+Treat prompt text as code. A rule stated in a prompt needs the same thing a
+constant needs: something mechanical that fails when the prose and the
+behaviour disagree. Rewording a prompt is a behaviour change, not
+documentation.
+
+**Measured wider, 2026-09-18.** Seventeen false statements were found in the
+three seats that pick and size trades, eight of them able to change a trade.
+Two facts came out of trying to design a check for it, and both point away
+from the obvious answer. First, scanning prompt text for numbers does not
+work — about 1,825 number-like tokens, mostly dates and list numbering.
+Second, and decisive: neither confirmed defect lived in a prompt FILE at all.
+Both were strings the code assembles as it runs, so a file scanner would have
+caught neither.
+
+**The check that works is at the DELETION site, not the reading site.** When a
+mechanism is removed, search for its name across every prompt, every assembled
+string and every comment, and fail if it still appears. The flagship case was a
+deleted mechanism still described in prose with no number in it — nothing that
+inspects the prose for suspicious content could ever have found it, because
+the prose was not suspicious. Only the deletion knew.
+
+**And the rot is not confined to prompts.** The same day, a code comment was
+found reasoning at length about a reward:risk floor that the same file
+declares dead two hundred lines above and that the constants module marks
+inert. A comment is the cheapest place for a deleted rule to keep living,
+because nothing ever executes it. A related trap sits one step further out: a
+number can outlive its own derivation silently. A stop scaler was derived as
+"the tightest value that keeps the stop outside the measured noise band" on a
+base that was later changed, and at the new base that constraint no longer
+binds — the number survived, its justification did not, and nothing announced
+that it had become arbitrary again. When a base or an input changes, re-check
+every number that was derived FROM it, not just the ones that reference it.
+
+## A returned value that nobody catches is a check that does not exist
+
+**Found 2026-09-18.** Two reconciliation routines computed real answers —
+which positions the broker had closed behind the desk's back, and which
+unprotected positions had just been re-protected — and every one of their five
+call sites called them as bare statements, keeping nothing. What proved it was
+an unfinished pattern rather than a decision was the third sibling beside
+them, whose return IS captured and threaded into the session result, and which
+is the only reason a missing stop reaches the owner at all.
+
+State this kind of gap precisely or it misleads. Both routines logged what
+they did, so the information existed; what it could not do was reach a session
+result, a message, or any test that reads one. That is a REPORTING gap, not a
+detection gap, and calling it silent would have put the fix in the wrong
+place. The pattern to distrust on sight: a function that returns a value being
+invoked as a statement.
+
+## Anything that costs money to produce gets kept
+
+**Owner ruling, 2026-09-18.** Keep anything a model said, any decision and
+the reason behind it, and any number the broker gave at a moment in time —
+write each once, never edit it afterward. Do not keep anything the code can
+recompute from those: two stored versions of the same fact that can drift
+apart and disagree is its own defect, not a safety margin.
+
+Reason: a paid seat forms a judgement and today that judgement is discarded,
+so the next run pays again for a sentence the desk already owns. Worse,
+grading the desk's own reasoning after the fact is impossible unless the
+reasoning sits beside what actually happened next. This is doctrine, not an
+open item — apply it whenever a run's persistence is being designed or
+reviewed. See item 116 (`docs/WORK.md`) for where it is not yet applied.
+
+## A finding with no owner and no due date will be lost
+
+**Measured, 2026-09-17.** An audit that produces an inventory rather than
+items does not get worked. The ~30 unsourced trade-governing numbers were
+catalogued on 2026-09-11 and filed as "inventory, not an item" with a note
+saying "never re-audit". Nothing was assigned, nothing had a date, and all
+thirty were still live and still governing trades a week later.
+
+The rule: an audit ends in numbered board items, or in a mechanical check
+that fails the build. A finding with no mechanical surface is a finding that
+will be lost. This is the same lesson as the status board itself — everything
+mechanically enforced holds; everything relying on someone remembering slips.
+
+## Prove a path has succeeded once before optimising it
+
+**Measured, 2026-09-17.** Six separate passes optimised the TIMING of the
+live-fill websocket, which had never authenticated once in any session since
+it was built. A 100% failure rate is not a race condition. Before any work to
+make a path faster or more reliable, prove it has succeeded at least once.
+
+The adversary review missed it for a related reason: it was briefed on the
+timing question and answered only the claim as filed, so the existence
+question was never asked. **Brief the adversary with the existence question,
+not just the design question.**
+
+## Verify the single load-bearing claim of every agent report
+
+**Standing rule, reinforced 2026-09-17.** Roughly one agent report in three
+contains something that falls apart under checking. On 2026-09-17 two claims
+reached the owner unchecked and both were wrong: "the status board is
+effectively full" (it was 30,700 of 100,000 bytes) and "147 websocket
+failures today" (about 45 — the 147 counted log lines, several per failure).
+
+Check the one assertion the conclusion rests on, cheaply and adversarially,
+before it reaches the owner. If a report says tests pass, check the count. If
+it says X is the cause, confirm X produces the symptom. If it says something
+never worked, find the counter-example first.
+
 ## There is no such thing as a quiet market
 
 Across a universe of a hundred-plus names, something is always moving. **"It
@@ -338,6 +452,36 @@ net." See `src/execution/broker.py::wait_for_order_terminal` for the
 shipped shape of this: try the real-time mechanism first, fall back to the
 old polling behavior only on a genuine connection failure, never silently
 lose the old reliability guarantee while gaining the new speed one.
+
+**AND THEN THE MECHANISM DID NOT WORK — the part that matters most
+(2026-09-17).** The websocket described above has never once authenticated
+on this host, in any session, since it was built on 2026-09-10. Every fill
+the desk has ever confirmed was confirmed by the REST polling path this
+section demotes. Two independent blockers were confirmed before the
+switch-off, so this was never a tuning problem: the trading process holds
+placeholder Alpaca credentials that a local injecting proxy substitutes on
+outbound REST only, and the installed `alpaca-py` stream is built on
+`websockets.legacy`, which has no proxy support at all; separately, Alpaca
+authenticates the stream with an in-band websocket MESSAGE rather than a
+handshake header, which a header-injecting gateway cannot supply either.
+The socket is therefore OFF by configuration
+(`execution.fill_stream_enabled`) and the REST path is the mechanism, not
+the fallback. The code is dormant, not deleted — the owner deferred the
+credential decision that would revive it.
+
+**The lesson this adds to the one above, and it is the sharper of the two:
+the API's documented mechanism is the right answer only once it is
+observed working in YOUR deployment.** "The vendor recommends this" is a
+reason to build it; it is not evidence that it runs. The failure was
+invisible for a week because the fallback was good — the desk kept trading
+correctly while logging ~150 auth failures a day that nobody read, and the
+only cost was a bounded slice of every fill window spent on a handshake
+that could never complete. A degraded path that still works is the hardest
+kind of breakage to notice, so the fix shipped an ALERT on fill
+confirmation actually degrading (an unconfirmed order outcome, or the
+desk's records disagreeing with the broker's), and deliberately NOT on the
+socket being off — that is now the intended configuration, and paging on
+it would just move the noise into Telegram.
 
 ## Execution-environment principle
 

@@ -4,7 +4,7 @@ Current engineering lead: **Codex**. This contract is intentionally agent-neutra
 
 ## Start
 
-Read `docs/STATE.md`, then `docs/WORK.md`. Use `docs/OUTCOME.md` for product intent and only the accepted architecture/contracts relevant to the task. `docs/FUTURE_*` is conceptual only.
+Read `docs/STATE.md`, then `docs/WORK.md`. Use `docs/OUTCOME.md` for product intent and only the accepted architecture/contracts relevant to the task. `docs/FUTURE.md` is conceptual only.
 
 Do not trust a document's claimed status at face value — check reality first: `sudo -n -u qamc git -C /home/qamc/quant-agent log --oneline -1`.
 
@@ -154,9 +154,9 @@ Analysis artefacts such as `docs/QAMC_REMEDIATION_SPEC.md`, `docs/AGENT_ROLE_AUD
 
 Long-lived, unlike Tier 2 — they are maintained rather than consumed, and **must be updated in the same change that alters the subsystem they describe**. They are authoritative on mechanism and never on status: if one implies a capability exists, `STATE.md` decides whether it actually does.
 
-**Conceptual — `docs/FUTURE_*`. Binding on nothing.**
+**Conceptual — `docs/FUTURE.md`. Binding on nothing.**
 
-`FUTURE_LIVE_SENTINEL.md`, `FUTURE_SECURITY_OBSERVATORY.md`. Ideas recorded so they are not lost. They authorize no work, describe nothing that exists, and must carry their `Status: CONCEPTUAL / NOT AUTHORIZED` header. Never cite one as a requirement or as evidence that something is planned.
+The one file for future ideas; add new ones as sections there, never as new files. It records ideas so they are not lost, authorizes no work, describes nothing that exists, and must keep its `Status: CONCEPTUAL / NOT AUTHORIZED` header. Never cite one as a requirement or as evidence that something is planned.
 
 **Project-standard — `README.md`, `SECURITY.md`.**
 

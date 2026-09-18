@@ -1,8 +1,34 @@
+# Deliberately OFF the shared :00/:30 tick every other session timer uses —
+# see docs/INCIDENT_HISTORY.md, 2026-09-17.
 [Unit]
-Description=quant-agent intra_check — check every 30 min, script self-gates to its ET window
+Description=quant-agent intra_check — check every 30 min at :15/:45, offset from the other sessions' shared tick, script self-gates to its ET window
 
 [Timer]
-OnCalendar=*:0/30
+# All six session timers used to carry OnCalendar=*:0/30, so every one of
+# them fired in the SAME SECOND every half hour. Two consequences, both
+# observed live on 2026-09-17:
+#   1. morning and intra_check raced at 09:30 — ordering between two timers
+#      firing in the same second is not guaranteed, so there was a window
+#      where intra_check could read state before morning had written it.
+#   2. Both intra_check and a session-lock-holding session (that day,
+#      midday) ran their stop-coverage reconcile within the same tick
+#      (measured ~90ms apart) — harmless that day because nothing needed
+#      repairing, but the same race with a real gap present is exactly how
+#      a repair placing a stop collides with a session cancelling one to
+#      sell.
+#
+# intra_check is the one timer that can move: it is a stateless, idempotent
+# circuit breaker (see run_if_et_window.sh) with no once-per-day guard and
+# no dependency on landing at :00/:30 specifically — only on firing every
+# ~30 minutes somewhere inside its 09:30-16:00 ET window. Moving it to
+# :15/:45 keeps that cadence, keeps every session-lock exemption in
+# run_if_et_window.sh untouched (this is still the same MODE, still exempt
+# from the once-per-day guard and the cross-mode session lock — see the
+# tests pinning that in tests/test_et_window_script.py), and simply stops
+# it from ever landing on the same second as morning, midday, close,
+# evening, earnings_preprocess, or the coverage-sweep timer, all of which
+# stay on *:0/30.
+OnCalendar=*:15,45
 Persistent=true
 
 [Install]

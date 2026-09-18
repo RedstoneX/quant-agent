@@ -32,7 +32,7 @@ from src.api.deps import (
     get_cash_sweep_symbol,
     get_risk_limits,
 )
-from src.execution.broker import AlpacaBroker
+from src.execution.broker import AlpacaBroker, _internal_symbol
 
 logger = logging.getLogger(__name__)
 
@@ -334,7 +334,18 @@ def _order_to_dict(o) -> dict:
         return str(raw)
 
     order_id = _extract_order_field(lambda: _str_or_none(getattr(o, "id", None)))
-    symbol = _extract_order_field(lambda: _str_or_none(getattr(o, "symbol", None)))
+    # Alpaca's order objects carry ITS class-share spelling (e.g. "BRK.B"),
+    # while `read_positions` (via `AlpacaBroker.get_positions`) already
+    # normalizes to the QAMC/yfinance canonical form ("BRK-B") the rest of
+    # the cockpit and universe use. Left untranslated here, the cockpit's
+    # symbol-string equality checks (e.g. `findPositionStop` matching a
+    # resting stop order to its position) silently fail for every
+    # punctuated ticker — Berkshire's chart showed no stop line for exactly
+    # this reason even though a live protective stop existed at the broker.
+    symbol = _extract_order_field(
+        lambda: _internal_symbol(_str_or_none(getattr(o, "symbol", None)))
+        if getattr(o, "symbol", None) is not None else None
+    )
     return {
         "id": order_id,
         "symbol": symbol,

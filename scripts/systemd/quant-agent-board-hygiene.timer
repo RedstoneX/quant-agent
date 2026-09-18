@@ -1,0 +1,28 @@
+# Fires the work-board hygiene check EVERY DAY at 08:55 ET.
+[Unit]
+Description=quant-agent work-board hygiene check — daily 08:55 ET
+
+[Timer]
+# 08:55 ET sits five minutes after the unit-drift check (08:50), which
+# itself sits five minutes after the deploy-drift check (08:45) — all three
+# read-only, all three well before the 09:30 morning session. Sequencing
+# them a few minutes apart is free (none of them is time-sensitive to the
+# minute) and keeps a glance at the journal around 08:45-08:55 showing all
+# three of the day's read-only checks together.
+#
+# EVERY DAY, not Mon-Fri, matching quant-agent-unit-drift.timer and for the
+# same recorded reason: the board can fill on a weekend just as easily as a
+# weekday, and a Mon-Fri schedule would leave two days of silence exactly
+# when nobody is watching by hand. The check costs no network beyond one
+# possible Telegram push and no model call, so a weekend firing is free.
+#
+# systemd resolves the IANA zone, so this stays 08:55 New York across DST.
+OnCalendar=*-*-* 08:55 America/New_York
+# Run a missed firing on boot (server was down at 08:55).
+Persistent=true
+# The comparison does not care about the exact minute; letting systemd
+# batch this with the other 08:4x/08:5x checks is free.
+AccuracySec=1m
+
+[Install]
+WantedBy=timers.target

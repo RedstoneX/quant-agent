@@ -26,7 +26,28 @@ import logging
 import math
 from typing import Any, Callable
 
+from src.execution.stop_records import (
+    STOP_ABSENT, STOP_USABLE, classify_stop_price,
+)
+
 logger = logging.getLogger(__name__)
+
+
+def _refuse(outcome: dict | None, reason: str) -> bool:
+    """Record WHY this repair did not happen, then report it as not repaired.
+
+    docs/WORK.md item 88. Every `return False` in this function is one of
+    two very different things — "the broker would not take the order" or
+    "this janitor refuses to place this number" — and the caller used to
+    receive only the bare bool. `coverage == 'none'` then paged the owner
+    with "the automatic repair could not restore one" and no reason at
+    all, and a 'partial' gap carried the refusal no further than a log
+    line. `reason` is a plain sentence, owner-facing, stamped onto the
+    caller's gap dict when it supplies one.
+    """
+    if isinstance(outcome, dict):
+        outcome["repair_refusal"] = reason
+    return False
 
 
 def repair_stop_coverage(
@@ -37,6 +58,7 @@ def repair_stop_coverage(
     uncovered_qty: float,
     is_short: bool,
     db: Any = None,
+    outcome: dict | None = None,
 ) -> bool:
     """Best-effort: re-place protective stop coverage on an uncovered
     position using the stop level recorded on its last opening row (BUY for
@@ -104,24 +126,92 @@ def repair_stop_coverage(
             "coverage repair: last-%s lookup failed for %s: %s",
             opening, symbol, exc,
         )
-        return False
-    try:
-        stop_price = float(entry.get("stop_loss") or 0)
-    except (TypeError, ValueError):
-        stop_price = 0.0
-    if stop_price <= 0:
+        return _refuse(
+            outcome,
+            f"the archive could not be read for the recorded {opening} stop",
+        )
+    # docs/WORK.md item 88 — the two cases this used to collapse into one
+    # sentence. "No stop was ever recorded" and "a stop was recorded and its
+    # value is garbage" are different facts: the first is a row this janitor
+    # has no reviewed level for, the second is a corrupt archive on a live
+    # position, and an owner reading "has no recorded stop_loss" about a row
+    # that DOES carry one would go looking in the wrong place. Neither is
+    # repaired — inventing a level was never this function's job — but they
+    # are no longer reported as the same thing. The classification also
+    # catches a recorded ±Inf, which the old `<= 0` test passed straight
+    # through to the broker (NaN cannot survive SQLite, which stores it as
+    # NULL; Inf round-trips as a real number).
+    recorded = entry.get("stop_loss")
+    stop_state, stop_price = classify_stop_price(recorded)
+    if stop_state == STOP_ABSENT:
         logger.warning(
             "coverage repair: %s has no recorded %s stop_loss — leaving the "
             "gap flagged for manual review", symbol, opening,
         )
-        return False
+        return _refuse(
+            outcome,
+            f"no stop level was ever recorded on the {opening} row, so "
+            f"there is no reviewed level to restore",
+        )
+    if stop_state != STOP_USABLE:
+        logger.error(
+            "coverage repair REFUSED for %s: the recorded %s stop_loss is "
+            "%r, which cannot be a stop price. NOT treated as 'no stop "
+            "needed' — the gap stays flagged for manual review and the "
+            "archive row needs a look.", symbol, opening, recorded,
+        )
+        return _refuse(
+            outcome,
+            f"the recorded {opening} stop level is {recorded!r}, which "
+            f"cannot be a stop price — the archive row is corrupt",
+        )
+    # The wrong-side test below decides whether putting this stop back would
+    # fire it instantly — i.e. sell the position at market. That test is only
+    # as good as the price it runs against, and a price with no trade time on
+    # it can be yesterday's last print on a thin name, or a quote the tape
+    # never confirmed. Against a stale number the test can read "safe" while
+    # today's real price is already through the stop, and the repair becomes
+    # an unintended market exit. So a repair requires a trade print stamped
+    # today; anything else leaves the gap flagged for the next sweep, which
+    # is the same outcome this function already produces for every other
+    # unverifiable input.
+    stamped = None
     try:
-        price = broker.get_latest_price(symbol)
+        from src.execution.broker import LivePrice
+
+        getter = getattr(broker, "get_latest_price_stamped", None)
+        if callable(getter):
+            candidate = getter(symbol)
+            # isinstance, not truthiness: most tests drive this with a
+            # MagicMock broker whose auto-attributes are callable and whose
+            # return value is another MagicMock. Only a real reading is
+            # allowed to carry the freshness verdict; anything else falls
+            # back to the bare price exactly as before.
+            if isinstance(candidate, LivePrice):
+                stamped = candidate
+        price = stamped.price if stamped is not None else broker.get_latest_price(symbol)
     except Exception as exc:  # noqa: BLE001
         logger.warning("coverage repair: price lookup failed for %s: %s", symbol, exc)
-        return False
+        return _refuse(
+            outcome, "the live price could not be read, so the recorded stop "
+            "could not be checked against the tape",
+        )
     if not (isinstance(price, (int, float)) and price > 0 and math.isfinite(price)):
-        return False
+        return _refuse(
+            outcome, "the broker returned no usable live price, so the "
+            "recorded stop could not be checked against the tape",
+        )
+    if stamped is not None and not stamped.is_today_print:
+        logger.warning(
+            "coverage repair: %s has no trade print from today (price $%.2f came "
+            "from %s) — a stop placed off an unconfirmed price could fire "
+            "immediately. Leaving the gap flagged for the next sweep.",
+            symbol, price, stamped.source,
+        )
+        return _refuse(
+            outcome, "there is no trade print from today to check the "
+            "recorded stop against",
+        )
     # Long sell-stop must sit strictly below the tape; short buy-stop must
     # sit strictly above it. The wrong-side test is the one that would turn
     # this janitor into an immediate marketable exit.
@@ -133,7 +223,12 @@ def repair_stop_coverage(
             "gap flagged; the reviewer owns this exit decision.",
             symbol, protective_side, stop_price, price,
         )
-        return False
+        return _refuse(
+            outcome,
+            f"the recorded stop ${stop_price:,.2f} is already on the live-"
+            f"price side of ${price:,.2f}, so restoring it would exit the "
+            f"position at market — that is the reviewer's decision",
+        )
     # Spec §11.1 guard 1 belongs here too. This was a single bare
     # `_submit_stop_limit_order` call with NO retry burst at all — a
     # transient failure (429, dropped connection) cost the position a full
@@ -160,7 +255,11 @@ def repair_stop_coverage(
             "retries exhausted or broker did not accept an order id",
             symbol, uncovered_qty, stop_price,
         )
-        return False
+        return _refuse(
+            outcome,
+            f"the broker did not accept a protective stop at "
+            f"${stop_price:,.2f} after every retry",
+        )
     residual = 0.0
     try:
         residual = float(result.get("uncovered_qty") or 0)
@@ -181,7 +280,11 @@ def repair_stop_coverage(
             "gapped; next sweep will re-check", symbol,
             uncovered_qty - residual, uncovered_qty, stop_price, residual,
         )
-        return False
+        return _refuse(
+            outcome,
+            f"only {uncovered_qty - residual:.4f} of {uncovered_qty:.4f} "
+            f"uncovered share(s) could be covered",
+        )
     logger.warning(
         "COVERAGE REPAIRED: %s — placed protective %s stop-limit coverage "
         "for %.4f uncovered share(s) at the recorded %s stop $%.2f (GTC over "

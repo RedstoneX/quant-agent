@@ -2,6 +2,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def _write_executable(path: Path, content: str) -> None:
     path.write_text(content)
@@ -366,6 +368,67 @@ def test_run_if_et_window_intra_check_bypasses_session_lock(tmp_path):
     assert counter_file.read_text().strip() == "fired"
     # The held lock must remain — intra_check never touches it.
     assert (lock_dir / "owner").read_text() == "morning 2026-04-20 1000 12345"
+
+
+@pytest.mark.parametrize("hh,mm", [("10", "15"), ("13", "45")])
+def test_run_if_et_window_intra_check_bypasses_session_lock_at_new_ticks(
+    tmp_path, hh, mm,
+):
+    """Pin for the 2026-09-17 schedule split: quant-agent-intra_check.timer
+    now fires at :15/:45 instead of the shared :00/:30 tick (see
+    tests/test_systemd_units.py). This wrapper script has no idea which
+    wall-clock minute invoked it — the exemption is a MODE check, not a
+    minute check — but the exemption is exactly what the schedule move
+    depends on staying intact: intra_check must still fire, and still
+    leave any held lock untouched, at the minutes it now actually runs on.
+    """
+    script = Path(__file__).resolve().parents[1] / "scripts" / "run_if_et_window.sh"
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / ".env").write_text("")
+
+    last_run_dir = tmp_path / "cache"
+    lock_dir = last_run_dir / "active-session.lock"
+    lock_dir.mkdir(parents=True)
+    (lock_dir / "owner").write_text("midday 2026-04-20 1000 12345")
+
+    timeout_bin = tmp_path / "timeout"
+    python_bin = tmp_path / "fake-python"
+    counter_file = tmp_path / "intra-fired-new-tick.txt"
+
+    _write_executable(timeout_bin, "#!/bin/bash\nshift 2\nexec \"$@\"\n")
+    _write_executable(
+        python_bin,
+        "#!/bin/bash\n"
+        f"echo fired >> \"{counter_file}\"\n"
+        "exit 0\n",
+    )
+
+    result = subprocess.run(
+        ["bash", str(script), "intra_check"],
+        env=os.environ | {
+            "PROJECT_ROOT_OVERRIDE": str(project_root),
+            "PYTHON_OVERRIDE": str(python_bin),
+            "TIMEOUT_OVERRIDE": str(timeout_bin),
+            "LAST_RUN_DIR_OVERRIDE": str(last_run_dir),
+            "ET_DOW_OVERRIDE": "1",
+            "ET_HOUR_OVERRIDE": hh,
+            "ET_MIN_OVERRIDE": mm,
+            "ET_DATE_OVERRIDE": "2026-04-20",
+            "NOW_UNIX_OVERRIDE": "1010",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert counter_file.exists(), (
+        "intra_check must still fire at its new :15/:45 ticks even when "
+        "another session holds the lock"
+    )
+    # The held lock must remain untouched — intra_check never takes it.
+    assert (lock_dir / "owner").read_text() == "midday 2026-04-20 1000 12345"
 
 
 def test_run_if_et_window_intra_check_skips_outside_window(tmp_path):

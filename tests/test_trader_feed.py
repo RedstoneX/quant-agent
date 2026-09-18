@@ -1,8 +1,12 @@
 import json
+import re
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
+
+import pytest
 
 from src import trader_feed
 from src.data.company import CompanyProfile, CompanyProfileStore
@@ -10,12 +14,37 @@ from src.notifier import TelegramNotifier
 
 _ET = ZoneInfo("America/New_York")
 # A deliberately NOT-top-of-hour, NOT-9:30 instant — `trader_feed._is_hourly_
-# checkpoint` fires on minute==0 (or 9:30), and without pinning the clock a
-# quiet-tick "no message" assertion is flaky once an hour in real time. Any
-# test asserting `msg is None` for intra_check must pin the clock with this.
-_QUIET_TICK_TIME = datetime(2026, 9, 17, 10, 15, tzinfo=_ET)
-# A top-of-hour instant, for the hourly-desk-check tests.
-_TOP_OF_HOUR_TIME = datetime(2026, 9, 17, 14, 0, tzinfo=_ET)
+# checkpoint` fires on intra_check's own first-tick-of-the-hour minute (or
+# 9:30), and without pinning the clock a quiet-tick "no message" assertion
+# is flaky once an hour in real time. Any test asserting `msg is None` for
+# intra_check must pin the clock with this.
+#
+# 2026-09-17: intra_check's real systemd cadence is `*:15,45` (moved off
+# `*:0/30` by #454), so :15 is now the hourly-checkpoint minute (#462) and
+# :45 is the ordinary quiet tick — :15 no longer means "quiet" here.
+_QUIET_TICK_TIME = datetime(2026, 9, 17, 10, 45, tzinfo=_ET)
+# A top-of-hour instant, for the hourly-desk-check tests — the FIRST tick
+# intra_check makes each hour under its real `*:15,45` cadence, i.e. :15,
+# not :00 (intra_check never ticks at :00). Deliberately OUTSIDE the midday
+# window (13:00-14:30 ET) — 13:15 is where the 2026-09-17 midday-suppression
+# rule silences a quiet tick before the hourly-checkpoint check ever runs,
+# which would defeat this test's purpose of exercising that check in
+# isolation. The window-specific interaction has its own tests below (see
+# `_MIDDAY_COLLISION_TICK_TIME`).
+_TOP_OF_HOUR_TIME = datetime(2026, 9, 17, 15, 15, tzinfo=_ET)
+# The ONE intra_check tick that collides with the midday report: midday
+# runs once per ET date, on the first scheduler tick inside its 13:00-14:30
+# window (13:00), and 13:15 is the first intra_check tick after it. This is
+# the only instant the 2026-09-17 suppression rule silences. It is also the
+# 13:00 hour's guaranteed-pulse tick under #462, which is exactly why the
+# rule has to run before `_is_hourly_checkpoint`.
+_MIDDAY_COLLISION_TICK_TIME = datetime(2026, 9, 17, 13, 15, tzinfo=_ET)
+# A quiet top-of-hour instant LATER in the midday window (14:15) — the
+# 14:00 hour's guaranteed pulse. Inside the window but not the colliding
+# tick, so it must still send.
+_MIDDAY_TOP_OF_HOUR_TIME = datetime(2026, 9, 17, 14, 15, tzinfo=_ET)
+# A quiet, non-top-of-hour instant inside the midday window.
+_MIDDAY_QUIET_TICK_TIME = datetime(2026, 9, 17, 13, 45, tzinfo=_ET)
 
 
 def _pin_clock(monkeypatch, when: datetime) -> None:
@@ -267,7 +296,11 @@ def test_execution_skip_is_not_misreported_as_investment_hold(tmp_path, monkeypa
         50.0,
     )
     assert "Execution gate: 1 skip" in msg
-    assert "insufficient_cash" in msg
+    # Board item 89 defect 5: this used to assert the internal reason CODE
+    # appeared in the owner's message. It must not; the plain-English label
+    # that `_SKIP_WHO_LABELS` already held for it must.
+    assert "insufficient_cash" not in msg
+    assert "Blocked by the desk — insufficient cash" in msg
     assert "decision(s) survived review but execution could not complete" in msg
 
 
@@ -668,6 +701,47 @@ def test_close_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     assert "SELL CCJ (Cameco Corporation)" in msg
 
 
+def test_position_review_now_shows_todays_and_total_pnl(tmp_path, monkeypatch):
+    """Owner request 2026-09-17: replace the unlabelled 'Session P&L' line
+    with today's P&L and a dated total P&L, in the same spot — and, unlike
+    the old line, `run_position_review` (midday/close) must actually show
+    it. Before this change `run_position_review`'s own returned dict never
+    set `daily_pnl` at all, so this line silently never rendered on a
+    midday/close message — the operator was never shown a number here,
+    whatever "session" was assumed to mean."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-review-pnl"
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 1,
+        "orders": [], "review": None,
+        "daily_pnl": 12.34, "daily_return_pct": 0.13,
+        "total_pnl": 44.70, "total_return_pct": 0.46,
+        "total_pnl_since": "2026-09-02",
+    }
+    msg = trader_feed.format_session_result("midday", result, 5.0)
+    assert msg is not None
+    assert "Session P&L" not in msg
+    assert "📈 Today's P&L: +$12.34 (+0.13%)" in msg
+    assert "📊 Total P&L since 2026-09-02: +$44.70 (+0.46%)" in msg
+
+
+def test_position_review_missing_pnl_says_not_available_never_zero(tmp_path, monkeypatch):
+    """A midday/close run with no P&L figures at all (e.g. an early
+    halt-path result) must say so honestly — never a fabricated $0.00,
+    which would read as 'flat today' rather than 'unknown'."""
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-review-no-pnl"
+    result = {
+        "status": "reviewed", "run_id": run, "positions": 0,
+        "orders": [], "review": None,
+    }
+    msg = trader_feed.format_session_result("midday", result, 5.0)
+    assert msg is not None
+    assert "📈 Today's P&L: not available" in msg
+    assert "📊 Total P&L: not available" in msg
+    assert "$0.00" not in msg
+
+
 def test_intraday_alert_names_the_company_it_traded(tmp_path, monkeypatch):
     db = _make_db(tmp_path, monkeypatch)
     run = "run-identity-intra"
@@ -1019,6 +1093,7 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     _agent_log(db, run, "portfolio_manager", "no trades", cost=0.10)
     outer = {
         "status": "ok", "run_id": run, "daily_pnl": 0.13, "daily_return_pct": 0.001,
+        "total_pnl": 44.70, "total_return_pct": 0.46, "total_pnl_since": "2026-09-02",
         "intraday_scan": {
             "status": "intraday_no_trades", "run_id": run,
             "candidates": ["VST", "AVGO"], "orders": [],
@@ -1041,6 +1116,11 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
 
     # --- signed money, sign before '$', true minus for negatives ---
     assert "+$0.13" in msg
+
+    # --- "Session P&L" is gone; today's + dated total P&L replace it ---
+    assert "Session P&L" not in msg
+    assert "📈 Today's P&L: +$0.13 (+0.00%)" in msg
+    assert "📊 Total P&L since 2026-09-02: +$44.70 (+0.46%)" in msg
 
     # --- scan-first sections: VST blocked (desk-side, insufficient cash),
     # AVGO looked at and passed (neutral) ---
@@ -1068,9 +1148,9 @@ def test_intraday_no_trade_message_is_readable_and_sectioned(tmp_path, monkeypat
     lines = msg.split("\n")
     assert lines[0].strip() != "" and lines[-1].strip() != ""
     assert "\n\n\n" not in msg
-    # A blank line separates the header from the P&L line, and the
+    # A blank line separates the header from the P&L lines, and the
     # scan-first sections from the footer.
-    pnl_idx = next(i for i, l in enumerate(lines) if l.startswith("📈 Session P&L"))
+    pnl_idx = next(i for i, l in enumerate(lines) if l.startswith("📈 Today's P&L"))
     assert lines[pnl_idx - 1] == ""
     footer_idx = next(i for i, l in enumerate(lines) if l.startswith("🧾"))
     assert lines[footer_idx - 1] == ""
@@ -1213,7 +1293,9 @@ def test_actionable_intraday_tick_sends_immediately_at_any_time(tmp_path, monkey
     msg = trader_feed.format_session_result("intra_check", outer, 3.0)
     assert msg is not None
     assert "⚡ INTRADAY OPPORTUNITY" in msg
-    assert "insufficient_cash" in msg
+    # Board item 89 defect 5 — plain words, never the internal code.
+    assert "insufficient_cash" not in msg
+    assert "Blocked by the desk — insufficient cash" in msg
     # A half-hour tick is not the hourly checkpoint — no desk-check banner.
     assert "🕐 DESK CHECK" not in msg
 
@@ -1240,6 +1322,7 @@ def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
     outer = {
         "status": "ok", "run_id": top_of_hour_run,
         "daily_pnl": 5.5, "daily_return_pct": 0.02,
+        "total_pnl": 44.70, "total_return_pct": 0.46, "total_pnl_since": "2026-09-02",
         # No `intraday_scan` key at all — this tick's own scan did not run
         # (e.g. nothing moved enough to qualify).
     }
@@ -1249,11 +1332,285 @@ def test_top_of_hour_quiet_tick_sends_hourly_summary_with_half_hour_signals(
     assert "🕐 DESK CHECK" in msg
     assert "No action this hour" in msg
     assert "CEG" in msg  # the earlier :30 tick's signal, different run_id
-    assert "+$5.50" in msg
+    assert "Session P&L" not in msg
+    assert "📈 Today's P&L: +$5.50 (+0.02%)" in msg
+    assert "📊 Total P&L since 2026-09-02: +$44.70 (+0.46%)" in msg
     assert "who:" in msg or "CEG" in msg
     # No leading/trailing/double blank line in the synthetic summary either.
     assert not msg.startswith("\n") and not msg.endswith("\n")
     assert "\n\n\n" not in msg
+
+
+# === 2026-09-17 regression guard: the hourly checkpoint must track
+# intra_check's REAL timer cadence, not a hard-coded minute ===
+#
+# PR #454 moved intra_check's systemd timer from `*:0/30` to `*:15,45` the
+# same night, and `_is_hourly_checkpoint` kept checking `minute == 0` — a
+# minute intra_check never ticks on any more. The guaranteed once-per-hour
+# message silently stopped firing on any quiet day. This block (a) proves
+# that would have been caught, and (b) pins the fix so the NEXT cadence
+# move can't repeat it silently: `_is_hourly_checkpoint` now reads its
+# checkpoint minute from the unit file itself, and this test independently
+# re-parses that same file and fails the build the moment the two disagree.
+
+_INTRA_CHECK_TIMER = (
+    Path(trader_feed.__file__).resolve().parent.parent
+    / "scripts" / "systemd" / "quant-agent-intra_check.timer"
+)
+
+
+def _real_intra_check_oncalendar_minutes() -> tuple[int, ...]:
+    """Independently re-derives intra_check's per-hour tick minutes straight
+    from the unit file's `OnCalendar=` line — deliberately NOT calling
+    `trader_feed._intra_check_tick_minutes`, so a bug in that function's own
+    parsing can't hide from this test."""
+    text = _INTRA_CHECK_TIMER.read_text()
+    spec = next(
+        line.split("=", 1)[1].strip()
+        for line in text.splitlines()
+        if line.strip().startswith("OnCalendar=")
+    )
+    match = re.fullmatch(r"\*:(\d{1,2}(?:,\d{1,2})*)", spec)
+    assert match, f"unexpected OnCalendar spec {spec!r} in {_INTRA_CHECK_TIMER}"
+    return tuple(sorted({int(m) for m in match.group(1).split(",")}))
+
+
+def test_hourly_checkpoint_minute_matches_intra_check_timer_cadence():
+    """The regression guard itself: if a future PR moves intra_check's
+    timer again without updating (or correctly re-deriving) the
+    hourly-checkpoint minute, this fails — instead of the owner's
+    guaranteed hourly message silently going quiet in production again."""
+    real_minutes = _real_intra_check_oncalendar_minutes()
+    assert trader_feed._intra_check_tick_minutes() == real_minutes
+    assert trader_feed._hourly_checkpoint_minute() == min(real_minutes)
+
+
+def test_is_hourly_checkpoint_follows_a_synthetic_cadence_change(monkeypatch):
+    """`_is_hourly_checkpoint` must track WHATEVER cadence intra_check's
+    timer reports, not a number frozen at write-time — simulate the timer
+    moving to `*:20,50` and confirm the checkpoint minute moves with it."""
+    monkeypatch.setattr(trader_feed, "_intra_check_tick_minutes", lambda: (20, 50))
+    assert trader_feed._hourly_checkpoint_minute() == 20
+    assert trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, 10, 20, tzinfo=_ET))
+    assert not trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, 10, 50, tzinfo=_ET))
+    assert not trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, 10, 0, tzinfo=_ET))
+    # The 9:30 session-open exception survives any cadence.
+    assert trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, 9, 30, tzinfo=_ET))
+
+
+def test_intra_check_ticks_send_exactly_one_guaranteed_message_per_hour(
+    tmp_path, monkeypatch,
+):
+    """Walk every real intra_check tick across a full trading session
+    (09:30-16:00 ET, `*:15,45` cadence) on a completely quiet day and
+    confirm the guaranteed hourly pulse fires EXACTLY once per clock hour
+    — not zero, not two."""
+    _make_db(tmp_path, monkeypatch)
+    minutes = trader_feed._intra_check_tick_minutes()
+    # The real intra_check schedule: 9:30 (session open, no earlier :15/:45
+    # tick that day), then every configured minute from 9:45 through 15:45.
+    ticks = [(9, 30)] + [
+        (hour, minute)
+        for hour in range(9, 16)
+        for minute in minutes
+        if not (hour == 9 and minute < 30)
+    ]
+    checkpoint_hits = [
+        (hour, minute) for hour, minute in ticks
+        if trader_feed._is_hourly_checkpoint(datetime(2026, 9, 17, hour, minute, tzinfo=_ET))
+    ]
+    # One session-open exception, plus one per ordinary hour 10 through 15.
+    assert checkpoint_hits == [(9, 30)] + [(h, min(minutes)) for h in range(10, 16)]
+
+
+def test_hourly_checkpoint_unparseable_oncalendar_fails_loudly(tmp_path, monkeypatch):
+    """A cadence syntax `_intra_check_tick_minutes` doesn't understand (a
+    day restriction, a `/` step, ...) must raise, not silently fall back to
+    a guessed minute — the whole point of this fix is that a mismatch
+    between the timer and the checkpoint logic is never quiet again."""
+    fake_timer = tmp_path / "quant-agent-intra_check.timer"
+    fake_timer.write_text("[Timer]\nOnCalendar=Mon..Fri *:15,45\n")
+    monkeypatch.setattr(trader_feed, "_INTRA_CHECK_TIMER_PATH", fake_timer)
+    with pytest.raises(RuntimeError):
+        trader_feed._intra_check_tick_minutes()
+
+
+# === Owner decision, 2026-09-17: suppress the routine intra_check message
+# that collides with the midday position review ===
+#
+# The midday report and intra_check's routine "nothing to report" ping must
+# not fire minutes apart. The ratified fix silences that routine ping ONCE,
+# at the single colliding tick (13:15 ET) — not for the whole 13:00-14:30
+# window. Everything actionable (an order, a stop-coverage gap, a crashed
+# scan, ...) still sends immediately, in or out of the window, and the
+# guaranteed hourly pulse survives everywhere except that one tick.
+
+
+def test_collision_tick_is_derived_not_hard_coded(monkeypatch, tmp_path):
+    """The suppressed minute must come from the midday window constant and
+    intra_check's own timer unit — never a third hard-coded number. Move the
+    cadence and the suppressed tick must move with it."""
+    from src.trading_calendar import SESSION_WINDOWS
+
+    assert trader_feed._midday_collision_tick_minute() == 13 * 60 + 15
+
+    fake_timer = tmp_path / "quant-agent-intra_check.timer"
+    fake_timer.write_text("[Timer]\nOnCalendar=*:05,35\n")
+    monkeypatch.setattr(trader_feed, "_INTRA_CHECK_TIMER_PATH", fake_timer)
+    assert trader_feed._midday_collision_tick_minute() == 13 * 60 + 5
+
+    lo, _hi = SESSION_WINDOWS["midday"]
+    assert trader_feed._midday_collision_tick_minute() >= lo
+
+
+def test_quiet_collision_tick_suppressed(tmp_path, monkeypatch):
+    """13:15 is the 13:00 hour's guaranteed-pulse tick, so without this rule
+    it would send a desk check ~15 minutes after the midday report. A quiet
+    tick there is suppressed, before `_is_hourly_checkpoint` is consulted."""
+    db = _make_db(tmp_path, monkeypatch)
+    _evidence(
+        db, "run-half-hour-earlier", "tech_analyst", "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
+         "reasoning": "Range-bound, no signal."},
+        symbol="CEG",
+    )
+    _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
+    outer = {
+        "status": "ok", "run_id": "run-midday-collision",
+        "daily_pnl": 2.0, "daily_return_pct": 0.01,
+        "intraday_scan": {
+            "status": "intraday_scan_no_opportunity",
+            "run_id": "run-midday-collision",
+        },
+    }
+    assert trader_feed.format_session_result("intra_check", outer, 2.0) is None
+
+
+def test_later_hourly_pulse_in_window_still_sends(tmp_path, monkeypatch):
+    """Regression guard on the scope of this rule. `midday` runs ONCE per ET
+    date (run_if_et_window.sh writes a last-run marker for every mode except
+    intra_check), so only 13:00 carries a midday report — suppressing every
+    quiet tick across 13:00-14:30 would swallow the 14:00 hour's guaranteed
+    pulse (14:15) and leave a quiet day with nothing between 13:00 and
+    15:15. 14:15 must still send."""
+    db = _make_db(tmp_path, monkeypatch)
+    _evidence(
+        db, "run-earlier", "tech_analyst", "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
+         "reasoning": "Range-bound, no signal."},
+        symbol="CEG",
+    )
+    _pin_clock(monkeypatch, _MIDDAY_TOP_OF_HOUR_TIME)  # 14:15 ET
+    outer = {
+        "status": "ok", "run_id": "run-midday-later-hour",
+        "daily_pnl": 1.0, "daily_return_pct": 0.005,
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 1.0)
+    assert msg is not None
+    assert "DESK CHECK" in msg
+
+
+def test_ordinary_quiet_tick_in_window_unchanged(tmp_path, monkeypatch):
+    """13:45 is inside the window but is neither the colliding tick nor an
+    hour-owning one — it is silent for the pre-existing "ordinary quiet tick
+    sends nothing" reason, not because of this rule."""
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _MIDDAY_QUIET_TICK_TIME)  # 13:45 ET
+    assert trader_feed._is_midday_collision_tick(_MIDDAY_QUIET_TICK_TIME) is False
+    outer = {
+        "status": "ok", "run_id": "run-midday-quiet",
+        "daily_pnl": 2.0, "daily_return_pct": 0.01,
+        "intraday_scan": {
+            "status": "intraday_scan_no_opportunity", "run_id": "run-midday-quiet",
+        },
+    }
+    assert trader_feed.format_session_result("intra_check", outer, 2.0) is None
+
+
+def test_same_hourly_pulse_minute_outside_window_still_sends(tmp_path, monkeypatch):
+    """The identical quiet payload at the identical minute-past-the-hour,
+    from outside the midday window, is untouched by this rule — this is the
+    control for `test_quiet_collision_tick_suppressed`."""
+    db = _make_db(tmp_path, monkeypatch)
+    _evidence(
+        db, "run-outside", "tech_analyst", "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
+         "reasoning": "Range-bound, no signal."},
+        symbol="CEG",
+    )
+    _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME.replace(hour=11))  # 11:15 ET
+    outer = {
+        "status": "ok", "run_id": "run-outside-collision-minute",
+        "daily_pnl": 2.0, "daily_return_pct": 0.01,
+        "intraday_scan": {
+            "status": "intraday_scan_no_opportunity",
+            "run_id": "run-outside-collision-minute",
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 2.0)
+    assert msg is not None
+    assert "DESK CHECK" in msg
+
+
+def test_weekend_is_never_a_collision_tick():
+    """`in_session_window` short-circuits on non-weekdays; the rule must not
+    claim a collision on a day midday never runs."""
+    saturday = datetime(2026, 9, 19, 13, 15, tzinfo=_ET)
+    assert saturday.weekday() == 5
+    assert trader_feed._is_midday_collision_tick(saturday) is False
+
+
+def test_order_placed_still_sends_at_collision_tick(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-midday-order"
+    _trade(db, run, "CCJ", "BUY", qty=15, price=59.0)
+    _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": -5.0, "daily_return_pct": -0.05,
+        "intraday_scan": {
+            "status": "intraday_executed", "run_id": run,
+            "candidates": ["CCJ"], "orders": [{"symbol": "CCJ"}],
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 4.0)
+    assert msg is not None
+    assert "CCJ" in msg
+
+
+def test_stop_coverage_gap_still_sends_at_collision_tick(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
+    outer = {
+        "status": "ok", "run_id": "run-midday-gap",
+        "daily_pnl": -1.0, "daily_return_pct": -0.01,
+        "stop_coverage_gaps": [{"symbol": "TSLA", "covered_qty": 0, "held_qty": 10}],
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 3.0)
+    assert msg is not None
+    assert "TSLA" in msg
+
+
+def test_crashed_scan_still_sends_at_collision_tick(tmp_path, monkeypatch):
+    """An error carve-out, pinned at the one suppressed instant."""
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
+    outer = {
+        "status": "ok", "run_id": "run-midday-crash",
+        "daily_pnl": 0.0, "daily_return_pct": 0.0,
+        "intraday_scan": {
+            "status": "intraday_scan_crashed", "run_id": "run-midday-crash",
+        },
+    }
+    assert trader_feed.format_session_result("intra_check", outer, 3.0) is not None
+
+
+# Not tested here: the daily-loss circuit breaker itself
+# (`TradingPipeline._alert_owner_daily_loss_halt`, src/pipeline.py). It
+# pushes its own alert via a direct `send_owner_alert` call at the moment
+# the halt happens, entirely independent of `format_session_result`/
+# `trader_feed.py` — this suppression rule cannot reach it regardless of
+# window, and its shape is already pinned in tests/test_pipeline.py
+# (search `daily_loss_halted`).
 
 
 def test_signals_list_never_drops_an_analyzed_symbol(tmp_path, monkeypatch):
@@ -1471,7 +1828,12 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
         assert f"{sym}:" in details_section and reason in details_section
     assert "🧠 PM/Constructor: 2 change(s) · 0 hold(s)" in details_section
     assert "🛡️ Risk: APPROVED · rr_fail" in details_section
-    assert "fat_finger_guard" in details_section  # raw evidence, unabridged
+    # Board item 89 defect 5: the DETAILS block used to paste the internal
+    # reason code through verbatim. The guard's own plain sentence (the
+    # `detail`) is what carries the evidence, unabridged; the code does not
+    # appear anywhere in the message.
+    assert "fat_finger_guard" not in msg
+    assert "Blocked by desk safety check (not the broker)" in details_section
 
     # --- no separate 'who:' identity block anywhere ---
     assert "who:" not in msg
@@ -1486,3 +1848,272 @@ def test_1305_intraday_message_is_scan_first_sectioned(tmp_path, monkeypatch):
     assert final_text.count("<blockquote expandable>") == 1
     assert final_text.count("</blockquote>") == 1
     assert "<b>✅ DONE</b>" in final_text
+
+
+# === Evening report, 2026-09-18 owner redesign ===
+#
+# Owner review of the live 2026-09-17 evening message. Each assertion below
+# pins one of his points so the structure cannot silently drift back.
+
+
+def _evening_result(**overrides):
+    """A realistic evening result dict, shaped like `run_evening`'s return."""
+    result = {
+        "status": "analyzed",
+        "run_id": "evening-testrun",
+        "total_value": 9734.50,
+        "daily_pnl": 38.73,
+        "daily_return_pct": 0.3994,
+        "equity_close": None,
+        "pnl_4pm": None,
+        "total_pnl": -83.54,
+        "total_return_pct": -0.85,
+        "total_pnl_since": "2026-09-02",
+        "risk_capital_dollars": 720.60,
+        "max_daily_loss_pct": 6.7,
+        "missing_sessions": [],
+        "auto_meta": None,
+        "stop_coverage_gaps": [],
+        "stop_proximity": [],
+        "earnings_proximity": [],
+        "analysis": {
+            "daily_summary": "Tech led a recovery day.",
+            "tomorrow_outlook": "Momentum likely continues.",
+            "risk_rating": "moderate",
+            "tomorrow_bias": "bullish",
+            "tomorrow_conviction": "medium",
+            "tomorrow_key_risks": ["VIX complacency near 17.7"],
+            "suggested_actions": ["Monitor AMD support at $495"],
+        },
+    }
+    result.update(overrides)
+    return result
+
+
+def _expected_fractional_gap(symbol="AAPL", covered=9.0):
+    """The overnight state the hybrid-stop design produces every night."""
+    return {
+        "symbol": symbol, "held_qty": covered + 0.76, "covered_qty": covered,
+        "coverage": "fractional_overnight", "uncovered_qty": 0.76,
+        "unprotected_value": 256.44, "repaired": False,
+    }
+
+
+def test_evening_leads_with_todays_and_total_pnl(tmp_path, monkeypatch):
+    """Owner request: both P&L figures at the VERY top, above everything
+    except a banner that needs reading first."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    lines = [line for line in msg.split("\n") if line.strip()]
+    assert lines[1].startswith("📈 Today's P&L: +$38.73")
+    assert lines[2].startswith("📊 Total P&L since 2026-09-02: −$83.54")
+    assert lines[3] == "   Account value: $9,734.50"
+    # ...and above the book, which used to come first.
+    assert msg.index("Today's P&L") < msg.index("POSITIONS")
+
+
+def test_evening_drops_run_id_and_provider_request_count(tmp_path, monkeypatch):
+    """Both are internal identifiers with no action attached to them."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _agent_log(db, "evening-testrun", "evening_analyst", "done", cost=0.0)
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "run_id" not in msg
+    assert "evening-testrun" not in msg
+    assert "provider request" not in msg
+
+
+def test_evening_says_analyzed_in_plain_words(tmp_path, monkeypatch):
+    """'status: analyzed' only ever meant "the review produced a parseable
+    answer". The success case becomes one header word; the failure case —
+    which the owner CAN act on — becomes a sentence."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+
+    ok = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+    assert ok.split("\n")[0].endswith("REVIEWED")
+    assert "analyzed" not in ok.lower()
+    assert "status:" not in ok
+
+    failed = trader_feed.format_session_result(
+        "evening",
+        _evening_result(status="evening_parse_error", analysis=None),
+        41.6,
+    )
+    assert failed.split("\n")[0].endswith("REVIEW FAILED")
+    assert "The evening review did not complete" in failed
+
+
+def test_evening_cost_is_words_not_a_row_of_zeros(tmp_path, monkeypatch):
+    """Every seat the evening session runs is on a free model, so the true
+    cost is zero — which read as broken rendered as '$0.0000'."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _agent_log(db, "evening-testrun", "evening_analyst", "done", cost=0.0)
+    _agent_log(db, "evening-testrun", "news_analyst_evening", "done", cost=0.0)
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "$0.0000" not in msg
+    assert "AI cost tonight: none — the evening review runs on free models" in msg
+
+
+def test_evening_cost_says_not_available_when_a_price_is_missing(tmp_path, monkeypatch):
+    """An unpriced model must never render as a confident zero."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _agent_log(db, "evening-testrun", "evening_analyst", "done", cost=None)
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "AI cost tonight: not available" in msg
+
+
+def test_evening_is_silent_about_the_expected_overnight_fractional_state(
+    tmp_path, monkeypatch,
+):
+    """The sub-share DAY stop lapsing at the close happens to every
+    fractional position every night. A line that never varies is not
+    information — the owner called it redundant and it now says nothing."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(stop_coverage_gaps=[
+        _expected_fractional_gap("AAPL"), _expected_fractional_gap("AMD", 1.0),
+    ])
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "unprotected" not in msg
+    assert "by design" not in msg
+    assert "NO STOP" not in msg
+
+
+def test_evening_speaks_when_a_sub_one_share_holding_has_no_stop(tmp_path, monkeypatch):
+    """The one overnight state that is NOT expected: a holding of less than
+    one whole share has no whole-share GTC leg, so the ENTIRE position is
+    stopless overnight — the classifier still calls it 'fractional'."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(stop_coverage_gaps=[{
+        "symbol": "BRK-B", "held_qty": 0.44, "covered_qty": 0.0,
+        "coverage": "fractional_overnight", "uncovered_qty": 0.44,
+        "unprotected_value": 223.74, "repaired": False,
+    }])
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "🛑 NO STOP OVERNIGHT" in msg
+    assert "BRK-B" in msg
+    assert "$223.74" in msg
+
+
+def test_evening_speaks_when_a_remainder_was_not_recovered_in_session(
+    tmp_path, monkeypatch,
+):
+    """'fractional_replaced' means the session's sweep put the stop back.
+    A row that claims that without having repaired anything is a fault."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(stop_coverage_gaps=[{
+        "symbol": "NET", "held_qty": 3.48, "covered_qty": 3.0,
+        "coverage": "fractional_replaced", "uncovered_qty": 0.48,
+        "unprotected_value": 160.30, "repaired": False,
+    }])
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "🛑 NO STOP OVERNIGHT" in msg
+    assert "NET" in msg
+
+
+def test_evening_still_raises_a_real_uncovered_position(tmp_path, monkeypatch):
+    """Suppressing the nightly line must not suppress the banner that
+    matters: a whole-share position with zero coverage."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(stop_coverage_gaps=[
+        {"symbol": "MRVL", "held_qty": 2.0, "covered_qty": 0.0, "coverage": "none"},
+        _expected_fractional_gap("AAPL"),
+    ])
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "🛑🛑🛑 NO STOP AT ALL" in msg
+    assert "MRVL" in msg
+    # ...and the expected fractional rows are still not counted into it.
+    assert "1 position(s)" in msg
+
+
+def test_evening_positions_line_reads_as_a_heading(tmp_path, monkeypatch):
+    """Owner review item 8 — "Positions: 9 invested $10,650" was a section
+    title that did not look like one."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _insert_position(db, "AMD", qty=2, avg_entry=500.0, current_price=480.0)
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "<b>POSITIONS (2)</b>" in msg
+    assert "📈 Top winners:" in msg
+    assert "📉 Underwater:" in msg
+
+
+def test_evening_tomorrow_carries_a_scale_and_a_consequence(tmp_path, monkeypatch):
+    """Owner review item 9 — "moderate" with no scale and "bullish" with no
+    consequence both said nothing."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "<b>TOMORROW</b>" in msg
+    assert "step 2 of 4 (low · moderate · elevated · high)" in msg
+    assert "Leaning bullish, medium confidence — tomorrow morning's decisions start from this" in msg
+    assert "risk=moderate" not in msg
+
+
+def test_evening_reports_stop_proximity_and_earnings(tmp_path, monkeypatch):
+    """The two additions: what is close to its stop, and what reports
+    earnings imminently. An unknown is labelled, never rendered as calm."""
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    result = _evening_result(
+        stop_proximity=[
+            {"symbol": "ETN", "status": "near", "price": 409.46,
+             "stop": 400.12, "gap": 9.34, "atr": 11.2},
+            {"symbol": "BRK-B", "status": "unknown"},
+        ],
+        earnings_proximity=[
+            {"symbol": "AAPL", "sessions_away": 1, "status": "measured"},
+            {"symbol": "NOK", "sessions_away": 14, "status": "measured"},
+        ],
+    )
+    msg = trader_feed.format_session_result("evening", result, 41.6)
+
+    assert "<b>WORTH KNOWING</b>" in msg
+    assert "ETN" in msg and "one ordinary day's move of its stop" in msg
+    assert "Could not check the stop distance on" in msg and "BRK-B" in msg
+    assert "AAPL" in msg and "reports earnings tomorrow" in msg
+    # A report two weeks out is not news tonight.
+    assert "NOK" not in msg.split("<b>WORTH KNOWING</b>")[1].split("<b>")[0]
+
+
+def test_evening_says_nothing_when_nothing_is_worth_knowing(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "WORTH KNOWING" not in msg
+
+
+def test_evening_details_block_uses_the_shared_collapsible_layout(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    _insert_position(db, "NVDA")
+    _agent_log(db, "evening-testrun", "evening_analyst", "done", cost=0.0)
+    msg = trader_feed.format_session_result("evening", _evening_result(), 41.6)
+
+    assert "<b>DETAILS</b>\n<blockquote expandable>" in msg
+    assert msg.count("</blockquote>") == 1
+    details = msg.split("<b>DETAILS</b>")[1]
+    assert "Tech led a recovery day." in details
+    assert "Monitor AMD support at $495" in details
+
+    notifier = TelegramNotifier(token="t", chat_id="c")
+    payload = notifier._build_payload(msg, symbols=["NVDA"], preserve_structural_markup=True)
+    assert len(payload["text"]) <= TelegramNotifier.MAX_MESSAGE_CHARS + 300
+    assert "<b>POSITIONS (1)</b>" in payload["text"]

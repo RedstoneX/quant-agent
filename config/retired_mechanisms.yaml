@@ -1,0 +1,116 @@
+# Mechanisms this desk USED to have, and the words that described them.
+#
+# WHY THIS FILE EXISTS. On 2026-09-14 the daily-loss breaker stopped
+# liquidating the book and started halting instead (docs/WORK.md item 32).
+# `_midday_emergency_liquidate` and `_check_late_breach_and_emergency_
+# liquidate` were deleted. Three days later four places were still describing
+# the deleted behaviour, and two of them were text the desk PAID a model to
+# read: the position reviewer's assembled prompt told the seat, every time
+# any safety net had fired, that the desk performs an "emergency sell-all on
+# −3% daily-loss breach". Both the mechanism and the number were gone.
+#
+# Deleting code does not delete the prose about it, and prose is not compiled.
+# This file is the compiler. Retiring a mechanism means adding it here, and
+# then the build fails until every description of it is gone too.
+#
+# ADD AN ENTRY WHENEVER YOU DELETE OR RENAME A MECHANISM A MODEL IS TOLD
+# ABOUT. That is the only maintenance this check asks for, and it is asked
+# at exactly the moment the person has the facts: the deletion commit.
+#
+# Fields:
+#   retired      YYYY-MM-DD, from git, not from memory.
+#   why          one plain line: what replaced it.
+#   symbols      code identifiers that no longer exist. Also checked against
+#                the source itself, so a resurrected name fails too.
+#   phrases      prose forms of the same claim, lowercased, matched as
+#                substrings. THIS is the field that catches prompt text,
+#                because prompts never name the function.
+#   allowed_in   whole files where a mention is legitimate: this registry,
+#                the incident history, the check's own tests. A TOMBSTONE in
+#                live code does NOT get a whole file — it puts the marker
+#                `retired-ok` on the line. Per line, because allowing a whole
+#                file is how `src/pipeline.py` would have gone on hiding the
+#                `run_intra_check` docstring, one of the four sites this
+#                check exists to find.
+#
+# Scope note, stated rather than implied: `phrases` is a substring match over
+# prompt files, agent-assembled strings, docstrings and comments. Keep each
+# phrase specific enough that it cannot appear innocently. A phrase like
+# "sell" would be useless; "emergency sell-all" cannot be about anything else.
+
+retired:
+
+  - name: daily-loss whole-book liquidation
+    retired: 2026-09-14
+    why: >-
+      Replaced by `_halt_on_daily_loss_breach`, which refuses new risk,
+      verifies every held position's stop AT THE BROKER, files a durable
+      per-symbol reason and alerts the owner. It closes, resizes and zeroes
+      nothing. The old path submitted LIMIT orders 1% through the market and
+      then restored the original stops on any leg that did not fill, so on a
+      correlated gap it cancelled every protective stop, sold nothing, and
+      put the stops back. It never once fired in production.
+    symbols:
+      - _midday_emergency_liquidate
+      - _check_late_breach_and_emergency_liquidate
+    phrases:
+      - "emergency sell-all"
+      - "emergency-sell every position"
+      - "emergency sell every position"
+      - "sell-all when daily loss"
+      - "liquidates every position"
+      - "force-liquidates"
+    allowed_in:
+      - config/retired_mechanisms.yaml
+      - src/retired_mechanisms.py
+      - docs/INCIDENT_HISTORY.md
+      - docs/WORK.md
+      - docs/BOARD_NOTES.md
+      - tests/test_retired_mechanisms.py
+
+  - name: the flat -3% daily-loss threshold
+    retired: 2026-09-11
+    why: >-
+      The breaker has one limit with three rungs, in precedence order:
+      an explicit `max_daily_loss_pct` (null today); otherwise a
+      volatility-relative threshold measured from the held book's own daily
+      sigma (`drawdown_vol_sensitivity`, capped at the ladder's owner-alert
+      point); otherwise the fixed `effective_max_daily_loss_pct`. No rung is
+      a flat -3%. Prompts must render the number, never type it.
+    symbols: []
+    phrases:
+      - "-3% daily-loss"
+      - "−3% daily-loss"
+      - "-3% daily loss"
+      - "−3% daily loss"
+      - "daily loss breached -3%"
+      - "3% daily-loss breach"
+    allowed_in:
+      - config/retired_mechanisms.yaml
+      - src/retired_mechanisms.py
+      - docs/INCIDENT_HISTORY.md
+      - docs/WORK.md
+      - docs/BOARD_NOTES.md
+      - tests/test_retired_mechanisms.py
+
+  - name: correlation breach as an exit trigger
+    retired: 2026-09-13
+    why: >-
+      Removed from `_HARD_TRIGGER_KEYWORDS` and
+      `EXTERNAL_INFORMATION_PATTERNS` (docs/WORK.md item 44). Nothing in the
+      desk computes a correlation-breach EVENT, so the claim was never
+      checkable, and a correlation is a function of the price series, so it
+      was never external information either. The position reviewer's prompt
+      still names it — to tell the seat it does NOT match — which is why that
+      file is allowed below.
+    symbols: []
+    phrases:
+      - "correlation breach is a valid trigger"
+      - "correlation cluster breach is a valid trigger"
+    allowed_in:
+      - config/retired_mechanisms.yaml
+      - src/retired_mechanisms.py
+      - docs/INCIDENT_HISTORY.md
+      - docs/WORK.md
+      - docs/BOARD_NOTES.md
+      - tests/test_retired_mechanisms.py

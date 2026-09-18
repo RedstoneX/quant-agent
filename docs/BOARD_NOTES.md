@@ -110,12 +110,6 @@ this line, one heading per item.
 **Recommendation —** Nothing to approve. Clear the gate first. A recommendation to spend roughly $5 and settle it was put to you on 2026-09-13 and withdrawn the same day for this reason.
 
 
-## item 3
-
-**Plain language —** Sometimes an order sits with the broker but the price moves away before it fills, so the desk cancels it rather than chase a worse price. That is working as designed when the market itself walked away. It is not working as designed when the desk was simply late after the trade was already approved. Lateness is a defect, not "a little late." The connection to the broker now opens while the reviewer is still working, so that wait is not stacked on after approval. Steps that genuinely need time (confirming a funding sale) have that time written in as a known budget. If that budget is gone, the desk refuses the ticket honestly as the window closing rather than sending a stale limit, even if the price still looks acceptable. One catch-up inside the already-approved price exists only as a safety net, not as the way the desk is supposed to work. Chasing a worse price stays off.
-**Example —** About one in eleven trade ideas end this way: the limit order waits, the stock drifts off the target price, and the order is cancelled unfilled, with the opportunity gone. A different failure, seen the same morning the later scan reused the morning research: after the reviewer said yes, the broker connection spent minutes authenticating, and names that were still inside the approved price were lost to that stall. That connection now starts during the review. If the known budget is gone, the skip is named as the window closing, not as the market being too expensive.
-
-
 ## item 17
 
 **Plain language —** If the desk's own record-keeping breaks, a safety switch can shut down all further AI-based decisions completely, and it stays off until a person manually clears it — working as intended. The real problem, observed live, was that the alert meant to warn someone about it also failed to send, so the desk could sit switched off for a full day or a weekend with nobody aware, looking exactly like an ordinary quiet market.
@@ -315,3 +309,169 @@ decision at all.
 **Recommendation —** Keep the never-blank path. Keep the drop-the-name patch labelled temporary. Do not treat skip-and-continue as the product.
 
 
+
+## item 79
+
+**Plain language —** The desk has a guard against a typo in a price — a "fat finger" check that refuses anything more than 20% away from the market. It is being applied to the stop-loss price as well as the buy price, and on 17 September it threw away a perfectly good short on FLNC after the desk had already paid for the whole analysis. FLNC moves about 9.6% on a normal day, so a flat 20% cap forbids any stop wider than about two normal days — a volatility question answered with a made-up number.
+**Example —** A name that swings 10% a day needs a stop further away than a name that swings 1%. One flat percentage cannot serve both.
+**Recommendation —** Apply the typo guard only to the price we are buying or selling at, which is where a typo lands. Do not swap 20% for another invented number. Separately, when a refusal is shown to you it must print the name's normal daily range beside the percentage, or a correct refusal reads like a bug.
+
+## item 86
+
+**Plain language —** The live feed that tells the desk instantly when an order has filled has never once worked. The trading process deliberately holds a fake key; a local helper swaps in the real one for ordinary requests, but the live feed does not go through that helper — it dials the broker directly and offers the fake key. Two separate things block a quick fix: the library the desk uses cannot be pointed at that helper at all, and the broker checks the key inside the conversation rather than in the connection header, which the helper cannot reach.
+**Example —** Five rounds of work were spent making this path faster before anyone checked whether it had ever worked.
+**Nothing is at risk —** Orders are placed over the ordinary connection, which works, and fills are detected by asking the broker every few seconds instead. The feed is now switched off. The only loss is a few seconds of speed. Today's failure count was about 45, not the 147 first quoted — that figure counted log lines, several per failure.
+**The decision — yours, and nobody builds any of it without you.** Five options, best fit first: (1) have the machine hold the key in an encrypted store — **this turns out NOT to be possible on this machine** (the service cannot read the decryption key, there is no security chip, and the installed system software lacks the feature); an earlier answer of "encrypted and tied to the machine" was wrong. (2) A small local relay that holds the real key and rewrites the login message: the only option that keeps the key out of the trading process, but it is custom credential-handling code, which this project has previously refused. (3) Get the helper taught to do this properly, upstream: correct, does not exist, slow. (4) Make the library able to use the helper: does not fix the login problem on its own. (5) Leave the feed off and keep asking the broker — no credential change at all, costs a few seconds of fill latency, and stops about 150 error lines a day.
+**Recommendation —** Option 5 today, since it is already in place and costs almost nothing. What remains achievable for protecting the key on this machine is file-permission protection, not encryption.
+
+## item 87
+
+**Plain language —** When the book gets too big relative to the account, the desk automatically trims it. That is now the only thing on the desk that sells by itself. Nobody has ever checked whether it cancels the protective stop-losses first in order to free the shares — and if it cancels them and then fails to sell, the holdings are left with no protection at all. That exact flaw is why the older "big loss today" liquidation was deleted on 14 September.
+**Recommendation —** Audit it before changing anything. Find out what it actually does, then decide.
+
+## item 89
+
+**Plain language —** An audit on 17 September of everything the desk sends you found nineteen defects. Six of them can mislead you into a decision. Thirteen are clarity problems — the message is correct but hard or impossible to act on. You are choosing which get fixed.
+**The six that can mislead you —**
+  1. You are told you hold a name that was sold that same morning.
+  2. A message asserts every thesis is intact, and then lists three that are missing.
+  3. "Thesis unavailable" is shown for any position held overnight. The reason IS in the records; the lookup only searches today.
+  4. A rule is cited to you by number, and the rule at that number says the opposite of what it is cited for.
+  5. Raw internal error text is passed through to you word for word.
+  6. A whole trade plan was discarded over two tenths of a percentage point, and no message was sent at all.
+**The thirteen clarity defects —** bare ticker symbols with no company name after the twelfth name in a list; blocked trades explained in jargon and prices rather than in words; a missing broker reason on a rejection; internal status codes shown as-is; percentages with no denominator, so you cannot tell percent of what; a reward-to-risk figure with no unit; detail truncated mid-sentence; a "TRADED" header on a run that only sold; a "data degraded" warning that names internal components; run identifiers; and an unscaled risk rating.
+**Recommendation —** Fix the six first; they are the ones that can cost money. The thirteen are worth doing but nothing turns on them.
+**Progress on the six, 18 September — four fixed, one could not be found, one left alone.** Nothing about what the desk trades, or when, or how much, was touched; this is about what you are told.
+  - **Fixed — a whole trade plan discarded with no message (the dangerous one).** The desk had already written down, for every plan it dropped, which name it was and why, in plain words. Nothing ever read those notes, so a session could end reading "orders: 0" with no explanation and you had no way to know a decision had been made. Your messages now carry them. The reason you will see in the case that was found reads: "the desk decided to open this but the position it asked for was 0.20% of the account, and the desk does not place a new trade smaller than 0.50% of the account. The whole plan for this name was dropped on size alone — nothing was judged wrong with the idea. Nothing already held was touched." **The 0.50% is not a sourced number** — it is written down in one place in the code, appears in no settings file and no document, was never ratified, and the note beside it justifies a different figure entirely. It has NOT been changed: what size is too small to trade is your call, and it belongs with the other thirty unsourced numbers.
+  - **Fixed — "thesis unavailable" on anything held overnight.** The reason was always on file. The lookup that fetched it only searched the current day, so everything bought before today came back empty and the seat that reviews your positions wrote "unavailable" into its notes, which is what reached you. It now reads the entry record whatever its date, using the same lookup the evening review and the cockpit's Why tab already use. Deliberately limited to the REASON: the same record also holds the stop and the target as they stood on the day of purchase, and those must keep coming from live figures, not from history.
+  - **Fixed — a message asserting one thing and then listing another.** The position-review message stated a number of holdings taken before that session's own selling, above a list of holdings taken after it. On any day something was sold the two disagreed and you could not tell which was your book. The number is now counted off the list printed beneath it, so they cannot differ; when the book changed during the session, it says so.
+  - **Fixed — a rule cited by number that said the opposite.** When a trade was refused because the evidence did not net out in favour of it, you were pointed at a numbered section of the design document. That section is about agreement earning a LARGER position, says nothing about refusing anything, and the part it does say was retired on 14 September. The rule is now written out in the message instead of pointed at. That is the real fix: a section number is a promise that another document still says a particular thing, and nothing checked that promise, so it could go stale again silently.
+  - **Fixed — raw internal error text.** Internal code-words and broker status tokens no longer reach you; the plain-English wording for them already existed and one line was skipping it. Where a fault message is genuinely the only record of what broke it is kept, but labelled as machine text with a note that there is nothing in it for you to do — inventing a friendly paraphrase of a fault would be inventing a fact. A token nobody has plain wording for is reported as exactly that, never guessed at.
+  - **Could not be found — being told you hold a name sold that morning.** Every message that names your holdings reads one table, and that table is refreshed from the broker at the start of every session, after every order, and on every half-hourly check, so it is never more than half an hour behind. We could not produce the message from the code and have not fixed a defect we cannot reproduce. The board's own note on the discarded stop-out reconciliation (item 101) points at the likeliest mechanism and is still open. If you have the message, it would settle this in one look.
+**Progress, 18 September —** The evening message was redesigned against the owner's own review of the live 17 September copy. Three of the thirteen are now fixed THERE (run identifiers, internal status codes, the unscaled risk rating) and remain open in the other messages. Also removed from the evening message: the provider-request count, and the nightly "overnight fractional unprotected by design" line, which now speaks only when a holding of under one whole share has nothing protecting it overnight. The near-zero cost was verified truthful, not broken — every seat the evening session runs is on a free model and the one expensive seat does not run in the evening — and now renders as a sentence. Two things the desk knew and never said were added: which holdings sit within one ordinary day's move of their stop, and which report earnings inside the three-session window.
+
+## item 90
+
+**Plain language —** About thirty numbers that govern real trades were never read off anything — they were chosen because they sounded sensible. They were catalogued on 11 September and then filed as "an inventory, not a job", with a note saying never to re-audit. Nothing was assigned, nothing had a date, and a week later all thirty were still live. There is no mechanical check of any kind that would catch the next one.
+**Recommendation —** Two halves. Read each number off the instrument it is meant to describe. And build a check that fails the build the next time an unsourced trading number is added, so this cannot happen again by filing.
+
+## item 91
+
+**Plain language —** The desk counts how long it has held something in calendar days, but the rules that read that number expect trading days. A weekend therefore makes a holding look two days older than it is, against every rule about how long a trade should take.
+**Verified 2026-09-18, and it is worse than the general case —** the position reviewer's own pace check already has the right number sitting next to the wrong one. A weekend-aware trading-session count is computed a few lines above the pace math and used correctly elsewhere in the same file (widening the noise band). The pace math itself reads the calendar-day count instead, so the exact fix this item asks for already exists in scope and is simply not being read.
+
+## item 92
+
+**Plain language —** The "we have lost too much today" alarm compares today's loss against how much the book would normally move. If a holding's normal movement cannot be measured, that holding is left out of the sum — so the book looks calmer than it is and the alarm trips earlier than it was designed to.
+**Correction you should have —** This alarm does NOT sell anything. The selling version was deleted on 14 September and replaced with a halt: it stops new risk, cancels resting entry orders, checks every holding still has its stop, and alerts. An earlier answer saying it sells everything was read off an out-of-date comment in the code and was wrong.
+**Recommendation —** Treat a holding whose movement cannot be measured as normally volatile, rather than dropping it. That needs no new number.
+
+## item 93
+
+**Plain language —** The file that records what has gone wrong and been fixed is merged automatically when two sessions edit it at once. Eleven entries written since 2 September use the wrong heading style, so the merge tool cannot see them, and branches collide over nothing.
+**Recommendation —** Fix it with the tool's own machinery and add a check. Never by hand — hand-editing that file is how live items were once deleted.
+
+## item 95
+
+**Plain language — your decision.** The account can borrow. Today the portfolio manager is not even shown that, which is a separate defect. Once it is shown, the question is whether it may PLAN to spend borrowed money. Borrowing costs about 6.25% a year on the borrowed balance, so anything bought with it has to beat 6.25% just to break even, not zero.
+**Recommendation —** None until you rule. Nobody builds it either way.
+
+## item 96
+
+**Plain language — your decision.** The risk manager can approve a sale whose stated reason is provably false against the desk's own records — nothing checks the reason before the sale goes through.
+**Recommendation —** None until you rule.
+
+## item 97
+
+**Plain language — your decision.** The desk judges whether a trade is moving too slowly against a holding period the model simply states rather than reads off anything. That is the kind of unverifiable number the desk has already banned from sizing trades; whether it may stay in this one test is your call.
+**Recommendation —** None until you rule.
+
+## item 98
+
+**Plain language —** A review of the prompts that brief the decision-making seats (the ones that actually pick and size trades) found seventeen statements in those briefings that are flatly wrong about what the code does today. Eight of the seventeen can change which trade happens or how big it is.
+**The eight that can change a trade —**
+  1. A sizing rule tied to a seat-counting scheme that was retired is still capping position size.
+  2. The briefing says the macro view never counts toward whether other seats agree; the actual rule counts it as plus-or-minus-one, and that difference killed a real trade on 17 September.
+  3. A 75% sector limit is described as a hard wall; it is really advisory and can go as high as 90%.
+  4. A sizing formula is described as mandatory that multiplies by a number deleted from the code 1 September.
+  5. The risk manager is briefed on the wrong quantity when it checks position size.
+  6. A minimum reward-to-risk ratio is described as required; it was abolished.
+  7. Reasons the executor gives for exiting a trade are silently thrown away rather than recorded.
+  8. Any position held overnight shows "thesis unavailable" because the lookup that fetches the reason for holding it only searches today — the reason exists, it just isn't found. Same defect as item 89's clarity issue #3, but here it affects the decision, not just the message to you.
+**The other nine —** clarity-only mismatches between what the prompt claims and what the code does; listed in the audit, not trade-affecting on their own.
+**In progress —** PRs #464 (a prompt-drift check) and #467 (fixes sixteen of the seventeen), stacked, not yet merged; confirm which one is left out and why before treating this item as closed.
+**Recommendation —** Fix the eight trade-affecting ones first, in the order above (the agreement-ladder and sector-cap ones are the most likely to have already cost or blocked a trade). Not yet placed in your priority order — flagging so it doesn't get lost.
+
+## item 99
+
+**Plain language —** A second review, of the prompts that brief the analysts (the seats that read the market and write reports, one layer below the decision-makers), found the prompts are full of numbers and claims nothing in the code actually enforces.
+**What it found —**
+  - About 55 numbers exist only as text in a prompt, with no code checking or producing them.
+  - About 20 claims about how markets behave are stated as fact with no source.
+  - The technical analyst is told it gets 20 days of price history; it actually gets 40, plus five whole categories of data the prompt never mentions it has.
+  - The evening report's briefing hasn't been touched since before this project started, and still describes a completely different strategy — a 77-symbol quarterly value approach — while the technical seat's own briefing describes a 5-to-15-day swing-trading window. Both feed the same decision seat. They cannot both be the desk's real strategy — **this is now a pending decision for you, in `docs/WORK.md`.**
+  - Roughly a third of the portfolio manager's briefing, and a quarter of the risk manager's and the position reviewer's, is prose describing machinery the model doesn't actually use. That dead weight is where almost every stale or wrong claim above was found living.
+  - Separately: a check already exists that fills prompts with numbers straight from the code so they can't go stale, but it only covers 2 of the 10 prompt files. Scanning prompt text for suspicious numbers doesn't work either — there are about 1,825 numbers in there, mostly just dates and list numbering. Neither of the two confirmed mistakes above (item 98) was even sitting in a prompt file — both were assembled by Python code into a string. What would actually have caught the worst one: when code that a prompt describes gets deleted, search the prompts for its name at that moment.
+**Recommendation —** Decide the evening-vs-technical mandate question first (it changes what "fix the prompt" even means); then strip the dead weight, since that's where the false statements cluster; build the deletion-site check as ongoing insurance rather than trying to scan for numbers. Not yet placed in your priority order.
+
+## item 100
+
+**Plain language —** Three pieces of cockpit and reporting work are already in progress, and your instructions for each are recorded here so they survive if the session restarts.
+  1. **Cockpit panel scrolling.** Panels can be dragged around the screen, so a scrolling rule tied to "top of screen" or "bottom of screen" breaks the moment a panel moves. Scroll behaviour should belong to each panel itself. Holdings and Positions scroll internally; the tabbed detail panels should grow to fit their content and let the whole page scroll instead.
+  2. **"Why do we hold this" view.** When you click through to see why a position is held, the fix replaces what's already there rather than adding a new panel: one plain sentence at the top giving the real reason with actual numbers in it, then the rest of the decision-relevant detail written for a human to read, with no fixed line count — you rejected a "keep it to four lines" rule; the test is whether something is relevant, not how long it is. Internal ID numbers get tucked behind a toggle rather than shown up front.
+  3. **Evening report.** Drop run identifiers and provider-request counts (nobody-facing plumbing); state the LLM cost in a sentence instead of a row of zeros; only mention "overnight fractional position unprotected by design" when something is actually abnormal that night, not every night; put today's and total profit/loss at the very top; keep the winners and underwater-positions lists; rewrite the risk/bias section so it reads in plain language.
+**Recommendation —** No action needed from you; recorded so the in-progress work has something to be checked against when it lands.
+## item 104
+
+**Plain language —** The three seats that actually pick and size your trades are each given a written brief, in plain English, describing the desk's rules. Seventeen statements in those briefs are no longer true — the code underneath them was changed and nobody changed the brief. Eight of the seventeen can change a trade. One of them killed a name on 17 September: the brief tells the seat that the macro view never counts toward how many sources agree, while the code counts it as a vote either way.
+**How confident to be —** Two were re-checked independently against the code on 18 September and both held up: the brief calls 75% "the sector limit" when the code treats 75% as a soft warning and 90% as the real ceiling, and the technical seat is told it is being shown the last 20 days of prices when it is actually shown 40.
+**Why it kept happening —** Nothing ties the English in a brief to the code it describes, so prose rots silently. Treat a brief as code that can go stale.
+**Recommendation —** Two pieces of work are already open and stacked, and between them they correct sixteen of the seventeen. Before anyone calls this finished, confirm which one is being left out and why.
+
+## item 105
+
+**Plain language —** The analyst seats' briefs contain about 55 numbers that exist nowhere but in the brief itself — no code behind them, nothing that checks them. The desk already bans numbers that were invented rather than read off real data; these are exactly that, and they were invisible because nobody had looked in the briefs. About 20 further statements about how markets behave are asserted with no source at all. Roughly a third of the portfolio manager's brief, and a quarter of two others', describes machinery the model does not actually operate — and that dead prose is where nearly every stale claim in item 104 was hiding.
+**One seat is a bigger question than the rest —** The evening seat's brief has not been touched since before this project began and still describes a hand-picked 77-stock value book held over quarters. The technical seat's brief describes a 5 to 15 day swing book. Both advise the same decision seat. They cannot both be right, and choosing between them is your call, not ours — it is now a dated decision on the board.
+**What was ruled out, so nobody rebuilds it —** Automatically scanning the briefs for numbers does not work: there are about 1,825 number-like tokens in them and most are dates and list numbering. More importantly, neither of the two confirmed cases in item 104 was even in a brief file — both were text the code assembles as it runs, so a file scanner would have caught neither.
+**Recommendation —** Build the check at the point of DELETION instead: when a mechanism is removed from the code, search for its name across every brief and every assembled string. That would have caught the worst case; nothing else proposed would.
+
+## item 106
+
+**Plain language — these are your own instructions, written down so the work lands against them.** Three pieces of work are in flight and each must match what you asked for, not an agent's taste: how the dashboard panels scroll, what the "why do we hold this" view shows, and how the evening report reads.
+**One requirement is not yet in any work at all —** You asked that when the reason to hold a stock rests on an insider or institutional purchase, the view show the DATE and the PRICE of that purchase — your example was Republic Services and when Cascade Investment actually bought. Somebody is working on it, but it is not committed anywhere yet, so it is recorded here as a requirement rather than as done.
+**The blocker on the rest of (b) is gone as of tonight —** the read-only endpoint behind this view is merged, and it was held back only until the panel-layout work landed; that has now also merged. Nothing stands between this and a working view: fetch the endpoint when a held symbol is opened, show its one-sentence reason and its labelled detail up front, and put the machine identifiers and the existing step-by-step trace behind one toggle. Nothing else about the page changes.
+
+## item 101
+
+**Plain language —** Twice a session the desk works out something important and then throws the answer away. One check finds exits the broker made on its own that the desk's books never recorded; the other counts positions it has just put protection back onto. Both compute the answer and then discard it at every one of the five places they are called. The answers do reach the log file, so this is not invisible — but they can never reach a Telegram message, a session summary, or anything that would actually tell you.
+**How we know it is wrong rather than deliberate —** The sister check sitting on the very next line does the opposite: it keeps its answer and carries it through to the session summary, which is how a missing stop reaches you today.
+**Recommendation —** Carry both answers through the same way the stop-coverage check already does. Do this alongside the Telegram work in item 89 — the "you were told you hold a name you sold that morning" defect is the same information going missing.
+
+## item 102
+
+**Plain language —** If an order fills only part-way and stays open, the desk never writes down how much of it filled. That is fine while the order eventually finishes, because the next pass picks it up. It stops being fine in a case the code itself already warns about: the broker deletes its order history after a few days, and after that an unrecorded order gets treated as having filled completely. So a half-filled order can end up counted as a whole one, with the cash and position figures wrong behind it.
+**Age —** This is not new and not from tonight's changes; it has been true at every one of these checks since they were written.
+**Recommendation —** Decide what a part-fill should record, then make that branch write it instead of skipping.
+
+## item 103
+
+**Plain language — your decision, and we are waiting on it.** You asked for the internal scrollbars to come off the detail panels, and they have. The consequence is that the Trades tab, which holds your full live trade history, now makes the page about 6,000 pixels tall. That is the cost of the change, not a fault, and moving to any other tab puts it back to normal. You were offered that one tab's scrollbar back and have not answered, so nothing has been changed.
+**Recommendation —** None until you rule. Your ruling was that scrolling belongs to a panel rather than to a position on the screen, so making one tab an exception is yours to decide, not ours.
+
+## item 115
+
+**Plain language —** The raw insider-filing gobbledygook you complained about is gone from the new "Why" tab, but there is a second screen — the run-detail popup — that still prints the same kind of raw machine text if you open it.
+**Why a separate number —** it was already written down, but buried inside item 106's paragraph about the Why tab, and you asked directly for this to be recorded on its own so it does not get missed or later mistaken for a duplicate of the fixed one.
+**Recommendation —** Same fix as item 106: put the raw evidence behind a labelled toggle in this view too, rather than dumping it as text.
+
+## item 116
+
+**Plain language —** The evening report used to compute real numbers from the broker every night and then throw them away, so a night's report could never be checked again later. That is now fixed. Nobody has checked whether the same thing happens at the other five points in the day: morning, midday, close, the half-hourly check, and the pre-earnings pass.
+**Why it matters —** if a decision that night rested on a price or a model's judgement that was never saved, there is no way to go back and check whether the decision was reasonable at the time.
+**Recommendation —** Apply the same fix used for the evening report to each of the other five checkpoints, one at a time.
+
+## item 117
+
+**Plain language —** The automated check that watches the size of this very file sometimes fails for a reason that has nothing to do with the file — it cannot get enough git history to compare against on some CI runs. A related problem, where three tests failed depending on what minute the clock read, has already been fixed.
+**Why it matters —** this automated check is the only gate that has to pass before a change can merge. A gate that fails for reasons unrelated to the actual change trains people to route around it instead of trusting it.
+**Recommendation —** Give the CI job enough git history up front so it never needs to guess, or make the check fail open (skip, not block) when it genuinely cannot read a baseline.
