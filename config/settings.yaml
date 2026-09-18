@@ -962,16 +962,25 @@ risk:
   # beta yet." Deliberately flipped only AFTER the gross-exposure ceiling and
   # the de-levering ladder were merged and verified, which was the ratified
   # sequencing. The PM prompt's exposure table moved to 2.0x in the same
-  # commit — the two must never diverge.
+  # commit — the two must never diverge. That table lives in
+  # `config/prompts/portfolio_manager.md` ("Target gross exposure", plus the
+  # de-levering-ladder table under it), NOT in `src/agents/
+  # portfolio_manager.py` — which has never held one, and where looking for
+  # it has already produced a false "the table was deleted" report
+  # (2026-09-18). Verified still present and still stating 2.0x as of
+  # 2026-09-18; it is prose, so nothing mechanical pins it to this value.
   allow_margin: true
   # --- Margin interest tracker (spec §11.2, 2026-09-01) ------------------
   # MEASURES only — never a risk check. Alpaca's live non-elite rate (elite
   # is 4.75%); kept here so it can be corrected without a code change.
   # Charged ONLY on the overnight debit balance, (balance x rate) / 360 —
   # intraday leverage is free. See src/margin_interest.py for the
-  # formula and the still-open question of whether paper trading charges
-  # this at all — every figure surfaced from this rate is a labelled
-  # ESTIMATE until the broker's own INT activity confirms or denies it.
+  # formula and the question of whether paper trading charges this at all —
+  # every figure surfaced from this rate is a labelled ESTIMATE. First
+  # measurement 2026-09-18: a -$915.83 debit carried overnight 09-17 -> 09-18
+  # produced ZERO broker `INT` activity rows on a query proven live in the
+  # same probe, i.e. paper did NOT charge it that night. One night on a small
+  # balance is not proof, the ESTIMATE label stays, and nothing gates on it.
   margin_interest_rate_pct: 6.25
   # --- Spec §11.2 — the gross-exposure ceiling (owner-ratified 2026-09-01)
   #
