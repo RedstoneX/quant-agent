@@ -252,6 +252,15 @@ a live item vanish. See the "Operational facts" note in `docs/WORK.md` for
 what a refusal looks like and how to tell a missing driver from a genuine
 one.
 
+**Trust its refusal, but check its success.** On 2026-09-18 the resolver was
+caught merging a real conflict, correctly handing back one sentence it judged
+unsafe to merge automatically — and, in the same run, silently dropping a
+whole unrelated item block while still reporting that it had succeeded. It
+was only caught because the person running it happened to re-read their own
+item back out of the file afterwards. Always do that: after any run that
+reports success rather than a refusal, re-read the item you expect to be
+there. See `docs/INCIDENT_HISTORY.md`, 2026-09-18, for the full defect.
+
 ### Configure
 
 1. Create `.env` (set `chmod 600` after — these are secrets):

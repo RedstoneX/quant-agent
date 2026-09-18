@@ -11999,6 +11999,20 @@ whole market — has fully cleared its backlog first; if the drain cannot
 finish, the day is marked stale and the owner is told before the market opens,
 rather than the desk silently discovering it hours later.
 
+**Why the old check was replaced rather than tuned.** The market-wide crawl it
+replaced had been checked, not assumed: it had never once, on any live
+intraday check since it started running the day before, come back saying
+"nothing new" — every single time it ran, it refused the decision. A path
+that has never once succeeded is a candidate for replacing, not for tuning
+its timing, the same lesson this desk already paid for once on the
+fill-notification socket. A second design — reading a single SEC-published
+daily list of that day's filings, instead of crawling full text — was
+considered and rejected with evidence: the file for the current day does not
+exist yet when checked (the request is refused), and the newest available
+file is always the previous business day's. A list that cannot see today
+cannot be used to decide whether today's evidence is stale, so this should
+not be re-proposed without a different data source.
+
 **Four smaller problems noticed while fixing this, not yet acted on:**
 - The existing written incident record already claims the Form 4 read is
   scoped to watched names the way the news read is — it is not, and the
@@ -12021,5 +12035,33 @@ rewrite the same day may have already made the first two moot by replacing
 the code path they describe — that has not been separately re-verified and
 should be checked against current `src/data/smart_money.py` before treating
 them as still live.
+
+---
+
+### 2026-09-18 — the automatic board-conflict resolver silently dropped an entire item while reporting success
+
+**In plain words:** the tool this desk trusts to merge conflicting edits to
+the open-work list said it had succeeded when it had not — it dropped a
+whole item from the list without telling anyone, in the same run where it
+correctly and visibly refused to merge a different, smaller conflict. The
+only reason it was caught is that the person running it happened to check
+their own work afterward. The rule that this tool must always be used
+instead of resolving a conflict by hand still holds; what changes is that its
+success can no longer be taken on trust.
+
+Working a real merge conflict in the open-work list, the resolver merged the
+bulk of it correctly, explicitly flagged one sentence as unsafe to combine
+automatically and handed it back for a person to decide — that part behaved
+exactly as documented. In the same run, however, it silently dropped a whole,
+unrelated item block and still reported the merge as successful. Refusing
+to guess is the documented, trusted behaviour; quietly losing something while
+claiming success is not, and nothing about the tool's own output would have
+shown the difference. The rule that a conflict in the open-work list must
+always go through this tool, never be resolved by hand, is unaffected and
+still correct — hand-resolution is how a different, earlier conflict lost
+five live items outright. What changes is the second half of that rule:
+after the tool reports success, whoever ran it must re-read their own item
+back out of the file and confirm it is still there, rather than trusting the
+reported success on its own.
 
 ---

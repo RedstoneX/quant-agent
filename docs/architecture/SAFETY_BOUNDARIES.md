@@ -112,6 +112,18 @@
   or a reconciliation finding the desk's record and the broker's
   disagreeing with no sale to explain it). The socket being off never
   pages. Verified by `tests/test_fill_stream_switch.py`.
+- **UPDATE, 2026-09-18: "has never authenticated" above is now history, not
+  the present state.** With the real credential delivered and the flag on, a
+  connection attempt as the desk's own account authenticated on the FIRST
+  try — the placeholder-credential root cause is proven fixed, not merely
+  inferred. The broker's reply also flagged the in-band message format
+  alpaca-py sends as deprecated; the desk now sends the format the broker
+  actually asks for, with the old one kept only as a same-socket fallback.
+  Both were fixed and shipped the same day. Full detail, including what is
+  still unproven (the desk's own code completing the handshake end to end
+  during a real trading session) and the account this socket is pinned to:
+  `docs/architecture/CREDENTIAL_DELIVERY_EVIDENCE.md`, "The websocket
+  exception" section.
 - **One `trade_updates` socket per Alpaca account** (2026-09-17, DORMANT
   while the flag above is off — this is the behaviour flipping it back on
   restores): Alpaca
