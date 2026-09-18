@@ -19,12 +19,15 @@ right here.
 Directionality matters and is the whole point:
   - `thesis_progress_pct` rising is improvement.
   - `distance_to_stop_pct` rising is improvement ONLY when the PRICE moved
-    away from the stop. It is a function of the stop as much as of the
-    price, so widening the stop also makes it rise — which is the desk
-    removing its own protection, not the position getting better. Verified
-    on real 2026-09-01 snapshots for V, CMCSA and DIS, all three of which
-    were deteriorating at the time. Decomposed since 2026-09-18; see
-    `_STOP_DEPENDENT_METRIC` and `MetricDeltas.stop_driven`.
+    away from the stop, on EITHER side — see `veto_contradicted_exit`'s
+    docstring for the 2026-09-18 fix that made the underlying metric
+    actually side-correct for a short. It is also a function of the stop
+    as much as of the price, so widening the stop also makes it rise —
+    which is the desk removing its own protection, not the position
+    getting better. Verified on real 2026-09-01 snapshots for V, CMCSA and
+    DIS, all three of which were deteriorating at the time. Decomposed
+    since 2026-09-18; see `_STOP_DEPENDENT_METRIC` and
+    `MetricDeltas.stop_driven`, both side-aware since the same date.
   - `r_multiple` rising is improvement.
   - `pace` rising is improvement.
 A verdict may not call a position stalled while its own measured deltas are
@@ -124,8 +127,13 @@ _STOP_DEPENDENT_METRIC = "distance_to_stop_pct"
 
 #: Snapshot fields that are not metrics but are needed to attribute a
 #: `distance_to_stop_pct` move to the price or to the stop. Carried
-#: alongside the metrics by `TradingPipeline._REVIEW_METRIC_KEYS`.
-_PROVENANCE_KEYS = ("stop_loss", "current_price")
+#: alongside the metrics by `TradingPipeline._REVIEW_METRIC_KEYS`. `qty`
+#: (2026-09-18 follow-up) supplies the SIDE: `distance_to_stop_pct` mirrors
+#: its numerator for a short (`stop - current` instead of `current -
+#: stop`), and the counterfactual recomputation below must mirror the same
+#: way or it silently reproduces the pre-fix long-only formula for every
+#: short reviewed.
+_PROVENANCE_KEYS = ("stop_loss", "current_price", "qty")
 
 #: How much a metric must move before it counts as a real change rather than
 #: rounding noise. Expressed in each metric's own units.
@@ -152,11 +160,13 @@ class MetricDeltas:
     symbol: str
     changes: dict[str, tuple[float, float]] = field(default_factory=dict)
     prior_timestamp: str | None = None
-    #: `{stop_loss: (before, after), current_price: (before, after)}` when
-    #: both snapshots carried them. Not metrics and never scored — they
-    #: exist only to attribute a `distance_to_stop_pct` move (see
-    #: `_STOP_DEPENDENT_METRIC`). Empty for a snapshot written before
-    #: 2026-09-18, which is handled explicitly rather than guessed.
+    #: `{stop_loss: (before, after), current_price: (before, after),
+    #: qty: (before, after)}` when the snapshot pair carried them. Not
+    #: metrics and never scored — they exist only to attribute a
+    #: `distance_to_stop_pct` move (see `_STOP_DEPENDENT_METRIC`) and, via
+    #: `qty`'s sign, to know which side's formula to replay. Empty for a
+    #: snapshot written before 2026-09-18, which is handled explicitly
+    #: rather than guessed.
     provenance: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     @property
@@ -170,12 +180,17 @@ class MetricDeltas:
         False - it only improves because the stop moved; the price alone
                 does not carry it past the same noise floor.
         None  - unattributable: this pair of snapshots does not carry the
-                stop and the price, so the question cannot be answered.
+                stop and the price, or the recorded side flipped between
+                the two snapshots, so the question cannot be answered.
 
         The test is the metric's own formula with the stop pinned to its
         prior value — an exact decomposition, not an estimate, and it
         introduces no number: it reuses `_NOISE_FLOOR` exactly as
-        `improved` does.
+        `improved` does. It must mirror
+        `TradingPipeline._build_position_facts`'s side-aware formula
+        exactly (2026-09-18 fix + follow-up), or it silently reproduces
+        the pre-fix long-only arithmetic for every short reviewed —
+        recomputing the wrong number is worse than not recomputing at all.
         """
         pair = self.changes.get(_STOP_DEPENDENT_METRIC)
         if pair is None:
@@ -188,10 +203,32 @@ class MetricDeltas:
         price_now = prices[1]
         if price_now <= 0:
             return None
-        # `(current - stop) / current * 100`, verbatim, with the stop held
-        # at the value it had at the prior review. Sign convention is the
-        # producer's and is not second-guessed here.
-        counterfactual = (price_now - stop_then) / price_now * 100
+        # `qty` is the side. Missing (a snapshot pair that predates this
+        # field, or a hand-built long-only fixture) defaults to LONG rather
+        # than refusing to attribute: that reproduces this function's own
+        # pre-existing behaviour exactly, which is correct for an actual
+        # long and, for an actual short, merely continues for one more
+        # review cycle the same long-only misattribution this whole fix
+        # closes — never worse than the status quo it replaces, and it
+        # self-heals once both snapshots carry `qty`.
+        qty_pair = self.provenance.get("qty")
+        if qty_pair is None:
+            is_short = False
+        else:
+            qty_before, qty_after = qty_pair
+            # A side flip between snapshots (long closed and a short opened
+            # on the same symbol, or vice versa) means the "prior stop" is
+            # not even the same position's stop. Refuse to attribute rather
+            # than guess — same fail-safe posture as every other None here.
+            if (qty_before < 0) != (qty_after < 0):
+                return None
+            is_short = qty_after < 0
+        # Mirrors `dist_stop_pct` in `TradingPipeline._build_position_facts`
+        # exactly: SHORT numerator is `(stop - current)` (stop sits above
+        # price), LONG is `(current - stop)`. The stop is held at its
+        # PRIOR value; only price is let move, to isolate its contribution.
+        numerator = (stop_then - price_now) if is_short else (price_now - stop_then)
+        counterfactual = numerator / price_now * 100
         floor = _NOISE_FLOOR.get(_STOP_DEPENDENT_METRIC, 0.0)
         return counterfactual - pair[0] > floor
 
@@ -313,9 +350,10 @@ def compute_deltas(
             if before is None or after is None:
                 continue
             changes[name] = (before, after)
-        # Stop/price are carried, never scored — they only answer "did the
-        # distance-to-stop move because the market moved or because we
-        # moved the stop?". Absent on snapshots written before 2026-09-18.
+        # Stop/price/qty are carried, never scored — they only answer "did
+        # the distance-to-stop move because the market moved or because we
+        # moved the stop, and on which side?". Absent on snapshots written
+        # before 2026-09-18.
         for name in _PROVENANCE_KEYS:
             before = _finite(prior.get(name))
             after = _finite(current.get(name))
@@ -352,10 +390,28 @@ def veto_contradicted_exit(
     new information, which the reviewer keeps full authority to make (spec
     Phase 3.8).
 
-    `deltas` is trusted to already be direction-corrected for a short (see
-    `TradingPipeline._build_position_facts` / `_pnl_pct` — every metric here
-    is "higher is better" regardless of which side is held), so COVER needs
-    no separate sign handling in this function.
+    `deltas` is trusted to already be direction-corrected for a short, so
+    COVER needs no separate sign handling in this function. Verified
+    per-metric, 2026-09-18 (each is computed in
+    `TradingPipeline._build_position_facts` unless noted):
+      - `thesis_progress_pct` — side-correct by construction: both
+        `(cur - entry)` and `(progress_target - entry)` flip sign together
+        for a short, so the ratio is unchanged.
+      - `pace` — inherits `thesis_progress_pct`'s correctness; the
+        denominator (`time_fraction`) is never signed.
+      - `r_multiple` — side-correct by construction (`src/risk/metrics.py
+        ::r_multiple` takes `qty`'s sign as the side and mirrors both the
+        numerator and the risk-per-share denominator for a short).
+      - `distance_to_stop_pct` — was NOT side-correct until 2026-09-18: it
+        was computed as `(cur - stop_loss) / cur * 100` regardless of side,
+        which is correct for a long (stop below price) but for a short
+        (stop above price) is negative and moves the WRONG way — it gets
+        MORE negative, i.e. reads as "worse" under `_HIGHER_IS_BETTER`, as
+        the price moves further from the stop and the position gets safer.
+        Fixed by mirroring the numerator for `qty < 0`. Any snapshot
+        written before that fix still has old-formula (mis-signed for
+        shorts) values, so a delta spanning that boundary is stale, not
+        wrong — it self-heals after one review cycle.
     """
     if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
         return None

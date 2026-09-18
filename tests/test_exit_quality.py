@@ -186,6 +186,57 @@ def test_position_facts_fall_back_to_buy_row_stop():
     assert facts["GE"]["stop_distance_atrs"] is None   # unknown ≠ zero
 
 
+def test_distance_to_stop_pct_is_side_aware_for_shorts():
+    """A SHORT's stop sits ABOVE price. `distance_to_stop_pct` must still
+    come out positive and RISE as price moves further from the stop
+    (favourable for a short = price falling) — the same "higher is safer"
+    meaning `_HIGHER_IS_BETTER` in `src/risk/exit_guard.py` assumes for
+    every side. Before the 2026-09-18 fix the raw
+    `(cur - stop_loss) / cur * 100` formula was applied unconditionally,
+    which for a short is negative and moves the WRONG way: it got MORE
+    negative (read as "worse") as the position got safer.
+    """
+    SHORT = Position(
+        symbol="XYZ", qty=-10.0, avg_entry=100.0, current_price=90.0,
+        market_value=-900.0, unrealized_pnl=100.0,
+        unrealized_intraday_pnl=0.0, sector="Technology",
+    )
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    pipeline.broker.get_current_stop_price.return_value = None
+    pipeline.db = MagicMock()
+    pipeline.db.get_symbol_last_buy.return_value = {
+        "stop_loss": 110.0, "take_profit": 70.0,
+        "timestamp": "2026-07-01 14:00:00",
+    }
+    pipeline._atr_for_symbol = lambda s: None
+
+    facts_favorable = pipeline._build_position_facts(
+        [SHORT], morning_trades=[], total_value=100_000.0,
+    )
+    dist_favorable = facts_favorable["XYZ"]["distance_to_stop_pct"]
+
+    ADVERSE = Position(
+        symbol="XYZ", qty=-10.0, avg_entry=100.0, current_price=105.0,
+        market_value=-1050.0, unrealized_pnl=-50.0,
+        unrealized_intraday_pnl=0.0, sector="Technology",
+    )
+    facts_adverse = pipeline._build_position_facts(
+        [ADVERSE], morning_trades=[], total_value=100_000.0,
+    )
+    dist_adverse = facts_adverse["XYZ"]["distance_to_stop_pct"]
+
+    # Both positive: "room left before the stop", never a negative reading.
+    assert dist_favorable > 0
+    assert dist_adverse > 0
+    # Further from the stop (price fell to 90) must score HIGHER than
+    # closer to the stop (price rose to 105) — the sign bug had this
+    # backwards.
+    assert dist_favorable > dist_adverse
+    assert abs(dist_favorable - (110 - 90) / 90 * 100) < 0.01
+    assert abs(dist_adverse - (110 - 105) / 105 * 100) < 0.01
+
+
 def _pm_rc():
     from src.models import ReasoningChain
     return ReasoningChain(

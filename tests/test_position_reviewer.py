@@ -316,6 +316,38 @@ def test_prompt_embeds_position_metrics():
     assert "NVDA" in msg
 
 
+def test_prompt_backcomputes_short_stop_on_the_correct_side_of_price():
+    """When `trade_context` has no stop (position opened before today) the
+    prompt back-computes one from `distance_to_stop_pct` — but the inverse
+    of the pipeline's formula is side-mirrored: a SHORT's stop sits ABOVE
+    price, `sl = cur * (1 + dist/100)`; a LONG's sits below,
+    `sl = cur * (1 - dist/100)`. Using the long-only inverse for a short
+    would place the "Hard stop" BELOW the current price — the wrong side
+    entirely."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            session_type="midday",
+            positions=[Position(
+                symbol="XYZ", qty=-10, avg_entry=100.0, current_price=90.0,
+                market_value=-900.0, unrealized_pnl=100.0, sector="Tech",
+            )],
+            macro_summary={"vix": {"current": 18.0}},
+            cash_balance=1_000.0,
+            total_value=10_000.0,
+            # Side-aware value a SHORT at $90 with a stop at $110 actually
+            # produces: (110 - 90) / 90 * 100.
+            position_facts={"XYZ": {"distance_to_stop_pct": (110 - 90) / 90 * 100}},
+        )
+
+    assert "Hard stop (broker): $110.00" in msg, (
+        f"expected the back-computed stop above current price for a short, "
+        f"got: {msg!r}"
+    )
+
+
 def test_prompt_contains_money_making_principles_reference():
     """The system prompt tells the LLM to 'read BEFORE every review' — the
     user-message scaffold should not silently override that by omitting the

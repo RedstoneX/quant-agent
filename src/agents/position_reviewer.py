@@ -245,7 +245,15 @@ class PositionReviewerAgent(BaseAgent):
             # reviewer always sees the actual protection levels it is asked
             # to reason about (new_stop >= old_stop*1.02 rule).
             if not sl and pf.get("distance_to_stop_pct") is not None and p.current_price > 0:
-                sl = p.current_price * (1 - pf["distance_to_stop_pct"] / 100)
+                # Inverse of `TradingPipeline._build_position_facts`'s
+                # `dist_stop_pct` formula, which is side-mirrored since
+                # 2026-09-18: a LONG's stop sits BELOW price
+                # (`sl = cur * (1 - dist/100)`), a SHORT's sits ABOVE
+                # (`sl = cur * (1 + dist/100)`). Using the long-only inverse
+                # for a short back-computed a stop on the wrong side of
+                # price entirely.
+                _dist = pf["distance_to_stop_pct"] / 100
+                sl = p.current_price * ((1 + _dist) if p.qty < 0 else (1 - _dist))
             if not tp and pf.get("distance_to_target_pct") is not None and p.current_price > 0:
                 tp = p.current_price * (1 + pf["distance_to_target_pct"] / 100)
             if sl:

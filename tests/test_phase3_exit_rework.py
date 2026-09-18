@@ -304,6 +304,48 @@ def test_distance_improvement_without_provenance_is_not_counted():
     assert "provenance unknown" in d.render()
 
 
+def test_deltas_short_price_driven_improvement_still_counts():
+    """SHORT twin of `test_deltas_detect_improvement`. Stop fixed at 110
+    (above price, protecting the short); price falls 100 -> 90, a real
+    favourable move. `distance_to_stop_pct` (side-mirrored:
+    `(stop - current) / current * 100`) rises 10.0 -> 22.22, and — because
+    `qty` is carried and negative on both snapshots — the provenance
+    recomputation must recognise this as PRICE-driven, not stop-driven,
+    the same as it would for a long."""
+    d = compute_deltas(
+        "XYZ",
+        prior={"distance_to_stop_pct": 10.0, "stop_loss": 110.0,
+               "current_price": 100.0, "qty": -10.0},
+        current={"distance_to_stop_pct": 22.22, "stop_loss": 110.0,
+                 "current_price": 90.0, "qty": -10.0},
+    )
+    assert d.stop_driven == []
+    assert d.improved == ["distance_to_stop_pct"]
+    assert d.net_improved is True
+
+
+def test_deltas_short_widened_stop_is_not_an_improvement():
+    """SHORT twin of the V/CMCSA/DIS real-data case: the stop is loosened
+    (moved further ABOVE price, from 110 to 130) while price actually moves
+    ADVERSELY for the short (100 -> 105, i.e. up). `distance_to_stop_pct`
+    still rises 10.0 -> 23.8 because both terms moved, but holding the stop
+    at its prior value (110) with the new price (105) gives
+    (110-105)/105*100 = 4.76 — LOWER than the prior 10.0, so price alone
+    does not carry the rise. Must land in `stop_driven`, excluded from
+    `improved`, exactly like the long case — not the sign-flipped opposite
+    conclusion a long-only recomputation would reach."""
+    d = compute_deltas(
+        "XYZ",
+        prior={"distance_to_stop_pct": 10.0, "stop_loss": 110.0,
+               "current_price": 100.0, "qty": -10.0},
+        current={"distance_to_stop_pct": 23.8, "stop_loss": 130.0,
+                 "current_price": 105.0, "qty": -10.0},
+    )
+    assert d.stop_driven == ["distance_to_stop_pct"]
+    assert d.improved == []
+    assert "wider stop, NOT an improvement" in d.render()
+
+
 def test_deltas_detect_deterioration():
     d = compute_deltas(
         "AAA",

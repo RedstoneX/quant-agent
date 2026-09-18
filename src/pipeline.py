@@ -12355,10 +12355,24 @@ class TradingPipeline:
                         pace_status = "measured"
 
             # Distance-to-stop / distance-to-target as % of current price.
+            #
+            # `distance_to_stop_pct` MUST be side-aware. A LONG's stop sits
+            # BELOW price, so `(cur - stop_loss)` is the room left and is
+            # positive while the position is alive. A SHORT's stop sits
+            # ABOVE price, so that same expression is NEGATIVE, and it moves
+            # the WRONG way: it gets MORE negative (looks worse under
+            # `_HIGHER_IS_BETTER`) as the price falls further from the stop
+            # — i.e. as the position gets safer. Mirror the numerator for a
+            # short (`p.qty < 0`) so the metric means the same thing on both
+            # sides: positive, and falling as the stop gets closer. See
+            # `src/risk/exit_guard.py::_HIGHER_IS_BETTER`, which trusts this
+            # value to already be direction-corrected.
             dist_stop_pct = None
             dist_target_pct = None
             if stop_loss and cur > 0:
-                dist_stop_pct = (cur - stop_loss) / cur * 100
+                dist_stop_pct = (
+                    (stop_loss - cur) if p.qty < 0 else (cur - stop_loss)
+                ) / cur * 100
             if take_profit and cur > 0:
                 dist_target_pct = (take_profit - cur) / cur * 100
 
@@ -12426,6 +12440,12 @@ class TradingPipeline:
                 # deteriorating. See `exit_guard._STOP_DEPENDENT_METRIC`.
                 "stop_loss": stop_loss or None,
                 "current_price": cur if cur > 0 else None,
+                # Side, so the provenance recomputation in
+                # `exit_guard.MetricDeltas._distance_move_is_price_driven`
+                # can mirror the SAME formula this block uses above
+                # (`dist_stop_pct`) rather than assume every position is a
+                # long. Never scored — not a metric, just qty's sign.
+                "qty": p.qty,
                 "weight_pct": weight_pct,
                 "parabolic_flag": parabolic_flag,
                 "drift_flag": drift_flag,
@@ -12450,15 +12470,18 @@ class TradingPipeline:
     #: Metric keys snapshotted after every review and compared on the next one.
     #: Kept deliberately small — these are the numbers a "stalling" claim is
     #: actually about, and every one of them has a defined direction.
-    #: `stop_loss` / `current_price` are NOT metrics and are never scored.
-    #: They are the two terms of `distance_to_stop_pct` and are snapshotted
-    #: solely so the next review can attribute a move in it to the market
-    #: or to the desk's own stop (2026-09-18). Snapshots written before
-    #: that date lack them; `compute_deltas` handles that explicitly.
+    #: `stop_loss` / `current_price` / `qty` are NOT metrics and are never
+    #: scored. `stop_loss` and `current_price` are the two terms of
+    #: `distance_to_stop_pct`, snapshotted so the next review can attribute
+    #: a move in it to the market or to the desk's own stop (2026-09-18).
+    #: `qty` supplies the SIDE that same recomputation needs to mirror the
+    #: numerator correctly for a short (2026-09-18 follow-up, alongside the
+    #: sign fix to `distance_to_stop_pct` itself). Snapshots written before
+    #: 2026-09-18 lack all three; `compute_deltas` handles that explicitly.
     _REVIEW_METRIC_KEYS = (
         "thesis_progress_pct", "distance_to_stop_pct", "r_multiple", "pace",
         "days_held", "expected_horizon_sessions", "setup_type", "pace_status",
-        "stop_loss", "current_price",
+        "stop_loss", "current_price", "qty",
     )
 
     def _build_review_metric_deltas(self, position_facts: dict, *, run_id: str) -> dict:
