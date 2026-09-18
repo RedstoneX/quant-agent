@@ -6,6 +6,11 @@
 
     scripts/desk_status.py --evening              # last night's stored report
     scripts/desk_status.py --evening 2026-09-17   # a specific night
+    scripts/desk_status.py --morning              # this morning's stored report
+    scripts/desk_status.py --midday 2026-09-17    # a specific midday review
+    scripts/desk_status.py --close                # today's stored close review
+    scripts/desk_status.py --intra                # the most recent intra_check tick
+    scripts/desk_status.py --intra intra_check-20260917-1200  # one tick by run id
 
 WHAT IT IS
     "Tell me where the desk stands, now." It reports state; it does not
@@ -83,6 +88,26 @@ def build_parser() -> argparse.ArgumentParser:
             "broker call, no model call."
         ),
     )
+    for mode in ("morning", "midday", "close"):
+        parser.add_argument(
+            f"--{mode}", nargs="?", const="latest", metavar="DATE",
+            help=(
+                f"Re-render a stored {mode} report instead of the live desk "
+                "status. DATE is a trading day (YYYY-MM-DD); omit it for "
+                "the most recent stored session. Reads only the database "
+                "— no broker call, no model call."
+            ),
+        )
+    parser.add_argument(
+        "--intra", nargs="?", const="latest", metavar="RUN_ID_OR_DATE",
+        help=(
+            "Re-render one stored intra_check tick instead of the live "
+            "desk status. Accepts a run id, a trading day (YYYY-MM-DD, "
+            "renders that day's latest tick), or omit it for the most "
+            "recent stored tick overall. Reads only the database — no "
+            "broker call, no model call."
+        ),
+    )
     return parser
 
 
@@ -109,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.evening:
         return _send_stored_evening(args, config)
+    for mode in ("morning", "midday", "close"):
+        if getattr(args, mode):
+            return _send_stored_session_report(mode, args, config)
+    if args.intra:
+        return _send_stored_intra_check(args, config)
 
     api_key = os.environ.get("ALPACA_API_KEY", "")
     secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
@@ -196,6 +226,84 @@ def _send_stored_evening(args, config) -> int:
 
     try:
         message = render_stored_evening(record)
+    except ValueError as exc:
+        print(f"ERROR: {exc} — nothing sent.", file=sys.stderr)
+        return 3
+
+    return _deliver(message, config, dry_run=args.dry_run)
+
+
+def _send_stored_session_report(mode: str, args, config) -> int:
+    """`--morning/--midday/--close [DATE]`: read one stored session report
+    back out. Same contract as `_send_stored_evening` — see its docstring.
+    """
+    from src.trader_feed import read_stored_session_report, render_stored_session_report
+
+    db_path = Path(config.storage.db_path)
+    if not db_path.is_absolute():
+        db_path = PROJECT_ROOT / db_path
+    if not db_path.exists():
+        print(f"ERROR: database not found: {db_path}", file=sys.stderr)
+        return 2
+
+    raw = getattr(args, mode)
+    requested = None if raw == "latest" else str(raw)
+    record = read_stored_session_report(mode, requested, db_path=db_path)
+
+    if record is None:
+        which = f"for {requested}" if requested else "at all"
+        print(
+            f"ERROR: no readable {mode} report stored {which} — nothing "
+            f"sent. The {mode} run either did not complete or predates "
+            f"the stored-report table; there is no honest message to send.",
+            file=sys.stderr,
+        )
+        return 3
+
+    try:
+        message = render_stored_session_report(mode, record)
+    except ValueError as exc:
+        print(f"ERROR: {exc} — nothing sent.", file=sys.stderr)
+        return 3
+
+    return _deliver(message, config, dry_run=args.dry_run)
+
+
+def _send_stored_intra_check(args, config) -> int:
+    """`--intra [RUN_ID_OR_DATE]`: read one stored intra_check tick back
+    out. Same contract as `_send_stored_evening` — see its docstring.
+    """
+    from src.trader_feed import read_stored_intra_check, render_stored_intra_check
+
+    db_path = Path(config.storage.db_path)
+    if not db_path.is_absolute():
+        db_path = PROJECT_ROOT / db_path
+    if not db_path.exists():
+        print(f"ERROR: database not found: {db_path}", file=sys.stderr)
+        return 2
+
+    raw = None if args.intra == "latest" else str(args.intra)
+    run_id = None
+    date = None
+    if raw:
+        # A trading-day key looks like YYYY-MM-DD; anything else is a run id.
+        if len(raw) == 10 and raw.count("-") == 2:
+            date = raw
+        else:
+            run_id = raw
+    record = read_stored_intra_check(run_id=run_id, date=date, db_path=db_path)
+
+    if record is None:
+        which = f"for {raw}" if raw else "at all"
+        print(
+            f"ERROR: no readable intra_check tick stored {which} — nothing "
+            f"sent. There is no honest message to send.",
+            file=sys.stderr,
+        )
+        return 3
+
+    try:
+        message = render_stored_intra_check(record)
     except ValueError as exc:
         print(f"ERROR: {exc} — nothing sent.", file=sys.stderr)
         return 3

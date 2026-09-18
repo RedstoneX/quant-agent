@@ -1133,6 +1133,15 @@ def _append_watch(lines: list[str], rows: list[dict], profiles: dict) -> None:
 def _format_decision_session(mode: str, result: dict, elapsed: float) -> str:
     run_id = result.get("run_id")
     snap = _read_run(run_id)
+    # A caller may supply `_positions` already — that is how a stored
+    # morning report is re-rendered (`render_stored_session_report`).
+    # `_read_run`'s positions query is deliberately NOT run-scoped (it
+    # reads the book as it stands right now), so replaying an older run
+    # through it would print today's holdings under that run's date. A
+    # supplied snapshot wins; the live morning path never sets one.
+    if isinstance(result.get("_positions"), list):
+        snap = dict(snap)
+        snap["positions"] = result["_positions"]
     status = str(result.get("status", "unknown"))
 
     done_rows = _done_rows(snap)
@@ -1192,6 +1201,12 @@ def _held_symbols(snap: dict[str, Any]) -> list[str]:
 def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     run_id = result.get("run_id")
     snap = _read_run(run_id)
+    # See `_format_decision_session`'s identical comment: a supplied
+    # `_positions` snapshot is how a stored midday/close report is
+    # re-rendered without printing today's book under an old date.
+    if isinstance(result.get("_positions"), list):
+        snap = dict(snap)
+        snap["positions"] = result["_positions"]
     status = str(result.get("status", "unknown"))
     review = result.get("review") if isinstance(result.get("review"), dict) else {}
 
@@ -2629,6 +2644,312 @@ def render_stored_evening(record: dict, elapsed_seconds: float = 0.0) -> str:
         else "   The producing run id was not recorded"
     )
     lines = [*header, "", body]
+
+    if gaps:
+        if len(gaps) == 1:
+            named = gaps[0]
+        else:
+            named = ", ".join(gaps[:-1]) + " and " + gaps[-1]
+        lines += [
+            "",
+            _b("NOT AVAILABLE"),
+            f"   The stored record does not contain {named}. That is "
+            f"missing information, not an empty result — do not read the "
+            f"silence above as an all-clear.",
+        ]
+    return "\n".join(lines)
+
+
+# === stored morning / midday / close reports (2026-09-18 gap sweep) ===
+#
+# Same rationale and shape as the evening pair above: `run_morning` and
+# `run_position_review` compute `leverage` (the §11.2 gross-ceiling
+# snapshot) and `stop_coverage_gaps` (the broker-truth stop audit) from
+# live state and hand them to the notifier with no other durable home.
+# `Database.save_session_report` now keeps them, keyed by (date, mode).
+
+_STORED_SESSION_GAP_WORDS: tuple[tuple[str, str], ...] = (
+    ("stop_coverage_gaps", "the stop-coverage audit result"),
+    ("leverage", "the gross-exposure ceiling snapshot"),
+)
+
+_STORED_SESSION_LABELS = {
+    "morning": "MORNING",
+    "midday": "MIDDAY REVIEW",
+    "close": "CLOSE REVIEW",
+}
+
+
+def read_stored_session_report(
+    mode: str, date: str | None = None, db_path: Any = None,
+) -> dict[str, Any] | None:
+    """One `session_reports` row for `mode` ('morning', 'midday', 'close'),
+    through a read-only connection. Mirrors `read_stored_evening`'s
+    contract exactly — see its docstring for why an unreadable row is
+    treated as absent and why this opens the file `mode=ro`.
+    """
+    path = Path(db_path) if db_path is not None else Path(_DB_PATH)
+    if not path.exists():
+        return None
+    conn = None
+    try:
+        conn = sqlite3.connect(
+            f"file:{path.resolve()}?mode=ro", uri=True, timeout=1.0,
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=1000")
+        if date:
+            row = conn.execute(
+                "SELECT * FROM session_reports WHERE date = ? AND mode = ?",
+                (date, mode),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM session_reports WHERE mode = ? "
+                "ORDER BY date DESC LIMIT 1", (mode,),
+            ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        logger.warning("stored %s report read failed: %s", mode, exc)
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+    if not row:
+        return None
+    record = dict(row)
+    try:
+        payload = json.loads(record.get("payload_json") or "")
+    except (TypeError, ValueError):
+        logger.error(
+            "stored %s report for %s has unreadable payload",
+            mode, record.get("date"),
+        )
+        return None
+    if not isinstance(payload, dict):
+        return None
+    positions = None
+    if record.get("positions_json"):
+        try:
+            parsed = json.loads(record["positions_json"])
+            positions = parsed if isinstance(parsed, list) else None
+        except (TypeError, ValueError):
+            positions = None
+    return {
+        "date": record.get("date"),
+        "mode": record.get("mode") or mode,
+        "run_id": record.get("run_id"),
+        "timestamp": record.get("timestamp"),
+        "payload": payload,
+        "positions": positions,
+    }
+
+
+def render_stored_session_report(
+    mode: str, record: dict, elapsed_seconds: float = 0.0,
+) -> str:
+    """One stored morning/midday/close report as a Telegram message.
+
+    `record` is a `read_stored_session_report`/`Database.get_session_report`
+    row. Raises ValueError if it carries no usable payload.
+    """
+    if mode not in ("morning", "midday", "close"):
+        raise ValueError(f"render_stored_session_report: unknown mode {mode!r}")
+    payload = record.get("payload") if isinstance(record, dict) else None
+    if not isinstance(payload, dict):
+        raise ValueError(f"stored {mode} report has no usable payload")
+
+    result = dict(payload)
+    gaps: list[str] = []
+
+    # The book must come from the stored snapshot — see the identical
+    # reasoning in `render_stored_evening`.
+    positions = record.get("positions")
+    if isinstance(positions, list):
+        result["_positions"] = positions
+    else:
+        result["_positions"] = []
+        gaps.append("the book as it stood at the end of that session")
+
+    for key, words in _STORED_SESSION_GAP_WORDS:
+        if payload.get(key) is None:
+            gaps.append(words)
+
+    body = format_session_result(mode, result, elapsed_seconds)
+    if not body:
+        raise ValueError(f"stored {mode} report could not be rendered")
+
+    date_text = record.get("date") or "date not recorded"
+    run_id = record.get("run_id")
+    label = _STORED_SESSION_LABELS.get(mode, mode.upper())
+    header = [
+        _b(f"STORED {label} REPORT · {date_text}"),
+        "   Read back from the stored record. Nothing was run to produce "
+        "this: no broker call, no model call, no order.",
+    ]
+    header.append(
+        f"   Produced by run {run_id}" if run_id
+        else "   The producing run id was not recorded"
+    )
+    lines = [*header, "", body]
+
+    if gaps:
+        if len(gaps) == 1:
+            named = gaps[0]
+        else:
+            named = ", ".join(gaps[:-1]) + " and " + gaps[-1]
+        lines += [
+            "",
+            _b("NOT AVAILABLE"),
+            f"   The stored record does not contain {named}. That is "
+            f"missing information, not an empty result — do not read the "
+            f"silence above as an all-clear.",
+        ]
+    return "\n".join(lines)
+
+
+# === stored intra_check ticks (2026-09-18 gap sweep) ===
+#
+# intra_check fires roughly every 30 minutes, not once/day, so there is
+# no single "the" report for a date the way evening/morning/midday/close
+# have one. `Database.save_intra_check_report` keeps every tick, keyed by
+# run_id.
+
+
+def read_stored_intra_check(
+    run_id: str | None = None, date: str | None = None, db_path: Any = None,
+) -> dict[str, Any] | None:
+    """One `intra_check_reports` row, through a read-only connection.
+
+    `run_id` selects a specific tick. Otherwise `date` (or, absent that,
+    the most recent row overall) returns the latest tick recorded for
+    that day.
+    """
+    path = Path(db_path) if db_path is not None else Path(_DB_PATH)
+    if not path.exists():
+        return None
+    conn = None
+    try:
+        conn = sqlite3.connect(
+            f"file:{path.resolve()}?mode=ro", uri=True, timeout=1.0,
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=1000")
+        if run_id:
+            row = conn.execute(
+                "SELECT * FROM intra_check_reports WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        elif date:
+            row = conn.execute(
+                "SELECT * FROM intra_check_reports WHERE date = ? "
+                "ORDER BY timestamp DESC LIMIT 1", (date,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM intra_check_reports "
+                "ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        logger.warning("stored intra_check report read failed: %s", exc)
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+    if not row:
+        return None
+    record = dict(row)
+    try:
+        payload = json.loads(record.get("payload_json") or "")
+    except (TypeError, ValueError):
+        logger.error(
+            "stored intra_check report for %s has unreadable payload",
+            record.get("run_id"),
+        )
+        return None
+    if not isinstance(payload, dict):
+        return None
+    positions = None
+    if record.get("positions_json"):
+        try:
+            parsed = json.loads(record["positions_json"])
+            positions = parsed if isinstance(parsed, list) else None
+        except (TypeError, ValueError):
+            positions = None
+    return {
+        "date": record.get("date"),
+        "run_id": record.get("run_id"),
+        "timestamp": record.get("timestamp"),
+        "payload": payload,
+        "positions": positions,
+    }
+
+
+def render_stored_intra_check(record: dict, elapsed_seconds: float = 0.0) -> str:
+    """One stored intra_check tick, rendered honestly.
+
+    Deliberately NOT `format_session_result("intra_check", ...)`. That
+    formatter decides whether to speak at all from the CURRENT wall clock
+    (`_is_hourly_checkpoint`, `_is_midday_collision_tick`) and from a live
+    "last hour" evidence window (`_read_hour_evidence`/
+    `_read_hour_trade_count`) measured from now, not from the tick's own
+    time. Reusing it to replay an old tick would either render nothing
+    (today's clock says "not a checkpoint minute") or silently substitute
+    TODAY's last-hour activity for that tick's — both worse than a
+    purpose-built read of exactly what this tick itself recorded.
+
+    Renders the tick's own status, P&L, stop-coverage finding, book and
+    intraday-scan outcome straight from the stored payload. This is not a
+    byte-for-byte reproduction of whatever Telegram message (if any) that
+    tick produced live — it is the tick's own durable record.
+    """
+    payload = record.get("payload") if isinstance(record, dict) else None
+    if not isinstance(payload, dict):
+        raise ValueError("stored intra_check report has no usable payload")
+
+    result = dict(payload)
+    gaps: list[str] = []
+
+    positions = record.get("positions")
+    if isinstance(positions, list):
+        result["_positions"] = positions
+    else:
+        result["_positions"] = []
+        gaps.append("the book as it stood at this tick")
+
+    if payload.get("stop_coverage_gaps") is None:
+        gaps.append("the stop-coverage audit result")
+
+    status = str(payload.get("status", "unknown"))
+    date_text = record.get("date") or "date not recorded"
+    run_id = record.get("run_id")
+    lines = [
+        _b(f"STORED INTRA_CHECK TICK · {date_text}"),
+        "   Read back from the stored record. Nothing was run to produce "
+        "this: no broker call, no model call, no order. This tick's own "
+        "status only — not a re-derivation of the hourly DESK CHECK "
+        "message, which also reflects other ticks around it.",
+        (f"   Produced by run {run_id}" if run_id
+         else "   The producing run id was not recorded"),
+        "",
+        f"{_status_emoji(status)} STATUS: {status}",
+    ]
+    _new_section(lines, *_pnl_section_lines(result))
+    _new_block(lines, _append_coverage_gaps, result)
+    risk_positions = [
+        row for row in result["_positions"]
+        if isinstance(row, dict)
+        and str(row.get("symbol", "")).upper() not in _SWEEP_SYMBOLS
+    ]
+    lines.append(f"💼 Positions held: {len(risk_positions)}")
+    scan = payload.get("intraday_scan")
+    if isinstance(scan, dict):
+        lines.append(f"🔎 Intraday scan: {scan.get('status', 'unknown')}")
 
     if gaps:
         if len(gaps) == 1:
