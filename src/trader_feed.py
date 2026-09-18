@@ -1133,7 +1133,11 @@ def format_coverage_gap_line(row: dict, profiles: dict | None = None) -> str:
     if value is not None and value > 0:
         bits.append(f"${value:,.2f} unprotected")
     text = "   \u2022 " + ", ".join(bits)
-    refusal = str(row.get("repair_refusal") or "").strip()
+    # `repair_refusal` is why the automatic repair placed nothing. `note` is
+    # the same trailing-sentence slot for a coverage condition that had no
+    # repair to refuse — an elected-but-unfilled stop, where the order is
+    # present and correctly sized and simply did not execute.
+    refusal = str(row.get("repair_refusal") or row.get("note") or "").strip()
     if refusal:
         text += f" \u2014 {_clip(refusal, 300)}"
     return text
@@ -1837,6 +1841,8 @@ def _append_evening_watchlist(lines: list[str], result: dict, profiles: dict) ->
     """
     near = [r for r in (result.get("stop_proximity") or [])
             if isinstance(r, dict) and r.get("status") == "near"]
+    through = [r for r in (result.get("stop_proximity") or [])
+               if isinstance(r, dict) and r.get("status") == "through"]
     unknown_stop = [r for r in (result.get("stop_proximity") or [])
                     if isinstance(r, dict) and r.get("status") == "unknown"]
     earnings = [r for r in (result.get("earnings_proximity") or []) if isinstance(r, dict)]
@@ -1846,9 +1852,26 @@ def _append_evening_watchlist(lines: list[str], result: dict, profiles: dict) ->
         if isinstance(r.get("sessions_away"), int)
         and r["sessions_away"] <= EARNINGS_EVENT_WINDOW_SESSIONS
     ]
-    if not near and not soon and not unknown_stop:
+    if not near and not soon and not unknown_stop and not through:
         return
     lines.append(_b("WORTH KNOWING"))
+    # Printed FIRST and separately from "near": a stop the tape has already
+    # passed without the order filling is not a tight stop, it is shares
+    # with nothing standing watch over them. The two used to render as the
+    # same line.
+    for row in sorted(
+        through, key=lambda r: -(_number(r.get("through")) or 0.0),
+    ):
+        name = _ticker_co(str(row.get("symbol", "?")), profiles)
+        stop = _number(row.get("stop"))
+        past = _number(row.get("through"))
+        stop_text = f" at ${stop:,.2f}" if stop else ""
+        past_text = f" \u2014 price is ${past:,.2f} past it" if past else ""
+        lines.append(
+            f"   \U0001f534 {name}: the protective order{stop_text} fired "
+            f"and did not fill{past_text}, so those shares have nothing "
+            "standing watch over them"
+        )
     for row in sorted(near, key=lambda r: _number(r.get("gap")) or 0.0):
         name = _ticker_co(str(row.get("symbol", "?")), profiles)
         stop = _number(row.get("stop"))

@@ -538,3 +538,189 @@ def test_a_failure_that_actually_landed_does_not_page(shared_marker):
     assert gaps[0]["session_repair_failed"] is True   # the gap is still reported
     send.assert_not_called()
     assert reads["n"] >= 2, "the broker must be re-read before paging"
+
+
+# ---------------------------------------------------------------------------
+# a protective stop that FIRED and did NOT FILL
+# ---------------------------------------------------------------------------
+# The desk's protective stops rest at the broker as stop-LIMIT orders with a
+# 3% buffer, and `STOP_LIMIT_BUFFER_PCT`'s own comment states the trade-off:
+# "on gaps beyond 3% the limit won't fill and the position stays open until a
+# session can act." Nothing could see that state. The coverage sweep lists
+# orders with status=OPEN and counts an elected-but-unfilled stop's shares as
+# covered, so the one routine whose job is restoring lapsed protection looks
+# at a blown-through stop and correctly-by-its-own-logic does nothing. The
+# only code that compared price to stop clamped a negative gap to zero and
+# reported it as "near".
+#
+# These tests pin the DETECTION only. Nothing here may sell, cancel or
+# replace an order: an exit decision on an unfilled stop is an owner-level
+# change and is deliberately not made.
+
+
+def _elected_pipeline(symbol, held, price, stop, *, covered=None):
+    """A position the sweep considers FULLY covered, whose stop the tape has
+    already passed. Fully covered on purpose — that is the blind spot."""
+    qty = abs(held) if held > 0 else held
+    p = _pipeline(held_qty=abs(held), price=price, symbol=symbol)
+    p.broker.get_positions.return_value = [
+        MagicMock(symbol=symbol, qty=qty, current_price=price),
+    ]
+    p.broker.snapshot_protective_stops.return_value = (
+        True, [{"qty": abs(held) if covered is None else covered,
+                "stop_price": stop}],
+    )
+    return p
+
+
+def test_a_long_whose_stop_fired_without_filling_is_detected_and_reported(
+    shared_marker,
+):
+    p = _elected_pipeline("VST", 31.0, price=150.0, stop=158.0)
+    gaps, send = _run(p)
+    # The sweep still says coverage is fine — it is, by share count.
+    assert gaps == []
+    assert send.call_count == 1, "the session that saw it must be the one that tells him"
+    text = send.call_args.args[0]
+    assert "A PROTECTIVE STOP FIRED AND DID NOT FILL" in text
+    assert "VST" in text and "holding 31" in text
+    assert "$158.00 fired and did not fill" in text
+    assert "$8.00 past it" in text
+    assert "nothing standing watch" in text
+    assert send.call_args.kwargs["symbols"] == ["VST"]
+
+
+def test_a_short_whose_buy_stop_fired_without_filling_is_detected(shared_marker):
+    p = _elected_pipeline("VST", -10.0, price=170.0, stop=158.0)
+    _gaps, send = _run(p)
+    assert send.call_count == 1
+    text = send.call_args.args[0]
+    assert "A PROTECTIVE STOP FIRED AND DID NOT FILL" in text
+    assert "$12.00 past it" in text
+
+
+def test_a_merely_tight_stop_is_not_reported_as_unfilled(shared_marker):
+    """Price ABOVE a long's stop: the order has not been elected at all."""
+    p = _elected_pipeline("VST", 31.0, price=160.0, stop=158.0)
+    _gaps, send = _run(p)
+    send.assert_not_called()
+
+
+def test_price_exactly_at_the_trigger_is_not_reported(shared_marker):
+    """Strict inequality, so the float-equality case resolves towards
+    silence rather than towards a tolerance nobody chose."""
+    p = _elected_pipeline("VST", 31.0, price=158.0, stop=158.0)
+    _gaps, send = _run(p)
+    send.assert_not_called()
+
+
+def test_an_elected_unfilled_stop_is_not_detected_while_the_market_is_shut(
+    shared_marker,
+):
+    p = _elected_pipeline("VST", 31.0, price=150.0, stop=158.0)
+    with patch("src.notifier.send_owner_alert") as send, \
+            patch("src.pipeline._market_is_open_now", return_value=False):
+        p._reconcile_stop_coverage()
+    send.assert_not_called()
+
+
+def test_detection_places_cancels_and_replaces_nothing(shared_marker):
+    p = _elected_pipeline("VST", 31.0, price=150.0, stop=158.0)
+    _gaps, _send = _run(p)
+    p.broker._submit_protective_stop_retrying.assert_not_called()
+    p.broker.cancel_protective_stops.assert_not_called()
+    p.broker.replace_stop_loss.assert_not_called()
+    p.broker.close_position.assert_not_called()
+    p.broker.submit_order.assert_not_called()
+
+
+def test_the_same_blown_through_stop_is_not_paged_twice_in_one_day(shared_marker):
+    _gaps, first = _run(_elected_pipeline("VST", 31.0, price=150.0, stop=158.0))
+    assert first.call_count == 1
+    _gaps, second = _run(_elected_pipeline("VST", 31.0, price=150.0, stop=158.0))
+    second.assert_not_called()
+
+
+def test_a_second_name_blowing_through_later_is_not_swallowed(shared_marker):
+    _gaps, first = _run(_elected_pipeline("VST", 31.0, price=150.0, stop=158.0))
+    assert first.call_count == 1
+    _gaps, later = _run(_elected_pipeline("NET", 12.0, price=300.0, stop=334.0))
+    assert later.call_count == 1
+    assert "NET" in later.call_args.args[0]
+
+
+def test_the_two_conditions_do_not_silence_each_other(shared_marker):
+    """PR #514's placement-failure marker and this one share the state file
+    and the trading-day key, but not the identity. One key would let a stop
+    that could not be PLACED silence a stop that did not FILL on the same
+    name, which is not what "do not double-alert" means."""
+    from src import coverage_watchdog
+
+    _gaps, first = _run(_elected_pipeline("VST", 31.0, price=150.0, stop=158.0))
+    assert first.call_count == 1
+    assert coverage_watchdog.claim_elected_unfilled_alert(["VST"]) == []
+    assert coverage_watchdog.claim_repair_failure_alert(["VST"]) == ["VST"]
+
+
+def test_the_worst_elected_trigger_is_the_one_reported(shared_marker):
+    """A position can carry several stops. The distance reported is to the
+    trigger the tape is furthest past — read off the orders, not chosen."""
+    p = _elected_pipeline("VST", 31.0, price=150.0, stop=158.0)
+    p.broker.snapshot_protective_stops.return_value = (
+        True, [{"qty": 20.0, "stop_price": 155.0},
+               {"qty": 11.0, "stop_price": 160.0}],
+    )
+    _gaps, send = _run(p)
+    assert "$160.00 fired and did not fill" in send.call_args.args[0]
+    assert "$10.00 past it" in send.call_args.args[0]
+
+
+# ---------------------------------------------------------------------------
+# the evening report must stop merging "tight" with "blown through"
+# ---------------------------------------------------------------------------
+
+
+def _evening_pipeline(qty, price, stop, atr=2.0):
+    p = TradingPipeline.__new__(TradingPipeline)
+    p.broker = MagicMock()
+    p.broker.get_current_stop_price.return_value = stop
+    p._sweep_symbol = lambda: None
+    p._atr_for_symbol = lambda _sym: atr
+    return p, [MagicMock(symbol="VST", qty=qty, current_price=price)]
+
+
+def test_evening_reports_a_blown_through_stop_as_its_own_state():
+    p, positions = _evening_pipeline(31.0, price=150.0, stop=158.0)
+    rows = p._evening_stop_proximity(positions)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "through", (
+        "a stop the tape has passed without filling is not the same fact as "
+        "a stop that is merely close"
+    )
+    assert rows[0]["through"] == pytest.approx(8.0)
+
+
+def test_evening_still_reports_a_genuinely_tight_stop_as_near():
+    p, positions = _evening_pipeline(31.0, price=159.0, stop=158.0)
+    rows = p._evening_stop_proximity(positions)
+    assert rows[0]["status"] == "near"
+    assert rows[0]["gap"] == pytest.approx(1.0)
+
+
+def test_the_evening_feed_spells_out_a_blown_through_stop():
+    from src.trader_feed import _append_evening_watchlist
+
+    lines: list[str] = []
+    _append_evening_watchlist(
+        lines,
+        {"stop_proximity": [{
+            "symbol": "VST", "status": "through", "price": 150.0,
+            "stop": 158.0, "through": 8.0, "atr": 2.0,
+        }]},
+        {},
+    )
+    text = "\n".join(lines)
+    assert "fired and did not fill" in text
+    assert "$158.00" in text and "$8.00 past it" in text
+    assert "nothing standing watch over them" in text
+    assert "inside one ordinary day's move" not in text
