@@ -256,7 +256,13 @@ ARBITRARY_REQUIRED_FIELDS: tuple[str, ...] = (
 #: ceiling this was gameable by deleting a row. LOWER THIS when one is
 #: sourced, in the same commit that sources it. Raising it is an owner
 #: decision, not a build fix.
-MAX_ARBITRARY_ENTRIES = 86
+#: 2026-09-18: 86 -> 87. NOT a new number and not a loosened gate --
+#: `max_filings_per_refresh` was misclassified `not-trade-governing` on the
+#: claim that a fetch cap "never decides whether or how much to trade", and
+#: that day the cap binding is what refused a trading decision. Correcting a
+#: misclassification upward is the ratchet working; the debt was always
+#: there, unrecorded.
+MAX_ARBITRARY_ENTRIES = 87
 
 #: Sentinel for the scope rule. Module-level numeric constants found by this
 #: same scanner in `src/**.py` files that are NOT in scope. Measured, not

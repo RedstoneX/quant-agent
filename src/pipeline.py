@@ -13359,8 +13359,27 @@ class TradingPipeline:
         smart_money_refresh: dict = {"status": "disabled"}
         if self.config.smart_money.enabled:
             try:
-                smart_money_refresh = self.smart_money_provider.refresh()
+                # Watched names are passed so the Form 4 discovery budget
+                # (`max_filings_per_refresh`) is spent on the desk's own
+                # names before the rest of the listed market. Nothing is
+                # filtered out — external candidate nomination still reads
+                # filings on names the desk does not watch.
+                watched = self._watched_research_symbols()
+                try:
+                    smart_money_refresh = self.smart_money_provider.refresh(watched)
+                except TypeError:
+                    smart_money_refresh = self.smart_money_provider.refresh()
                 logger.info("Smart-money refresh (SEC Form 4 + congressional): %s", smart_money_refresh)
+                # Backlog depth, named in its own line: `refresh` runs once a
+                # day pre-market, so a residue cannot drain until tomorrow,
+                # and an unread Form 4 is what the research-expiry peek reads
+                # as a new filing. Report-only — no threshold, no alert.
+                logger.info(
+                    "Smart-money Form 4 backlog: pending=%s watched_pending=%s cap_reached=%s",
+                    smart_money_refresh.get("pending_filings"),
+                    smart_money_refresh.get("watched_pending_filings"),
+                    smart_money_refresh.get("discovery_cap_reached"),
+                )
             except Exception as exc:
                 logger.warning("SEC Form 4 refresh failed softly: %s", exc)
                 smart_money_refresh = {

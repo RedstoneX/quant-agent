@@ -432,8 +432,12 @@ class CongressionalTradingProvider:
             groups[key].append(row)
         return [self._merge_group(rows) for rows in groups.values()]
 
-    def refresh(self) -> dict:
+    def refresh(self, symbols: list[str] | None = None) -> dict:
         """Network refresh with a JSON-safe status/result summary.
+
+        ``symbols`` is accepted for the `SmartMoneySource` signature and
+        ignored: both feeds are whole-file fetches with no per-name
+        discovery budget to order.
 
         Fail-open per source: either feed being unreachable, timed out or
         malformed degrades to that feed's last good cache (or an empty
@@ -577,7 +581,10 @@ class CombinedSmartMoneyProvider:
     def __init__(self, providers: list[SmartMoneySource]):
         self.providers = [p for p in providers if p is not None]
 
-    def refresh(self) -> dict:
+    def refresh(self, symbols: list[str] | None = None) -> dict:
+        """``symbols`` are the names the desk watches; sub-providers that
+        accept them spend their discovery budget on those names first.
+        """
         # Keyed by index+class name, not class name alone: two providers of
         # the same class (or two test doubles that happen to share one)
         # must not collide and silently drop one result from `results`.
@@ -586,7 +593,10 @@ class CombinedSmartMoneyProvider:
         for index, provider in enumerate(self.providers):
             name = f"{index}:{type(provider).__name__}"
             try:
-                results[name] = provider.refresh()
+                try:
+                    results[name] = provider.refresh(symbols)
+                except TypeError:
+                    results[name] = provider.refresh()
                 if results[name].get("error"):
                     errors.append(f"{name}:{results[name]['error']}")
             except Exception as exc:
@@ -601,6 +611,18 @@ class CombinedSmartMoneyProvider:
                 ) else "partial"
             ),
             "providers": results,
+            # Surfaced at the top level, not only nested per sub-provider, so
+            # the unread-Form-4 backlog is a number the session payload and
+            # the pre-market log line can actually read.
+            "pending_filings": sum(
+                int(r.get("pending_filings") or 0) for r in results.values()
+            ),
+            "watched_pending_filings": sum(
+                int(r.get("watched_pending_filings") or 0) for r in results.values()
+            ),
+            "discovery_cap_reached": any(
+                bool(r.get("discovery_cap_reached")) for r in results.values()
+            ),
             "error": "; ".join(errors) or None,
         }
 
