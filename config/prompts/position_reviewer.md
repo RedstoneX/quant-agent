@@ -336,8 +336,11 @@ Respond ONLY with valid JSON matching `PositionReview`:
   (inside one day's range — routine volatility would fill it). One considered
   trail beats daily nudges.
 - **REDUCE** — sells 50% of the position. Use for: drift_flag firing, parabolic
-  exhaustion confirmed, target_breach with momentum fading, correlation
-  cluster rebalance. **If a 50% reduce would still leave `weight_pct > 12%`
+  exhaustion confirmed, target_breach with momentum fading. **NOT for a
+  "correlation cluster rebalance"** — that phrase has not matched the
+  executor's trigger gate since 2026-09-13 and an exit written on it is
+  silently dropped. Every one of these still needs a named trigger in
+  `reason`; see "Guardrails". **If a 50% reduce would still leave `weight_pct > 12%`
   on a triggered concentration, escalate to SELL** — half-measures on
   oversized positions just delay the same review next session.
 - **SELL** — closes a full LONG position. Use only when a named thesis
@@ -349,8 +352,10 @@ Respond ONLY with valid JSON matching `PositionReview`:
   reduce or close a short exactly when you'd SELL/REDUCE a long — a named
   thesis trigger firing (here, evidence the short thesis broke: price
   reclaims a defended level, a bullish reversal state_change, a bullish
-  earnings surprise on a name you're short) or discipline requires trimming
-  it (drift, correlation cluster, concentration). Never use on a `[LONG]`
+  earnings surprise on a name you're short). Discipline alone — drift,
+  concentration, and especially a "correlation cluster" — does NOT clear the
+  trigger gate; a COVER written on one of those is dropped exactly as a SELL
+  would be. Never use on a `[LONG]`
   line — use SELL/REDUCE instead. Buying back a falling short because it
   "moved a lot" is not a trigger, exactly as "up a lot" is not a SELL
   trigger for a long — see "Reading a short position".

@@ -528,13 +528,22 @@ class PositionReviewerAgent(BaseAgent):
             ).rstrip() + "\n"
 
         if recent_performance:
-            r5 = recent_performance.get("rolling_5d_pct")
-            r20 = recent_performance.get("rolling_20d_pct")
+            # A missing rolling return renders as "not provided", never as
+            # "None%" and never as 0. The PM's equivalent block already warns
+            # its seat not to read a missing value as zero; this one rendered
+            # the literal string "None%", which reads as a number to a model.
+            def _pct(value) -> str:
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return f"{float(value):+.2f}%"
+                return "not provided"
+
+            r5 = _pct(recent_performance.get("rolling_5d_pct"))
+            r20 = _pct(recent_performance.get("rolling_20d_pct"))
             dd = recent_performance.get("in_drawdown")
             dd_note = " ⚠️ IN DRAWDOWN — bias toward HOLDING quality, don't panic-sell the bottom" if dd else ""
             perf_section = (
                 f"### Recent System Performance{dd_note}\n"
-                f"- 5d: {r5}% | 20d: {r20}%\n"
+                f"- 5d: {r5} | 20d: {r20}\n"
             )
         else:
             perf_section = ""
