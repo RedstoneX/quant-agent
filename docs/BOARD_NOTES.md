@@ -356,6 +356,7 @@ decision at all.
 ## item 91
 
 **Plain language —** The desk counts how long it has held something in calendar days, but the rules that read that number expect trading days. A weekend therefore makes a holding look two days older than it is, against every rule about how long a trade should take.
+**Verified 2026-09-18, and it is worse than the general case —** the position reviewer's own pace check already has the right number sitting next to the wrong one. A weekend-aware trading-session count is computed a few lines above the pace math and used correctly elsewhere in the same file (widening the noise band). The pace math itself reads the calendar-day count instead, so the exact fix this item asks for already exists in scope and is simply not being read.
 
 ## item 92
 
@@ -436,6 +437,7 @@ decision at all.
 
 **Plain language — these are your own instructions, written down so the work lands against them.** Three pieces of work are in flight and each must match what you asked for, not an agent's taste: how the dashboard panels scroll, what the "why do we hold this" view shows, and how the evening report reads.
 **One requirement is not yet in any work at all —** You asked that when the reason to hold a stock rests on an insider or institutional purchase, the view show the DATE and the PRICE of that purchase — your example was Republic Services and when Cascade Investment actually bought. Somebody is working on it, but it is not committed anywhere yet, so it is recorded here as a requirement rather than as done.
+**The blocker on the rest of (b) is gone as of tonight —** the read-only endpoint behind this view is merged, and it was held back only until the panel-layout work landed; that has now also merged. Nothing stands between this and a working view: fetch the endpoint when a held symbol is opened, show its one-sentence reason and its labelled detail up front, and put the machine identifiers and the existing step-by-step trace behind one toggle. Nothing else about the page changes.
 
 ## item 101
 
