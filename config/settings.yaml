@@ -355,33 +355,47 @@ execution:
   # trading day while it holds. Read-only; it never places an order.
   fractional_enabled: true
   fractional_share_decimals: 4
-  # Live `trade_updates` websocket fill feed. OFF — owner decision
-  # 2026-09-17. Fills are confirmed by the bounded REST fallback, which is
-  # what has actually confirmed every fill since the socket was built on
-  # 2026-09-10: the socket has never once authenticated on this host.
+  # Live `trade_updates` websocket fill feed. ON since 2026-09-18.
   #
-  # Two independent blockers were confirmed before this switch existed, so
-  # nothing in this repo could have made it work:
-  #   * the trading process holds PLACEHOLDER Alpaca credentials; a local
-  #     credential-injecting proxy substitutes the real key on outbound
-  #     REST (hence working order placement) but the websocket does not go
-  #     through that proxy, and the installed `alpaca-py` stream uses
-  #     `websockets.legacy`, which has no proxy support at all;
-  #   * Alpaca authenticates the stream with an in-band websocket MESSAGE,
-  #     not a handshake header, and the gateway injects headers only.
+  # The socket pushes a message the instant an order fills, instead of the
+  # desk discovering the fill on its next REST poll (up to half an hour
+  # later). The REST path is unchanged and is still the fallback for every
+  # wait the socket cannot serve.
   #
-  # Leaving it on cost a bounded slice of every fill window on a handshake
-  # that could never succeed, plus ~150 auth-failure log lines a day that
-  # the owner never saw. With it off the desk never opens the socket,
-  # never takes the account-wide lease and never runs the reconnect loop.
-  # No timeout, poll interval or ceiling changes — fill waits take the
-  # same REST polling path `use_stream=False` has always taken.
+  # HISTORY, because this flag was off for a reason and the reason is gone.
+  # From the socket being built (2026-09-10) to 2026-09-17 it NEVER
+  # authenticated: 1,017 `failed to authenticate` lines across the retained
+  # production logs and not one success. The cause was NOT the connection's
+  # timing — six pull requests re-sequenced that and none of them could have
+  # worked. The process held a 29-character placeholder credential literally
+  # containing the word `placeholder`, and:
+  #   * Alpaca authenticates this stream with an in-band websocket MESSAGE,
+  #     not a handshake header, while the local gateway that substitutes the
+  #     real key rewrites HTTP HEADERS — it cannot reach an in-band frame;
+  #   * the installed `alpaca-py` stream is built on `websockets.legacy`,
+  #     which has no proxy support at all, so the socket never traversed the
+  #     gateway either.
+  # So the desk was sending the word "placeholder" as its password.
   #
-  # The websocket code is DORMANT, not deleted. The owner deferred the
-  # credential decision; if the process is ever given real Alpaca
-  # credentials directly, flipping this to true is the only change needed
-  # and restores the pre-2026-09-17 behaviour exactly.
-  fill_stream_enabled: false
+  # Real credential files were delivered 2026-09-18 and the process now
+  # reads them directly (systemd credential, 26 characters) — so the single
+  # blocker is gone and this flag is the only thing that was still holding
+  # the socket shut. Nothing about credential handling changes here.
+  #
+  # Safe to have on: this is a PAPER account and the stream is RECEIVE-ONLY
+  # — it delivers fill notifications and places no orders. A paper/live
+  # endpoint mismatch is impossible by construction: src/config.py hard-
+  # fails unless `paper` is true and the REST base_url is the paper host,
+  # and the SDK derives the stream host from that same `paper` bool with no
+  # url_override anywhere.
+  #
+  # No timeout, poll interval, retry count or ceiling changed with this
+  # flip. If it is refused again, grep the log for
+  # `trade_updates authentication REJECTED by broker` — that line now
+  # carries Alpaca's own message and the key's LENGTH and first two
+  # characters (never the value, never the secret). Success prints
+  # `trade_updates websocket authenticated`.
+  fill_stream_enabled: true
 
 risk:
   # Single-name NOTIONAL ceiling — a concentration/liquidity backstop, not

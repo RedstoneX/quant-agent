@@ -702,8 +702,9 @@ def _known_entry_submit_budget_s(pipeline, *, will_fund: bool) -> float:
     with will_fund=False.
 
     Auth is also omitted when the socket is switched off entirely
-    (`execution.fill_stream_enabled`, off since 2026-09-17): there is no
-    handshake ahead of submit, so counting one would leave a stale 30s of
+    (`execution.fill_stream_enabled`; on since 2026-09-18, so this branch
+    is the configured-off case): there is no handshake ahead of submit, so
+    counting one would leave a stale 30s of
     slack in a window that is supposed to be the sum of the waits actually
     programmed. This widens nothing and tightens no existing timeout — it
     stops claiming a wait that cannot happen.
