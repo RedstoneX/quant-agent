@@ -2111,3 +2111,80 @@ def test_main_live_mode_graceful_scheduler_exit_notifies_clearly(monkeypatch):
     assert any("the scheduler stopped" in m for m in sent)
     assert not any("scheduler_exited" in m for m in sent)
     assert not any("reported nothing the desk could read" in m for m in sent)
+
+
+def test_risk_mod_cannot_increase_a_buy_allocation():
+    """2026-09-18: `RiskModification.new_value` is unbounded and
+    `TradeDecision.allocation_pct` only clamps 0-100, so nothing stopped the
+    risk seat — whose job is to be MORE protective — from ENLARGING a BUY.
+    On a BUY that adds to a held name the field is an increment, so an upward
+    edit grows the position by more than the number reads. An increase must
+    be reverted and recorded in `rejected`; the BUY ships at the
+    constructor's size."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    buy = TradeDecision(
+        action="BUY", symbol="RSG", allocation_pct=44.23,
+        entry_price=100, stop_loss=95, take_profit=115, reasoning="add",
+    )
+    modifications = [
+        RiskModification(
+            symbol="RSG", field="allocation_pct",
+            original_value=44.23, new_value=50.0,
+            reason="RM wants a bigger position",
+        )
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
+
+    assert len(updated) == 1
+    assert updated[0].allocation_pct == 44.23  # unchanged
+    assert len(rejected) == 1
+    assert rejected[0]["symbol"] == "RSG"
+    assert rejected[0]["field"] == "allocation_pct"
+    assert "INCREASE" in rejected[0]["reason"]
+
+
+def test_risk_mod_reducing_a_buy_allocation_still_applies():
+    """The guard above must not block the seat's actual job. A REDUCTION of a
+    BUY's allocation_pct is applied exactly as before."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    buy = TradeDecision(
+        action="BUY", symbol="RSG", allocation_pct=44.23,
+        entry_price=100, stop_loss=95, take_profit=115, reasoning="add",
+    )
+    modifications = [
+        RiskModification(
+            symbol="RSG", field="allocation_pct",
+            original_value=44.23, new_value=9.23,
+            reason="trim",
+        )
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
+
+    assert updated[0].allocation_pct == 9.23
+    assert rejected == []
+
+
+def test_out_of_range_buy_allocation_still_drops_the_decision():
+    """Ordering guard. The BUY-may-only-reduce check runs AFTER schema
+    validation, so an out-of-range `allocation_pct` (>100) keeps hitting the
+    validation branch and DROPS the decision — the stricter outcome, and the
+    behaviour `test_pipeline_drops_decision_when_risk_modification_invalid`
+    pins. Only values Pydantic accepts reach the reduce-only guard."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    buy = TradeDecision(
+        action="BUY", symbol="SPY", allocation_pct=10,
+        entry_price=500, stop_loss=480, take_profit=530, reasoning="t",
+    )
+    modifications = [
+        RiskModification(
+            symbol="SPY", field="allocation_pct",
+            original_value=10, new_value=150, reason="bad",
+        )
+    ]
+
+    updated, rejected = pipeline._apply_risk_modifications([buy], modifications)
+
+    assert updated == []       # dropped, not reverted
+    assert rejected == []

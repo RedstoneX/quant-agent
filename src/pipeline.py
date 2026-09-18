@@ -2610,6 +2610,18 @@ class TradingPipeline:
            governing the validation-failure branch below, and it does not
            require inventing a new rejection channel for something the
            schema already has one for.
+        1b. **A BUY's `allocation_pct` may only be reduced.** This seat exists
+           to be MORE protective than the constructor, and nothing enforced
+           that: `RiskModification.new_value` is unbounded. On a BUY that adds
+           to a held name the field is an INCREMENT on top of the existing
+           weight, so an upward edit grows the position by more than the
+           number reads (2026-09-18: an edit believed to cut a name to 30%
+           left it at 50.8%). An increase is reverted and recorded in
+           `rejected_mods` — same posture as guard 1, the trade still ships at
+           the constructor's size. Checked AFTER schema validation, unlike
+           guard 1: an out-of-range value (allocation_pct > 100) must keep
+           hitting the validation branch below and DROP the decision, which is
+           stricter still. This guard governs only the values Pydantic accepts.
         2. **A stop/target edit cannot bypass the checks a fresh decision
            would have to clear.** The constructor measures reward:risk on a
            range setup (refusing only an UNMEASURABLE ratio — a computed
@@ -2695,6 +2707,43 @@ class TradingPipeline:
                         mod.symbol, mod.field, mod.original_value, mod.new_value, exc,
                     )
                     updated_decisions[idx] = None
+                    break
+
+                # Guard 1b — an `allocation_pct` edit on a BUY may only
+                # REDUCE. The Risk Manager's stated job at this seat is to be
+                # MORE protective than the constructor; nothing in the schema
+                # enforced that for this field (`RiskModification.new_value`
+                # is unbounded and `TradeDecision.allocation_pct` only clamps
+                # 0-100), so a larger number sailed through as a
+                # "protection". Compounding it, on a BUY that ADDS the field
+                # is an INCREMENT on top of the existing holding, so an
+                # upward edit grows the position by more than the number
+                # suggests — observed 2026-09-18, where an edit the seat
+                # believed cut a name to 30% left it at 50.8%. The prompt now
+                # states the increment and the resulting weight; this guard is
+                # the part that holds regardless of what the model reasons.
+                if (
+                    decision.action == "BUY"
+                    and mod.field == "allocation_pct"
+                    and float(mod.new_value) > decision.allocation_pct
+                ):
+                    reason = (
+                        f"RM modification would INCREASE {mod.symbol}'s BUY "
+                        f"allocation_pct ({decision.allocation_pct:.2f} -> "
+                        f"{mod.new_value:.2f}). Reverted — the risk seat may "
+                        f"only reduce a BUY's size, never enlarge it; on an "
+                        f"add this field is an increment, so an upward edit "
+                        f"grows the position by more than the number reads. "
+                        f"RM reason given: {mod.reason!r}"
+                    )
+                    logger.warning("Risk mod REJECTED for %s: %s", mod.symbol, reason)
+                    rejected_mods.append({
+                        "symbol": mod.symbol,
+                        "field": mod.field,
+                        "reason": reason,
+                    })
+                    # updated_decisions[idx] already holds the unmodified
+                    # decision — the BUY ships at the constructor's size.
                     break
 
                 # Guard 2 — a stop/target edit on a BUY/SHORT must not ship
