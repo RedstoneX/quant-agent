@@ -383,22 +383,6 @@ decision at all.
 **Plain language — not yours to wait on any more; the orchestrator decides after an adversary run.** The desk judges whether a trade is moving too slowly against a holding period the model simply states rather than reads off anything. That is the kind of unverifiable number the desk has already banned from sizing trades; whether it may stay in this one test is being decided, not left with you.
 **Recommendation —** None yet; decide after an adversary run, and record the decision and its reason before anything is built on it.
 
-## item 98
-
-**Plain language —** A review of the prompts that brief the decision-making seats (the ones that actually pick and size trades) found seventeen statements in those briefings that are flatly wrong about what the code does today. Eight of the seventeen can change which trade happens or how big it is.
-**The eight that can change a trade —**
-  1. A sizing rule tied to a seat-counting scheme that was retired is still capping position size.
-  2. The briefing says the macro view never counts toward whether other seats agree; the actual rule counts it as plus-or-minus-one, and that difference killed a real trade on 17 September.
-  3. A 75% sector limit is described as a hard wall; it is really advisory and can go as high as 90%.
-  4. A sizing formula is described as mandatory that multiplies by a number deleted from the code 1 September.
-  5. The risk manager is briefed on the wrong quantity when it checks position size.
-  6. A minimum reward-to-risk ratio is described as required; it was abolished.
-  7. Reasons the executor gives for exiting a trade are silently thrown away rather than recorded.
-  8. Any position held overnight shows "thesis unavailable" because the lookup that fetches the reason for holding it only searches today — the reason exists, it just isn't found. Same defect as item 89's clarity issue #3, but here it affects the decision, not just the message to you.
-**The other nine —** clarity-only mismatches between what the prompt claims and what the code does; listed in the audit, not trade-affecting on their own.
-**In progress —** PRs #464 (a prompt-drift check) and #467 (fixes sixteen of the seventeen), stacked, not yet merged; confirm which one is left out and why before treating this item as closed.
-**Recommendation —** Fix the eight trade-affecting ones first, in the order above (the agreement-ladder and sector-cap ones are the most likely to have already cost or blocked a trade). Not yet placed in your priority order — flagging so it doesn't get lost.
-
 ## item 99
 
 **Plain language —** A second review, of the prompts that brief the analysts (the seats that read the market and write reports, one layer below the decision-makers), found the prompts are full of numbers and claims nothing in the code actually enforces.
@@ -411,25 +395,12 @@ decision at all.
   - Separately: a check already exists that fills prompts with numbers straight from the code so they can't go stale, but it only covers 2 of the 10 prompt files. Scanning prompt text for suspicious numbers doesn't work either — there are about 1,825 numbers in there, mostly just dates and list numbering. Neither of the two confirmed mistakes above (item 98) was even sitting in a prompt file — both were assembled by Python code into a string. What would actually have caught the worst one: when code that a prompt describes gets deleted, search the prompts for its name at that moment.
 **Recommendation —** Decide the evening-vs-technical mandate question first (it changes what "fix the prompt" even means); then strip the dead weight, since that's where the false statements cluster; build the deletion-site check as ongoing insurance rather than trying to scan for numbers. Not yet placed in your priority order.
 
-## item 104
-
-**Plain language —** The three seats that actually pick and size your trades are each given a written brief, in plain English, describing the desk's rules. Seventeen statements in those briefs are no longer true — the code underneath them was changed and nobody changed the brief. Eight of the seventeen can change a trade. One of them killed a name on 17 September: the brief tells the seat that the macro view never counts toward how many sources agree, while the code counts it as a vote either way.
-**How confident to be —** Two were re-checked independently against the code on 18 September and both held up: the brief calls 75% "the sector limit" when the code treats 75% as a soft warning and 90% as the real ceiling, and the technical seat is told it is being shown the last 20 days of prices when it is actually shown 40.
-**Why it kept happening —** Nothing ties the English in a brief to the code it describes, so prose rots silently. Treat a brief as code that can go stale.
-**Recommendation —** Two pieces of work are already open and stacked, and between them they correct sixteen of the seventeen. Before anyone calls this finished, confirm which one is being left out and why.
-
 ## item 105
 
 **Plain language —** The analyst seats' briefs contain about 55 numbers that exist nowhere but in the brief itself — no code behind them, nothing that checks them. The desk already bans numbers that were invented rather than read off real data; these are exactly that, and they were invisible because nobody had looked in the briefs. About 20 further statements about how markets behave are asserted with no source at all. Roughly a third of the portfolio manager's brief, and a quarter of two others', describes machinery the model does not actually operate — and that dead prose is where nearly every stale claim in item 104 was hiding.
 **One seat is a bigger question than the rest —** The evening seat's brief has not been touched since before this project began and still describes a hand-picked 77-stock value book held over quarters. The technical seat's brief describes a 5 to 15 day swing book. Both advise the same decision seat. They cannot both be right, and choosing between them is your call, not ours — it is now a dated decision on the board.
 **What was ruled out, so nobody rebuilds it —** Automatically scanning the briefs for numbers does not work: there are about 1,825 number-like tokens in them and most are dates and list numbering. More importantly, neither of the two confirmed cases in item 104 was even in a brief file — both were text the code assembles as it runs, so a file scanner would have caught neither.
 **Recommendation —** Build the check at the point of DELETION instead: when a mechanism is removed from the code, search for its name across every brief and every assembled string. That would have caught the worst case; nothing else proposed would.
-
-## item 106
-
-**Plain language — these are your own instructions, written down so the work lands against them.** Three pieces of work are in flight and each must match what you asked for, not an agent's taste: how the dashboard panels scroll, what the "why do we hold this" view shows, and how the evening report reads.
-**One requirement is not yet in any work at all —** You asked that when the reason to hold a stock rests on an insider or institutional purchase, the view show the DATE and the PRICE of that purchase — your example was Republic Services and when Cascade Investment actually bought. Somebody is working on it, but it is not committed anywhere yet, so it is recorded here as a requirement rather than as done.
-**The blocker on the rest of (b) is gone as of tonight —** the read-only endpoint behind this view is merged, and it was held back only until the panel-layout work landed; that has now also merged. Nothing stands between this and a working view: fetch the endpoint when a held symbol is opened, show its one-sentence reason and its labelled detail up front, and put the machine identifiers and the existing step-by-step trace behind one toggle. Nothing else about the page changes.
 
 ## item 111
 
