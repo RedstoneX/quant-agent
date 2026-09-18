@@ -412,3 +412,129 @@ def test_repair_refuses_a_quote_midpoint_because_the_tape_never_traded_there():
     gaps = p._reconcile_stop_coverage()
     assert len(gaps) == 1 and gaps[0]["repaired"] is not True
     p.broker._submit_protective_stop_retrying.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# a failed SESSION-HOURS re-placement has to reach the owner from the session
+# ---------------------------------------------------------------------------
+# On 2026-09-18 09:30:45 ET the fractional coverage repair refused NET
+# (held 3.4785, covered 3.0000) and RSG (held 9.2860, covered 9.0000) and
+# logged "this is case (b) and it alerts." It alerted nobody: the only code
+# that could page lived in the standalone coverage watchdog, and no watchdog
+# process ran that day. A failed session-hours repair falls back to
+# 'partial' whenever any whole share is still covered, so it never reached
+# the NO-STOP-AT-ALL escalation either. The owner sees this desk only
+# through Telegram; NET's 0.4785 shares sat unprotected for 15 minutes and
+# he was never told.
+
+
+def _fractional_pipeline(symbol, held, covered, price, *, buy_stop=1.0):
+    p = _pipeline(
+        held_qty=held, covered=covered, price=price, symbol=symbol,
+        buy_stop=buy_stop,
+    )
+    p.broker.get_positions.return_value = [
+        MagicMock(symbol=symbol, qty=held, current_price=price),
+    ]
+    p.broker._submit_protective_stop_retrying.return_value = None
+    return p
+
+
+@pytest.fixture
+def shared_marker(tmp_path, monkeypatch):
+    """Point the once-a-day placement-failure marker at a scratch file."""
+    from src import coverage_watchdog
+
+    path = tmp_path / "coverage_heartbeat.json"
+    monkeypatch.setattr(coverage_watchdog, "STATE_PATH", path)
+    return path
+
+
+def _run(p):
+    with patch("src.notifier.send_owner_alert") as send, \
+            patch("src.pipeline._market_is_open_now", return_value=True), \
+            patch("src.trader_feed._profiles", return_value={}):
+        gaps = p._reconcile_stop_coverage()
+    return gaps, send
+
+
+def test_failed_session_hours_repair_alerts_the_owner_from_the_session(
+    shared_marker,
+):
+    p = _fractional_pipeline("NET", 3.4785, 3.0, 334.0, buy_stop=300.0)
+    gaps, send = _run(p)
+    assert gaps[0]["coverage"] == "partial"     # unchanged classification
+    assert gaps[0]["session_repair_failed"] is True
+    assert send.call_count == 1, "the session that saw it must be the one that tells him"
+    text = send.call_args.args[0]
+    assert "COULD NOT PUT THE PROTECTIVE STOP BACK" in text
+    assert "NET" in text and "holding 3.4785" in text
+    assert "stop covers 3" in text
+    assert "unprotected" in text
+    assert send.call_args.kwargs["symbols"] == ["NET"]
+
+
+def test_the_overnight_fractional_lapse_still_says_nothing(shared_marker):
+    """Owner-ratified, bounded, happens every night — it must stay silent."""
+    p = _fractional_pipeline("NET", 3.4785, 3.0, 334.0, buy_stop=300.0)
+    with patch("src.notifier.send_owner_alert") as send, \
+            patch("src.pipeline._market_is_open_now", return_value=False):
+        gaps = p._reconcile_stop_coverage()
+    assert gaps[0]["coverage"] == "fractional_overnight"
+    assert "session_repair_failed" not in gaps[0]
+    send.assert_not_called()
+
+
+def test_the_same_position_is_not_paged_twice_in_one_day(shared_marker):
+    p = _fractional_pipeline("NET", 3.4785, 3.0, 334.0, buy_stop=300.0)
+    _gaps, first = _run(p)
+    assert first.call_count == 1
+    _gaps, second = _run(_fractional_pipeline("NET", 3.4785, 3.0, 334.0, buy_stop=300.0))
+    second.assert_not_called()
+
+
+def test_a_second_position_failing_later_is_not_swallowed(shared_marker):
+    """The trap `should_alert_repair_failure`'s docstring warns about, one
+    level down: a per-DAY marker claimed by NET at 09:30 would silence RSG."""
+    _gaps, first = _run(_fractional_pipeline("NET", 3.4785, 3.0, 334.0, buy_stop=300.0))
+    assert first.call_count == 1
+    _gaps, later = _run(_fractional_pipeline("RSG", 9.2860, 9.0, 217.0, buy_stop=200.0))
+    assert later.call_count == 1
+    assert "RSG" in later.call_args.args[0]
+
+
+def test_the_standalone_watchdog_and_the_session_share_one_marker(shared_marker):
+    """Both processes can see the identical condition; the owner hears once."""
+    from src import coverage_watchdog
+
+    _gaps, first = _run(_fractional_pipeline("NET", 3.4785, 3.0, 334.0, buy_stop=300.0))
+    assert first.call_count == 1
+    assert coverage_watchdog.claim_repair_failure_alert(["NET"]) == []
+    assert coverage_watchdog.claim_repair_failure_alert(["RSG"]) == ["RSG"]
+
+
+def test_a_failure_that_actually_landed_does_not_page(shared_marker):
+    """2026-09-16: two processes ran the same BRK-B repair 5 ms apart and
+    submitted DAY orders 23 ms apart; the loser's retry loop reported
+    FAILURE on an order that had landed. The broker is re-read right before
+    the alert goes out, so the owner is not told about a failure that
+    succeeded. The duplicate-submission race itself is a separate defect
+    and is NOT addressed here."""
+    p = _fractional_pipeline("BRK-B", 1.4393, 1.0, 505.0, buy_stop=460.0)
+    reads = {"n": 0}
+
+    def _snapshot(symbol, side="sell", **_kw):
+        reads["n"] += 1
+        if reads["n"] == 1:               # the survey pass: really short
+            return True, [{"qty": 1.0, "stop_price": 501.06}]
+        # by the time we would alert, the sibling process's order is resting
+        return True, [
+            {"qty": 1.0, "stop_price": 501.06},
+            {"qty": 0.4393, "stop_price": 501.06},
+        ]
+
+    p.broker.snapshot_protective_stops.side_effect = _snapshot
+    gaps, send = _run(p)
+    assert gaps[0]["session_repair_failed"] is True   # the gap is still reported
+    send.assert_not_called()
+    assert reads["n"] >= 2, "the broker must be re-read before paging"

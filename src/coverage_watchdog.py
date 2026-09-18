@@ -116,6 +116,7 @@ import math
 import os
 import sqlite3
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -221,7 +222,15 @@ class CoverageStatus:
         marker. Sharing the exposure marker would let the 06:15 report
         swallow a 10:00 failure to put the stop back — a silence with an
         uncovered position behind it, which is the whole defect item 53
-        was opened on."""
+        was opened on.
+
+        `already_alerted_repair_failure_for_day` is now true only when
+        EVERY currently-failing position has already been reported today
+        (`_repair_failure_alerted_symbols`), so a new name failing later in
+        the day cannot be swallowed either — the same reasoning applied one
+        level down. The marker is shared with the live session path, which
+        can find the identical condition in a process this one knows
+        nothing about."""
         return bool(self.repair_failures) and not self.already_alerted_repair_failure_for_day
 
 
@@ -554,7 +563,13 @@ def load_state(path: Path | None = None) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raw = {}
     raw.setdefault("alerted_for_day", None)
+    # Kept as a truthful record of the last day a placement-failure alert
+    # went out, and still written; it is no longer what SUPPRESSES one.
+    # Suppression reads `repair_failure_alerted_symbols` below, which is
+    # keyed per position as well as per day — see
+    # `_repair_failure_alerted_symbols`.
     raw.setdefault("repair_failure_alerted_for_day", None)
+    raw.setdefault("repair_failure_alerted_symbols", None)
     raw.setdefault("last_result", None)
     raw.setdefault("updated_at", None)
     return raw
@@ -580,6 +595,87 @@ def save_state(state: dict[str, Any], path: Path | None = None) -> bool:
     except OSError:
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# the placement-failure marker — shared with the live session path
+# ---------------------------------------------------------------------------
+# A failed session-hours re-placement can be found by EITHER of two
+# processes: this standalone unit, or the coverage reconcile a live session
+# runs on itself (`src/pipeline.py`). On 2026-09-18 the session found two
+# and said in the log that it alerts, while the only code that could alert
+# lived here — and no watchdog process ran that day. Both paths now send,
+# and both claim the same marker so the owner is not told twice about the
+# same position.
+#
+# The marker is keyed per POSITION as well as per day, which is the honest
+# version of "at most once a trading day": a 10:00 failure on one name must
+# never be swallowed by an earlier alert about a different one. That is the
+# same trap `should_alert_repair_failure` was written to avoid, one level
+# down.
+
+
+def repair_failure_alert_day(now: datetime | None = None) -> str:
+    """The ET calendar date a placement failure is filed under.
+
+    Deliberately NOT `most_recent_trading_day`: that answers "which session
+    should have re-placed a stop overnight", which at 10:00 ET is still
+    yesterday. A placement that just failed is happening TODAY, and both
+    paths must agree on the key or the shared marker is no marker at all.
+    """
+    return (now or _utc_now()).astimezone(ET).date().isoformat()
+
+
+def _repair_failure_alerted_symbols(state: dict[str, Any], day: str) -> set[str]:
+    raw = state.get("repair_failure_alerted_symbols")
+    if not isinstance(raw, dict) or raw.get("day") != day:
+        return set()
+    return {
+        str(sym).strip().upper()
+        for sym in (raw.get("symbols") or [])
+        if str(sym).strip()
+    }
+
+
+def _record_repair_failure_alert(
+    state: dict[str, Any], day: str, symbols: Iterable[str],
+) -> None:
+    merged = _repair_failure_alerted_symbols(state, day) | {
+        str(sym).strip().upper() for sym in symbols if str(sym).strip()
+    }
+    state["repair_failure_alerted_symbols"] = {
+        "day": day, "symbols": sorted(merged),
+    }
+    state["repair_failure_alerted_for_day"] = day
+
+
+def claim_repair_failure_alert(
+    symbols: Iterable[str], *, now: datetime | None = None,
+    path: Path | None = None,
+) -> list[str]:
+    """Reserve today's placement-failure alert for `symbols` and return the
+    ones NOT already alerted today, in the order given.
+
+    An empty list means every one of them has already been reported and the
+    caller should stay quiet. A non-empty list is the caller's to send, and
+    is recorded as sent before it returns — an unwritable state file
+    therefore errs towards telling the owner twice rather than not at all,
+    which is the right way round for an unprotected position.
+    """
+    day = repair_failure_alert_day(now)
+    state = load_state(path)
+    already = _repair_failure_alerted_symbols(state, day)
+    fresh = [
+        sym for sym in dict.fromkeys(
+            str(raw).strip().upper() for raw in symbols if str(raw).strip()
+        )
+        if sym not in already
+    ]
+    if not fresh:
+        return []
+    _record_repair_failure_alert(state, day, fresh)
+    save_state(state, path)
+    return fresh
 
 
 def _scale_in_skip(broker: Any, db_path: str | Path | None) -> set[str]:
@@ -727,6 +823,16 @@ def check_coverage(
         except Exception as exc:  # noqa: BLE001
             logger.error("coverage watchdog stop-level reconcile failed: %s", exc)
 
+    # Suppression for a failed placement is per position and keyed on
+    # today's ET date, shared with the live session path (see
+    # `claim_repair_failure_alert`).
+    failure_day = repair_failure_alert_day(moment)
+    already_failed = _repair_failure_alerted_symbols(state, failure_day)
+    failing_symbols = [
+        str(r.symbol).strip().upper() for r in repairs
+        if not r.placed and str(r.symbol).strip()
+    ]
+
     status = CoverageStatus(
         trading_day=day.isoformat(),
         session_ran=ran,
@@ -737,14 +843,14 @@ def check_coverage(
         repairs=repairs,
         market_open=market_open,
         market_reason=market_reason,
-        already_alerted_repair_failure_for_day=(
-            state.get("repair_failure_alerted_for_day") == day.isoformat()
+        already_alerted_repair_failure_for_day=bool(failing_symbols) and all(
+            sym in already_failed for sym in failing_symbols
         ),
     )
     if status.should_alert:
         state["alerted_for_day"] = day.isoformat()
     if status.should_alert_repair_failure:
-        state["repair_failure_alerted_for_day"] = day.isoformat()
+        _record_repair_failure_alert(state, failure_day, failing_symbols)
     state["last_result"] = {
         "trading_day": status.trading_day,
         "session_ran": status.session_ran,

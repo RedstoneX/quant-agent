@@ -1108,6 +1108,37 @@ def _append_footer(lines: list[str], snap: dict[str, Any], elapsed: float) -> No
     lines.append("\U0001f9fe " + " \u00b7 ".join(bits))
 
 
+def format_coverage_gap_line(row: dict, profiles: dict | None = None) -> str:
+    """One owner-facing bullet for a stop-coverage gap.
+
+    Company name, the two quantities as words, the dollars with no stop
+    over them, and the reason the automatic repair gave when it refused
+    (`repair_refusal` is a plain sentence stamped at the repair site;
+    absent when it has nothing to say). Nothing here is estimated.
+
+    Module-level and shared on purpose: `src/pipeline.py` sends the same
+    facts as an interrupting alert when a session-hours re-placement fails,
+    and two renderings of one condition are how the feed and the alert end
+    up describing the same position differently.
+    """
+    name = _ticker_co(str(row.get("symbol", "?")), profiles)
+    held = _number(row.get("held_qty"))
+    covered = _number(row.get("covered_qty"))
+    bits = [name]
+    if held is not None:
+        bits.append(f"holding {held:g}")
+    if covered is not None:
+        bits.append(f"stop covers {covered:g}")
+    value = _number(row.get("unprotected_value"))
+    if value is not None and value > 0:
+        bits.append(f"${value:,.2f} unprotected")
+    text = "   \u2022 " + ", ".join(bits)
+    refusal = str(row.get("repair_refusal") or "").strip()
+    if refusal:
+        text += f" \u2014 {_clip(refusal, 300)}"
+    return text
+
+
 def _append_coverage_gaps(lines: list[str], result: dict) -> None:
     """Spec §11.1 guard 3 — two banners, never one merged count.
 
@@ -1136,26 +1167,7 @@ def _append_coverage_gaps(lines: list[str], result: dict) -> None:
     profiles = _profiles(uncovered, partial)
 
     def _gap_line(row: dict) -> str:
-        # Company name, the two quantities as words, and the reason the
-        # automatic repair gave when it refused (`repair_refusal` is a
-        # plain sentence stamped at the repair site; absent when it has
-        # nothing to say). Nothing here is estimated.
-        name = _ticker_co(str(row.get("symbol", "?")), profiles)
-        held = _number(row.get("held_qty"))
-        covered = _number(row.get("covered_qty"))
-        bits = [name]
-        if held is not None:
-            bits.append(f"holding {held:g}")
-        if covered is not None:
-            bits.append(f"stop covers {covered:g}")
-        value = _number(row.get("unprotected_value"))
-        if value is not None and value > 0:
-            bits.append(f"${value:,.2f} unprotected")
-        text = "   • " + ", ".join(bits)
-        refusal = str(row.get("repair_refusal") or "").strip()
-        if refusal:
-            text += f" — {_clip(refusal, 300)}"
-        return text
+        return format_coverage_gap_line(row, profiles)
 
     if uncovered:
         lines.append(f"🚨 NO STOP AT ALL: {len(uncovered)} position(s) with nothing protecting them")
