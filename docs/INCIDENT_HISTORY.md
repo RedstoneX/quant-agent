@@ -97,6 +97,20 @@ record whose value is constant across every symbol and every session cannot
 answer a question, and that is checkable by looking at it rather than by
 waiting for an alarm to fire uselessly.
 
+### 2026-09-18 — the same audit of the analysts' briefs had been filed twice, and the two became one (item 105 retired)
+
+**What happened, in one line:** two agents reviewed the briefs given to the desk's analyst seats on the same day, neither knowing about the other, and filed one finding as two board items plus two identically-worded dated decisions — so a reader had no way to tell it was one piece of work.
+
+**They were diffed in full before anything was deleted.** Items 99 and 105 agree on every measurement: about 55 numbers that exist only as prose in a brief with no code behind them, about 20 statements about market behaviour asserted with no source, five data blocks the technical seat receives that its brief never mentions, and dead prose — machinery the model does not actually operate — at roughly a third of the portfolio manager's brief and a quarter of the risk manager's and the position reviewer's. The only thing 105 said that 99 did not was the framing that a number living only in a brief IS the invented number the desk already bans; that is preserved by name in item 99, which survives as the lower number. The duplicated dated decision was cut back to one.
+
+**What this is NOT.** It is not the same finding as item 98. Item 98 is the technical seat being told it is shown 20 bars while the code sends 40 — 99 mentions that in passing, **105 never mentions it at all**, and a first attempt at this collapse assumed all three were one defect and would have buried a live Tier-2 finding inside a Tier-1 one. Item 98 was left untouched.
+
+**What was ruled out, so nobody rebuilds it.** Scanning brief text for suspicious numbers does not work: there are about 1,825 number-like tokens in the briefs and most are dates and list numbering. Rendering numbers into briefs from the code already exists, but covers only 2 of the 10 brief files. And neither confirmed drift defect lived in a brief file at all — both were strings the Python assembles as it runs, so a file scanner would have caught neither. The check worth building is at the point of DELETION: when a mechanism is removed, search every brief and every assembled string for its name.
+
+**Still open.** Everything above is unfixed. This entry records only that four records became two; item 99 carries the work.
+
+---
+
 ### 2026-09-18 — the written briefs that tell the trade-picking seats the desk's rules had seventeen statements in them that were no longer true (items 98 and 104 collapsed)
 
 **What broke, in one line:** the three seats that actually pick and size trades are each handed a brief, in plain English, describing the desk's own rules — and seventeen of those statements described machinery that had been changed or deleted underneath them, eight of which could change which trade happened or how big it was.
