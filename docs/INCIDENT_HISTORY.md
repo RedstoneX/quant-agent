@@ -11672,3 +11672,57 @@ still retrying) is untouched by either change.
 
 ---
 
+### 2026-09-18 — most of the nineteen Telegram defects are fixed; what is left is written on the board (item 89)
+
+**In plain words:** an audit on 17 September found nineteen things wrong with
+the messages the desk sends the owner, and on 18 September all but three of
+them were fixed — nothing about what the desk trades, or when, or how much,
+was touched.
+
+Of the six defects that could mislead a decision: four were fixed at the
+cause — a whole trade plan dropped on size alone with no message ever sent
+(the dropped-plan rows the desk already wrote are now read and reported); a
+"thesis unavailable" on anything held overnight (the lookup searched today
+only; the date-unrestricted lookup the evening review already uses is now
+threaded through, scoped to the thesis TEXT so the pinned stop and target
+cannot override live figures); a header whose holdings count disagreed with
+its own list (the count is now derived from the list printed beneath it); and
+a rule cited by section number that said the opposite of what it was cited
+for (§9.4 earns SIZE, states no refusal, and its sizing half was retired
+2026-09-14 — the rule is now written out, because a section number is an
+unchecked promise about another document). One was not reproducible and one
+was never attempted; both are still on the board under item 89.
+
+The evening message was separately redesigned to the owner's own review of
+the live 17 September copy: run id, provider-request count, "status:
+analyzed" and the nightly fractional-stop line removed; P&L first; the risk
+rating given its scale and its consequence; stop proximity measured against
+each name's own ATR, and imminent earnings, added. Nine of the eleven
+catalogued clarity defects were then fixed across the morning, midday, close,
+intraday, hourly desk-check, pre-earnings and data-quality messages: bare
+tickers after the twelfth name, the missing broker reason on a rejection,
+internal status codes, percentages with no denominator, reward:risk with no
+unit, detail truncated mid-sentence, "TRADED" on a run that only sold, the
+"data degraded" line naming internal components, and blocked-trade jargon in
+part. New substance the desk knew and never said was added at the same time:
+the pre-earnings note names each filing and what changes for the owner, the
+hourly check names every order and holding it counts, looked-at names carry
+the Portfolio Manager's own recorded reason, and a stop-coverage banner names
+the company, both quantities, the dollars unprotected and the repair's own
+refusal reason.
+
+Record gaps found in passing and now recorded: which filings the earnings
+pass handled, and the broker's own words on a plain rejection. Still not
+recorded: how many retries an unreadable filing has used. `min_trade_weight_
+delta = 0.5` — the threshold that drops a plan on size alone — was found to
+exist only as a dataclass default in `src/portfolio_constructor.py`, absent
+from `config/settings.yaml` and from every document; it IS in
+`config/number_ledger.yaml` (an earlier claim that the ledger missed it was
+wrong) and its value was not changed. Verified by re-rendering identical
+stored rows through `render_stored_session_report` and
+`render_stored_intra_check` on main and on the branch; the live database is
+not readable from the operator account, so no real past session was
+re-rendered — which is why item 89's three acceptance checks wait on a live
+session.
+
+---
