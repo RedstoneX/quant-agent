@@ -36,7 +36,10 @@ move to the system manager; the reader below is unchanged either way, because
 both directives populate the same directory.
 """
 
+import json
 import os
+import tempfile
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 # The variable systemd sets for a unit that declares LoadCredential= or
@@ -186,6 +189,29 @@ _PLACEHOLDER_WORDS: tuple[str, ...] = (
 )
 
 
+def _normalise_words(text: str) -> str:
+    """Lowercase, and reduce every run of non-alphanumeric characters to one space.
+
+    Surrounded by spaces so a whole-word test is a plain substring test on the
+    result — `" todo "` is in `" please todo this "` but not in `" aktodoi3x "`.
+    """
+    out: list[str] = []
+    previous_was_separator = True
+    for character in text.lower():
+        if character.isalnum():
+            out.append(character)
+            previous_was_separator = False
+        elif not previous_was_separator:
+            out.append(" ")
+            previous_was_separator = True
+    return " " + "".join(out).strip() + " "
+
+
+def _contains_phrase(normalised_value: str, normalised_word: str) -> bool:
+    """True when `normalised_word` appears in `normalised_value` on word boundaries."""
+    return normalised_word.strip() != "" and normalised_word in normalised_value
+
+
 def placeholder_reason(value: str) -> str | None:
     """Return a plain-English reason this value is obviously not a real key, else None.
 
@@ -194,9 +220,17 @@ def placeholder_reason(value: str) -> str | None:
     if not value:
         return "it is empty"
 
-    lowered = value.lower()
+    # Matched as whole WORDS, not as raw substrings. The substring form had a
+    # false-positive surface nobody had measured: a real key is an opaque run of
+    # characters, and "todo", "insert" and "xxxx" can all appear inside one by
+    # chance — at which point the desk would shout "placeholder" about a working
+    # credential. Normalising every non-alphanumeric run to a single space on
+    # BOTH sides keeps hyphen/underscore spellings working (`your-key`,
+    # `CHANGE_ME`, `placeholder-alpaca-key`) while requiring the word to stand on
+    # its own. No threshold and no length rule is introduced by this.
+    normalised = _normalise_words(value)
     for word in _PLACEHOLDER_WORDS:
-        if word in lowered:
+        if _contains_phrase(normalised, _normalise_words(word)):
             return f"it contains the word '{word}', which is what a fill-this-in stand-in looks like"
 
     # A credential is sent verbatim as an HTTP header value. Whitespace inside
@@ -266,7 +300,78 @@ def describe_delivery(
     return facts, problems
 
 
-def report_startup_credentials(api_keys: object, *, logger, alert: bool = True) -> list[str]:
+# ---------------------------------------------------------------------------
+# Once-a-day alerting
+# ---------------------------------------------------------------------------
+#
+# WHY THIS IS RATIONED AT ALL. `main.py --mode <session>` is the entrypoint for
+# every session unit on the box — six of them — and both broker credentials are
+# placeholders today, so an alert per problem per start is roughly a dozen
+# identical Telegram messages a day, indefinitely, about a condition that is the
+# known, intended state while the live-fill socket is off.
+#
+# The desk has already paid for this mistake twice. The fill-degradation alert
+# was shipped deliberately NOT firing on the socket being off, precisely because
+# paging on an intended configuration only moves the noise into Telegram. And
+# the eight-day placeholder this module exists to catch went unnoticed BECAUSE
+# roughly 150 daily auth failures had made that channel unreadable. A dozen a
+# day builds the next unreadable channel.
+#
+# WHY ONCE A DAY, AND NOT SOME OTHER CADENCE. A placeholder credential is a
+# standing configuration state, not an event: it changes only when a human
+# changes it. So the alert is not reporting an occurrence, it is re-stating a
+# condition, and the honest cadence for that is the coarsest one that still
+# reaches the owner while it is live. One calendar day is that cadence, and it
+# is the same once-a-day marker shape the coverage and silence watchdogs already
+# use — no new mechanism, no tunable number. The log line is UNCHANGED and still
+# written on every single start; only the push is rationed.
+STATE_PATH = (
+    Path(__file__).resolve().parent.parent / "data" / "alerting" / "credential_placeholder.json"
+)
+
+
+def _today() -> date:
+    """Seam for tests — real code never patches `datetime` itself."""
+    return datetime.now(timezone.utc).date()
+
+
+def load_state(path: Path | None = None) -> dict[str, object]:
+    """Read the once-a-day marker. Never raises; a missing file is 'never alerted'."""
+    try:
+        raw = json.loads((path or STATE_PATH).read_text())
+    except (OSError, ValueError):
+        raw = None
+    if not isinstance(raw, dict):
+        raw = {}
+    raw.setdefault("alerted_for_day", None)
+    return raw
+
+
+def save_state(state: dict[str, object], path: Path | None = None) -> bool:
+    """Atomic write, same shape as the sibling watchdogs. Never raises."""
+    target = path or STATE_PATH
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as handle:
+                json.dump(state, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+            os.replace(tmp_name, target)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        return False
+    return True
+
+
+def report_startup_credentials(
+    api_keys: object, *, logger, alert: bool = True, state_path: Path | None = None,
+) -> list[str]:
     """Log how the broker credentials arrived and shout about placeholder-shaped ones.
 
     THE FAILURE THIS EXISTS TO PREVENT. The most expensive failure in this
@@ -292,15 +397,35 @@ def report_startup_credentials(api_keys: object, *, logger, alert: bool = True) 
         logger.error("PLACEHOLDER CREDENTIAL — %s", problem)
 
     if problems and alert:
-        try:
-            from src.notifier import send_owner_alert
+        day = _today().isoformat()
+        state = load_state(state_path)
+        if state.get("alerted_for_day") == day:
+            logger.info(
+                "placeholder credential already reported to the owner today (%s) — "
+                "logging only, not pushing again",
+                day,
+            )
+        else:
+            try:
+                from src.notifier import send_owner_alert
 
-            # One message per problem: the desk's standing alert rule is that
-            # every failure gets its own Telegram message rather than being
-            # folded into a run summary where it can be skimmed past.
-            for problem in problems:
-                send_owner_alert(f"Placeholder trading credential in use. {problem}")
-        except Exception as exc:  # noqa: BLE001 - notification must never block startup
-            logger.warning("could not alert the owner about a placeholder credential: %s", exc)
+                # ONE message, listing every placeholder credential, ONCE a day.
+                # Not one per problem and not one per session start: see the
+                # STATE_PATH comment above for why a standing configuration state
+                # is re-stated daily rather than paged on every entrypoint.
+                body = " ".join(problems)
+                send_owner_alert(
+                    "Placeholder trading credential in use "
+                    "(reported once a day while this stays true). " + body
+                )
+            except Exception as exc:  # noqa: BLE001 - notification must never block startup
+                logger.warning("could not alert the owner about a placeholder credential: %s", exc)
+            else:
+                state["alerted_for_day"] = day
+                if not save_state(state, state_path):
+                    logger.warning(
+                        "could not record that the placeholder-credential alert was sent — "
+                        "the next session start may repeat it"
+                    )
 
     return problems

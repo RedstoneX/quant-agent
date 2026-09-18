@@ -54,8 +54,34 @@ process's environment, so it is not visible in the places a running process
 normally leaks its settings, and it is not in the code checkout, so no deploy can
 move or expose it. The fake password stays exactly where it is and is simply
 outranked. Every start now says, in the log, where each trading credential came
-from and how long it is — never what it is — and shouts in its own Telegram
-message if it is holding an obvious stand-in.
+from and how long it is — never what it is — and, if it is holding an obvious
+stand-in, pushes ONE Telegram message naming every affected credential, at most
+ONCE A DAY while that stays true.
+
+**Why the alert is rationed, which was a correction on this change.** The first
+version alerted once per problem, per start. `main.py --mode <session>` is the
+entrypoint for all six session units and both broker credentials are
+placeholders today, so that was roughly a dozen identical messages a day,
+indefinitely, about a condition that is the known intended state while the
+live-fill socket is off. That is the same mistake twice over: the
+fill-degradation alert was deliberately shipped NOT firing on the socket being
+off, precisely because paging on an intended configuration only moves the noise
+into Telegram — and the eight-day placeholder above went unnoticed BECAUSE
+roughly 150 daily auth failures had already made that channel unreadable. A
+placeholder credential is a standing configuration state, not an event; it
+changes only when a human changes it. So the honest cadence is the coarsest one
+that still re-states the condition while it is live. The log line is unchanged
+and still written on every single start; only the push is rationed, on the same
+once-a-day marker shape the coverage and silence watchdogs already use.
+
+**And the stand-in word list is matched on word boundaries, not raw substrings.**
+A real key is an opaque run of characters, and "todo", "insert" and "xxxx" can
+all turn up inside one by chance — at which point the desk would have shouted
+"placeholder" about a working credential. It could never have blocked anything,
+but an unmeasured false-positive word list sitting in an alert path is exactly
+how alerts stop being read. No length or prefix rule was added; Alpaca documents
+neither, and inventing one would start rejecting real keys the day the issuing
+format changed.
 
 **What was ruled out.** Encrypting the credential at rest, which was the
 original intent. The desk's services run under the unprivileged account's own

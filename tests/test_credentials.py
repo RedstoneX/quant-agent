@@ -7,6 +7,7 @@ looks for — they authenticate with nothing.
 """
 
 import logging
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -334,7 +335,7 @@ def test_describe_delivery_never_reveals_a_value():
     assert problems == []
 
 
-def test_report_startup_credentials_shouts_about_a_placeholder(monkeypatch, caplog):
+def test_report_startup_credentials_shouts_about_a_placeholder(monkeypatch, caplog, tmp_path):
     monkeypatch.delenv(CREDENTIALS_DIRECTORY_ENV, raising=False)
     api_keys = _ApiKeys("placeholder-alpaca-key", DUMMY_SECRET_FROM_SYSTEMD)
     logger = logging.getLogger("credential-test")
@@ -343,29 +344,34 @@ def test_report_startup_credentials_shouts_about_a_placeholder(monkeypatch, capl
     monkeypatch.setattr("src.notifier.send_owner_alert", lambda text, **kw: sent.append(text))
 
     with caplog.at_level(logging.INFO, logger="credential-test"):
-        problems = report_startup_credentials(api_keys, logger=logger)
+        problems = report_startup_credentials(
+            api_keys, logger=logger, state_path=tmp_path / "marker.json",
+        )
 
     assert len(problems) == 1
     assert "alpaca_key" in problems[0]
     assert "PLACEHOLDER CREDENTIAL" in caplog.text
+    # ONE message, not one per problem.
     assert len(sent) == 1
     assert "placeholder-alpaca-key" not in caplog.text
     assert "placeholder-alpaca-key" not in sent[0]
 
 
-def test_report_startup_credentials_is_quiet_when_both_look_real(monkeypatch, caplog):
+def test_report_startup_credentials_is_quiet_when_both_look_real(monkeypatch, caplog, tmp_path):
     monkeypatch.delenv(CREDENTIALS_DIRECTORY_ENV, raising=False)
     api_keys = _ApiKeys(DUMMY_KEY_FROM_SYSTEMD, DUMMY_SECRET_FROM_SYSTEMD)
     logger = logging.getLogger("credential-test-quiet")
 
     with caplog.at_level(logging.INFO, logger="credential-test-quiet"):
-        problems = report_startup_credentials(api_keys, logger=logger)
+        problems = report_startup_credentials(
+            api_keys, logger=logger, state_path=tmp_path / "marker.json",
+        )
 
     assert problems == []
     assert "PLACEHOLDER CREDENTIAL" not in caplog.text
 
 
-def test_alert_failure_never_blocks_startup(monkeypatch):
+def test_alert_failure_never_blocks_startup(monkeypatch, tmp_path):
     """A broken notification path must not stop the desk — it is the wrong reason to."""
     monkeypatch.delenv(CREDENTIALS_DIRECTORY_ENV, raising=False)
 
@@ -375,6 +381,135 @@ def test_alert_failure_never_blocks_startup(monkeypatch):
     monkeypatch.setattr("src.notifier.send_owner_alert", _explode)
     api_keys = _ApiKeys("placeholder-alpaca-key", "placeholder-alpaca-secret")
 
-    problems = report_startup_credentials(api_keys, logger=logging.getLogger("credential-test-fail"))
+    problems = report_startup_credentials(
+        api_keys,
+        logger=logging.getLogger("credential-test-fail"),
+        state_path=tmp_path / "marker.json",
+    )
 
     assert len(problems) == 2
+
+
+# ---------------------------------------------------------------------------
+# alert volume — the reason this is rationed at all
+# ---------------------------------------------------------------------------
+
+def test_both_placeholders_produce_one_message_not_two(monkeypatch, tmp_path):
+    """Two placeholder credentials must not mean two Telegram messages.
+
+    `main.py --mode <session>` is the entrypoint for all six session units, so
+    one message per problem per start is roughly a dozen a day about a condition
+    that is the intended state. That is how a channel becomes unreadable — which
+    is the very reason the eight-day placeholder went unnoticed.
+    """
+    monkeypatch.delenv(CREDENTIALS_DIRECTORY_ENV, raising=False)
+    sent: list[str] = []
+    monkeypatch.setattr("src.notifier.send_owner_alert", lambda text, **kw: sent.append(text))
+
+    problems = report_startup_credentials(
+        _ApiKeys("placeholder-alpaca-key", "placeholder-alpaca-secret"),
+        logger=logging.getLogger("credential-test-volume"),
+        state_path=tmp_path / "marker.json",
+    )
+
+    assert len(problems) == 2
+    assert len(sent) == 1
+    assert "alpaca_key" in sent[0] and "alpaca_secret" in sent[0]
+
+
+def test_repeat_starts_on_the_same_day_log_but_do_not_push(monkeypatch, tmp_path, caplog):
+    """Six session starts a day are six log lines and ONE push."""
+    monkeypatch.delenv(CREDENTIALS_DIRECTORY_ENV, raising=False)
+    sent: list[str] = []
+    monkeypatch.setattr("src.notifier.send_owner_alert", lambda text, **kw: sent.append(text))
+    marker = tmp_path / "marker.json"
+    logger = logging.getLogger("credential-test-repeat")
+
+    with caplog.at_level(logging.INFO, logger="credential-test-repeat"):
+        for _ in range(6):
+            report_startup_credentials(
+                _ApiKeys("placeholder-alpaca-key", DUMMY_SECRET_FROM_SYSTEMD),
+                logger=logger,
+                state_path=marker,
+            )
+
+    assert len(sent) == 1
+    assert caplog.text.count("PLACEHOLDER CREDENTIAL") == 6
+
+
+def test_the_next_day_pushes_again(monkeypatch, tmp_path):
+    """The condition is re-stated daily while it is still true, not silenced forever."""
+    monkeypatch.delenv(CREDENTIALS_DIRECTORY_ENV, raising=False)
+    sent: list[str] = []
+    monkeypatch.setattr("src.notifier.send_owner_alert", lambda text, **kw: sent.append(text))
+    marker = tmp_path / "marker.json"
+    api_keys = _ApiKeys("placeholder-alpaca-key", DUMMY_SECRET_FROM_SYSTEMD)
+    logger = logging.getLogger("credential-test-nextday")
+
+    monkeypatch.setattr("src.credentials._today", lambda: date(2026, 9, 18))
+    report_startup_credentials(api_keys, logger=logger, state_path=marker)
+    report_startup_credentials(api_keys, logger=logger, state_path=marker)
+    assert len(sent) == 1
+
+    monkeypatch.setattr("src.credentials._today", lambda: date(2026, 9, 19))
+    report_startup_credentials(api_keys, logger=logger, state_path=marker)
+    assert len(sent) == 2
+
+
+def test_a_failed_push_is_not_recorded_as_sent(monkeypatch, tmp_path):
+    """A notification that never left must not silence tomorrow's — or today's next."""
+    monkeypatch.delenv(CREDENTIALS_DIRECTORY_ENV, raising=False)
+    attempts: list[str] = []
+
+    def _explode(text, **kwargs):
+        attempts.append(text)
+        raise RuntimeError("telegram down")
+
+    monkeypatch.setattr("src.notifier.send_owner_alert", _explode)
+    marker = tmp_path / "marker.json"
+    api_keys = _ApiKeys("placeholder-alpaca-key", DUMMY_SECRET_FROM_SYSTEMD)
+    logger = logging.getLogger("credential-test-failpush")
+
+    report_startup_credentials(api_keys, logger=logger, state_path=marker)
+    report_startup_credentials(api_keys, logger=logger, state_path=marker)
+
+    assert len(attempts) == 2
+
+
+# ---------------------------------------------------------------------------
+# the word list is matched on word boundaries, not as raw substrings
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "AKFZ8XTODOI3XQ",     # contains "todo" by chance
+        "PKINSERT9QZ2X4LM",   # contains "insert" by chance
+        "AKXXXXQ7ZM2V9LD4",   # contains "xxxx" by chance
+        "PK7ZQ3M2V9LD4WX1",
+    ],
+)
+def test_placeholder_words_do_not_fire_inside_an_opaque_key(value):
+    """A real key is an opaque run of characters; a stand-in word can appear in one.
+
+    Firing on a raw substring made the detector shout "placeholder" at a working
+    credential. It cannot block anything, but an unmeasured false-positive word
+    list in an alert path is how alerts stop being read.
+    """
+    assert placeholder_reason(value) is None, value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "TODO",
+        "todo-replace-this",
+        "ALPACA_KEY_INSERT_HERE",
+        "XXXX",
+        "placeholder-alpaca-key",
+        "CHANGE_ME",
+        "YOUR-KEY-HERE",
+    ],
+)
+def test_placeholder_words_still_fire_as_whole_words(value):
+    assert placeholder_reason(value), value
