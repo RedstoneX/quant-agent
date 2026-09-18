@@ -2158,3 +2158,36 @@ def test_send_without_the_flag_still_fully_escapes_a_literal_tag():
         assert notifier.send("<b>hi</b> & bye") is True
     body = mock_post.call_args.kwargs["json"]["text"]
     assert body == "&lt;b&gt;hi&lt;/b&gt; &amp; bye"
+
+
+def test_data_quality_alert_speaks_in_words_and_keeps_the_raw_pair_labelled():
+    """Board item 89 clarity defect: the alert named internal components
+    ("macro=failed"). The seat and its state are now said in words, what
+    it means for the owner is stated, and the raw pair is kept beneath,
+    labelled as a machine record."""
+    from src.notifier import maybe_alert_data_quality
+
+    result = {"run_id": "run-dq", "data_status": {"macro": "failed", "tech": "partial",
+                                                  "sector": "brand_new_state"}}
+    with patch("src.notifier.send_owner_alert") as alert:
+        assert maybe_alert_data_quality(result, mode="morning")
+    body = alert.call_args[0][0]
+    assert "DATA QUALITY ALERT" in body
+    assert "the market-backdrop research did not return an answer" in body
+    assert "the chart research returned only part of an answer" in body
+    assert "no plain wording for (kept for the record: brand_new_state)" in body
+    assert "WHAT THIS MEANS FOR YOU" in body
+    assert "Machine record, kept for the log" in body
+    assert "macro=failed, sector=brand_new_state, tech=partial" in body
+
+
+def test_coverage_gap_banner_says_the_quantities_in_words():
+    """"NVDA(4/10)" was a bare fraction; it now reads as what it is."""
+    result = {
+        "status": "ok", "run_id": "r",
+        "stop_coverage_gaps": [{"symbol": "NVDA", "held_qty": 10.0, "covered_qty": 4.0}],
+    }
+    msg = format_session_result("intra_check", result, 1.0)
+    assert msg is not None
+    assert "NVDA holding 10, stop covers 4" in msg
+    assert "(4/10)" not in msg
