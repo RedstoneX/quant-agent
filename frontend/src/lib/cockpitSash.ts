@@ -16,6 +16,17 @@ upward drag was swallowed. */
 
 export const COCKPIT_LAYOUT_KEY = "qamc.dockview.cockpit.v9";
 export const COCKPIT_GROWTH_KEY = "qamc.dockview.cockpit.v9.growth";
+/** Last auto-fit height (the extra the content-sized panels needed).
+ *
+ * Auto-fit is always re-derived from the live content, never trusted from
+ * storage — but the saved dockview blob stores row heights in absolute
+ * pixels, so restoring it into a box that has not been pre-grown makes
+ * every other row collapse toward its floor before auto-fit can run.
+ * Measured: a reload dropped Holdings from 201px to 133px and the chart
+ * from 626px to 416px. This value exists only to open the box at roughly
+ * the right size for that first layout; the reconciler corrects it
+ * immediately afterwards. */
+export const COCKPIT_FIT_KEY = "qamc.dockview.cockpit.v9.fit";
 /** Same floor `buildDefaultLayout` sets as Positions/Orders minimumHeight. */
 export const BOTTOMS_FLOOR_PX = 260;
 /** Chart row floor so a sash above the candles cannot crush the stage. */
@@ -104,6 +115,34 @@ export function writePersistedGrowth(px: number): void {
 export function clearPersistedGrowth(): void {
   try {
     window.localStorage.removeItem(COCKPIT_GROWTH_KEY);
+  } catch {
+    /* UI-only best effort */
+  }
+}
+
+export function readPersistedFit(): number {
+  try {
+    const raw = window.localStorage.getItem(COCKPIT_FIT_KEY);
+    if (raw == null) return 0;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function writePersistedFit(px: number): void {
+  try {
+    if (px <= 0) window.localStorage.removeItem(COCKPIT_FIT_KEY);
+    else window.localStorage.setItem(COCKPIT_FIT_KEY, String(Math.round(px)));
+  } catch {
+    /* UI-only best effort */
+  }
+}
+
+export function clearPersistedFit(): void {
+  try {
+    window.localStorage.removeItem(COCKPIT_FIT_KEY);
   } catch {
     /* UI-only best effort */
   }
