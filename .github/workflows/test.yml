@@ -92,7 +92,7 @@ jobs:
           # cost is concentrated in a handful of wall-clock assertions rather
           # than spread across the 6,600 tests, so these are the numbers to
           # refresh `SLOW_FILES` in the splitter from, and they are free.
-          pytest -q --durations=12 "${FILES[@]}"
+          pytest -q --durations=0 -p no:randomly "${FILES[@]}"
 
   # `pytest` is the required status check in branch protection on main, so this
   # job keeps that name and is the only thing branch protection looks at. It
