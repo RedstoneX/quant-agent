@@ -30,6 +30,19 @@ open question empirically: on the first morning after a debit balance is
 carried overnight, the account's own `INT` activity records either show a
 charge or they do not. This module does not pre-judge which.
 
+**FIRST MEASUREMENT, 2026-09-18 — ONE NIGHT, NOT PROOF.** The paper account
+carried a debit balance of -$915.83 overnight from 2026-09-17 into
+2026-09-18 (equity $9,778.72, long market value $10,694.55, i.e. gross
+~1.09x). `/v2/account/activities/INT` returned ZERO rows, for `after`
+2026-09-17, for `after` 2026-09-01, and with no `after` filter at all. The
+endpoint itself was confirmed live in the same probe — the same client
+returned 78 `FILL` rows for `after=2026-09-15` — so the empty INT result is
+an answer, not a broken read. Read this as: **paper trading did not charge
+margin interest on that night's debit.** It remains a single observation on
+a small balance, so `ESTIMATE_LABEL` stays on every rendering and nothing in
+this module or anywhere else gates on the result. Re-run the same query
+after a larger or longer-carried debit before treating the cost as zero.
+
 **Today's actual state.** `allow_margin` has been `True` (2.0x gross) since
 2026-09-02. That flag on its own says nothing about whether a negative cash
 balance is actually being carried on any given day — callers of this module

@@ -556,10 +556,33 @@ class PMFacts:
         if band is None:
             from src.config import CashSweepConfig
             band = CashSweepConfig.model_fields["reserve_pct"].get_default()
+        # 2026-09-18 fix: the not-under branch used to read
+        # "invested=109.4% vs mandate=100% (gap +9pp)". On 2026-09-17 the PM
+        # cited that line, alongside the (separately fixed) "no margin" cash
+        # label, as a reason it could not add without selling protected
+        # holdings — it read a deliberately levered book as over a limit.
+        # The 100% is a FLOOR on cash deployment (the owner's mandate is
+        # about cash drag: cash below inflation is a loss); it says nothing
+        # about gross exposure, which has its own enforced ceiling. Neither
+        # `DESK_INVESTED_TARGET_PCT` nor `max_gross_exposure_x` changes here
+        # — only what the seat is told the 100 means.
+        if self.deployment_gap_pp > 0:
+            return (
+                f"\n\n### Deployment vs Fully-Invested Mandate"
+                f"\n- invested={self.invested_pct:.1f}%; the mandate is a FLOOR of "
+                f"{self.invested_target_pct:.0f}%, not a ceiling."
+                f" You are {self.deployment_gap_pp:+.0f}pp above the floor, which is"
+                f" margin at work — that is NOT a breach and NOT a limit you are"
+                f" over, so it is not by itself a reason to reduce anything."
+                f"\n- The only ceiling on gross exposure is the enforced one in the"
+                f" risk engine (the standing gross-exposure cap, tightened by the"
+                f" de-levering ladder), and Python applies it after you submit."
+                f" Judge adds on their own evidence, not against this line."
+            )
         if self.deployment_gap_pp >= -band:
             return (
                 f"\n\n### Deployment vs Fully-Invested Mandate"
-                f"\n- invested={self.invested_pct:.1f}% vs mandate="
+                f"\n- invested={self.invested_pct:.1f}% against a floor of "
                 f"{self.invested_target_pct:.0f}% (gap {self.deployment_gap_pp:+.0f}pp)."
                 f" Any cash left undeployed is a cost — name why in `cash_target`."
             )
