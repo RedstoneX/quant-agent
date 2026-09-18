@@ -597,6 +597,17 @@ class PositionReviewerAgent(BaseAgent):
             if reserve_balance > 0 else ""
         )
 
+        # Substantiation re-ask (2026-09-18). Non-empty only on the ONE
+        # re-ask `TradingPipeline._substantiate_exit_triggers` may make in
+        # a session, and it names the symbols whose exit trigger came back
+        # unsubstantiated. Empty string on every first call, so the prompt
+        # this seat sees normally is byte-for-byte unchanged.
+        substantiation_challenge: str = kwargs.get("substantiation_challenge") or ""
+        substantiation_section = (
+            f"### ⚠️ {substantiation_challenge}\n"
+            if substantiation_challenge else ""
+        )
+
         # Margin mandate (carried over from v2 — sub-dollar threshold).
         allow_margin: bool = bool(kwargs.get("allow_margin", True))
         from src.risk.constants import MARGIN_DEFICIT_FLOOR_USD
@@ -752,6 +763,7 @@ class PositionReviewerAgent(BaseAgent):
         )
         return f"""## Position Review — {session_label}
 
+{substantiation_section}
 {margin_section}
 {system_actions_section}
 {already_trimmed_section}
@@ -813,6 +825,7 @@ schema."""
                recent_performance: dict | None = None,
                already_trimmed_today: set[str] | None = None,
                allow_margin: bool = True,
+               substantiation_challenge: str = "",
                # §11.2 ladder headroom, threaded from the SAME computation
                # execution's submit loop uses (`_entry_deployment_budget` /
                # `_session_gross_ceiling` in `src/pipeline_stages.py`) so
@@ -846,6 +859,7 @@ schema."""
             recent_performance=recent_performance or {},
             already_trimmed_today=already_trimmed_today or set(),
             allow_margin=allow_margin,
+            substantiation_challenge=substantiation_challenge,
             margin_headroom_usd=margin_headroom_usd,
             margin_ladder_backed=margin_ladder_backed,
             margin_ladder_multiple=margin_ladder_multiple,

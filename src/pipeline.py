@@ -9313,6 +9313,229 @@ class TradingPipeline:
 
         return check
 
+    def _substantiate_exit_triggers(self, review, *, ctx, run_id: str,
+                                    review_kwargs: dict):
+        """Heal, re-ask, then durably record an unsubstantiated exit trigger.
+
+        The defect this closes (2026-09-18). Every SELL/REDUCE/COVER had to
+        "cite a hard trigger" and the entire check was a substring match
+        over `reason` prose. On 2026-09-16 the two real exits — COP SELL
+        and EQNR REDUCE, run `midday-d8996a51` — carried the reason
+        ``"adverse news"``, two words and nothing else, and passed every
+        gate: the phrase is on the list, and
+        `exit_guard.holding_discipline_claim_check` returned "ok" because
+        it reads the PROSE for a claim it knows how to check and those two
+        words make none. Meanwhile an exit that honestly described a stall
+        is what the metric veto audits, and one naming no listed phrase is
+        dropped. The gate was selecting for bad paperwork.
+
+        The desk's standing heal order (owner 2026-09-16, `src.seat_heal`)
+        applies, in order and with no step skipped:
+
+        1. **Mechanical heal.** A trigger the prose already names is
+           written into `PositionAction.exit_trigger` from the SAME phrase
+           vocabulary the executor has matched against since 2026-08-27.
+           Nothing is invented and nothing that used to execute stops
+           executing.
+        2. **One re-ask.** Anything still unsubstantiated — no trigger, no
+           evidence behind the trigger, or an explicit
+           `cannot_substantiate` — goes back to the seat naming those
+           symbols and asking for the trigger plus the recorded thing it
+           rests on, with keeping `cannot_substantiate` and HOLDing named
+           as a correct answer. Bounded by the same one-paid-retry-per-
+           seat-per-session cap the research seats use
+           (`seat_heal.can_paid_retry`), so this can never loop or
+           double-spend.
+        3. **Durable reason.** Whatever is still unsubstantiated after the
+           re-ask gets an append-only per-symbol `exit_refusal` row
+           (`code=unsubstantiated_after_reask`, `layer=exit_trigger`) and
+           a heal-FAILED owner alert, exactly as a failed research heal
+           does.
+
+        **What this does NOT do: it does not drop the exit.** `dropped` is
+        False on every row this method writes. The call site's disclosed
+        reasoning is that stranding the desk in a losing position is
+        strictly worse than an uncheckable claim passing, so an
+        unsubstantiated exit still reaches the remaining gates. What has
+        changed is that it is no longer UNREPORTABLE, and that the trigger
+        is now in a field — so `holding_discipline_claim_check` can be
+        pointed at the record the claim is about and reach a PROVABLY
+        FALSE verdict, which does block and does alert. Three-valued as
+        ratified 2026-09-04: false blocks, unverifiable logs, ok passes.
+        """
+        from src.cost_circuit import PaidAnalysisSuspended
+        from src.risk.exit_refusal import record_exit_refusal
+        from src.risk.exit_trigger import (
+            CODE_UNSUBSTANTIATED_AFTER_REASK, CODE_UNSUBSTANTIATED_TRIGGER,
+            REASK_DIRECTIVE, check_exit_trigger,
+        )
+        from src.seat_heal import (
+            HealResult, HEAL_CAP_BLOCKED, HEAL_FAILED, HEAL_PAID_RETRY,
+            can_paid_retry, record_paid_retry,
+        )
+        SEAT = "position_reviewer_exit_trigger"
+
+        def _classify(actions):
+            """{SYMBOL: check} for every exit needing substantiation, and
+            the count of actions the mechanical heal fixed."""
+            pending, healed = {}, 0
+            for a in actions or []:
+                check = check_exit_trigger(
+                    action=getattr(a, "action", None),
+                    exit_trigger=getattr(a, "exit_trigger", None),
+                    trigger_evidence=getattr(a, "trigger_evidence", ""),
+                    reason=getattr(a, "reason", ""),
+                    symbol=getattr(a, "symbol", "") or "",
+                )
+                if check.healed and check.trigger is not None:
+                    # Persist the heal on the object the executor reads, so
+                    # the downstream fact-check sees a named trigger rather
+                    # than re-deriving it from prose a second time.
+                    try:
+                        a.exit_trigger = check.trigger
+                        healed += 1
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(
+                            "exit trigger: could not write healed trigger "
+                            "on %s (%s)", getattr(a, "symbol", "?"), e,
+                        )
+                if check.needs_reask:
+                    pending[(getattr(a, "symbol", "") or "").upper()] = check
+            return pending, healed
+
+        if review is None:
+            return review
+        pending, healed = _classify(getattr(review, "actions", None))
+        if healed:
+            logger.info(
+                "exit trigger: mechanically healed %d exit trigger(s) from "
+                "the reason prose — no trigger invented", healed,
+            )
+        if not pending:
+            return review
+
+        for sym, check in sorted(pending.items()):
+            logger.warning("exit trigger: %s", check.finding)
+            record_exit_refusal(
+                self.db, symbol=sym, run_id=run_id, action="EXIT",
+                code=CODE_UNSUBSTANTIATED_TRIGGER, dropped=False,
+                detail=str(check.finding or "")[:400], layer="exit_trigger",
+            )
+
+        retries = dict(getattr(ctx, "heal_paid_retries", None) or {})
+        if not can_paid_retry(retries, SEAT):
+            logger.warning(
+                "exit trigger: the one re-ask for this seat is already "
+                "spent this session — %s stay(s) unsubstantiated and "
+                "recorded", ", ".join(sorted(pending)),
+            )
+            return review
+        try:
+            self._require_paid_analysis("position_reviewer")
+        except PaidAnalysisSuspended as exc:
+            self._record_heal(ctx, HealResult(
+                seat=SEAT, outcome=HEAL_CAP_BLOCKED,
+                reason=f"spend cap blocked the exit-trigger re-ask: {exc}",
+                details={"symbols": sorted(pending)},
+            ), alert=True)
+            return review
+
+        ctx.heal_paid_retries = record_paid_retry(retries, SEAT)
+        challenge = REASK_DIRECTIVE + ", ".join(sorted(pending))
+        try:
+            reasked, reask_result = self.position_reviewer.review(
+                **{**review_kwargs, "substantiation_challenge": challenge},
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._record_heal(ctx, HealResult(
+                seat=SEAT, outcome=HEAL_FAILED,
+                reason=f"exit-trigger re-ask raised: {exc}",
+                paid_retry=True, details={"symbols": sorted(pending)},
+            ), alert=True)
+            return review
+
+        try:
+            self.db.insert_agent_log(
+                agent_name="position_reviewer", run_id=run_id,
+                input_summary=f"exit-trigger re-ask | {', '.join(sorted(pending))}",
+                input_message=reask_result.user_message,
+                output_summary=(
+                    reasked.overall_assessment if reasked else "parse_error"
+                ),
+                full_response=reask_result.raw_text,
+                model=reask_result.model,
+                tokens_used=reask_result.tokens_used,
+                input_tokens=reask_result.input_tokens,
+                output_tokens=reask_result.output_tokens,
+                cost_usd=reask_result.cost_usd,
+                **agent_log_kwargs(reask_result),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("exit trigger: re-ask log write failed: %s", e)
+
+        if reasked is None:
+            self._record_heal(ctx, HealResult(
+                seat=SEAT, outcome=HEAL_FAILED,
+                reason="exit-trigger re-ask returned no parseable review",
+                paid_retry=True, details={"symbols": sorted(pending)},
+            ), alert=True)
+            return review
+
+        # Merge the re-answered actions for the CHALLENGED symbols only.
+        # Every other action stays exactly as first answered: the re-ask
+        # asked one question and is not an opportunity to re-decide the
+        # rest of the book.
+        replacements = {
+            (getattr(a, "symbol", "") or "").upper(): a
+            for a in (getattr(reasked, "actions", None) or [])
+            if (getattr(a, "symbol", "") or "").upper() in pending
+        }
+        merged = [
+            replacements.get((getattr(a, "symbol", "") or "").upper(), a)
+            for a in (getattr(review, "actions", None) or [])
+        ]
+        review.actions = merged
+        still, _ = _classify(merged)
+        logger.info(
+            "exit trigger: re-ask answered %d of %d challenged symbol(s); "
+            "%d still unsubstantiated",
+            len(replacements), len(pending), len(still),
+        )
+
+        if not still:
+            self._record_heal(ctx, HealResult(
+                seat=SEAT, outcome=HEAL_PAID_RETRY,
+                reason="exit-trigger re-ask substantiated every challenged exit",
+                paid_retry=True, usable=True,
+                details={"symbols": sorted(pending)},
+            ), alert=False)
+            return review
+
+        for sym, check in sorted(still.items()):
+            logger.error(
+                "exit trigger: %s STILL unsubstantiated after the re-ask. "
+                "The exit is NOT dropped on this ground — stranding the "
+                "desk in a losing position is worse than an uncheckable "
+                "claim passing — but it is recorded and the named trigger "
+                "is now fact-checked against the desk's own records. %s",
+                sym, check.finding,
+            )
+            record_exit_refusal(
+                self.db, symbol=sym, run_id=run_id, action="EXIT",
+                code=CODE_UNSUBSTANTIATED_AFTER_REASK, dropped=False,
+                detail=str(check.finding or "")[:400], layer="exit_trigger",
+            )
+        self._record_heal(ctx, HealResult(
+            seat=SEAT, outcome=HEAL_FAILED,
+            reason=(
+                "exit trigger still unsubstantiated after the one re-ask "
+                "for: " + ", ".join(sorted(still)) + ". Exits not dropped "
+                "on this ground; recorded per symbol."
+            ),
+            paid_retry=True, details={"symbols": sorted(still)},
+        ), alert=True)
+        return review
+
     def _holding_discipline_check_for_exit(
         self,
         *,
@@ -9322,6 +9545,7 @@ class TradingPipeline:
         positions,
         run_id: str,
         position_history: dict | None = None,
+        exit_trigger=None,
     ):
         """Fact-check ONE midday/close exit's hard-trigger claim, using the
         same deterministic checker the morning Portfolio-Manager path uses.
@@ -9382,6 +9606,7 @@ class TradingPipeline:
             claims_thesis_invalidation,
             holding_discipline_claim_check,
         )
+        from src.risk.exit_trigger import ExitTrigger, normalize_trigger
 
         if str(action).upper() not in ("SELL", "REDUCE", "COVER"):
             return None
@@ -9389,8 +9614,21 @@ class TradingPipeline:
         # actually adjudicate. With neither present it returns "ok"
         # regardless of everything else it is passed, so its verdict is not
         # what the thesis branch below is here for.
+        # 2026-09-18: read the claim from `PositionAction.exit_trigger`
+        # when the seat filled it, and from the prose only as a fallback.
+        # The prose-only version of this line is why the two real
+        # 2026-09-16 exits were never adjudicated at all: their entire
+        # reason was the words "adverse news", which neither regex
+        # recognises, so this short-circuited to None and no fact-check of
+        # any kind ran. See `src/risk/exit_trigger.py`.
+        _structured = normalize_trigger(exit_trigger)
         adjudicable_claim = (
-            claims_regime_flip(reason) or claims_bearish_state_change(reason)
+            claims_regime_flip(reason)
+            or claims_bearish_state_change(reason)
+            or _structured in (
+                ExitTrigger.REGIME_SHIFT, ExitTrigger.BEARISH_STATE_CHANGE,
+                ExitTrigger.ADVERSE_NEWS,
+            )
         )
         # (a) thesis invalidation. Until 2026-09-14 this fell through the
         # short-circuit above and the structural check was NEVER consulted
@@ -9420,7 +9658,10 @@ class TradingPipeline:
         # level was considered and deliberately NOT done here: it is a
         # separate, ratifiable decision, not a side effect of wiring up a
         # check that should always have been consulted.
-        thesis_claim = claims_thesis_invalidation(reason)
+        thesis_claim = (
+            claims_thesis_invalidation(reason)
+            or _structured is ExitTrigger.THESIS_INVALID
+        )
         if not (adjudicable_claim or thesis_claim):
             return None
 
@@ -9534,6 +9775,7 @@ class TradingPipeline:
             macro_regime_today=macro_regime_today,
             macro_status=macro_status,
             active_state_changes=active_state_changes,
+            exit_trigger=exit_trigger,
         )
 
     def _trail_tightened_recently(self, symbol: str, calendar_days: int = 4) -> bool:
@@ -10405,6 +10647,12 @@ class TradingPipeline:
                         symbol=symbol, action=act, reason=reason_text,
                         positions=positions, run_id=run_id,
                         position_history=hd_position_history,
+                        # The STRUCTURED trigger, so the fact-check reads
+                        # the claim from the field the seat filled rather
+                        # than guessing it from the sentence. This is what
+                        # makes the 2026-09-16 "adverse news" shape
+                        # adjudicable at all.
+                        exit_trigger=action_item.get("exit_trigger"),
                     )
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
@@ -12183,6 +12431,21 @@ class TradingPipeline:
                 "pace": pace,
                 "distance_to_stop_pct": dist_stop_pct,
                 "distance_to_target_pct": dist_target_pct,
+                # Provenance for `distance_to_stop_pct`, not metrics of
+                # their own: that metric is a function of BOTH terms, so
+                # without them a rise caused by the stop being widened is
+                # indistinguishable from a rise caused by the price moving
+                # away. It read as "(improved)" on real 2026-09-01
+                # snapshots for V, CMCSA and DIS while all three were
+                # deteriorating. See `exit_guard._STOP_DEPENDENT_METRIC`.
+                "stop_loss": stop_loss or None,
+                "current_price": cur if cur > 0 else None,
+                # Side, so the provenance recomputation in
+                # `exit_guard.MetricDeltas._distance_move_is_price_driven`
+                # can mirror the SAME formula this block uses above
+                # (`dist_stop_pct`) rather than assume every position is a
+                # long. Never scored — not a metric, just qty's sign.
+                "qty": p.qty,
                 "weight_pct": weight_pct,
                 "parabolic_flag": parabolic_flag,
                 "drift_flag": drift_flag,
@@ -12207,9 +12470,18 @@ class TradingPipeline:
     #: Metric keys snapshotted after every review and compared on the next one.
     #: Kept deliberately small — these are the numbers a "stalling" claim is
     #: actually about, and every one of them has a defined direction.
+    #: `stop_loss` / `current_price` / `qty` are NOT metrics and are never
+    #: scored. `stop_loss` and `current_price` are the two terms of
+    #: `distance_to_stop_pct`, snapshotted so the next review can attribute
+    #: a move in it to the market or to the desk's own stop (2026-09-18).
+    #: `qty` supplies the SIDE that same recomputation needs to mirror the
+    #: numerator correctly for a short (2026-09-18 follow-up, alongside the
+    #: sign fix to `distance_to_stop_pct` itself). Snapshots written before
+    #: 2026-09-18 lack all three; `compute_deltas` handles that explicitly.
     _REVIEW_METRIC_KEYS = (
         "thesis_progress_pct", "distance_to_stop_pct", "r_multiple", "pace",
         "days_held", "expected_horizon_sessions", "setup_type", "pace_status",
+        "stop_loss", "current_price", "qty",
     )
 
     def _build_review_metric_deltas(self, position_facts: dict, *, run_id: str) -> dict:
@@ -12789,8 +13061,7 @@ class TradingPipeline:
                 _margin_ceiling.rung if _margin_ceiling is not None else None
             )
 
-            try:
-                review, md_result = self.position_reviewer.review(
+            review_kwargs = dict(
                     positions=review_positions,
                     macro_summary=macro_summary,
                     cash_balance=review_cash,
@@ -12819,7 +13090,9 @@ class TradingPipeline:
                     margin_ladder_backed=margin_ladder_backed,
                     margin_ladder_multiple=margin_ladder_multiple,
                     margin_ladder_rung=margin_ladder_rung,
-                )
+            )
+            try:
+                review, md_result = self.position_reviewer.review(**review_kwargs)
             except PaidAnalysisSuspended as exc:
                 self._reconcile_fills()
                 return self._paid_suspension_after_late_safety(
@@ -12848,6 +13121,14 @@ class TradingPipeline:
                 output_tokens=md_result.output_tokens,
                 cost_usd=md_result.cost_usd,
                 **review_log_kwargs,
+            )
+
+            # Substantiation pass on the exit side (2026-09-18). Heals the
+            # structured trigger from the prose, RE-ASKS once for anything
+            # still unsubstantiated, and records a durable reason for what
+            # survives both. See `_substantiate_exit_triggers`.
+            review = self._substantiate_exit_triggers(
+                review, ctx=ctx, run_id=run_id, review_kwargs=review_kwargs,
             )
 
             # Risk check: if the daily loss limit is breached, HALT — refuse
