@@ -120,17 +120,48 @@ defending any threshold, cap, or rule in this codebase.** See
 `docs/WORK.md`'s session-start section for the current short version; this
 is the fuller statement of the same principle.
 
-**MECHANICALLY ENFORCED SINCE 2026-09-18, for the first time.** Until then
-this section was honour-system prose and the numbers it forbids accumulated
-under it — 122 in the modules that decide, size, price and exit a trade, of
-which 87 have nothing behind them. `src/number_sources.py` now requires every
-one to carry an entry in `config/number_ledger.yaml` recording where it came
-from, and `tests/test_number_sources.py` fails the build on a number that does
-not. Read that module's docstring before adding a constant; the ledger's
-header states what each classification requires. Two things it does NOT do:
-it does not judge whether a written source is TRUE, and it does not make any
-of the 87 sourced — those are `docs/WORK.md` item 90's open half, and every
-one of them is the owner's to move, not an agent's.
+**PARTIALLY ENFORCED SINCE 2026-09-18.** Until then this section was
+honour-system prose and the numbers it forbids accumulated under it. There is
+now a check — `src/number_sources.py`, failing through
+`tests/test_number_sources.py` — that requires a numeric definition site
+inside a declared scope to carry an entry in `config/number_ledger.yaml`
+recording where the number came from. 178 sites are in scope; 86 distinct
+numbers are recorded as having nothing behind them.
+
+**What the mechanism actually does, stated exactly, because an authority file
+must not claim more than the code does.** It is a COVERAGE and CONSISTENCY
+check over a declared scope, not a proof that any number is sourced.
+
+  * Scope is a hand-written file list plus a stated admission rule (every
+    module from a verdict to a broker order). A second check counts
+    module-level numeric constants in the `src/` files OUTSIDE that list and
+    fails if the count rises, so a new one cannot arrive silently — but the
+    list itself is still reviewed by a person, not derived.
+  * It pins the CODE DEFAULT. For 52 of these sites the value the desk
+    actually trades comes from `config/settings.yaml`. Since 2026-09-18 the
+    deployed value is checked against the ledger too; before that,
+    `risk.max_position_risk_pct: 5` could have been edited to `10` with the
+    check silent.
+  * It cannot tell a TRUE justification from a plausible one. This is not
+    hypothetical. The ledger's own flagship entry, written on shipping day
+    about the 0.50% minimum-risk floor, was false in four places — it said
+    the number was absent from `settings.yaml`, absent from every document
+    and absent from any ratification record, when it is at
+    `config/settings.yaml:751`, is the owner-ratified row at line 84 of THIS
+    file, and was ratified on 2026-08-27. Every claim was one grep from being
+    disproved. `source` must now be a URL or a `path:line` for that reason.
+  * It does not source any of the 86. That is `docs/WORK.md` item 90's open
+    half, and every one of them is the owner's to move, not an agent's.
+
+Read `src/number_sources.py`'s docstring before adding a constant; the
+ledger's header states what each classification requires. `arbitrary` is now
+the most expensive entry to write rather than the cheapest: it requires a
+note, the open question in answerable form, and what the desk pays while it
+is unanswered. That is three of the five things outcome 3 below demands of an
+open number. The schema does NOT yet require the other two — what was already
+searched and ruled out, and what evidence would settle it. Outcome 3's rule
+that a citation "is a URL a later reader can open and check" is what the
+`source` requirement below now enforces mechanically.
 
 Every constant that governs a real trade decision — a stop distance, a
 holding period, a risk percentage, a tolerance band, the reward:risk
