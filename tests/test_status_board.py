@@ -606,26 +606,78 @@ def test_no_board_item_disappears_without_being_retired():
     )
 
 
-def test_work_md_does_not_grow_without_pruning():
-    """Owner's standing rule: every write to docs/WORK.md cleans it up first.
-    Resolved items that are written up in docs/INCIDENT_HISTORY.md are
-    deleted, not condensed — the file is loaded by every session and every
-    compaction, so every resolved byte is paid for again and again.
+def test_work_md_growth_budget_shrinks_as_the_file_fills():
+    """Pins `sb.work_md_growth_budget`'s shape directly, independent of git
+    plumbing: half of whatever headroom remains below the cap, so the
+    allowance shrinks as the file fills rather than staying flat. See the
+    function's own docstring in scripts/status_board.py for why 0.5 is
+    provisional and what it replaced."""
+    cap = sb.WORK_MD_GROWTH_CAP_BYTES
+    assert sb.work_md_growth_budget(30_000, cap) == 35_000   # ~30% full
+    assert sb.work_md_growth_budget(85_000, cap) == 7_500    # ~85% full
+    assert sb.work_md_growth_budget(95_000, cap) == 2_500    # ~95% full
+    assert sb.work_md_growth_budget(cap, cap) == 0           # at the cap
+    assert sb.work_md_growth_budget(cap + 10_000, cap) == 0  # past it: never negative
 
-    Until 2026-09-14 that rule lived only in memory, and the only mechanical
-    check was the 100,000-byte ceiling below. The ceiling cannot catch it: a
-    change that adds 2,000 bytes and prunes nothing passes it until the day
-    the file hits the cap, and five board items were added that way in one
-    afternoon. This test encodes the rule itself: a change may not leave
-    WORK.md larger than it found it. Adding an item means removing at least
-    as much finished material in the same change.
 
-    Deliberately no escape hatch — an override is how a rule gets bypassed.
-    If a change ever genuinely has nothing left to prune, this failing is the
-    signal to raise that with the owner, not to work around it.
+def test_work_md_growth_share_is_pinned():
+    """`WORK_MD_GROWTH_SHARE` is a provisional judgement call (see its
+    comment in scripts/status_board.py) — pinned here so a future edit
+    cannot quietly loosen or tighten it without a visible, reviewed test
+    change."""
+    assert sb.WORK_MD_GROWTH_SHARE == 0.5
 
-    Fails closed in CI when no base can be read, so a shallow checkout cannot
-    silently skip it. Skips only on a local run with no reachable origin.
+
+def test_work_md_growth_cap_matches_the_byte_ceiling():
+    """`WORK_MD_GROWTH_CAP_BYTES` must equal the cap
+    `test_work_md_stays_under_a_hundred_thousand_bytes` enforces below —
+    that test owns the number, this only guards against the two silently
+    drifting apart if the ceiling is ever changed there and not here.
+    Reads the ceiling test's own source, the same way
+    `scripts/check_board_hygiene.py:read_cap_bytes` already does, rather
+    than re-typing the number a third time."""
+    from scripts.check_board_hygiene import read_cap_bytes
+
+    repo = Path(__file__).resolve().parents[1]
+    cap, error = read_cap_bytes(repo)
+    assert error is None, error
+    assert sb.WORK_MD_GROWTH_CAP_BYTES == cap
+
+
+def test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills():
+    """Owner's ruling, 2026-09-17, in substance: the old rule here (no
+    change may ever leave docs/WORK.md larger than it found it, "
+    deliberately no escape hatch") was WRITTEN BADLY. It was meant to stop
+    finished work piling up unpruned, and it did — but it could not tell
+    that apart from a night where far more genuine defects were found than
+    were closed, and blocked recording them while the file sat at roughly
+    30,000 of its 100,000-byte cap, comfortably under it, with nothing left
+    to prune. What he wants is housekeeping enforced, not recording
+    blocked; the 100,000-byte ceiling itself stays exactly as it was.
+
+    The replacement, `sb.work_md_growth_budget` (see its docstring for the
+    full reasoning): a single change may grow the file by at most `share`
+    (provisional, `sb.WORK_MD_GROWTH_SHARE`) of whatever headroom remains
+    below the cap. That budget is enormous while the file is well under the
+    cap — recording a new defect is never blocked for lack of something to
+    prune — and shrinks automatically as the file fills, so growth that is
+    fine at 30% full is not fine at 95% full, without a second flat number
+    to justify at each band.
+
+    This test only bounds how fast the file may approach the cap. It does
+    NOT, by itself, make housekeeping happen — that is enforced separately
+    and unconditionally (not gated on growth) by
+    `find_finished_items_still_on_board` / `find_closed_items_not_marked_
+    done`, via `test_the_real_backlog_has_no_finished_item_still_on_the_
+    board` and `test_the_real_backlog_has_no_item_contradicting_its_own_
+    title`: a change that adds nothing here still fails CI if it leaves a
+    self-declared-finished item sitting on the board. The three checks
+    together are the housekeeping rule: a hard ceiling, a shrinking growth
+    budget, and an unconditional finished-item gate.
+
+    Fails closed in CI when no base can be read, so a shallow checkout
+    cannot silently skip it. Skips only on a local run with no reachable
+    origin.
     """
     import os
     import subprocess
@@ -651,13 +703,18 @@ def test_work_md_does_not_grow_without_pruning():
         return  # WORK.md did not exist at the base; nothing to compare
     before = len(r.stdout)
     after = work_md.stat().st_size
-    assert after <= before, (
-        f"docs/WORK.md grew from {before:,} to {after:,} bytes "
-        f"(+{after - before:,}) without pruning. Owner's standing rule: every "
-        "write to WORK.md cleans it up in the same change. Delete resolved "
-        "items already written up in docs/INCIDENT_HISTORY.md (write one up "
-        "first if it is not), and their `## item N` blocks in "
-        "docs/BOARD_NOTES.md, until the file is no larger than it was."
+    cap = sb.WORK_MD_GROWTH_CAP_BYTES
+    budget = sb.work_md_growth_budget(before, cap)
+    grew_by = after - before
+    assert grew_by <= budget, (
+        f"docs/WORK.md grew from {before:,} to {after:,} bytes (+{grew_by:,}), "
+        f"more than the {budget:,}-byte growth budget allowed at this fullness "
+        f"({before:,}/{cap:,} bytes, {before / cap:.0%} full). The closer the "
+        "file is to the cap, the less room a single change gets before it "
+        "must prune first: delete items already written up in "
+        "docs/INCIDENT_HISTORY.md (write one up first if it is not), and "
+        "their `## item N` blocks in docs/BOARD_NOTES.md, until the growth "
+        "fits the budget."
     )
 
 
@@ -1296,6 +1353,123 @@ def test_a_missing_backlog_or_heading_flags_nothing(tmp_path):
     p = tmp_path / "WORK.md"
     p.write_text("# Work\n\nno funnel queue heading here\n")
     assert sb.find_closed_items_not_marked_done(p) == []
+
+
+# ---------------------------------------------------------------------------
+# the OUTFLOW half of "docs/WORK.md holds only open work"
+#
+# `test_no_board_item_disappears_without_being_retired` and
+# `test_work_md_stays_under_a_hundred_thousand_bytes` mechanically stop the
+# file from GROWING without being pruned. Neither one notices a single item
+# that has quietly finished and simply never been moved out — the file can
+# sit at its cap forever with finished items still occupying the space they
+# should have given back. `find_finished_items_still_on_board` is the other
+# half: it reads each item's own status the same way the renderer does
+# (`status_tail`, cross-references to other items stripped, negations
+# honoured) and fails when an item's own words say it is done.
+# ---------------------------------------------------------------------------
+
+def _board_notes(tmp_path, text=""):
+    p = tmp_path / "BOARD_NOTES.md"
+    p.write_text(text)
+    return p
+
+
+def test_a_synthetic_finished_item_trips_the_check(tmp_path):
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. A made-up bug — 3 of 68 (4%). FIXED 2026-09-04 (PR #999).**\n"
+    )
+    notes = _board_notes(tmp_path)
+    flagged = sb.find_finished_items_still_on_board(work, notes)
+    assert len(flagged) == 1
+    assert "item 9" in flagged[0]
+    # The message must tell a reader the whole procedure, not just that
+    # something is wrong — this is the one check nobody will know how to
+    # act on without being told.
+    for step in ("INCIDENT_HISTORY.md", "docs/WORK.md", "BOARD_NOTES.md",
+                 "retired"):
+        assert step in flagged[0]
+
+
+def test_a_partially_fixed_item_with_open_follow_ons_does_not_trip_it(tmp_path):
+    """Item 18's real shape: a closure word (MERGED) sits in the same tail as
+    a word admitting real work remains (PARTIALLY). Must stay open."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. Big finding — MEASURED 2026-09-02, PARTIALLY FIXED, core cause "
+        "MERGED 2026-09-04 (PR #252), real follow-ons below.**\n\n"
+        "Still open: a real remaining piece of work.\n"
+    )
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(work, notes) == []
+
+
+def test_a_deferred_owner_decision_does_not_trip_it(tmp_path):
+    """Item 17's real shape: no due date, explicitly deferred. A closure
+    word never appears, but this pins the paused/deferred exemption too."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. Backup alert channel — OWNER DECISION, deferred, no due "
+        "date.**\n"
+    )
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(work, notes) == []
+
+
+def test_working_as_intended_trips_it_like_a_closure_word(tmp_path):
+    """The owner's own concrete example (item 3): "WORKING AS INTENDED" with
+    no remaining follow-on is a settled conclusion, not open work, even
+    though it uses none of the FIXED/MERGED/SHIPPED vocabulary."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. Something investigated — 6 of 68 (9%). WORKING AS "
+        "INTENDED.**\n\n"
+        "A settled explanation with nothing left outstanding.\n"
+    )
+    notes = _board_notes(tmp_path)
+    flagged = sb.find_finished_items_still_on_board(work, notes)
+    assert len(flagged) == 1
+    assert "item 9" in flagged[0]
+
+
+def test_a_bare_open_marker_suppresses_a_stray_closure_word_in_the_tail(tmp_path):
+    """The real false positive this check was designed around: item 80's
+    tail uses "shipped" to describe the KIND of stop a rule is about
+    ("every shipped stop"), not this item's own state, and separately
+    declares itself "OPEN" in the very same tail. The literal OPEN must
+    win."""
+    work = tmp_path / "WORK.md"
+    work.write_text(
+        "## THE FUNNEL QUEUE\n\n"
+        "**9. Stop provenance — every shipped stop must trace to a level. "
+        "OPEN; the refusal path is contested, filed 2026-09-17.**\n"
+    )
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(work, notes) == []
+
+
+def test_a_missing_backlog_flags_nothing_for_the_finished_check(tmp_path):
+    notes = _board_notes(tmp_path)
+    assert sb.find_finished_items_still_on_board(
+        tmp_path / "nope.md", notes) == []
+
+
+def test_the_real_backlog_has_no_finished_item_still_on_the_board():
+    """The real docs/WORK.md and docs/BOARD_NOTES.md, not a fixture. This is
+    the check itself: it must find nothing once the cleanup pass in this
+    same change has moved out every item its own words call finished."""
+    work = Path(__file__).resolve().parents[1] / "docs" / "WORK.md"
+    notes = Path(__file__).resolve().parents[1] / "docs" / "BOARD_NOTES.md"
+    flagged = sb.find_finished_items_still_on_board(work, notes)
+    assert not flagged, (
+        "docs/WORK.md has item(s) that declare themselves finished in their "
+        "own status but are still on the board:\n  " + "\n  ".join(flagged)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2477,10 +2651,17 @@ def test_the_real_backlog_no_longer_queues_decided_or_started_work_as_open():
         assert by_rank[rank].in_hand_state == "decided, not yet built", rank
     for rank in (20, 39):
         assert by_rank[rank].bucket == "in_hand", rank
+    # Item 3 used to be pinned here as the "no_action" case (WORKING AS
+    # INTENDED, no follow-on). It was written up in
+    # docs/INCIDENT_HISTORY.md and deleted from docs/WORK.md once
+    # `find_finished_items_still_on_board` existed to catch a finished item
+    # sitting on the board — the parser behaviour it used to pin here lives
+    # on as a synthetic fixture in
+    # `test_a_cause_that_is_by_design_is_listed_but_never_queued`.
+    assert 3 not in by_rank
     # Checked and by design. Funnel item 8 (stop on the wrong side of
     # entry) joined the retired list on 2026-09-15: written up
     # 2026-09-02/03 as not a defect, then deleted from the queue.
-    assert by_rank[3].bucket == "no_action"
     assert 8 not in by_rank
     # Items 48 and 50 used to be pinned here as the "RESOLVED but never
     # struck through" case. Both have since been written up in

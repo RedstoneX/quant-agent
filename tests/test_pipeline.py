@@ -989,6 +989,47 @@ def test_prelatched_position_review_preserves_deterministic_safety(session_type)
     pipeline._check_late_breach_and_halt.assert_called_once()
 
 
+def test_total_pnl_since_reset_uses_earliest_row_prior_equity(tmp_path):
+    """The Telegram feed's 'total P&L' baseline: the earliest surviving
+    `daily_pnl` row's account equity BEFORE that day's own P&L
+    (total_value - daily_pnl) — the broker's own last_equity going into
+    the first post-reset trading day, a value already recorded on that
+    row, not reconstructed. Total P&L is current equity vs. that baseline;
+    total return % is over the same baseline."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_daily_pnl(date="2026-09-02", total_value=9862.74, daily_pnl=44.70, daily_return_pct=0.46)
+    db.insert_daily_pnl(date="2026-09-16", total_value=9717.05, daily_pnl=-147.81, daily_return_pct=-1.50)
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+
+    total_pnl, total_return_pct, since = pipeline._total_pnl_since_reset(9900.00)
+
+    baseline = 9862.74 - 44.70  # equity going into the first post-reset day
+    assert since == "2026-09-02"
+    assert total_pnl == pytest.approx(9900.00 - baseline)
+    assert total_return_pct == pytest.approx((9900.00 - baseline) / baseline * 100)
+    db.close()
+
+
+def test_total_pnl_since_reset_no_baseline_is_none_not_zero(tmp_path):
+    """No `daily_pnl` row recorded yet (fresh DB) — the baseline is
+    genuinely unknown, so this must say so, never fabricate a 0."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+
+    assert pipeline._total_pnl_since_reset(9900.00) == (None, None, None)
+    db.close()
+
+
 def test_halt_reconciles_fills_before_judging_coverage(tmp_path):
     """The dedupe/staleness reasoning that used to protect the liquidator
     still applies to the halt, for a different reason: DB rows can be stale
@@ -3248,6 +3289,116 @@ def test_symbols_already_trimmed_today_recognises_force_delever_action():
     assert trimmed == {"NVDA"}
 
 
+def test_sold_out_symbol_does_not_reach_position_reviewer():
+    """2026-09-17 XOM incident: XOM was fully SOLD this morning (broker no
+    longer holds it — only AAPL remains) yet the reviewer returned 7 actions
+    including a HOLD for XOM on a 6-... well, 1-position book in this
+    reduced repro. Root cause: `_symbols_already_trimmed_today` reads
+    today's trade rows with no idea which of those symbols are still held,
+    so a fully-closed name rides into the "Already Trimmed Today" prompt
+    section that tells the LLM to render a decision for every name in it.
+
+    Pin: the set actually handed to the reviewer must be restricted to
+    symbols still in the broker-truth position list, so a sold-out name can
+    never surface in the prompt (and therefore never in a fabricated
+    action) again."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    pipeline.broker.is_trading_day.return_value = True
+    pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
+    pipeline.broker.get_positions.return_value = [
+        Position(
+            symbol="AAPL", qty=10.0, avg_entry=200.0, current_price=210.0,
+            market_value=2100.0, unrealized_pnl=100.0, sector="Technology",
+        )
+    ]
+    pipeline.macro = MagicMock()
+    pipeline.macro.get_macro_summary.return_value = {}
+    pipeline.db = MagicMock()
+    # XOM was fully SOLD this morning — a real sell-side row exists in the
+    # trades table even though the broker no longer holds any XOM shares.
+    pipeline.db.get_trades.return_value = [
+        {"action": "SELL", "symbol": "XOM", "fill_status": "filled"},
+    ]
+    pipeline.config = MagicMock()
+    pipeline.config.llm.position_reviewer_model = "test-model"
+    pipeline._handle_ex_dividends = MagicMock(return_value=[])
+    pipeline._run_news_update = MagicMock(return_value=(None, None))
+    pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
+    pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
+    pipeline._reconcile_fills = MagicMock()
+    pipeline.risk_engine = MagicMock()
+    pipeline.risk_engine.check_daily_loss.return_value = None
+    pipeline.position_reviewer = MagicMock()
+    pipeline.position_reviewer.review.return_value = (
+        PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
+        _mock_agent_result(),
+    )
+
+    result = pipeline.run_midday()
+
+    assert result["status"] == "reviewed"
+    assert result["positions"] == 1, "reviewed count must match broker holdings (1), not trade-row history"
+
+    review_kwargs = pipeline.position_reviewer.review.call_args.kwargs
+    reviewed_symbols = {p.symbol for p in review_kwargs["positions"]}
+    assert reviewed_symbols == {"AAPL"}, (
+        f"sold-out XOM must not reach review_positions: got {reviewed_symbols}"
+    )
+    assert review_kwargs["already_trimmed_today"] == set(), (
+        "XOM was fully sold (not merely trimmed while still held) — it must "
+        "not appear in the 'Already Trimmed Today' set the reviewer prompt "
+        f"renders as an actionable position: got {review_kwargs['already_trimmed_today']}"
+    )
+
+
+def test_partially_trimmed_still_held_symbol_stays_in_discipline_set():
+    """Contrast case for the fix above: a symbol that was REDUCEd (not
+    fully closed) this morning and is STILL in the broker book must remain
+    in already_trimmed_today — that is the discipline the set exists to
+    enforce (2026-05-04 AMZN double-trim). Only a fully-closed name should
+    be dropped."""
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.broker = MagicMock()
+    pipeline.broker.is_trading_day.return_value = True
+    pipeline.broker.get_account.return_value = {"cash": 1000.0, "portfolio_value": 5000.0}
+    pipeline.broker.get_positions.return_value = [
+        Position(
+            symbol="AMZN", qty=21.0, avg_entry=100.0, current_price=112.0,
+            market_value=2352.0, unrealized_pnl=252.0, sector="Consumer Cyclical",
+        )
+    ]
+    pipeline.macro = MagicMock()
+    pipeline.macro.get_macro_summary.return_value = {}
+    pipeline.db = MagicMock()
+    pipeline.db.get_trades.return_value = [
+        {"action": "REDUCE", "symbol": "AMZN", "fill_status": "filled"},
+    ]
+    pipeline.config = MagicMock()
+    pipeline.config.llm.position_reviewer_model = "test-model"
+    pipeline._handle_ex_dividends = MagicMock(return_value=[])
+    pipeline._run_news_update = MagicMock(return_value=(None, None))
+    pipeline._load_earnings_analyses = MagicMock(return_value=(None, []))
+    pipeline._midday_execute_llm_actions = MagicMock(return_value=[])
+    pipeline._reconcile_fills = MagicMock()
+    pipeline.risk_engine = MagicMock()
+    pipeline.risk_engine.check_daily_loss.return_value = None
+    pipeline.position_reviewer = MagicMock()
+    pipeline.position_reviewer.review.return_value = (
+        PositionReview(reasoning_chain=_review_rc(), actions=[], overall_assessment="stable", risk_level="low"),
+        _mock_agent_result(),
+    )
+
+    result = pipeline.run_midday()
+
+    assert result["status"] == "reviewed"
+    review_kwargs = pipeline.position_reviewer.review.call_args.kwargs
+    assert review_kwargs["already_trimmed_today"] == {"AMZN"}, (
+        "a still-held, partially-trimmed symbol must remain in the "
+        f"discipline set: got {review_kwargs['already_trimmed_today']}"
+    )
+
+
 # ============================================================================
 # FORCE_DELEVER persistence + inverse-ETF deprioritization
 # ============================================================================
@@ -4050,3 +4201,135 @@ def test_pipeline_morning_syncs_positions_at_snapshot_and_after_reconcile():
 
     assert result["status"] == "no_data"
     assert pipeline._sync_positions_from_broker.call_count >= 2
+
+
+def test_intra_check_reconciles_outstanding_fills(tmp_path):
+    """2026-09-17 AMD incident: AMD filled at $549.11 but the trades table
+    still read 'submitted' — because `run_intra_check`, the half-hourly
+    tick between morning and midday, never called `_reconcile_fills` at
+    all. It reconciles protective-stop coverage and broker-initiated
+    stop-out fills, but neither of those asks the broker about the fate of
+    an order the desk itself submitted. This is the tightest-cadence
+    session and therefore the one place a stale 'submitted' row should be
+    caught soonest.
+
+    Pin: a BUY left 'submitted' from an earlier session must flip to
+    'filled' (with the real fill price) by the time `run_intra_check`
+    returns, using a real DB so the fill_status transition is genuine,
+    not a mocked call assertion."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade(
+        symbol="AMD", action="BUY", qty=5.0, price=540.0,
+        reasoning="morning entry", run_id="morning-r1",
+        broker_order_id="alpaca-amd-1", fill_status="submitted",
+        stop_loss=500.0, take_profit=600.0,
+    )
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+    pipeline._kill_switch_path = None
+    pipeline._is_trading_day = MagicMock(return_value=True)
+    pipeline._activate_cost_session = MagicMock()
+    pipeline._drain_pending_protection_restores = MagicMock()
+    pipeline._drain_pending_repegs = MagicMock()
+    pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
+    pipeline._release_retired_cash_park = MagicMock()
+    pipeline._reconcile_orphan_pending_submits = MagicMock()
+    pipeline._reconcile_stop_out_fills = MagicMock()
+    pipeline._run_intraday_opportunity_scan = MagicMock(
+        return_value={"status": "intraday_scan_disabled"}
+    )
+    pipeline._sync_positions_from_broker = MagicMock()
+    pipeline.broker = MagicMock()
+    pipeline.broker.get_account.return_value = {
+        "cash": 1000.0, "portfolio_value": 5000.0, "last_equity": 5000.0,
+    }
+    pipeline.broker.get_positions.return_value = []
+    # Broker truth: AMD actually filled at $549.11 — the desk's own record
+    # just hasn't been told yet.
+    pipeline.broker.get_order_fill_info.return_value = {
+        "status": "filled", "filled_qty": "5.0", "filled_avg_price": "549.11",
+    }
+    pipeline.risk_engine = MagicMock()
+    pipeline.risk_engine.check_daily_loss.return_value = None
+
+    result = pipeline.run_intra_check()
+
+    assert result["status"] == "ok"
+    row = db.execute(
+        "SELECT fill_status, fill_price FROM trades WHERE broker_order_id = 'alpaca-amd-1'"
+    ).fetchone()
+    assert row["fill_status"] == "filled", (
+        "an order that filled between sessions must be reconciled on the "
+        "next half-hourly run, not left reading 'submitted'"
+    )
+    assert float(row["fill_price"]) == 549.11
+    db.close()
+
+
+def test_intra_check_reconciles_rejected_and_cancelled_orders(tmp_path):
+    """Same gap as the AMD fill case, for the other two terminal outcomes
+    the half-hourly reconcile must also resolve: a rejected order and a
+    cancelled order must not be left reading 'submitted' either."""
+    from src.storage.db import Database
+
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+    db.insert_trade(
+        symbol="TSLA", action="BUY", qty=3.0, price=250.0,
+        reasoning="rejected entry", run_id="morning-r1",
+        broker_order_id="alpaca-tsla-1", fill_status="submitted",
+    )
+    db.insert_trade(
+        symbol="NVDA", action="REDUCE", qty=2.0, price=120.0,
+        reasoning="cancelled reduce", run_id="morning-r1",
+        broker_order_id="alpaca-nvda-1", fill_status="submitted",
+    )
+
+    pipeline = TradingPipeline.__new__(TradingPipeline)
+    pipeline.db = db
+    pipeline._kill_switch_path = None
+    pipeline._is_trading_day = MagicMock(return_value=True)
+    pipeline._activate_cost_session = MagicMock()
+    pipeline._drain_pending_protection_restores = MagicMock()
+    pipeline._drain_pending_repegs = MagicMock()
+    pipeline._reconcile_stop_coverage = MagicMock(return_value=[])
+    pipeline._release_retired_cash_park = MagicMock()
+    pipeline._reconcile_orphan_pending_submits = MagicMock()
+    pipeline._reconcile_stop_out_fills = MagicMock()
+    pipeline._run_intraday_opportunity_scan = MagicMock(
+        return_value={"status": "intraday_scan_disabled"}
+    )
+    pipeline._sync_positions_from_broker = MagicMock()
+    pipeline.broker = MagicMock()
+    pipeline.broker.get_account.return_value = {
+        "cash": 1000.0, "portfolio_value": 5000.0, "last_equity": 5000.0,
+    }
+    pipeline.broker.get_positions.return_value = []
+
+    def _fill_info(order_id):
+        if order_id == "alpaca-tsla-1":
+            return {"status": "rejected", "filled_qty": None, "filled_avg_price": None}
+        if order_id == "alpaca-nvda-1":
+            return {"status": "canceled", "filled_qty": None, "filled_avg_price": None}
+        return None
+
+    pipeline.broker.get_order_fill_info.side_effect = _fill_info
+    pipeline.risk_engine = MagicMock()
+    pipeline.risk_engine.check_daily_loss.return_value = None
+
+    result = pipeline.run_intra_check()
+
+    assert result["status"] == "ok"
+    tsla = db.execute(
+        "SELECT fill_status FROM trades WHERE broker_order_id = 'alpaca-tsla-1'"
+    ).fetchone()
+    nvda = db.execute(
+        "SELECT fill_status FROM trades WHERE broker_order_id = 'alpaca-nvda-1'"
+    ).fetchone()
+    assert tsla["fill_status"] == "rejected"
+    assert nvda["fill_status"] == "canceled"
+    db.close()

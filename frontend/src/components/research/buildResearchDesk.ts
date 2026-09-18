@@ -170,14 +170,143 @@ function evidenceChips(rows: StoredResearchEvidence[]): ResearchEvidenceItem[] {
     source: row.agent_name, timestamp: row.timestamp,
   }));
 }
-function marketContext(rows: StoredResearchEvidence[]): ResearchMarketContext[] {
-  return sortEvidence(rows).reverse().flatMap((row) => {
+/* The desk writes the derivation's provenance into the order's own
+ * `reasoning` as a fixed machine-written suffix — see
+ * `src/portfolio_constructor.py::_target_note`. That suffix is the ONLY
+ * place the basis reaches stored evidence (the payload has no
+ * `target_basis` field), so it is parsed rather than re-derived. A
+ * non-match yields null and the UI simply prints no basis; nothing is
+ * guessed. */
+const TARGET_NOTE = /\[target \$[\d,.]+(?: computed from ([a-z ]+);| — ([a-z_ ]+)\])/;
+function targetBasis(payload: unknown): string | null {
+  const reasoning = stringAt(payload, "reasoning");
+  if (!reasoning) return null;
+  const match = TARGET_NOTE.exec(reasoning);
+  const basis = (match?.[1] || match?.[2] || "").trim().replace(/_/g, " ");
+  return basis || null;
+}
+function numberArrayAt(payload: unknown, ...keys: string[]): number[] {
+  const root = object(payload);
+  if (!root) return [];
+  for (const key of keys) {
+    const value = root[key];
+    if (Array.isArray(value) && value.length && value.every((v) => typeof v === "number")) return value as number[];
+  }
+  return [];
+}
+/* Latest desk-derived `take_profit` per symbol, read off the
+ * portfolio_manager's OWN `proposed_order` row (the only place that
+ * number is stored — see the marketContext doc below). Built once from
+ * ALL of today's evidence, not just the technical seat's rows, because
+ * that is the only way the two numbers can ever be compared on one
+ * card. */
+function derivedTargetsBySymbol(allEvidence: StoredResearchEvidence[]): Map<string, { price: number; basis: string | null }> {
+  const out = new Map<string, { price: number; basis: string | null }>();
+  const orders = allEvidence.filter((row) => seatOf(row.agent_name) === "portfolio_manager" && row.kind === "proposed_order");
+  for (const row of sortEvidence(orders)) {
+    if (!row.symbol) continue;
+    const price = numberAt(row.payload, "take_profit");
+    if (price == null) continue;
+    out.set(row.symbol, { price, basis: targetBasis(row.payload) });
+  }
+  return out;
+}
+/* Whether the technical-analyst SEAT itself grounded `reference_target` in
+ * something checkable, per `config/prompts/tech_analyst.md`:
+ *
+ * - a "range" setup: `reference_target` IS the overhead level, and
+ *   `support_levels`/`resistance_levels` are required to be "actual
+ *   prices where the chart has traded... a number you cannot point to on
+ *   the chart does not belong here" — so a target that matches one of the
+ *   seat's own listed levels (to the cent) is a checkable claim, not an
+ *   inference we are making on its behalf.
+ * - a "breakout" setup: there is no overhead level by design, and the
+ *   prompt instead requires the seat to name it a measured move and "say
+ *   so in `reasoning`" — read literally, never paraphrased.
+ *
+ * A `reference_target` that matches neither test is undrawable: the seat
+ * did not point at anything, so nothing is drawn, however close the
+ * number sits to the desk's own figure. */
+function analystTargetBasis(payload: unknown, target: number): "structural level" | "measured move" | null {
+  const levels = [...numberArrayAt(payload, "support_levels"), ...numberArrayAt(payload, "resistance_levels")];
+  if (levels.some((level) => Math.abs(level - target) < 0.005)) return "structural level";
+  const setupType = stringAt(payload, "setup_type");
+  const reasoning = stringAt(payload, "reasoning") || "";
+  if (setupType === "breakout" && /measured move/i.test(reasoning)) return "measured move";
+  return null;
+}
+
+/* Stop/entry/target(s) as the desk and the seat actually recorded them, or
+ * — for a row that is undrawable for some OTHER reason — a stated reason
+ * why not.
+ *
+ * What this deliberately does NOT do:
+ *
+ * 1. It never draws a `reference_target` the seat did not itself ground
+ *    in a named level or a stated measured move (`analystTargetBasis`
+ *    above). Per owner ruling (2026-09-18): the seat IS required to point
+ *    at something checkable, and that reasoning is persisted in full
+ *    (`analysis.model_dump_json()` in `src/pipeline_stages.py`), so an
+ *    ungrounded number is the only thing hidden — not the seat's read as
+ *    such. When both the seat's grounded target and the desk's own
+ *    `take_profit` exist, both are shown, clearly labelled as two
+ *    different facts, with agreement to the cent surfaced as its own
+ *    signal.
+ *
+ * 2. It is direction-aware. The geometry test is NOT `stop < entry &&
+ *    entry < target`, which would silently discard every short (a
+ *    short's stop sits ABOVE entry and its target BELOW).
+ *
+ * 3. A row with NEITHER a desk-derived target NOR a seat-grounded one
+ *    says nothing about it — no card, no "not available" line, no gap
+ *    message. Only a row that IS drawable-in-principle but fails on its
+ *    own terms (bad geometry, zero risk distance) still reports a reason.
+ */
+function marketContext(rows: StoredResearchEvidence[], allEvidence: StoredResearchEvidence[]): { contexts: ResearchMarketContext[]; gaps: string[] } {
+  const contexts: ResearchMarketContext[] = [];
+  const faults: string[] = [];
+  const derivedLookup = derivedTargetsBySymbol(allEvidence);
+  for (const row of sortEvidence(rows).reverse()) {
     const entry = numberAt(row.payload, "entry_price");
     const stop = numberAt(row.payload, "stop_loss", "suggested_stop_price");
-    const target = numberAt(row.payload, "reference_target", "take_profit");
-    if (!row.symbol || entry == null || stop == null || target == null || !(stop < entry && entry < target)) return [];
-    return [{ symbol: row.symbol, stop, entry, target }];
-  }).slice(0, 3);
+    if (!row.symbol || entry == null || stop == null) continue;
+    if (stop === entry) {
+      faults.push(`${row.symbol}: the recorded stop equals the entry — no risk distance to draw.`);
+      continue;
+    }
+    const direction = stop < entry ? "long" : "short";
+    const beyondEntry = (price: number) => (direction === "long" ? price > entry : price < entry);
+
+    const derivedRaw = derivedLookup.get(row.symbol) || null;
+    const derivedOk = derivedRaw != null && beyondEntry(derivedRaw.price);
+
+    const referenceTarget = numberAt(row.payload, "reference_target");
+    const analystBasis = referenceTarget != null ? analystTargetBasis(row.payload, referenceTarget) : null;
+    const analystRaw = analystBasis ? { price: referenceTarget as number, basis: analystBasis } : null;
+    const analystOk = analystRaw != null && beyondEntry(analystRaw.price);
+
+    if (!derivedOk && !analystOk) {
+      // Report a geometry fault only when there was actually a number to
+      // fail on — a bare absence (no take_profit, no grounded
+      // reference_target) is the normal case and stays silent.
+      const badCandidate = (derivedRaw && !beyondEntry(derivedRaw.price)) ? derivedRaw
+        : (analystRaw && !beyondEntry(analystRaw.price)) ? analystRaw : null;
+      if (badCandidate) {
+        faults.push(`${row.symbol}: the recorded ${direction} target ${badCandidate.price} is not beyond the entry ${entry} — geometry not drawable.`);
+      }
+      continue;
+    }
+    contexts.push({
+      symbol: row.symbol, stop, entry, direction,
+      derived_target: derivedOk ? derivedRaw!.price : null,
+      derived_target_basis: derivedOk ? derivedRaw!.basis : null,
+      analyst_target: analystOk ? analystRaw!.price : null,
+      analyst_target_basis: analystOk ? analystRaw!.basis : null,
+      targets_agree: Boolean(derivedOk && analystOk && Math.abs(derivedRaw!.price - analystRaw!.price) < 0.005),
+    });
+  }
+  const gaps = faults.slice(0, 3);
+  return { contexts: contexts.slice(0, 3), gaps };
 }
 function aggregateDirection(rows: StoredResearchEvidence[]): ResearchDirection {
   const directions = rows.map((row) => directionOf(row.payload)).filter((value) => value !== "unknown" && value !== "neutral");
@@ -390,13 +519,14 @@ export function buildResearchDesk(data: ResearchDailyResponse, priorDay: Researc
     const seatStatus: ResearchItemStatus = failedCall || missingSeat || allRowsForSeat.some((row) => row.state === "invalid")
       ? "error" : current ? freshnessStatus : "unavailable";
     const newsChange = seat === "news" ? last(currentRows.flatMap((row) => objects(object(row.payload)?.state_changes))) : undefined;
+    const setups = seat === "technical" ? marketContext(currentRows, allEvidence) : { contexts: [], gaps: [] };
     return {
       seat, status: seatStatus,
       headline, read: headline && read && headline.toLowerCase() === read.toLowerCase() ? null : read,
       direction: aggregateDirection(currentRows), evidence: evidenceChips(currentRows),
       changed: changedRead(seat, currentRows, previous?.rows || [], callRead, editCopy(priorCall?.output_summary)),
       tension: null, why_now: editCopy(stringAt(rep?.payload, "why_now", "catalyst", "shift_reason") || stringAt(newsChange, "market_impact", "event"), 220),
-      market_context: seat === "technical" ? marketContext(currentRows) : [],
+      market_context: setups.contexts, market_context_gaps: setups.gaps,
       timestamp: call?.timestamp || rep?.timestamp || null,
       error: failedCall ? "Agent call failed; no conclusion is inferred." : allRowsForSeat.some((row) => row.state === "invalid") ? "Some structured evidence was invalid." : null,
     };

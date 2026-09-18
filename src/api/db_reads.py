@@ -1212,3 +1212,62 @@ def get_conviction_ledger() -> dict:
         })
 
     return {"read_error": None, "credits": credits, "stances": stances}
+
+
+def get_holding_why(symbol: str) -> dict | None:
+    """Everything `src.api.holding_why.build_holding_why` needs for one
+    symbol, or None when the desk has no entry row for it at all.
+
+    Scoped deliberately narrowly: the ENTRY trade (the most recent
+    `BUY`/`SHORT`), that entry run's symbol-scoped evidence, every later
+    `review_metrics` row for the same position, and the trades written
+    against the position after the entry. Reading the whole symbol's
+    evidence history instead would pull in every prior run that looked at
+    the name and never traded it — which is exactly the repetition the
+    holding view exists to remove.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        entry = conn.execute(
+            "SELECT * FROM trades WHERE symbol = ? AND action IN ('BUY', 'SHORT') "
+            "ORDER BY timestamp DESC, id DESC LIMIT 1",
+            (symbol,),
+        ).fetchone()
+        if entry is None:
+            return None
+        entry = dict(entry)
+        evidence = [
+            dict(row) for row in conn.execute(
+                # The entry run's evidence is written BEFORE the fill (the
+                # Form 4 admission precedes the order by minutes), so the
+                # review-metrics cutoff must not be applied to it.
+                #
+                # `target_revision` rows are pulled on the same
+                # after-the-entry basis as `review_metrics`: a re-derived
+                # take-profit, or a named refusal to re-derive one, happens
+                # in a LATER session than the entry, and the holding view
+                # must show which number it is currently displaying and why.
+                "SELECT * FROM specialist_evidence WHERE symbol = ? AND "
+                "(run_id = ? OR (kind IN ('review_metrics', 'target_revision') "
+                "AND timestamp >= ?)) "
+                "ORDER BY id",
+                (symbol, entry.get("run_id") or "", entry.get("timestamp") or ""),
+            ).fetchall()
+        ]
+        interim: list[dict] = []
+        position_id = entry.get("position_id")
+        if position_id:
+            interim = [
+                dict(row) for row in conn.execute(
+                    "SELECT * FROM trades WHERE position_id = ? AND id != ? "
+                    "ORDER BY timestamp, id",
+                    (position_id, entry.get("id")),
+                ).fetchall()
+            ]
+        return {"entry": entry, "evidence": evidence, "interim": interim}
+    except sqlite3.Error:
+        return None
+    finally:
+        if conn is not None:
+            conn.close()

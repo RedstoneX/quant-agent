@@ -285,6 +285,28 @@ def test_order_to_dict_handles_a_non_isoformat_timestamp():
     assert out["submitted_at"] == "2026-08-12 13:30:00"
 
 
+def test_order_to_dict_normalizes_a_punctuated_class_share_symbol():
+    """Alpaca's order objects spell class shares with a dot ("BRK.B"), but
+    `read_positions` (AlpacaBroker.get_positions) already normalizes to the
+    hyphenated QAMC/yfinance form ("BRK-B"). Left untranslated, the
+    cockpit's symbol string-equality checks (e.g. matching a resting stop
+    order to its position for the chart's stop line) silently fail for
+    every punctuated ticker — this is what made Berkshire's chart show no
+    stop line despite a live protective stop existing at the broker."""
+    out = broker_reads._order_to_dict(_order(symbol="BRK.B"))
+    assert out["symbol"] == "BRK-B"
+
+
+def test_order_to_dict_leaves_an_unpunctuated_symbol_alone():
+    out = broker_reads._order_to_dict(_order(symbol="AAPL"))
+    assert out["symbol"] == "AAPL"
+
+
+def test_order_to_dict_survives_a_missing_symbol():
+    out = broker_reads._order_to_dict(_order(symbol=None))
+    assert out["symbol"] is None
+
+
 # ---------------------------------------------------------------------------
 # read_orders
 # ---------------------------------------------------------------------------

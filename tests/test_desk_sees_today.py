@@ -224,3 +224,82 @@ def test_stage_live_price_kwarg_only_for_usable_live_price():
     assert kw({"ORCL": {"last_price": ORCL_LIVE}}, "ORCL") == {"live_price": ORCL_LIVE}
     assert kw({"ORCL": {"live_unavailable": "x", "last_price": 1.0}}, "ORCL") == {}
     assert kw({}, "ORCL") == {}
+
+
+# ---------------------------------------------------------------------------
+# The same rule, applied to the ORDER path (2026-09-17)
+#
+# The 2026-09-14 fix made the RESEARCH path refuse a price that is not from
+# today. The order path was never given the same rule: `_live_fill_price` and
+# the entry-ceiling pin both took the bare price reader, which reports a
+# prior session's last print and an unconfirmed quote midpoint identically to
+# a live trade. These pin the order path to today's data.
+# ---------------------------------------------------------------------------
+
+def _stamped_broker(price, *, source="last_trade", is_today=True, is_today_print=True):
+    from src.execution.broker import LivePrice
+
+    broker = MagicMock()
+    broker.get_latest_price_stamped.return_value = LivePrice(
+        price=price, source=source, trade_at=None,
+        is_today=is_today, is_today_print=is_today_print,
+    )
+    return broker
+
+
+def test_order_path_accepts_a_price_stamped_today():
+    from src.pipeline_stages import _today_order_price
+
+    pipeline = MagicMock()
+    pipeline.broker = _stamped_broker(181.25)
+    assert _today_order_price(pipeline, "NVDA") == 181.25
+
+
+def test_order_path_accepts_a_live_quote_mid_as_a_fill_reference():
+    """A quote mid is not proof the tape traded there, but mid-session it IS
+    the current market and a legitimate reference for a limit. Only the stop
+    path demands a real print."""
+    from src.pipeline_stages import _today_order_price
+
+    pipeline = MagicMock()
+    pipeline.broker = _stamped_broker(
+        100.0, source="quote_mid", is_today=True, is_today_print=False,
+    )
+    assert _today_order_price(pipeline, "NVDA") == 100.0
+
+
+def test_order_path_refuses_a_price_from_a_prior_session():
+    from src.pipeline_stages import _today_order_price
+
+    pipeline = MagicMock()
+    pipeline.broker = _stamped_broker(181.25, is_today=False, is_today_print=False)
+    assert _today_order_price(pipeline, "NVDA") is None
+
+
+def test_order_path_refuses_a_price_whose_freshness_cannot_be_read():
+    """Unknown freshness fails visible. The callers already treat None as
+    "no verifiable live price" and skip the name rather than pricing off it."""
+    from src.pipeline_stages import _today_order_price
+
+    pipeline = MagicMock()
+    pipeline.broker = _stamped_broker(181.25, is_today=False, is_today_print=False)
+    assert _today_order_price(pipeline, "NVDA") is None
+
+
+def test_entry_ceiling_falls_back_to_the_approved_entry_when_today_has_no_price():
+    """The pinned ceiling must not be computed from a stale price. With no
+    usable live price it comes from the entry the PM/RM actually approved."""
+    from src.pipeline_stages import _pin_approved_entry_ceilings
+
+    pipeline = MagicMock()
+    pipeline.broker = _stamped_broker(500.0, is_today=False, is_today_print=False)
+    pipeline.config.execution.entry_slippage_bps = 40
+    ctx = MagicMock()
+    ctx.approved_entry_ceiling = {}
+    decision = MagicMock()
+    decision.symbol = "NVDA"
+    decision.action = "BUY"
+    decision.entry_price = 100.0
+    _pin_approved_entry_ceilings(pipeline, ctx, [decision])
+    # 100 * (1 + 40bp) — from the approved entry, not the 500.0 stale price.
+    assert abs(ctx.approved_entry_ceiling["NVDA"] - 100.4) < 0.01

@@ -3410,6 +3410,38 @@ class PositionAction(LLMOutputModel):
         return self
 
 
+class TargetRevisionFlag(LLMOutputModel):
+    """A seat's claim that a held position's take-profit was measured against
+    structure that no longer exists. EVIDENCE ONLY — there is no price field.
+
+    This schema carries no target price ON PURPOSE. A revision is a
+    RE-DERIVATION: `src.risk.target_revision.assess_target_revision` decides
+    whether a structural event legitimises re-asking, and
+    `src.data.levels.derive_structural_target` supplies the number from
+    today's bars. The seat supplies the observation; the code supplies the
+    price. Accepting a typed target here would put a model-guessed number on
+    the DENOMINATOR of `thesis_progress_pct` and `pace` — i.e. docs/WORK.md
+    item 80 (stop provenance) reappearing on the field that feeds the exit
+    guard — so the field simply does not exist to be filled in.
+
+    Raising a flag is not a revision. The overwhelmingly common outcome is
+    `REFUSAL_NO_STRUCTURAL_EVENT`, recorded per symbol: a view that a name
+    has further to run is not a structural event.
+    """
+
+    symbol: str
+    evidence: str = Field(min_length=1)
+    """WHAT was observed about the structure, not what the seat expects.
+    "gapped through and closed above the 214 resistance on earnings" is
+    evidence; "I think there is more upside here" is not and will be
+    refused."""
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol(cls, value: str) -> str:
+        return _normalize_symbol(value)
+
+
 class PositionReasoningChain(LLMOutputModel):
     """Six-step chain the position reviewer must fill before emitting actions.
 
@@ -3451,6 +3483,11 @@ class PositionReview(LLMOutputModel):
     actions: list[PositionAction] = []
     overall_assessment: str = Field(min_length=1)
     risk_level: Literal["low", "moderate", "elevated", "high"]
+    target_revision_flags: list[TargetRevisionFlag] = []
+    """Positions whose take-profit was measured against structure the seat
+    observes is gone. Evidence only — see `TargetRevisionFlag`. Each flag is
+    adjudicated by `src.risk.target_revision` and recorded per symbol
+    whichever way it goes; a flag is never an instruction and never an exit."""
 
     @model_validator(mode="before")
     @classmethod

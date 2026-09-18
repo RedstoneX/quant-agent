@@ -3,6 +3,7 @@ import {
   api,
   AccountResponse,
   HealthResponse,
+  HoldingWhyResponse,
   MacroBroaderContext,
   OrderItem,
   PositionItem,
@@ -306,6 +307,57 @@ export default function App() {
     previousChartSymbolRef.current = current;
     markChartInteraction();
   }
+  // "Why do we hold this" for the charted symbol (owner's own proposal,
+  // approved 2026-09-18). Fetched HERE, next to chartSymbol itself, and
+  // not inside the Why panel: every symbol-click affordance in the
+  // cockpit already funnels through setChartSymbol below, so one effect
+  // on that value covers holdings, positions, trades and orders at once
+  // — and, critically, it keeps filling while the Why tab is a
+  // background tab. A fetch inside the panel would only run once he
+  // switched to it, which is the opposite of what he asked for.
+  const [holdingWhy, setHoldingWhy] = useState<HoldingWhyResponse | null>(null);
+  const [holdingWhyError, setHoldingWhyError] = useState<string | null>(null);
+  const [holdingWhyLoading, setHoldingWhyLoading] = useState(false);
+  // Monotonic request id: symbol clicks arrive far faster than these
+  // reads return, so a slow response for an earlier symbol must never
+  // overwrite the answer for the one now on the chart.
+  const holdingWhyRequestRef = useRef(0);
+  useEffect(() => {
+    const requestId = ++holdingWhyRequestRef.current;
+    if (!chartSymbol) {
+      setHoldingWhy(null);
+      setHoldingWhyError(null);
+      setHoldingWhyLoading(false);
+      return;
+    }
+    setHoldingWhyLoading(true);
+    // Clear the previous symbol's answer immediately: leaving it on
+    // screen under a new symbol's heading would attribute one holding's
+    // reasoning to another.
+    setHoldingWhy(null);
+    setHoldingWhyError(null);
+    api
+      .holdingWhy(chartSymbol)
+      .then((response) => {
+        if (holdingWhyRequestRef.current !== requestId) return;
+        setHoldingWhy(response);
+        setHoldingWhyLoading(false);
+      })
+      .catch((err: Error & { status?: number }) => {
+        if (holdingWhyRequestRef.current !== requestId) return;
+        setHoldingWhyLoading(false);
+        // 404 is not a fault — it is the endpoint's own way of saying the
+        // desk never opened a position in this name, which is a real and
+        // common answer (any symbol on the watchlist). Said in words, not
+        // as a status code: the owner is not a developer.
+        setHoldingWhyError(
+          err.status === 404
+            ? `The desk has no record of buying ${chartSymbol}, so there is no reason on file for it.`
+            : `Could not read the reasoning for ${chartSymbol}: ${err.message}`,
+        );
+      });
+  }, [chartSymbol]);
+
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [view, setView] = useState<View>("cockpit");
   // Positions leads on every breakpoint (item 1) — the trader's first
@@ -650,6 +702,7 @@ export default function App() {
                 onChartInteraction: markChartInteraction,
                 previousChartSymbol: previousChartSymbolRef.current,
                 onGoBackSymbol: goBackToPreviousSymbol,
+                holdingWhy, holdingWhyError, holdingWhyLoading,
                 todaysRuns, todaysFunnels, todaysTrades, selectedRunId, autoFollow,
                 onSelectSession: selectSession, onFollowLatest: followPrimarySession,
                 onSelectTrade: selectSessionTrade, regime: latestRegime,

@@ -18,7 +18,9 @@ export function OrdersPanel({
   onInspect,
   onSelectSymbol,
   trades = [],
+  fit,
 }: {
+  fit?: boolean;
   orders: OrderItem[];
   error: string | null;
   loading: boolean;
@@ -89,6 +91,7 @@ export function OrdersPanel({
 
   return (
     <Panel
+      fit={fit}
       title="Orders"
       subtitle="Broker order facts. Select a linked order to inspect its chart and lifecycle."
       status={panelStatus}

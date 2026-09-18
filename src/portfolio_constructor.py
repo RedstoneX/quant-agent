@@ -1140,18 +1140,41 @@ class PortfolioConstructor:
                     # row (HOLD is long-only bookkeeping, above) nor any log
                     # line at all — not a regex miss, there was nothing for
                     # `_DropReasonCapture` to see. Not a judgement on the
-                    # idea, only on its size against an already-ratified
-                    # config threshold; filed the same way every other named
-                    # non-outcome in this module is.
+                    # idea, only on its size.
+                    #
+                    # Board item 89 defect 6 (2026-09-18). Two corrections
+                    # here, neither of which touches the threshold or the
+                    # decision it drives.
+                    #
+                    # 1. This comment used to call the threshold "an
+                    #    already-ratified config threshold". It is neither.
+                    #    `min_trade_weight_delta = 0.5` exists ONLY as a
+                    #    dataclass default in this file — it is absent from
+                    #    `config/settings.yaml`, from every document in
+                    #    `docs/`, and from any ratification record; the only
+                    #    justification written anywhere is the parenthetical
+                    #    "(avoid tiny 0.2% churn trades)" beside the default,
+                    #    which does not even match the value. It is an
+                    #    unsourced trading number of exactly the class
+                    #    `docs/WORK.md` item 90 covers. It is NOT changed
+                    #    here: this change is about reporting the drop, and
+                    #    the number is a separate owner question.
+                    # 2. The sentence the owner reads is rewritten for a
+                    #    reader who is not a developer. The measured
+                    #    figures are unchanged and nothing is rounded,
+                    #    estimated or added; "No existing position to record
+                    #    as a HOLD" was internal bookkeeping and is gone.
                     self._note_refusal(
                         sym, target.direction,
                         CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA,
-                        f"the requested change ({delta_pct:+.2f}pp of "
-                        f"equity) is below the "
-                        f"{self.cfg.min_trade_weight_delta:.2f}pp minimum "
-                        f"trade size — not worth the commission and "
-                        f"attention of an immaterial position. No existing "
-                        f"position to record as a HOLD.",
+                        f"the desk decided to open this but the position it "
+                        f"asked for was {abs(delta_pct):.2f}% of the "
+                        f"account, and the desk does not place a new trade "
+                        f"smaller than {self.cfg.min_trade_weight_delta:.2f}"
+                        f"% of the account. The whole plan for this name "
+                        f"was dropped on size alone — nothing was judged "
+                        f"wrong with the idea. Nothing already held was "
+                        f"touched.",
                     )
                 # drop-reason: both arms above are accounted for — a held
                 # position leaves a HOLD row (the symbol survives), a
@@ -1520,11 +1543,32 @@ class PortfolioConstructor:
                 # running the regex against this message.
                 self._note_refusal(
                     sym, target.direction, STOP_REFUSAL_AGREEMENT_NET,
+                    # Board item 89 defect 4 — a rule cited by NUMBER whose
+                    # text says something else. This read "§9.4 refuses a
+                    # net at or below zero". `docs/QAMC_REMEDIATION_SPEC.md`
+                    # §9.4 is titled "Conviction is agreement, not a
+                    # technical rating" and is about agreement EARNING
+                    # SIZE; it states no refusal at all, and the sizing
+                    # half it does state was RETIRED on 2026-09-14 — which
+                    # the sibling dissent note twenty lines below already
+                    # says out loud, in the same function. So the owner was
+                    # pointed at a section that contradicted the reason he
+                    # was given for losing the trade.
+                    #
+                    # The rule is now STATED rather than cited. That is the
+                    # real fix: a section number in owner-facing prose is a
+                    # promise that a separate document still says a
+                    # particular thing, and nothing in this repo checks
+                    # that promise — so it can go stale again the moment
+                    # the spec is renumbered or amended, silently and
+                    # without touching this file. Nothing about the gate,
+                    # the threshold or the decision changes here; only what
+                    # the owner is told about it.
                     f"{agreement_count} aligned / {opposing_count} opposed = "
                     f"net {source_score:+d} independent source(s) for this "
-                    f"{target.direction}. §9.4 refuses a net at or below "
-                    f"zero: the evidence does not net out in favour of the "
-                    f"trade. Any existing position is "
+                    f"{target.direction}. The desk does not open a position "
+                    f"when the independent sources do not net out in favour "
+                    f"of it, and here they do not. Any existing position is "
                     f"left untouched.",
                 )
                 del priced[sym]
@@ -1965,9 +2009,11 @@ class PortfolioConstructor:
         a defined band and does not need breakout room, and a risk-off tape
         swings wider for the same ATR reading than a trending one does.
 
-        Reachable output is [1.2825, 1.80] ATR — narrowest is a range setup on
-        a risk-on tape (1.5 x 0.90 x 0.95), widest a breakout on a risk-off
-        one (1.5 x 1.00 x 1.20). Both ends are pinned to real measurements;
+        Reachable output is [2.1375, 3.00] ATR — narrowest is a range setup on
+        a risk-on tape (2.5 x 0.90 x 0.95), widest a breakout on a risk-off
+        one (2.5 x 1.00 x 1.20). (This docstring still read [1.2825, 1.80]
+        off the old 1.5 base until 2026-09-17; the base moved to 2.5 on
+        2026-09-10.) Both ends are pinned to real measurements;
         see `ConstructorConfig.stop_atr_setup_scale` for the derivation.
         """
         multiple = self.cfg.min_stop_atr_multiple

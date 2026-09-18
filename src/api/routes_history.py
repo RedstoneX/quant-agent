@@ -18,6 +18,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from src.api import db_reads, deps
+from src.api.holding_why import build_holding_why
 from src.api.schemas import (
     AgentDetailResponse,
     AgentLogItem,
@@ -26,6 +27,7 @@ from src.api.schemas import (
     CandidateItem,
     CandidatesResponse,
     DecisionDetailResponse,
+    HoldingWhyResponse,
     MetaPeriodSummary,
     PositionHistoryResponse,
     ReflectionItem,
@@ -184,4 +186,29 @@ def get_reflections(limit: int = 7) -> ReflectionsResponse:
     return ReflectionsResponse(
         insights=[ReflectionItem(**row) for row in insights],
         meta_periods=[MetaPeriodSummary(**row) for row in meta_periods],
+    )
+
+
+@router.get("/holdings/{symbol}/why", response_model=HoldingWhyResponse)
+def get_holding_why(symbol: str) -> HoldingWhyResponse:
+    """"Why do we hold this" for one symbol, in plain English.
+
+    Read-only, assembled entirely from what the desk already stored: the
+    entry trade row, that run's specialist evidence, later position
+    reviews, and any trades written against the position since. Nothing
+    is computed from live market data and nothing is inferred — see
+    `src/api/holding_why.py` for the wording rules, including why the
+    take-profit price is always labelled as something nothing acts on.
+
+    404 when the desk has no entry row for the symbol at all, which is
+    the one case where there is genuinely no "why" to give.
+    """
+    symbol = symbol.strip().upper()
+    bundle = db_reads.get_holding_why(symbol)
+    if bundle is None:
+        raise HTTPException(404, "no recorded entry for this symbol")
+    return HoldingWhyResponse(
+        **build_holding_why(
+            bundle["entry"], bundle["evidence"], bundle["interim"],
+        )
     )

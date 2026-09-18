@@ -1944,7 +1944,11 @@ def test_below_min_trade_weight_delta_on_a_new_position_leaves_a_reason():
     assert decisions == []
     refusals = constructor.drain_refusals()
     assert refusals["NVDA"]["refusal"] == CONSTRUCTOR_NO_ACTION_BELOW_MIN_DELTA
-    assert "minimum trade size" in refusals["NVDA"]["detail"]
+    # Board item 89 defect 6: this sentence is now OWNER-FACING (the drop
+    # used to reach no message at all), so it is written for a reader who
+    # is not a developer. The measured figures are unchanged.
+    assert "does not place a new trade smaller than" in refusals["NVDA"]["detail"]
+    assert "% of the account" in refusals["NVDA"]["detail"]
     assert "NVDA" in constructor.last_drop_reasons
 
 

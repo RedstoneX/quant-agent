@@ -44,6 +44,35 @@ npm run preview   # serve the built output locally for a final check
   dashboards' `REFRESH_MS` polling posture — no websocket, no new
   transport).
 
+## Desktop workspace: how panels are sized
+
+The desktop cockpit is a Dockview workspace laid out inside a box whose
+height is pinned to the viewport. Dockview redistributes the space inside
+that box; it cannot grow the box itself. Two consequences, and what the
+code does about them:
+
+- **A sash only exists between two rows.** The bottom-most row has nothing
+  under it to drag, which is why panels could only ever be expanded
+  upwards. `DesktopCockpitWorkspace` adds a grip on the workspace's own
+  bottom edge that grows the box and hands the extra height to the bottom
+  row; the page scrolls. Extra height is persisted, so a reload keeps it.
+- **Scroll policy belongs to the panel, not to the slot.** Panels are
+  draggable, so "the bottom ones scroll differently" is not a stable rule.
+  `FIT_PANELS` lists the panels that are sized by their content: no
+  internal vertical scrollbar, the row grows to fit them, and the page
+  scrolls. Everything else keeps a normal internal scrollbar. Both
+  behaviours travel with the panel wherever it is dragged.
+
+Content sets a floor, not a fixed height: a content-sized panel can be
+dragged taller and keeps that height, and only gives height back when its
+content itself shrinks.
+
+Blotter column widths are stored as fractions of the table width that sum
+to 1, never as pixels. `table-layout: fixed` does not clamp a table to its
+specified width — the used width is the larger of the specified width and
+the sum of the column widths — so pixel widths summed past the panel and
+the trailing columns were clipped out of reach.
+
 ## Boundaries this frontend must not cross
 
 Same as every other Mission Control surface (`docs/architecture/

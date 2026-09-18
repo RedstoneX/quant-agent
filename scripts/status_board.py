@@ -1506,9 +1506,189 @@ def find_closed_items_not_marked_done(work_md: Path) -> list[str]:
     return flagged
 
 
+#: BOARD-HYGIENE CHECK ONLY (`find_finished_items_still_on_board`). Reuses
+#: the renderer's own wide closure/no-action vocabularies rather than
+#: inventing a third one that could disagree with them:
+#:
+#:   `_RENDER_CLOSURE_WORDS` -- FIXED / DONE / MERGED / RESOLVED / WITHDRAWN /
+#:       SHIPPED / REPLACED / REDESIGNED / CLOSED / LANDED / SUPERSEDED /
+#:       DELIVERED / COMPLETE(D) -- the item's own status says the work landed.
+#:   `_NO_ACTION_WORDS` -- WORKING AS INTENDED / NOT A DEFECT -- the item was
+#:       investigated and needs no fix; still finished work, just never
+#:       "shipped" anything.
+#:   "SETTLED" -- added here because items 55/56/63/64/65/70/74 use it as
+#:       their own word for "the research question now has an answer", a
+#:       shape `_RENDER_CLOSURE_WORDS` does not otherwise cover.
+#:
+#: `QueueItem.claims_closure` and `QueueItem.no_action` already read these on
+#: WORD BOUNDARIES, off `status_tail` only (never the body), with
+#: `_CLOSURE_NEGATIONS` and cross-reference stripping applied first -- see
+#: their docstrings. This constant only widens that vocabulary by "SETTLED";
+#: it does not re-implement the reading.
+_BOARD_FINISHED_WORDS = _RENDER_CLOSURE_WORDS + _NO_ACTION_WORDS + ("SETTLED",)
+
+#: Any of these appearing in an item's own `status_tail` means the item is
+#: still, in its own words, open -- and must suppress a finished verdict even
+#: when one of `_BOARD_FINISHED_WORDS` also appears in the same tail.
+#:
+#: Found by running this check against the real backlog: item 80's tail is
+#: "every SHIPPED stop must trace to a computed level, the signal bar, or the
+#: volatility band. OPEN; the REFUSAL path is contested, filed 2026-09-17." --
+#: "SHIPPED" there describes the KIND of stop the rule is about (a stop that
+#: has already gone out to the broker), not this item's own state; the
+#: item's actual, self-declared state is the literal word "OPEN" two clauses
+#: later. Reusing the renderer's own `_RENDER_PART_DONE_WORDS` /
+#: `_RENDER_REVIEW_OWED_WORDS` / `_CLOSURE_EXEMPT_WORDS` / `_PAUSED_WORDS`
+#: covers "PARTIALLY", "PENDING REVIEW", "DEFERRED" and friends the same way
+#: `claims_closure`/`no_action` already exempt them; "OPEN" and "STILL OPEN"
+#: are added because the backlog's own convention opens a live item's status
+#: with exactly that word ("OPEN, filed 2026-09-14", "OPEN; the REFUSAL path
+#: is contested"), and no genuinely finished item in the real backlog uses it
+#: to describe itself.
+_BOARD_STILL_OPEN_WORDS = (
+    _RENDER_PART_DONE_WORDS + _RENDER_REVIEW_OWED_WORDS
+    + _CLOSURE_EXEMPT_WORDS + _PAUSED_WORDS
+    + ("OPEN", "STILL OPEN")
+)
+
+
+def find_finished_items_still_on_board(
+        work_md: Path, board_notes: Path) -> list[str]:
+    """Board items that declare themselves finished in their own status text
+    but are still sitting in `docs/WORK.md`.
+
+    `docs/WORK.md` opens with the owner's own rule: it holds only open work.
+    Finished work belongs in `docs/INCIDENT_HISTORY.md`, with its
+    `## item N` block deleted from `docs/BOARD_NOTES.md` and its number
+    added to the retired line. Nothing previously checked the OUTFLOW half
+    of that rule -- `test_no_board_item_disappears_without_being_retired` and
+    `test_work_md_stays_under_a_hundred_thousand_bytes` only stop the file
+    from growing past its cap without being pruned; neither one notices a
+    single item that has quietly finished and simply never been moved.
+
+    Reuses `load_funnel_queue` / `load_pm_gate` -- the same `QueueItem`
+    parser and the same `status_tail` (only the status half of the headline,
+    cross-references to OTHER items' PRs stripped, negations honoured) the
+    render path already relies on -- rather than a second parser that could
+    disagree with it. An item counts as "declares itself finished" only
+    when:
+
+      * its `status_tail` hits one of `_BOARD_FINISHED_WORDS`, AND
+      * `status_tail` hits none of `_BOARD_STILL_OPEN_WORDS` -- which is
+        what keeps a partially-fixed item with a listed follow-on, a
+        deferred owner decision, or an item whose own words are "OPEN" from
+        firing.
+
+    `board_notes` is `docs/BOARD_NOTES.md`'s path; it is loaded only so the
+    lookup-by-`ref` prose attaches the same way the renderer attaches it --
+    this check does not read the notes' own text, since an item's *headline*
+    is where the backlog records its status, and the notes file is the
+    owner-facing writeup, not a second place a status could be declared.
+
+    Returns plain-English strings, empty when nothing is flagged. Each
+    string names the item and spells out every step of the retirement
+    procedure, because whoever trips this will not otherwise know it.
+    """
+    notes = load_board_notes(board_notes)
+    flagged: list[str] = []
+    for items, _problem in (load_funnel_queue(work_md, notes=notes),
+                             load_pm_gate(work_md, notes=notes)):
+        for item in items:
+            if item.done:
+                continue
+            tail = item.status_tail
+            if any(w in tail for w in _CLOSURE_NEGATIONS):
+                continue
+            scan = _strip_cross_references(tail)
+            if not _closure_hit(scan, _BOARD_FINISHED_WORDS):
+                continue
+            if _closure_hit(scan, _BOARD_STILL_OPEN_WORDS):
+                continue
+            flagged.append(
+                f"{item.ref} declares itself finished "
+                f"({item.headline[:120]!r}) but is still on the board. "
+                "Write it up in docs/INCIDENT_HISTORY.md (newest first, "
+                "opening with one plain-language line), then delete its "
+                "docs/WORK.md block AND its matching '## " + item.ref +
+                "' block in docs/BOARD_NOTES.md, and add its number to "
+                "the retired line at the end of the relevant list in "
+                "docs/WORK.md."
+            )
+    return flagged
+
+
 #: `- [ ] DECIDE BY 2026-09-16 — question` — the same shape
 #: `test_no_pending_decision_is_overdue` enforces, deliberately, so the board
 #: and the build are reading one format and cannot disagree about it.
+#: PROVISIONAL — no owner ruling states this fraction; it is a judgement
+#: call, made here rather than left as an unstated assumption in a test.
+#:
+#: `work_md_growth_budget` spends this share of whatever headroom remains
+#: below the 100,000-byte cap (`test_work_md_stays_under_a_hundred_thousand_
+#: bytes` owns that number; this module never re-types it, see
+#: `WORK_MD_GROWTH_CAP_BYTES` below) on ONE change. That makes the allowance
+#: shrink automatically as the file fills — half the remaining room at 30%
+#: full is enormous (unrestricted in practice), half the remaining room at
+#: 95% full is a couple thousand bytes (enough for a short item, not enough
+#: to dump an afternoon's findings without pruning first) — without pinning
+#: separate numbers at arbitrary bands (60%, 85%, 95%, ...) that would each
+#: need their own justification. 0.5 was picked only because it is the
+#: simplest value that produces that shape; it is not measured from
+#: anything. Owner ruling 2026-09-17: the old rule (a change may never leave
+#: docs/WORK.md larger than it found it) was replacing a housekeeping
+#: problem with a recording-defects problem, and had to go — see
+#: `test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills`.
+WORK_MD_GROWTH_SHARE = 0.5
+
+#: Kept EQUAL to the cap `test_work_md_stays_under_a_hundred_thousand_bytes`
+#: enforces — that test owns the number, this is a second, independent
+#: place it is used, and `test_work_md_growth_cap_matches_the_byte_ceiling`
+#: reads the cap test's own source (the same way
+#: `scripts/check_board_hygiene.py:read_cap_bytes` already does) and fails
+#: if the two ever disagree, so this cannot drift silently if the ceiling
+#: test is ever edited.
+WORK_MD_GROWTH_CAP_BYTES = 100_000
+
+
+def work_md_growth_budget(before_size: int,
+                           cap: int = WORK_MD_GROWTH_CAP_BYTES,
+                           share: float = WORK_MD_GROWTH_SHARE) -> int:
+    """How many bytes `docs/WORK.md` may grow in a single change, given its
+    size before that change.
+
+    Replaces the 2026-09-14 rule that a change could never leave the file
+    larger than it found it. That rule was written for a real problem —
+    finished work piling up unpruned — but had no escape hatch, so it also
+    blocked recording a brand-new, genuine defect on a night when far more
+    defects were found than were closed, while the file sat at ~30,000 of
+    its 100,000-byte cap: comfortably under it, with nothing to prune.
+    Owner's ruling (2026-09-17, in substance): the rule was badly written;
+    he wants housekeeping enforced, not recording blocked. This function is
+    the mechanical replacement.
+
+    Returns a budget that SHRINKS as the file fills, rather than a flat
+    allowance: `share` of whatever headroom remains below `cap`. Near-empty,
+    the budget is effectively unrestricted for a normal edit; near the cap,
+    it is small enough that anything but a short item forces pruning first.
+    The 100,000-byte hard cap itself is untouched and still the final
+    backstop (`test_work_md_stays_under_a_hundred_thousand_bytes`) — this
+    only shapes how a single change may approach it. Never negative: a
+    `before_size` at or past `cap` returns 0.
+
+    This does not, by itself, make housekeeping happen — it only bounds how
+    much can be added without it. The mechanical push to actually retire
+    finished work is `find_finished_items_still_on_board` /
+    `find_closed_items_not_marked_done`, run unconditionally against the
+    real board on every change (`test_the_real_backlog_has_no_finished_
+    item_still_on_the_board`, `test_the_real_backlog_has_no_item_
+    contradicting_its_own_title`) — not gated on growth, so a change that
+    adds nothing still fails if it leaves a self-declared-finished item
+    sitting on the board.
+    """
+    headroom = max(cap - before_size, 0)
+    return int(headroom * share)
+
+
 _DECISION_RE = re.compile(r"^- \[ \] DECIDE BY (\d{4})-(\d{2})-(\d{2}) [-\u2014] (.+)$")
 
 

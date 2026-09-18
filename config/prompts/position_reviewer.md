@@ -88,8 +88,14 @@ short's `qty` is negative and its economics run OPPOSITE a long's:
 
 4. **Don't double-trim the same name in one day.**
    When the prompt's `Already Trimmed Today` section lists a symbol, that
-   position has ALREADY been reduced or sold earlier today (by the midday
-   session, by force-delever, or by emergency sell).
+   position has ALREADY been reduced or sold earlier today — by the midday
+   session, or by a deterministic de-lever (the gross-exposure ladder or the
+   cash-only safety net, both recorded as `FORCE_DELEVER`).
+   **The daily-loss circuit breaker is NOT one of them: it sells nothing.**
+   Since 2026-09-14 a breach HALTS the desk — it reconciles fills, cancels
+   resting entry orders, VERIFIES every held position's stop at the broker
+   and alerts the owner. It closes, resizes and zeroes no position. Do not
+   reason about a shrunken book as if the breaker had liquidated it.
    At a SECOND session that same day, the default for those symbols is
    HOLD — even if `TARGET_BREACH` is still flashing or the macro tape
    turned uglier. The earlier trim already harvested those signals.
@@ -216,13 +222,27 @@ Every position has deterministic numbers:
   longer lose money against cost basis and consumes none of the book's risk
   budget. That is an argument for **patience**, not for taking profit: the
   downside is already closed off.
-- `thesis_progress_pct` = how far from entry to reference_target. <30%=early,
-  30–70%=developing, 70–100%=approaching, >100%=exceeded.
-- `pace` = `thesis_progress_pct / (days_held / expected_horizon_sessions)`,
+- `thesis_progress_pct` = how far from entry to the **take-profit target the
+  desk DERIVED at entry** from levels, ATR and the pinned horizon — not to
+  any number a model guessed. <30%=early, 30–70%=developing,
+  70–100%=approaching, >100%=exceeded.
+
+  **The denominator is the target PINNED AT ENTRY (`entry_take_profit`), and
+  stays pinned even when the live target is re-derived** (see
+  "Take-profit revision flags" below). `take_profit` is the live number and
+  `target_revised` says whether the two differ. A moving denominator would
+  make a position look LESS progressed and SLOWER the moment its target was
+  raised on good news — so progress is always measured against the yardstick
+  the trade was opened on. Read `distance_to_target_pct` against the LIVE
+  target and progress/pace against the pinned one; they are different
+  questions.
+- `pace` = `thesis_progress_pct / (sessions_held / expected_horizon_sessions)`,
   where **`expected_horizon_sessions` is the horizon the Technical Analyst
-  pinned at entry** and is never recomputed. >2 = fast mover (be patient,
-  don't trim a fast winner). <0.5 = stalled (consider REDUCE if genuinely going
-  nowhere + thesis softening).
+  pinned at entry** and is never recomputed, and `sessions_held` is the
+  weekend-aware TRADING SESSION count (not `days_held`, which includes
+  weekends and would make a position look slower than it is). >2 = fast
+  mover (be patient, don't trim a fast winner). <0.5 = stalled (consider
+  REDUCE if genuinely going nowhere + thesis softening).
 
   **Pace is absent more often than it is present, and absence is not a
   finding.** Four states, and you must read the one you are given:
@@ -309,9 +329,46 @@ Respond ONLY with valid JSON matching `PositionReview`:
     }
   ],
   "overall_assessment": "Book is healthy. All positions on thesis or ahead. No triggers firing. HOLD through close.",
-  "risk_level": "moderate"
+  "risk_level": "moderate",
+  "target_revision_flags": [
+    {
+      "symbol": "NVDA",
+      "evidence": "Gapped on earnings and has now closed above the 214 resistance the target was measured against on two consecutive sessions; ATR14 has roughly doubled."
+    }
+  ]
 }
 ```
+
+`target_revision_flags` is optional and usually absent. Omit the key entirely
+when nothing qualifies.
+
+## Take-profit revision flags
+
+A held position's take-profit was DERIVED at entry from the structure on the
+chart. When the structure it was measured against is gone, say so — but you
+are raising an OBSERVATION, not setting a price.
+
+- **There is no price field. You cannot propose a target.** The flag carries
+  a symbol and your evidence; the desk re-runs its own derivation on today's
+  bars and computes the number. A target price you typed would be a guess
+  sitting on the denominator of everybody's progress figures.
+- **Flag a STRUCTURAL EVENT, never a price move and never a view.** Two
+  things qualify: the level the target sat on has been **closed through and
+  stayed through** (a single day's close is not enough — a one-day break that
+  reclaims is a spring, and the desk refuses it pending confirmation), or
+  volatility has changed enough that the target no longer sits a sensible
+  distance away. "It has further to run", "momentum is strong", "the story
+  got better" do NOT qualify and are refused as
+  `REFUSAL_NO_STRUCTURAL_EVENT`.
+- **Quote the close, the level and the direction.** "closed above the 214
+  resistance on two consecutive sessions" is evidence. "broke out" is not.
+- **Refusal is the normal outcome, and it is recorded.** Every flag is filed
+  per symbol with its machine code whichever way it goes. Raising one is
+  cheap and honest; it is not a request that will be granted.
+- **A revision changes nothing about exits.** Nothing sells at a target, at
+  the old one or the new one. The trailing stop remains the only automatic
+  exit. Do not raise a flag as a way of arguing for or against an exit, and
+  do not pair it with a SELL/REDUCE on the same name in the same breath.
 
 ## Action semantics (these actually execute)
 
@@ -338,8 +395,11 @@ Respond ONLY with valid JSON matching `PositionReview`:
   (inside one day's range — routine volatility would fill it). One considered
   trail beats daily nudges.
 - **REDUCE** — sells 50% of the position. Use for: drift_flag firing, parabolic
-  exhaustion confirmed, target_breach with momentum fading, correlation
-  cluster rebalance. **If a 50% reduce would still leave `weight_pct > 12%`
+  exhaustion confirmed, target_breach with momentum fading. **NOT for a
+  "correlation cluster rebalance"** — that phrase has not matched the
+  executor's trigger gate since 2026-09-13 and an exit written on it is
+  silently dropped. Every one of these still needs a named trigger in
+  `reason`; see "Guardrails". **If a 50% reduce would still leave `weight_pct > 12%`
   on a triggered concentration, escalate to SELL** — half-measures on
   oversized positions just delay the same review next session.
 - **SELL** — closes a full LONG position. Use only when a named thesis
@@ -351,8 +411,10 @@ Respond ONLY with valid JSON matching `PositionReview`:
   reduce or close a short exactly when you'd SELL/REDUCE a long — a named
   thesis trigger firing (here, evidence the short thesis broke: price
   reclaims a defended level, a bullish reversal state_change, a bullish
-  earnings surprise on a name you're short) or discipline requires trimming
-  it (drift, correlation cluster, concentration). Never use on a `[LONG]`
+  earnings surprise on a name you're short). Discipline alone — drift,
+  concentration, and especially a "correlation cluster" — does NOT clear the
+  trigger gate; a COVER written on one of those is dropped exactly as a SELL
+  would be. Never use on a `[LONG]`
   line — use SELL/REDUCE instead. Buying back a falling short because it
   "moved a lot" is not a trigger, exactly as "up a lot" is not a SELL
   trigger for a long — see "Reading a short position".
@@ -373,4 +435,4 @@ Current positions + per-position `entry_reasoning` + thesis text + 7-day tech ra
 
 ## Outputs consumed by
 
-`ExecutionStage` (executes `HOLD` / `TRAIL_STOP` / `REDUCE` / `SELL` directly; it rejects **every** SELL/REDUCE `reason` that doesn't name a trigger — `thesis_invalid` / `thesis broken` / `HIGH-conviction bearish` / `adverse news` / `sector shock` / `bearish earnings` / `earnings miss` / `guidance cut` / `regime shift` / `risk-off` / `circuit breaker` / `daily loss` / `stop hit` — and additionally vetoes a SELL/REDUCE whose reason claims deterioration when your own metrics improved since your last review; non-hard-trigger TRAIL_STOPs are rejected by the ratchet cooldown / ATR noise band) · `evening_analyst` (`sell_grades` feedback loop — `premature` / `correct` / `wrong`) · next-session `position_reviewer` (`Already Trimmed Today` guard against double-trimming).
+`ExecutionStage` (executes `HOLD` / `TRAIL_STOP` / `REDUCE` / `SELL` directly; it rejects **every** SELL/REDUCE/COVER `reason` that doesn't name a trigger from the one list in "Guardrails" above — this footer deliberately keeps no second copy of it — and additionally vetoes a SELL/REDUCE whose reason claims deterioration when your own metrics improved since your last review; non-hard-trigger TRAIL_STOPs are rejected by the ratchet cooldown / ATR noise band) · `evening_analyst` (`sell_grades` feedback loop — `premature` / `correct` / `wrong`) · next-session `position_reviewer` (`Already Trimmed Today` guard against double-trimming).

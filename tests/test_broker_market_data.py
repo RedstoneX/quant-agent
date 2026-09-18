@@ -459,3 +459,97 @@ def test_intraday_snapshots_empty_symbol_list_short_circuits():
     b._data_client = MagicMock()
     assert b.get_intraday_snapshots([]) == {}
     b._data_client.get_stock_snapshot.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_latest_price_stamped — provenance and freshness (2026-09-17)
+#
+# `get_latest_price` answered "what is it worth" and threw away how it knew.
+# It never looked at WHEN the trade happened, so yesterday's last print on a
+# thin name, and a quote the tape never confirmed, both came back looking
+# exactly like a live price — to callers that place and move real orders.
+# These pin the two freshness answers apart: `is_today` (the provider stamped
+# it today, trade or quote) and `is_today_print` (additionally a real trade).
+# ---------------------------------------------------------------------------
+
+def _at(day: date, hour: int = 15) -> datetime:
+    """An aware ET-comparable timestamp on `day` (UTC, as Alpaca sends)."""
+    return datetime(day.year, day.month, day.day, hour, 30, tzinfo=timezone.utc)
+
+
+def test_stamped_price_marks_a_today_trade_as_a_today_print():
+    b = _broker()
+    now = datetime(2026, 9, 17, 17, 30, tzinfo=timezone.utc)
+    b._data_client = _price_client(
+        trade=SimpleNamespace(price=181.25, timestamp=_at(date(2026, 9, 17))),
+    )
+    with patch("src.trading_calendar.et_now", return_value=now):
+        stamped = b.get_latest_price_stamped("NVDA")
+    assert stamped.price == 181.25
+    assert stamped.source == "last_trade"
+    assert stamped.is_today is True
+    assert stamped.is_today_print is True
+
+
+def test_stamped_price_refuses_to_call_yesterdays_print_today():
+    """The defect this exists for: a thin name whose last trade was a prior
+    session came back indistinguishable from a live price."""
+    b = _broker()
+    now = datetime(2026, 9, 17, 17, 30, tzinfo=timezone.utc)
+    b._data_client = _price_client(
+        trade=SimpleNamespace(price=181.25, timestamp=_at(date(2026, 9, 16))),
+    )
+    with patch("src.trading_calendar.et_now", return_value=now):
+        stamped = b.get_latest_price_stamped("NVDA")
+    assert stamped.price == 181.25          # still reported, never invented
+    assert stamped.is_today is False        # but not as today's price
+    assert stamped.is_today_print is False
+
+
+def test_stamped_price_never_calls_a_quote_a_print():
+    """A quote mid is a usable fill reference while the session is live, but
+    it is not evidence the tape traded there — which is what deciding where
+    a stop belongs requires."""
+    b = _broker()
+    now = datetime(2026, 9, 17, 17, 30, tzinfo=timezone.utc)
+    b._data_client = _price_client(
+        trade=SimpleNamespace(price=0),
+        quote=SimpleNamespace(
+            ask_price=101.0, bid_price=99.0, timestamp=_at(date(2026, 9, 17)),
+        ),
+    )
+    with patch("src.trading_calendar.et_now", return_value=now):
+        stamped = b.get_latest_price_stamped("NVDA")
+    assert stamped.price == 100.0
+    assert stamped.source == "quote_mid"
+    assert stamped.is_today is True
+    assert stamped.is_today_print is False
+
+
+def test_stamped_price_treats_a_missing_timestamp_as_not_today():
+    """Unknown freshness fails visible rather than passing as live."""
+    b = _broker()
+    b._data_client = _price_client(trade=SimpleNamespace(price=181.25))
+    stamped = b.get_latest_price_stamped("NVDA")
+    assert stamped.is_today is False
+    assert stamped.is_today_print is False
+
+
+def test_stamped_price_is_none_when_nothing_is_quotable():
+    b = _broker()
+    b._data_client = _price_client(
+        trade=SimpleNamespace(price=0),
+        quote=SimpleNamespace(ask_price=0, bid_price=0),
+    )
+    assert b.get_latest_price_stamped("NVDA") is None
+
+
+def test_bare_get_latest_price_keeps_its_old_shape():
+    """Reporting callers ("how far has this moved since we sold it") keep a
+    bare float and their own last-close degradation; only order-placing
+    callers take the stamped reader."""
+    b = _broker()
+    b._data_client = _price_client(
+        trade=SimpleNamespace(price=181.25, timestamp=_at(date(2026, 9, 16))),
+    )
+    assert b.get_latest_price("NVDA") == 181.25

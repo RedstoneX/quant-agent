@@ -27,10 +27,13 @@ duplicate is.
 """
 
 import ast
+import functools
 import pathlib
 from unittest.mock import MagicMock
 
 import pytest
+
+from tests import _shared_ast_cache
 
 from src.agents.portfolio_manager import PortfolioManagerAgent
 from src.agents.position_reviewer import PositionReviewerAgent
@@ -58,18 +61,31 @@ def _pos(symbol, qty, avg, current, sector="Technology") -> Position:
 # written and whatever it is named — not only at the call sites fixed today.
 # --------------------------------------------------------------------------
 
-def _binops():
-    """(path, lineno, node, flattened_source) for every BinOp under src/."""
-    for path in sorted(SRC.rglob("*.py")):
-        source = path.read_text()
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:  # pragma: no cover - a broken module fails elsewhere
-            continue
+@functools.lru_cache(maxsize=1)
+def _binops_cached() -> tuple[tuple[pathlib.Path, int, ast.BinOp, str], ...]:
+    """Every (path, lineno, node, flattened_source) BinOp under src/, parsed once.
+
+    Three tests below each need this same walk of the whole src/ tree
+    (~11s on a CI runner). Recomputing it per test made this one file cost
+    three times the parse for identical input; caching it for the session
+    keeps every test's assertions unchanged while paying the parse once.
+    Parsing itself goes through `_shared_ast_cache`, which is keyed by
+    absolute file path rather than by caller, so a file already parsed by
+    `test_ops_scripts_importable.py`'s whole-repo scan (same src/ tree,
+    different property) is not re-read or re-parsed here either.
+    """
+    hits = []
+    for path, source, tree in _shared_ast_cache.parse_tree(SRC):
         for node in ast.walk(tree):
             if isinstance(node, ast.BinOp):
                 segment = ast.get_source_segment(source, node) or ""
-                yield path, node.lineno, node, " ".join(segment.split())
+                hits.append((path, node.lineno, node, " ".join(segment.split())))
+    return tuple(hits)
+
+
+def _binops():
+    """(path, lineno, node, flattened_source) for every BinOp under src/."""
+    return _binops_cached()
 
 
 def _report(hits, quantity, single_source):

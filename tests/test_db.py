@@ -164,6 +164,24 @@ def test_insert_daily_pnl(db):
     assert pnl[0]["daily_pnl"] == 150.0
 
 
+def test_get_earliest_daily_pnl_is_the_oldest_row_not_the_newest(db):
+    """The Telegram feed's 'total P&L since <date>' baseline reads this —
+    it must be the OLDEST recorded row (the reset baseline), not whichever
+    row happened to be inserted first in test order or the newest one
+    `get_daily_pnl`'s default DESC ordering would return."""
+    db.insert_daily_pnl(date="2026-09-16", total_value=9717.05, daily_pnl=-147.81, daily_return_pct=-1.50)
+    db.insert_daily_pnl(date="2026-09-02", total_value=9862.74, daily_pnl=44.70, daily_return_pct=0.46)
+    db.insert_daily_pnl(date="2026-09-15", total_value=9860.38, daily_pnl=-5.20, daily_return_pct=-0.05)
+
+    earliest = db.get_earliest_daily_pnl()
+    assert earliest["date"] == "2026-09-02"
+    assert earliest["total_value"] == 9862.74
+
+
+def test_get_earliest_daily_pnl_empty_table_returns_none(db):
+    assert db.get_earliest_daily_pnl() is None
+
+
 def test_get_daily_pnl_before_date_excludes_current_day(db):
     today_str = str(date.today())
     prev_day = str(date.today() - timedelta(days=1))

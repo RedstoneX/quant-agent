@@ -368,8 +368,16 @@ This file records what is accepted and true **now**. Git history preserves imple
   (mechanical first, then at most one paid retry inside cost caps); heal
   failure and a spend-cap block page the owner. Empty or failed morning
   carry-forward still refuses before the Portfolio Manager. Desk-caused
-  stall after Risk is a defect, not "a little late." Handshake starts
-  during Risk so auth is not serial after approval. Alpaca allows one
+  stall after Risk is a defect, not "a little late." **Fills are confirmed
+  by the bounded REST path; the live `trade_updates` websocket is OFF
+  (owner, 2026-09-17, `execution.fill_stream_enabled`) — it never
+  authenticated on this host, and two confirmed blockers mean no code
+  change could make it. No socket, no lease, no reconnect loop, no
+  handshake before submit; REST timeouts and poll intervals unchanged. The
+  code is dormant, not deleted. Fill confirmation actually degrading now
+  pages the owner; the socket being off never does.** The rest of this
+  paragraph is what flipping the flag back on restores: handshake starts
+  during Risk so auth is not serial after approval; Alpaca allows one
   `trade_updates` socket per account: one desk process owns it via a
   cross-process lease; other processes attach to that process's hub or
   REST-poll with a wait no longer than the REST path — they never open a
@@ -745,6 +753,7 @@ Accepted behavior includes:
 - Cockpit tables clip and truncate with free column resize rather than forcing a page or section horizontal slider;
 - Positions/Orders table columns support resize and drag-to-reorder, opt-in per table via `DataTable` props, persisted to `localStorage`; columns can shrink to ~1ch so Stop and Target stay on the blotter;
 - a read-only Desk diary at `/diary` (and `/diary/`) served from gitignored `data/diary/`, same posture as `/board`; Mission Control does not generate the entries.
+- a read-only `/holdings/{symbol}/why` endpoint (2026-09-18) that answers "why do we hold this" in plain English, assembled from the stored entry row plus that run's specialist evidence: one lede sentence with the numbers in it, a readable section (named primary driver, which seat raised it, insider who/how-much/when/at-what-price, the recorded invalidation condition, the pinned horizon, the reference target and the fact that nothing acts on it, and what has happened since entry), and a `raw_evidence` bucket for the accession numbers / internal flags / broker-eligibility JSON. It also reports OUR OWN purchase — the entry date, the fill price (or the order price, labelled as such when no fill was recorded) and the quantity — added 2026-09-18 because the owner asked for the purchase date and price by name and only the insider's were on file. **Consumed by the cockpit's "Why" tab** (2026-09-18), a Dockview panel that starts beside Candidates: clicking a symbol anywhere in the cockpit — holdings, positions, trades, orders — charts it as before and also fills this tab, fetched in `App.tsx` next to the chart symbol so a background tab is already populated when the owner switches to it. `raw_evidence` sits behind a collapsed "show the technical detail" toggle and is rendered as labelled rows, never as a payload dump. `LifecycleTimeline`'s generic `detailsText` renderer is untouched and still serves the run-detail modal.
 
 The chart live-price/current-price truth issue is **already resolved**. Commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b` (`fix(qamc): show session fills and live chart price`, 2026-08-21) introduced the genuinely live `/quotes` path and separated live/current price from historical bars. Current `PriceChartPanel` also hides the historical series' default last-value line and renders explicit `LIVE` and `PREV CLOSE` lines. This is accepted behavior and is not an outstanding task.
 

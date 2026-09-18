@@ -267,6 +267,116 @@ def test_execution_stage_cancels_then_submits_buy_add():
     assert ctx.execution_skips == []
 
 
+def test_scale_in_add_carries_the_pinned_setup_type_not_todays_reread():
+    """Item 82: `setup_type` is pinned on the trade row at ENTRY and must
+    never be reclassified by a later scale-in add.
+
+    COP was originally entered as a "breakout" (Type B — no overhead
+    structure, progress/pace disabled, managed by trailing only). Today's
+    fresh Technical read for the same symbol has drifted to "range" as the
+    chart evolved — a routine, unremarkable occurrence, not itself a bug.
+    Before the fix, the execution stage re-derived `setup_type` from
+    TODAY's `ctx.analyses` on every BUY, including this scale-in add, and
+    wrote "range" onto the new (and now newest) trade row — silently
+    stripping the breakout's protection from every consumer that reads
+    `get_symbol_last_buy` (position-review pace/progress, the trailing
+    stop, target revision). The fix carries the EXISTING pinned value
+    forward unchanged on a scale-in add.
+    """
+    held = [_cop_position()]
+    pipeline = _pipeline(positions=held)
+    stop = {"id": "stop-cop", "qty": 10, "stop_price": 88.0}
+    pipeline.broker.snapshot_protective_stops.return_value = (True, [stop])
+    pipeline.broker.cancel_snapshotted_stops.return_value = True
+    pipeline.broker.wait_for_order_terminal.side_effect = (
+        lambda order_id, *a, **k: "canceled" if "stop" in str(order_id) else "filled"
+    )
+    pipeline.broker.submit_order.return_value = {
+        "id": "buy-cop", "status": "accepted", "symbol": "COP",
+        "pending_stop_price": 90.0,
+    }
+    pipeline.broker.place_entry_protection.return_value = {"id": "stop-new"}
+    pipeline.db.insert_pending_protection_restore.return_value = 7
+    pipeline.db.insert_trade.return_value = 1
+    # The ORIGINAL entry's pinned row — this is what a real
+    # `get_symbol_last_buy` would return before today's add is recorded.
+    pipeline.db.get_symbol_last_buy.return_value = {
+        "setup_type": "breakout", "take_profit": 120.0,
+    }
+
+    from src.models import TechAnalysisResult, TechReasoningChain
+    todays_reread = TechAnalysisResult(
+        symbol="COP", rating="buy", conviction="medium",
+        entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+        support_levels=[95.0], resistance_levels=[110.0],
+        # Deliberately DIFFERENT from the pinned "breakout" — this is
+        # today's independent re-classification, not a re-assertion of
+        # the entry-day one.
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning_chain=TechReasoningChain(
+            trend="x", momentum="x", volatility="x", volume="x",
+            support_resistance="x",
+        ),
+        reasoning="test", thesis_invalid_if="closes below support",
+    )
+
+    ctx = _ctx([_buy_cop()], positions=held)
+    ctx.analyses = [todays_reread]
+    orders = ExecutionStage(pipeline=pipeline).run(ctx)
+
+    assert len(orders) == 1
+    insert_kwargs = pipeline.db.insert_trade.call_args.kwargs
+    assert insert_kwargs["setup_type"] == "breakout", (
+        "scale-in add reclassified a pinned setup_type instead of "
+        f"carrying it forward: got {insert_kwargs['setup_type']!r}"
+    )
+
+
+def test_new_entry_reads_setup_type_from_the_decision_not_a_second_lookup():
+    """Item 82: a genuinely new entry has no prior pinned row, so
+    `setup_type` must come from the single value the constructor already
+    classified onto `TradeDecision.setup_type` — not from a second,
+    independent lookup into `ctx.analyses`. `isinstance` on the resulting
+    value keeps this gated on a real classification, never a MagicMock
+    truthiness accident (~58 existing tests drive a MagicMock broker)."""
+    pipeline = _pipeline(positions=[])
+    pipeline.broker.submit_order.return_value = {
+        "id": "buy-cop", "status": "accepted", "symbol": "COP",
+        "pending_stop_price": 90.0,
+    }
+    pipeline.broker.place_entry_protection.return_value = {"id": "stop-new"}
+    pipeline.db.insert_trade.return_value = 1
+
+    decision = TradeDecision(
+        action="BUY", symbol="COP", allocation_pct=10,
+        entry_price=100.0, stop_loss=90.0, take_profit=120.0,
+        reasoning="new breakout entry", setup_type="breakout",
+    )
+    from src.models import TechAnalysisResult, TechReasoningChain
+    # A DIFFERENT analysis for the same symbol, standing in for whatever
+    # `ctx.analyses` happens to hold by execution time — the point is that
+    # it must not be consulted for setup_type on a new entry either.
+    mismatched_analysis = TechAnalysisResult(
+        symbol="COP", rating="buy", conviction="medium",
+        entry_price=100.0, stop_loss=95.0, reference_target=110.0,
+        support_levels=[95.0], resistance_levels=[110.0],
+        setup_type="range", expected_horizon_sessions=10,
+        reasoning_chain=TechReasoningChain(
+            trend="x", momentum="x", volatility="x", volume="x",
+            support_resistance="x",
+        ),
+        reasoning="test", thesis_invalid_if="closes below support",
+    )
+
+    ctx = _ctx([decision], positions=[])
+    ctx.analyses = [mismatched_analysis]
+    ExecutionStage(pipeline=pipeline).run(ctx)
+
+    insert_kwargs = pipeline.db.insert_trade.call_args.kwargs
+    assert isinstance(insert_kwargs["setup_type"], str)
+    assert insert_kwargs["setup_type"] == "breakout"
+
+
 def test_execution_stage_rearms_at_the_tighter_of_cancelled_and_add_stop():
     """A looser add stop must not replace a tighter cancelled protective sell."""
     held = [_cop_position()]

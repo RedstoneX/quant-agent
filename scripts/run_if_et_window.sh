@@ -99,7 +99,7 @@ fi
 # don't edit one without the other.
 # earnings_preprocess: 08:00-09:15 ET (pre-market, analyze fresh filings)
 # morning            : 09:30-12:00 ET (pre-market / early session, wide for late-wake grace)
-# intra_check        : 09:30-16:00 ET (flash-crash circuit breaker, fires every 30min tick; NOT subject to once-per-day guard — stateless, all actions idempotent)
+# intra_check        : 09:30-16:00 ET (flash-crash circuit breaker, fires every 30min tick — at :15/:45, deliberately offset from every other session's shared :00/:30 tick since 2026-09-17; NOT subject to once-per-day guard — stateless, all actions idempotent)
 # midday             : 13:00-14:30 ET (position reviewer, afternoon patience)
 # close              : 15:30-16:00 ET (position reviewer, act-on-trigger before overnight; 30min width so launchd StartInterval=1800 always lands one tick inside regardless of phase)
 # evening            : 20:00-22:00 ET (post-market, insights written before next morning)

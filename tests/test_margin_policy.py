@@ -591,3 +591,201 @@ def test_midday_reviewer_surfaces_delever_when_cash_negative():
 
     assert "de-lever" in msg.lower() or "DE-LEVER" in msg
     assert "$1,000" in msg
+
+
+def test_pm_prompt_never_says_no_margin_when_margin_enabled():
+    """2026-09-17 CRM incident: the prompt hardcoded 'no margin' regardless
+    of `allow_margin`, so the model refused a confirmed BUY reading a false
+    prompt while execution had already spent margin the same session. The
+    cash line must never assert "no margin" while margin is enabled."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
+        msg = agent.build_user_message(
+            analyses=[], positions=[], macro_analysis=None,
+            cash_balance=-915.83, total_value=9_736.0,
+            earnings_analyses=[], allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+        )
+
+    assert "no margin" not in msg.lower()
+    # Raw cash is still shown, and still labelled as raw cash.
+    assert "$-915.83" in msg
+    assert "raw cash" in msg.lower()
+
+
+def test_pm_prompt_margin_section_discloses_ladder_headroom():
+    """With margin enabled and a resolved ladder, the Margin Capacity
+    section must be non-empty and must show the SAME headroom figure
+    execution's `_entry_deployment_budget` computes — never a separate
+    number invented in the prompt layer."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
+        msg = agent.build_user_message(
+            analyses=[], positions=[], macro_analysis=None,
+            cash_balance=-915.83, total_value=9_736.0,
+            earnings_analyses=[], allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+        )
+
+    assert "Margin Capacity" in msg
+    assert "$11,434.37" in msg
+    assert "2.00x" in msg
+
+
+def test_pm_prompt_margin_section_honest_when_ladder_unresolved():
+    """Margin enabled but the ladder could not be resolved this session —
+    the section must say so, not go blank and not fabricate a number."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
+        msg = agent.build_user_message(
+            analyses=[], positions=[], macro_analysis=None,
+            cash_balance=500.0, total_value=9_736.0,
+            earnings_analyses=[], allow_margin=True,
+            # margin_ladder_backed defaults False — ladder unresolved.
+        )
+
+    assert "Margin Policy" in msg
+    assert "could not be resolved" in msg
+    assert "$" not in msg.split("## Margin Policy")[1].split("##")[0]
+
+
+def test_pm_prompt_never_leaks_prohibited_buying_power_fields():
+    """The prohibited margin-buying-power fields must never appear anywhere
+    in the PM prompt, including in the new Margin Capacity wording — the
+    §11.2 ladder headroom is a different, permitted number."""
+    from src.agents.portfolio_manager import PortfolioManagerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PortfolioManagerAgent(api_key="test", model="claude-opus-4-6")
+        msg = agent.build_user_message(
+            analyses=[], positions=[], macro_analysis=None,
+            cash_balance=-915.83, total_value=9_736.0,
+            earnings_analyses=[], allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+        )
+
+    for forbidden in ("buying_power", "regt_buying_power"):
+        assert forbidden not in msg
+
+
+def test_pm_prompt_margin_headroom_wired_from_entry_deployment_budget():
+    """Source-level pin: the DecisionStage code path that builds the PM
+    prompt's margin kwargs must call `_entry_deployment_budget` (the exact
+    function execution's submit loop uses to size real orders) and thread
+    its return values straight through to `decide()` — never re-derive the
+    headroom with a second formula."""
+    import inspect
+
+    import src.pipeline_stages as ps
+
+    src = inspect.getsource(ps.DecisionStage.run)
+    assert "_entry_deployment_budget(pipeline, ctx, positions, total_value, cash)" in src
+    assert "margin_headroom_usd=margin_headroom_usd" in src
+    assert "margin_ladder_backed=margin_ladder_backed" in src
+
+
+
+def test_reviewer_prompt_never_says_no_margin_when_margin_enabled():
+    """Same 2026-09-17 defect, same fix, mirrored for the seat that decides
+    whether to hold or cut existing positions twice a day (midday/close)."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=-915.83, total_value=9_736.0,
+            allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+        )
+
+    assert "no margin" not in msg.lower()
+    assert "$-915.83" in msg
+    assert "raw cash" in msg.lower()
+
+
+def test_reviewer_prompt_margin_section_discloses_ladder_headroom():
+    """Margin Capacity section must be non-empty and show the SAME headroom
+    figure execution's `_entry_deployment_budget` computes."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=-915.83, total_value=9_736.0,
+            allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+        )
+
+    assert "Margin Capacity" in msg
+    assert "$11,434.37" in msg
+    assert "2.00x" in msg
+
+
+def test_reviewer_prompt_margin_section_honest_when_ladder_unresolved():
+    """Margin enabled but the ladder could not be resolved this session —
+    the section must say so, not go blank and not fabricate a number."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=500.0, total_value=9_736.0,
+            allow_margin=True,
+            # margin_ladder_backed defaults False — ladder unresolved.
+        )
+
+    assert "Margin Policy" in msg
+    assert "could not be resolved" in msg
+    assert "$" not in msg.split("### Margin Policy")[1].split("###")[0]
+
+
+def test_reviewer_prompt_never_leaks_prohibited_buying_power_fields():
+    """The prohibited margin-buying-power fields must never appear anywhere
+    in the reviewer prompt either."""
+    from src.agents.position_reviewer import PositionReviewerAgent
+
+    with patch("anthropic.Anthropic"):
+        agent = PositionReviewerAgent(api_key="test", model="claude-sonnet-4-6")
+        msg = agent.build_user_message(
+            positions=[], macro_summary={"vix": {"current": 20, "trend": "flat"}},
+            cash_balance=-915.83, total_value=9_736.0,
+            allow_margin=True,
+            margin_headroom_usd=11_434.37, margin_ladder_backed=True,
+            margin_ladder_multiple=2.0, margin_ladder_rung="none",
+        )
+
+    for forbidden in ("buying_power", "regt_buying_power"):
+        assert forbidden not in msg
+
+
+def test_reviewer_prompt_margin_headroom_wired_from_entry_deployment_budget():
+    """Source-level pin: `run_position_review` must call
+    `_entry_deployment_budget` (the exact function execution's submit loop
+    uses to size real orders) and thread its return values straight through
+    to `PositionReviewerAgent.review` — never re-derive the headroom."""
+    import inspect
+
+    from src.pipeline import TradingPipeline
+
+    # `run_position_review` became a thin persistence wrapper on 2026-09-18
+    # (see `Database.save_session_report`); the pinned call now lives in
+    # `_run_position_review_body`.
+    src = inspect.getsource(TradingPipeline._run_position_review_body)
+    assert "_entry_deployment_budget(" in src
+    assert "self, ctx, review_positions, total_value, review_cash," in src
+    assert "margin_headroom_usd=margin_headroom_usd" in src
+    assert "margin_ladder_backed=margin_ladder_backed" in src
