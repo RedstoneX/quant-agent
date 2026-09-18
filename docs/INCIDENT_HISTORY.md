@@ -22,6 +22,91 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — the gross-exposure de-lever does cancel stops to sell (it has to), recovery is complete, and it has never fired (item 87 closed); one gap ruled acceptable, one gap fixed
+
+**What broke, in one line:** nothing did. Item 87 asked whether the desk's
+one remaining automatic seller — the gross-exposure de-levering ladder —
+cancels protective stop-losses in order to sell, because cancel-then-fail-
+to-sell is the exact flaw that got the daily-loss liquidation deleted on
+2026-09-14. It does cancel them, the cancel is mandatory (a resting stop
+holds the whole position at the broker, which would otherwise reject the
+sell outright), and the recovery around it is complete — unlike the deleted
+liquidator.
+
+**How it works.** `_enforce_gross_ceiling` (`src/pipeline.py`) calls
+`_submit_protected_sell(label="FORCE_DELEVER")`, whose first act is
+`_cancel_stops_with_write_ahead`: snapshot the resting stop, write a durable
+recovery row, then cancel. Verified against the code at every failure
+point: a failed cancel is rolled back and the row discharged, so the symbol
+is skipped with its stop untouched; a broker rejection of the sell restores
+the stop inline; a submit exception restores it inline; a no-fill or
+partial fill is resolved by `_finalize_pending_protections`, which restores
+the original stop or re-protects the real residual quantity; and a mid-run
+process death is covered because the write-ahead row is durable before any
+broker mutation, with `_drain_pending_protection_restores` (which reads it)
+running at the start of all five session entry points. An unreadable
+equity book is marked unmeasurable and trims nothing (`apply_gross_ceiling`).
+
+**Reachability, and how theoretical this all is.** The ladder runs
+unconditionally in the morning session and again in the shared midday/close
+body, no feature flag. It has never fired: zero `FORCE_DELEVER` rows exist
+in any live database checked, and the deepest recorded peak-to-trough
+drawdown is -1.48% against a first rung that fires at -8%
+(`src/risk/rules.py`).
+
+**Two real gaps came out of the audit, neither the one item 87 asked
+about.**
+
+**Gap one — filed and CLOSED THE SAME DAY BY OWNER RULING, item 111, never
+sat open on this board.** When the ladder trims more than one holding in
+the same pass, `_submit_protected_sell` cancels each holding's stop inside
+the loop, but `_finalize_pending_protections` — the only step that restores
+or re-protects — runs once, after the whole batch (`src/pipeline.py`, the
+sweep/de-lever site sells inside its loop around line 10435 with finalize
+outside it around line 10486; `_enforce_gross_ceiling` sells inside its
+loop around line 10709 with finalize outside it around line 10743). The
+earliest-trimmed holding rides naked for the rest of the loop plus every
+later holding's fill wait, worst exactly when the ladder fires (a
+drawdown). `_force_delever` (the separate cash-only margin sweep) shares
+the same batch shape; there is no per-symbol finalize precedent anywhere in
+the file. **The owner's ruling: leave it as it is.** In his own terms —
+the unprotected window is not a large risk even at five or ten minutes,
+where changing the ORDER of selling, buying and stop placement is a real
+chance of breaking something that currently works. The supporting facts
+make the trade obvious: the ladder has never fired once (zero
+`FORCE_DELEVER` rows, live databases) and the deepest recorded peak-to-
+trough is -1.48% against a first rung at -8%, so the exposure this would
+close is theoretical, while a sequencing regression would land on the
+desk's ONLY remaining automatic seller. Not revisited without a live firing
+or a new finding that changes the cost side of that trade.
+
+**Gap two — filed and CLOSED THE SAME DAY, item 112, SHIPPED.** A de-lever
+pass that fails to bring the book back under its ceiling only logged a
+warning — nothing told the owner the pass didn't work, only that a rung had
+fired. Not silent (it did log); unreportable, because it could not reach a
+session result, a Telegram message, or a test. Fixed the same day: after
+the post-trim broker refresh, `_alert_owner_delever_incomplete`
+(`src/pipeline.py`) compares the freshly re-measured gross exposure against
+the ceiling — both numbers already computed by the ordinary
+`_resolve_gross_ceiling` path used for ANY session's leverage line, nothing
+invented — and sets `ctx.leverage["delever_incomplete"]` when the book is
+still over. Every session-result dict already copies `ctx.leverage`
+verbatim, so the field reaches all of them with no new plumbing.
+`_append_leverage_line` (`src/notifier.py`) renders it as one owner-facing
+line, plain language, no internal names, using only the two measured
+numbers: *"Tried to bring the account's exposure back under its limit by
+selling down positions, but it is still over: the account currently has
+N.NNx of equity invested against a N.NNx limit."* No order, sizing, or
+sequencing changed — this is a reporting addition only, gated on both
+numbers being real and measured; if either is unavailable, nothing is
+claimed.
+
+**Not changed by either gap.** No cancel, sell, buy, or stop-placement call
+was reordered, added, or removed. What gets trimmed and by how much is
+untouched.
+
+---
+
 ### 2026-09-18 — the production checkout now matches what git records (item 94 closed)
 
 The live box was running a hand-built dashboard bundle that had never been committed. Git was not wrong about production in the usual direction — the SERVER was the stale side, since nobody could say from the repo alone what was actually being served. PR #465 rebuilt and committed the cockpit bundle from current frontend source so the two agree, and added a guard that `index.html` may only reference assets that are actually committed, so the drift cannot silently recur. Verified: the dashboard looks no different to the owner — this was a recording fix, not a behaviour change. Item 94 retired.

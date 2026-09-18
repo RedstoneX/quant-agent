@@ -10753,9 +10753,47 @@ class TradingPipeline:
             # Re-measure so the alert and the dashboard report the book that
             # now exists, not the one that triggered the de-lever.
             self._resolve_gross_ceiling(ctx)
+            self._alert_owner_delever_incomplete(ctx)
         except Exception as e:  # noqa: BLE001
             logger.error("GROSS-EXPOSURE DE-LEVER: broker refresh failed: %s", e)
         return orders
+
+    def _alert_owner_delever_incomplete(self, ctx: RunContext) -> None:
+        """Flag it when the gross-exposure de-lever did not work.
+
+        `_enforce_gross_ceiling` already logs a warning the moment it
+        *decides* to trim. What nothing checked before this is the OUTCOME:
+        a trim can be submitted and still leave the book over the ceiling —
+        an order that failed to place, a partial fill, integer-share
+        rounding down, or the market moving between the plan and the fill
+        can all produce this. That gap is unreportable, not silent: it was
+        always in the log, just never in anything the owner actually reads
+        (a Telegram message) or in the session result a test can assert on.
+        This is a reporting-only check — it runs after every broker call in
+        the de-lever is already done and changes no order, no sizing, and no
+        sequencing.
+
+        Sets `ctx.leverage["delever_incomplete"] = True` (which every
+        session-result dict already threads through, since they all copy
+        `ctx.leverage` verbatim) whenever we have a real, freshly-measured
+        gross exposure that is still above the ceiling. Never guesses: both
+        numbers come from the same post-refresh `_resolve_gross_ceiling`
+        call used for the ordinary leverage line, and the check is skipped
+        (not defaulted to False) when either is unmeasurable.
+        """
+        leverage = ctx.leverage or {}
+        gross_x = leverage.get("gross_x")
+        ceiling_x = leverage.get("ceiling_x")
+        if not isinstance(gross_x, (int, float)) or not isinstance(ceiling_x, (int, float)):
+            return
+        if gross_x <= ceiling_x:
+            return
+        leverage["delever_incomplete"] = True
+        logger.warning(
+            "GROSS-EXPOSURE DE-LEVER: still over the ceiling after de-levering "
+            "— gross exposure %.2fx equity vs a %.2fx ceiling.",
+            gross_x, ceiling_x,
+        )
 
     def _execution_stage(self, ctx: RunContext) -> list[dict]:
         """Delegates to ExecutionStage (class lives in pipeline_stages.py)."""
