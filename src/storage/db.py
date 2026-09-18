@@ -651,6 +651,42 @@ class Database:
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            -- Same rationale, extended to morning/midday/close (2026-09-18
+            -- gap sweep): `run_morning` and `run_position_review` compute
+            -- `leverage` (the §11.2 gross-exposure ceiling snapshot) and
+            -- `stop_coverage_gaps` (the broker-truth stop audit) fresh every
+            -- call, hand them to the notifier, and drop them — neither has
+            -- any other durable home (unlike PM/RM reasoning and orders,
+            -- already persisted via `specialist_evidence`/`trades`). One row
+            -- per trading day per mode ('morning', 'midday', 'close'): a
+            -- same-day re-run replaces it, same convention as daily_pnl/
+            -- insights/evening_reports.
+            CREATE TABLE IF NOT EXISTS session_reports (
+                date TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                run_id TEXT,
+                payload_json TEXT NOT NULL,
+                positions_json TEXT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (date, mode)
+            );
+
+            -- intra_check fires roughly every 30 minutes through the
+            -- session (not once/day like the table above), so a same-day
+            -- "replace" key would keep only the last tick and silently
+            -- drop every earlier one — including the one tick that caught
+            -- a coverage gap before a later, uneventful tick overwrote it.
+            -- Keyed by run_id instead: every tick gets its own durable row.
+            CREATE TABLE IF NOT EXISTS intra_check_reports (
+                run_id TEXT PRIMARY KEY,
+                date TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                positions_json TEXT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_intra_check_reports_date
+                ON intra_check_reports(date);
+
             CREATE TABLE IF NOT EXISTS insights (
                 date TEXT PRIMARY KEY,
                 tomorrow_outlook TEXT,
@@ -3306,6 +3342,186 @@ class Database:
             logger.error(
                 "evening_reports row for %s has unreadable payload_json",
                 record.get("date"),
+            )
+            return None
+        if not isinstance(payload, dict):
+            return None
+        positions = None
+        raw_positions = record.get("positions_json")
+        if raw_positions:
+            try:
+                parsed = json.loads(raw_positions)
+                positions = parsed if isinstance(parsed, list) else None
+            except (TypeError, ValueError):
+                positions = None
+        return {
+            "date": record.get("date"),
+            "run_id": record.get("run_id"),
+            "timestamp": record.get("timestamp"),
+            "payload": payload,
+            "positions": positions,
+        }
+
+    def _positions_snapshot_json(self) -> str:
+        """The `positions` table, verbatim, as JSON — same query
+        `save_evening_report` uses. Shared so morning/midday/close/
+        intra_check capture the book in exactly the same shape.
+        """
+        import json
+
+        with self._lock:
+            positions = [
+                dict(row) for row in self.conn.execute(
+                    "SELECT symbol, qty, avg_entry, current_price, market_value, "
+                    "unrealized_pnl FROM positions WHERE qty != 0 "
+                    "ORDER BY ABS(market_value) DESC"
+                ).fetchall()
+            ]
+        return json.dumps(positions, default=str)
+
+    def save_session_report(self, *, mode: str, date: str,
+                            run_id: str | None, payload: dict) -> None:
+        """Store one morning/midday/close result dict, verbatim, for replay.
+
+        Same contract as `save_evening_report`: `payload` is stored exactly
+        as the run produced it (no field defaulted or filled in), keyed by
+        (date, mode) so a same-day re-run of the same session replaces its
+        row rather than accumulating. The book is captured alongside it for
+        the same reason evening's is — a replay weeks later must not print
+        today's holdings under an old date.
+        """
+        import json
+
+        payload_json = json.dumps(payload, default=str)
+        positions_json = self._positions_snapshot_json()
+        with self._lock:
+            self.conn.execute(
+                """INSERT INTO session_reports
+                   (date, mode, run_id, payload_json, positions_json)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(date, mode) DO UPDATE SET
+                     run_id=excluded.run_id,
+                     payload_json=excluded.payload_json,
+                     positions_json=excluded.positions_json,
+                     timestamp=datetime('now')""",
+                (date, mode, run_id, payload_json, positions_json),
+            )
+            self.conn.commit()
+
+    def get_session_report(self, mode: str, date: str | None = None) -> dict | None:
+        """One stored morning/midday/close report for `mode` — `date`, or
+        the most recent one. None when absent or unreadable; see
+        `get_evening_report`'s docstring for why that distinction matters.
+        """
+        import json
+
+        with self._lock:
+            if date:
+                row = self.conn.execute(
+                    "SELECT * FROM session_reports WHERE date = ? AND mode = ?",
+                    (date, mode),
+                ).fetchone()
+            else:
+                row = self.conn.execute(
+                    "SELECT * FROM session_reports WHERE mode = ? "
+                    "ORDER BY date DESC LIMIT 1", (mode,),
+                ).fetchone()
+        if not row:
+            return None
+        record = dict(row)
+        try:
+            payload = json.loads(record.get("payload_json") or "")
+        except (TypeError, ValueError):
+            logger.error(
+                "session_reports row for %s/%s has unreadable payload_json",
+                record.get("mode"), record.get("date"),
+            )
+            return None
+        if not isinstance(payload, dict):
+            return None
+        positions = None
+        raw_positions = record.get("positions_json")
+        if raw_positions:
+            try:
+                parsed = json.loads(raw_positions)
+                positions = parsed if isinstance(parsed, list) else None
+            except (TypeError, ValueError):
+                positions = None
+        return {
+            "date": record.get("date"),
+            "mode": record.get("mode"),
+            "run_id": record.get("run_id"),
+            "timestamp": record.get("timestamp"),
+            "payload": payload,
+            "positions": positions,
+        }
+
+    def save_intra_check_report(self, *, run_id: str, date: str,
+                                payload: dict) -> None:
+        """Store one intra_check tick's result dict, verbatim, for replay.
+
+        Keyed by run_id, not date: intra_check fires roughly every 30
+        minutes through the session, and a date-keyed "replace" row would
+        keep only the last tick — see the table's own comment in the
+        schema. Every tick gets its own durable row.
+        """
+        import json
+
+        payload_json = json.dumps(payload, default=str)
+        positions_json = self._positions_snapshot_json()
+        with self._lock:
+            self.conn.execute(
+                """INSERT INTO intra_check_reports
+                   (run_id, date, payload_json, positions_json)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(run_id) DO UPDATE SET
+                     payload_json=excluded.payload_json,
+                     positions_json=excluded.positions_json,
+                     timestamp=datetime('now')""",
+                (run_id, date, payload_json, positions_json),
+            )
+            self.conn.commit()
+
+    def get_intra_check_report(self, run_id: str | None = None,
+                               date: str | None = None) -> dict | None:
+        """One stored intra_check tick.
+
+        `run_id` selects a specific tick. Otherwise `date` (or, absent
+        that, today's most recent row overall) returns the LATEST tick
+        recorded for that day — the closest analogue to "what did the desk
+        last see" for a session that runs many times a day. None when
+        absent or unreadable.
+        """
+        import json
+
+        with self._lock:
+            if run_id:
+                row = self.conn.execute(
+                    "SELECT * FROM intra_check_reports WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+            elif date:
+                # rowid tie-breaks `timestamp`, which is second-resolution
+                # (`datetime('now')`) — two ticks in the same second must
+                # still resolve to insertion order, not an arbitrary one.
+                row = self.conn.execute(
+                    "SELECT * FROM intra_check_reports WHERE date = ? "
+                    "ORDER BY timestamp DESC, rowid DESC LIMIT 1", (date,),
+                ).fetchone()
+            else:
+                row = self.conn.execute(
+                    "SELECT * FROM intra_check_reports "
+                    "ORDER BY timestamp DESC, rowid DESC LIMIT 1"
+                ).fetchone()
+        if not row:
+            return None
+        record = dict(row)
+        try:
+            payload = json.loads(record.get("payload_json") or "")
+        except (TypeError, ValueError):
+            logger.error(
+                "intra_check_reports row for %s has unreadable payload_json",
+                record.get("run_id"),
             )
             return None
         if not isinstance(payload, dict):

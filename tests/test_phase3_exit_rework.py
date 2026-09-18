@@ -217,7 +217,10 @@ def test_pipeline_does_not_feed_calibration_hold_time_into_the_review_path():
     """Guard against a future edit quietly restoring the loop."""
     import inspect
 
-    source = inspect.getsource(TradingPipeline.run_position_review)
+    # `run_position_review` became a thin persistence wrapper on 2026-09-18
+    # (see `Database.save_session_report`); the real body — where this
+    # guard actually bites — is `_run_position_review_body`.
+    source = inspect.getsource(TradingPipeline._run_position_review_body)
     # Comments explaining WHY the loop was removed are welcome; a live
     # reference is not. Strip comment text before checking.
     code = "\n".join(

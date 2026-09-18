@@ -475,13 +475,18 @@ def test_the_de_lever_runs_in_the_preamble_before_any_agent_is_called():
     import inspect
     from src.pipeline import TradingPipeline
 
-    for entry_point in (TradingPipeline.run_morning, TradingPipeline.run_position_review):
+    # `run_morning`/`run_position_review` became thin persistence wrappers
+    # on 2026-09-18 (see `Database.save_session_report`, same shape
+    # `run_evening`/`_run_evening_body` already used); the preamble this
+    # test pins now lives in their bodies.
+    for entry_point in (TradingPipeline._run_morning_body,
+                        TradingPipeline._run_position_review_body):
         source = inspect.getsource(entry_point)
         assert "_enforce_gross_ceiling" in source, (
             f"{entry_point.__name__} must de-lever in its preamble"
         )
 
-    morning = inspect.getsource(TradingPipeline.run_morning)
+    morning = inspect.getsource(TradingPipeline._run_morning_body)
     assert morning.index("_enforce_gross_ceiling") < morning.index("_decision_stage"), (
         "the de-lever must run BEFORE the Portfolio Manager is called, so a "
         "blank or truncated model response cannot skip it"
@@ -490,7 +495,7 @@ def test_the_de_lever_runs_in_the_preamble_before_any_agent_is_called():
     # The midday/close lane has its own agent (the position reviewer) and the
     # same requirement: the ladder steps on measured drawdown, and a reviewer
     # that returns nothing must not postpone the de-lever to tomorrow.
-    review = inspect.getsource(TradingPipeline.run_position_review)
+    review = inspect.getsource(TradingPipeline._run_position_review_body)
     assert review.index("_enforce_gross_ceiling") < review.index("position_reviewer"), (
         "the de-lever must run BEFORE the position reviewer is called, for "
         "the same reason it runs before the Portfolio Manager"
