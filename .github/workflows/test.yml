@@ -8,45 +8,10 @@ on:
   # Allow manual re-runs from the Actions tab
   workflow_dispatch:
 
-# Only the newest run for a PR branch can be the answer, and every superseded
-# run is holding runners that the shards below need. Cancel them on pull
-# requests; never on main, where each commit's result stands on its own.
-# Branch protection only ever reads the head commit's checks, so cancelling an
-# older commit's run cannot unblock a merge.
-concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  # The suite is split across several runners, and each runner additionally
-  # spreads its slice over its own cores (`-n auto`, set in pyproject.toml).
-  # `scripts/ci_shard.py` does the splitting; it slices by test FILE, so a
-  # module is never divided and within-module ordering is unchanged.
-  #
-  # Why five. Measured on the runners, the suite is 758.7s of test time and
-  # five individual tests are over half of it: three whole-repo AST scans in
-  # test_one_definition_per_quantity.py at ~62s each, one 71s test in
-  # test_ops_scripts_importable.py, and one 60s test in test_tech_analyst.py.
-  # Those five do not overlap with each other -- a shard holding two of them
-  # takes their sum -- so the wall-clock is set by how well they are kept
-  # apart, not by how evenly the other 6,600 tests are spread. Five shards is
-  # the first count that gives each of the five its own shard; fewer doubles
-  # one up and lands back at three or four minutes, and more cannot beat the
-  # 71s single test that is the hard floor.
-  #
-  # To change the shard count, edit this list and nothing else: the script is
-  # told how many shards there are via `strategy.job-total`, so the two cannot
-  # drift apart.
-  shard:
-    name: shard ${{ matrix.shard }}
+  pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      # One failing shard must not hide the others; we want the whole picture
-      # in one run.
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3, 4]
 
     steps:
       - name: Check out repo
@@ -74,53 +39,4 @@ jobs:
           ALPACA_API_KEY: dummy-alpaca-key-for-ci
           ALPACA_SECRET_KEY: dummy-alpaca-secret-for-ci
           FRED_API_KEY: dummy-fred-key-for-ci
-        run: |
-          set -euo pipefail
-          # Refuse to run a split that is not a clean partition of the suite.
-          # A dropped file would be tests silently not running underneath a
-          # green required check, which is worse than a slow build.
-          python scripts/ci_shard.py --shards "${{ strategy.job-total }}" --check
-          mapfile -t UNITS < <(
-            python scripts/ci_shard.py \
-              --shards "${{ strategy.job-total }}" \
-              --index "${{ matrix.shard }}"
-          )
-          if [ "${#UNITS[@]}" -eq 0 ]; then
-            echo "::error::shard ${{ matrix.shard }} was handed nothing to run"
-            exit 1
-          fi
-          echo "shard ${{ matrix.shard }}/${{ strategy.job-total }}: ${#UNITS[@]} units"
-          # --durations surfaces the slow files in the job log. The suite's
-          # cost is concentrated in a handful of wall-clock assertions rather
-          # than spread across the 6,600 tests, so these are the numbers to
-          # refresh `SLOW_FILES` in the splitter from, and they are free.
-          pytest -q --durations=12 "${UNITS[@]}"
-
-  # `pytest` is the required status check in branch protection on main, so this
-  # job keeps that name and is the only thing branch protection looks at. It
-  # runs on `always()` precisely so that it still reports when a shard failed,
-  # was cancelled or never ran — and in every one of those cases it must go
-  # red. A green `pytest` over a shard that did not run would remove the only
-  # gate on this repository.
-  #
-  # `needs.shard.result` is the aggregate over the whole matrix: it is
-  # 'success' only when every leg succeeded, and 'failure', 'cancelled' or
-  # 'skipped' otherwise. Anything that is not 'success' fails this job.
-  pytest:
-    name: pytest
-    needs: shard
-    if: always()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Require every shard to have passed
-        run: |
-          set -euo pipefail
-          result="${{ needs.shard.result }}"
-          echo "aggregate result of all test shards: ${result}"
-          if [ "${result}" != "success" ]; then
-            echo "::error::test shards did not all succeed (aggregate result: ${result})"
-            exit 1
-          fi
-          echo "every test shard passed"
+        run: pytest tests/ -q
