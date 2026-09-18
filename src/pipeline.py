@@ -14180,6 +14180,44 @@ class TradingPipeline:
         }
 
     def run_evening(self) -> dict:
+        """The evening session, plus the durable record of its own output.
+
+        The body below is unchanged; this wrapper exists so that EVERY
+        return path (holiday short-circuit, paid-analysis suspension, the
+        error payloads and the full report) lands in `evening_reports`
+        before the result reaches the notifier. Previously the run handed
+        stop_coverage_gaps / stop_proximity / earnings_proximity /
+        total_pnl / risk_capital_dollars to the Telegram formatter and
+        then dropped them: only daily_pnl and insights survived, so last
+        night's report could not be re-read without paying for a fresh
+        run. Persistence is fail-soft — a storage problem must cost the
+        audit record, never the evening push.
+        """
+        result = self._run_evening_body()
+        self._persist_evening_report(result)
+        return result
+
+    def _persist_evening_report(self, result: dict) -> None:
+        """Write the evening result dict verbatim, keyed by trading day.
+
+        No field is defaulted or filled in: a value the run could not
+        compute is stored absent/None so that a re-render says
+        "not available" rather than showing a fabricated zero.
+        """
+        if not isinstance(result, dict):
+            return
+        try:
+            self.db.save_evening_report(
+                date=session_date_key(),
+                run_id=result.get("run_id"),
+                payload=result,
+            )
+        except Exception as exc:  # noqa: BLE001 — never break the push
+            logger.warning(
+                "evening report persistence failed (non-fatal): %s", exc,
+            )
+
+    def _run_evening_body(self) -> dict:
         ctx = RunContext.start("evening")
         run_id = ctx.run_id
         logger.info("=== Evening report: %s ===", run_id)
