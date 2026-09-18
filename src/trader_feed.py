@@ -1638,8 +1638,17 @@ def _format_evening(result: dict, elapsed: float) -> str:
     snap = _read_run(run_id)
     # The base formatter read the positions table itself; reuse the
     # trader-feed snapshot read instead so there is one DB path, not two.
+    #
+    # A caller may supply `_positions` already — that is how a stored
+    # report is re-rendered (`render_stored_evening`). `_read_run`'s
+    # positions query is deliberately NOT run-scoped (it reads the book as
+    # it stands right now), so replaying an older night through it would
+    # print today's holdings under that night's date. A supplied snapshot
+    # therefore wins; the live evening path never sets one and is
+    # unaffected.
     result = dict(result)
-    result["_positions"] = snap.get("positions") or []
+    if not isinstance(result.get("_positions"), list):
+        result["_positions"] = snap.get("positions") or []
     profiles = _lookup_company_profiles(
         _all_symbols(
             result["_positions"],
@@ -2305,3 +2314,162 @@ def format_desk_status(
         coverage_text=_ON_DEMAND_COVERAGE_TEXT,
         scanned_text=_ON_DEMAND_SCANNED_TEXT,
     )
+
+
+# === stored evening report, re-rendered (2026-09-18) ===
+#
+# The evening run's own output is now written to `evening_reports` (see
+# `Database.save_evening_report`). This renders one of those rows back
+# through `format_session_result`, the SAME entry point the live evening
+# push uses, so the owner can read last night's report — or be shown what
+# the report looks like — without running any part of the pipeline,
+# without a broker call and without a model call.
+#
+# It holds no message format of its own, exactly like `format_desk_status`
+# above: every future change to `_format_evening` reaches this with no
+# edit here.
+#
+# The one thing it must add is honesty about gaps. A stored row can be
+# partial (a run that died early, a storage failure, a row written before
+# a field existed), and several of the evening formatter's inputs render as
+# SILENCE when absent — silence that reads as "nothing was wrong". So the
+# pieces whose absence would otherwise be indistinguishable from a clean
+# result are named in plain words at the bottom. Nothing is ever defaulted,
+# zeroed, estimated or back-filled.
+_STORED_EVENING_GAP_WORDS: tuple[tuple[str, str], ...] = (
+    ("stop_coverage_gaps", "the stop-coverage audit result"),
+    ("stop_proximity", "which holdings were sitting near their stops"),
+    ("earnings_proximity", "which holdings had earnings due"),
+)
+
+
+def read_stored_evening(
+    date: str | None = None, db_path: Any = None,
+) -> dict[str, Any] | None:
+    """One `evening_reports` row, through a READ-ONLY connection.
+
+    `date` is a trading day key; omit it for the most recent stored night.
+    Mirrors `Database.get_evening_report`'s contract and return shape, but
+    opens the file `mode=ro` the way `_read_run` does, so the on-demand
+    command cannot write to (or create anything in) the live database —
+    including the table itself, which is why a not-yet-migrated database
+    returns None here rather than being altered.
+
+    Returns None when there is no row, no table, no database file, or the
+    stored JSON is unreadable. An unreadable row is an ABSENT report: the
+    caller says so and renders nothing.
+    """
+    path = Path(db_path) if db_path is not None else Path(_DB_PATH)
+    if not path.exists():
+        return None
+    conn = None
+    try:
+        conn = sqlite3.connect(
+            f"file:{path.resolve()}?mode=ro", uri=True, timeout=1.0,
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=1000")
+        if date:
+            row = conn.execute(
+                "SELECT * FROM evening_reports WHERE date = ?", (date,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM evening_reports ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        logger.warning("stored evening report read failed: %s", exc)
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+    if not row:
+        return None
+    record = dict(row)
+    try:
+        payload = json.loads(record.get("payload_json") or "")
+    except (TypeError, ValueError):
+        logger.error(
+            "stored evening report for %s has unreadable payload",
+            record.get("date"),
+        )
+        return None
+    if not isinstance(payload, dict):
+        return None
+    positions = None
+    if record.get("positions_json"):
+        try:
+            parsed = json.loads(record["positions_json"])
+            positions = parsed if isinstance(parsed, list) else None
+        except (TypeError, ValueError):
+            positions = None
+    return {
+        "date": record.get("date"),
+        "run_id": record.get("run_id"),
+        "timestamp": record.get("timestamp"),
+        "payload": payload,
+        "positions": positions,
+    }
+
+
+def render_stored_evening(record: dict, elapsed_seconds: float = 0.0) -> str:
+    """One stored evening report as a Telegram message.
+
+    `record` is a `Database.get_evening_report` row. Raises ValueError if
+    it carries no usable payload — the caller must then say the report is
+    unavailable rather than render anything.
+    """
+    payload = record.get("payload") if isinstance(record, dict) else None
+    if not isinstance(payload, dict):
+        raise ValueError("stored evening report has no usable payload")
+
+    result = dict(payload)
+    gaps: list[str] = []
+
+    # The book must come from the stored snapshot: `_read_run`'s positions
+    # query reads the CURRENT table, so letting it answer would print
+    # today's holdings under that night's date.
+    positions = record.get("positions")
+    if isinstance(positions, list):
+        result["_positions"] = positions
+    else:
+        result["_positions"] = []
+        gaps.append("the book as it stood that night")
+
+    for key, words in _STORED_EVENING_GAP_WORDS:
+        if payload.get(key) is None:
+            gaps.append(words)
+
+    body = format_session_result("evening", result, elapsed_seconds)
+    if not body:
+        raise ValueError("stored evening report could not be rendered")
+
+    date_text = record.get("date") or "date not recorded"
+    run_id = record.get("run_id")
+    header = [
+        _b(f"STORED EVENING REPORT · {date_text}"),
+        "   Read back from the stored record. Nothing was run to produce "
+        "this: no broker call, no model call, no order.",
+    ]
+    header.append(
+        f"   Produced by run {run_id}" if run_id
+        else "   The producing run id was not recorded"
+    )
+    lines = [*header, "", body]
+
+    if gaps:
+        if len(gaps) == 1:
+            named = gaps[0]
+        else:
+            named = ", ".join(gaps[:-1]) + " and " + gaps[-1]
+        lines += [
+            "",
+            _b("NOT AVAILABLE"),
+            f"   The stored record does not contain {named}. That is "
+            f"missing information, not an empty result — do not read the "
+            f"silence above as an all-clear.",
+        ]
+    return "\n".join(lines)
