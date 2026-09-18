@@ -236,6 +236,75 @@ def _skip_who(reason: str) -> str:
     return _SKIP_WHO_LABELS.get(str(reason or ""), "Blocked by the desk")
 
 
+# Board item 89 defect 5 — raw internal tokens printed to the owner word
+# for word. Every value below is what the token MEANS, in the same words a
+# person would use; the key is the internal spelling and never reaches the
+# message. An unrecognised token is DESCRIBED ("the desk recorded an
+# outcome it has no plain wording for"), never pasted through and never
+# guessed at, because guessing what an unknown status means to a person
+# reading it as a trading fact is the failure this rule exists to stop.
+_ORDER_END_WORDS: dict[str, str] = {
+    "canceled": "the order was cancelled before anything filled",
+    "cancelled": "the order was cancelled before anything filled",
+    "expired": "the order ran out of time before anything filled",
+    "rejected": "the broker turned the order down",
+    "submit_failed": "the order never reached the broker",
+    "replaced": "the order was replaced by another one",
+    "done_for_day": "the order was closed out at the end of the day unfilled",
+    "suspended": "the order was suspended by the broker before filling",
+    "stopped": "the broker stopped the order before it filled",
+    "pending_cancel": "the order is being cancelled",
+    "pending_replace": "the order is being replaced",
+}
+
+#: The same treatment for a fill state shown ALONGSIDE an order line, where
+#: the sentence above would read oddly. Kept as a separate map rather than
+#: reworded from one, so neither reads as a translation of the other.
+_FILL_STATE_WORDS: dict[str, str] = {
+    "filled": "filled",
+    "submitted": "placed, waiting to fill",
+    "pending_submit": "not yet at the broker",
+    "partially_filled": "part-filled, still working",
+    "canceled": "cancelled unfilled",
+    "cancelled": "cancelled unfilled",
+    "expired": "expired unfilled",
+    "rejected": "turned down by the broker",
+    "submit_failed": "never reached the broker",
+}
+
+
+def _machine_detail(text: Any) -> str:
+    """Board item 89 defect 5 — the underlying fault text, LABELLED as
+    machine output instead of pasted in as though it were a sentence
+    written for the reader.
+
+    It is kept rather than dropped: it is often the only record of what
+    actually broke, and inventing a friendly paraphrase of an exception
+    would be inventing a fact. What changes is that the owner is told what
+    he is looking at and that there is nothing in it for him to do.
+    """
+    return (
+        "Machine fault text, kept for the record — nothing here needs "
+        f"anything from you: {_clip(text, 900)}"
+    )
+
+
+def _order_end_plain(fill_status: Any) -> str:
+    token = str(fill_status or "").strip().lower()
+    known = _ORDER_END_WORDS.get(token)
+    if known:
+        return known
+    return (
+        "the order never became a live fill, and the desk recorded an "
+        "outcome it has no plain wording for"
+    )
+
+
+def _fill_state_plain(fill_status: Any) -> str:
+    token = str(fill_status or "").strip().lower()
+    return _FILL_STATE_WORDS.get(token) or "state not recorded in plain words"
+
+
 def _decision_action_for(symbol: str, snap: dict[str, Any]) -> str:
     """The PM/constructor's own action word for `symbol` this run (BUY /
     SELL / SHORT / COVER / HOLD / ...), so a BLOCKED/FAILED line can say
@@ -342,12 +411,45 @@ def _blocked_rows(result: dict, snap: dict[str, Any]) -> list[dict]:
         symbol = str(row.get("symbol", "?")).upper()
         if symbol in seen:
             continue
-        status = str(row.get("fill_status") or "unknown")
         rows.append({
             "symbol": symbol,
             "action": str(row.get("action", "?")).upper(),
             "who": "Not filled in time",
-            "reason": f"order never became a live fill (status: {status})",
+            # Board item 89 defect 5: this used to print the broker's own
+            # status token verbatim ("(status: canceled)"). `_ORDER_END_WORDS`
+            # says the same thing in words; an unmapped token is described,
+            # never pasted.
+            "reason": _order_end_plain(row.get("fill_status")),
+        })
+        seen.add(symbol)
+
+    # Board item 89 defect 6 — the silent drop. A target the constructor
+    # ended before an order existed reached no message at all: it produced
+    # no trade row, no execution skip and no risk verdict, so every one of
+    # the three sources above missed it and the session read "orders: 0"
+    # with no explanation. The reason it carries is already a plain-English
+    # sentence written at the refusal site (`PortfolioConstructor._note_
+    # refusal`), so nothing is invented here; the internal refusal CODE
+    # beside it is deliberately NOT rendered.
+    for row in (snap.get("constructor_blocks") or []):
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol", "?")).upper()
+        if symbol in seen:
+            continue
+        detail = str(row.get("detail") or "").strip()
+        if not detail:
+            # Never a guess and never an internal code: say that the reason
+            # was not written down.
+            detail = (
+                "the desk ended this plan before placing an order and did "
+                "not record why"
+            )
+        rows.append({
+            "symbol": symbol,
+            "action": _decision_action_for(symbol, snap),
+            "who": "Stopped by the desk before an order was placed",
+            "reason": detail,
         })
         seen.add(symbol)
 
@@ -433,6 +535,14 @@ def _empty_snapshot() -> dict[str, Any]:
         "risk": None,
         "risk_mods": [],
         "skips": [],
+        # Board item 89 defect 6. Targets the CONSTRUCTOR ended before an
+        # order was ever built. Deliberately a separate key from `skips`:
+        # `skips` is read by `_intraday_tick_actionable` to decide whether a
+        # quiet half-hour tick speaks at all, and the owner's ratified
+        # silence rule says a tick with nothing to act on sends nothing.
+        # These rows only ever ADD lines to a message that is already going
+        # out; they never cause one to be sent.
+        "constructor_blocks": [],
         "trades": [],
         "positions": [],
         "agent_summaries": {},
@@ -483,6 +593,23 @@ def _read_run(run_id: str | None) -> dict[str, Any]:
                     snapshot["risk_mods"].append(data)
                 elif agent == "execution" and kind == "execution_skip":
                     snapshot["skips"].append(data)
+                elif agent == "pipeline" and kind == "pipeline_event":
+                    # Board item 89 defect 6: a plan the constructor ended
+                    # before building an order left a durable per-symbol row
+                    # here (`_record_constructor_drops` in
+                    # src/pipeline_stages.py) and reached NO message at all —
+                    # not the order list, not BLOCKED/FAILED, nothing. The
+                    # owner could not know a decision had been made. Read
+                    # only the terminal blocked outcomes; `unmeasurable`
+                    # (data faults) already pages separately.
+                    if (
+                        str(data.get("stage") or "") == "deterministic_gate"
+                        and str(data.get("outcome") or "") == "blocked"
+                        and row["symbol"]
+                    ):
+                        snapshot["constructor_blocks"].append(
+                            {**data, "symbol": row["symbol"]}
+                        )
         except sqlite3.DatabaseError:
             pass
 
@@ -800,9 +927,14 @@ def _append_gate_and_execution(
         lines.append(f"⚙️ Execution gate: {len(skips)} skip(s)")
         for row in skips[:3]:
             symbol = str(row.get("symbol", "?")).upper()
-            reason = str(row.get("reason", "?"))
+            # Board item 89 defect 5: this printed the internal reason code
+            # verbatim ("• NVDA: fat_finger_guard"). `_skip_who` is the
+            # plain-English map that already exists for exactly these codes
+            # and the BLOCKED section already uses it; only this line
+            # bypassed it.
+            who = _skip_who(row.get("reason", ""))
             detail = _clip(row.get("detail"), 420)
-            text = f"   • {symbol}: {reason}"
+            text = f"   • {symbol}: {who}"
             if detail:
                 text += f" — {detail}"
             lines.append(text)
@@ -826,10 +958,12 @@ def _append_gate_and_execution(
             symbol = str(row.get("symbol", "?")).upper()
             qty = _number(row.get("fill_qty")) or _number(row.get("qty"))
             price = _number(row.get("fill_price")) or _number(row.get("price"))
-            fill_status = row.get("fill_status") or "recorded"
+            # Board item 89 defect 5: the raw fill-status token used to be
+            # printed here ("· pending_submit").
+            fill_state = _fill_state_plain(row.get("fill_status"))
             qty_text = f" {qty:g}" if qty is not None else ""
             price_text = f" @ ${price:,.2f}" if price is not None and price > 0 else ""
-            lines.append(f"   • {action} {symbol}{qty_text}{price_text} · {fill_status}")
+            lines.append(f"   • {action} {symbol}{qty_text}{price_text} · {fill_state}")
     elif explain_no_trade:
         _append_no_trade_reason(lines, result, snap, skips)
 
@@ -1103,13 +1237,31 @@ def _format_position_review(mode: str, result: dict, elapsed: float) -> str:
     risk_level = review.get("risk_level")
 
     def _render_review_summary(lines: list[str]) -> None:
-        bits = []
-        if positions is not None:
-            bits.append(f"{positions} position(s)")
+        # Board item 89 defect 2 — an assertion computed independently of
+        # the list underneath it.
+        #
+        # This line used to print `result["positions"]`, which
+        # `run_position_review` sets to `len(positions)` from the snapshot
+        # taken at the START of the session, BEFORE the reviewer's own
+        # exits ran and before the closing `_sync_positions_from_broker`.
+        # The HELD block a few lines below reads the book AFTER all of
+        # that. So on any session that actually sold something the header
+        # claimed a number, and the list beneath it named a different set
+        # — the owner had no way to tell which one was his book.
+        #
+        # The count is now taken from `held_symbols`, the very list that is
+        # rendered below it, so the two cannot disagree. The pre-session
+        # count is not discarded: when it differs, the message says the
+        # book changed during the session rather than printing two numbers
+        # and leaving the reader to reconcile them.
+        if not held_symbols and not risk_level and not positions:
+            return
+        bits = [f"{len(held_symbols)} position(s) held now"]
+        if isinstance(positions, int) and positions != len(held_symbols):
+            bits.append(f"{positions} at the start of this session")
         if risk_level:
             bits.append(f"risk {risk_level}")
-        if bits:
-            lines.append("📍 Review: " + " · ".join(bits))
+        lines.append("📍 Review: " + " · ".join(bits))
 
     _new_block(lines, _render_review_summary)
 
@@ -1638,8 +1790,17 @@ def _format_evening(result: dict, elapsed: float) -> str:
     snap = _read_run(run_id)
     # The base formatter read the positions table itself; reuse the
     # trader-feed snapshot read instead so there is one DB path, not two.
+    #
+    # A caller may supply `_positions` already — that is how a stored
+    # report is re-rendered (`render_stored_evening`). `_read_run`'s
+    # positions query is deliberately NOT run-scoped (it reads the book as
+    # it stands right now), so replaying an older night through it would
+    # print today's holdings under that night's date. A supplied snapshot
+    # therefore wins; the live evening path never sets one and is
+    # unaffected.
     result = dict(result)
-    result["_positions"] = snap.get("positions") or []
+    if not isinstance(result.get("_positions"), list):
+        result["_positions"] = snap.get("positions") or []
     profiles = _lookup_company_profiles(
         _all_symbols(
             result["_positions"],
@@ -1720,15 +1881,25 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
                 "normally."
             )
             if nested.get("error"):
-                lines.append(f"Trigger: {_clip(nested.get('error'), 900)}")
+                lines.append(_machine_detail(nested.get("error")))
         elif status == "intraday_analysis_error":
+            # Board item 89 defect 5: `failure_status` is an internal token
+            # ("pm_output_unparseable") and was printed in the middle of the
+            # plain sentence. The sentence says what happened; the token
+            # itself carries nothing the owner can act on and is dropped.
             lines.append(
-                f"🛑 FAILED: PM analysis failed "
-                f"({nested.get('failure_status') or 'unknown'}); this was not "
-                "a deliberate no-trade decision."
+                "🛑 FAILED: the Portfolio Manager's analysis did not "
+                "complete, so nothing was decided. This was not a "
+                "deliberate no-trade decision."
             )
-            if nested.get("error"):
-                lines.append(f"Error: {_clip(nested.get('error'), 900)}")
+            if nested.get("error") or nested.get("failure_status"):
+                lines.append(_machine_detail(
+                    " ".join(
+                        str(part) for part in
+                        (nested.get("failure_status"), nested.get("error"))
+                        if part
+                    )
+                ))
         elif status == "evidence_gate_skip":
             lost = nested.get("lost_seats") or []
             seats = ", ".join(str(s) for s in lost) or "a research seat"
@@ -1748,12 +1919,20 @@ def _format_intraday(outer: dict, nested: dict, elapsed: float) -> str:
             # nested path `paid_analysis_suspended` / `intraday_analysis_error`
             # already use, instead of silently reading as "Status: ok".
             lines.append(
-                f"🛑 CRASHED: intraday opportunity scan crashed "
-                f"({nested.get('error_type') or 'unknown'}); the deterministic "
-                "intraday loss check above completed normally."
+                "🛑 CRASHED: the search for intraday opportunities stopped "
+                "with a fault, so it found nothing. The automatic loss "
+                "check above ran normally."
             )
-            if nested.get("error"):
-                lines.append(f"Error: {_clip(nested.get('error'), 900)}")
+            # The exception TYPE is not thrown away — it moves out of the
+            # owner's sentence and into the labelled machine line with the
+            # message, where it belongs and where it stays greppable.
+            if nested.get("error") or nested.get("error_type"):
+                lines.append(_machine_detail(
+                    " ".join(
+                        str(part) for part in
+                        (nested.get("error_type"), nested.get("error")) if part
+                    )
+                ))
 
     _new_block(lines, _render_status_banner)
 
@@ -2305,3 +2484,162 @@ def format_desk_status(
         coverage_text=_ON_DEMAND_COVERAGE_TEXT,
         scanned_text=_ON_DEMAND_SCANNED_TEXT,
     )
+
+
+# === stored evening report, re-rendered (2026-09-18) ===
+#
+# The evening run's own output is now written to `evening_reports` (see
+# `Database.save_evening_report`). This renders one of those rows back
+# through `format_session_result`, the SAME entry point the live evening
+# push uses, so the owner can read last night's report — or be shown what
+# the report looks like — without running any part of the pipeline,
+# without a broker call and without a model call.
+#
+# It holds no message format of its own, exactly like `format_desk_status`
+# above: every future change to `_format_evening` reaches this with no
+# edit here.
+#
+# The one thing it must add is honesty about gaps. A stored row can be
+# partial (a run that died early, a storage failure, a row written before
+# a field existed), and several of the evening formatter's inputs render as
+# SILENCE when absent — silence that reads as "nothing was wrong". So the
+# pieces whose absence would otherwise be indistinguishable from a clean
+# result are named in plain words at the bottom. Nothing is ever defaulted,
+# zeroed, estimated or back-filled.
+_STORED_EVENING_GAP_WORDS: tuple[tuple[str, str], ...] = (
+    ("stop_coverage_gaps", "the stop-coverage audit result"),
+    ("stop_proximity", "which holdings were sitting near their stops"),
+    ("earnings_proximity", "which holdings had earnings due"),
+)
+
+
+def read_stored_evening(
+    date: str | None = None, db_path: Any = None,
+) -> dict[str, Any] | None:
+    """One `evening_reports` row, through a READ-ONLY connection.
+
+    `date` is a trading day key; omit it for the most recent stored night.
+    Mirrors `Database.get_evening_report`'s contract and return shape, but
+    opens the file `mode=ro` the way `_read_run` does, so the on-demand
+    command cannot write to (or create anything in) the live database —
+    including the table itself, which is why a not-yet-migrated database
+    returns None here rather than being altered.
+
+    Returns None when there is no row, no table, no database file, or the
+    stored JSON is unreadable. An unreadable row is an ABSENT report: the
+    caller says so and renders nothing.
+    """
+    path = Path(db_path) if db_path is not None else Path(_DB_PATH)
+    if not path.exists():
+        return None
+    conn = None
+    try:
+        conn = sqlite3.connect(
+            f"file:{path.resolve()}?mode=ro", uri=True, timeout=1.0,
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=1000")
+        if date:
+            row = conn.execute(
+                "SELECT * FROM evening_reports WHERE date = ?", (date,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM evening_reports ORDER BY date DESC LIMIT 1"
+            ).fetchone()
+    except sqlite3.DatabaseError as exc:
+        logger.warning("stored evening report read failed: %s", exc)
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+    if not row:
+        return None
+    record = dict(row)
+    try:
+        payload = json.loads(record.get("payload_json") or "")
+    except (TypeError, ValueError):
+        logger.error(
+            "stored evening report for %s has unreadable payload",
+            record.get("date"),
+        )
+        return None
+    if not isinstance(payload, dict):
+        return None
+    positions = None
+    if record.get("positions_json"):
+        try:
+            parsed = json.loads(record["positions_json"])
+            positions = parsed if isinstance(parsed, list) else None
+        except (TypeError, ValueError):
+            positions = None
+    return {
+        "date": record.get("date"),
+        "run_id": record.get("run_id"),
+        "timestamp": record.get("timestamp"),
+        "payload": payload,
+        "positions": positions,
+    }
+
+
+def render_stored_evening(record: dict, elapsed_seconds: float = 0.0) -> str:
+    """One stored evening report as a Telegram message.
+
+    `record` is a `Database.get_evening_report` row. Raises ValueError if
+    it carries no usable payload — the caller must then say the report is
+    unavailable rather than render anything.
+    """
+    payload = record.get("payload") if isinstance(record, dict) else None
+    if not isinstance(payload, dict):
+        raise ValueError("stored evening report has no usable payload")
+
+    result = dict(payload)
+    gaps: list[str] = []
+
+    # The book must come from the stored snapshot: `_read_run`'s positions
+    # query reads the CURRENT table, so letting it answer would print
+    # today's holdings under that night's date.
+    positions = record.get("positions")
+    if isinstance(positions, list):
+        result["_positions"] = positions
+    else:
+        result["_positions"] = []
+        gaps.append("the book as it stood that night")
+
+    for key, words in _STORED_EVENING_GAP_WORDS:
+        if payload.get(key) is None:
+            gaps.append(words)
+
+    body = format_session_result("evening", result, elapsed_seconds)
+    if not body:
+        raise ValueError("stored evening report could not be rendered")
+
+    date_text = record.get("date") or "date not recorded"
+    run_id = record.get("run_id")
+    header = [
+        _b(f"STORED EVENING REPORT · {date_text}"),
+        "   Read back from the stored record. Nothing was run to produce "
+        "this: no broker call, no model call, no order.",
+    ]
+    header.append(
+        f"   Produced by run {run_id}" if run_id
+        else "   The producing run id was not recorded"
+    )
+    lines = [*header, "", body]
+
+    if gaps:
+        if len(gaps) == 1:
+            named = gaps[0]
+        else:
+            named = ", ".join(gaps[:-1]) + " and " + gaps[-1]
+        lines += [
+            "",
+            _b("NOT AVAILABLE"),
+            f"   The stored record does not contain {named}. That is "
+            f"missing information, not an empty result — do not read the "
+            f"silence above as an all-clear.",
+        ]
+    return "\n".join(lines)

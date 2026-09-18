@@ -1242,8 +1242,15 @@ def get_holding_why(symbol: str) -> dict | None:
                 # The entry run's evidence is written BEFORE the fill (the
                 # Form 4 admission precedes the order by minutes), so the
                 # review-metrics cutoff must not be applied to it.
+                #
+                # `target_revision` rows are pulled on the same
+                # after-the-entry basis as `review_metrics`: a re-derived
+                # take-profit, or a named refusal to re-derive one, happens
+                # in a LATER session than the entry, and the holding view
+                # must show which number it is currently displaying and why.
                 "SELECT * FROM specialist_evidence WHERE symbol = ? AND "
-                "(run_id = ? OR (kind = 'review_metrics' AND timestamp >= ?)) "
+                "(run_id = ? OR (kind IN ('review_metrics', 'target_revision') "
+                "AND timestamp >= ?)) "
                 "ORDER BY id",
                 (symbol, entry.get("run_id") or "", entry.get("timestamp") or ""),
             ).fetchall()

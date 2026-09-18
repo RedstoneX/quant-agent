@@ -623,6 +623,34 @@ class Database:
                 timestamp TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            -- The evening run's OWN OUTPUT — the exact result dict the
+            -- evening Telegram formatter (src/trader_feed.py
+            -- `_format_evening`) was handed, plus the book as the
+            -- positions table held it at that moment.
+            --
+            -- Why this exists (2026-09-18): `run_evening` computed
+            -- stop_coverage_gaps / stop_proximity / earnings_proximity /
+            -- total_pnl / risk_capital_dollars from live broker state,
+            -- handed them to the notifier, and discarded them. daily_pnl
+            -- and insights persist the P&L and the narrative; nothing
+            -- persisted the report's own inputs, so last night's message
+            -- could not be re-read or reviewed without paying for a fresh
+            -- pipeline run. Keyed by trading day like daily_pnl/insights
+            -- (one authoritative report per day, a same-day re-run
+            -- replaces it) with the producing run_id carried alongside.
+            --
+            -- Purely a forensic/re-render record: nothing in the trading
+            -- path reads it, so losing this table costs no trading
+            -- behaviour. A partially-populated payload stays partial —
+            -- readers must render the gap as unavailable, never fill it.
+            CREATE TABLE IF NOT EXISTS evening_reports (
+                date TEXT PRIMARY KEY,
+                run_id TEXT,
+                payload_json TEXT NOT NULL,
+                positions_json TEXT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS insights (
                 date TEXT PRIMARY KEY,
                 tomorrow_outlook TEXT,
@@ -820,6 +848,41 @@ class Database:
         except Exception as e:  # noqa: BLE001
             _log.error("Schema migration backfill for trades.initial_stop_loss failed: %s", e)
         _ensure_column("trades", "take_profit", "take_profit REAL DEFAULT 0")
+        # Frozen copy of the ENTRY take-profit, mirroring `initial_stop_loss`
+        # above. `take_profit` became mutable when a seat's flag could trigger
+        # a RE-DERIVATION of the target (`src.risk.target_revision`), and the
+        # original must survive that for two independent reasons:
+        #
+        #   1. `thesis_progress_pct` and `pace` are measured against this
+        #      PINNED number, never the live one. The target is the
+        #      DENOMINATOR of progress, so raising it mechanically lowers
+        #      progress AND pace — both of which are in
+        #      `exit_guard._HIGHER_IS_BETTER`. A revision that moved them
+        #      would land in `MetricDeltas.worsened`, clear `net_improved`,
+        #      and switch OFF `veto_contradicted_exit` — i.e. good news would
+        #      unlock a "this position is stalling" SELL.
+        #   2. Without the original there is no way to ever grade whether
+        #      revising targets helps or hurts.
+        _ensure_column("trades", "initial_take_profit", "initial_take_profit REAL")
+        # Pin the entry target on legacy opening rows. Safe on exactly the
+        # same grounds as the `initial_stop_loss` backfill above: before this
+        # column existed `take_profit` was written ONLY by `insert_trade` and
+        # never written back, so the value still on the row IS the entry
+        # derivation. Rows that opened with no target stay NULL so a later
+        # revision cannot mint a progress denominator out of nothing.
+        try:
+            self.conn.execute(
+                "UPDATE trades SET initial_take_profit = take_profit "
+                "WHERE initial_take_profit IS NULL "
+                "AND COALESCE(take_profit, 0) > 0 "
+                "AND UPPER(action) IN ('BUY', 'SHORT')"
+            )
+            self.conn.commit()
+        except Exception as e:  # noqa: BLE001
+            _log.error(
+                "Schema migration backfill for trades.initial_take_profit "
+                "failed: %s", e,
+            )
         # Phase 3.1 — the thesis horizon and setup type PINNED AT ENTRY.
         # `pace` used to be measured against `avg_hold_days` from the system's
         # OWN rolling 30-day realized-trade calibration (~2.0 days), so selling
@@ -1237,18 +1300,30 @@ class Database:
             except (TypeError, ValueError):
                 stop_at_insert = 0.0
             initial_stop_loss = stop_at_insert if stop_at_insert > 0 else None
+            # Pin the entry target the same way, and for the same reason the
+            # `initial_take_profit` migration note gives: `take_profit` is
+            # mutable now that a structural event can trigger a
+            # re-derivation, and progress/pace must keep measuring against
+            # the yardstick the trade was opened on.
+            try:
+                target_at_insert = float(take_profit or 0)
+            except (TypeError, ValueError):
+                target_at_insert = 0.0
+            initial_take_profit = target_at_insert if target_at_insert > 0 else None
             cur = self.conn.execute(
                 "INSERT INTO trades (symbol, action, qty, price, reasoning, run_id, "
                 "stop_loss, take_profit, broker_order_id, fill_status, decision_id, "
                 "expected_horizon_sessions, setup_type, position_id, exit_reason_category, "
                 "conviction, requested_risk_pct, allocated_risk_pct, decision_model, "
-                "decision_id_status, thesis_invalid_if, initial_stop_loss) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "decision_id_status, thesis_invalid_if, initial_stop_loss, "
+                "initial_take_profit) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (symbol, action, qty, price, reasoning, run_id,
                  stop_loss, take_profit, broker_order_id, fill_status, decision_id,
                  expected_horizon_sessions, setup_type, position_id, exit_category,
                  conviction, requested_risk_pct, allocated_risk_pct, decision_model,
-                 decision_link_status, thesis_invalid_if, initial_stop_loss),
+                 decision_link_status, thesis_invalid_if, initial_stop_loss,
+                 initial_take_profit),
             )
             self.conn.commit()
             return cur.lastrowid
@@ -2624,6 +2699,71 @@ class Database:
         eligible break seen yet), never as True, so a missing row can never
         manufacture a confirmed break.
         """
+        # Body shared with the target-side twin below (`_prior_break_flags`)
+        # so the two cross-day confirmation reads cannot drift apart.
+        return self._prior_break_flags(
+            symbols, kind=self.HOLDING_PROTECTION_BREAK_KIND,
+            today_bar_date=today_bar_date, exclude_run_id=exclude_run_id,
+        )
+
+    # --- Take-profit revision record (`src.risk.target_revision`) -------
+    #
+    # Two kinds, both on `specialist_evidence` rather than a new table: it
+    # already carries exactly what a revision record needs (run_id, agent,
+    # kind, symbol, JSON payload, timestamp) and the cross-day confirmation
+    # read above is the same shape.
+    #
+    # TARGET_LEVEL_BREAK_KIND is the two-consecutive-closes state for
+    # "the level THE TARGET was measured against has been closed through",
+    # keyed by the close's own `bar_date` for the same reason
+    # HOLDING_PROTECTION_BREAK_KIND is — several intraday cycles reading one
+    # close must not count as two confirming days. It is deliberately a
+    # SEPARATE kind from the holding-protection break: that one asks whether
+    # the STOP's support broke (adverse, lifts protection), this one asks
+    # whether the TARGET's ceiling broke (favourable, re-derives a number).
+    # Sharing a key would let one question confirm the other.
+    TARGET_LEVEL_BREAK_KIND = "target_level_break"
+
+    #: One durable row per adjudicated flag — revision, refusal or fault
+    #: alike. A flag is NEVER a silent no-op and never a blank.
+    TARGET_REVISION_KIND = "target_revision"
+
+    def save_target_level_break(
+        self, *, run_id: str, symbol: str, raw_broken: bool, bar_date: str,
+    ) -> int:
+        """Record whether the close dated `bar_date` had cleared this
+        position's target level, so a LATER, DIFFERENT bar_date's read can
+        require it to still be cleared before treating the break as
+        confirmed."""
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="risk_manager",
+            kind=self.TARGET_LEVEL_BREAK_KIND, scope="symbol",
+            symbol=symbol.upper(),
+            evidence_json=json.dumps({
+                "raw_broken": bool(raw_broken), "bar_date": str(bar_date),
+            }),
+        )
+
+    def get_prior_target_level_break(
+        self, symbols, *, today_bar_date: str, exclude_run_id: str | None = None,
+    ) -> dict[str, bool]:
+        """The most recent target-level break flag per symbol from a close
+        dated STRICTLY BEFORE `today_bar_date`.
+
+        A symbol absent from the result has no qualifying prior-day read, and
+        callers must read that as False — a missing row can never manufacture
+        a confirmed break, exactly as for the stop-side twin above.
+        """
+        return self._prior_break_flags(
+            symbols, kind=self.TARGET_LEVEL_BREAK_KIND,
+            today_bar_date=today_bar_date, exclude_run_id=exclude_run_id,
+        )
+
+    def _prior_break_flags(
+        self, symbols, *, kind: str, today_bar_date: str,
+        exclude_run_id: str | None = None,
+    ) -> dict[str, bool]:
+        """Shared body of the two prior-close break reads."""
         wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
         if not wanted:
             return {}
@@ -2632,12 +2772,10 @@ class Database:
             "SELECT symbol, evidence_json, timestamp FROM specialist_evidence "
             f"WHERE agent_name='risk_manager' AND kind=? AND symbol IN ({placeholders})"
         )
-        params: list = [self.HOLDING_PROTECTION_BREAK_KIND, *wanted]
+        params: list = [kind, *wanted]
         if exclude_run_id:
             sql += " AND run_id != ?"
             params.append(exclude_run_id)
-        # Newest first, capped generously per symbol below — recent history
-        # only; this is a same-week confirmation check, not an archive scan.
         sql += " ORDER BY timestamp DESC, id DESC LIMIT 500"
         with self._lock:
             rows = self.conn.execute(sql, tuple(params)).fetchall()
@@ -2646,19 +2784,127 @@ class Database:
             row = dict(row)
             sym = row["symbol"]
             if sym in latest:
-                continue  # already have this symbol's most recent prior day
+                continue
             try:
                 payload = json.loads(row.get("evidence_json") or "{}")
                 bar_date = payload.get("bar_date")
             except (TypeError, ValueError):
                 continue
             if not bar_date or bar_date >= today_bar_date:
-                # Same day (or, defensively, a future-dated row) — not a
-                # distinct PRIOR trading day's close. Keep scanning for an
-                # older one instead of using it.
                 continue
             latest[sym] = bool(payload.get("raw_broken"))
         return latest
+
+    def record_target_revision(
+        self, *, run_id: str, symbol: str, code: str, seat: str,
+        evidence: str, detail: str = "", trigger: str = "",
+        prior_price: float | None = None, new_price: float | None = None,
+        basis: str = "", level_used: float | None = None,
+        evidence_id: int | None = None, applied: bool = False,
+    ) -> int:
+        """File one adjudicated flag. Every outcome gets a row.
+
+        `code` is the machine outcome — a TRIGGER_* code when the target was
+        re-derived, otherwise the REFUSAL_*/FAULT_* code naming why it was
+        not. `applied` says whether `trades.take_profit` actually moved, so
+        the record cannot disagree with the row.
+        """
+        return self.insert_specialist_evidence(
+            run_id=run_id, agent_name="risk_manager",
+            kind=self.TARGET_REVISION_KIND, scope="symbol",
+            symbol=symbol.upper(),
+            evidence_json=json.dumps({
+                "code": str(code), "trigger": str(trigger or ""),
+                "seat": str(seat or ""), "evidence": str(evidence or ""),
+                "evidence_id": evidence_id,
+                "detail": str(detail or ""), "basis": str(basis or ""),
+                "prior_price": prior_price, "new_price": new_price,
+                "level_used": level_used, "applied": bool(applied),
+            }),
+        )
+
+    def get_target_revisions(self, symbols, *, limit: int = 200) -> dict[str, list[dict]]:
+        """`{symbol: [payload, ...]}` newest first, for the cockpit and for
+        grading whether revising targets helps."""
+        wanted = [str(s).strip().upper() for s in symbols if str(s).strip()]
+        if not wanted:
+            return {}
+        placeholders = ",".join("?" for _ in wanted)
+        sql = (
+            "SELECT symbol, evidence_json, timestamp, run_id FROM "
+            "specialist_evidence WHERE agent_name='risk_manager' AND kind=? "
+            f"AND symbol IN ({placeholders}) ORDER BY timestamp DESC, id DESC "
+            "LIMIT ?"
+        )
+        with self._lock:
+            rows = self.conn.execute(
+                sql, (self.TARGET_REVISION_KIND, *wanted, int(limit)),
+            ).fetchall()
+        out: dict[str, list[dict]] = {}
+        for row in rows:
+            row = dict(row)
+            try:
+                payload = json.loads(row.get("evidence_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            payload["timestamp"] = row.get("timestamp")
+            payload["run_id"] = row.get("run_id")
+            out.setdefault(row["symbol"], []).append(payload)
+        return out
+
+    def update_open_take_profit(
+        self, symbol: str, new_target: float, *, action: str | None = None,
+    ) -> bool:
+        """Write a re-derived target onto every opening row of this position.
+
+        Mirrors `update_open_stop_loss`. Never touches `initial_take_profit`
+        — that column is the entry derivation and the denominator of
+        progress/pace, and a revision must not be able to move it.
+
+        Refuses a non-positive target rather than zeroing the field: a zero
+        target would make `thesis_progress_pct` undefined, and a blank is
+        exactly what the per-symbol refusal record exists to avoid.
+        """
+        try:
+            target = float(new_target)
+        except (TypeError, ValueError):
+            return False
+        if not target > 0:
+            _log.error(
+                "update_open_take_profit refused a non-positive target for "
+                "%s: %r", symbol, new_target,
+            )
+            return False
+        act = (action or "").strip().upper()
+        if act and act not in ("BUY", "SHORT"):
+            _log.error(
+                "update_open_take_profit refused unknown action %r for %s",
+                action, symbol,
+            )
+            return False
+
+        def _do():
+            sql = (
+                "UPDATE trades SET take_profit = ? WHERE symbol = ? "
+                "AND UPPER(action) IN ('BUY', 'SHORT')"
+            )
+            params: list = [target, symbol.upper()]
+            if act:
+                sql = (
+                    "UPDATE trades SET take_profit = ? WHERE symbol = ? "
+                    "AND UPPER(action) = ?"
+                )
+                params = [target, symbol.upper(), act]
+            sql += (
+                " AND position_id = (SELECT position_id FROM trades "
+                "WHERE symbol = ? AND UPPER(action) IN ('BUY', 'SHORT') "
+                "ORDER BY id DESC LIMIT 1)"
+            )
+            params.append(symbol.upper())
+            cur = self.conn.execute(sql, tuple(params))
+            self.conn.commit()
+            return cur.rowcount > 0
+        return self._locked_write(_do, label="update_open_take_profit")
 
     def record_intraday_evaluation(
         self, *, symbol: str, run_id: str, status: str, detail: str = "",
@@ -2984,6 +3230,101 @@ class Database:
             )
             self.conn.commit()
             return cursor.rowcount > 0
+
+    def save_evening_report(self, *, date: str, run_id: str | None,
+                            payload: dict) -> None:
+        """Store the evening run's own output for later re-rendering.
+
+        `payload` is the result dict `run_evening` returns — the very
+        object the evening Telegram formatter is handed. It is stored
+        verbatim as JSON: no field is defaulted, renamed or filled in
+        here, because a reader must be able to tell "the run did not
+        produce this" from "the run produced zero". `default=str` is the
+        last-resort escape for a value that is not JSON-native; it never
+        substitutes for a missing value.
+
+        The book is captured alongside it because `trader_feed._read_run`
+        reads the `positions` table UNSCOPED (current holdings, not the
+        run's), so a re-render weeks later would otherwise show today's
+        book under last month's date.
+
+        Keyed by trading day, matching daily_pnl/insights: a documented
+        same-day evening re-run replaces the row and the run_id of the
+        run that actually produced the stored numbers travels with it.
+        """
+        import json
+
+        payload_json = json.dumps(payload, default=str)
+        with self._lock:
+            positions = [
+                dict(row) for row in self.conn.execute(
+                    "SELECT symbol, qty, avg_entry, current_price, market_value, "
+                    "unrealized_pnl FROM positions WHERE qty != 0 "
+                    "ORDER BY ABS(market_value) DESC"
+                ).fetchall()
+            ]
+            positions_json = json.dumps(positions, default=str)
+            self.conn.execute(
+                """INSERT INTO evening_reports
+                   (date, run_id, payload_json, positions_json)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(date) DO UPDATE SET
+                     run_id=excluded.run_id,
+                     payload_json=excluded.payload_json,
+                     positions_json=excluded.positions_json,
+                     timestamp=datetime('now')""",
+                (date, run_id, payload_json, positions_json),
+            )
+            self.conn.commit()
+
+    def get_evening_report(self, date: str | None = None) -> dict | None:
+        """One stored evening report — `date`, or the most recent one.
+
+        Returns None when there is no row, and None when the stored JSON
+        cannot be parsed: an unreadable row is an absent report, and the
+        caller must say so rather than render a partial guess. `positions`
+        is None (not []) when the row carries no book snapshot — "not
+        recorded" and "flat book" are different facts.
+        """
+        import json
+
+        with self._lock:
+            if date:
+                row = self.conn.execute(
+                    "SELECT * FROM evening_reports WHERE date = ?", (date,),
+                ).fetchone()
+            else:
+                row = self.conn.execute(
+                    "SELECT * FROM evening_reports ORDER BY date DESC LIMIT 1"
+                ).fetchone()
+        if not row:
+            return None
+        record = dict(row)
+        try:
+            payload = json.loads(record.get("payload_json") or "")
+        except (TypeError, ValueError):
+            logger.error(
+                "evening_reports row for %s has unreadable payload_json",
+                record.get("date"),
+            )
+            return None
+        if not isinstance(payload, dict):
+            return None
+        positions = None
+        raw_positions = record.get("positions_json")
+        if raw_positions:
+            try:
+                parsed = json.loads(raw_positions)
+                positions = parsed if isinstance(parsed, list) else None
+            except (TypeError, ValueError):
+                positions = None
+        return {
+            "date": record.get("date"),
+            "run_id": record.get("run_id"),
+            "timestamp": record.get("timestamp"),
+            "payload": payload,
+            "positions": positions,
+        }
 
     def backfill_position_ids(self, *, dry_run: bool = False) -> dict:
         """One-time reconstruction of `position_id` chains for trades rows

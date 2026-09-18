@@ -30,6 +30,7 @@ import {
 } from "../lib/cockpitSash";
 import { OrdersPanel } from "./OrdersPanel";
 import { TradesPanel } from "./TradesPanel";
+import { WhyPanel } from "./WhyPanel";
 import { RunsPanel } from "./RunsPanel";
 import { DirectionalBiasPanel } from "./DirectionalBiasPanel";
 import { MissedOpportunitiesPanel } from "./MissedOpportunitiesPanel";
@@ -53,14 +54,73 @@ import { Panel, StateMessage } from "./ui/Panel";
 // fine and easy to read. Chart is absent for a different reason — it is
 // a canvas that fills whatever box it is given and has no natural
 // content height to fit to.
-const FIT_PANELS = new Set(["orders", "trades", "candidates"]);
+//
+// A THIRD policy joined those two on 2026-09-18 (owner request,
+// board item 103): "both". Vertical and horizontal scrollbars, internal
+// to that one panel. It exists because Trades is not shaped like the
+// other tables — it carries sixteen columns (time, symbol, action, a
+// full reasoning paragraph, fill status, filled qty, fill price,
+// realized P&L, recorded stop, take profit, run, decision, conviction,
+// requested risk, allocated risk, decision model). Fitting all of that
+// to the panel's width crushed every column to a few characters, and
+// fitting it to its HEIGHT grew the page to roughly six thousand pixels.
+// Scrolled in both directions, the columns render at their natural
+// widths and the row stays inside the panel.
+//
+// Expressed as a per-panel policy, not a check for the name "trades",
+// so moving Trades anywhere in the workspace takes its scrolling with
+// it and any future panel can opt in by naming its policy here.
+type PaneScroll = "fit" | "scroll-y" | "scroll-both";
+
+/** Scroll policy per panel id. Anything unlisted is "scroll-y" — a
+ * normal internal vertical scrollbar, which is what Holdings, Positions
+ * and the rest keep (owner is happy with those; do not change them). */
+const PANE_SCROLL: Record<string, PaneScroll> = {
+  orders: "fit",
+  candidates: "fit",
+  why: "fit",
+  trades: "scroll-both",
+};
+
+const paneScroll = (id: string): PaneScroll => PANE_SCROLL[id] ?? "scroll-y";
+
+/** Panels sized BY THEIR CONTENT — the set the workspace measures and
+ * grows a row for. Derived from PANE_SCROLL so the policy is declared in
+ * exactly one place. */
+const FIT_PANELS = new Set(
+  Object.entries(PANE_SCROLL)
+    .filter(([, policy]) => policy === "fit")
+    .map(([id]) => id),
+);
 
 /** Wrapper classes for a pane whose panel scrolls internally. */
 const SCROLL_PANE = "h-full min-w-0 overflow-x-hidden overflow-y-auto p-2";
+/** Wrapper classes for a pane that scrolls in BOTH directions. `h-full`
+ * (not `min-h-full`) so the pane is the panel's box and the vertical
+ * scrollbar is the panel's own; `overflow-auto` so the horizontal one
+ * appears exactly when the table is genuinely wider than the panel and
+ * not before. */
+const SCROLL_BOTH_PANE = "h-full min-w-0 overflow-auto p-2";
 /** Wrapper classes for a content-sized pane. `min-h-full` so a short
  * panel still paints the full group background; no `overflow-y-auto`, so
  * its scrollHeight reports the height the row actually needs. */
 const FIT_PANE = "min-h-full min-w-0 overflow-x-hidden overflow-y-visible p-2";
+
+/** One pane wrapper, whose scrolling comes from the panel's own policy in
+ * PANE_SCROLL above rather than from each call site repeating a class
+ * string. `data-fit-pane` is the marker the auto-fit measurement below
+ * looks for, so it is set by the same switch — a "fit" panel can never be
+ * left unmeasured (or a scrolling one measured) by someone editing one of
+ * the two and forgetting the other. */
+function Pane({ id, extra, children }: { id: string; extra?: string; children: React.ReactNode }) {
+  const policy = paneScroll(id);
+  const base = policy === "fit" ? FIT_PANE : policy === "scroll-both" ? SCROLL_BOTH_PANE : SCROLL_PANE;
+  return (
+    <div data-fit-pane={policy === "fit" ? "true" : undefined} className={extra ? `${base} ${extra}` : base}>
+      {children}
+    </div>
+  );
+}
 
 // Item 2 of cockpit pass 3: the middle column of the bottom row used to
 // be deliberately empty by default — "free for him to populate" in the
@@ -82,7 +142,7 @@ const FIT_PANE = "min-h-full min-w-0 overflow-x-hidden overflow-y-visible p-2";
 // compatibility — it is not placed by default any more.
 function WorkspaceSlotPane() {
   return (
-    <div className={SCROLL_PANE}>
+    <Pane id="workspaceSlot">
       <Panel title="Workspace">
         <StateMessage
           hero
@@ -90,7 +150,7 @@ function WorkspaceSlotPane() {
           text="Empty by default — drag any panel's tab here to fill this column, or use “Reset layout” to restore the default."
         />
       </Panel>
-    </div>
+    </Pane>
   );
 }
 
@@ -101,7 +161,7 @@ function WorkspaceSlotPane() {
 function PositionsPane() {
   const state = useSupportWorkspace();
   return (
-    <div className={SCROLL_PANE}>
+    <Pane id="positions">
       <PositionsPanel
         positions={state.positions}
         error={state.positionsError}
@@ -109,14 +169,14 @@ function PositionsPane() {
         updatedAt={state.positionsUpdatedAt}
         onSelectSymbol={state.onSelectPositionSymbol}
       />
-    </div>
+    </Pane>
   );
 }
 
 function HoldingsPane() {
   const state = useSupportWorkspace();
   return (
-    <div className={SCROLL_PANE}>
+    <Pane id="holdings">
       <HoldingsStrip
         positions={state.positions}
         error={state.positionsError}
@@ -124,7 +184,7 @@ function HoldingsPane() {
         onSelectSymbol={state.onSelectPositionSymbol}
         variant="panel"
       />
-    </div>
+    </Pane>
   );
 }
 
@@ -132,7 +192,7 @@ function AccountPane() {
   const support = useSupportWorkspace();
   const cockpit = useCockpitWorkspace();
   return (
-    <div className={SCROLL_PANE}>
+    <Pane id="account">
       <HeroBand
         account={support.account}
         accountError={support.accountError}
@@ -146,14 +206,14 @@ function AccountPane() {
         positions={support.positions}
         variant="panel"
       />
-    </div>
+    </Pane>
   );
 }
 
 function SessionsPane() {
   const cockpit = useCockpitWorkspace();
   return (
-    <div className={SCROLL_PANE}>
+    <Pane id="sessions">
       <TodaySessionsStrip
         runs={cockpit.todaysRuns}
         funnels={cockpit.todaysFunnels}
@@ -175,13 +235,13 @@ function SessionsPane() {
         updatedAt={cockpit.updatedAt}
         variant="panel"
       />
-    </div>
+    </Pane>
   );
 }
 
 function CandidatesPane() {
   const state = useCockpitWorkspace();
-  return <div data-fit-pane="true" className={FIT_PANE}><CandidateRail fit funnel={state.funnel} loading={state.loading} error={state.error} updatedAt={state.updatedAt} selectedSymbol={state.chartSymbol} onSelectSymbol={state.onSelectSymbol} /></div>;
+  return <Pane id="candidates"><CandidateRail fit funnel={state.funnel} loading={state.loading} error={state.error} updatedAt={state.updatedAt} selectedSymbol={state.chartSymbol} onSelectSymbol={state.onSelectSymbol} /></Pane>;
 }
 
 // Above the candles: company name + ticker + Lifecycle. Holding figures
@@ -227,16 +287,44 @@ function ChartPane() {
 
 function OrdersPane() {
   const state = useSupportWorkspace();
-  return <div data-fit-pane="true" className={FIT_PANE}><OrdersPanel fit orders={state.orders} error={state.ordersError} loading={state.ordersLoading} status={state.orderStatus} onStatusChange={state.onOrderStatusChange} onInspect={state.onInspectOrder} onSelectSymbol={state.onSelectPositionSymbol} trades={state.trades} /></div>;
+  return <Pane id="orders"><OrdersPanel fit orders={state.orders} error={state.ordersError} loading={state.ordersLoading} status={state.orderStatus} onStatusChange={state.onOrderStatusChange} onInspect={state.onInspectOrder} onSelectSymbol={state.onSelectPositionSymbol} trades={state.trades} /></Pane>;
 }
 
+// Trades is the one panel on the "both scrollbars" policy — see
+// PANE_SCROLL above for why (sixteen columns, and ~6,000px of page when
+// it was grown to fit). No `data-fit-pane` marker and no `fit` on the
+// panel: this pane must NOT be measured and grown, it must stay inside
+// its box and scroll. `scrollX` lets its table size columns to their
+// content instead of being squeezed into the panel width, which is what
+// gives the horizontal scrollbar something to scroll.
 function TradesPane() {
   const state = useSupportWorkspace();
-  return <div data-fit-pane="true" className={FIT_PANE}><TradesPanel fit trades={state.trades} error={state.tradesError} loading={state.tradesLoading} onInspect={state.onInspectTrade} onSelectSymbol={state.onSelectPositionSymbol} /></div>;
+  return <Pane id="trades"><TradesPanel scrollX trades={state.trades} error={state.tradesError} loading={state.tradesLoading} onInspect={state.onInspectTrade} onSelectSymbol={state.onSelectPositionSymbol} /></Pane>;
 }
 
-function RunsPane() { const state = useSupportWorkspace(); return <div className={SCROLL_PANE}><RunsPanel runs={state.runs} error={state.runsError} loading={state.runsLoading} /></div>; }
-function BiasPane() { return <div className={SCROLL_PANE}><DirectionalBiasPanel /></div>; }
+// The owner's own proposal, approved 2026-09-18: a tab beside Candidates
+// that answers "why do we hold this" for whatever symbol was last
+// clicked, anywhere in the cockpit. It reads the already-fetched answer
+// off CockpitWorkspaceContext rather than fetching for itself — App.tsx
+// fetches on every chart-symbol change so the content is already here
+// when he switches to the tab, exactly as he asked.
+function WhyPane() {
+  const state = useCockpitWorkspace();
+  return (
+    <Pane id="why">
+      <WhyPanel
+        fit
+        symbol={state.chartSymbol}
+        why={state.holdingWhy}
+        error={state.holdingWhyError}
+        loading={state.holdingWhyLoading}
+      />
+    </Pane>
+  );
+}
+
+function RunsPane() { const state = useSupportWorkspace(); return <Pane id="runs"><RunsPanel runs={state.runs} error={state.runsError} loading={state.runsLoading} /></Pane>; }
+function BiasPane() { return <Pane id="bias"><DirectionalBiasPanel /></Pane>; }
 // Was wired to a callback that conditionally opened the candidate-detail
 // modal depending on which session happened to be selected in the
 // Sessions strip — unrelated to the missed-opportunity row being clicked
@@ -244,7 +332,7 @@ function BiasPane() { return <div className={SCROLL_PANE}><DirectionalBiasPanel 
 // explanation. Routed to the same modal-free callback PositionsPane uses
 // above: chart the symbol, open nothing (governing principle, App.tsx's
 // chartPositionSymbol).
-function MissedPane() { const state = useSupportWorkspace(); return <div className={SCROLL_PANE}><MissedOpportunitiesPanel onSelectSymbol={state.onSelectPositionSymbol} /></div>; }
+function MissedPane() { const state = useSupportWorkspace(); return <Pane id="missed"><MissedOpportunitiesPanel onSelectSymbol={state.onSelectPositionSymbol} /></Pane>; }
 
 // Item 13 (cockpit trader rework): System and Search — named by the owner
 // as "not trading" — used to each be their own top-level tab in this
@@ -254,10 +342,10 @@ function MissedPane() { const state = useSupportWorkspace(); return <div classNa
 function DiagnosticsPane() {
   const state = useSupportWorkspace();
   return (
-    <div className={`${SCROLL_PANE} flex flex-col gap-3`}>
+    <Pane id="diagnostics" extra="flex flex-col gap-3">
       <HealthPanel health={state.health} error={state.healthError} />
       <SearchPanel onSelectSymbol={state.onSelectPositionSymbol} />
-    </div>
+    </Pane>
   );
 }
 
@@ -270,6 +358,7 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   chart: ChartPane,
   orders: OrdersPane,
   trades: TradesPane,
+  why: WhyPane,
   runs: RunsPane,
   bias: BiasPane,
   missed: MissedPane,
@@ -330,6 +419,21 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
 // compact header row — item 9; System+Search merged into one Diagnostics
 // panel — item 13.)
 const STORAGE_KEY = COCKPIT_LAYOUT_KEY;
+
+/** Panels added to the cockpit AFTER a layout was already saved.
+ *
+ * Dockview restores exactly what was serialised, so a brand-new panel
+ * would simply never appear for anyone with a saved arrangement — which
+ * is everyone who has used the cockpit. The alternative fix is bumping
+ * COCKPIT_LAYOUT_KEY, and that throws the owner's own arrangement away;
+ * he rearranges these panels deliberately and has asked us not to keep
+ * resetting things that work. So instead each late panel names the
+ * neighbour it should sit beside, and onReady adds it as a background tab
+ * in that group if the restored layout has no panel with its id. Falls
+ * back to the chart group when the named neighbour was itself closed. */
+const LATE_PANELS: { id: string; title: string; beside: string }[] = [
+  { id: "why", title: "Why", beside: "candidates" },
+];
 
 // Item 2 of cockpit pass 3, revised per direct owner request ("a better
 // DEFAULT, not a lock" — every panel below stays exactly as
@@ -460,6 +564,12 @@ function buildDefaultLayout(api: DockviewApi) {
     minimumWidth: 80,
   });
   api.addPanel({ id: "candidates", component: "candidates", title: "Candidates", position: { referencePanel: "positions", direction: "within" }, inactive: true });
+  // The owner's own proposal, approved 2026-09-18. It goes in THIS group
+  // — the one that already carries Candidates — because that is where he
+  // asked for it, beside the panels he studies a name with rather than
+  // beside the blotters. Inactive by default: it is a tab he switches to,
+  // and it is already populated by the time he does (see WhyPane).
+  api.addPanel({ id: "why", component: "why", title: "Why", position: { referencePanel: "candidates", direction: "within" }, inactive: true });
   api.addPanel({ id: "orders", component: "orders", title: "Orders", position: { referencePanel: "positions", direction: "right" }, minimumHeight: BOTTOMS_FLOOR_PX, minimumWidth: 80 });
   api.addPanel({ id: "trades", component: "trades", title: "Trades", position: { referencePanel: "orders", direction: "within" }, inactive: true });
 
@@ -553,6 +663,23 @@ function fitContentHeight(pane: HTMLElement): number {
     total += child.offsetHeight + parseFloat(childStyle.marginTop || "0") + parseFloat(childStyle.marginBottom || "0");
   }
   return Math.ceil(total);
+}
+
+/** See LATE_PANELS. A no-op on a freshly built default layout, where
+ * buildDefaultLayout has already placed every panel. */
+function addLatePanels(api: DockviewApi) {
+  for (const late of LATE_PANELS) {
+    if (api.getPanel(late.id)) continue;
+    const reference = api.getPanel(late.beside) ?? api.getPanel("chart");
+    if (!reference) continue;
+    api.addPanel({
+      id: late.id,
+      component: late.id,
+      title: late.title,
+      position: { referencePanel: reference.id, direction: "within" },
+      inactive: true,
+    });
+  }
 }
 
 export function DesktopCockpitWorkspace() {
@@ -688,6 +815,7 @@ export function DesktopCockpitWorkspace() {
       if (saved) event.api.fromJSON(JSON.parse(saved));
     } catch { localStorage.removeItem(STORAGE_KEY); }
     if (!event.api.panels.length) buildDefaultLayout(event.api);
+    else addLatePanels(event.api);
     event.api.onDidLayoutChange(() => {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(event.api.toJSON())); } catch { /* UI-only best effort */ }
     });
