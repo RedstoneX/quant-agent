@@ -116,7 +116,9 @@ export function TradesPanel({
   loading,
   onInspect,
   onSelectSymbol,
+  fit,
 }: {
+  fit?: boolean;
   trades: TradeItem[];
   error: string | null;
   loading: boolean;
@@ -133,6 +135,7 @@ export function TradesPanel({
   const status = error ? "degraded" : loading ? "loading" : "ok";
   return (
     <Panel
+      fit={fit}
       title="Recent trades"
       subtitle="Recorded stop is the execution record, not proof of a live broker stop. Select a linked trade for protection evidence."
       status={status}

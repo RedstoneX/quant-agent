@@ -14,6 +14,7 @@ export function Panel({
   hideTitle,
   dense,
   flush,
+  fit,
   children,
 }: {
   title: string;
@@ -33,6 +34,20 @@ export function Panel({
   hideTitle?: boolean;
   dense?: boolean;
   flush?: boolean;
+  /** Scroll policy, and it belongs to the PANEL, not to where the panel
+   * happens to sit on screen (owner correction 2026-09-17: panels are
+   * draggable, so "the bottom ones" is not a stable identity).
+   *
+   * Default (false): the card fills its box and the body scrolls
+   * internally once the content is taller — right for a list that keeps
+   * growing, like Holdings or Positions, where the owner said the
+   * scrollbar is fine and easy to read.
+   *
+   * `fit`: the card is as tall as its content and never scrolls
+   * internally; the workspace grows and the PAGE scrolls instead. The
+   * desktop workspace measures panels marked this way and grows the row
+   * they are in — see FIT_PANELS in DesktopCockpitWorkspace.tsx. */
+  fit?: boolean;
   children: ReactNode;
 }) {
   const statusColor: Color =
@@ -49,7 +64,7 @@ export function Panel({
     <Card
       decoration={accent ? "top" : undefined}
       decorationColor={accent ? "cyan" : undefined}
-      className={`!p-0 !bg-panel !ring-border rounded-xl overflow-hidden flex flex-col h-full ${full ? "md:col-span-2" : ""} ${
+      className={`!p-0 !bg-panel !ring-border rounded-xl overflow-hidden flex flex-col ${fit ? "" : "h-full"} ${full ? "md:col-span-2" : ""} ${
         status === "stale" ? "!ring-warn/60" : ""
       }`}
       aria-label={hideTitle ? title : undefined}
@@ -66,7 +81,7 @@ export function Panel({
           </span>
         )}
       </div>
-      <div className={`panel-body ${flush ? "!p-0" : ""}`}>{children}</div>
+      <div className={`panel-body ${flush ? "!p-0" : ""} ${fit ? "!overflow-y-visible !flex-none" : ""}`}>{children}</div>
     </Card>
   );
 }
