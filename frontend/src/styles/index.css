@@ -366,6 +366,11 @@ tr:last-child td {
 .research-mini-risk { @apply absolute inset-y-0 left-0 rounded-l-full bg-neg/50; }
 .research-mini-track i { @apply absolute top-1/2 h-3 w-px -translate-x-1/2 -translate-y-1/2 bg-ink; }
 .research-mini-labels b { @apply text-ink font-medium; }
+/* Stated reasons a stored row was not drawn as a setup — see
+   buildResearchDesk.ts::marketContext. Deliberately dim prose, not a
+   warning colour: an undrawable row is a gap in the record, not a risk. */
+.research-mini-gaps { @apply mt-3 space-y-1 border-t border-border pt-2; }
+.research-mini-gaps p { font-size: var(--fs-meta); }
 .decision-delta { @apply space-y-0; }
 .decision-step { @apply relative grid gap-3 pb-4; grid-template-columns: 28px 1fr; }
 .decision-step:not(:last-child)::after { content: ""; @apply absolute left-[13px] top-7 bottom-0 w-px bg-border; }

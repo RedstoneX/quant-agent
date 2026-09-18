@@ -31,7 +31,7 @@ from src.notifier import (
     format_session_result as _base_format_session_result,
     TelegramNotifier,
 )
-from src.trading_calendar import et_now
+from src.trading_calendar import SESSION_WINDOWS, et_now, in_session_window, to_et
 
 logger = logging.getLogger(__name__)
 
@@ -1920,6 +1920,39 @@ def _intraday_tick_actionable(result: dict, nested: dict | None, snap: dict[str,
     return False  # disabled / lock_contended / no_opportunity — quiet
 
 
+def _midday_collision_tick_minute() -> int | None:
+    """Minute-of-ET-day of the ONE intra_check tick that collides with the
+    midday position review, or None if the two never meet.
+
+    `midday` runs once per ET date (`scripts/run_if_et_window.sh` writes a
+    last-run marker for every mode but `intra_check`), so its single report
+    lands on the first scheduler tick inside `SESSION_WINDOWS["midday"]`.
+    The colliding intra_check tick is therefore the first intra_check tick
+    at or after that window opens — derived from the window constant and
+    intra_check's own timer unit rather than restated as a third number.
+    """
+    lo, hi = SESSION_WINDOWS["midday"]
+    ticks = _intra_check_tick_minutes()
+    for hour in range(lo // 60, hi // 60 + 1):
+        for minute in ticks:
+            candidate = hour * 60 + minute
+            if lo <= candidate <= hi:
+                return candidate
+    return None
+
+
+def _is_midday_collision_tick(now=None) -> bool:
+    """True only at that single tick, and only on a session weekday."""
+    now = now or et_now()
+    if not in_session_window("midday", when=now):
+        return False
+    collision = _midday_collision_tick_minute()
+    if collision is None:
+        return False
+    now_et = to_et(now)
+    return now_et.hour * 60 + now_et.minute == collision
+
+
 def _format_intra_check(result: dict, elapsed_seconds: float) -> str | None:
     nested = result.get("intraday_scan")
     run_id = (nested.get("run_id") if isinstance(nested, dict) else None) or result.get("run_id")
@@ -1939,6 +1972,39 @@ def _format_intra_check(result: dict, elapsed_seconds: float) -> str | None:
             own_message = _base_format_session_result(
                 "intra_check", result, elapsed_seconds, error=None,
             )
+
+    # Owner decision, 2026-09-17: the midday position review and the routine
+    # half-hourly intra_check "nothing to report" ping must not fire minutes
+    # apart. The ratified fix is to suppress that routine ping ONCE — at the
+    # single intra_check tick that actually collides with the midday report —
+    # not to silence intra_check for the whole 90-minute window.
+    #
+    # `_midday_collision_tick_minute()` derives that one tick from the two
+    # existing authoritative sources (`SESSION_WINDOWS["midday"]` and
+    # intra_check's own timer unit), so no new number is introduced and a
+    # future cadence or window move carries the rule with it.
+    #
+    # Why only one tick and not the window: `midday` runs once per ET date,
+    # not once per tick — `scripts/run_if_et_window.sh` writes a last-run
+    # marker for every mode except `intra_check` and exits early for the rest
+    # of the day. So the window holds exactly ONE midday report (its first
+    # tick, 13:00 ET), and suppressing every quiet intra_check tick in the
+    # window would instead swallow the 14:00 hour's guaranteed pulse (14:15
+    # under #462's derived checkpoint minute) and leave a genuinely quiet day
+    # with no message at all between 13:00 and 15:15 — breaking the owner's
+    # standing "never a full clock hour without a message" requirement in
+    # order to fix a two-messages-at-once complaint.
+    #
+    # Ordering matters: this runs BEFORE `_is_hourly_checkpoint` so that the
+    # 13:00 hour's guaranteed pulse (13:15) does not re-send what the midday
+    # report just said. Anything actionable (an order placed/filled/cancelled/
+    # refused, a stop-coverage gap, a scan crash, `paid_analysis_suspended`,
+    # a degraded-fill or coverage finding, ...) already set `own_message`
+    # above and is never reached by this branch, in or out of the window. The
+    # daily-loss circuit breaker never reaches here at all — it alerts
+    # directly from `TradingPipeline._alert_owner_daily_loss_halt`.
+    if own_message is None and _is_midday_collision_tick():
+        return None
 
     if not _is_hourly_checkpoint():
         return own_message  # None here means: quiet tick, no send.

@@ -22,6 +22,91 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — a stop price of zero switched protection OFF instead of refusing the trade (item 88 closed)
+
+**In plain words.** The desk used the number zero to mean "this position was
+never given a stop". So whenever a stop came out as zero by accident — a
+miscalculation, a corrupted saved level, a bad number from a model — the
+system did not say "that is wrong, refuse the trade". It read it as "this one
+is not supposed to have a stop" and carried on with nothing protecting the
+position. The one thing a risk control must never do is fail in the direction
+of less protection, and this did exactly that.
+
+**Where it was real, and where it was not.** Three lanes were untraced when
+this was filed. Traced against the code, not the docstrings:
+
+* **The coverage-repair janitor — genuinely exposed, and worse than failing
+  open.** The thing whose entire job is to close protection gaps REFUSED to
+  act on a recorded stop of zero, and reported that refusal as the same fact
+  as "this row never had a stop". So a position could be permanently
+  unrepairable, and the owner alert that eventually fired said only that "the
+  automatic repair could not restore one" — identical wording for a corrupt
+  saved level, a level the price had already passed, and three exhausted
+  broker retries. Three different states, three different owner actions, one
+  sentence. Worse, the refusal only reaches the owner at all when coverage is
+  *exactly zero*; a partly-covered position carried it no further than a log
+  file.
+* **The partial-exit reprotect — a genuine fail-open, found while tracing.**
+  After a partial sale the residual shares are re-protected using the most
+  protective of the stops that were cancelled to make the sale possible. If
+  none of those carried a usable price, the function returned **success**. The
+  caller reads success as "coverage rebuilt" and DELETES the saved recovery
+  intent — so the residual position was left naked with nothing left to retry
+  it, and nothing said so. A missing (rather than zero) price would instead
+  crash the comparison.
+* **The position-resume / write-ahead lanes — not exposed.** They already
+  refused a non-positive stop and kept the recovery row alive. They did pass a
+  recorded infinity straight through to the broker, which is not a price
+  either; closed here.
+* **The live entry lane — safe, but for a reason nobody should rely on.** The
+  entry call site converted a zero into "no stop supplied" *before* the broker
+  could judge it, which is the laundering at the heart of this item. Nothing
+  live reached it only because a zero stop on an entry is separately hard-
+  blocked by the `require_stop_loss` risk rule, i.e. by a setting that happens
+  to be switched on. The order edge now fails closed on its own.
+
+**What the fix actually is: the distinction, not another threshold.** "No stop
+was requested" and "a stop was requested and its value is garbage" are
+different facts with opposite correct responses, and every one of these lanes
+had collapsed them into one. Exactly one path is legitimately stopless — the
+cash-sweep park, which passes no stop at all and says so — and it still works.
+Everything else now refuses zero, negative, NaN and infinity loudly, at the
+order edge, and keeps the gap flagged instead of reporting it as covered. The
+repair janitor now hands its caller the REASON it declined, which the owner
+alert and the standalone coverage watchdog both render instead of guessing.
+
+**What would have caught it.** Nothing, and that is the point: the sentinel was
+documented, deliberate and explicitly left in place by an earlier pass (the
+NaN half of the same hole was closed on the entry lane only). A test asserted
+the defect as correct behaviour. The lesson is the one already in
+`docs/OUTCOME.md`: a value that means "absent" must never be a value the
+arithmetic can also produce.
+
+**Deliberately NOT changed.** `TradeDecision` still accepts `stop_loss=0` on a
+BUY/SHORT — that is what lets the `require_stop_loss` rule be tested at all,
+and the refusal now lives at the order edge where it fails closed for every
+producer rather than at one model's validator.
+
+### 2026-09-17 — the desk was paying a model to read a description of a safety net it had deleted three days earlier
+
+**In plain words:** when anything had automatically sold a position earlier in the day, the seat that reviews open positions was handed a note explaining why. That note said the desk performs an "emergency sell-all" when the day's loss passes 3%. Neither half had been true since 14 September: the sell-all was deleted and replaced by a stop-everything-and-check-the-stops halt that sells nothing, and the 3% figure had already been replaced by a limit measured from how much the book itself moves on an ordinary day. So a paid seat was reasoning about the desk's own emergency behaviour from a description that was two changes out of date, on exactly the days something had already gone wrong.
+
+**Cause — and it is not "someone forgot".** The change that deleted the sell-all shipped a full documentation pass: the backlog, the board notes and this file were all updated in the same commit. It touched no prompt. That is not an oversight by one person, it is a gap in what the word "documentation" points at here: `AGENTS.md` names three tiers of document, and the prompts are in none of them. Nothing in the project's own rules ever said a prompt was a document, so "every substantive change ships with a documentation pass" was satisfied without anyone looking at the text the desk actually pays to have read.
+
+**What was ruled out.** Not neglect of the prompts in general — five prompt files were edited in the three days after the change, including the very one carrying the stale claim. They were edited for other reasons and nothing pointed at the stale sentence. Not an absent mechanism either: a rendering mechanism has existed since 2026-09-11 that makes a numeric limit in a prompt physically unable to disagree with the settings file. It covers two of ten prompt files and, more to the point, it could not have helped: nothing was wrong with a number here. A mechanism described in words stopped existing, and words are not rendered from anything.
+
+**The sharpest finding.** The stale text was not in a prompt FILE. `config/prompts/position_reviewer.md` contains no such claim and never did — the sentence is assembled in Python, in the module that builds the reviewer's message. Any check scoped to the prompt directory would have caught none of it. The surface that matters is prompt markdown AND the Python that assembles prompts, and only the first of those looks like a document.
+
+**Four designs were weighed and three rejected.** Rendering constants into prompts: right for numbers, already exists, extended here to the one hand-typed daily-loss figure it had missed — but blind to this defect. Extracting claims from prompt prose and checking them: nothing can read "the desk performs an emergency sell" and know which function that is. Annotating every behavioural claim with a tie to what it describes: it would have worked, but it asks for maintenance on every sentence forever, and the failure being closed is precisely that nobody remembers the prompts exist. Requiring every number in a prompt to match a named constant: measured at 1,828 numeric tokens across the prompt files — mostly list numbering, dates and figures inside worked examples — it would demand about a thousand annotations and catch neither confirmed case.
+
+**What catches it instead: a check at the deletion site.** Retiring a mechanism now means recording it, in one file, with the WORDS that described it. The build then fails while any prompt, assembled prompt string, docstring or comment still uses those words. Maintenance is asked once, at the moment somebody has the facts open in front of them — the commit that does the deleting — and is free afterwards. Run against the tree as it stood the day before this fix, it finds every stale site, including the two that were live text a model read.
+
+**What it does not catch, said plainly.** A mechanism whose behaviour changes without being deleted: nothing is retired, so nothing is scanned. Drift in a description nobody retired — a threshold that moved, steps reordered, a guarantee quietly weakened. A phrase nobody thought to list. And a retirement nobody records at all, which is a convention and not enforcement; it is a convention placed at the one point in the work where the facts are known, which is the best available trade, not a guarantee.
+
+**One new way to stop the desk, on the record.** The rendering mechanism raises at agent construction time, so a typo in a placeholder halts trading before any capital moves. That is fail-closed and correct, and this change adds two more rendered placeholders. It is also a new way for a settings edit to stop the desk, and the owner should know it exists rather than discover it.
+
+**A third category, worth separating from drift.** Numbers that live only in prompt prose and correspond to nothing in the code: the trade-picking seat's whole sizing arithmetic (its conviction bases, its reward-to-risk bonus, its evening tilt, its stale-signal halving), the technical seat's "three aligned signals for high conviction", its eight-days-to-go-stale rule and its price-to-earnings stretch levels. These are not stale — nothing moved underneath them. They are unsourced numbers hiding where no audit of the code would ever find them, and no check proposed here would see them. Filed as backlog item 107.
+
 ### 2026-09-18 — the production checkout now matches what git records (item 94 closed)
 
 The live box was running a hand-built dashboard bundle that had never been committed. Git was not wrong about production in the usual direction — the SERVER was the stale side, since nobody could say from the repo alone what was actually being served. PR #465 rebuilt and committed the cockpit bundle from current frontend source so the two agree, and added a guard that `index.html` may only reference assets that are actually committed, so the drift cannot silently recur. Verified: the dashboard looks no different to the owner — this was a recording fix, not a behaviour change. Item 94 retired.

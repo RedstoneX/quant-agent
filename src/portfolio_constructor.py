@@ -1965,9 +1965,11 @@ class PortfolioConstructor:
         a defined band and does not need breakout room, and a risk-off tape
         swings wider for the same ATR reading than a trending one does.
 
-        Reachable output is [1.2825, 1.80] ATR — narrowest is a range setup on
-        a risk-on tape (1.5 x 0.90 x 0.95), widest a breakout on a risk-off
-        one (1.5 x 1.00 x 1.20). Both ends are pinned to real measurements;
+        Reachable output is [2.1375, 3.00] ATR — narrowest is a range setup on
+        a risk-on tape (2.5 x 0.90 x 0.95), widest a breakout on a risk-off
+        one (2.5 x 1.00 x 1.20). (This docstring still read [1.2825, 1.80]
+        off the old 1.5 base until 2026-09-17; the base moved to 2.5 on
+        2026-09-10.) Both ends are pinned to real measurements;
         see `ConstructorConfig.stop_atr_setup_scale` for the derivation.
         """
         multiple = self.cfg.min_stop_atr_multiple

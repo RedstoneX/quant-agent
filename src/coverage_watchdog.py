@@ -510,11 +510,17 @@ def replace_missing_stops(
                 gap.symbol, covered_now, gap.held_qty,
             )
             continue
+        # `repair` collects the refusal REASON (docs/WORK.md item 88). The
+        # message below used to list every guard that COULD have stopped the
+        # repair and send the owner to the journal to work out which one did
+        # — including the case this item is about, a recorded stop of zero,
+        # which reads as "no recorded stop level" and is not the same thing.
+        repair: dict = {}
         try:
             placed = repair_stop_coverage(
                 broker=broker, last_buy=last_buy,
                 symbol=gap.symbol, uncovered_qty=shortfall,
-                is_short=gap.is_short, db=db,
+                is_short=gap.is_short, db=db, outcome=repair,
             )
         except Exception as exc:  # noqa: BLE001
             outcomes.append(RepairOutcome(
@@ -524,10 +530,13 @@ def replace_missing_stops(
         outcomes.append(RepairOutcome(
             gap.symbol, shortfall, bool(placed),
             "" if placed else (
-                "the broker did not accept a protective stop for the "
-                f"shortfall — see the journal for which guard stopped it "
-                f"(no recorded {opening} stop level, stop on the live-price "
-                "side, or retries exhausted)"
+                repair.get("repair_refusal")
+                or (
+                    "the broker did not accept a protective stop for the "
+                    f"shortfall — see the journal for which guard stopped it "
+                    f"(no recorded {opening} stop level, stop on the live-"
+                    "price side, or retries exhausted)"
+                )
             ),
         ))
     return outcomes
