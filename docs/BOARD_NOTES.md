@@ -324,6 +324,11 @@ decision at all.
 **The decision — yours, and nobody builds any of it without you.** Five options, best fit first: (1) have the machine hold the key in an encrypted store — **this turns out NOT to be possible on this machine** (the service cannot read the decryption key, there is no security chip, and the installed system software lacks the feature); an earlier answer of "encrypted and tied to the machine" was wrong. (2) A small local relay that holds the real key and rewrites the login message: the only option that keeps the key out of the trading process, but it is custom credential-handling code, which this project has previously refused. (3) Get the helper taught to do this properly, upstream: correct, does not exist, slow. (4) Make the library able to use the helper: does not fix the login problem on its own. (5) Leave the feed off and keep asking the broker — no credential change at all, costs a few seconds of fill latency, and stops about 150 error lines a day.
 **Recommendation —** Option 5 today, since it is already in place and costs almost nothing. What remains achievable for protecting the key on this machine is file-permission protection, not encryption.
 
+## item 87
+
+**Plain language —** When the book gets too big relative to the account, the desk automatically trims it. That is now the only thing on the desk that sells by itself. Nobody has ever checked whether it cancels the protective stop-losses first in order to free the shares — and if it cancels them and then fails to sell, the holdings are left with no protection at all. That exact flaw is why the older "big loss today" liquidation was deleted on 14 September.
+**Recommendation —** Audit it before changing anything. Find out what it actually does, then decide.
+
 ## item 89
 
 **Plain language —** An audit on 17 September of everything the desk sends you found nineteen defects. Six of them can mislead you into a decision. Thirteen are clarity problems — the message is correct but hard or impossible to act on. You are choosing which get fixed.
