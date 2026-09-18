@@ -885,28 +885,26 @@ def test_submit_order_buy_without_stop_loss_uses_plain_limit_not_oto(mock_tc_cls
 
 
 @patch("src.execution.broker.TradingClient")
-def test_submit_order_buy_with_zero_stop_loss_skips_oto(mock_tc_cls):
-    """stop_loss_price=0 is treated the same as None (degenerate ATR
-    output) — no OTO bracket. Without this guard the OTO leg would be
-    submitted with stop_price=0 and broker would reject the whole order,
-    losing the BUY too."""
-    from alpaca.trading.requests import LimitOrderRequest
-
+def test_submit_order_buy_with_zero_stop_loss_is_refused(mock_tc_cls):
+    """docs/WORK.md item 88 — REPLACES the old
+    `test_submit_order_buy_with_zero_stop_loss_skips_oto`, which pinned the
+    defect: a requested stop of 0.0 was read as this codebase's "no stop"
+    sentinel, so the entry submitted with NO protection at all. A stop that
+    was REQUESTED and is not a price must be refused, not silently dropped;
+    only a caller passing `stop_loss_price=None` (the cash-sweep park) gets
+    a stopless order. Nothing may reach the broker."""
     mock_client = MagicMock()
-    mock_client.submit_order.return_value = MagicMock(
-        id="ord-zero", status="accepted", symbol="X",
-    )
     mock_tc_cls.return_value = mock_client
 
     broker = AlpacaBroker(api_key="test", secret_key="test", paper=True)
-    broker.submit_order(
+    result = broker.submit_order(
         symbol="X", qty=5, side="buy",
         limit_price=100.0,
         stop_loss_price=0.0,
     )
-    req = mock_client.submit_order.call_args[0][0]
-    assert getattr(req, "order_class", None) is None
-    assert getattr(req, "stop_loss", None) is None
+    assert result["status"] == "rejected_bad_stop"
+    assert result["id"] is None
+    mock_client.submit_order.assert_not_called()
 
 
 @patch("src.execution.broker.TradingClient")

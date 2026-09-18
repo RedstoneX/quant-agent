@@ -3110,6 +3110,7 @@ class TradingPipeline:
                     )
                     repaired = self._repair_stop_coverage(
                         symbol, held - covered, is_short=is_short,
+                        outcome=gap,
                     )
                     gap["repaired"] = repaired
                     if repaired:
@@ -3160,7 +3161,7 @@ class TradingPipeline:
                         "buy" if is_short else "sell",
                     )
                 gap["repaired"] = self._repair_stop_coverage(
-                    symbol, held - covered, is_short=is_short,
+                    symbol, held - covered, is_short=is_short, outcome=gap,
                 )
                 gaps.append(gap)
         if (longs_checked or shorts_checked) and not gaps:
@@ -3237,9 +3238,16 @@ class TradingPipeline:
         try:
             from src import notifier as _notifier
 
+            # The refusal REASON, not just the shortfall (docs/WORK.md item
+            # 88). "The automatic repair could not restore one" was true of a
+            # corrupt recorded stop, a level the tape has already passed and
+            # an exhausted broker retry alike — three states with three
+            # different owner actions. `repair_refusal` is stamped by
+            # `repair_stop_coverage` and omitted when it has nothing to say.
             detail = "\n".join(
                 f"  {g.get('symbol', '?')}: held {g.get('held_qty')}, "
                 f"covered {g.get('covered_qty')}"
+                + (f" — {g['repair_refusal']}" if g.get("repair_refusal") else "")
                 for g in naked
             )
             _notifier.send_owner_alert(
@@ -3257,11 +3265,19 @@ class TradingPipeline:
 
     def _repair_stop_coverage(
         self, symbol: str, uncovered_qty: float, *, is_short: bool,
+        outcome: dict | None = None,
     ) -> bool:
         """Best-effort: re-place protective stop coverage on an uncovered
         position using the stop level recorded on its last opening row
         (BUY for a long, SHORT for a short). Returns True when the gap
         was actually closed.
+
+        `outcome`, when given, is the caller's gap dict: a refusal stamps
+        `repair_refusal` on it with a plain sentence saying WHY nothing was
+        placed (docs/WORK.md item 88). Before that, the caller received a
+        bare False and the owner alert could only say the repair "could not
+        restore one" — a corrupt recorded stop, a level already through the
+        tape and three exhausted broker retries all read identically.
 
         THE BODY MOVED to `src.execution.stop_repair.repair_stop_coverage`
         and this is now a delegate — see that module for the whole design,
@@ -3290,6 +3306,7 @@ class TradingPipeline:
             uncovered_qty=uncovered_qty,
             is_short=is_short,
             db=self.db,
+            outcome=outcome,
         )
 
     def _submit_protected_sell(
@@ -4483,11 +4500,34 @@ class TradingPipeline:
         knows coverage wasn't actually rebuilt.
         """
         if residual_qty <= 0 or not cancelled_specs:
+            # NOTHING WAS REQUESTED: no residual to protect, or no stops were
+            # cancelled to restore. Legitimately "nothing to do".
             return True
-        stop_prices = [s.get("stop_price", 0) for s in cancelled_specs]
-        best_stop = min(stop_prices, default=0) if side == "buy" else max(stop_prices, default=0)
-        if best_stop <= 0:
-            return True
+        # docs/WORK.md item 88. `[s.get("stop_price", 0) for s in specs]` then
+        # `best_stop <= 0: return True` was the fail-open: a spec set whose
+        # prices are all zero/absent/garbage was read as "no stop to restore"
+        # and reported as SUCCESS — which makes the drain caller DELETE the
+        # persisted recovery intent and leaves the residual position naked
+        # with nothing left to retry it. A missing price also made `min`/`max`
+        # raise on a None. Judge the values first, then decide; specs existed,
+        # so "no usable price among them" is a REFUSAL, not an absence.
+        from src.execution.stop_records import usable_stop_prices
+
+        usable = usable_stop_prices(
+            s.get("stop_price") for s in cancelled_specs
+        )
+        if not usable:
+            logger.error(
+                "Reprotect REFUSED for %s: %d cancelled stop spec(s) carried "
+                "no usable trigger price (%r) — the residual %s share(s) are "
+                "UNPROTECTED and the recovery intent is kept so the next "
+                "drain retries. A garbage stop is not 'no stop needed'.",
+                symbol, len(cancelled_specs),
+                [s.get("stop_price") for s in cancelled_specs],
+                self._format_qty(residual_qty),
+            )
+            return False
+        best_stop = min(usable) if side == "buy" else max(usable)
 
         # Idempotency: drain may replay finalize on a row whose previous
         # attempt already submitted the residual stop but couldn't

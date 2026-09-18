@@ -329,11 +329,6 @@ decision at all.
 **Plain language —** When the book gets too big relative to the account, the desk automatically trims it. That is now the only thing on the desk that sells by itself. Nobody has ever checked whether it cancels the protective stop-losses first in order to free the shares — and if it cancels them and then fails to sell, the holdings are left with no protection at all. That exact flaw is why the older "big loss today" liquidation was deleted on 14 September.
 **Recommendation —** Audit it before changing anything. Find out what it actually does, then decide.
 
-## item 88
-
-**Plain language —** Inside the code, a stop price of exactly zero is the agreed way of saying "there is no stop". So if a bad number ever arrives as zero, the desk does not refuse the trade — it quietly removes the protection instead. The path that opens new trades has been checked and passes nothing rather than zero, so no live position depends on this today. The paths that resume, sweep and repair positions have not been checked.
-**Recommendation —** Trace the unchecked paths, then make a zero or missing stop a refusal, never a silent unprotected position.
-
 ## item 89
 
 **Plain language —** An audit on 17 September of everything the desk sends you found nineteen defects. Six of them can mislead you into a decision. Thirteen are clarity problems — the message is correct but hard or impossible to act on. You are choosing which get fixed.
