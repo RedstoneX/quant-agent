@@ -11903,3 +11903,123 @@ re-rendered — which is why item 89's three acceptance checks wait on a live
 session.
 
 ---
+
+### 2026-09-18 — a fractional stop refusal was correct; a quote-based fix for it was rejected; a bigger defect sits underneath
+
+**In plain words:** two small leftover slivers of stock went briefly unprotected
+because the system correctly refused to guess a stop price from a stale
+overnight quote — that refusal was the right call, not a bug. A proposed fix
+to accept a live quote instead was considered and turned down, because the
+desk had already ruled elsewhere that a quote is not a real trade and must
+never be treated as one, and there is no reliable way to tell a fresh quote
+from a leftover overnight one. A different, real defect was found while
+looking at this: placing a small leftover share's stop may not be possible at
+all while the whole-share stop order sitting alongside it is still open.
+
+44 seconds after the 2026-09-18 open, the sweep that re-places stops over
+fractional-share remainders refused two of nine names (NET, 0.4785 shares;
+RSG, 0.2860 shares) because `src/execution/stop_repair.py`'s freshness check
+(`stamped.is_today_print`) found no real trade had printed for either name yet
+that morning on the IEX feed — only yesterday's stale closing price was
+available. The refusal was correct: refuse rather than invent a price. Both
+were covered later in the same session by a later sweep.
+
+**The rejected fix.** The proposal was to let the price check accept today's
+live quote (the bid, for a long position's sell-stop) when no fresh trade
+print exists yet, instead of refusing. Turned down for reasons that each stood
+on their own: the board had already recorded, as a ratified preference, never
+to treat a quote midpoint as if it were an actual trade; the code path cited
+as precedent for "a quote is sometimes acceptable" turns out not to reach this
+case at all; the test used to decide "is this quote fresh" only compares
+calendar dates, so a quote sitting from before the market opened would still
+count as "today's" and could sit on the wrong side of the real price on a
+gap day; and what actually gets placed if the price is wrong is not a plain
+stop but a stop with a 3% buffer built in, meaning a bad price does not just
+trigger a stop, it can let the position ride up to 3% past where the stop was
+supposed to protect it.
+
+**What was decided instead.** Compare against today's actual lowest traded
+price so far, not a quote, closing the same board question this decision would
+otherwise have reopened. Also worth doing, and cheaper: let the sweep retry a
+few times within the same pass before giving up, since the code that already
+retries stop placement elsewhere argues for exactly this on its own terms.
+Explicitly rejected: waiting for a later check of the day to retry, since the
+sliver had already gone unprotected since the previous close and waiting only
+adds more unprotected time for the same stale-price problem.
+
+**The bigger, still-open defect.** On 2026-09-16, a similar sliver of BRK-B
+could not get its stop replaced because the broker reported the ENTIRE
+fractional position as "held for other orders", not just the portion actually
+tied up by the whole-share stop resting alongside it. If that is how the
+broker's fractional accounting actually works, then a leftover sliver's stop
+may never be placeable through this repair path while any whole-share stop on
+the same position is open — regardless of how fresh or stale the price used
+to size it is. Two things need to be measured before anything more is built:
+what the real market prices looked like at the moment of the NET/RSG refusal
+(to close out whether the freshness check even mattered that morning), and
+whether the broker's "held for other orders" figure really does report the
+whole fractional position rather than just the ordered quantity in this
+specific situation — this has not been confirmed either way. Not yet
+resolved; nothing further should be built on this path until those two
+measurements exist.
+
+### 2026-09-18 — the Form 4 insider-evidence backlog was refusing trading decisions on filings nobody had read yet
+
+**In plain words:** the system was treating "there might be an insider filing
+we haven't gotten around to reading" the same as "the insider evidence we
+already have is now out of date" — and refusing to trade on that basis alone,
+even when nothing had actually changed. A proposed shortcut to stop treating
+an unread backlog as disqualifying was considered and rejected, because it
+would have let the desk trade on outdated insider research while believing it
+had none at all, which is worse than refusing. The real fix — landed the same
+day as PR #529 — was to read only each watched company's own filing history
+instead of crawling every filing on the market, and to make sure that backlog
+is fully drained before the freshness check is allowed to rely on it. Four
+smaller problems were also noticed and are not yet acted on.
+
+At the 13:45 UTC check that day, the insider-evidence seat came back
+"expired" and the decision was refused, even though no new Form 4 had
+actually been filed on any name the desk trades — the trigger was the desk's
+own unread backlog of filings market-wide, capped at 1,000 processed per day
+against a market that files 400-700 a day. A proposal to exempt an unread
+backlog from counting as "expired" was rejected: knowing only that a filing
+exists, without knowing its direction, size or who filed it, is not the same
+as knowing it is harmless, and the stale insider answer was already being
+carried into the trading decision before the freshness check ran — so
+softening the check without also dropping the stale answer would have let the
+desk trade on outdated insider research while believing the question was
+settled.
+
+**What shipped instead (PR #529, same day).** The freshness check now asks
+only "has anything been filed on a company I actually watch since I last
+checked", reading each watched company's own SEC filing history directly,
+rather than crawling every filing market-wide. That check cannot pass unless
+a separate drain — scoped to the desk's own roughly 100 watched names, not the
+whole market — has fully cleared its backlog first; if the drain cannot
+finish, the day is marked stale and the owner is told before the market opens,
+rather than the desk silently discovering it hours later.
+
+**Four smaller problems noticed while fixing this, not yet acted on:**
+- The existing written incident record already claims the Form 4 read is
+  scoped to watched names the way the news read is — it is not, and the
+  record has never been corrected to say so.
+- A filing check that runs out of time before finishing returns whatever
+  partial answer it has gathered so far, which could just as easily miss a
+  genuinely new filing as an unread old one — the opposite failure from the
+  one just fixed, on the same code path.
+- The rule that decides whether a decision needs insider evidence at all
+  currently treats "no insider activity found" the same as "safe to trade",
+  while a partial or interrupted answer is treated as "refuse" — an asymmetry
+  nobody has defended or explained.
+- Of the desk's four evidence sources able to refresh partway through the
+  day, only the macroeconomic one is actually wired up to do so; a bad
+  news or insider read from the morning can currently only be corrected the
+  next morning, not the same afternoon.
+
+These four were current as of the 2026-09-18 investigation; the PR #529
+rewrite the same day may have already made the first two moot by replacing
+the code path they describe — that has not been separately re-verified and
+should be checked against current `src/data/smart_money.py` before treating
+them as still live.
+
+---
