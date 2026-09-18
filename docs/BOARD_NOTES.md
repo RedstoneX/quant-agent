@@ -457,3 +457,21 @@ decision at all.
 
 **Plain language — your decision, and we are waiting on it.** You asked for the internal scrollbars to come off the detail panels, and they have. The consequence is that the Trades tab, which holds your full live trade history, now makes the page about 6,000 pixels tall. That is the cost of the change, not a fault, and moving to any other tab puts it back to normal. You were offered that one tab's scrollbar back and have not answered, so nothing has been changed.
 **Recommendation —** None until you rule. Your ruling was that scrolling belongs to a panel rather than to a position on the screen, so making one tab an exception is yours to decide, not ours.
+
+## item 115
+
+**Plain language —** The raw insider-filing gobbledygook you complained about is gone from the new "Why" tab, but there is a second screen — the run-detail popup — that still prints the same kind of raw machine text if you open it.
+**Why a separate number —** it was already written down, but buried inside item 106's paragraph about the Why tab, and you asked directly for this to be recorded on its own so it does not get missed or later mistaken for a duplicate of the fixed one.
+**Recommendation —** Same fix as item 106: put the raw evidence behind a labelled toggle in this view too, rather than dumping it as text.
+
+## item 116
+
+**Plain language —** The evening report used to compute real numbers from the broker every night and then throw them away, so a night's report could never be checked again later. That is now fixed. Nobody has checked whether the same thing happens at the other five points in the day: morning, midday, close, the half-hourly check, and the pre-earnings pass.
+**Why it matters —** if a decision that night rested on a price or a model's judgement that was never saved, there is no way to go back and check whether the decision was reasonable at the time.
+**Recommendation —** Apply the same fix used for the evening report to each of the other five checkpoints, one at a time.
+
+## item 117
+
+**Plain language —** The automated check that watches the size of this very file sometimes fails for a reason that has nothing to do with the file — it cannot get enough git history to compare against on some CI runs. A related problem, where three tests failed depending on what minute the clock read, has already been fixed.
+**Why it matters —** this automated check is the only gate that has to pass before a change can merge. A gate that fails for reasons unrelated to the actual change trains people to route around it instead of trusting it.
+**Recommendation —** Give the CI job enough git history up front so it never needs to guess, or make the check fail open (skip, not block) when it genuinely cannot read a baseline.
