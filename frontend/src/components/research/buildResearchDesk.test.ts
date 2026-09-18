@@ -78,35 +78,75 @@ describe("buildResearchDesk", () => {
     expect(data.why_now).toBe("Price retested support today.");
     expect(data.prior_as_of).toBe("2026-08-24T13:00:00Z");
     expect(data.dry_annotation).toBe("Several reads. No portfolio instruction. That is still a decision.");
-    // The analyst's own `reference_target` is NEVER drawn — only the desk's
-    // derived `take_profit` is. A row carrying only the guess simply has no
-    // target: per owner ruling, that is not announced (no card, no gap
-    // message) — the absence is quiet, unlike an undrawable-geometry fault.
+    // An ungrounded `reference_target` (no matching support/resistance
+    // level, no stated measured move) is never drawn, and — per owner
+    // ruling 2026-09-18 — its absence is not announced either: no card,
+    // no gap message. Only a row that's drawable-in-principle but fails
+    // on its own terms gets a stated reason.
     const technical = data.agents.find((agent) => agent.seat === "technical");
     expect(technical?.market_context).toHaveLength(0);
     expect(technical?.market_context_gaps).toHaveLength(0);
   });
 
-  it("draws the desk's derived target, labels its basis, and keeps shorts", () => {
-    const long = evidence({ payload: {
-      rating: "buy", entry_price: 101, stop_loss: 98, take_profit: 110, reference_target: 125,
-      reasoning: "Breakout held. [target $110.00 computed from structural level; analyst's reference $125.00, -12.0%]",
+  it("draws the desk's derived target (read off the PM's own proposed_order row), labels its basis, and keeps shorts", () => {
+    const long = evidence({ payload: { rating: "buy", entry_price: 101, stop_loss: 98, reference_target: 125 } });
+    const longOrder = evidence({ id: 10, agent_name: "portfolio_manager", kind: "proposed_order", payload: {
+      take_profit: 110, reasoning: "Breakout held. [target $110.00 computed from structural level; analyst's reference $125.00, -12.0%]",
     } });
-    const short = evidence({ id: 2, symbol: "XYZ", payload: {
-      rating: "sell", entry_price: 50, stop_loss: 54, take_profit: 42,
-      reasoning: "Breakdown confirmed. [target $42.00 computed from measured move; analyst's reference $40.00, +5.0%]",
+    const short = evidence({ id: 2, symbol: "XYZ", payload: { rating: "sell", entry_price: 50, stop_loss: 54 } });
+    const shortOrder = evidence({ id: 20, symbol: "XYZ", agent_name: "portfolio_manager", kind: "proposed_order", payload: {
+      take_profit: 42, reasoning: "Breakdown confirmed. [target $42.00 computed from measured move; analyst's reference $40.00, +5.0%]",
     } });
-    const data = buildResearchDesk(response([long, short]));
+    const data = buildResearchDesk(response([long, longOrder, short, shortOrder]));
     const context = data.agents.find((agent) => agent.seat === "technical")?.market_context || [];
     expect(context).toHaveLength(2);
     expect(context.find((item) => item.symbol === "XYZ")).toMatchObject({
-      stop: 54, entry: 50, target: 42, direction: "short", target_source: "derived", target_basis: "measured move",
+      stop: 54, entry: 50, direction: "short", derived_target: 42, derived_target_basis: "measured move",
+      analyst_target: null, targets_agree: false,
     });
-    expect(context.find((item) => item.direction === "long")).toMatchObject({ target: 110, target_basis: "structural level" });
+    expect(context.find((item) => item.direction === "long")).toMatchObject({ derived_target: 110, derived_target_basis: "structural level" });
+  });
+
+  it("draws the analyst seat's own target when it matches a level the seat itself listed", () => {
+    const data = buildResearchDesk(response([evidence({ payload: {
+      rating: "buy", entry_price: 101, stop_loss: 98, reference_target: 120,
+      resistance_levels: [120, 130], support_levels: [98, 95],
+    } })]));
+    const context = data.agents.find((agent) => agent.seat === "technical")?.market_context || [];
+    expect(context).toMatchObject([{ analyst_target: 120, analyst_target_basis: "structural level", derived_target: null, targets_agree: false }]);
+  });
+
+  it("draws the analyst seat's stated measured-move target on a breakout, but not a bare number on one", () => {
+    const grounded = buildResearchDesk(response([evidence({ payload: {
+      rating: "buy", entry_price: 101, stop_loss: 98, reference_target: 130, setup_type: "breakout",
+      reasoning: "Cleared the range; measured move projects to 130.",
+    } })]));
+    expect(grounded.agents.find((a) => a.seat === "technical")?.market_context).toMatchObject([{ analyst_target: 130, analyst_target_basis: "measured move" }]);
+
+    const bare = buildResearchDesk(response([evidence({ payload: {
+      rating: "buy", entry_price: 101, stop_loss: 98, reference_target: 130, setup_type: "breakout", reasoning: "Cleared the range.",
+    } })]));
+    const bareTechnical = bare.agents.find((a) => a.seat === "technical");
+    expect(bareTechnical?.market_context).toHaveLength(0);
+    expect(bareTechnical?.market_context_gaps).toHaveLength(0);
+  });
+
+  it("shows agreement as one line when the desk and the grounded analyst read match to the cent", () => {
+    const analysis = evidence({ payload: {
+      rating: "buy", entry_price: 101, stop_loss: 98, reference_target: 120, resistance_levels: [120],
+    } });
+    const order = evidence({ id: 10, agent_name: "portfolio_manager", kind: "proposed_order", payload: {
+      take_profit: 120, reasoning: "[target $120.00 — structural_level]",
+    } });
+    const data = buildResearchDesk(response([analysis, order]));
+    const context = data.agents.find((agent) => agent.seat === "technical")?.market_context || [];
+    expect(context).toMatchObject([{ derived_target: 120, analyst_target: 120, targets_agree: true }]);
   });
 
   it("records a reason instead of dropping an undrawable geometry", () => {
-    const data = buildResearchDesk(response([evidence({ payload: { rating: "buy", entry_price: 101, stop_loss: 98, take_profit: 97 } })]));
+    const analysis = evidence({ payload: { rating: "buy", entry_price: 101, stop_loss: 98 } });
+    const order = evidence({ id: 10, agent_name: "portfolio_manager", kind: "proposed_order", payload: { take_profit: 97 } });
+    const data = buildResearchDesk(response([analysis, order]));
     const technical = data.agents.find((agent) => agent.seat === "technical");
     expect(technical?.market_context).toHaveLength(0);
     expect(technical?.market_context_gaps[0]).toContain("not beyond the entry");
