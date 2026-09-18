@@ -243,6 +243,11 @@ class RunContext:
     execution_skips: list[dict] = field(default_factory=list)
     # One paid research-heal retry per seat per session (owner 2026-09-16).
     heal_paid_retries: dict[str, int] = field(default_factory=dict)
+    # Current wire text available to the news seat's one paid heal retry.
+    # Set only when a fetch this run actually returned wire (the intraday
+    # expiry peek). None means the seat has no honest input and must stay
+    # lost rather than be re-asked with nothing.
+    heal_news_text: str | None = None
     # Fills path: desk-caused stall after Risk (WS handshake). Catch-up
     # inside the already-approved ceiling is a safety net only, not the
     # product. Repeg stays off. Submit deadline is the sum of programmed
