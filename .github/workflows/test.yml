@@ -78,7 +78,11 @@ jobs:
             exit 1
           fi
           echo "shard ${{ matrix.shard }}/${{ strategy.job-total }}: ${#FILES[@]} files"
-          pytest -q "${FILES[@]}"
+          # --durations surfaces the slow files in the job log. The suite's
+          # cost is concentrated, not spread (measured: shard step times of
+          # 22s to 161s for near-identical test counts), so this is the data
+          # anyone rebalancing the shards needs, and it is free.
+          pytest -q --durations=12 "${FILES[@]}"
 
   # `pytest` is the required status check in branch protection on main, so this
   # job keeps that name and is the only thing branch protection looks at. It
