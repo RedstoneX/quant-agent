@@ -23,6 +23,16 @@ jobs:
   # `scripts/ci_shard.py` does the splitting; it slices by test FILE, so a
   # module is never divided and within-module ordering is unchanged.
   #
+  # Why three and not more. Measured: one test
+  # (test_rehearsal_reproduces_cost_ceiling.py) takes 160s on its own, 31% of
+  # the whole serial suite, because it is asserting a wall-clock ceiling. No
+  # split can finish before that test does, so ~160s plus ~25s of runner setup
+  # is the floor however many shards there are. Three reaches that floor with
+  # the other two shards at roughly 40s each; a fourth shard cannot beat 160s
+  # and only consumes more of the free concurrency budget that six or seven
+  # simultaneous pull requests are already competing for. The way to go faster
+  # from here is that one test, not more runners.
+  #
   # To change the shard count, edit this list and nothing else: the script is
   # told how many shards there are via `strategy.job-total`, so the two cannot
   # drift apart.
@@ -35,7 +45,7 @@ jobs:
       # in one run.
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2]
 
     steps:
       - name: Check out repo
@@ -79,9 +89,9 @@ jobs:
           fi
           echo "shard ${{ matrix.shard }}/${{ strategy.job-total }}: ${#FILES[@]} files"
           # --durations surfaces the slow files in the job log. The suite's
-          # cost is concentrated, not spread (measured: shard step times of
-          # 22s to 161s for near-identical test counts), so this is the data
-          # anyone rebalancing the shards needs, and it is free.
+          # cost is concentrated in a handful of wall-clock assertions rather
+          # than spread across the 6,600 tests, so these are the numbers to
+          # refresh `SLOW_FILES` in the splitter from, and they are free.
           pytest -q --durations=12 "${FILES[@]}"
 
   # `pytest` is the required status check in branch protection on main, so this
