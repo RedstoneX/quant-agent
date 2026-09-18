@@ -154,13 +154,25 @@ def base_ref(repo: Path | None = None) -> str | None:
     1, so the parent is fetched on demand rather than requiring a workflow
     change. A local run measures against the merge base with `origin/main`.
 
+    The on-demand fetch fetches the exact checked-out SHA into an explicit
+    destination ref, not a bare `--deepen=1`: a pull_request run's HEAD lives
+    at `refs/remotes/pull/<N>/merge`, outside the remote's default fetch
+    refspec (`refs/heads/*`), so a refspec-less deepen fetches nothing for it
+    and silently leaves `HEAD^1` unresolvable on every such run — see the
+    dated evidence in `tests/test_status_board.py::_work_md_base_ref`, which
+    hit exactly this and shares the fix.
+
     Duplicated rather than shared because that helper is inside a module
     `pytest` collects, and importing a test module from a script to reuse one
     twelve-line function is a worse coupling than the copy.
     """
     if os.environ.get("GITHUB_ACTIONS"):
         if _git("rev-parse", "--verify", "-q", "HEAD^1", repo=repo).returncode != 0:
-            _git("fetch", "-q", "--deepen=1", "origin", repo=repo)
+            head = _git("rev-parse", "HEAD", repo=repo)
+            if head.returncode == 0:
+                sha = head.stdout.strip()
+                _git("fetch", "-q", "--depth=2", "origin",
+                     f"+{sha}:refs/ci-work-md-base-probe", repo=repo)
         r = _git("rev-parse", "--verify", "-q", "HEAD^1", repo=repo)
         return r.stdout.strip() or None
     _git("fetch", "-q", "origin", "main", repo=repo)
