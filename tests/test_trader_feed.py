@@ -20,13 +20,31 @@ _ET = ZoneInfo("America/New_York")
 # intra_check must pin the clock with this.
 #
 # 2026-09-17: intra_check's real systemd cadence is `*:15,45` (moved off
-# `*:0/30` by #454), so :15 is now the hourly-checkpoint minute and :45 is
-# the ordinary quiet tick — :15 no longer means "quiet" here.
+# `*:0/30` by #454), so :15 is now the hourly-checkpoint minute (#462) and
+# :45 is the ordinary quiet tick — :15 no longer means "quiet" here.
 _QUIET_TICK_TIME = datetime(2026, 9, 17, 10, 45, tzinfo=_ET)
 # A top-of-hour instant, for the hourly-desk-check tests — the FIRST tick
 # intra_check makes each hour under its real `*:15,45` cadence, i.e. :15,
-# not :00 (intra_check never ticks at :00).
-_TOP_OF_HOUR_TIME = datetime(2026, 9, 17, 14, 15, tzinfo=_ET)
+# not :00 (intra_check never ticks at :00). Deliberately OUTSIDE the midday
+# window (13:00-14:30 ET) — 13:15 is where the 2026-09-17 midday-suppression
+# rule silences a quiet tick before the hourly-checkpoint check ever runs,
+# which would defeat this test's purpose of exercising that check in
+# isolation. The window-specific interaction has its own tests below (see
+# `_MIDDAY_COLLISION_TICK_TIME`).
+_TOP_OF_HOUR_TIME = datetime(2026, 9, 17, 15, 15, tzinfo=_ET)
+# The ONE intra_check tick that collides with the midday report: midday
+# runs once per ET date, on the first scheduler tick inside its 13:00-14:30
+# window (13:00), and 13:15 is the first intra_check tick after it. This is
+# the only instant the 2026-09-17 suppression rule silences. It is also the
+# 13:00 hour's guaranteed-pulse tick under #462, which is exactly why the
+# rule has to run before `_is_hourly_checkpoint`.
+_MIDDAY_COLLISION_TICK_TIME = datetime(2026, 9, 17, 13, 15, tzinfo=_ET)
+# A quiet top-of-hour instant LATER in the midday window (14:15) — the
+# 14:00 hour's guaranteed pulse. Inside the window but not the colliding
+# tick, so it must still send.
+_MIDDAY_TOP_OF_HOUR_TIME = datetime(2026, 9, 17, 14, 15, tzinfo=_ET)
+# A quiet, non-top-of-hour instant inside the midday window.
+_MIDDAY_QUIET_TICK_TIME = datetime(2026, 9, 17, 13, 45, tzinfo=_ET)
 
 
 def _pin_clock(monkeypatch, when: datetime) -> None:
@@ -1409,6 +1427,184 @@ def test_hourly_checkpoint_unparseable_oncalendar_fails_loudly(tmp_path, monkeyp
     monkeypatch.setattr(trader_feed, "_INTRA_CHECK_TIMER_PATH", fake_timer)
     with pytest.raises(RuntimeError):
         trader_feed._intra_check_tick_minutes()
+
+
+# === Owner decision, 2026-09-17: suppress the routine intra_check message
+# that collides with the midday position review ===
+#
+# The midday report and intra_check's routine "nothing to report" ping must
+# not fire minutes apart. The ratified fix silences that routine ping ONCE,
+# at the single colliding tick (13:15 ET) — not for the whole 13:00-14:30
+# window. Everything actionable (an order, a stop-coverage gap, a crashed
+# scan, ...) still sends immediately, in or out of the window, and the
+# guaranteed hourly pulse survives everywhere except that one tick.
+
+
+def test_collision_tick_is_derived_not_hard_coded(monkeypatch, tmp_path):
+    """The suppressed minute must come from the midday window constant and
+    intra_check's own timer unit — never a third hard-coded number. Move the
+    cadence and the suppressed tick must move with it."""
+    from src.trading_calendar import SESSION_WINDOWS
+
+    assert trader_feed._midday_collision_tick_minute() == 13 * 60 + 15
+
+    fake_timer = tmp_path / "quant-agent-intra_check.timer"
+    fake_timer.write_text("[Timer]\nOnCalendar=*:05,35\n")
+    monkeypatch.setattr(trader_feed, "_INTRA_CHECK_TIMER_PATH", fake_timer)
+    assert trader_feed._midday_collision_tick_minute() == 13 * 60 + 5
+
+    lo, _hi = SESSION_WINDOWS["midday"]
+    assert trader_feed._midday_collision_tick_minute() >= lo
+
+
+def test_quiet_collision_tick_suppressed(tmp_path, monkeypatch):
+    """13:15 is the 13:00 hour's guaranteed-pulse tick, so without this rule
+    it would send a desk check ~15 minutes after the midday report. A quiet
+    tick there is suppressed, before `_is_hourly_checkpoint` is consulted."""
+    db = _make_db(tmp_path, monkeypatch)
+    _evidence(
+        db, "run-half-hour-earlier", "tech_analyst", "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
+         "reasoning": "Range-bound, no signal."},
+        symbol="CEG",
+    )
+    _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
+    outer = {
+        "status": "ok", "run_id": "run-midday-collision",
+        "daily_pnl": 2.0, "daily_return_pct": 0.01,
+        "intraday_scan": {
+            "status": "intraday_scan_no_opportunity",
+            "run_id": "run-midday-collision",
+        },
+    }
+    assert trader_feed.format_session_result("intra_check", outer, 2.0) is None
+
+
+def test_later_hourly_pulse_in_window_still_sends(tmp_path, monkeypatch):
+    """Regression guard on the scope of this rule. `midday` runs ONCE per ET
+    date (run_if_et_window.sh writes a last-run marker for every mode except
+    intra_check), so only 13:00 carries a midday report — suppressing every
+    quiet tick across 13:00-14:30 would swallow the 14:00 hour's guaranteed
+    pulse (14:15) and leave a quiet day with nothing between 13:00 and
+    15:15. 14:15 must still send."""
+    db = _make_db(tmp_path, monkeypatch)
+    _evidence(
+        db, "run-earlier", "tech_analyst", "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
+         "reasoning": "Range-bound, no signal."},
+        symbol="CEG",
+    )
+    _pin_clock(monkeypatch, _MIDDAY_TOP_OF_HOUR_TIME)  # 14:15 ET
+    outer = {
+        "status": "ok", "run_id": "run-midday-later-hour",
+        "daily_pnl": 1.0, "daily_return_pct": 0.005,
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 1.0)
+    assert msg is not None
+    assert "DESK CHECK" in msg
+
+
+def test_ordinary_quiet_tick_in_window_unchanged(tmp_path, monkeypatch):
+    """13:45 is inside the window but is neither the colliding tick nor an
+    hour-owning one — it is silent for the pre-existing "ordinary quiet tick
+    sends nothing" reason, not because of this rule."""
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _MIDDAY_QUIET_TICK_TIME)  # 13:45 ET
+    assert trader_feed._is_midday_collision_tick(_MIDDAY_QUIET_TICK_TIME) is False
+    outer = {
+        "status": "ok", "run_id": "run-midday-quiet",
+        "daily_pnl": 2.0, "daily_return_pct": 0.01,
+        "intraday_scan": {
+            "status": "intraday_scan_no_opportunity", "run_id": "run-midday-quiet",
+        },
+    }
+    assert trader_feed.format_session_result("intra_check", outer, 2.0) is None
+
+
+def test_same_hourly_pulse_minute_outside_window_still_sends(tmp_path, monkeypatch):
+    """The identical quiet payload at the identical minute-past-the-hour,
+    from outside the midday window, is untouched by this rule — this is the
+    control for `test_quiet_collision_tick_suppressed`."""
+    db = _make_db(tmp_path, monkeypatch)
+    _evidence(
+        db, "run-outside", "tech_analyst", "analysis",
+        {"symbol": "CEG", "rating": "neutral", "conviction": "low",
+         "reasoning": "Range-bound, no signal."},
+        symbol="CEG",
+    )
+    _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME.replace(hour=11))  # 11:15 ET
+    outer = {
+        "status": "ok", "run_id": "run-outside-collision-minute",
+        "daily_pnl": 2.0, "daily_return_pct": 0.01,
+        "intraday_scan": {
+            "status": "intraday_scan_no_opportunity",
+            "run_id": "run-outside-collision-minute",
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 2.0)
+    assert msg is not None
+    assert "DESK CHECK" in msg
+
+
+def test_weekend_is_never_a_collision_tick():
+    """`in_session_window` short-circuits on non-weekdays; the rule must not
+    claim a collision on a day midday never runs."""
+    saturday = datetime(2026, 9, 19, 13, 15, tzinfo=_ET)
+    assert saturday.weekday() == 5
+    assert trader_feed._is_midday_collision_tick(saturday) is False
+
+
+def test_order_placed_still_sends_at_collision_tick(tmp_path, monkeypatch):
+    db = _make_db(tmp_path, monkeypatch)
+    run = "run-midday-order"
+    _trade(db, run, "CCJ", "BUY", qty=15, price=59.0)
+    _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
+    outer = {
+        "status": "ok", "run_id": run, "daily_pnl": -5.0, "daily_return_pct": -0.05,
+        "intraday_scan": {
+            "status": "intraday_executed", "run_id": run,
+            "candidates": ["CCJ"], "orders": [{"symbol": "CCJ"}],
+        },
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 4.0)
+    assert msg is not None
+    assert "CCJ" in msg
+
+
+def test_stop_coverage_gap_still_sends_at_collision_tick(tmp_path, monkeypatch):
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
+    outer = {
+        "status": "ok", "run_id": "run-midday-gap",
+        "daily_pnl": -1.0, "daily_return_pct": -0.01,
+        "stop_coverage_gaps": [{"symbol": "TSLA", "covered_qty": 0, "held_qty": 10}],
+    }
+    msg = trader_feed.format_session_result("intra_check", outer, 3.0)
+    assert msg is not None
+    assert "TSLA" in msg
+
+
+def test_crashed_scan_still_sends_at_collision_tick(tmp_path, monkeypatch):
+    """An error carve-out, pinned at the one suppressed instant."""
+    _make_db(tmp_path, monkeypatch)
+    _pin_clock(monkeypatch, _MIDDAY_COLLISION_TICK_TIME)  # 13:15 ET
+    outer = {
+        "status": "ok", "run_id": "run-midday-crash",
+        "daily_pnl": 0.0, "daily_return_pct": 0.0,
+        "intraday_scan": {
+            "status": "intraday_scan_crashed", "run_id": "run-midday-crash",
+        },
+    }
+    assert trader_feed.format_session_result("intra_check", outer, 3.0) is not None
+
+
+# Not tested here: the daily-loss circuit breaker itself
+# (`TradingPipeline._alert_owner_daily_loss_halt`, src/pipeline.py). It
+# pushes its own alert via a direct `send_owner_alert` call at the moment
+# the halt happens, entirely independent of `format_session_result`/
+# `trader_feed.py` — this suppression rule cannot reach it regardless of
+# window, and its shape is already pinned in tests/test_pipeline.py
+# (search `daily_loss_halted`).
 
 
 def test_signals_list_never_drops_an_analyzed_symbol(tmp_path, monkeypatch):
