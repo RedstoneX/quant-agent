@@ -200,7 +200,7 @@ numbers:
     status: sourced
     site: src/config.py
     source: >-
-      src/config.py:464 (the derivation at the definition site: the quantity
+      src/config.py:483 (the derivation at the definition site: the quantity
       is FLOORED, never rounded up, so the only exposure is under-spending the
       budget, and 4dp is under a tenth of a cent of notional at any price this
       desk trades) and docs/QAMC_REMEDIATION_SPEC.md:1457 (the
@@ -429,7 +429,7 @@ numbers:
       of the current market value of margin securities held long.
       https://www.finra.org/rules-guidance/rulebooks/finra-rules/4210 (fetched
       and confirmed 2026-09-18). Quoted at the definition site
-      src/config.py:930. Not a desk choice, and used only to report
+      src/config.py:952. Not a desk choice, and used only to report
       distance-to-forced-liquidation. CAVEAT recorded rather than asserted
       away: 25% is the REGULATORY FLOOR and brokers routinely enforce 30-40%,
       so a distance-to-liquidation computed from it is the most optimistic
@@ -446,7 +446,7 @@ numbers:
       and confirmed 2026-09-18; the Elite tier is 4.75%). Applied on the
       broker's own (debit x rate)/360 convention at src/margin_interest.py:1.
       The fee schedule says the rate MAY CHANGE OVER TIME, so this is a source
-      with an expiry. The definition site src/config.py:940 already labels
+      with an expiry. The definition site src/config.py:921 already labels
       every figure derived from it an ESTIMATE until the broker's own INT
       activity confirms paper accounts are charged at all.
   - id: src.config.RiskConfig.max_cluster_risk_share_pct
@@ -1701,7 +1701,7 @@ numbers:
       minimum-risk floor are different quantities that share a digit.
     note: >-
       Every new trade plan sized under 0.50% of the account is DENIED OUTRIGHT
-      rather than shrunk (src/portfolio_constructor.py:487). One of three
+      rather than shrunk (src/portfolio_constructor.py:488). One of three
       sites holding the same ratified number; the other two are
       src/risk/constants.py:144 and src/config.py:770.
   - id: src.portfolio_constructor.ConstructorConfig.min_stop_atr_multiple

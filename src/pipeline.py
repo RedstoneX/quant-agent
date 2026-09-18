@@ -12587,6 +12587,48 @@ class TradingPipeline:
                 limit=50, today_only=True, executed_only=True,
             )
 
+            # Board item 89 defect 3 (and item 104's eighth trade-affecting
+            # prompt defect, which is the same root cause one layer down).
+            #
+            # `morning_trades` is deliberately `today_only=True` — the
+            # reviewer's "what already happened this session" block depends
+            # on that and must keep it. But it is ALSO the only source the
+            # reviewer had for a position's ENTRY THESIS, so every position
+            # opened on an earlier day rendered "Entry thesis: (unavailable
+            # — position opened before today)". The reason was never
+            # missing: it is on the entry row in `trades`, which the lookup
+            # simply never searched. The reviewer then wrote "thesis
+            # unavailable" into its hold reasons, and those reasons go
+            # straight into the owner's message.
+            #
+            # `get_symbol_last_buy` is the existing unrestricted lookup —
+            # the same "most recent executed opening row for this symbol,
+            # no date bound" query the evening thesis-health context and
+            # the cockpit's "why do we hold this" endpoint already use. No
+            # second lookup is written here, and nothing about the review
+            # DECISION changes: this only stops a fact the desk already
+            # holds from being reported as absent.
+            entry_context: dict[str, dict] = {}
+            for _p in review_positions:
+                _sym = getattr(_p, "symbol", None)
+                if not _sym:
+                    continue
+                # A short's opening row is a SHORT, not a BUY, and mixing
+                # the two would hand a short a long's thesis and stop —
+                # the precise confusion `get_symbol_last_buy` refuses by
+                # taking the opening action explicitly.
+                _action = "SHORT" if getattr(_p, "qty", 0) < 0 else "BUY"
+                try:
+                    _row = self.db.get_symbol_last_buy(_sym, action=_action)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "%s: entry-context lookup failed for %s: %s",
+                        session_type, _sym, e,
+                    )
+                    continue
+                if _row:
+                    entry_context[_sym] = _row
+
             # Reuse morning's macro_analysis from macro_store so the
             # reviewer sees the same regime the PM committed to today.
             macro_analysis_dict = None
@@ -12687,6 +12729,8 @@ class TradingPipeline:
                     position_facts=position_facts,
                     metric_deltas=metric_deltas,
                     morning_trades=morning_trades,
+                    # Board item 89 defect 3 — see the build above.
+                    entry_context=entry_context,
                     news_intel=session_news,
                     earnings_analyses=session_earnings,
                     macro_analysis=macro_analysis_dict,

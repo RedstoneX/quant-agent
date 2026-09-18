@@ -85,6 +85,8 @@ This is a hypothesis until the measured win rate, average win/loss ratio and exp
 | Max total at risk | 25% of equity, correlation-adjusted |
 | Position count | Not fixed. Determined dynamically by the risk budget. |
 
+**Correction, 2026-09-18:** the 0.5% minimum was reported internally as unsourced — existing only as a dataclass default, absent from config and from any ratification record. That report was wrong. Verify directly: `config/settings.yaml` (`risk.min_position_risk_pct: 0.5`), the row above (this file, owner-ratified 2026-08-27), and `src/risk/constants.py` (`STARTER_POSITION_RISK_PCT`, whose own docstring names it the same field). Check a documented claim against the file before repeating it.
+
 Correlated names consume a single bet's budget rather than several, so genuine diversification is rewarded and fake diversification is refused. Risk is released as trades prove themselves: once a position's trailing stop sits at or above entry it stops consuming budget, so the book expands when the desk is right and contracts when it is not.
 
 **Conviction is expressed as risk allocation, not as percent-of-portfolio notional.** The specialist team decides how much conviction an idea carries; deterministic code converts that into a share count using the analyst's stop. A wider stop yields a smaller position, never a tighter stop.
@@ -356,6 +358,21 @@ result, a message, or any test that reads one. That is a REPORTING gap, not a
 detection gap, and calling it silent would have put the fix in the wrong
 place. The pattern to distrust on sight: a function that returns a value being
 invoked as a statement.
+
+## Anything that costs money to produce gets kept
+
+**Owner ruling, 2026-09-18.** Keep anything a model said, any decision and
+the reason behind it, and any number the broker gave at a moment in time —
+write each once, never edit it afterward. Do not keep anything the code can
+recompute from those: two stored versions of the same fact that can drift
+apart and disagree is its own defect, not a safety margin.
+
+Reason: a paid seat forms a judgement and today that judgement is discarded,
+so the next run pays again for a sentence the desk already owns. Worse,
+grading the desk's own reasoning after the fact is impossible unless the
+reasoning sits beside what actually happened next. This is doctrine, not an
+open item — apply it whenever a run's persistence is being designed or
+reviewed. See item 116 (`docs/WORK.md`) for where it is not yet applied.
 
 ## A finding with no owner and no due date will be lost
 

@@ -129,6 +129,11 @@ as if it covered more:
   * A number outside scope that the sentinel's count ratchet lets through
     because something else in an unscoped file was deleted in the same
     commit.
+  * A `path:line` citation that has DRIFTED. Rule 7 catches a path that does
+    not exist and a line past the end of a file; it cannot tell that line 930
+    of a file that is still 2000 lines long stopped being the line meant. Three
+    of this ledger's own citations drifted by 20-30 lines inside one day of
+    merges and were re-checked by hand. Prefer a URL where one exists.
   * A number computed at run time from live inputs, or a `default_factory`
     whose number lives in a function body.
   * A number in prompt PROSE. Measured 2026-09-18: ~1,825 numeric tokens

@@ -28,23 +28,68 @@ export function SignalStackPanel({ data }: { data: ResearchDeskData }) {
   </section>;
 }
 
-/* The target is NOT a level the desk acts on. The automatic take-profit
+/* No target here is a level the desk acts on. The automatic take-profit
  * trim was deleted in PR #321 (2026-09-12) and "TARGET_BREACH" is
  * deliberately absent from the exit-reason list the pipeline accepts, so
- * nothing exits here by itself — the trailing stop is the only exit rule.
- * It is therefore labelled "(recorded)", the same convention
- * PriceChartPanel already uses for a stop that no live broker order backs.
- * The basis words, when the desk wrote them, say what the number was
- * measured from. */
+ * nothing exits at either number by itself — the trailing stop is the
+ * only exit rule. Both are therefore labelled "(recorded)", the same
+ * convention PriceChartPanel already uses for a stop that no live broker
+ * order backs.
+ *
+ * Two DIFFERENT facts can appear here (owner ruling 2026-09-18) and must
+ * read as different facts, never merged into one number:
+ *   - the desk's own arithmetic (`derived_target`), computed from the
+ *     instrument's bars;
+ *   - the technical-analyst SEAT's own read (`analyst_target`), drawn
+ *     only when the seat named a checkable basis for it — a level it
+ *     also listed itself, or a stated measured move.
+ * When they agree to the cent, that agreement is shown as its own line
+ * rather than silently collapsed to one number — an independently
+ * grounded seat read matching the desk's arithmetic is evidence, not
+ * noise. */
+type MiniTargetLine = { label: string; price: number; basis: string | null; title: string };
+function miniTargetLines(item: ResearchMarketContext): MiniTargetLine[] {
+  if (item.targets_agree) {
+    const basis = item.analyst_target_basis || item.derived_target_basis;
+    return [{
+      label: "Target — desk & analyst agree",
+      price: item.derived_target as number,
+      basis,
+      title: `The desk's own computed target and the technical-analyst seat's own read agree to the cent${basis ? `, both pointing at a ${basis}` : ""}. Not enforced — nothing exits here automatically.`,
+    }];
+  }
+  const lines: MiniTargetLine[] = [];
+  if (item.derived_target != null) {
+    lines.push({
+      label: item.analyst_target != null ? "Desk target" : "Target",
+      price: item.derived_target,
+      basis: item.derived_target_basis,
+      title: `Desk-derived target, not enforced — nothing exits here automatically${item.derived_target_basis ? `; measured from ${item.derived_target_basis}` : ""}.`,
+    });
+  }
+  if (item.analyst_target != null) {
+    lines.push({
+      label: "Analyst's read",
+      price: item.analyst_target,
+      basis: item.analyst_target_basis,
+      title: `The technical-analyst seat's own target — not the desk's computed number, and not enforced${item.analyst_target_basis ? `; the seat grounded it in a ${item.analyst_target_basis}` : ""}.`,
+    });
+  }
+  return lines;
+}
 function MiniMarketContext({ item }: { item: ResearchMarketContext }) {
-  const span = item.target - item.stop;
+  const primaryTarget = (item.derived_target ?? item.analyst_target) as number;
+  const span = primaryTarget - item.stop;
   const position = span === 0 ? 0 : Math.min(100, Math.max(0, ((item.entry - item.stop) / span) * 100));
-  const basis = item.target_basis ? ` · ${item.target_basis}` : "";
-  const targetTitle = `Desk-derived target, not enforced — nothing exits here automatically${item.target_basis ? `; measured from ${item.target_basis}` : ""}.`;
-  return <div className="research-mini-chart" aria-label={`${item.symbol} ${item.direction}: stop ${item.stop}, entry ${item.entry}, recorded target ${item.target}, which the desk does not act on`}>
+  const lines = miniTargetLines(item);
+  const ariaTargets = lines.map((line) => `${line.label.toLowerCase()} ${line.price}`).join(", ");
+  return <div className="research-mini-chart" aria-label={`${item.symbol} ${item.direction}: stop ${item.stop}, entry ${item.entry}, recorded ${ariaTargets}, which the desk does not act on`}>
     <div className="research-mini-chart-head"><strong>{item.symbol}</strong><span>{item.direction} setup context</span></div>
     <div className="research-mini-track"><span className="research-mini-risk" style={{ width: `${position}%` }} /><i style={{ left: `${position}%` }} /></div>
-    <div className="research-mini-labels"><span>stop {item.stop}</span><b>entry {item.entry}</b><span title={targetTitle}>target {item.target} (recorded{basis})</span></div>
+    <div className="research-mini-labels"><span>stop {item.stop}</span><b>entry {item.entry}</b></div>
+    <div className="research-mini-targets">{lines.map((line, i) => <div className="research-mini-target-line" key={i} title={line.title}>
+      <span>{line.label}</span><b>{line.price} (recorded{line.basis ? ` · ${line.basis}` : ""})</b>
+    </div>)}</div>
   </div>;
 }
 
