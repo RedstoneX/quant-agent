@@ -612,6 +612,22 @@ def build_holding_why(
         entry_price = float(entry.get("price") or 0) or None
     except (TypeError, ValueError):
         entry_price = None
+    # The target PINNED AT ENTRY. `take_profit` above is the LIVE number,
+    # which a confirmed structural event can re-derive
+    # (`src.risk.target_revision`); this is the one `thesis_progress_pct`
+    # and `pace` are measured against, and the only yardstick a revision
+    # can ever be graded on. None on rows that predate the column.
+    try:
+        entry_target = float(entry.get("initial_take_profit") or 0) or None
+    except (TypeError, ValueError):
+        entry_target = None
+    # Most recent adjudicated revision flag for this symbol, whichever way
+    # it went. A refusal is a first-class outcome and is shown as one.
+    revision_rows = by_kind.get(("risk_manager", "target_revision")) or []
+    revision = _payload(revision_rows[-1]) if revision_rows else {}
+    revised = bool(
+        tp and entry_target and round(tp, 2) != round(entry_target, 2)
+    )
     if tp:
         move = ""
         if entry_price:
@@ -619,11 +635,23 @@ def build_holding_why(
                 f", about {abs(tp - entry_price) / entry_price * 100:.1f}% from "
                 "where we bought"
             )
+        plain = f"Reference target: ${tp:,.2f}{move}."
+        if revised and entry_target:
+            plain = (
+                f"Reference target: ${tp:,.2f}{move} — re-derived from "
+                f"${entry_target:,.2f}, which is still what progress and pace "
+                f"are measured against."
+            )
         take_profit = {
             "price": tp,
-            "plain": f"Reference target: ${tp:,.2f}{move}.",
+            "plain": plain,
             "acted_on": False,
             "note": NOTHING_ACTS_ON_TARGET,
+            "entry_price_target": entry_target,
+            "revised": revised,
+            "basis": str(revision.get("basis") or "") if revised else "",
+            "last_revision_code": str(revision.get("code") or ""),
+            "last_revision_detail": str(revision.get("detail") or ""),
         }
     else:
         take_profit = {
@@ -631,6 +659,11 @@ def build_holding_why(
             "plain": f"Take-profit target: {NOT_RECORDED}",
             "acted_on": False,
             "note": NOTHING_ACTS_ON_TARGET,
+            "entry_price_target": entry_target,
+            "revised": False,
+            "basis": "",
+            "last_revision_code": str(revision.get("code") or ""),
+            "last_revision_detail": str(revision.get("detail") or ""),
         }
 
     # --- what would prove the thesis wrong ----------------------------

@@ -8821,6 +8821,307 @@ class TradingPipeline:
             logger.warning("ATR fetch failed for %s: %s", symbol, e)
             return None
 
+    def _adjudicate_target_revision_flags(
+        self, review, positions, *, run_id: str, seat: str,
+    ) -> list[dict]:
+        """Adjudicate this review's take-profit revision flags.
+
+        A seat raises `src.models.TargetRevisionFlag` — SYMBOL AND EVIDENCE,
+        no price; the schema has no price field. This method supplies
+        `src.risk.target_revision.assess_target_revision` with real numbers
+        recomputed straight from bars, using the same deterministic, no-LLM
+        machinery `_structural_protection_for_holding` uses
+        (`compute_indicators` for ATR, `find_structural_levels` for levels,
+        `levels_coverage_for_bars` for whether an empty result is a fault or
+        a reading), and writes the outcome.
+
+        DELIBERATELY runs AFTER `_midday_execute_llm_actions`. Every exit
+        decision this session makes has already been made and vetoed against
+        `metric_deltas` built before this point, so a revision cannot reach
+        them even in principle. That is the second of two independent
+        defences; the first is that progress/pace are measured against the
+        PINNED `initial_take_profit` (see `_build_position_facts`), so a
+        revision cannot move a guarded metric at all.
+
+        EVERY flag produces a durable row — a re-derivation, a named refusal,
+        or a named data fault. Never a silent no-op and never a blank.
+        Returns the outcome payloads for the session result / cockpit.
+
+        Never raises: a failure here must not take down a review that has
+        already executed its orders.
+        """
+        from src.data.levels import (
+            BREAKOUT_PROJECTION_ATR_MULTIPLE,
+            CLUSTER_TOLERANCE_PCT,
+            COVERAGE_UNKNOWN,
+            MAX_HORIZON_SESSIONS,
+            MAX_REACH_ATR_MULTIPLE,
+            MIN_TARGET_ATR_MULTIPLE,
+        )
+        from src.risk.target_revision import (
+            assess_target_revision,
+            level_backing_target,
+            target_level_broken,
+        )
+        from src.trading_calendar import et_today
+
+        flags = list(getattr(review, "target_revision_flags", None) or [])
+        if not flags:
+            return []
+
+        risk_cfg = getattr(getattr(self, "risk_engine", None), "config", None)
+        target_cfg = {
+            "min_target_atr_multiple": getattr(
+                risk_cfg, "min_target_atr_multiple", MIN_TARGET_ATR_MULTIPLE),
+            "breakout_projection_atr_multiple": getattr(
+                risk_cfg, "breakout_projection_atr_multiple",
+                BREAKOUT_PROJECTION_ATR_MULTIPLE),
+            "max_reach_atr_multiple": getattr(
+                risk_cfg, "max_target_reach_atr_multiple", MAX_REACH_ATR_MULTIPLE),
+            "max_horizon_sessions": getattr(
+                risk_cfg, "max_target_horizon_sessions", MAX_HORIZON_SESSIONS),
+        }
+
+        # Direction comes from BROKER TRUTH (the sign of the held qty), never
+        # from the flag — the seat names a symbol, not a side.
+        held: dict[str, object] = {}
+        for p in positions or []:
+            held[str(getattr(p, "symbol", "")).upper()] = p
+
+        outcomes: list[dict] = []
+        seen: set[str] = set()
+        for flag in flags:
+            sym = str(getattr(flag, "symbol", "") or "").strip().upper()
+            evidence = str(getattr(flag, "evidence", "") or "")
+            if not sym or sym in seen:
+                continue
+            seen.add(sym)
+            position = held.get(sym)
+            if position is None:
+                # The seat flagged something not held. Filed, not silently
+                # dropped, because a flag on a symbol that is not in the
+                # book is itself a finding about the seat's view of the book.
+                outcomes.append(self._file_target_revision(
+                    run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
+                    code="REFUSAL_NOT_HELD", applied=False,
+                    detail=(
+                        "the seat flagged a take-profit revision for a symbol "
+                        "the broker does not show as held"
+                    ),
+                ))
+                continue
+
+            is_short = float(getattr(position, "qty", 0) or 0) < 0
+            try:
+                buy = self.db.get_symbol_last_buy(
+                    sym, action="SHORT" if is_short else None,
+                ) if is_short else self.db.get_symbol_last_buy(sym)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "target revision: opening-row lookup failed for %s (%s)",
+                    sym, exc,
+                )
+                buy = None
+            buy = buy or {}
+
+            # Same bars, same window, same helpers as
+            # `_structural_protection_for_holding` — and the same rule that
+            # the price fed to a break test is the latest COMPLETED DAILY
+            # CLOSE, never a live quote.
+            levels: list[float] = []
+            atr = close_price = bar_date = None
+            coverage = None
+            try:
+                bars = self.market.get_ohlcv(
+                    sym, self.config.trading.lookback_days,
+                ) or []
+                from src.data.levels import (
+                    find_structural_levels,
+                    structure_coverage,
+                )
+                from src.data.technical import compute_indicators
+                # What the bar history behind `levels` was, so an empty list
+                # from a dead feed is a DATA fault and one from a measured,
+                # structureless chart is a refusal — the same distinction
+                # `_derive_target` passes at entry.
+                coverage = structure_coverage(bars)
+                if bars:
+                    last_bar = sorted(bars, key=lambda b: b.date)[-1]
+                    close_price = float(last_bar.close)
+                    bar_date = str(last_bar.date)
+                    atr = compute_indicators(sym, bars).atr_14
+                    supports, resistances = find_structural_levels(bars)
+                    levels = sorted(lv.price for lv in (*supports, *resistances))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "target revision: bars/indicator fetch failed for %s (%s) "
+                    "— the flag is filed as a data fault, not judged",
+                    sym, exc,
+                )
+
+            stored_target = None
+            try:
+                stored_target = float(buy.get("take_profit") or 0) or None
+            except (TypeError, ValueError):
+                stored_target = None
+
+            # Which level this target was measured against, recovered by the
+            # same identity test the stop side uses. None for a measured-move
+            # target, which is correct: it never sat on a level.
+            target_level = level_backing_target(
+                stored_target=stored_target,
+                computed_levels=levels,
+                # NOT a knob — the exact constant `find_structural_levels`
+                # clustered these zones with (docs/WORK.md item 46).
+                level_cluster_tolerance_pct=CLUSTER_TOLERANCE_PCT,
+            )
+
+            # Cross-day confirmation, keyed off THIS READ's own bar_date so
+            # several intraday cycles re-reading one close are never
+            # miscounted as two confirming days.
+            effective_bar_date = bar_date or str(et_today())
+            break_seen_prior_close = False
+            try:
+                prior = self.db.get_prior_target_level_break(
+                    [sym], today_bar_date=effective_bar_date,
+                    exclude_run_id=run_id,
+                )
+                break_seen_prior_close = bool(prior.get(sym, False))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "target revision: prior-close read failed for %s (%s) — "
+                    "today's break, if any, starts unconfirmed", sym, exc,
+                )
+
+            outcome = assess_target_revision(
+                symbol=sym,
+                direction="short" if is_short else "long",
+                entry_price=float(getattr(position, "avg_entry", 0) or 0) or None,
+                stored_target=stored_target,
+                target_level=target_level,
+                pinned_horizon_sessions=buy.get("expected_horizon_sessions"),
+                setup_type=buy.get("setup_type") or None,
+                levels=levels,
+                atr=atr,
+                close_price=close_price,
+                levels_coverage=coverage or COVERAGE_UNKNOWN,
+                break_seen_prior_close=break_seen_prior_close,
+                # The same ratified derivation bars the constructor passes at
+                # entry, read off `risk_engine.config` (what
+                # `ConstructorConfig` itself mirrors). Read defensively
+                # because this method must survive a lightweight pipeline
+                # double in unit tests that never built a real risk_engine;
+                # the fallbacks are `src.data.levels`' own module constants,
+                # not a second invented set of numbers.
+                **target_cfg,
+            )
+
+            # File today's raw break state for the NEXT trading day to
+            # confirm against — the same read/persist shape as
+            # `_structural_protection_for_holding`. A `None` from the break
+            # test means the question could not be asked; nothing is filed,
+            # so a missing input can never become half of a confirmation.
+            raw_broken = target_level_broken(
+                target_level=target_level, close_price=close_price,
+                atr=atr, is_short=is_short,
+            )
+            if raw_broken is not None and bar_date:
+                try:
+                    self.db.save_target_level_break(
+                        run_id=run_id, symbol=sym,
+                        raw_broken=bool(raw_broken), bar_date=bar_date,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "target revision: failed to persist %s break state "
+                        "(%s) — tomorrow's read starts unconfirmed", sym, exc,
+                    )
+
+            applied = False
+            if outcome.revised and outcome.new_price:
+                try:
+                    applied = bool(self.db.update_open_take_profit(
+                        sym, outcome.new_price,
+                        action="SHORT" if is_short else "BUY",
+                    ))
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "target revision: write-back failed for %s (%s) — "
+                        "the stored target stands", sym, exc,
+                    )
+                    applied = False
+                if applied:
+                    logger.info(
+                        "Target revised: %s $%.2f -> $%.2f (%s, %s) — "
+                        "progress/pace stay measured against the pinned "
+                        "entry target",
+                        sym, outcome.prior_price or 0.0, outcome.new_price,
+                        outcome.basis, outcome.trigger,
+                    )
+            if not applied and outcome.revised:
+                # The derivation succeeded but the row did not move. Recorded
+                # as its own outcome so the record can never claim a revision
+                # the trade row does not carry.
+                outcomes.append(self._file_target_revision(
+                    run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
+                    code="FAULT_REVISION_WRITE_FAILED", applied=False,
+                    trigger=outcome.trigger, prior_price=outcome.prior_price,
+                    detail=(
+                        f"{outcome.trigger} fired and re-derived "
+                        f"${outcome.new_price:,.2f}, but the opening row could "
+                        f"not be updated — the stored target stands"
+                    ),
+                ))
+                continue
+
+            outcomes.append(self._file_target_revision(
+                run_id=run_id, symbol=sym, seat=seat, evidence=evidence,
+                code=outcome.code, applied=applied, trigger=outcome.trigger,
+                prior_price=outcome.prior_price, new_price=outcome.new_price,
+                basis=outcome.basis, level_used=outcome.level_used,
+                detail=outcome.detail,
+            ))
+        return outcomes
+
+    def _file_target_revision(
+        self, *, run_id: str, symbol: str, seat: str, evidence: str,
+        code: str, applied: bool, trigger: str = "",
+        prior_price: float | None = None, new_price: float | None = None,
+        basis: str = "", level_used: float | None = None, detail: str = "",
+    ) -> dict:
+        """Write one adjudicated flag and return its payload.
+
+        Persistence failure degrades to the in-memory payload (which still
+        reaches the session result and the cockpit) rather than losing the
+        outcome or raising — but it is logged as an error, because an
+        unrecorded refusal is the blank this whole path exists to avoid.
+        """
+        payload = {
+            "symbol": symbol, "code": code, "trigger": trigger, "seat": seat,
+            "evidence": evidence, "detail": detail, "basis": basis,
+            "prior_price": prior_price, "new_price": new_price,
+            "level_used": level_used, "applied": bool(applied),
+        }
+        evidence_id = None
+        try:
+            evidence_id = self.db.record_target_revision(
+                run_id=run_id, symbol=symbol, code=code, seat=seat,
+                evidence=evidence, detail=detail, trigger=trigger,
+                prior_price=prior_price, new_price=new_price, basis=basis,
+                level_used=level_used, applied=applied,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "target revision: failed to record %s outcome %s (%s)",
+                symbol, code, exc,
+            )
+        payload["evidence_id"] = evidence_id
+        if not applied:
+            logger.info(
+                "Target revision refused for %s: %s — %s", symbol, code, detail,
+            )
+        return payload
+
     def _structural_protection_for_holding(
         self,
         *,
@@ -11551,7 +11852,42 @@ class TradingPipeline:
                         buy = None
 
             stop_loss = float((buy or {}).get("stop_loss") or 0)
+            # The LIVE target — re-derived if a structural event has since
+            # triggered `src.risk.target_revision`. Used for
+            # `distance_to_target_pct` and for display, and NEVER as the
+            # denominator of progress; see `progress_target` below.
             take_profit = float((buy or {}).get("take_profit") or 0)
+            # The ENTRY target, frozen as `initial_take_profit` at insert.
+            #
+            # THIS, not `take_profit`, is the denominator of
+            # `thesis_progress_pct` and therefore of `pace`. The target is
+            # the denominator, so RAISING it mechanically LOWERS progress and
+            # LOWERS pace — and both are in
+            # `src.risk.exit_guard._HIGHER_IS_BETTER`. Measured against the
+            # live target, a revision on good news (the name gaps through the
+            # resistance the target sat on, the target is re-derived higher)
+            # would show up in `MetricDeltas.worsened`, which clears
+            # `net_improved`, which switches OFF `veto_contradicted_exit` —
+            # so the position would instantly look less progressed and
+            # slower than an hour earlier, and a "this position is stalling"
+            # SELL that was previously blocked would go through. A machine
+            # for making winners look stalled and then selling them.
+            #
+            # Pinning the denominator removes that by construction rather
+            # than by a special case in the guard: a revision cannot move
+            # either metric at all, so it cannot appear as a deterioration.
+            # Same reasoning as the pinned horizon two paragraphs down — a
+            # yardstick that moves measures nothing.
+            #
+            # Legacy rows that predate the column fall back to the live
+            # target, which for them IS the entry target: `take_profit` was
+            # only ever written by `insert_trade` before the revision path
+            # existed (see the `initial_take_profit` migration in
+            # `src/storage/db.py`), and a row with no revision has nothing
+            # to diverge from.
+            progress_target = float(
+                (buy or {}).get("initial_take_profit") or take_profit or 0
+            )
             # The ENTRY stop, frozen as `initial_stop_loss` on first
             # write-back. R-multiple's denominator is the bet that was
             # actually made, not the level a trail later ratcheted it to
@@ -11619,8 +11955,8 @@ class TradingPipeline:
             if setup_type == "breakout":
                 pace_status = "n/a_breakout"
             else:
-                if take_profit and entry and take_profit != entry:
-                    progress_pct = (cur - entry) / (take_profit - entry) * 100
+                if progress_target and entry and progress_target != entry:
+                    progress_pct = (cur - entry) / (progress_target - entry) * 100
 
                 # Pace against the horizon the ANALYST pinned at entry.
                 #
@@ -11717,6 +12053,18 @@ class TradingPipeline:
                 "target_breach_flag": target_breach_flag,
                 "atr_pct": atr_pct,
                 "stop_distance_atrs": stop_distance_atrs,
+                # Both targets, named for what they are. `take_profit` is the
+                # live (possibly re-derived) number; `entry_take_profit` is
+                # the pinned entry derivation that `thesis_progress_pct` and
+                # `pace` above are measured against. Surfaced separately so
+                # neither the reviewer nor the cockpit has to guess which
+                # number a progress figure came from.
+                "take_profit": take_profit or None,
+                "entry_take_profit": progress_target or None,
+                "target_revised": bool(
+                    take_profit and progress_target
+                    and round(take_profit, 2) != round(progress_target, 2)
+                ),
             }
         return facts
 
@@ -12118,6 +12466,9 @@ class TradingPipeline:
             # the log-only failure mode the fix exists to close.
             logger.warning("%s: %s", session_type, macro_coverage.describe())
         review = None
+        # Adjudicated take-profit revision flags, filed per symbol whichever
+        # way each one goes (revision, named refusal, named data fault).
+        target_revisions: list[dict] = []
         # Pre-LLM orders (take-profit + ex-div) feed into the same bucket.
 
         # LLM view: the cash-sweep vehicle is cash-equivalent, not a
@@ -12403,6 +12754,26 @@ class TradingPipeline:
                     position_facts=position_facts,
                 ))
 
+                # Take-profit revision flags, adjudicated LAST — after every
+                # exit decision this session makes. A re-derived target
+                # therefore cannot reach this session's exits even in
+                # principle; and because progress/pace are measured against
+                # the PINNED entry target, it cannot reach a later session's
+                # exit-guard veto either. Places no orders: nothing here
+                # exits anything, and the trailing stop remains the only
+                # automatic exit (PR #321).
+                try:
+                    target_revisions = self._adjudicate_target_revision_flags(
+                        review, review_positions, run_id=run_id,
+                        seat="position_reviewer",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "target revision sweep failed (non-fatal, no target "
+                        "was changed): %s", exc,
+                    )
+                    target_revisions = []
+
             # Snapshot AFTER the review so the next session compares against
             # what this one actually saw. Written even when the review failed:
             # the metrics are deterministic and their continuity is the point.
@@ -12445,6 +12816,9 @@ class TradingPipeline:
             "orders": orders,
             "run_id": run_id,
             "stop_coverage_gaps": coverage_gaps,
+            # Every take-profit revision flag this session adjudicated, with
+            # its basis code — read by the cockpit, which draws the target.
+            "target_revisions": target_revisions,
             # Spec §11.2 — gross exposure, its ladder-resolved ceiling and the
             # distance to forced liquidation, for the operator alert.
             "leverage": dict(ctx.leverage),
