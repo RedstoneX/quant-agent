@@ -79,11 +79,12 @@ describe("buildResearchDesk", () => {
     expect(data.prior_as_of).toBe("2026-08-24T13:00:00Z");
     expect(data.dry_annotation).toBe("Several reads. No portfolio instruction. That is still a decision.");
     // The analyst's own `reference_target` is NEVER drawn — only the desk's
-    // derived `take_profit` is. A row carrying only the guess records a
-    // stated reason instead of vanishing.
+    // derived `take_profit` is. A row carrying only the guess simply has no
+    // target: per owner ruling, that is not announced (no card, no gap
+    // message) — the absence is quiet, unlike an undrawable-geometry fault.
     const technical = data.agents.find((agent) => agent.seat === "technical");
     expect(technical?.market_context).toHaveLength(0);
-    expect(technical?.market_context_gaps.join(" ")).toContain("analyst's own estimated target");
+    expect(technical?.market_context_gaps).toHaveLength(0);
   });
 
   it("draws the desk's derived target, labels its basis, and keeps shorts", () => {

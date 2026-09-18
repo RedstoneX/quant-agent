@@ -186,10 +186,10 @@ function targetBasis(payload: unknown): string | null {
   return basis || null;
 }
 
-/* Stop/entry/target as the desk actually recorded them, or a stated
- * reason why a row could not be drawn.
+/* Stop/entry/target as the desk actually recorded them, or — for a row
+ * that is undrawable for some OTHER reason — a stated reason why not.
  *
- * Two things this deliberately does NOT do, both of them fixed defects:
+ * Three things this deliberately does NOT do, all of them fixed defects:
  *
  * 1. It never draws `reference_target`. That field is the ANALYST MODEL'S
  *    guess. The constructor stopped choosing answers from it on
@@ -205,20 +205,31 @@ function targetBasis(payload: unknown): string | null {
  *    entry < target`, which silently discarded every short (a short's
  *    stop sits ABOVE entry and its target BELOW) and left no record that
  *    anything had been dropped.
+ *
+ * 3. Per owner ruling (2026-09-18), a row with no desk-derived target
+ *    says NOTHING about it — no card, no "not available" line, no gap
+ *    message. An absent target is the normal case for a technical-seat
+ *    row today and is not itself a defect worth announcing; only a row
+ *    that IS drawable-in-principle but fails on its own terms (bad
+ *    geometry, zero risk distance) still reports a reason below.
  */
 function marketContext(rows: StoredResearchEvidence[]): { contexts: ResearchMarketContext[]; gaps: string[] } {
   const contexts: ResearchMarketContext[] = [];
   const faults: string[] = [];
-  let guessOnly = 0;
   for (const row of sortEvidence(rows).reverse()) {
     const entry = numberAt(row.payload, "entry_price");
     const stop = numberAt(row.payload, "stop_loss", "suggested_stop_price");
     if (!row.symbol || entry == null || stop == null) continue;
     const target = numberAt(row.payload, "take_profit");
     if (target == null) {
-      // A stop and an entry but no desk-derived target. Draw nothing: the
-      // only other number available is the model's guess.
-      if (numberAt(row.payload, "reference_target") != null) guessOnly += 1;
+      // No desk-derived target on this row (the only other number
+      // available is the analyst model's own guess, which the desk does
+      // not use). Per owner ruling, an absent target is not itself a
+      // defect worth announcing — say nothing and move on, rather than
+      // drawing attention to a number that was never expected to exist
+      // here. A row that's undrawable for some OTHER reason (bad
+      // geometry, zero risk distance) still reports below, since that is
+      // something worth flagging.
       continue;
     }
     if (stop === entry) {
@@ -237,9 +248,6 @@ function marketContext(rows: StoredResearchEvidence[]): { contexts: ResearchMark
     });
   }
   const gaps = faults.slice(0, 3);
-  if (guessOnly) {
-    gaps.push(`${guessOnly} read${guessOnly === 1 ? "" : "s"} carried only the analyst's own estimated target, which the desk does not use — not drawn.`);
-  }
   return { contexts: contexts.slice(0, 3), gaps };
 }
 function aggregateDirection(rows: StoredResearchEvidence[]): ResearchDirection {
