@@ -8,6 +8,44 @@ import { DataTable } from "./ui/DataTable";
 
 const columnHelper = createColumnHelper<PositionItem>();
 
+/* Totals row (owner request, 2026-09-18: "make it noticeable").
+ *
+ * Only the columns where addition means something get a number.
+ *
+ * - Qty, Market value: added straight across every row, which is what
+ *   those columns are — a count of shares held and dollars of exposure.
+ * - Day P&L, Unrealized P&L: added across the DIRECTIONAL rows only,
+ *   because cash parking already renders as "—"/"excluded" in those two
+ *   columns. A total that quietly included what the rows above exclude
+ *   would not be the total of what is on screen.
+ * - Avg entry, Price: left BLANK. They are per-share prices of different
+ *   companies; adding them produces a number that means nothing, and a
+ *   share-weighted average across unrelated instruments means nothing
+ *   either. Nothing is invented to fill the cell.
+ * - Symbol, Role, Sector: not numbers. Symbol carries the row's label.
+ *
+ * The note under the table states all of that in words, including any
+ * position the desk has no day figure for, so a reader never has to
+ * guess what went into a total.
+ */
+function positionTotals(positions: PositionItem[]) {
+  const directional = positions.filter((position) => !position.is_cash_equivalent);
+  const dayRows = directional.filter((position) => position.unrealized_intraday_pnl !== null);
+  const sum = (values: (number | null)[]) =>
+    values.reduce<number>((total, value) => total + (value ?? 0), 0);
+  return {
+    count: positions.length,
+    directionalCount: directional.length,
+    missingDayFigures: directional.length - dayRows.length,
+    qty: sum(positions.map((position) => position.qty)),
+    marketValue: sum(positions.map((position) => position.market_value)),
+    dayPnl: dayRows.length ? sum(dayRows.map((position) => position.unrealized_intraday_pnl)) : null,
+    unrealizedPnl: directional.length
+      ? sum(directional.map((position) => position.unrealized_pnl))
+      : null,
+  };
+}
+
 export function PositionsPanel({
   positions,
   error,
@@ -58,6 +96,34 @@ export function PositionsPanel({
     [onSelectSymbol]
   );
 
+  const totals = useMemo(() => positionTotals(positions), [positions]);
+  // Keyed by COLUMN ID so the row survives the reordering and resizing
+  // this table already supports — see DataTable's `footer`.
+  const footer = useMemo(
+    () => ({
+      symbol: (
+        <span className="uppercase tracking-wide">
+          Total · {totals.count} {totals.count === 1 ? "position" : "positions"}
+        </span>
+      ),
+      qty: fmtNum(totals.qty),
+      market_value: fmtMoney(totals.marketValue),
+      unrealized_intraday_pnl:
+        totals.dayPnl === null ? (
+          <span className="text-dim">not available</span>
+        ) : (
+          <span className={pnlClass(totals.dayPnl)}>{fmtMoney(totals.dayPnl)}</span>
+        ),
+      unrealized_pnl:
+        totals.unrealizedPnl === null ? (
+          <span className="text-dim">not available</span>
+        ) : (
+          <span className={pnlClass(totals.unrealizedPnl)}>{fmtMoney(totals.unrealizedPnl)}</span>
+        ),
+    }),
+    [totals],
+  );
+
   return (
     <Panel
       title="Positions"
@@ -89,7 +155,25 @@ export function PositionsPanel({
             resizable
             reorderable
             storageKey="positions-columns"
+            footer={footer}
           />
+          {/* Says in words what each total does and does not include, so
+              no figure in the row above needs interpreting. */}
+          <p className="mt-2 font-sans text-[0.78rem] leading-relaxed text-dim">
+            The total row adds the quantity, market value and profit-and-loss columns.
+            {totals.count !== totals.directionalCount
+              ? " Cash parking is left out of both profit-and-loss totals, exactly as it is in the rows above."
+              : ""}
+            {totals.missingDayFigures > 0
+              ? ` ${totals.missingDayFigures} ${
+                  totals.missingDayFigures === 1 ? "position has" : "positions have"
+                } no day profit-and-loss recorded and ${
+                  totals.missingDayFigures === 1 ? "is" : "are"
+                } not in that total.`
+              : ""}{" "}
+            Average entry and price are left blank: they are per-share prices of different
+            companies, so there is no meaningful figure to add them into.
+          </p>
         </div>
       )}
     </Panel>
