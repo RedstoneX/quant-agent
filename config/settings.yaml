@@ -355,6 +355,33 @@ execution:
   # trading day while it holds. Read-only; it never places an order.
   fractional_enabled: true
   fractional_share_decimals: 4
+  # Live `trade_updates` websocket fill feed. OFF — owner decision
+  # 2026-09-17. Fills are confirmed by the bounded REST fallback, which is
+  # what has actually confirmed every fill since the socket was built on
+  # 2026-09-10: the socket has never once authenticated on this host.
+  #
+  # Two independent blockers were confirmed before this switch existed, so
+  # nothing in this repo could have made it work:
+  #   * the trading process holds PLACEHOLDER Alpaca credentials; a local
+  #     credential-injecting proxy substitutes the real key on outbound
+  #     REST (hence working order placement) but the websocket does not go
+  #     through that proxy, and the installed `alpaca-py` stream uses
+  #     `websockets.legacy`, which has no proxy support at all;
+  #   * Alpaca authenticates the stream with an in-band websocket MESSAGE,
+  #     not a handshake header, and the gateway injects headers only.
+  #
+  # Leaving it on cost a bounded slice of every fill window on a handshake
+  # that could never succeed, plus ~150 auth-failure log lines a day that
+  # the owner never saw. With it off the desk never opens the socket,
+  # never takes the account-wide lease and never runs the reconnect loop.
+  # No timeout, poll interval or ceiling changes — fill waits take the
+  # same REST polling path `use_stream=False` has always taken.
+  #
+  # The websocket code is DORMANT, not deleted. The owner deferred the
+  # credential decision; if the process is ever given real Alpaca
+  # credentials directly, flipping this to true is the only change needed
+  # and restores the pre-2026-09-17 behaviour exactly.
+  fill_stream_enabled: false
 
 risk:
   # Single-name NOTIONAL ceiling — a concentration/liquidity backstop, not
@@ -935,16 +962,25 @@ risk:
   # beta yet." Deliberately flipped only AFTER the gross-exposure ceiling and
   # the de-levering ladder were merged and verified, which was the ratified
   # sequencing. The PM prompt's exposure table moved to 2.0x in the same
-  # commit — the two must never diverge.
+  # commit — the two must never diverge. That table lives in
+  # `config/prompts/portfolio_manager.md` ("Target gross exposure", plus the
+  # de-levering-ladder table under it), NOT in `src/agents/
+  # portfolio_manager.py` — which has never held one, and where looking for
+  # it has already produced a false "the table was deleted" report
+  # (2026-09-18). Verified still present and still stating 2.0x as of
+  # 2026-09-18; it is prose, so nothing mechanical pins it to this value.
   allow_margin: true
   # --- Margin interest tracker (spec §11.2, 2026-09-01) ------------------
   # MEASURES only — never a risk check. Alpaca's live non-elite rate (elite
   # is 4.75%); kept here so it can be corrected without a code change.
   # Charged ONLY on the overnight debit balance, (balance x rate) / 360 —
   # intraday leverage is free. See src/margin_interest.py for the
-  # formula and the still-open question of whether paper trading charges
-  # this at all — every figure surfaced from this rate is a labelled
-  # ESTIMATE until the broker's own INT activity confirms or denies it.
+  # formula and the question of whether paper trading charges this at all —
+  # every figure surfaced from this rate is a labelled ESTIMATE. First
+  # measurement 2026-09-18: a -$915.83 debit carried overnight 09-17 -> 09-18
+  # produced ZERO broker `INT` activity rows on a query proven live in the
+  # same probe, i.e. paper did NOT charge it that night. One night on a small
+  # balance is not proof, the ESTIMATE label stays, and nothing gates on it.
   margin_interest_rate_pct: 6.25
   # --- Spec §11.2 — the gross-exposure ceiling (owner-ratified 2026-09-01)
   #

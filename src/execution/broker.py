@@ -25,6 +25,9 @@ from alpaca.trading.requests import (
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
 
 from src.models import Position, _ALLOWED_SECTORS, _SECTOR_ALIASES
+# THE stop-value judgement (docs/WORK.md item 88). `src.execution.stop_records`
+# imports nothing from this module, so this is a leaf dependency.
+from src.execution.stop_records import STOP_USABLE, classify_stop_price
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,44 @@ _PLAIN_PRICE_LABELS = {
     "stop_loss_price": "stop",
     "take_profit_price": "target price",
 }
+
+
+def _outlier_refusal_detail(
+    label: str,
+    candidate: float,
+    reference_price: float,
+    *,
+    symbol: str,
+    atr: float | None,
+) -> str:
+    """The owner-facing sentence for a fat-finger refusal.
+
+    A bare deviation percentage is not something a trader can judge: 24% is
+    absurd on a utility and an ordinary couple of sessions on a $7 name. So
+    the sentence puts the stock's OWN normal daily range next to it.
+
+    `atr` is the desk's already-measured ATR(14) for this symbol, handed
+    down by the caller (`src/pipeline_stages.py` reads it off the same
+    analysis the constructor sized from). Nothing is fetched and nothing is
+    estimated here: if the caller has no ATR, the range clause is simply
+    omitted rather than filled with an invented number.
+
+    Plain words only — no field names, no jargon, no "ATR". The owner is
+    not a developer and reads these in a Telegram alert.
+    """
+    deviation_pct = abs(candidate - reference_price) / reference_price * 100
+    sentence = (
+        f"{_PLAIN_PRICE_LABELS.get(label, label)} "
+        f"${candidate:,.2f} is {deviation_pct:.0f}% "
+        f"from price ${reference_price:,.2f}"
+    )
+    if atr is not None and math.isfinite(atr) and atr > 0:
+        atr_pct = atr / reference_price * 100
+        sentence += (
+            f" — {symbol} normally moves about ${atr:,.2f} "
+            f"({atr_pct:.0f}%) in a day"
+        )
+    return sentence
 
 # Alpaca allows one `trade_updates` websocket per account. Each fill wait
 # used to construct its own TradingStream; a second handshake while the
@@ -1013,9 +1054,20 @@ class AlpacaBroker:
     #: reads None rather than raising; `_kill_switch_active` already treats
     #: None as "no switch configured", i.e. inert.
     _kill_switch_path: "Path | None" = None
+    #: Live `trade_updates` websocket feed. Declared here, FALSE, for the
+    #: same reason as `_kill_switch_path` above: an instance built without
+    #: __init__ must read the safe value rather than raise. Fail-closed
+    #: direction is OFF — a construction site that never threads the flag
+    #: through (the read-only broker in src/api/broker_reads.py, the
+    #: heartbeat, one-off scripts, isolated unit tests) must not be able to
+    #: open the account's single socket by omission. See
+    #: `ExecutionConfig.fill_stream_enabled` for WHY it is off in
+    #: production; src/pipeline.py is the only site that passes it.
+    _fill_stream_enabled: bool = False
     def __init__(self, api_key: str, secret_key: str, paper: bool = True,
                  kill_switch_path: str | None = None,
-                 trade_updates_lease_path: str | None = None):
+                 trade_updates_lease_path: str | None = None,
+                 fill_stream_enabled: bool = False):
         self.api_key = api_key
         self.secret_key = secret_key
         self._paper = paper
@@ -1068,6 +1120,8 @@ class AlpacaBroker:
         )
         self._trade_slot_held = False
         self._trade_lease_contended = False
+        self._fill_stream_enabled = bool(fill_stream_enabled)
+        self._fill_stream_off_logged = False
 
     def _kill_switch_active(self) -> bool:
         """Guard 1: True once ops has halted the desk by `touch`-ing the
@@ -2834,6 +2888,38 @@ class AlpacaBroker:
             except RuntimeError:
                 pass
 
+    def fill_stream_enabled(self) -> bool:
+        """True when the desk is allowed to open the `trade_updates` socket.
+
+        Public because the submit-window budget needs it: `src/pipeline_stages.py`
+        adds the handshake budget only when a handshake can actually happen.
+        """
+        return bool(getattr(self, "_fill_stream_enabled", False))
+
+    def _fill_stream_off_warmup(self) -> TradeStreamWarmup:
+        """The warmup an intentionally-disabled socket reports.
+
+        `handshake_failed` and `retried` are both FALSE on purpose. They are
+        what `_start_trade_updates_early` / `_warm_trade_updates` /
+        `_adopt_stream_stall` read to set `ctx.desk_latency_stall` — i.e. "the
+        desk lost time to a broken socket". A socket that was never opened
+        because the owner switched it off cost no time and is not a stall, so
+        reporting a failure here would rebuild the exact noise this switch
+        removes, just in a different field.
+        """
+        if not self._fill_stream_off_logged:
+            # Once per process, at INFO — ops still needs to be able to see
+            # WHY fills are REST-confirmed. This deliberately replaces the
+            # ~150 auth-failure WARNINGs a day, and must never become a
+            # per-order line.
+            logger.info(
+                "trade_updates websocket disabled by configuration "
+                "(execution.fill_stream_enabled) — fills are confirmed by "
+                "the bounded REST path; no socket, no lease, no reconnect loop",
+            )
+            self._fill_stream_off_logged = True
+        return TradeStreamWarmup(ready=False, handshake_failed=False, retried=False)
+
     def ensure_trade_updates(self) -> TradeStreamWarmup:
         """Start (or reuse) the kept trade_updates socket. Does not wait for auth.
 
@@ -2886,7 +2972,14 @@ class AlpacaBroker:
 
         No-op reuse when this process already owns a live hub. Refuses to
         open a socket when another process holds the account lease.
+
+        Refuses outright, before the lease is even attempted, when
+        `execution.fill_stream_enabled` is off — see that flag for why.
         """
+        if not self.fill_stream_enabled():
+            warmup = self._fill_stream_off_warmup()
+            self._last_stream_warmup = warmup
+            return warmup
         if TradingStream is None:
             warmup = TradeStreamWarmup(
                 ready=False, handshake_failed=True, retried=False,
@@ -2983,8 +3076,13 @@ class AlpacaBroker:
         A live-but-silent hub (alpaca-py reconnecting inside `run()`) is
         sliced at the REST poll interval so a fill cannot hide longer than
         the REST path would have taken to see it.
+
+        `execution.fill_stream_enabled` off takes the SAME branch as an
+        explicit `use_stream=False` — deliberately the identical code path,
+        not a parallel one, so the configuration change cannot alter a
+        bounded wait. Same timeout, same poll interval, same ceiling.
         """
-        if not use_stream:
+        if not use_stream or not self.fill_stream_enabled():
             return self._wait_for_order_status_via_polling(
                 order_id, timeout_seconds, poll_interval,
                 stop_states=stop_states,
@@ -3183,6 +3281,13 @@ class AlpacaBroker:
         Auth leftover is not added on top. A dead hub does not sit out a
         second full window before REST.
         """
+        # Belt and braces with `_wait_for_order_status`'s own gate: this is
+        # the ONLY function that can construct a TradingStream or take the
+        # account lease for a fill wait, so the "never opens a socket"
+        # guarantee is enforced here too and does not depend on every
+        # caller routing through the wrapper above.
+        if not self.fill_stream_enabled():
+            return None, False
         if TradingStream is None:
             return None, False
 
@@ -3374,7 +3479,17 @@ class AlpacaBroker:
                      limit_price: float | None = None,
                      stop_loss_price: float | None = None,
                      take_profit_price: float | None = None,
-                     reference_price: float | None = None) -> dict:
+                     reference_price: float | None = None,
+                     atr: float | None = None) -> dict:
+        """Submit an entry or exit order.
+
+        `atr` is OPTIONAL and is used for the OWNER-FACING WORDING ONLY —
+        never for a gate, a threshold or a size. It is the desk's own
+        already-measured ATR(14) for this symbol, so that a fat-finger
+        refusal can state the stock's normal daily range beside the
+        deviation instead of a bare percentage the owner cannot judge. No
+        code path branches on it.
+        """
         if self._kill_switch_active():
             # Guard 1: deliberately unconditional. This is the ONE check in
             # the order-submission path that does NOT exempt a SELL/COVER —
@@ -3394,28 +3509,74 @@ class AlpacaBroker:
         internal_symbol = _internal_symbol(symbol)
         alpaca_symbol = _alpaca_symbol(internal_symbol)
 
+        # Captured BEFORE `_quantize_price`, which maps NaN/Inf to None (see
+        # its docstring). A non-finite STOP would therefore vanish silently
+        # and `use_stop` below would go False — submitting the entry with no
+        # protective stop at all, which is the worst possible outcome of a
+        # bad number. The stop checks below refuse it instead.
+        stop_was_supplied = stop_loss_price is not None
+        stop_was_finite = (
+            stop_loss_price is not None and math.isfinite(stop_loss_price)
+        )
+
         # Normalize to Alpaca's tick size — sub-penny values from quote-midpoint
         # math or LLM outputs get Alpaca error 42210000 and a rejected order.
         limit_price = _quantize_price(limit_price)
         stop_loss_price = _quantize_price(stop_loss_price)
         take_profit_price = _quantize_price(take_profit_price)
 
-        # Fat-finger / outlier price guardrail. If the caller passed a
-        # reference_price (typically today's quote or last bar close) and any
-        # of our prices is more than 20% away from it, the number is almost
-        # certainly garbage — a data-source glitch ($0.01 quote on a $300
-        # stock, or an LLM hallucinated entry). Submitting would turn qty
-        # sizing into nonsense (5% alloc / $0.01 = 500× expected shares) and
-        # blow through every risk check. Refuse the order.
+        # ------------------------------------------------------------------
+        # Fat-finger / outlier price guardrail — ENTRY/LIMIT PRICE ONLY.
+        # ------------------------------------------------------------------
+        # If the caller passed a reference_price (today's quote) and the
+        # price we would TRANSACT AT is more than `OUTLIER_MAX_DEVIATION`
+        # away from it, the number is almost certainly garbage — a
+        # data-source glitch ($0.01 quote on a $300 stock, or an LLM
+        # hallucinated entry). Submitting would turn qty sizing into
+        # nonsense (5% alloc / $0.01 = 500x expected shares) and blow
+        # through every risk check. Refuse the order.
+        #
+        # WHY THIS NO LONGER APPLIES TO THE STOP (2026-09-17, FLNC).
+        # `OUTLIER_MAX_DEVIATION` is an unsourced 20% inherited from the
+        # upstream project (ca4c51d9, yebof, 2026-04-18) and it was being
+        # applied to the stop as well. A flat percentage band is the wrong
+        # shape of test for a stop, for three reasons:
+        #
+        #   1. It is measured in the wrong units. A stop's distance from
+        #      entry is a volatility distance, not a fixed fraction of
+        #      price. FLNC's own measured ATR(14) on 2026-09-17 was $0.75
+        #      against a $7.785 price — 9.6% — so a flat 20% band refuses
+        #      any stop wider than ~2.1x that stock's ordinary daily range,
+        #      while on a $500 name with a 1% ATR the same band permits 20
+        #      ATRs. It bans nothing on a quiet stock and bans normal
+        #      structure on a volatile one.
+        #   2. It only catches the SAFE direction. A too-WIDE stop, under
+        #      risk-based sizing, makes the position SMALLER (qty = risk
+        #      budget / stop distance). The dangerous error is a too-TIGHT
+        #      stop, which inflates size — and a deviation band never
+        #      catches a tight stop at all, because a tight stop sits close
+        #      to the reference by definition.
+        #   3. It refused a trade the desk had already paid for. On
+        #      2026-09-17 17:05:30 (production log) a risk-manager-approved
+        #      SELL_SHORT FLNC — entry $7.785, stop $9.66, correct side,
+        #      R/R 1.51:1, the constructor's own reading recorded as "stop
+        #      width 2.50 x ATR, touch probability 20.7%" — was rejected
+        #      here AFTER every analyst, portfolio-manager and risk-manager
+        #      call had been billed.
+        #
+        # No replacement percentage is invented for the stop: there is no
+        # published source for one, and per the desk's no-arbitrary-numbers
+        # rule a fitted number would be no better than this one. What the
+        # stop gets instead, below, are the two checks that need no number
+        # at all — finiteness and side. The width question already belongs
+        # to `src/portfolio_constructor.py::_widen_stop_past_noise`, which
+        # measures it in the instrument's own ATR and honours a
+        # level-backed stop however tight (spec §12.1). Nothing here
+        # second-guesses that in percent.
         OUTLIER_MAX_DEVIATION = 0.20
         if reference_price and reference_price > 0:
-            for label, candidate in (
-                ("limit_price", limit_price),
-                ("stop_loss_price", stop_loss_price),
-                ("take_profit_price", take_profit_price),
-            ):
-                if candidate is None or candidate <= 0:
-                    continue
+            label, candidate = "limit_price", limit_price
+            if candidate is not None and candidate > 0:
                 deviation = abs(candidate - reference_price) / reference_price
                 if deviation > OUTLIER_MAX_DEVIATION:
                     logger.error(
@@ -3434,13 +3595,99 @@ class AlpacaBroker:
                         # refused a perfectly sane order. Plain words, not
                         # the internal field name/precision the log line
                         # above carries (owner-facing text, not a log):
-                        # "stop $9.66 is 24% from price $7.79", never
-                        # "stop_loss_price=$9.6600 deviates 24.1% from
+                        # "limit price $9.66 is 24% from price $7.79", never
+                        # "limit_price=$9.6600 deviates 24.1% from
                         # reference $7.79 (likely ... hallucinated)".
+                        #
+                        # The bare percentage alone is not judgeable: 24%
+                        # is an outrage on a utility and an ordinary two
+                        # days on a $7 name. So the message carries the
+                        # stock's OWN measured daily range beside it —
+                        # `atr` is the desk's already-computed ATR(14) for
+                        # this symbol, passed down from the entry stage; it
+                        # is never fetched or estimated here, and when the
+                        # caller has none the sentence simply omits it
+                        # rather than inventing a range.
+                        "detail": _outlier_refusal_detail(
+                            label, candidate, reference_price,
+                            symbol=internal_symbol, atr=atr,
+                        ),
+                    }
+
+        # ------------------------------------------------------------------
+        # Stop-price sanity — the checks appropriate to a STOP.
+        # ------------------------------------------------------------------
+        # Only on the two ENTRY sides, which are the only sides that ever
+        # pass a stop (see `use_stop` below): 'sell' is this codebase's
+        # word for reducing/closing a long and never supplies one.
+        if side.lower() in ("buy", "sell_short") and stop_was_supplied:
+            # docs/WORK.md item 88. A stop WAS requested, so from here the
+            # only two legal outcomes are "a usable price" and "refused".
+            # `0.0` used to be a third: this codebase's sentinel for "no
+            # stop", which made a degenerate ATR output or a miscomputed
+            # level REMOVE protection instead of refusing the trade. The
+            # sentinel survives only where nothing was supplied at all
+            # (`stop_loss_price=None`, the cash-sweep park's deliberate
+            # stopless buy) — that distinction is the whole fix. NaN/Inf
+            # was the same hole in a different disguise, closed for this
+            # lane by PR #455; zero is closed here.
+            stop_state, _stop_px = classify_stop_price(
+                stop_loss_price if stop_was_finite else float("nan")
+            )
+            if stop_state != STOP_USABLE:
+                logger.error(
+                    "Stop sanity: %s %s — a stop was requested and its value "
+                    "(%r) cannot be a stop price. Order REJECTED rather than "
+                    "submitted naked. A garbage stop is not an absent stop: "
+                    "only a caller that passes no stop at all (None) is "
+                    "allowed a stopless order.",
+                    side.upper(), symbol, stop_loss_price,
+                )
+                return {
+                    "id": None, "status": "rejected_bad_stop",
+                    "symbol": internal_symbol,
+                    "detail": "the stop price is not a usable number",
+                }
+            # Side check. A stop on the wrong side of the price we are
+            # entering at protects nothing and would fire instantly — the
+            # same refusal the constructor makes against its own entry
+            # (`STOP_REFUSAL_WRONG_SIDE`), repeated here because this is
+            # the last deterministic gate before the broker and Invariant 2
+            # requires the final authority to fail closed. Measured against
+            # the price this order actually transacts at (the limit),
+            # falling back to the quote when it is a market order. No
+            # number is chosen: it is an inequality.
+            entry_ref = (
+                limit_price if (limit_price and limit_price > 0)
+                else (reference_price if (reference_price and reference_price > 0)
+                      else None)
+            )
+            if (
+                entry_ref is not None
+                and stop_loss_price is not None
+                # Unreachable unless usable now — the refusal above returns
+                # on anything else. Kept as a precondition, not a sentinel.
+                and stop_loss_price > 0
+            ):
+                is_short_entry = side.lower() == "sell_short"
+                wrong_side = (
+                    stop_loss_price <= entry_ref if is_short_entry
+                    else stop_loss_price >= entry_ref
+                )
+                if wrong_side:
+                    logger.error(
+                        "Stop sanity: %s %s — stop=$%.4f is on the wrong "
+                        "side of the $%.4f entry, so it protects nothing. "
+                        "Order REJECTED.",
+                        side.upper(), symbol, stop_loss_price, entry_ref,
+                    )
+                    return {
+                        "id": None, "status": "rejected_bad_stop",
+                        "symbol": internal_symbol,
                         "detail": (
-                            f"{_PLAIN_PRICE_LABELS.get(label, label)} "
-                            f"${candidate:,.2f} is {deviation * 100:.0f}% "
-                            f"from price ${reference_price:,.2f}"
+                            f"stop ${stop_loss_price:,.2f} is on the wrong "
+                            f"side of the ${entry_ref:,.2f} entry, so it "
+                            f"would protect nothing"
                         ),
                     }
 
@@ -3941,6 +4188,28 @@ class AlpacaBroker:
                 ) or status
             except Exception:  # noqa: BLE001
                 pass
+            if (status or "").lower() not in self._TERMINAL_ORDER_STATES:
+                # Fill confirmation has genuinely DEGRADED: the bounded
+                # window closed, the cancel-and-recheck closed too, and the
+                # broker still has not said what happened to a live order.
+                # The desk proceeds on filled_qty=0 below — the safe
+                # assumption, possibly a wrong one — so the owner has to be
+                # told, not just the log. This is NOT "the websocket is
+                # off": it is reachable identically with the socket on, and
+                # is exactly the outcome the REST path is supposed to
+                # prevent. See src/notifier.py's fill-confirmation block.
+                try:
+                    from src.notifier import alert_order_outcome_unconfirmed
+                    alert_order_outcome_unconfirmed(
+                        symbol, order_id,
+                        waited_seconds=_ENTRY_FILL_TIMEOUT_S,
+                        last_status=(status or "").lower() or None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "entry protection: unconfirmed-outcome alert for %s "
+                        "could not be sent: %s", symbol, exc,
+                    )
 
         try:
             info = self.get_order_fill_info(order_id) or {}
@@ -4179,6 +4448,22 @@ class AlpacaBroker:
         success — so guard 2 stays silent on success and still fires on a
         genuine partial cover.
         """
+        # docs/WORK.md item 88. Refuse a garbage trigger BEFORE burning the
+        # retry burst on it: a zero/negative/NaN/Inf stop is not a transient
+        # broker failure, so three attempts and ~2 seconds of sleeps cannot
+        # turn it into a placed order. None is the caller's escalate signal
+        # and every caller on this path already treats it as one, so the
+        # gap stays flagged instead of being reported as covered.
+        if classify_stop_price(stop_price)[0] != STOP_USABLE:
+            logger.critical(
+                "protective stop REFUSED for %s (qty=%s): the requested "
+                "trigger %r cannot be a stop price. Nothing was placed and "
+                "the position stays flagged as uncovered — a garbage stop "
+                "is never treated as 'no stop needed'.",
+                symbol, qty, stop_price,
+            )
+            return None
+
         whole, frac = _split_protective_qty(qty)
         if frac <= 0:
             # Whole-share: unchanged in every observable way.
@@ -4398,6 +4683,22 @@ class AlpacaBroker:
                 self._kill_switch_path, symbol, qty, stop_price,
             )
             return {"id": None, "status": "kill_switch_halted", "symbol": symbol}
+        # docs/WORK.md item 88 — the LAST authority before the broker, for
+        # the callers that reach this directly (the partial-exit reprotect
+        # and the restore paths) rather than through
+        # `_submit_protective_stop_retrying`. A zero trigger quantizes to
+        # 0.0 and a non-finite one quantizes to None, and both used to be
+        # handed to the SDK: one becomes a broker rejection, the other a
+        # serializer error, and neither says what was wrong. Raising is the
+        # contract this method's callers already handle ("the submit either
+        # worked or it raised"), so a garbage stop can never be mistaken
+        # for a placed one.
+        if classify_stop_price(stop_price)[0] != STOP_USABLE:
+            raise ValueError(
+                f"refusing a protective stop for {symbol}: the requested "
+                f"trigger {stop_price!r} is not a usable stop price "
+                f"(must be finite and positive)"
+            )
         order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
         time_in_force = _derive_stop_tif(qty)
         if time_in_force is TimeInForce.DAY:

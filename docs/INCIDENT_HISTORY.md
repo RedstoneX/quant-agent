@@ -22,6 +22,172 @@ what would catch it next time.
 
 ---
 
+### 2026-09-18 — a stop price of zero switched protection OFF instead of refusing the trade (item 88 closed)
+
+**In plain words.** The desk used the number zero to mean "this position was
+never given a stop". So whenever a stop came out as zero by accident — a
+miscalculation, a corrupted saved level, a bad number from a model — the
+system did not say "that is wrong, refuse the trade". It read it as "this one
+is not supposed to have a stop" and carried on with nothing protecting the
+position. The one thing a risk control must never do is fail in the direction
+of less protection, and this did exactly that.
+
+**Where it was real, and where it was not.** Three lanes were untraced when
+this was filed. Traced against the code, not the docstrings:
+
+* **The coverage-repair janitor — genuinely exposed, and worse than failing
+  open.** The thing whose entire job is to close protection gaps REFUSED to
+  act on a recorded stop of zero, and reported that refusal as the same fact
+  as "this row never had a stop". So a position could be permanently
+  unrepairable, and the owner alert that eventually fired said only that "the
+  automatic repair could not restore one" — identical wording for a corrupt
+  saved level, a level the price had already passed, and three exhausted
+  broker retries. Three different states, three different owner actions, one
+  sentence. Worse, the refusal only reaches the owner at all when coverage is
+  *exactly zero*; a partly-covered position carried it no further than a log
+  file.
+* **The partial-exit reprotect — a genuine fail-open, found while tracing.**
+  After a partial sale the residual shares are re-protected using the most
+  protective of the stops that were cancelled to make the sale possible. If
+  none of those carried a usable price, the function returned **success**. The
+  caller reads success as "coverage rebuilt" and DELETES the saved recovery
+  intent — so the residual position was left naked with nothing left to retry
+  it, and nothing said so. A missing (rather than zero) price would instead
+  crash the comparison.
+* **The position-resume / write-ahead lanes — not exposed.** They already
+  refused a non-positive stop and kept the recovery row alive. They did pass a
+  recorded infinity straight through to the broker, which is not a price
+  either; closed here.
+* **The live entry lane — safe, but for a reason nobody should rely on.** The
+  entry call site converted a zero into "no stop supplied" *before* the broker
+  could judge it, which is the laundering at the heart of this item. Nothing
+  live reached it only because a zero stop on an entry is separately hard-
+  blocked by the `require_stop_loss` risk rule, i.e. by a setting that happens
+  to be switched on. The order edge now fails closed on its own.
+
+**What the fix actually is: the distinction, not another threshold.** "No stop
+was requested" and "a stop was requested and its value is garbage" are
+different facts with opposite correct responses, and every one of these lanes
+had collapsed them into one. Exactly one path is legitimately stopless — the
+cash-sweep park, which passes no stop at all and says so — and it still works.
+Everything else now refuses zero, negative, NaN and infinity loudly, at the
+order edge, and keeps the gap flagged instead of reporting it as covered. The
+repair janitor now hands its caller the REASON it declined, which the owner
+alert and the standalone coverage watchdog both render instead of guessing.
+
+**What would have caught it.** Nothing, and that is the point: the sentinel was
+documented, deliberate and explicitly left in place by an earlier pass (the
+NaN half of the same hole was closed on the entry lane only). A test asserted
+the defect as correct behaviour. The lesson is the one already in
+`docs/OUTCOME.md`: a value that means "absent" must never be a value the
+arithmetic can also produce.
+
+**Deliberately NOT changed.** `TradeDecision` still accepts `stop_loss=0` on a
+BUY/SHORT — that is what lets the `require_stop_loss` rule be tested at all,
+and the refusal now lives at the order edge where it fails closed for every
+producer rather than at one model's validator.
+
+### 2026-09-18 — the production checkout now matches what git records (item 94 closed)
+
+The live box was running a hand-built dashboard bundle that had never been committed. Git was not wrong about production in the usual direction — the SERVER was the stale side, since nobody could say from the repo alone what was actually being served. PR #465 rebuilt and committed the cockpit bundle from current frontend source so the two agree, and added a guard that `index.html` may only reference assets that are actually committed, so the drift cannot silently recur. Verified: the dashboard looks no different to the owner — this was a recording fix, not a behaviour change. Item 94 retired.
+### 2026-09-18 — the stale-prose problem is not limited to the briefs; the code's own comments are rotting the same way, and two of them were checked
+
+**What broke, in one line:** the desk found seventeen out-of-date statements
+in the written briefs given to the trading seats, and then found the same kind
+of out-of-date statement inside the code's own comments — so the explanation a
+future reader trusts can be describing a rule that was switched off weeks ago.
+
+**The confirmed instance.** `src/portfolio_constructor.py` carries a long
+comment reasoning about a "hard reward:risk floor", and works through the
+arithmetic of `min_reward_risk_after_widening` as a live constraint a trade
+must clear. About two hundred lines above it, the same file states plainly
+that nothing in the module refuses a trade on a reward:risk floor any more,
+and `src/risk/constants.py` labels the historical key inert. Both cannot be
+true. The second is the current one. Nobody is misled into a bad trade by this
+— the code does not read the comment — but the next person deriving a stop
+width from that arithmetic would be reasoning from a rule that does not exist,
+and that is exactly how the brief defects in item 98 were born.
+
+**A second finding in the same comment, worth more than the comment itself.**
+The stop-width setup scalers are breakout 1.00 / range 0.90. They were
+corrected to those values on 2026-09-04, and the reasoning was recorded
+properly at the time: range 0.90 was chosen as *the tightest scaler that keeps
+the narrowest reachable stop outside the measured 1.25-ATR noise band*, and
+0.85 was explicitly rejected because `1.5 x 0.85 x 0.95 = 1.21` fell back
+inside that band. That derivation depended on the base being 1.5. **The base
+was changed to 2.5 on 2026-09-10.** At 2.5 the narrowest reachable stop is
+`2.5 x 0.90 x 0.95 = 2.14` ATR, nowhere near the noise band — so the
+constraint that produced 0.90 rather than 0.85 no longer binds at all. The
+number survived; the reason for it did not. It is now effectively an
+unsourced constant wearing an old derivation, and it belongs with the rest of
+the unsourced trade-governing numbers rather than being treated as settled.
+Nothing here says 0.90 is wrong — only that it is no longer derived.
+
+**One thing checked and found FINE, recorded so nobody reopens it.** A
+question was raised about whether the exit gate leaves a durable, per-symbol
+record when it refuses a sale whose reason names no recognised trigger. It
+does. The gate writes a per-symbol, per-run row carrying the status and the
+rejected reason text, and separately records the refusal with its own code and
+layer. The concern was that the refusal existed only as a log line. It does
+not. No work needed.
+
+**A claim that did NOT check out, recorded because a wrong entry is worse than
+a missing one.** It was suspected that the setup and regime multipliers had
+drifted from what the 2026-09-04 audit recorded with no write-up explaining
+why. Half right. They did change — the audit's own table lists setup scalers
+of 0.85/1.15, and the live values are 0.90/1.00 — but there IS a full
+write-up, in this file under the 2026-09-04 entry, giving the inversion
+argument and the derivation of each new value. The regime scalers
+(1.20/1.10/0.95) never changed at all. What is genuinely missing is only the
+narrower point above: that the 2.5 base silently retired range 0.90's
+justification.
+
+**What would catch this class next time.** The same check item 99 argues for,
+extended one step: when a mechanism is deleted, grep its symbol name across
+the briefs, the assembled strings AND the comments. A comment is the cheapest
+place for a deleted rule to keep living, because nothing ever executes it.
+
+### 2026-09-18 — two reconciliation answers were computed and binned, and nobody noticed because a third one next to them was not
+
+**What broke, in one line:** twice every session the desk works out something
+worth knowing — which positions the broker closed behind its back, and which
+unprotected positions it has just re-protected — and then throws the answer
+away before anything can tell the owner.
+
+**The shape of it.** Both routines return a real result: one a list of exits
+the broker made unilaterally that the ledger never heard about, the other a
+count of protection restores it drained. Every one of the five call sites
+calls them as bare statements and keeps nothing. The reason this is a defect
+rather than a style choice is sitting on the adjacent line: the third member
+of the same family, the stop-coverage audit, has its return captured and
+threaded into the session result at every exit point, which is the mechanism
+by which a missing stop reaches the owner today. Two of three siblings are
+wired up; one pattern was simply never finished.
+
+**Not invisible, and the distinction matters.** Both discarded routines log
+what they did, so the information exists in the journal. What it cannot do is
+reach a session result, a Telegram message, or any test that reads one. The
+honest statement is "unreportable", not "silent" — overstating it would put a
+detection gap where there is a reporting gap.
+
+**Found alongside it, older and separate.** A partly-filled order that is
+still open never has its filled quantity written down. The fill reconciler
+acts only on terminal broker statuses, and a part-fill is not terminal, so
+the row stays marked as merely submitted. The code documents that as
+deliberate deferral to the next pass, which is sound — except that the same
+function documents the case that breaks it: the broker purges order history
+after a few days, and an unreconciled row then falls through a
+legacy-compatibility filter that treats it as fully filled. A half-filled
+order can therefore end up counted as a whole one, taking the cash and
+position figures with it. This predates all of tonight's work.
+
+**What would catch it next time.** A test asserting that every reconciliation
+routine's result appears in the session result, in the same way the stop
+coverage gap already must. The pattern to distrust is a function that returns
+a value being called as a statement.
+
+---
+
 ### 2026-09-17 — the desk could never have been told its own fills
 
 **In plain words:** the desk places orders through a service that quietly swaps
@@ -114,6 +280,246 @@ that, not the credential, is what actually failed.
 
 ---
 
+### 2026-09-17 — the desk was paying a model to read a description of a safety net it had deleted three days earlier
+
+**In plain words:** when anything had automatically sold a position earlier in the day, the seat that reviews open positions was handed a note explaining why. That note said the desk performs an "emergency sell-all" when the day's loss passes 3%. Neither half had been true since 14 September: the sell-all was deleted and replaced by a stop-everything-and-check-the-stops halt that sells nothing, and the 3% figure had already been replaced by a limit measured from how much the book itself moves on an ordinary day. So a paid seat was reasoning about the desk's own emergency behaviour from a description that was two changes out of date, on exactly the days something had already gone wrong.
+
+**Cause — and it is not "someone forgot".** The change that deleted the sell-all shipped a full documentation pass: the backlog, the board notes and this file were all updated in the same commit. It touched no prompt. That is not an oversight by one person, it is a gap in what the word "documentation" points at here: `AGENTS.md` names three tiers of document, and the prompts are in none of them. Nothing in the project's own rules ever said a prompt was a document, so "every substantive change ships with a documentation pass" was satisfied without anyone looking at the text the desk actually pays to have read.
+
+**What was ruled out.** Not neglect of the prompts in general — five prompt files were edited in the three days after the change, including the very one carrying the stale claim. They were edited for other reasons and nothing pointed at the stale sentence. Not an absent mechanism either: a rendering mechanism has existed since 2026-09-11 that makes a numeric limit in a prompt physically unable to disagree with the settings file. It covers two of ten prompt files and, more to the point, it could not have helped: nothing was wrong with a number here. A mechanism described in words stopped existing, and words are not rendered from anything.
+
+**The sharpest finding.** The stale text was not in a prompt FILE. `config/prompts/position_reviewer.md` contains no such claim and never did — the sentence is assembled in Python, in the module that builds the reviewer's message. Any check scoped to the prompt directory would have caught none of it. The surface that matters is prompt markdown AND the Python that assembles prompts, and only the first of those looks like a document.
+
+**Four designs were weighed and three rejected.** Rendering constants into prompts: right for numbers, already exists, extended here to the one hand-typed daily-loss figure it had missed — but blind to this defect. Extracting claims from prompt prose and checking them: nothing can read "the desk performs an emergency sell" and know which function that is. Annotating every behavioural claim with a tie to what it describes: it would have worked, but it asks for maintenance on every sentence forever, and the failure being closed is precisely that nobody remembers the prompts exist. Requiring every number in a prompt to match a named constant: measured at 1,828 numeric tokens across the prompt files — mostly list numbering, dates and figures inside worked examples — it would demand about a thousand annotations and catch neither confirmed case.
+
+**What catches it instead: a check at the deletion site.** Retiring a mechanism now means recording it, in one file, with the WORDS that described it. The build then fails while any prompt, assembled prompt string, docstring or comment still uses those words. Maintenance is asked once, at the moment somebody has the facts open in front of them — the commit that does the deleting — and is free afterwards. Run against the tree as it stood the day before this fix, it finds every stale site, including the two that were live text a model read.
+
+**What it does not catch, said plainly.** A mechanism whose behaviour changes without being deleted: nothing is retired, so nothing is scanned. Drift in a description nobody retired — a threshold that moved, steps reordered, a guarantee quietly weakened. A phrase nobody thought to list. And a retirement nobody records at all, which is a convention and not enforcement; it is a convention placed at the one point in the work where the facts are known, which is the best available trade, not a guarantee.
+
+**One new way to stop the desk, on the record.** The rendering mechanism raises at agent construction time, so a typo in a placeholder halts trading before any capital moves. That is fail-closed and correct, and this change adds two more rendered placeholders. It is also a new way for a settings edit to stop the desk, and the owner should know it exists rather than discover it.
+
+**A third category, worth separating from drift.** Numbers that live only in prompt prose and correspond to nothing in the code: the trade-picking seat's whole sizing arithmetic (its conviction bases, its reward-to-risk bonus, its evening tilt, its stale-signal halving), the technical seat's "three aligned signals for high conviction", its eight-days-to-go-stale rule and its price-to-earnings stretch levels. These are not stale — nothing moved underneath them. They are unsourced numbers hiding where no audit of the code would ever find them, and no check proposed here would see them. Filed as backlog item 107.
+
+### 2026-09-17 — the live fill feed never once worked, and nobody was told
+
+**In plain words:** when the desk places an order it needs to know whether it actually bought anything. It was built in September to be told the instant a trade happens, over a live connection to the broker. That connection has never worked — not once, in any session, since the day it was built. Everything kept running because the desk also asks the broker over and over the ordinary way, and that has always worked, so no trade was missed and no money was lost. What was lost was a few seconds of every order's waiting time spent on a connection that could never open, and about a hundred and fifty error lines a day in a log the owner does not read.
+
+**Cause.** Two separate, independent reasons, either of which alone is fatal, and neither of which anything in this repository could fix. First, the trading process is not given the real broker keys; it holds placeholders, and a local helper swaps in the real key on ordinary web requests on the way out. That is why placing orders works. The live connection does not go through that helper, and the broker library the desk uses is built on an old networking component that cannot be pointed at one. Second, the broker does not check the key when the connection opens — it checks it in a message sent afterwards, and the local helper only ever rewrites the opening. So even a newer library would have connected and then been refused.
+
+**Decision.** The owner switched the feed off. Fills are confirmed the ordinary way, which is what has actually been confirming them all along. The switch is configuration, not a code change, and flipping it back restores the old behaviour exactly — the code was deliberately left in place, dormant, because the question of whether this process should be given real broker keys was explicitly deferred and is still open.
+
+**What was ruled out.** Any attempt to make the connection authenticate. Both blockers were confirmed before the switch was written, so retrying, reconnecting differently, waiting longer or lengthening the handshake budget were all fixing the wrong thing. Deleting the code was also rejected — the credential decision may revive it, and deleting it would mean rebuilding it from memory.
+
+**The real failure, and it is not the websocket.** A broken thing kept a good fallback, so it looked fine from the outside for a week. That is the hardest kind of breakage to notice, and it is why the switch-off shipped with an alert. The alert fires when fill confirmation genuinely degrades — an order the desk could not get a straight answer about before its window closed, or the half-hourly check finding the desk's own record of what it holds disagreeing with the broker's, with no sale to explain the difference. Both used to reach a log line and nothing else. Neither has anything to do with the feed being off: the feed being off is now the intended setup and deliberately never alerts, because moving a hundred and fifty daily error lines into Telegram would be worse than leaving them in the log.
+
+**What would catch it next time.** Checks that with the feed off no connection is opened and the account's connection slot is never claimed, that the ordinary confirmation path is byte-for-byte the one it always was, that flipping the switch back restores the old path, that an unconfirmed order and a records mismatch each page the owner, and that the feed being off cannot page him. The broader habit: a vendor recommending a mechanism is a reason to build it, never evidence that it runs in this deployment.
+
+---
+
+### 2026-09-17 — a 20% price band was applied to the stop, and it killed an approved short
+
+**In plain words:** the desk has a fat-finger guard — it refuses an order
+whose price is more than 20% away from the live quote, so a broken feed or a
+hallucinated number cannot be traded. That band was also being applied to the
+STOP price. A stop is supposed to sit outside the stock's normal daily
+swings, so on a jumpy stock the stop is legitimately a long way from the
+price, and the guard threw the trade away. On 17 September it threw away a
+FLNC short that the analyst, the portfolio manager and the risk manager had
+all already been paid to approve.
+
+**Confirmed from the production log**, 2026-09-17 17:05:30: `SELL_SHORT FLNC
+— stop_loss_price=$9.6600 deviates 24.1% from reference $7.79. Order
+REJECTED`. The same run's risk manager had approved it ("FLNC short is
+well-justified on technicals and earnings", R/R 1.51:1), and the desk's own
+constructor had measured the stop at "2.50 x ATR over a 10-session horizon —
+touch probability 20.7%". The stop was on the correct side, at a measured
+width the desk itself judged reasonable. The guard was the only thing that
+said no, and it said no after the money was spent.
+
+**Where the number came from.** `OUTLIER_MAX_DEVIATION = 0.20` is inherited
+from the upstream project (`ca4c51d9`, yebof, 2026-04-18) with no source. It
+was never reviewed against this desk's doctrine.
+
+**Why a flat percentage is the wrong shape of test for a stop.**
+
+1. Wrong units. A stop's distance from entry is a volatility distance. FLNC's
+   measured ATR(14) that session was $0.75 on a $7.785 price — 9.6% — so the
+   flat band refused any stop wider than about 2.1x that stock's ordinary
+   daily range. On a $500 name with a 1% ATR the same band permits twenty
+   such ranges. It bans nothing on a quiet stock and bans real structure on a
+   volatile one.
+2. It only caught the safe direction. Sizing is risk-based
+   (`_qty_by_risk_budget`: `risk_per_share = abs(entry - stop)`, `qty = risk
+   dollars / risk_per_share`), so a WIDER stop makes the position SMALLER.
+   The extreme case is self-limiting: a $0.01 stop under a $300 long makes
+   risk-per-share almost the whole share price, so the quantity collapses to
+   the authorised risk budget divided by the price and the worst case — the
+   stock to zero — loses exactly the budget that was approved. The dangerous
+   error is a too-TIGHT stop, which inflates size, and a deviation band never
+   caught that at all: a tight stop sits close to the reference by
+   definition.
+
+**What changed.** The 20% band now applies only to the price the order
+actually transacts at — the entry/limit price, the one whose corruption makes
+quantity sizing nonsense. Nothing about the band itself moved; only what it
+is applied to. The take-profit branch went with it (no caller has ever passed
+`take_profit_price`).
+
+**What the stop gets instead, at the same boundary.** Two checks that need no
+number: the stop must be a finite, positive number, and it must be on the
+correct side of the entry. Both refuse the order. The finiteness check also
+closes a separate hole found while doing this: `_quantize_price` maps NaN and
+Inf to `None`, which made `use_stop` False, so a non-finite stop used to
+submit the entry with NO protective stop at all, silently. Finiteness is now
+read before quantization.
+
+**What still protects a stop's WIDTH, unchanged.** The constructor measures
+it in the instrument's own ATR: `_widen_stop_past_noise` pushes an unbacked
+stop out to `min_stop_atr_multiple` (2.5) ATRs, honours a stop that sits on a
+computed structural level however tight down to
+`absolute_min_stop_atr_multiple` (1.0) ATR, and refuses a wrong-side or
+non-finite stop outright. `_qty_by_risk_budget` independently refuses invalid
+geometry. Spec §12.1 — honour a level-backed stop however tight, apply the
+volatility floor only when nothing computed backs it — is untouched by this
+change and was the reason not to write a new floor here.
+
+**No replacement number was invented for the stop, and none should be.** A
+percentage band on a stop has no published source, and fitting one to past
+trades would not make it non-arbitrary. If an absolute sanity bound on a stop
+is ever wanted, what would source it is a measured distribution of the
+desk's own realised stop widths in ATR terms per name — a reading, not a fit
+— and that is deliberately left unbuilt.
+
+**The wording, second half of the same fix.** A refusal used to read "stop
+$9.66 is 24% from price $7.79". A bare percentage is not judgeable: 24% is an
+outrage on a utility and an ordinary two sessions on a $7 stock, and the
+owner reasonably read a correct refusal as a bug. The message now carries the
+stock's own measured daily range beside the deviation — "limit price $4.96 is
+36% from price $7.79 — FLNC normally moves about $0.75 (10%) in a day" — from
+the ATR(14) the desk had already computed for that symbol and passed down
+from the entry stage. It is used for wording only; no code path branches on
+it, and when the caller has no ATR (the resume and sweep lanes carry no
+analysis) the range clause is omitted rather than filled with an invented
+number.
+
+**Alerting.** A stop refusal is a separate skip reason (`unusable_stop`) from
+a price refusal (`fat_finger_guard`), so the owner is never told a price was
+"too far from the market" when what actually happened is the stop could never
+have worked. Both still say the desk blocked it, not the broker.
+
+**Found while doing this, reported and LEFT ALONE.** A `stop_loss_price` of
+exactly `0.0` is this codebase's sentinel for "no stop", so the entry submits
+unprotected — pinned by `test_submit_order_buy_with_zero_stop_loss_skips_oto`.
+It is the same shape of hole as the NaN one, but it is explicit rather than
+silent, it pre-dates this work, and the production entry callsite already
+passes `None` rather than `0`, so nothing live reaches it. Not closed here.
+Separately, the fat-finger guard and its 2026-09-17 plain-words rewording had
+no write-up in these docs at all before this entry.
+
+**Not changed.** The 20% band's value. The kill switch. The constructor's ATR
+floors or the §12.1 level exemption. Nothing about how wide a stop is allowed
+to be. The `0.0` sentinel.
+
+
+---
+
+## The de-levering ladder was reading a shallower drawdown than the account really had, and an erased equity curve read as a book at record highs (2026-09-18)
+
+**In plain language.** The desk automatically reduces how much it owns once it
+falls far enough below its best-ever value. To do that it has to know what its
+best-ever value was. It was reading that from a table with a hole in it, so it
+thought the account was 1.3% below its high when it was really 2.7% below — and
+the error can only ever go that way, because a missing row can only make the
+"best ever" look smaller than it was. Worse: if that table were ever emptied
+completely, the desk reported 0.0% — no drawdown at all — which looks exactly
+like a book at record highs, holds the loosest possible limit, and says nothing
+to anybody. Losing the records and doing brilliantly produced identical output.
+
+**The one-directional error.** `peak_to_trough_pct` (`src/risk/rules.py`) takes
+`max()` over the stored `daily_pnl` history plus today's equity, and
+`resolve_gross_ceiling` reads the result. A missing row can only lower the peak,
+never raise it, so a hole in the table always produces a SHALLOWER drawdown and
+a LOOSER exposure ceiling than the ratified ladder intends. That is a safety
+error, not noise.
+
+**What was actually missing, and where it came from.** The live `daily_pnl`
+table held four rows, earliest 2026-09-02 at 9862.74. The desk reset of
+2026-09-02 (`data/resets/20260902T181859Z/`) deleted 13 rows **by design** — its
+own `reset_manifest.json` records `{"table": "daily_pnl", "rows": 13,
+"deleting": 13}` — and took a full database snapshot beside the manifest first.
+Those 13 rows run 2026-08-14 to 2026-09-01 and peak at **10005.68 on
+2026-08-20**. The account was not restarted by that reset: it flattened
+positions to cash on the same paper account (`PA3DFXH9FF5V` in both
+`book_before.json` and `book_after.json`), with equity running 9870.37 (08-27
+close) -> 9865.27 (pre-flatten) -> 9864.04 (post-flatten) -> 9862.74 (09-02
+close) and no capital added or removed. A high-water mark is a property of the
+account's capital, not of the strategy record the reset discarded, so 10005.68
+is this account's real high.
+
+**Correction to the brief that raised this.** The obvious restore source looked
+like `data/quant_agent.db.bak-20260828T151630`, which holds 10 of those rows.
+The reset's own snapshot holds all 13, including 2026-08-28, 2026-08-31 and
+2026-09-01, which the 08-28 backup predates. Restoring from the backup would
+have left a three-day hole. The snapshot was used instead.
+
+**What was restored.** All 13 rows, by `scripts/restore_daily_pnl_history.py`
+— dry run by default, idempotent (`INSERT OR IGNORE` on the `date` primary
+key), and it copies the target database before writing so the change is
+reversible. **Nothing was invented.** 2026-09-03 and the 2026-09-04..09-14 desk
+pause have no row in either database and were left absent: `daily_pnl` is
+written only by an evening run, `llm_budget_sessions` shows no desk activity
+across that window, and interpolating a row would fabricate an equity reading.
+
+**Measured effect.** Against the last stored equity (9734.50, 2026-09-17 close)
+the ladder read **-1.30%** before and reads **-2.71%** after. The resolved
+ceiling is 2.0x in both cases — the first rung is -8% — so **no trading
+behaviour changed today.** What changed is that the ladder is now measuring
+against the account's real high instead of a truncated one.
+
+**The worse half, and the fix.** With no usable prior reading at all,
+`peak_to_trough_pct` used to leave today's equity alone in the list, make it its
+own high-water mark, and return a confident `0.0`. `resolve_gross_ceiling` reads
+`0.0` as "inside the no-de-levering band" and holds the standing cap, so a
+data-loss event silently disabled the desk's only automatic seller while every
+log line and owner-facing message reported a healthy book. `peak_to_trough_pct`
+now returns UNMEASURABLE (`None`) when there is no usable PRIOR reading — empty
+history, or a history whose every entry was dropped as non-finite — and warns.
+`resolve_gross_ceiling`'s unknown branch now sets `alert_owner=True`.
+
+**Why the ceiling in that state was NOT tightened.** Following the precedent
+already in this area: `apply_gross_ceiling` marks an unreadable book
+UNMEASURABLE and trims nothing. Tightening to a rung would be picking a number
+for a state in which, by definition, nothing has been measured, and would
+force-liquidate the genuinely-fresh-account case `resolve_gross_ceiling`'s
+docstring exists to protect. Holding the loosest cap was never the defect;
+doing it in silence was.
+
+**Why the boundary is zero prior readings and not N days.** Zero is the line
+between measured and unmeasured — it is not a number anyone picked. Whether a
+short-but-non-empty curve (two or three days after a reset) is long enough to
+carry a meaningful high-water mark is a real and separate question with a real
+answer somewhere in the desk's own data; no `min_history=N` was smuggled in as
+if it had been answered.
+
+**A second defect found and fixed in passing.** The owner-facing leverage alert
+printed "DRAWDOWN PAST -20%" for every `alert_owner` state. Since 2026-09-02
+that already included the bad-equity-read state, which has no measured drawdown
+at all — so the owner could be told a specific, false number about his own book.
+The message is now chosen from the rung: a state that was never measured reports
+UNMEASURABLE and no number, and the empty-curve case says outright that this is
+NOT a book at record highs.
+
+**A test that pinned the old behaviour was replaced, deliberately.**
+`test_peak_to_trough_pct_all_history_corrupted_still_returns_a_number_not_nan`
+documented the all-history-corrupted -> 0.0 fallback as an accepted residual
+("the ladder still functions"). It was the same defect in a second doorway and
+is now pinned the other way.
+
+**Not changed.** No threshold, rung or trade-governing number. `GROSS_LADDER`
+and `GROSS_LADDER_ALERT_PCT` are untouched. The ladder's order type, its 1%
+limit buffer, and its sequencing of cancels, sells and stop placement are
+untouched — the sell-instrument question is filed as board item 118, with the
+order type explicitly left alone.
 ### 2026-09-17 — a limit order that never filled turned out to be the market doing its job, not the desk being slow
 
 **In plain words:** about one in eleven trade ideas ended with the order sitting at the broker, the price drifting away before it filled, and the order getting cancelled with the opportunity gone. That looked like a defect worth chasing. Measured against 68 real proposals, it happened 6 times (9%), and every one of those was the market itself walking away from a still-open limit price — not the desk being late.
@@ -11132,3 +11538,4 @@ by timing instead. The separate, pre-existing race where a crashed morning
 run leaves no completion stamp (so the desk treats morning as finished at
 09:30 and the first paid intraday look can start at 10:00 while morning is
 still retrying) is untouched by either change.
+

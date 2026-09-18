@@ -1620,6 +1620,75 @@ def find_finished_items_still_on_board(
 #: `- [ ] DECIDE BY 2026-09-16 — question` — the same shape
 #: `test_no_pending_decision_is_overdue` enforces, deliberately, so the board
 #: and the build are reading one format and cannot disagree about it.
+#: PROVISIONAL — no owner ruling states this fraction; it is a judgement
+#: call, made here rather than left as an unstated assumption in a test.
+#:
+#: `work_md_growth_budget` spends this share of whatever headroom remains
+#: below the 100,000-byte cap (`test_work_md_stays_under_a_hundred_thousand_
+#: bytes` owns that number; this module never re-types it, see
+#: `WORK_MD_GROWTH_CAP_BYTES` below) on ONE change. That makes the allowance
+#: shrink automatically as the file fills — half the remaining room at 30%
+#: full is enormous (unrestricted in practice), half the remaining room at
+#: 95% full is a couple thousand bytes (enough for a short item, not enough
+#: to dump an afternoon's findings without pruning first) — without pinning
+#: separate numbers at arbitrary bands (60%, 85%, 95%, ...) that would each
+#: need their own justification. 0.5 was picked only because it is the
+#: simplest value that produces that shape; it is not measured from
+#: anything. Owner ruling 2026-09-17: the old rule (a change may never leave
+#: docs/WORK.md larger than it found it) was replacing a housekeeping
+#: problem with a recording-defects problem, and had to go — see
+#: `test_work_md_growth_is_bounded_and_shrinks_as_the_cap_fills`.
+WORK_MD_GROWTH_SHARE = 0.5
+
+#: Kept EQUAL to the cap `test_work_md_stays_under_a_hundred_thousand_bytes`
+#: enforces — that test owns the number, this is a second, independent
+#: place it is used, and `test_work_md_growth_cap_matches_the_byte_ceiling`
+#: reads the cap test's own source (the same way
+#: `scripts/check_board_hygiene.py:read_cap_bytes` already does) and fails
+#: if the two ever disagree, so this cannot drift silently if the ceiling
+#: test is ever edited.
+WORK_MD_GROWTH_CAP_BYTES = 100_000
+
+
+def work_md_growth_budget(before_size: int,
+                           cap: int = WORK_MD_GROWTH_CAP_BYTES,
+                           share: float = WORK_MD_GROWTH_SHARE) -> int:
+    """How many bytes `docs/WORK.md` may grow in a single change, given its
+    size before that change.
+
+    Replaces the 2026-09-14 rule that a change could never leave the file
+    larger than it found it. That rule was written for a real problem —
+    finished work piling up unpruned — but had no escape hatch, so it also
+    blocked recording a brand-new, genuine defect on a night when far more
+    defects were found than were closed, while the file sat at ~30,000 of
+    its 100,000-byte cap: comfortably under it, with nothing to prune.
+    Owner's ruling (2026-09-17, in substance): the rule was badly written;
+    he wants housekeeping enforced, not recording blocked. This function is
+    the mechanical replacement.
+
+    Returns a budget that SHRINKS as the file fills, rather than a flat
+    allowance: `share` of whatever headroom remains below `cap`. Near-empty,
+    the budget is effectively unrestricted for a normal edit; near the cap,
+    it is small enough that anything but a short item forces pruning first.
+    The 100,000-byte hard cap itself is untouched and still the final
+    backstop (`test_work_md_stays_under_a_hundred_thousand_bytes`) — this
+    only shapes how a single change may approach it. Never negative: a
+    `before_size` at or past `cap` returns 0.
+
+    This does not, by itself, make housekeeping happen — it only bounds how
+    much can be added without it. The mechanical push to actually retire
+    finished work is `find_finished_items_still_on_board` /
+    `find_closed_items_not_marked_done`, run unconditionally against the
+    real board on every change (`test_the_real_backlog_has_no_finished_
+    item_still_on_the_board`, `test_the_real_backlog_has_no_item_
+    contradicting_its_own_title`) — not gated on growth, so a change that
+    adds nothing still fails if it leaves a self-declared-finished item
+    sitting on the board.
+    """
+    headroom = max(cap - before_size, 0)
+    return int(headroom * share)
+
+
 _DECISION_RE = re.compile(r"^- \[ \] DECIDE BY (\d{4})-(\d{2})-(\d{2}) [-\u2014] (.+)$")
 
 

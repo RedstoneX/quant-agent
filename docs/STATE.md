@@ -209,6 +209,53 @@ This file records what is accepted and true **now**. Git history preserves imple
   `_carry_forward_macro` (status `carried_from_morning`); when nothing is
   stored for today the status is passed as None and the claim is unverifiable,
   never defaulted into a value that could call it false.
+  **Extended 2026-09-18 — the trigger is a FIELD, not a phrase in a
+  sentence.** Fact-checking a claim read out of prose only works when the
+  prose happens to phrase the claim in a way a regex recognises. On
+  2026-09-16 the two real exits (COP SELL, EQNR REDUCE) carried the reason
+  `"adverse news"` — two words, entire. They cleared the substring gate
+  because the phrase is on the list, and `holding_discipline_claim_check`
+  returned "ok" because those two words make neither of the claims it knew
+  how to check, so nothing was checked. Meanwhile an exit that honestly
+  described a stall is what the metric veto audits and one naming no listed
+  phrase is dropped outright: the gate was **selecting for bad paperwork**.
+  `PositionAction` now carries `exit_trigger` (an `ExitTrigger` enum) and
+  `trigger_evidence` (the recorded thing the trigger rests on), and
+  `ExitTrigger.CANNOT_SUBSTANTIATE` is a first-class value so the seat is
+  never pushed into naming a trigger it cannot support. Both fields are
+  OPTIONAL: an action carrying only prose is mechanically healed from the
+  SAME phrase vocabulary as before, so nothing that used to execute stops
+  executing. Anything still unsubstantiated is RE-ASKED once — bounded by
+  the same one-paid-retry-per-seat-per-session cap the research seats use —
+  and what survives the re-ask gets an append-only per-symbol
+  `exit_refusal` row (`unsubstantiated_after_reask`) plus a heal-FAILED
+  owner alert. **It is not dropped:** stranding the desk in a losing
+  position is worse than an uncheckable claim passing. What changed is that
+  the claim is now in a field, so it can be routed to the record it is
+  about — an `adverse_news` trigger is checked against the same-day state-
+  change rows, and the ratified three-valued outcome applies to it
+  (contradicted = blocked + alerted, unfindable = logged only). See
+  `src/risk/exit_trigger.py`.
+- **A wider stop is no longer an "improvement" (2026-09-18).**
+  `distance_to_stop_pct = (current - stop) / current * 100` sits in the exit
+  guard's `_HIGHER_IS_BETTER`, and it is a function of the desk's own
+  protection as much as of the market — so LOWERING the stop makes a
+  position read as improved. Real recorded snapshots, 2026-08-31 close to
+  2026-09-01 midday: V distance-to-stop 1.42 -> 3.41 "improved" while
+  `r_multiple` fell -0.11 -> -0.82; CMCSA 3.53 -> 5.58 while r fell -0.04 ->
+  -0.33; DIS 1.85 -> 5.07 while thesis progress fell -3.06 -> -12.50. All
+  three were deteriorating. The review snapshot now carries `stop_loss` and
+  `current_price` (provenance, never scored), and `MetricDeltas` re-runs the
+  metric's own formula with the stop pinned at its prior value: a rise that
+  survives only because the stop moved is listed in `stop_driven` and
+  excluded from `improved`. The metric is NOT deleted — a price moving away
+  from a FIXED stop is a real improvement and is the case it exists for (the
+  2026-08-26 EPD premature exit turns on it). `worsened` is deliberately
+  left undecomposed: discounting a stop-driven FALL could turn
+  `net_improved` True and make the veto block an exit on paperwork, which is
+  the wrong failure direction here. Snapshot pairs written before
+  2026-09-18 carry no provenance; their distance-to-stop rise is
+  unattributable and is not counted, which self-heals after one session.
 - **Phase 3 of the remediation spec is COMPLETE and DEPLOYED** at `058273f1`
   (rollback `9f77b03e`), live on the paper account since ~09:20 ET
   2026-08-27. §3.1 the `pace` feedback loop is cut — the horizon is pinned to
@@ -321,8 +368,16 @@ This file records what is accepted and true **now**. Git history preserves imple
   (mechanical first, then at most one paid retry inside cost caps); heal
   failure and a spend-cap block page the owner. Empty or failed morning
   carry-forward still refuses before the Portfolio Manager. Desk-caused
-  stall after Risk is a defect, not "a little late." Handshake starts
-  during Risk so auth is not serial after approval. Alpaca allows one
+  stall after Risk is a defect, not "a little late." **Fills are confirmed
+  by the bounded REST path; the live `trade_updates` websocket is OFF
+  (owner, 2026-09-17, `execution.fill_stream_enabled`) — it never
+  authenticated on this host, and two confirmed blockers mean no code
+  change could make it. No socket, no lease, no reconnect loop, no
+  handshake before submit; REST timeouts and poll intervals unchanged. The
+  code is dormant, not deleted. Fill confirmation actually degrading now
+  pages the owner; the socket being off never does.** The rest of this
+  paragraph is what flipping the flag back on restores: handshake starts
+  during Risk so auth is not serial after approval; Alpaca allows one
   `trade_updates` socket per account: one desk process owns it via a
   cross-process lease; other processes attach to that process's hub or
   REST-poll with a wait no longer than the REST path — they never open a
@@ -698,6 +753,7 @@ Accepted behavior includes:
 - Cockpit tables clip and truncate with free column resize rather than forcing a page or section horizontal slider;
 - Positions/Orders table columns support resize and drag-to-reorder, opt-in per table via `DataTable` props, persisted to `localStorage`; columns can shrink to ~1ch so Stop and Target stay on the blotter;
 - a read-only Desk diary at `/diary` (and `/diary/`) served from gitignored `data/diary/`, same posture as `/board`; Mission Control does not generate the entries.
+- a read-only `/holdings/{symbol}/why` endpoint (2026-09-18) that answers "why do we hold this" in plain English, assembled from the stored entry row plus that run's specialist evidence: one lede sentence with the numbers in it, a readable section (named primary driver, which seat raised it, insider who/how-much/when/at-what-price, the recorded invalidation condition, the pinned horizon, the reference target and the fact that nothing acts on it, and what has happened since entry), and a `raw_evidence` bucket for the accession numbers / internal flags / broker-eligibility JSON. It also reports OUR OWN purchase — the entry date, the fill price (or the order price, labelled as such when no fill was recorded) and the quantity — added 2026-09-18 because the owner asked for the purchase date and price by name and only the insider's were on file. **Consumed by the cockpit's "Why" tab** (2026-09-18), a Dockview panel that starts beside Candidates: clicking a symbol anywhere in the cockpit — holdings, positions, trades, orders — charts it as before and also fills this tab, fetched in `App.tsx` next to the chart symbol so a background tab is already populated when the owner switches to it. `raw_evidence` sits behind a collapsed "show the technical detail" toggle and is rendered as labelled rows, never as a payload dump. `LifecycleTimeline`'s generic `detailsText` renderer is untouched and still serves the run-detail modal.
 
 The chart live-price/current-price truth issue is **already resolved**. Commit `796558f184f8dd800c7e1cbb57f11173ad3d6f6b` (`fix(qamc): show session fills and live chart price`, 2026-08-21) introduced the genuinely live `/quotes` path and separated live/current price from historical bars. Current `PriceChartPanel` also hides the historical series' default last-value line and renders explicit `LIVE` and `PREV CLOSE` lines. This is accepted behavior and is not an outstanding task.
 

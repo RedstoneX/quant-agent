@@ -256,6 +256,24 @@ def test_deterministic_loss_protection_still_runs_when_scan_crashes():
 # of an absent key.
 
 
+# WHY THE CLOCK IS PINNED IN THE THREE "stays healthy and silent" TESTS BELOW
+# (and why unfreezing it would put the flake straight back).
+#
+# `trader_feed._format_intra_check` asks `_is_hourly_checkpoint()`, which reads
+# the LIVE clock and compares it against the checkpoint minute derived from
+# intra_check's own timer unit (currently :15). So a quiet tick is silent at
+# :45 and legitimately SPEAKS at :15 — the owner's standing "never a full clock
+# hour without a message" pulse. These tests asserted only the silent case and
+# never pinned the minute, so they passed on luck and failed on any CI run that
+# happened to land on :15, against completely untouched code. A required check
+# that fails about one run in sixty for its own reasons is how a gate gets
+# routed around, and this check is the only gate this repo has.
+#
+# Pinning is therefore not a workaround for the assertion — the silence rule is
+# a ratified owner decision and nothing here is weakened. It pins WHICH TICK
+# each test is simulating. Each of the three now states both halves of the
+# rule: silent off the checkpoint minute, and speaking on it.
+
 def test_scan_never_ran_because_disabled_stays_healthy_and_silent(tmp_path, monkeypatch):
     _make_db(tmp_path, monkeypatch)
     p = _pipeline(enabled=False)
@@ -266,7 +284,16 @@ def test_scan_never_ran_because_disabled_stays_healthy_and_silent(tmp_path, monk
     assert result["intraday_scan"] == {
         "status": "intraday_scan_disabled", "run_id": result["run_id"],
     }
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
+
+    # The other half of the same rule: on the hourly checkpoint minute the
+    # very same quiet tick MUST speak, because the owner requires a pulse
+    # every clock hour. Asserted here so pinning the minute above cannot
+    # quietly become "this tick never sends".
+    _pin_clock(monkeypatch, _TOP_OF_HOUR_TIME)
+    hourly = trader_feed.format_session_result("intra_check", result, 5.0)
+    assert hourly is not None and "NO CHANGE" in hourly
 
 
 def test_scan_never_ran_because_process_lock_held_stays_healthy_and_silent(
@@ -287,7 +314,12 @@ def test_scan_never_ran_because_process_lock_held_stays_healthy_and_silent(
     assert result["intraday_scan"] == {
         "status": "intraday_scan_lock_contended", "run_id": result["run_id"],
     }
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
+
+    _pin_clock(monkeypatch, _TOP_OF_HOUR_TIME)
+    hourly = trader_feed.format_session_result("intra_check", result, 5.0)
+    assert hourly is not None and "NO CHANGE" in hourly
 
 
 def test_scan_never_ran_because_another_session_active_stays_healthy_and_silent(
@@ -309,7 +341,12 @@ def test_scan_never_ran_because_another_session_active_stays_healthy_and_silent(
     nested = result["intraday_scan"]
     assert nested["status"] == "intraday_scan_lock_contended"
     assert nested["run_id"] == result["run_id"]
+    _pin_clock(monkeypatch, _QUIET_TICK_TIME)
     assert trader_feed.format_session_result("intra_check", result, 5.0) is None
+
+    _pin_clock(monkeypatch, _TOP_OF_HOUR_TIME)
+    hourly = trader_feed.format_session_result("intra_check", result, 5.0)
+    assert hourly is not None and "NO CHANGE" in hourly
 
 
 def test_the_four_no_new_activity_statuses_are_pairwise_distinguishable(

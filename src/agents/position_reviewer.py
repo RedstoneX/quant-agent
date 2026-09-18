@@ -125,6 +125,12 @@ class PositionReviewerAgent(BaseAgent):
         # number it recorded six hours earlier improved.
         metric_deltas: dict = kwargs.get("metric_deltas") or {}
         morning_trades: list[dict] = kwargs.get("morning_trades", [])
+        # Board item 89 defect 3 / item 104's eighth prompt defect: the
+        # date-unrestricted entry row per held symbol. `morning_trades`
+        # stays `today_only` — the system-actions block below depends on
+        # that — so this is the only thing that can answer "why is this
+        # held" for a position opened before today.
+        entry_context: dict[str, dict] = kwargs.get("entry_context") or {}
         news_intel: NewsIntelligenceReport | None = kwargs.get("news_intel")
         earnings_analyses: list[dict] = kwargs.get("earnings_analyses") or []
         macro_analysis: dict | None = kwargs.get("macro_analysis")
@@ -152,12 +158,15 @@ class PositionReviewerAgent(BaseAgent):
             ):
                 trade_context[sym] = t
 
-        # Non-LLM system actions taken earlier in this session (force-delever
-        # when margin drifted negative; emergency sell-all when daily loss
-        # breached -3% on a long; emergency buy-to-cover under that same
-        # breach when the position being closed was a short instead; a
-        # broker-resident protective stop firing and getting written back by
-        # the stop-out reconciler — 2026-08-28 ONDS/CCJ). These bypass the
+        # Non-LLM system actions taken earlier in this session: a
+        # deterministic de-lever (`FORCE_DELEVER` — the gross-exposure
+        # ladder, or the cash-only safety net when margin drifted negative),
+        # or a broker-resident protective stop firing and getting written
+        # back by the stop-out reconciler (2026-08-28 ONDS/CCJ). The
+        # `EMERGENCY_SELL` / `EMERGENCY_COVER` tags are still matched here
+        # because historical rows carry them; NOTHING EMITS THEM ANY MORE.
+        # The daily-loss breaker stopped liquidating on 2026-09-14 (item 32)
+        # and now halts without closing anything. These bypass the
         # reviewer — the closed positions are already gone from ctx.positions
         # — but surfacing them prevents the reviewer from reasoning in a
         # vacuum about why the book shrank. A circuit-breaker cover
@@ -210,6 +219,20 @@ class PositionReviewerAgent(BaseAgent):
             pf = position_facts.get(p.symbol) or {}
 
             ctx = trade_context.get(p.symbol) or {}
+            # Board item 89 defect 3 — scoped DELIBERATELY to the thesis
+            # text and nothing else.
+            #
+            # The entry row also carries `stop_loss` and `take_profit`, and
+            # reading those from it would be a change to what the reviewer
+            # DECIDES on, not to what the owner is told: the back-compute
+            # below prefers `position_facts`, which tracks the LIVE broker
+            # stop and the live take-profit (revisable and provenanced as
+            # of 2026-09-18), whereas an old entry row holds the number
+            # PINNED at entry. Letting a stale pinned level win over a live
+            # one would degrade the `new_stop >= old_stop * 1.02` judgement.
+            # So `entry_context` answers only "why is this held", which is
+            # the defect, and the level lines are untouched.
+            entry_row = entry_context.get(p.symbol) or {}
             sl = ctx.get("stop_loss") or 0
             tp = ctx.get("take_profit") or 0
             # audit round 2 #4: trade_context only covers TODAY's BUY rows
@@ -222,7 +245,15 @@ class PositionReviewerAgent(BaseAgent):
             # reviewer always sees the actual protection levels it is asked
             # to reason about (new_stop >= old_stop*1.02 rule).
             if not sl and pf.get("distance_to_stop_pct") is not None and p.current_price > 0:
-                sl = p.current_price * (1 - pf["distance_to_stop_pct"] / 100)
+                # Inverse of `TradingPipeline._build_position_facts`'s
+                # `dist_stop_pct` formula, which is side-mirrored since
+                # 2026-09-18: a LONG's stop sits BELOW price
+                # (`sl = cur * (1 - dist/100)`), a SHORT's sits ABOVE
+                # (`sl = cur * (1 + dist/100)`). Using the long-only inverse
+                # for a short back-computed a stop on the wrong side of
+                # price entirely.
+                _dist = pf["distance_to_stop_pct"] / 100
+                sl = p.current_price * ((1 + _dist) if p.qty < 0 else (1 - _dist))
             if not tp and pf.get("distance_to_target_pct") is not None and p.current_price > 0:
                 tp = p.current_price * (1 + pf["distance_to_target_pct"] / 100)
             if sl:
@@ -231,21 +262,33 @@ class PositionReviewerAgent(BaseAgent):
                 lines.append(
                     f"  Reference target: ${tp:.2f} (soft — you manage exit)"
                 )
-            entry_reasoning = (ctx.get("reasoning") or "").strip()
+            entry_reasoning = (
+                (ctx.get("reasoning") or "").strip()
+                or (entry_row.get("reasoning") or "").strip()
+            )
             if entry_reasoning:
                 lines.append(f"  Entry thesis: {entry_reasoning[:220]}")
             else:
                 # audit round 2 #4: make the absence explicit — a missing
                 # thesis line must read as "data unavailable", not "this
                 # position has no thesis / no thesis_invalid_if condition".
+                #
+                # Board item 89 defect 3: this branch used to fire for EVERY
+                # position held overnight, because the only lookup feeding
+                # it was date-bounded to today. With `entry_context` above
+                # it now fires only when the entry row genuinely carries no
+                # reasoning, so the old "opened before today" explanation
+                # would be a false one and is gone.
                 lines.append(
-                    "  Entry thesis: (unavailable — position opened before "
-                    "today; judge integrity via Metrics, tech trail, and "
+                    "  Entry thesis: (not recorded on this position's entry "
+                    "row; judge integrity via Metrics, tech trail, and "
                     "memory sections, do not invent one)"
                 )
             metric_bits: list[str] = []
             if pf.get("days_held") is not None:
-                metric_bits.append(f"days_held={pf['days_held']}")
+                metric_bits.append(f"days_held={pf['days_held']} (calendar)")
+            if pf.get("sessions_held") is not None:
+                metric_bits.append(f"sessions_held={pf['sessions_held']} (trading)")
             if pf.get("thesis_progress_pct") is not None:
                 metric_bits.append(f"thesis_progress={pf['thesis_progress_pct']:.0f}%")
             # R-multiple (audit §1.4) — profit in units of the risk originally
@@ -275,8 +318,8 @@ class PositionReviewerAgent(BaseAgent):
                 elif _status == "too_early":
                     _h = pf.get("expected_horizon_sessions")
                     metric_bits.append(
-                        f"pace=not-yet-measurable (held {pf.get('days_held')}d of a "
-                        f"{_h}-session thesis; under 1/3 elapsed, so pace is "
+                        f"pace=not-yet-measurable ({pf.get('sessions_held')} of "
+                        f"{_h} sessions elapsed; under 1/3, so pace is "
                         f"mathematically meaningless — this is NOT 'stalled')"
                     )
                 elif _status == "unavailable_no_pinned_horizon":
@@ -525,13 +568,22 @@ class PositionReviewerAgent(BaseAgent):
             ).rstrip() + "\n"
 
         if recent_performance:
-            r5 = recent_performance.get("rolling_5d_pct")
-            r20 = recent_performance.get("rolling_20d_pct")
+            # A missing rolling return renders as "not provided", never as
+            # "None%" and never as 0. The PM's equivalent block already warns
+            # its seat not to read a missing value as zero; this one rendered
+            # the literal string "None%", which reads as a number to a model.
+            def _pct(value) -> str:
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return f"{float(value):+.2f}%"
+                return "not provided"
+
+            r5 = _pct(recent_performance.get("rolling_5d_pct"))
+            r20 = _pct(recent_performance.get("rolling_20d_pct"))
             dd = recent_performance.get("in_drawdown")
             dd_note = " ⚠️ IN DRAWDOWN — bias toward HOLDING quality, don't panic-sell the bottom" if dd else ""
             perf_section = (
                 f"### Recent System Performance{dd_note}\n"
-                f"- 5d: {r5}% | 20d: {r20}%\n"
+                f"- 5d: {r5} | 20d: {r20}\n"
             )
         else:
             perf_section = ""
@@ -543,6 +595,17 @@ class PositionReviewerAgent(BaseAgent):
             f"auto-liquidated before any BUY executes — already included "
             f"in Cash above)"
             if reserve_balance > 0 else ""
+        )
+
+        # Substantiation re-ask (2026-09-18). Non-empty only on the ONE
+        # re-ask `TradingPipeline._substantiate_exit_triggers` may make in
+        # a session, and it names the symbols whose exit trigger came back
+        # unsubstantiated. Empty string on every first call, so the prompt
+        # this seat sees normally is byte-for-byte unchanged.
+        substantiation_challenge: str = kwargs.get("substantiation_challenge") or ""
+        substantiation_section = (
+            f"### ⚠️ {substantiation_challenge}\n"
+            if substantiation_challenge else ""
         )
 
         # Margin mandate (carried over from v2 — sub-dollar threshold).
@@ -605,10 +668,9 @@ class PositionReviewerAgent(BaseAgent):
         if system_action_lines:
             system_actions_section = (
                 "### Non-LLM System Actions Earlier Today\n"
-                "These sells were triggered by hard-rule safety nets (force de-lever "
-                "when cash < 0; emergency sell-all on −3% daily-loss breach) or by the "
+                "These sells were triggered by a deterministic safety net, or by the "
                 "broker's own protective stop firing (STOP_OUT — the market closed the "
-                "position, not a decision anyone made) and bypassed LLM review — the "
+                "position, not a decision anyone made), and bypassed LLM review — the "
                 "listed symbols are already closed out of the book. Context-only; do "
                 "not try to re-open, re-stop, or second-guess:\n"
                 + "\n".join(system_action_lines) + "\n"
@@ -617,8 +679,8 @@ class PositionReviewerAgent(BaseAgent):
             system_actions_section = ""
 
         # Same-day trim discipline section. Renders only when at least one
-        # symbol was already trimmed earlier today (midday REDUCE, morning
-        # emergency sell, force-delever). The Python executor
+        # symbol was already trimmed earlier today (midday REDUCE, or a
+        # deterministic de-lever). The Python executor
         # enforces this rule independently — this section is the prompt-side
         # belt so the LLM isn't fighting an invisible filter.
         if already_trimmed_today:
@@ -626,7 +688,7 @@ class PositionReviewerAgent(BaseAgent):
                 "### ⚠️ Already Trimmed Today — DO NOT REDUCE/SELL again\n"
                 f"Symbols sold earlier today: {', '.join(sorted(already_trimmed_today))}\n"
                 "These positions ALREADY received a sell-side action this session day "
-                "(midday REDUCE, force-delever, or emergency sell).\n"
+                "(a midday REDUCE, or a deterministic de-lever).\n"
                 "**HOLD them at this session unless ONE of these HARD triggers fires:**\n"
                 "  - Named `thesis_invalid_if` condition is satisfied (price closed below "
                 "cited level, fundamental signal flipped, etc.)\n"
@@ -701,6 +763,7 @@ class PositionReviewerAgent(BaseAgent):
         )
         return f"""## Position Review — {session_label}
 
+{substantiation_section}
 {margin_section}
 {system_actions_section}
 {already_trimmed_section}
@@ -745,6 +808,10 @@ schema."""
                position_facts: dict | None = None,
                metric_deltas: dict | None = None,
                morning_trades: list[dict] | None = None,
+               # Board item 89 defect 3 — {symbol: entry trade row} for
+               # every held position, from the date-unrestricted lookup.
+               # See `TradingPipeline.run_position_review`.
+               entry_context: dict[str, dict] | None = None,
                news_intel: NewsIntelligenceReport | None = None,
                earnings_analyses: list[dict] | None = None,
                macro_analysis: dict | None = None,
@@ -758,6 +825,7 @@ schema."""
                recent_performance: dict | None = None,
                already_trimmed_today: set[str] | None = None,
                allow_margin: bool = True,
+               substantiation_challenge: str = "",
                # §11.2 ladder headroom, threaded from the SAME computation
                # execution's submit loop uses (`_entry_deployment_budget` /
                # `_session_gross_ceiling` in `src/pipeline_stages.py`) so
@@ -777,6 +845,7 @@ schema."""
             position_facts=position_facts or {},
             metric_deltas=metric_deltas or {},
             morning_trades=morning_trades or [],
+            entry_context=entry_context or {},
             news_intel=news_intel,
             earnings_analyses=earnings_analyses or [],
             macro_analysis=macro_analysis,
@@ -790,6 +859,7 @@ schema."""
             recent_performance=recent_performance or {},
             already_trimmed_today=already_trimmed_today or set(),
             allow_margin=allow_margin,
+            substantiation_challenge=substantiation_challenge,
             margin_headroom_usd=margin_headroom_usd,
             margin_ladder_backed=margin_ladder_backed,
             margin_ladder_multiple=margin_ladder_multiple,

@@ -441,3 +441,50 @@ def test_cockpit_homepage_links_to_desk_diary():
     text = "\n".join(blob)
     assert "Desk diary" in text
     assert "/diary/" in text
+
+
+def test_cockpit_index_html_only_references_committed_assets():
+    """Guard against the exact drift this repo has shipped with before:
+    someone builds the frontend directly on a server (or locally) and
+    only copies `index.html` + the two hashed bundle files it points at,
+    without running `git add`/`git commit` for the new hashed files or
+    `git rm` for the old ones. Content-hashed filenames make any mismatch
+    here mean the committed index.html and the committed assets/ directory
+    disagree about what should be served — i.e. `git show HEAD` alone is
+    not a reproducible description of the dashboard.
+
+    This is a static, no-build check: it does not verify the *contents*
+    of the committed bundle match a fresh build of `frontend/` (that would
+    need a Node build step, which does not exist in CI today) — only that
+    index.html's asset references and the committed assets/ directory
+    agree with each other.
+    """
+    import re
+
+    cockpit = REPO_ROOT / "src" / "api" / "static_cockpit"
+    index_html = (cockpit / "index.html").read_text(encoding="utf-8")
+
+    referenced = set(re.findall(r'(?:src|href)="/cockpit/(assets/[^"]+)"', index_html))
+    assert referenced, "expected index.html to reference at least one /cockpit/assets/ file"
+
+    for rel in referenced:
+        asset_path = cockpit / rel
+        assert asset_path.is_file(), (
+            f"index.html references {rel!r} but it is not committed under "
+            f"static_cockpit/assets/ — this is the exact drift where a "
+            f"server-side rebuild replaces the bundle without a matching commit"
+        )
+
+    # The reverse check: any committed top-level index-*.{js,css} bundle
+    # file that index.html does NOT reference is a leftover from a stale
+    # commit (e.g. an old hashed bundle that a rebuild forgot to `git rm`).
+    committed_bundle_files = {
+        f"assets/{p.name}"
+        for p in (cockpit / "assets").glob("index-*.*")
+        if p.suffix in {".js", ".css"}
+    }
+    orphaned = committed_bundle_files - referenced
+    assert not orphaned, (
+        f"committed but unreferenced cockpit bundle file(s): {sorted(orphaned)} — "
+        f"likely a stale bundle left behind by a rebuild that didn't `git rm` it"
+    )

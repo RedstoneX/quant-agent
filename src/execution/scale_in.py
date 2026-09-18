@@ -6,7 +6,9 @@ never by silently refusing the add.
 
     1. Snapshot the protective sell and persist a WAL recovery row.
     2. Cancel it.
-    3. Confirm the cancel via `trade_updates` / broker status — do not assume.
+    3. Confirm the cancel via the broker's own order status — do not assume.
+       (Was `trade_updates` first; that socket is off since 2026-09-17, so
+       this is the bounded REST wait. Same call, same window.)
     4. Submit the BUY add.
     5. On any fill (including partial): place ONE protective sell covering
        the broker's FULL position quantity at the existing protection level
@@ -139,7 +141,11 @@ def intended_specs(cancelled: list[dict], intended_stop: float) -> list[dict]:
 
 
 def confirm_protective_cancels(broker: Any, specs: list[dict]) -> tuple[bool, str]:
-    """Wait until each cancelled stop is terminal via trade_updates / REST.
+    """Wait until each cancelled stop is terminal, via `wait_for_order_terminal`.
+
+    That is bounded REST polling since `execution.fill_stream_enabled` was
+    switched off (2026-09-17); it was the websocket first before that. The
+    wait itself is unchanged either way.
 
     Returns ``(True, "")`` only when every spec with an id reached a
     cancelled-like terminal state. A fill aborts the add: the stop did its
@@ -191,7 +197,18 @@ def rearm_full_position_stop(
     On accept, writes `stop_price` back onto the opening row when `db` is
     given — the rearmed level can be tighter than the add's own stop.
     """
-    if qty <= 0 or stop_price <= 0:
+    # docs/WORK.md item 88: a non-finite trigger passed the old `<= 0` test
+    # (NaN/Inf compare False) and reached the broker, where quantization
+    # turned it into None. Returning None here is the caller's failure
+    # signal — the WAL row stays and the gap keeps escalating.
+    from src.execution.stop_records import STOP_USABLE, classify_stop_price
+
+    if qty <= 0 or classify_stop_price(stop_price)[0] != STOP_USABLE:
+        logger.error(
+            "scale-in rearm REFUSED for %s: qty=%r stop=%r is not a "
+            "placeable protective stop — nothing placed, the gap stays open",
+            symbol, qty, stop_price,
+        )
         return None
     buffer = getattr(broker, "STOP_LIMIT_BUFFER_PCT", 0.03)
     try:
@@ -495,11 +512,14 @@ def drain_scale_in_row(broker: Any, db: Any, row: dict) -> bool:
     held = abs(float(qty))
     if held <= 0:
         return True
-    if stop_price <= 0:
+    # item 88: `<= 0` alone let a recorded ±Inf through to the broker.
+    from src.execution.stop_records import STOP_USABLE, classify_stop_price
+
+    if classify_stop_price(stop_price)[0] != STOP_USABLE:
         logger.error(
-            "scale-in drain: %s held %.4f but no usable stop price on the "
-            "WAL row — leaving the row so the owner alert / next repair can "
-            "see it", symbol, held,
+            "scale-in drain: %s held %.4f but the WAL row's stop price is "
+            "%r, which cannot be a stop — leaving the row so the owner alert "
+            "/ next repair can see it", symbol, held, stop_price,
         )
         return False
 

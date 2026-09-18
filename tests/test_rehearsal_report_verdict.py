@@ -238,7 +238,19 @@ def _status_literals(func: ast.FunctionDef) -> set[str]:
 _PIPELINE_SESSION_FUNCTIONS = (
     "run_morning", "run_position_review", "run_intra_check",
     "_run_intraday_opportunity_scan", "_intraday_opportunity_scan_body",
-    "run_evening", "run_earnings_preprocess",
+    # `run_evening` is a thin wrapper (2026-09-18) that runs
+    # `_run_evening_body` and then persists the result to `evening_reports`
+    # so the report can be re-rendered later; every evening status literal
+    # lives in the body, so the body is scanned directly — the same shape as
+    # run_intra_check / _run_intraday_opportunity_scan above.
+    "run_evening", "_run_evening_body", "run_earnings_preprocess",
+    # `run_morning` / `run_position_review` / `run_intra_check` themselves
+    # became thin persistence wrappers the same day, for the same reason
+    # (2026-09-18 gap sweep — see `Database.save_session_report` /
+    # `save_intra_check_report`): every status literal for these three now
+    # lives in `_run_morning_body` / `_run_position_review_body` /
+    # `_run_intra_check_body`, so the bodies are scanned directly too.
+    "_run_morning_body", "_run_position_review_body", "_run_intra_check_body",
 )
 
 # Explicit indirection bridges: (source file, lookup, resolved status set).

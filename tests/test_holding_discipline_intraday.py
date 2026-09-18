@@ -194,12 +194,18 @@ def test_midday_and_close_share_the_one_executor_this_gate_lives_in():
     """Why the parametrised tests above are honest coverage of BOTH surfaces
     rather than one surface twice: `run_midday` and `run_close` are both thin
     delegations to `run_position_review`, which dispatches every LLM exit
-    through `_midday_execute_llm_actions`. One gate, both sessions."""
+    through `_midday_execute_llm_actions`. One gate, both sessions.
+
+    `run_position_review` itself became a thin persistence wrapper around
+    `_run_position_review_body` on 2026-09-18 (see `Database.
+    save_session_report` — the same shape `run_evening`/`_run_evening_body`
+    already used), so the executor call now lives in the body."""
     import inspect
 
     assert "run_position_review" in inspect.getsource(TradingPipeline.run_midday)
     assert "run_position_review" in inspect.getsource(TradingPipeline.run_close)
-    review_src = inspect.getsource(TradingPipeline.run_position_review)
+    assert "_run_position_review_body" in inspect.getsource(TradingPipeline.run_position_review)
+    review_src = inspect.getsource(TradingPipeline._run_position_review_body)
     assert review_src.count("_midday_execute_llm_actions(") == 1
 
 

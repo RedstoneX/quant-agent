@@ -487,6 +487,44 @@ class ExecutionConfig(BaseModel):
     trades, so the residual rounding tax is immaterial while the number
     stays short enough to read in a log line and in a Telegram alert."""
 
+    fill_stream_enabled: bool = False
+    """Master switch for the live `trade_updates` websocket fill feed
+    (`_TradeUpdatesHub` in `src/execution/broker.py`).
+
+    OFF by default, owner decision 2026-09-17. This is not a preference: on
+    this host the socket CANNOT authenticate, and two independent blockers
+    were confirmed before the switch was written, so no code or config
+    change could have fixed it.
+
+      1. The trading process holds PLACEHOLDER Alpaca credentials. A local
+         credential-injecting proxy substitutes the real key on outbound
+         REST — which is why REST order placement works — but the
+         websocket does not go through that proxy, and the installed
+         `alpaca-py` stream is built on `websockets.legacy`, which has no
+         proxy support at all (proxy support arrived in websockets 15.0,
+         and only in the asyncio and sync clients).
+      2. Alpaca authenticates the stream with an in-band websocket
+         MESSAGE, not a handshake header. The gateway injects headers
+         only, so even a proxy-capable client would not be authenticated.
+
+    The observed cost of leaving it on was pure noise: every fill wait
+    burned part of its own bounded window on a handshake that could never
+    succeed, then degraded to the REST fallback anyway, and the box logged
+    ~150 `trade_updates` auth failures a day. The REST fallback is the
+    mechanism that has actually confirmed every fill since the socket was
+    built (2026-09-10), and it is untouched by this flag.
+
+    With this OFF the desk never opens the socket, never takes the
+    account-wide lease, and never runs the reconnect loop; every fill wait
+    goes straight to the REST polling path — the same code path
+    `use_stream=False` has always taken, with the same timeouts, poll
+    intervals and ceilings. The websocket code is DORMANT, not deleted.
+
+    Flip to true to restore the pre-2026-09-17 behaviour byte for byte.
+    That is what the deferred credential decision would revive: if the
+    process is ever given real Alpaca credentials directly, this is the
+    only switch that has to move."""
+
 
 class RiskConfig(BaseModel):
     max_position_pct: float = Field(gt=0, le=100)
